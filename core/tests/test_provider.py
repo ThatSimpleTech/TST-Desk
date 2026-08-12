@@ -21,6 +21,7 @@ from tstd.provider import (
     FunctionDefinition,
     ProviderClient,
     ProviderError,
+    RetryConfig,
     StreamChunk,
     TimeoutConfig,
     ToolCall,
@@ -263,10 +264,12 @@ def mock_transport() -> httpx.ASGITransport:
 
 @pytest.fixture
 def client(mock_transport: httpx.ASGITransport) -> ProviderClient:
+    # Retry disabled: error-handling tests assert single-shot behaviour.
     return ProviderClient(
         base_url="http://mock/v1",
         api_key="sk-test-key",
         client=httpx.AsyncClient(transport=mock_transport),
+        retry_config=RetryConfig(max_retries=0),
     )
 
 
@@ -484,6 +487,22 @@ class TestErrorHandling:
         assert isinstance(result, ProviderError)
         assert result.code == "context_length_exceeded"
         assert not result.retryable
+        # Message is actionable
+        assert "context window" in result.message
+        assert "reduce" in result.message.lower()
+
+    async def test_auth_failure_message(self, client: ProviderClient) -> None:
+        """Test that 401 produces an actionable message."""
+        request = ChatCompletionRequest(
+            model="err-401", messages=[ChatMessage(role="user", content="Hi")]
+        )
+        result = await client.chat_completion(request)
+        assert isinstance(result, ProviderError)
+        assert result.code == "auth_failed"
+        assert not result.retryable
+        # Message is actionable
+        assert "API key" in result.message
+        assert "keychain" in result.message
 
     async def test_not_found(self, client: ProviderClient) -> None:
         """Test that 404 is handled."""
@@ -499,6 +518,7 @@ class TestErrorHandling:
         request = ChatCompletionRequest(
             model="err-429", messages=[ChatMessage(role="user", content="Hi")]
         )
+        # The fixture client has max_retries=0 — single-shot.
         errors: list[ProviderError] = []
         async for chunk in client.chat_completion_stream(request):
             if isinstance(chunk, ProviderError):
@@ -514,6 +534,7 @@ class TestErrorHandling:
             base_url="http://localhost:1",
             api_key="sk-test-key",
             timeout=TimeoutConfig(connect=0.1, read=0.1, total=0.5),
+            retry_config=RetryConfig(max_retries=0),
         )
         request = ChatCompletionRequest(
             model="test", messages=[ChatMessage(role="user", content="Hi")]

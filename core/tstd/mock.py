@@ -44,15 +44,24 @@ class Script:
         tool_arguments: JSON string of arguments for the ``tool_call`` kind.
         status_code: HTTP status for ``error`` / ``rate_limit`` kinds.
         error_code: Typed error code for the ``error`` kind.
+        fail_times: If > 0, the first N calls return an error (rate-limit by
+            default, or the kind's normal error) before the script's real
+            response.
+        retry_after: ``Retry-After`` value (seconds) attached to error
+            responses when ``fail_times`` applies.
         prompt_tokens / completion_tokens / cached_tokens: usage figures.
     """
 
-    kind: Literal["text", "stream", "tool_call", "malformed", "error", "rate_limit"]
+    kind: Literal[
+        "text", "stream", "tool_call", "malformed", "error", "rate_limit", "stream_interrupted"
+    ]
     content: str = ""
     tool_name: str = ""
     tool_arguments: str = ""
     status_code: int = 0
     error_code: str = ""
+    fail_times: int = 0
+    retry_after: float | None = None
     prompt_tokens: int = DEFAULT_PROMPT_TOKENS
     completion_tokens: int = DEFAULT_COMPLETION_TOKENS
     cached_tokens: int = DEFAULT_CACHED_TOKENS
@@ -92,6 +101,8 @@ class MockProvider:
         self._default = default or Script(kind="text", content="Hello from mock provider")
         # Every request is recorded so tests can assert what was sent.
         self.calls: list[ChatCompletionRequest] = []
+        # Per-model call counter for fail_times support.
+        self._fail_counts: dict[str, int] = {}
 
     def script(self, model: str, script: Script) -> None:
         """Register a script for a model name."""
@@ -107,6 +118,8 @@ class MockProvider:
         """Return a scripted non-streaming response."""
         self.calls.append(request)
         script = self._script_for(request.model)
+        if self._should_fail(request.model, script):
+            return self._fail_error(script)
         return self._render_nonstream(script, request.model)
 
     async def chat_completion_stream(
@@ -117,12 +130,44 @@ class MockProvider:
         self.calls.append(request)
         script = self._script_for(request.model)
 
+        if self._should_fail(request.model, script):
+            yield self._fail_error(script)
+            return
+
         if script.kind in ("error", "rate_limit"):
             yield self._render_error(script)
             return
 
         async for chunk in self._render_stream(script, request.model):
             yield chunk
+
+    # ── Failure simulation ──────────────────────────────────────────
+
+    def _should_fail(self, model: str, script: Script) -> bool:
+        """Return True if the mock should return an error for this call.
+
+        When ``script.fail_times > 0``, the first N calls to *model*
+        return a retryable error.  After N calls the real script response
+        is produced.
+        """
+        if script.fail_times <= 0:
+            return False
+        count = self._fail_counts.get(model, 0)
+        self._fail_counts[model] = count + 1
+        return count < script.fail_times
+
+    def _fail_error(self, script: Script) -> ProviderError:
+        """Error returned while a script is in its ``fail_times`` window."""
+        status = script.status_code or 429
+        retryable = status in (429, 500, 502, 503, 504)
+        code = script.error_code or ("rate_limited" if status == 429 else "server_error")
+        return ProviderError(
+            code=code,
+            message=script.content or f"Simulated failure (HTTP {status})",
+            status_code=status,
+            retryable=retryable,
+            retry_after=script.retry_after,
+        )
 
     # ── Rendering ────────────────────────────────────────────────────
 
@@ -133,6 +178,13 @@ class MockProvider:
             return self._render_error(script)
         if script.kind == "rate_limit":
             return self._render_error(script)
+        if script.kind == "stream_interrupted":
+            return ProviderError(
+                code="stream_interrupted",
+                message="Stream interrupted mid-tool-call (mock)",
+                status_code=200,
+                retryable=False,
+            )
         if script.kind == "malformed":
             return ProviderError(
                 code="parse_error",
@@ -176,16 +228,53 @@ class MockProvider:
                 message=script.content or "Rate limit exceeded",
                 status_code=429,
                 retryable=True,
+                retry_after=script.retry_after,
             )
         return ProviderError(
             code=script.error_code or "server_error",
             message=script.content or "Mock provider error",
             status_code=script.status_code or 500,
             retryable=script.status_code in (429, 500, 502, 503, 504),
+            retry_after=script.retry_after,
         )
 
     async def _render_stream(self, script: Script, model: str) -> AsyncIterator[StreamChunk]:
         chunk_id = f"mock-stream-{model}"
+
+        if script.kind == "stream_interrupted":
+            # Emit tool-call deltas then stop WITHOUT finish_reason (clean
+            # close).  Simulates a provider that drops the connection mid-tool-call.
+            yield StreamChunk(
+                id=chunk_id,
+                delta=Delta(
+                    content=None,
+                    tool_calls=[
+                        DeltaToolCall(
+                            index=0,
+                            id="call_interrupted_1",
+                            function_name="mock_tool",
+                            function_arguments="",
+                        )
+                    ],
+                ),
+                finish_reason=None,
+            )
+            yield StreamChunk(
+                id=chunk_id,
+                delta=Delta(
+                    content=None,
+                    tool_calls=[
+                        DeltaToolCall(
+                            index=0,
+                            function_name=None,
+                            function_arguments='{"partial": "true", "loc": "Sa',
+                        )
+                    ],
+                ),
+                finish_reason=None,
+            )
+            # No finish chunk, no usage — stream ends abruptly
+            return
 
         if script.kind == "tool_call":
             # Emit role chunk, then arguments, then finish chunk with usage.

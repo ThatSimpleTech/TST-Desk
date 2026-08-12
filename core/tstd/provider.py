@@ -10,8 +10,12 @@ environment files) — see :mod:`tstd.keychain`.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+import random
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 
 import httpx
@@ -258,6 +262,222 @@ class ProviderError:
     message: str
     status_code: int = 0
     retryable: bool = False
+    retry_after: float | None = None
+    """Seconds to wait before retrying, from a ``Retry-After`` header."""
+
+
+# ── Retry configuration ────────────────────────────────────────────────
+
+
+@dataclass
+class RetryConfig:
+    """Retry policy for provider calls.
+
+    Applies to retryable failures (HTTP 429, 5xx, and connection errors).
+    Delays grow exponentially with jitter, capped at *max_delay*.
+    ``Retry-After`` headers override the computed delay when present.
+    """
+
+    max_retries: int = 3
+    """Maximum number of retries after the initial attempt (0 = no retry)."""
+
+    initial_delay: float = 1.0
+    """Base delay for the first retry, in seconds."""
+
+    max_delay: float = 60.0
+    """Cap for the exponential delay, in seconds."""
+
+    jitter_factor: float = 0.25
+    """Fraction of the base delay added as random jitter (0 = none, 1 = 100%)."""
+
+    def __post_init__(self) -> None:
+        if self.max_retries < 0:
+            raise ValueError(f"max_retries must be >= 0, got {self.max_retries}")
+        if self.initial_delay <= 0:
+            raise ValueError(f"initial_delay must be > 0, got {self.initial_delay}")
+        if self.max_delay <= 0:
+            raise ValueError(f"max_delay must be > 0, got {self.max_delay}")
+        if self.jitter_factor < 0 or self.jitter_factor > 1:
+            raise ValueError(f"jitter_factor must be in [0, 1], got {self.jitter_factor}")
+
+
+def retry_delay(attempt: int, config: RetryConfig, retry_after: float | None = None) -> float:
+    """Compute the sleep delay before retry *attempt* (1-based).
+
+    Uses exponential backoff (*initial_delay* * 2**n) capped at *max_delay*,
+    plus uniform jitter of up to *jitter_factor* of the base.  If
+    *retry_after* is given (from a ``Retry-After`` header), the delay is at
+    least *retry_after*.
+
+    Parameters
+    ----------
+    attempt:
+        1-based retry attempt number.
+    config:
+        Retry policy.
+    retry_after:
+        Minimum seconds to wait, from a ``Retry-After`` header.
+
+    Returns
+    -------
+    The delay in seconds.
+    """
+    base: float = min(config.initial_delay * (2 ** (attempt - 1)), config.max_delay)
+    if retry_after is not None:
+        base = max(base, retry_after)
+    return base * (1 + config.jitter_factor * random.random())
+
+
+async def retry_call(
+    call: Callable[[], Awaitable[ChatCompletionResponse | ProviderError]],
+    config: RetryConfig,
+) -> ChatCompletionResponse | ProviderError:
+    """Call *call* and retry retryable errors with exponential backoff + jitter.
+
+    Stops after *config.max_retries* retries and returns the last error.
+    Non-retryable errors (auth, context-length, parse) are returned immediately
+    without retrying.
+
+    Parameters
+    ----------
+    call:
+        Async callable that returns a response or a typed error.
+    config:
+        Retry policy.
+
+    Returns
+    -------
+    The first successful response, or the last ``ProviderError`` after all
+    retries are exhausted.
+    """
+    attempts = 0
+    while True:
+        result = await call()
+        if isinstance(result, ChatCompletionResponse):
+            return result
+
+        # ProviderError
+        if not result.retryable or attempts >= config.max_retries:
+            return result
+
+        attempts += 1
+        delay = retry_delay(attempts, config, result.retry_after)
+        log.warning(
+            "provider call failed, retrying",
+            extra={
+                "extra_fields": {
+                    "attempt": attempts,
+                    "max_retries": config.max_retries,
+                    "code": result.code,
+                    "status_code": result.status_code,
+                    "delay": f"{delay:.2f}s",
+                }
+            },
+        )
+        await asyncio.sleep(delay)
+
+
+async def retry_stream(
+    open_stream: Callable[[], AsyncIterator[StreamChunk | ProviderError]],
+    config: RetryConfig,
+) -> AsyncIterator[StreamChunk | ProviderError]:
+    """Open a stream, retrying retryable errors on the **first** item only.
+
+    Once the first content chunk has been yielded, the stream is committed
+    and no further retries are attempted.  Mid-stream failures are passed
+    through as-is (never retried).
+
+    Parameters
+    ----------
+    open_stream:
+        Factory that returns an async iterator of stream chunks or errors.
+    config:
+        Retry policy.
+
+    Yields
+    ------
+    ``StreamChunk`` for each delta (or ``ProviderError`` on failure).
+    """
+    attempts = 0
+    while True:
+        stream = open_stream()
+        try:
+            first = await anext(stream)
+        except StopAsyncIteration:
+            return
+
+        if isinstance(first, ProviderError) and first.retryable and attempts < config.max_retries:
+            attempts += 1
+            delay = retry_delay(attempts, config, first.retry_after)
+            log.warning(
+                "provider stream connection failed, retrying",
+                extra={
+                    "extra_fields": {
+                        "attempt": attempts,
+                        "max_retries": config.max_retries,
+                        "code": first.code,
+                        "status_code": first.status_code,
+                        "delay": f"{delay:.2f}s",
+                    }
+                },
+            )
+            await asyncio.sleep(delay)
+            continue
+
+        yield first
+        async for item in stream:
+            yield item
+        return
+
+
+# ── Actionable error messages ─────────────────────────────────────────
+
+
+def auth_failure_message() -> str:
+    """Actionable guidance for authentication failures (HTTP 401)."""
+    return (
+        "Authentication failed. Fix one of these and retry: "
+        "1) store a valid API key for this provider in the OS keychain "
+        "(tstd keychain set <provider>), "
+        "2) check that the provider base_url in config.yaml "
+        "matches the key's provider, "
+        "3) verify the key has not expired or been revoked."
+    )
+
+
+def context_length_message(provider_detail: str = "") -> str:
+    """Actionable guidance for context-window-exceeded errors (HTTP 413)."""
+    msg = (
+        "The request exceeded the model's context window. "
+        "Reduce the conversation or tool results (start a new session, "
+        "trim the prompt), or switch the tier to a model with a larger "
+        "context window in config.yaml."
+    )
+    if provider_detail:
+        msg = f"{msg} Provider detail: {provider_detail}"
+    return msg
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a ``Retry-After`` header value to seconds.
+
+    Handles both decimal seconds and HTTP-date formats.
+    Returns ``None`` when the header is missing or unparseable.
+    """
+    if value is None:
+        return None
+    # Try seconds (integer or decimal)
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    # Try HTTP-date format (RFC 7231)
+    try:
+        dt = parsedate_to_datetime(value)
+        now = datetime.now(UTC)
+        return max(0.0, (dt - now).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 # ── Timeout configuration ──────────────────────────────────────────────
@@ -322,10 +542,12 @@ class ProviderClient:
         api_key: str,
         timeout: TimeoutConfig | None = None,
         client: httpx.AsyncClient | None = None,
+        retry_config: RetryConfig | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout or TimeoutConfig()
+        self.retry_config = retry_config or RetryConfig()
 
         self._client = client or httpx.AsyncClient(
             timeout=self.timeout.to_httpx_timeout(),
@@ -346,71 +568,101 @@ class ProviderClient:
         self,
         request: ChatCompletionRequest,
     ) -> ChatCompletionResponse | ProviderError:
-        """Send a non-streaming chat completion request.
+        """Send a non-streaming chat completion request with retries.
+
+        Retries on retryable errors (HTTP 429, 5xx, connection errors) with
+        exponential backoff and jitter, bounded by *retry_config*.
+        ``Retry-After`` headers are honoured when present.
 
         Args:
             request: The chat completion request.
 
         Returns:
-            The response, or a ``ProviderError`` on failure.
+            The response, or a ``ProviderError`` on failure (after retry
+            exhaustion for retryable errors).
         """
         body = request.to_dict()
         # Ensure stream is False
         body.pop("stream", None)
         body.pop("stream_options", None)
 
-        try:
-            response = await self._client.post(
-                f"{self.base_url}/chat/completions",
-                json=body,
-                headers=self._headers(),
-            )
-        except httpx.TimeoutException as e:
-            log.warning("provider request timed out", extra={"extra_fields": {"error": str(e)}})
-            return ProviderError(
-                code="timeout",
-                message=f"Request timed out: {e}",
-                retryable=True,
-            )
-        except httpx.ConnectError as e:
-            log.warning("provider connection failed", extra={"extra_fields": {"error": str(e)}})
-            return ProviderError(
-                code="connection_error",
-                message=f"Failed to connect to {self.base_url}: {e}",
-                retryable=True,
-            )
-        except httpx.HTTPError as e:
-            log.warning("provider request failed", extra={"extra_fields": {"error": str(e)}})
-            return ProviderError(
-                code="request_error",
-                message=str(e),
-                retryable=True,
-            )
-
-        if response.is_success:
+        async def _attempt() -> ChatCompletionResponse | ProviderError:
             try:
-                data = response.json()
-                return ChatCompletionResponse.from_api_dict(data)
-            except (ValueError, KeyError, IndexError) as e:
-                log.error(
-                    "failed to parse provider response",
-                    extra={"extra_fields": {"error": str(e), "body": response.text[:500]}},
+                response = await self._client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=body,
+                    headers=self._headers(),
+                )
+            except httpx.TimeoutException as e:
+                log.warning(
+                    "provider request timed out",
+                    extra={"extra_fields": {"error": str(e)}},
                 )
                 return ProviderError(
-                    code="parse_error",
-                    message=f"Failed to parse response: {e}",
-                    status_code=response.status_code,
-                    retryable=False,
+                    code="timeout",
+                    message=f"Request timed out: {e}",
+                    retryable=True,
+                )
+            except httpx.ConnectError as e:
+                log.warning(
+                    "provider connection failed",
+                    extra={"extra_fields": {"error": str(e)}},
+                )
+                return ProviderError(
+                    code="connection_error",
+                    message=f"Failed to connect to {self.base_url}: {e}",
+                    retryable=True,
+                )
+            except httpx.HTTPError as e:
+                log.warning(
+                    "provider request failed",
+                    extra={"extra_fields": {"error": str(e)}},
+                )
+                return ProviderError(
+                    code="request_error",
+                    message=str(e),
+                    retryable=True,
                 )
 
-        # Handle error responses
-        return self._parse_error(response)
+            if response.is_success:
+                try:
+                    data = response.json()
+                    return ChatCompletionResponse.from_api_dict(data)
+                except (ValueError, KeyError, IndexError) as e:
+                    log.error(
+                        "failed to parse provider response",
+                        extra={
+                            "extra_fields": {
+                                "error": str(e),
+                                "body": response.text[:500],
+                            }
+                        },
+                    )
+                    return ProviderError(
+                        code="parse_error",
+                        message=f"Failed to parse response: {e}",
+                        status_code=response.status_code,
+                        retryable=False,
+                    )
+
+            # Handle error responses
+            return self._parse_error(response)
+
+        return await retry_call(_attempt, self.retry_config)
 
     async def chat_completion_stream(
         self,
         request: ChatCompletionRequest,
     ) -> AsyncIterator[StreamChunk | ProviderError]:
         """Send a streaming chat completion request and yield chunks.
+
+        Retries on retryable errors **only for the initial connection**
+        (before any content chunk has been yielded).  Mid-stream failures
+        are passed through cleanly without retrying.
+
+        If the stream ends while a tool call is in flight, a
+        ``stream_interrupted`` error is yielded so the consumer never sees
+        a half-parsed tool call.
 
         Args:
             request: The chat completion request.
@@ -422,51 +674,117 @@ class ProviderClient:
         body["stream"] = True
         body["stream_options"] = {"include_usage": True}
 
-        try:
-            async with aconnect_sse(
-                self._client,
-                "POST",
-                f"{self.base_url}/chat/completions",
-                json=body,
-                headers=self._headers(),
-            ) as sse:
-                # Check for error responses
-                if not sse.response.is_success:
-                    error_body = await sse.response.aread()
-                    yield self._parse_error(
-                        sse.response, error_body.decode() if error_body else None
-                    )
-                    return
+        async def _stream_once() -> AsyncIterator[StreamChunk | ProviderError]:
+            try:
+                async with aconnect_sse(
+                    self._client,
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    json=body,
+                    headers=self._headers(),
+                ) as sse:
+                    # Check for error responses
+                    if not sse.response.is_success:
+                        error_body = await sse.response.aread()
+                        yield self._parse_error(
+                            sse.response,
+                            error_body.decode() if error_body else None,
+                        )
+                        return
 
-                async for event in sse.aiter_sse():
-                    chunk = self._parse_stream_chunk(event.data)
-                    if chunk is not None:
-                        yield chunk
+                    in_tool_call = False
+                    saw_finish = False
+                    try:
+                        async for event in sse.aiter_sse():
+                            try:
+                                chunk = self._parse_stream_chunk(event.data)
+                            except ValueError as e:
+                                # Malformed chunk mid-tool-call => fail cleanly
+                                if in_tool_call:
+                                    log.warning(
+                                        "malformed chunk mid-tool-call, discarding",
+                                        extra={
+                                            "extra_fields": {
+                                                "error": str(e)[:100],
+                                            }
+                                        },
+                                    )
+                                    yield ProviderError(
+                                        code="parse_error",
+                                        message="Malformed stream data arrived while a "
+                                        "tool call was in progress; the partial "
+                                        "tool call was discarded.",
+                                        retryable=False,
+                                    )
+                                    return
+                                log.warning(
+                                    "skipping malformed stream event",
+                                    extra={"extra_fields": {"error": str(e)[:100]}},
+                                )
+                                continue
+                            if chunk is None:
+                                continue
+                            if chunk.delta.tool_calls:
+                                in_tool_call = True
+                            if chunk.finish_reason:
+                                saw_finish = True
+                            yield chunk
+                    except httpx.HTTPError as e:
+                        # Mid-stream connection drop
+                        word = "tool call" if in_tool_call and not saw_finish else "response"
+                        log.warning(
+                            "provider stream interrupted mid-response",
+                            extra={"extra_fields": {"error": str(e)}},
+                        )
+                        yield ProviderError(
+                            code="stream_interrupted",
+                            message=f"Stream interrupted mid-{word}: {e}. "
+                            "Any partial content was discarded.",
+                            retryable=False,
+                        )
+                        return
 
-        except httpx.TimeoutException as e:
-            log.warning("provider stream timed out", extra={"extra_fields": {"error": str(e)}})
-            yield ProviderError(
-                code="timeout",
-                message=f"Stream timed out: {e}",
-                retryable=True,
-            )
-        except httpx.ConnectError as e:
-            log.warning(
-                "provider stream connection failed",
-                extra={"extra_fields": {"error": str(e)}},
-            )
-            yield ProviderError(
-                code="connection_error",
-                message=f"Failed to connect to {self.base_url}: {e}",
-                retryable=True,
-            )
-        except httpx.HTTPError as e:
-            log.warning("provider stream failed", extra={"extra_fields": {"error": str(e)}})
-            yield ProviderError(
-                code="request_error",
-                message=str(e),
-                retryable=True,
-            )
+                    if in_tool_call and not saw_finish:
+                        yield ProviderError(
+                            code="stream_interrupted",
+                            message="Stream ended before the tool call "
+                            "completed; the partial tool call was discarded.",
+                            retryable=False,
+                        )
+
+            except httpx.TimeoutException as e:
+                log.warning(
+                    "provider stream timed out",
+                    extra={"extra_fields": {"error": str(e)}},
+                )
+                yield ProviderError(
+                    code="timeout",
+                    message=f"Stream timed out: {e}",
+                    retryable=True,
+                )
+            except httpx.ConnectError as e:
+                log.warning(
+                    "provider stream connection failed",
+                    extra={"extra_fields": {"error": str(e)}},
+                )
+                yield ProviderError(
+                    code="connection_error",
+                    message=f"Failed to connect to {self.base_url}: {e}",
+                    retryable=True,
+                )
+            except httpx.HTTPError as e:
+                log.warning(
+                    "provider stream failed",
+                    extra={"extra_fields": {"error": str(e)}},
+                )
+                yield ProviderError(
+                    code="request_error",
+                    message=str(e),
+                    retryable=True,
+                )
+
+        async for chunk in retry_stream(_stream_once, self.retry_config):
+            yield chunk
 
     def _headers(self) -> dict[str, str]:
         """Build the request headers."""
@@ -481,40 +799,59 @@ class ProviderClient:
         response: httpx.Response,
         body: str | None = None,
     ) -> ProviderError:
-        """Parse an error response from the API."""
+        """Parse an error response from the API.
+
+        For auth failures (401) and context-length errors (413) the message
+        is replaced with actionable guidance.  ``Retry-After`` headers are
+        parsed and attached to the returned ``ProviderError``.
+        """
         status = response.status_code
         body_text = body or response.text
 
-        # Try to extract the error message from the JSON body
+        # Extract provider message and code
+        provider_msg = ""
+        provider_code = ""
         try:
             data = response.json() if body is None else __import__("json").loads(body)
-            # OpenAI/OpenRouter format: {"error": {"message": "...", "code": "..."}}
-            if "error" in data and isinstance(data["error"], dict):
+            if isinstance(data, dict) and "error" in data:
                 err = data["error"]
-                msg = err.get("message", body_text[:200])
-                code = err.get("code", f"http_{status}")
-                # Map generic http_XXX codes to friendly names
-                if code.startswith("http_"):
-                    mapped = _STATUS_CODE_MAP.get(status)
-                    if mapped:
-                        code = mapped
-                return ProviderError(
-                    code=code,
-                    message=msg,
-                    status_code=status,
-                    retryable=status in (429, 500, 502, 503, 504),
-                )
+                if isinstance(err, dict):
+                    provider_msg = str(err.get("message", "") or "")
+                    provider_code = str(err.get("code", "") or "")
         except (ValueError, KeyError, TypeError):
             pass
 
-        code = _STATUS_CODE_MAP.get(status, f"http_{status}")
+        if not provider_msg:
+            provider_msg = body_text[:300]
+
+        # Determine code: use provider code if meaningful, else map from status
+        code = provider_code
+        if not code or code.startswith("http_"):
+            code = _STATUS_CODE_MAP.get(status, f"http_{status}")
+
+        # Override for known status codes that carry specific semantics
+        if status == 401:
+            code = "auth_failed"
+        elif status == 413:
+            code = "context_length_exceeded"
+
         retryable = status in (429, 500, 502, 503, 504)
+        retry_after = _parse_retry_after(response.headers.get("retry-after"))
+
+        # Build actionable messages for known error types
+        if status == 401 or code == "auth_failed":
+            message = auth_failure_message()
+        elif status == 413 or code == "context_length_exceeded":
+            message = context_length_message(provider_msg)
+        else:
+            message = provider_msg
 
         return ProviderError(
             code=code,
-            message=body_text[:200],
+            message=message,
             status_code=status,
             retryable=retryable,
+            retry_after=retry_after,
         )
 
     def _parse_stream_chunk(self, raw: str) -> StreamChunk | None:
@@ -526,6 +863,9 @@ class ProviderClient:
         Returns:
             A ``StreamChunk``, or ``None`` for the ``[DONE]`` signal or
             non-data events.
+
+        Raises:
+            ValueError: If the raw data is malformed JSON.
         """
         # Handle the terminal signal
         line = raw.strip()
@@ -537,7 +877,7 @@ class ProviderClient:
         try:
             data = __import__("json").loads(line)
         except ValueError:
-            return None
+            raise ValueError(f"malformed stream event: {line[:200]!r}") from None
 
         # Parse usage from the final chunk, if present
         usage = None
