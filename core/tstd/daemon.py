@@ -15,7 +15,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import websockets.exceptions
+
 from .logging import get_logger, setup_logging, user_data_dir
+from .protocol import (
+    Attach,
+    Cancel,
+    ClientMessageT,
+    Detach,
+    HandshakeError,
+    OpenWorkspace,
+    UserMessage,
+    build_error,
+    parse_client_message,
+)
+from .session import Session, SessionRegistry, SessionRunner
 from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
@@ -46,7 +60,16 @@ class Daemon:
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
         self._tasks: list[asyncio.Task[Any]] = []
-        self.ws_server = WebSocketServer(self.data_dir)
+        self.session_registry = SessionRegistry()
+        # session_id -> set of attached connections
+        self._attached_clients: dict[str, set[Any]] = {}
+        # (connection, session_id) -> streaming task
+        self._streaming_tasks: dict[tuple[int, str], asyncio.Task[None]] = {}
+        self.ws_server = WebSocketServer(
+            self.data_dir,
+            message_handler=self._handle_message,
+            on_disconnect=self._on_connection_closed,
+        )
 
     async def run(self) -> None:
         """Start the daemon and run until shutdown is requested."""
@@ -107,6 +130,147 @@ class Daemon:
         from . import __version__
 
         return __version__
+
+    async def _handle_message(self, raw: str, _connection: Any) -> str | None:
+        """Handle a post-handshake message from a client.
+
+        Routes messages to the session layer. Returns a response string
+        or None to send nothing.
+        """
+        try:
+            msg: ClientMessageT = parse_client_message(raw)
+        except HandshakeError as e:
+            return build_error(e.code, e.message)
+
+        if isinstance(msg, OpenWorkspace):
+            sess = await self.session_registry.create(msg.path)
+            runner = SessionRunner(sess)
+            await runner.start()
+            await self.session_registry.register_runner(sess.id, runner)
+            self.state.active_sessions += 1
+            log.info(
+                "session opened",
+                extra={
+                    "extra_fields": {
+                        "session_id": sess.id,
+                        "workspace_path": msg.path,
+                    }
+                },
+            )
+            # Return the session_state event (seq=1, "running")
+            events = sess.event_log.events_from(1)
+            if events:
+                return events[0].model_dump_json()
+            return None
+
+        if isinstance(msg, UserMessage):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            log.info(
+                "user message",
+                extra={
+                    "extra_fields": {
+                        "session_id": msg.session_id,
+                        "content_length": len(msg.content),
+                    }
+                },
+            )
+            return None
+
+        if isinstance(msg, Cancel):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            await self.session_registry.cancel(msg.session_id)
+            self.state.active_sessions = max(0, self.state.active_sessions - 1)
+            # Return the cancellation event
+            events = found.event_log.events_from(found.event_log.last_seq)
+            if events:
+                return events[0].model_dump_json()
+            return None
+
+        if isinstance(msg, Attach):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            return await self._handle_attach(msg, found, _connection)
+
+        if isinstance(msg, Detach):
+            return await self._handle_detach(msg, _connection)
+
+        return None
+
+    async def _handle_attach(self, msg: Attach, session: Session, connection: Any) -> str | None:
+        """Handle an attach: replay events from from_seq, then stream live."""
+        # Replay events from from_seq
+        for event in session.event_log.events_from(msg.from_seq):
+            await connection.send(event.model_dump_json())
+
+        # Register as attached
+        session_id = session.id
+        if session_id not in self._attached_clients:
+            self._attached_clients[session_id] = set()
+        self._attached_clients[session_id].add(connection)
+
+        # Start a background task that streams new events
+        conn_key = (id(connection), session_id)
+
+        async def _stream() -> None:
+            seen_seq = session.event_log.last_seq
+            try:
+                while True:
+                    new_seq = await session.event_log.wait_for_new_event(seen_seq)
+                    for event in session.event_log.events_from(seen_seq + 1):
+                        await connection.send(event.model_dump_json())
+                    seen_seq = new_seq
+            except websockets.exceptions.ConnectionClosed:
+                pass
+            finally:
+                # Clean up on disconnect
+                self._cleanup_attach(connection, session_id, conn_key)
+
+        task = asyncio.create_task(_stream())
+        self._streaming_tasks[conn_key] = task
+        return None
+
+    async def _handle_detach(self, msg: Detach, connection: Any) -> str | None:
+        """Handle a detach: stop streaming without affecting the session."""
+        session_id = msg.session_id
+        conn_key = (id(connection), session_id)
+
+        self._cleanup_attach(connection, session_id, conn_key)
+        return None
+
+    def _cleanup_attach(self, connection: Any, session_id: str, conn_key: tuple[int, str]) -> None:
+        """Remove connection from attached clients and cancel its stream."""
+        # Remove from attached clients
+        clients = self._attached_clients.get(session_id)
+        if clients:
+            clients.discard(connection)
+            if not clients:
+                del self._attached_clients[session_id]
+
+        # Cancel the streaming task
+        task = self._streaming_tasks.pop(conn_key, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _on_connection_closed(self, connection: Any) -> None:
+        """Clean up all subscriptions for a disconnected client."""
+        # Clean up any attach subscriptions for this connection
+        for session_id in list(self._attached_clients.keys()):
+            conn_key = (id(connection), session_id)
+            self._cleanup_attach(connection, session_id, conn_key)
 
     def health(self) -> dict[str, Any]:
         """Return a health/diagnostics snapshot."""
