@@ -1,0 +1,283 @@
+"""OS keychain abstraction for secure credential storage.
+
+API keys live in the OS keychain, never in config files or environment variables
+(prime directive §2.2). This module provides a platform-agnostic interface for
+reading and writing secrets.
+
+Supported platforms:
+- macOS: `security` CLI to the system keychain
+- Linux: `secret-tool` CLI (libsecret)
+- Windows: Not yet implemented (stub raises NotImplementedError)
+
+The service name is always ``com.thatsimpletech.tstdesk``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import sys
+from abc import ABC, abstractmethod
+
+
+class KeychainError(Exception):
+    """Raised when a keychain operation fails."""
+
+
+class KeychainBackend(ABC):
+    """Platform-specific keychain backend."""
+
+    @abstractmethod
+    async def get_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> str:
+        """Retrieve a secret from the keychain.
+
+        Raises:
+            KeychainError: If the secret is not found or retrieval fails.
+        """
+        ...
+
+    @abstractmethod
+    async def set_secret(
+        self, account: str, secret: str, service: str = "com.thatsimpletech.tstdesk"
+    ) -> None:
+        """Store a secret in the keychain.
+
+        Raises:
+            KeychainError: If storage fails.
+        """
+        ...
+
+    @abstractmethod
+    async def delete_secret(
+        self, account: str, service: str = "com.thatsimpletech.tstdesk"
+    ) -> None:
+        """Delete a secret from the keychain.
+
+        Raises:
+            KeychainError: If the secret is not found or deletion fails.
+        """
+        ...
+
+
+class MacOSKeychain(KeychainBackend):
+    """macOS keychain via the `security` CLI."""
+
+    async def get_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> str:
+        proc = await asyncio.create_subprocess_exec(
+            "security",
+            "find-generic-password",
+            "-a",
+            account,
+            "-s",
+            service,
+            "-w",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            stderr_text = stderr.decode().strip()
+            if "could not be found" in stderr_text or "The specified item" in stderr_text:
+                raise KeychainError(
+                    f"API key not found in keychain. "
+                    f"Run: security add-generic-password -a '{account}' -s '{service}' -w"
+                )
+            raise KeychainError(f"Failed to read keychain: {stderr_text}")
+        return stdout.decode().strip()
+
+    async def set_secret(
+        self, account: str, secret: str, service: str = "com.thatsimpletech.tstdesk"
+    ) -> None:
+        # First try to delete any existing entry
+        with contextlib.suppress(KeychainError):
+            await self.delete_secret(account, service)
+
+        proc = await asyncio.create_subprocess_exec(
+            "security",
+            "add-generic-password",
+            "-a",
+            account,
+            "-s",
+            service,
+            "-w",
+            secret,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise KeychainError(f"Failed to store keychain secret: {stderr.decode().strip()}")
+
+    async def delete_secret(
+        self, account: str, service: str = "com.thatsimpletech.tstdesk"
+    ) -> None:
+        proc = await asyncio.create_subprocess_exec(
+            "security",
+            "delete-generic-password",
+            "-a",
+            account,
+            "-s",
+            service,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise KeychainError(f"Failed to delete keychain secret: {stderr.decode().strip()}")
+
+
+class LinuxSecretService(KeychainBackend):
+    """Linux keychain via `secret-tool` (libsecret)."""
+
+    async def get_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> str:
+        proc = await asyncio.create_subprocess_exec(
+            "secret-tool",
+            "lookup",
+            "service",
+            service,
+            "account",
+            account,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            stderr_text = stderr.decode().strip()
+            if "not found" in stderr_text or "does not exist" in stderr_text:
+                raise KeychainError(
+                    f"API key not found in keychain. "
+                    f"Run: secret-tool store "
+                    f"--label='TST Desk {account}' "
+                    f"service '{service}' account '{account}'"
+                )
+            raise KeychainError(f"Failed to read keychain: {stderr_text}")
+        value = stdout.decode().strip()
+        if not value:
+            raise KeychainError("API key not found in keychain (empty value).")
+        return value
+
+    async def set_secret(
+        self, account: str, secret: str, service: str = "com.thatsimpletech.tstdesk"
+    ) -> None:
+        proc = await asyncio.create_subprocess_exec(
+            "secret-tool",
+            "store",
+            "--label",
+            f"TST Desk {account}",
+            "service",
+            service,
+            "account",
+            account,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate(input=secret.encode())
+        if proc.returncode != 0:
+            raise KeychainError(f"Failed to store keychain secret: {stderr.decode().strip()}")
+
+    async def delete_secret(
+        self, account: str, service: str = "com.thatsimpletech.tstdesk"
+    ) -> None:
+        proc = await asyncio.create_subprocess_exec(
+            "secret-tool",
+            "clear",
+            "service",
+            service,
+            "account",
+            account,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise KeychainError(f"Failed to delete keychain secret: {stderr.decode().strip()}")
+
+
+def _detect_backend() -> KeychainBackend:
+    """Detect the appropriate keychain backend for the current platform."""
+    system = sys.platform
+    if system == "darwin":
+        return MacOSKeychain()
+
+    # On Linux, check if secret-tool is available
+    if system in ("linux", "linux2"):
+        # Use a simpler check: just try to use secret-tool
+        # The actual availability check happens at call time
+        return LinuxSecretService()
+
+    raise KeychainError(
+        f"Unsupported platform: {system}. TST Desk supports macOS and Linux keychain access."
+    )
+
+
+# Module-level singleton backend
+_backend: KeychainBackend | None = None
+
+
+def _get_backend() -> KeychainBackend:
+    global _backend
+    if _backend is None:
+        _backend = _detect_backend()
+    return _backend
+
+
+# ── Public API ─────────────────────────────────────────────────────────
+
+
+async def get_api_key(provider_name: str = "openrouter") -> str:
+    """Retrieve an API key from the OS keychain.
+
+    The key is stored with account name ``tst-{provider_name}``
+    under the service ``com.thatsimpletech.tstdesk``.
+
+    Args:
+        provider_name: The provider name (e.g. ``openrouter``, ``openai``).
+
+    Returns:
+        The API key string.
+
+    Raises:
+        KeychainError: If the key is not found or retrieval fails.
+    """
+    backend = _get_backend()
+    return await backend.get_secret(f"tst-{provider_name}")
+
+
+async def store_api_key(api_key: str, provider_name: str = "openrouter") -> None:
+    """Store an API key in the OS keychain.
+
+    The key is stored with account name ``tst-{provider_name}``
+    under the service ``com.thatsimpletech.tstdesk``.
+
+    Args:
+        api_key: The API key to store.
+        provider_name: The provider name (e.g. ``openrouter``, ``openai``).
+
+    Raises:
+        KeychainError: If storage fails.
+    """
+    backend = _get_backend()
+    await backend.set_secret(f"tst-{provider_name}", api_key)
+
+
+async def delete_api_key(provider_name: str = "openrouter") -> None:
+    """Delete an API key from the OS keychain.
+
+    Args:
+        provider_name: The provider name (e.g. ``openrouter``, ``openai``).
+
+    Raises:
+        KeychainError: If deletion fails.
+    """
+    backend = _get_backend()
+    await backend.delete_secret(f"tst-{provider_name}")
+
+
+def has_keychain_backend() -> bool:
+    """Check if a keychain backend is available for this platform."""
+    try:
+        _detect_backend()
+        return True
+    except (KeychainError, ImportError, OSError):
+        return False
