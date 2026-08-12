@@ -3,7 +3,9 @@ name = "tstd"
 version = "0.1.0"
 description = "TST Desk core daemon"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "websockets>=17.0.1",
+]
 
 [project.scripts]
 tstd = "tstd.daemon:main"
