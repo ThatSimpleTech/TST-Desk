@@ -305,7 +305,7 @@ class ProviderClient:
             api_key=api_key,
         )
         request = ChatCompletionRequest(
-            model="moonshotai/kimi-k3",
+            model="<your-model-slug>",  # comes from config.yaml, never hardcoded
             messages=[ChatMessage(role="user", content="Hello")],
         )
         # Non-streaming
