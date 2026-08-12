@@ -104,5 +104,11 @@ jobs:
       - name: Typecheck (tsc)
         run: npx tsc --noEmit
 
+      - name: Generate protocol fixtures
+        run: cd ../core && uv run python scripts/generate_protocol_fixtures.py
+
+      - name: Test (vitest)
+        run: npm run test
+
       - name: Build
         run: npm run build

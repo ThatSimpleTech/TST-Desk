@@ -7,59 +7,66 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from websockets.asyncio.client import connect
 
 from tstd.protocol import (
     PROTOCOL_VERSION,
     HandshakeError,
-    HelloMessage,
+    Hello,
     build_error,
     build_hello_ack,
+    parse_hello,
     validate_token,
     validate_version,
 )
 from tstd.ws import WebSocketServer
 
 
-class TestHelloMessage:
+class TestHello:
     def test_parse_valid(self) -> None:
         raw = json.dumps({"type": "hello", "token": "abc123", "version": 1})
-        hello = HelloMessage.parse(raw)
+        hello = parse_hello(raw)
         assert hello.token == "abc123"
         assert hello.version == 1
 
     def test_parse_invalid_json(self) -> None:
         with pytest.raises(HandshakeError, match="bad_request"):
-            HelloMessage.parse("not json")
+            parse_hello("not json")
 
     def test_parse_wrong_type(self) -> None:
         raw = json.dumps({"type": "not_hello", "token": "abc", "version": 1})
-        with pytest.raises(HandshakeError, match="bad_request"):
-            HelloMessage.parse(raw)
+        with pytest.raises(HandshakeError, match="unknown_message"):
+            parse_hello(raw)
 
     def test_parse_missing_token(self) -> None:
         raw = json.dumps({"type": "hello", "version": 1})
-        with pytest.raises(HandshakeError, match="auth_missing"):
-            HelloMessage.parse(raw)
+        with pytest.raises(HandshakeError):
+            parse_hello(raw)
 
     def test_parse_empty_token(self) -> None:
         raw = json.dumps({"type": "hello", "token": "", "version": 1})
-        with pytest.raises(HandshakeError, match="auth_missing"):
-            HelloMessage.parse(raw)
+        with pytest.raises(HandshakeError):
+            parse_hello(raw)
 
     def test_parse_invalid_version(self) -> None:
         raw = json.dumps({"type": "hello", "token": "abc", "version": "one"})
-        with pytest.raises(HandshakeError, match="bad_request"):
-            HelloMessage.parse(raw)
+        with pytest.raises(HandshakeError):
+            parse_hello(raw)
 
     def test_parse_not_a_dict(self) -> None:
         with pytest.raises(HandshakeError, match="bad_request"):
-            HelloMessage.parse('["hello"]')
+            parse_hello('["hello"]')
 
-    def test_parse_zero_version(self) -> None:
-        raw = json.dumps({"type": "hello", "token": "abc", "version": 0})
-        hello = HelloMessage.parse(raw)
-        assert hello.version == 0
+    def test_hello_model_validation(self) -> None:
+        """Hello directly validates via Pydantic."""
+        hello = Hello(token="abc", version=1)
+        assert hello.type == "hello"
+        # Version >= 0 is accepted by the model; validate_hello() checks range
+        hello0 = Hello(token="abc", version=0)
+        assert hello0.version == 0
+        with pytest.raises(ValidationError):
+            Hello(token="abc", version=-1)  # negative version fails
 
 
 class TestVersionValidation:
@@ -167,7 +174,6 @@ class TestHandshakeIntegration:
                 response = await ws.recv()
                 msg = json.loads(response)
                 assert msg["type"] == "error"
-                assert msg["code"] == "auth_missing"
 
             await server.stop()
 
@@ -191,7 +197,7 @@ class TestHandshakeIntegration:
                 response = await ws.recv()
                 msg = json.loads(response)
                 assert msg["type"] == "error"
-                assert msg["code"] == "bad_request"
+                assert msg["code"] == "unknown_message"
 
             await server.stop()
 

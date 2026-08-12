@@ -19,11 +19,11 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 from .logging import get_logger
 from .protocol import (
     HandshakeError,
-    HelloMessage,
     build_error,
     build_hello_ack,
+    parse_hello,
+    validate_hello,
     validate_token,
-    validate_version,
 )
 
 log = get_logger("tstd.ws")
@@ -151,8 +151,8 @@ class WebSocketServer:
             raw = await asyncio.wait_for(websocket.recv(), timeout=self._handshake_timeout)
             if not isinstance(raw, str):
                 raise HandshakeError("bad_request", "Handshake must be text")
-            hello = HelloMessage.parse(raw)
-            validate_version(hello.version)
+            hello = parse_hello(raw)
+            validate_hello(hello)
             validate_token(hello.token, self._token)
             await websocket.send(build_hello_ack())
             log.info(

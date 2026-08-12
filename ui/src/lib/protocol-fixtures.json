@@ -1,0 +1,155 @@
+{
+  "hello": {
+    "type": "hello",
+    "token": "test-token-abc",
+    "version": 1
+  },
+  "open_workspace": {
+    "type": "open_workspace",
+    "path": "/home/user/project"
+  },
+  "user_message": {
+    "type": "user_message",
+    "session_id": "sess-1",
+    "content": "hello world"
+  },
+  "approve": {
+    "type": "approve",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1"
+  },
+  "deny": {
+    "type": "deny",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "reason": "not safe"
+  },
+  "deny_no_reason": {
+    "type": "deny",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "reason": null
+  },
+  "cancel": {
+    "type": "cancel",
+    "session_id": "sess-1"
+  },
+  "attach": {
+    "type": "attach",
+    "session_id": "sess-1",
+    "from_seq": 5
+  },
+  "detach": {
+    "type": "detach",
+    "session_id": "sess-1"
+  },
+  "set_tier": {
+    "type": "set_tier",
+    "session_id": "sess-1",
+    "tier": "brain"
+  },
+  "get_instruction_stack": {
+    "type": "get_instruction_stack",
+    "session_id": "sess-1"
+  },
+  "ready": {
+    "type": "ready",
+    "seq": 1,
+    "version": "0.1.0",
+    "protocol_version": 1
+  },
+  "session_state": {
+    "type": "session_state",
+    "seq": 2,
+    "session_id": "sess-1",
+    "state": "running",
+    "reason": null
+  },
+  "assistant_delta": {
+    "type": "assistant_delta",
+    "seq": 3,
+    "session_id": "sess-1",
+    "delta": "Hello "
+  },
+  "tool_call": {
+    "type": "tool_call",
+    "seq": 4,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "name": "fs_read",
+    "arguments": {
+      "path": "test.txt"
+    },
+    "decision_class": "B"
+  },
+  "tool_result": {
+    "type": "tool_result",
+    "seq": 5,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "status": "success",
+    "output": "file content",
+    "truncated": false
+  },
+  "tool_result_truncated": {
+    "type": "tool_result",
+    "seq": 6,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "status": "error",
+    "output": "too long",
+    "truncated": true
+  },
+  "approval_request": {
+    "type": "approval_request",
+    "seq": 7,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "tool_name": "fs_write",
+    "arguments": {
+      "path": "test.txt"
+    },
+    "decision_class": "C",
+    "summary": "Write to test.txt"
+  },
+  "decision_logged": {
+    "type": "decision_logged",
+    "seq": 8,
+    "session_id": "sess-1",
+    "decision_class": "A",
+    "what": "Formatted file",
+    "why": "Ruff format",
+    "commit": "abc123"
+  },
+  "cost_update": {
+    "type": "cost_update",
+    "seq": 9,
+    "session_id": "sess-1",
+    "turn_cost": 0.05,
+    "session_cost": 0.5,
+    "total_cost": 1.2
+  },
+  "turn_complete": {
+    "type": "turn_complete",
+    "seq": 10,
+    "session_id": "sess-1",
+    "tokens": 1500,
+    "cost": 0.03,
+    "tier": "worker",
+    "duration": 2.5
+  },
+  "error": {
+    "type": "error",
+    "seq": 11,
+    "session_id": null,
+    "code": "test",
+    "message": "fail"
+  },
+  "error_with_session": {
+    "type": "error",
+    "seq": 12,
+    "session_id": "sess-1",
+    "code": "test",
+    "message": "fail"
+  }
+}
