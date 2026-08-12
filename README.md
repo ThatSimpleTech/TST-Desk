@@ -26,6 +26,49 @@ your tokens.
 # 4. Start working
 ```
 
+## Development
+
+### Prerequisites
+
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- Rust 1.77+ (for the Tauri host)
+- Node.js 24+ (for the frontend)
+
+### Setup
+
+```bash
+# Python core
+cd core
+uv sync
+
+# Frontend
+cd ../ui
+npm install
+```
+
+### Pre-commit hooks
+
+This repository uses [pre-commit](https://pre-commit.com) to run linting, formatting, and
+secret detection on every commit.
+
+```bash
+# Install hooks (one-time, from the core/ directory)
+cd core
+uv run pre-commit install
+```
+
+The hooks will then run automatically on `git commit`:
+- **ruff check** — lint Python files
+- **ruff format** — format Python files
+- **Secret detection** — blocks commits containing API keys, tokens, passwords, and other
+  credential-like patterns
+
+To bypass the hooks (e.g. for a false positive):
+```bash
+git commit --no-verify
+```
+
 ## Status
 
 v0.1 — in development. See [`docs/tst-desk-backlog.md`](docs/tst-desk-backlog.md) for the
