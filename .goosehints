@@ -2,9 +2,9 @@ This repository is TST Desk. Before your first action in any session, read ./AGE
 in full and treat it as binding. It outranks your defaults.
 
 Reference documents — read these ON DEMAND with the file tools, never all at once.
-They currently sit at the repo root and move to docs/ during TD-103:
-  tst-desk-spec.md     what we're building and why (behavior source of truth)
-  tst-desk-backlog.md  epics, stories, acceptance criteria (scope source of truth)
+They live in docs/:
+  docs/tst-desk-spec.md     what we're building and why (behavior source of truth)
+  docs/tst-desk-backlog.md  epics, stories, acceptance criteria (scope source of truth)
 
 Working on a story: search for that story's section by ID and read ONLY that section,
 plus the specific spec sections it references. Do not read either file whole.
