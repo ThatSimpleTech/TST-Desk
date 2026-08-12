@@ -6,6 +6,8 @@ and supports multiple simultaneous client connections.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import secrets
 from pathlib import Path
@@ -15,6 +17,14 @@ import websockets.exceptions
 from websockets.asyncio.server import Server, ServerConnection, serve
 
 from .logging import get_logger
+from .protocol import (
+    HandshakeError,
+    HelloMessage,
+    build_error,
+    build_hello_ack,
+    validate_token,
+    validate_version,
+)
 
 log = get_logger("tstd.ws")
 
@@ -76,12 +86,13 @@ class WebSocketServer:
         await server.stop()
     """
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, handshake_timeout: float = 10.0) -> None:
         self.data_dir = data_dir
         self._server: Server | None = None
         self._token: str = ""
         self._port: int = 0
         self._connections: set[ServerConnection] = set()
+        self._handshake_timeout = handshake_timeout
 
     @property
     def port(self) -> int:
@@ -128,21 +139,56 @@ class WebSocketServer:
         log.info("ws server stopped")
 
     async def _on_connect(self, websocket: ServerConnection) -> None:
-        """Handle a new client connection."""
+        """Handle a new client connection, requiring a token handshake."""
         self._connections.add(websocket)
         log.info(
             "client connected",
             extra={"extra_fields": {"remote": str(websocket.remote_address)}},
         )
+
+        # Handshake: the first message must be a valid `hello`.
+        try:
+            raw = await asyncio.wait_for(websocket.recv(), timeout=self._handshake_timeout)
+            if not isinstance(raw, str):
+                raise HandshakeError("bad_request", "Handshake must be text")
+            hello = HelloMessage.parse(raw)
+            validate_version(hello.version)
+            validate_token(hello.token, self._token)
+            await websocket.send(build_hello_ack())
+            log.info(
+                "handshake ok",
+                extra={"extra_fields": {"version": hello.version}},
+            )
+        except HandshakeError as e:
+            await self._send_and_close(websocket, e.code, e.message)
+            return
+        except TimeoutError:
+            await self._send_and_close(
+                websocket, "handshake_timeout", "No hello message within 10s"
+            )
+            return
+        except websockets.exceptions.ConnectionClosed:
+            return
+
+        # Post-handshake: messages pass through untouched (protocol in TD-204).
         try:
             async for _message in websocket:
-                # Echo for now — protocol handling comes in TD-203/204
                 pass
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
             self._connections.discard(websocket)
             log.info("client disconnected")
+
+    async def _send_and_close(self, websocket: ServerConnection, code: str, message: str) -> None:
+        """Send a typed error and close the connection."""
+        log.warning(
+            "handshake rejected",
+            extra={"extra_fields": {"code": code, "message": message}},
+        )
+        with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+            await websocket.send(build_error(code, message))
+        await websocket.close(1008, code)
 
     async def _auth_middleware(self, _connection: ServerConnection, _request: Any) -> None:
         """Accept connections; the token handshake is handled in TD-203.

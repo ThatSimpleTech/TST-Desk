@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from websockets.asyncio.client import connect
 
+from tstd.protocol import PROTOCOL_VERSION
 from tstd.ws import (
     WebSocketServer,
     create_port_file_path,
@@ -70,6 +71,21 @@ class TestPortFile:
         assert p == Path("/tmp/test") / "port.json"
 
 
+async def _do_handshake(uri: str, token: str) -> None:
+    """Connect to a server and perform the hello handshake."""
+    async with connect(uri) as ws:
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "hello",
+                    "token": token,
+                    "version": PROTOCOL_VERSION,
+                }
+            )
+        )
+        await ws.recv()  # hello_ack
+
+
 class TestWebSocketServer:
     @pytest.mark.asyncio
     async def test_start_and_stop(self) -> None:
@@ -90,8 +106,7 @@ class TestWebSocketServer:
             uri = f"ws://127.0.0.1:{server.port}"
 
             async def client() -> None:
-                async with connect(uri):
-                    pass  # just connect and disconnect
+                await _do_handshake(uri, server.token)
 
             await asyncio.gather(client(), client(), client())
             await server.stop()
@@ -103,9 +118,8 @@ class TestWebSocketServer:
             await server.start()
             uri = f"ws://127.0.0.1:{server.port}"
 
-            # Connect and disconnect
-            async with connect(uri):
-                pass
+            # Connect and disconnect with handshake
+            await _do_handshake(uri, server.token)
 
             # Wait for the server to process the disconnect
             for _ in range(20):
@@ -115,8 +129,7 @@ class TestWebSocketServer:
 
             # Server should still be operational
             assert server.client_count == 0
-            async with connect(uri):
-                pass
+            await _do_handshake(uri, server.token)
 
             for _ in range(20):
                 if server.client_count == 0:
@@ -133,18 +146,43 @@ class TestWebSocketServer:
             await server.start()
             uri = f"ws://127.0.0.1:{server.port}"
 
-            async with connect(uri):
-                assert server.client_count == 1
-                async with connect(uri):
-                    assert server.client_count == 2
-                # ws2 disconnected — wait for handler cleanup
-                for _ in range(20):
-                    if server.client_count == 1:
-                        break
-                    await asyncio.sleep(0.05)
-                assert server.client_count == 1
+            async def handshake_and_wait() -> None:
+                async with connect(uri) as ws:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "hello",
+                                "token": server.token,
+                                "version": PROTOCOL_VERSION,
+                            }
+                        )
+                    )
+                    await ws.recv()  # hello_ack
+                    # Stay connected until the test releases us
+                    await asyncio.Event().wait()
 
-            # ws1 disconnected
+            # Start first client
+            t1 = asyncio.create_task(handshake_and_wait())
+            await asyncio.sleep(0.2)
+            assert server.client_count == 1
+
+            # Start second client
+            t2 = asyncio.create_task(handshake_and_wait())
+            await asyncio.sleep(0.2)
+            assert server.client_count == 2
+
+            # Cancel second client, wait for cleanup
+            t2.cancel()
+            await asyncio.gather(t2, return_exceptions=True)
+            for _ in range(20):
+                if server.client_count == 1:
+                    break
+                await asyncio.sleep(0.05)
+            assert server.client_count == 1
+
+            # Cancel first client
+            t1.cancel()
+            await asyncio.gather(t1, return_exceptions=True)
             for _ in range(20):
                 if server.client_count == 0:
                     break
