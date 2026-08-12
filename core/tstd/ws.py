@@ -2,6 +2,10 @@
 
 Binds 127.0.0.1 only, writes a port file with a random auth token,
 and supports multiple simultaneous client connections.
+
+Post-handshake messages are routed to a message handler provided by the
+daemon. The handler receives parsed messages and returns responses to
+send back to the client.
 """
 
 from __future__ import annotations
@@ -10,6 +14,7 @@ import asyncio
 import contextlib
 import json
 import secrets
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +46,10 @@ def generate_token() -> str:
 def write_port_file(data_dir: Path, port: int, token: str) -> Path:
     """Write the port and token to the port file with restricted permissions.
 
+    If the file already exists, it is treated as stale (left by a previous
+    daemon instance) and replaced — a dead daemon's port file must never
+    block startup.
+
     Args:
         data_dir: The daemon's user data directory.
         port: The port the WebSocket server is listening on.
@@ -50,6 +59,11 @@ def write_port_file(data_dir: Path, port: int, token: str) -> Path:
         The path to the written port file.
     """
     port_file = data_dir / _PORT_FILE
+    if port_file.exists():
+        log.warning(
+            "stale port file detected, replacing",
+            extra={"extra_fields": {"path": str(port_file)}},
+        )
     content = json.dumps({"port": port, "token": token}, indent=2)
     port_file.write_text(content)
     # Set mode 0o600 (owner read/write only)
@@ -86,13 +100,21 @@ class WebSocketServer:
         await server.stop()
     """
 
-    def __init__(self, data_dir: Path, handshake_timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        handshake_timeout: float = 10.0,
+        message_handler: Callable[[str, ServerConnection], Awaitable[str | None]] | None = None,
+        on_disconnect: Callable[[ServerConnection], Awaitable[None]] | None = None,
+    ) -> None:
         self.data_dir = data_dir
         self._server: Server | None = None
         self._token: str = ""
         self._port: int = 0
         self._connections: set[ServerConnection] = set()
         self._handshake_timeout = handshake_timeout
+        self._message_handler = message_handler
+        self._on_disconnect = on_disconnect
 
     @property
     def port(self) -> int:
@@ -126,9 +148,12 @@ class WebSocketServer:
         """Stop the WebSocket server and close all connections."""
         log.info("ws server stopping")
 
-        # Close all client connections
-        for conn in self._connections:
-            await conn.close(1001, "Server shutting down")
+        # Close all client connections (iterate over a copy to avoid
+        # concurrent modification from disconnect callbacks)
+        connections = list(self._connections)
+        for conn in connections:
+            with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+                await conn.close(1001, "Server shutting down")
         self._connections.clear()
 
         # Close the server
@@ -170,14 +195,19 @@ class WebSocketServer:
         except websockets.exceptions.ConnectionClosed:
             return
 
-        # Post-handshake: messages pass through untouched (protocol in TD-204).
+        # Post-handshake: route messages to the daemon's message handler.
         try:
-            async for _message in websocket:
-                pass
+            async for raw in websocket:
+                if self._message_handler is not None and isinstance(raw, str):
+                    response = await self._message_handler(raw, websocket)
+                    if response is not None:
+                        await websocket.send(response)
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
             self._connections.discard(websocket)
+            if self._on_disconnect is not None:
+                await self._on_disconnect(websocket)
             log.info("client disconnected")
 
     async def _send_and_close(self, websocket: ServerConnection, code: str, message: str) -> None:
