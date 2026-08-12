@@ -133,3 +133,52 @@ hatch.
 **Rationale:** A scary confirmation is a UX band-aid, not a real safety boundary. Containers
 provide actual isolation — the "wall" the spec describes in §12. v0.1 defers autonomy mode
 to a later milestone, but the architecture must be built to require this.
+## 2026-08-12 — TD-306: Resilience
+
+Decisions made during resilience implementation.
+
+### 1. Retry strategy
+
+**Decision:** Exponential backoff with jitter, bounded attempts. Retry on 429, 5xx, and
+connection errors. Non-retryable errors (auth, context-length, parse) never retried.
+`Retry-After` header overrides the computed delay (max with exponential base).
+
+**Rationale:** Standard industry practice. The backlog explicitly specifies this pattern.
+
+### 2. Default-on retry
+
+**Decision:** `ProviderClient` retries by default (`RetryConfig` with `max_retries=3`).
+Callers can disable by passing `RetryConfig(max_retries=0)`.
+
+**Rationale:** Resilience is on by default so the loop (TD-401) gets it for free. Existing
+single-shot tests opt out with `max_retries=0`.
+
+### 3. Retry scope for streaming
+
+**Decision:** Retry on initial connection only (before any content chunk). Mid-stream
+failures produce a clean `stream_interrupted` error without retrying.
+
+**Rationale:** Retrying a mid-stream drop would re-send the entire request and re-stream
+from scratch, producing duplicate content chunks that the consumer cannot deduplicate.
+
+### 4. Stream interruption detection
+
+**Decision:** `_stream_once` tracks in-flight tool-call state. If the stream ends without
+a `finish_reason` while a tool call is in progress, a `stream_interrupted` `ProviderError`
+is yielded. The consumer can detect this and discard the partial tool call.
+
+**Rationale:** The consumer (loop) must never dispatch a half-parsed tool call. The
+`ProviderClient` guarantees this by emitting a typed error at the protocol level.
+
+### 5. Error message strategy
+
+**Decision:** Auth failures (401) and context-length errors (413) get actionable messages
+replacing the provider's generic error text. The provider's original detail is appended to
+context-length messages (safe, no secrets) but excluded from auth messages (risk of key
+echo in provider error body).
+
+**Rationale:** Users should see a fix instruction, not a raw provider error. The
+distinction between safe-to-include (context length) and not-safe-to-include (auth) follows
+the security principle of not echoing credentials. Auth/context-length error codes are
+normalized to `auth_failed` / `context_length_exceeded` regardless of the provider's
+internal code, giving the UI a stable branch target.
