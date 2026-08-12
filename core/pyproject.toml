@@ -5,6 +5,9 @@ description = "TST Desk core daemon"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+tstd = "tstd.daemon:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.11",
