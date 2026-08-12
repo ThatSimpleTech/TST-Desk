@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .logging import get_logger, setup_logging, user_data_dir
+from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
 
@@ -45,6 +46,7 @@ class Daemon:
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
         self._tasks: list[asyncio.Task[Any]] = []
+        self.ws_server = WebSocketServer(self.data_dir)
 
     async def run(self) -> None:
         """Start the daemon and run until shutdown is requested."""
@@ -75,12 +77,16 @@ class Daemon:
         )
 
     async def _serve(self) -> None:
-        """Main serving loop — waits until shutdown is requested."""
+        """Main serving loop — start subsystems and wait for shutdown."""
+        await self.ws_server.start()
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:
         """Graceful shutdown: cancel tasks, close sockets, flush state."""
         log.info("shutting down")
+
+        # Stop the WebSocket server
+        await self.ws_server.stop()
 
         # Cancel all running tasks
         for task in self._tasks:
@@ -110,6 +116,8 @@ class Daemon:
             "active_sessions": self.state.active_sessions,
             "data_dir": str(self.data_dir),
             "shutdown_requested": self._shutdown_event.is_set(),
+            "ws_port": self.ws_server.port,
+            "ws_clients": self.ws_server.client_count,
         }
 
 
