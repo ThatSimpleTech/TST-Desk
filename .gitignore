@@ -26,6 +26,10 @@ credentials.json
 *.keychain-db
 /secrets/
 
+# --- Stray development artifacts ---
+darwin.py
+files_*.zip
+
 # --- OS artifacts ---
 .DS_Store
 Thumbs.db
