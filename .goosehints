@@ -1,0 +1,13 @@
+This repository is TST Desk. Before your first action in any session, read ./AGENTS.md
+in full and treat it as binding. It outranks your defaults.
+
+Reference documents — read these ON DEMAND with the file tools, never all at once.
+They currently sit at the repo root and move to docs/ during TD-103:
+  tst-desk-spec.md     what we're building and why (behavior source of truth)
+  tst-desk-backlog.md  epics, stories, acceptance criteria (scope source of truth)
+
+Working on a story: search for that story's section by ID and read ONLY that section,
+plus the specific spec sections it references. Do not read either file whole.
+
+Never start a story whose dependencies are unfinished. Never build anything outside
+the current milestone. If unsure whether something is in scope, stop and ask.
