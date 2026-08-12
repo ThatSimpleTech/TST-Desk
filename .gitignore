@@ -1,0 +1,35 @@
+# --- Runtime state ---
+# Exclude .tst/ runtime state, but never .tst/rules/ (meant to be shared, per AGENTS.md §8)
+.tst/*
+!.tst/rules/
+!.tst/rules/**
+
+# --- Build artifacts ---
+target/
+build/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+node_modules/
+
+# --- Secrets ---
+.env
+.env.local
+*keychain*
+credentials.json
+
+# --- OS artifacts ---
+.DS_Store
+Thumbs.db
+
+# --- Editor ---
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
