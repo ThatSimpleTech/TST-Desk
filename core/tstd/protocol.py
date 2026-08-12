@@ -1,20 +1,27 @@
-"""Connection handshake and local auth protocol.
+"""Typed protocol messages exchanged between the shell and the daemon.
 
-Every client must present its auth token in a `hello` message before
-the server processes any other messages. The handshake also negotiates
-the protocol version.
+Every message has a discriminated `type` field. Client→daemon messages
+are `ClientMessage`; daemon→client events are `DaemonEvent` and carry a
+monotonic `seq` scoped to the session.
+
+Field naming is snake_case on the wire in both Python and TypeScript
+(see DECISIONS.md 2026-08-12 TD-204 §1).
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import secrets
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, Field, TypeAdapter
 
 # Current protocol version
 PROTOCOL_VERSION = 1
-
-# Minimum supported version
 MIN_PROTOCOL_VERSION = 1
+
+# Token length in bytes (64 hex chars)
+_TOKEN_BYTES = 32
 
 
 class HandshakeError(Exception):
@@ -26,54 +33,12 @@ class HandshakeError(Exception):
         super().__init__(f"{code}: {message}")
 
 
-@dataclass
-class HelloMessage:
-    """The client's opening handshake message."""
+# ── Handshake helpers ──────────────────────────────────────────────────
 
-    token: str
-    version: int
 
-    @classmethod
-    def parse(cls, raw: str) -> HelloMessage:
-        """Parse a raw JSON string into a HelloMessage.
-
-        Raises:
-            HandshakeError: If the message is malformed.
-        """
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise HandshakeError(
-                "bad_request",
-                f"Invalid JSON in handshake: {e}",
-            ) from e
-
-        if not isinstance(data, dict):
-            raise HandshakeError("bad_request", "Handshake must be a JSON object")
-
-        if data.get("type") != "hello":
-            raise HandshakeError(
-                "bad_request",
-                f"Expected type='hello', got {data.get('type', 'none')!r}",
-            )
-
-        token = data.get("token", "")
-        if not isinstance(token, str) or not token:
-            raise HandshakeError("auth_missing", "Missing or empty 'token' field")
-
-        version = data.get("version", 0)
-        if not isinstance(version, int):
-            raise HandshakeError(
-                "bad_request",
-                f"Invalid 'version' {version!r}: must be an integer",
-            )
-        if version < 0:
-            raise HandshakeError(
-                "bad_request",
-                f"Invalid 'version' {version!r}: cannot be negative",
-            )
-
-        return cls(token=token, version=version)
+def generate_token() -> str:
+    """Generate a random hex auth token."""
+    return secrets.token_hex(_TOKEN_BYTES)
 
 
 def validate_version(version: int) -> None:
@@ -112,6 +77,338 @@ def validate_token(provided: str, expected: str) -> None:
         )
 
 
+# ── Base classes ───────────────────────────────────────────────────────
+
+
+class ClientMessage(BaseModel):
+    """Base class for client→daemon messages."""
+
+    type: str
+
+
+class DaemonEvent(BaseModel):
+    """Base class for daemon→client events. Carries a session-scoped seq."""
+
+    type: str
+    seq: int = Field(gt=0, description="Monotonic per-session event sequence")
+
+
+# ── Client → Daemon ────────────────────────────────────────────────────
+
+
+class Hello(ClientMessage):
+    """Opening handshake: token + protocol version."""
+
+    type: Literal["hello"] = "hello"
+    token: str = Field(min_length=1)
+    version: int = Field(ge=0, description="Validated by validate_hello()")
+
+
+class OpenWorkspace(ClientMessage):
+    """Open a workspace directory for a new session."""
+
+    type: Literal["open_workspace"] = "open_workspace"
+    path: str
+
+
+class UserMessage(ClientMessage):
+    """A user message to the current session."""
+
+    type: Literal["user_message"] = "user_message"
+    session_id: str
+    content: str
+
+
+class Approve(ClientMessage):
+    """Approve a pending tool call."""
+
+    type: Literal["approve"] = "approve"
+    session_id: str
+    tool_call_id: str
+
+
+class Deny(ClientMessage):
+    """Deny a pending tool call."""
+
+    type: Literal["deny"] = "deny"
+    session_id: str
+    tool_call_id: str
+    reason: str | None = None
+
+
+class Cancel(ClientMessage):
+    """Cancel a running session."""
+
+    type: Literal["cancel"] = "cancel"
+    session_id: str
+
+
+class Attach(ClientMessage):
+    """Attach to a session, replaying events from `from_seq`."""
+
+    type: Literal["attach"] = "attach"
+    session_id: str
+    from_seq: int = Field(default=1, ge=1)
+
+
+class Detach(ClientMessage):
+    """Detach from a session, stopping the live stream."""
+
+    type: Literal["detach"] = "detach"
+    session_id: str
+
+
+class SetTier(ClientMessage):
+    """Override the active model tier for a session."""
+
+    type: Literal["set_tier"] = "set_tier"
+    session_id: str
+    tier: Literal["brain", "worker", "validator"]
+
+
+class GetInstructionStack(ClientMessage):
+    """Request the current instruction stack for a session."""
+
+    type: Literal["get_instruction_stack"] = "get_instruction_stack"
+    session_id: str
+
+
+# ── Daemon → Client ────────────────────────────────────────────────────
+
+
+class Ready(DaemonEvent):
+    """Sent after a successful handshake."""
+
+    type: Literal["ready"] = "ready"
+    seq: int = 1  # `ready` is connection-scoped, not session-scoped
+    version: str
+    protocol_version: int
+
+
+class SessionState(DaemonEvent):
+    """Session state transition."""
+
+    type: Literal["session_state"] = "session_state"
+    session_id: str
+    state: Literal["idle", "running", "awaiting_approval", "complete", "failed", "cancelled"]
+    reason: str | None = None
+
+
+class AssistantDelta(DaemonEvent):
+    """A streamed chunk of assistant output."""
+
+    type: Literal["assistant_delta"] = "assistant_delta"
+    session_id: str
+    delta: str
+
+
+class ToolCall(DaemonEvent):
+    """A tool call about to be executed."""
+
+    type: Literal["tool_call"] = "tool_call"
+    session_id: str
+    tool_call_id: str
+    name: str
+    arguments: dict[str, Any]
+    decision_class: Literal["A", "B", "C"] | None = None
+
+
+class ToolResult(DaemonEvent):
+    """The result of a tool call."""
+
+    type: Literal["tool_result"] = "tool_result"
+    session_id: str
+    tool_call_id: str
+    status: Literal["success", "error"]
+    output: str
+    truncated: bool = False
+
+
+class ApprovalRequest(DaemonEvent):
+    """A request for user approval of a tool call."""
+
+    type: Literal["approval_request"] = "approval_request"
+    session_id: str
+    tool_call_id: str
+    tool_name: str
+    arguments: dict[str, Any]
+    decision_class: Literal["A", "B", "C"]
+    summary: str
+
+
+class DecisionLogged(DaemonEvent):
+    """A decision appended to the autonomy ledger."""
+
+    type: Literal["decision_logged"] = "decision_logged"
+    session_id: str
+    decision_class: Literal["A", "B", "C"]
+    what: str
+    why: str
+    commit: str
+
+
+class CostUpdate(DaemonEvent):
+    """Accrued cost for the session."""
+
+    type: Literal["cost_update"] = "cost_update"
+    session_id: str
+    turn_cost: float = Field(ge=0)
+    session_cost: float = Field(ge=0)
+    total_cost: float = Field(ge=0)
+
+
+class TurnComplete(DaemonEvent):
+    """Summary of a completed turn."""
+
+    type: Literal["turn_complete"] = "turn_complete"
+    session_id: str
+    tokens: int = Field(ge=0)
+    cost: float = Field(ge=0)
+    tier: Literal["brain", "worker", "validator"]
+    duration: float = Field(ge=0)
+
+
+class Error(DaemonEvent):
+    """A typed error, usually in response to a bad message."""
+
+    type: Literal["error"] = "error"
+    session_id: str | None = None
+    code: str
+    message: str
+
+
+# ── Discriminated unions ───────────────────────────────────────────────
+
+ClientMessageT = Annotated[
+    Hello
+    | OpenWorkspace
+    | UserMessage
+    | Approve
+    | Deny
+    | Cancel
+    | Attach
+    | Detach
+    | SetTier
+    | GetInstructionStack,
+    Field(discriminator="type"),
+]
+
+DaemonEventT = Annotated[
+    Ready
+    | SessionState
+    | AssistantDelta
+    | ToolCall
+    | ToolResult
+    | ApprovalRequest
+    | DecisionLogged
+    | CostUpdate
+    | TurnComplete
+    | Error,
+    Field(discriminator="type"),
+]
+
+_client_message_adapter: TypeAdapter[ClientMessageT] = TypeAdapter(ClientMessageT)
+_daemon_event_adapter: TypeAdapter[DaemonEventT] = TypeAdapter(DaemonEventT)
+
+# Known message types for explicit unknown-type detection
+_KNOWN_CLIENT_TYPES = frozenset(
+    {
+        "hello",
+        "open_workspace",
+        "user_message",
+        "approve",
+        "deny",
+        "cancel",
+        "attach",
+        "detach",
+        "set_tier",
+        "get_instruction_stack",
+    }
+)
+_KNOWN_EVENT_TYPES = frozenset(
+    {
+        "ready",
+        "session_state",
+        "assistant_delta",
+        "tool_call",
+        "tool_result",
+        "approval_request",
+        "decision_logged",
+        "cost_update",
+        "turn_complete",
+        "error",
+    }
+)
+
+
+class UnknownMessageTypeError(HandshakeError):
+    """Raised when a message has an unrecognized `type`."""
+
+    def __init__(self, message_type: str) -> None:
+        super().__init__(
+            "unknown_message",
+            f"Unknown message type {message_type!r}. Check the protocol version and message name.",
+        )
+
+
+def _check_known_type(data: dict[str, Any], known_types: frozenset[str]) -> None:
+    """Raise UnknownMessageTypeError if the type field is not in known_types."""
+    msg_type = data.get("type")
+    if isinstance(msg_type, str) and msg_type not in known_types:
+        raise UnknownMessageTypeError(msg_type)
+
+
+def parse_client_message(raw: str) -> ClientMessageT:
+    """Parse a raw JSON string into a typed client message.
+
+    Raises:
+        HandshakeError: If the message is malformed or has an unknown type.
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HandshakeError("bad_request", f"Invalid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise HandshakeError("bad_request", "Message must be a JSON object")
+    if "type" not in data or not isinstance(data["type"], str):
+        raise HandshakeError("bad_request", "Message missing string 'type' field")
+
+    _check_known_type(data, _KNOWN_CLIENT_TYPES)
+
+    try:
+        return _client_message_adapter.validate_python(data)
+    except ValueError as e:
+        raise HandshakeError("bad_request", str(e)) from e
+
+
+def parse_daemon_event(raw: str) -> DaemonEventT:
+    """Parse a raw JSON string into a typed daemon event.
+
+    Raises:
+        HandshakeError: If the event is malformed or has an unknown type.
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HandshakeError("bad_request", f"Invalid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise HandshakeError("bad_request", "Event must be a JSON object")
+    if "type" not in data or not isinstance(data["type"], str):
+        raise HandshakeError("bad_request", "Event missing string 'type' field")
+
+    _check_known_type(data, _KNOWN_EVENT_TYPES)
+
+    try:
+        return _daemon_event_adapter.validate_python(data)
+    except ValueError as e:
+        raise HandshakeError("bad_request", str(e)) from e
+
+
+def parse_hello(raw: str) -> Hello:
+    """Parse a raw JSON string into a Hello message (for the handshake)."""
+    return parse_client_message(raw)  # type: ignore[return-value]
+
+
 def build_hello_ack() -> str:
     """Build the server's handshake acknowledgement."""
     return json.dumps({"type": "hello_ack", "version": PROTOCOL_VERSION})
@@ -120,3 +417,8 @@ def build_hello_ack() -> str:
 def build_error(code: str, message: str) -> str:
     """Build a typed error message."""
     return json.dumps({"type": "error", "code": code, "message": message})
+
+
+def validate_hello(hello: Hello) -> None:
+    """Validate the version and token of a parsed hello message."""
+    validate_version(hello.version)
