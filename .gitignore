@@ -20,8 +20,11 @@ node_modules/
 # --- Secrets ---
 .env
 .env.local
-*keychain*
 credentials.json
+# Runtime keychain artifacts (DB dumps, export files) — not source code
+*.keychain
+*.keychain-db
+/secrets/
 
 # --- OS artifacts ---
 .DS_Store
