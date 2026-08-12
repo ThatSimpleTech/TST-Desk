@@ -1,0 +1,18 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.2
+    hooks:
+      - id: ruff
+        args: [--fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: local
+    hooks:
+      - id: secrets
+        name: Secret detection
+        description: Rejects commits containing credential-like patterns
+        entry: .hooks/check-secrets
+        language: script
+        types: [text]
