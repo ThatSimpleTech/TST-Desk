@@ -24,10 +24,11 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
 
+from .audit_writer import ModelCallSink
 from .config import ModelConfig
 from .context import PromptAssembler
 from .context.stack import build_instruction_stack
-from .cost import CostTracker
+from .cost import CallRecord, CostTracker
 from .logging import get_logger
 from .protocol import AssistantDelta, SteeringReloaded, TurnComplete
 from .protocol import ToolCall as ToolCallEvent
@@ -303,6 +304,7 @@ async def agent_loop(
     tool_registry: ToolRegistry | None = None,
     tool_dispatcher: ToolDispatcher | None = None,
     prompt_assembler: PromptAssembler | None = None,
+    audit_sink: ModelCallSink | None = None,
 ) -> None:
     """Agent loop — runs inside ``SessionRunner``.
 
@@ -330,6 +332,9 @@ async def agent_loop(
             ``session.workspace_path``.  Injects the per-tier system
             prompt in stable-prefix order and logs the cache prefix
             hash for observability.
+        audit_sink: Optional :class:`ModelCallSink` (TD-902).  When
+            provided, every recorded model call is forwarded for audit
+            persistence.  The sink only enqueues — it never blocks.
     """
     # ── Conversation state ──────────────────────────────────────────
     assembler = prompt_assembler or PromptAssembler(session.workspace_path)
@@ -337,6 +342,14 @@ async def agent_loop(
     # turn below (TD-305).
     messages: list[ChatMessage] = []
     tracker = CostTracker(config)
+    # TD-902: feed every recorded model call to the audit writer. The
+    # sink only enqueues — it can never block or fail the loop.
+    if audit_sink is not None:
+
+        def _forward(rec: CallRecord, is_classifier: bool) -> None:
+            audit_sink.record_model_call(session.id, rec, is_classifier)
+
+        tracker.add_listener(_forward)
     provider: ProviderLike | None = None  # resolved lazily before first use
 
     # Pre-compute tool definitions if we have a registry

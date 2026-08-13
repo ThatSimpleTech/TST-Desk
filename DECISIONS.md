@@ -482,3 +482,63 @@ grouping (needed by per-day cost queries) happens at query time, matching how
 **Rationale:** `executescript` autocommits per statement, so the transaction must live in
 the script text for a failed step to roll back atomically with its version stamp. Tested
 by `test_failed_migration_rolls_back_atomically`.
+
+---
+
+## 2026-08-13 — TD-902: Audit writer
+
+Decisions made while wiring the audit store to live sessions.
+
+### 1. Event-sourced recording — no new protocol events
+
+**Decision:** The writer subscribes to each session's append-only event log and records
+turns, tool calls/results, and decisions from `TurnComplete` / `ToolCall` / `ToolResult` /
+`DecisionLogged` events. No event type was added to the protocol.
+
+**Rationale:** TD-204's daemon→client event set is deliberately closed for v0.1 (the shell
+is built against it). The event log already carries everything the audit trail needs except
+per-call model detail (see §2). The event-driven seam also means the loop never knows the
+store exists — recording cannot change loop behavior, and failure in the audit path cannot
+fail a turn.
+
+### 2. Model calls flow through a `CostTracker` listener, not events
+
+**Decision:** `CostTracker` gained `add_listener(callback)` — invoked with
+`(record, is_classifier)` after every recorded call; the loop attaches a forwarding closure
+when the daemon passes an `audit_sink` (new optional `agent_loop` parameter).
+
+**Rationale:** Every provider call already passes through `CostTracker.record()` (and, once
+the E7 track merges, `record_classifier()`), so one listener there observes all spend without
+touching the provider or the protocol. Note for the merge: `record_classifier()` must call
+`_notify(record, is_classifier=True)` when TD-703 lands here — the flag and API already exist.
+
+### 3. Turn model calls are buffered, then inserted with their turn row
+
+**Decision:** `record_model_call` buffers non-classifier calls per session; the `TurnComplete`
+handler inserts the turn row and its model calls in one store op so `turn_id` is set at insert
+time. Buffered calls flush unlinked (`turn_id=NULL`) on terminal session state or writer close.
+
+**Rationale:** The store is append-only — no backfill UPDATE is possible. Buffering is safe
+because both producer (cost listener) and consumer (event subscriber) run on the same event
+loop thread; a cancelled or failed turn emits no `TurnComplete`, so the terminal-state and
+shutdown flushes keep the spend record complete (a lost cost record is an audit defect).
+
+### 4. Refusals are stored as `status='refused'`
+
+**Decision:** A `ToolResult` with `status='error'` whose call carried `decision_class='C'` is
+stored with status `refused`.
+
+**Rationale:** TD-602 forces class C onto boundary refusals; mapping them apart from ordinary
+tool errors makes Class C refusals directly queryable (TD-902 criterion 4) and matches the
+store's `CHECK` constraint vocabulary. On this branch `decision_class` is still always NULL
+(TD-702 lands on the E7 track) — the mapping activates when that merges, no further change.
+
+### 5. Failure reporting is edge-triggered
+
+**Decision:** On a store write failure the writer logs the exception and emits one typed
+`error` event (`audit_write_failed`) into the affected session's timeline; it reports again
+only after a write has succeeded. Writes never stop.
+
+**Rationale:** "Degrades loudly" is a user-experience requirement, not a log volume. One
+banner per failure burst tells the user the trail is incomplete; a per-write notification
+would drown the timeline during a persistent disk fault.

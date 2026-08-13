@@ -17,6 +17,8 @@ from typing import Any
 
 import websockets.exceptions
 
+from .audit import AuditStore
+from .audit_writer import AuditWriter
 from .config import cached_config
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import agent_loop
@@ -71,6 +73,9 @@ class Daemon:
         self.session_registry = SessionRegistry()
         self.config = cached_config()
         self._provider = provider
+        # Built when the daemon starts serving — the audit database only
+        # appears on disk once the daemon actually runs (TD-902).
+        self._audit_writer: AuditWriter | None = None
         # session_id -> set of attached connections
         self._attached_clients: dict[str, set[Any]] = {}
         # (connection, session_id) -> streaming task
@@ -122,6 +127,8 @@ class Daemon:
 
     async def _serve(self) -> None:
         """Main serving loop — start subsystems and wait for shutdown."""
+        self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
+        self._audit_writer.start()
         await self.ws_server.start()
         await self._shutdown_event.wait()
 
@@ -138,6 +145,11 @@ class Daemon:
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
             self._tasks.clear()
+
+        # Drain audit writes before closing the store (state flushed)
+        if self._audit_writer is not None:
+            await self._audit_writer.close()
+            self._audit_writer = None
 
         log.info("shutdown complete")
 
@@ -174,11 +186,16 @@ class Daemon:
             async def get_provider() -> ProviderClient:
                 return await self._ensure_provider()
 
+            sink = self._audit_writer
             runner = SessionRunner(
                 sess,
-                loop_factory=lambda s: agent_loop(s, router, get_provider, self.config),
+                loop_factory=lambda s: agent_loop(
+                    s, router, get_provider, self.config, audit_sink=sink
+                ),
             )
             await runner.start()
+            if self._audit_writer is not None:
+                self._audit_writer.attach_session(sess)
             await self.session_registry.register_runner(sess.id, runner)
             self.state.active_sessions += 1
             log.info(
