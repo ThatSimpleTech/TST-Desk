@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
 
 from .config import ModelConfig
+from .context import PromptAssembler
 from .cost import CostTracker
 from .logging import get_logger
 from .protocol import AssistantDelta, TurnComplete
@@ -47,8 +48,6 @@ from .router import TierName, TierRouter
 from .session import Session
 from .tools import ToolDispatcher, ToolRegistry
 
-log = get_logger("tstd.loop")
-
 
 class ProviderLike(Protocol):
     """Structural protocol for the provider the loop talks to.
@@ -68,12 +67,7 @@ class ProviderLike(Protocol):
     ) -> AsyncIterator[StreamChunk | ProviderError]: ...
 
 
-# Placeholder system prompt — replaced by full steering assembly in
-# TD-305 (cache-aware prompt assembly) and TD-501 (file discovery).
-_PLACEHOLDER_SYSTEM_PROMPT = (
-    "You are a helpful assistant with access to filesystem and shell tools. "
-    "Respond to the user's request and call tools when appropriate."
-)
+log = get_logger("tstd.loop")
 
 
 def _stream_turn(
@@ -307,6 +301,7 @@ async def agent_loop(
     config: ModelConfig,
     tool_registry: ToolRegistry | None = None,
     tool_dispatcher: ToolDispatcher | None = None,
+    prompt_assembler: PromptAssembler | None = None,
 ) -> None:
     """Agent loop — runs inside ``SessionRunner``.
 
@@ -329,11 +324,17 @@ async def agent_loop(
             definitions are sent to the model.
         tool_dispatcher: Optional tool dispatcher.  If provided, tool
             calls are executed.  Requires *tool_registry*.
+        prompt_assembler: Optional :class:`PromptAssembler` (TD-305).
+            If ``None``, one is constructed from
+            ``session.workspace_path``.  Injects the per-tier system
+            prompt in stable-prefix order and logs the cache prefix
+            hash for observability.
     """
     # ── Conversation state ──────────────────────────────────────────
-    messages: list[ChatMessage] = [
-        ChatMessage(role="system", content=_PLACEHOLDER_SYSTEM_PROMPT),
-    ]
+    assembler = prompt_assembler or PromptAssembler(session.workspace_path)
+    # Conversation messages only; the system message is assembled per
+    # turn below (TD-305).
+    messages: list[ChatMessage] = []
     tracker = CostTracker(config)
     provider: ProviderLike | None = None  # resolved lazily before first use
 
@@ -361,6 +362,17 @@ async def agent_loop(
             tracker.begin_turn()
             turn_start = time.time()
 
+            # 2b. Assemble the per-tier system prompt in stable-prefix
+            #     order (TD-305) and place it before the conversation.
+            assembled = await assembler.assemble(
+                tier,
+                task=user_content if tier == "worker" else None,
+            )
+            if messages and messages[0].role == "system":
+                messages[0] = ChatMessage(role="system", content=assembled.text)
+            else:
+                messages.insert(0, ChatMessage(role="system", content=assembled.text))
+
             log.info(
                 "turn start",
                 extra={
@@ -369,15 +381,17 @@ async def agent_loop(
                         "tier": tier,
                         "model": tier_cfg.slug,
                         "turn": router.turn_count,
+                        "cache_prefix_hash": assembled.prefix_hash,
+                        "cache_prefix_tokens": assembled.prefix_tokens,
                     }
                 },
             )
 
-            # 2b. Resolve provider lazily on first use
+            # 2c. Resolve provider lazily on first use
             if provider is None:
                 provider = await provider_factory()
 
-            # 2c. Call provider (streaming)
+            # 2d. Call provider (streaming)
             collected_content, tool_calls, failed, error_msg = await _stream_and_parse(
                 provider,
                 tier_cfg.slug,
@@ -389,7 +403,7 @@ async def agent_loop(
                 tier_cfg,
             )
 
-            # 2d. Handle failure
+            # 2e. Handle failure
             if failed:
                 # If the session was cancelled during streaming, bail out
                 # without emitting a turn_complete or recording a failure.
@@ -460,6 +474,8 @@ async def agent_loop(
                         "turn": router.turn_count,
                         "tokens": tracker.turn_tokens(),
                         "cost": tracker.turn_cost(),
+                        "cache_prefix_hash": assembled.prefix_hash,
+                        "cache_ratio": round(tracker.turn_cache_ratio(), 4),
                     }
                 },
             )

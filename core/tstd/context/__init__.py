@@ -6,6 +6,12 @@ Epic E5: correct, inspectable, affordable instruction loading.
 from .assembler import AssembledSteering, ContextAssembler, ResolvedSource
 from .discover import Precedence, SteeringFileResolver, SteeringSource
 from .manifest import ManifestConfig, ManifestResult, WorkspaceManifest
+from .prompt import (
+    BASE_SYSTEM_PROMPT,
+    MEMORY_PLACEHOLDER,
+    AssembledPrompt,
+    PromptAssembler,
+)
 from .stack import build_instruction_stack
 from .tier import (
     DEFAULT_VALIDATOR_SUBSET,
@@ -24,13 +30,17 @@ from .tokens import (
 )
 
 __all__ = [
+    "BASE_SYSTEM_PROMPT",
     "DEFAULT_VALIDATOR_SUBSET",
+    "MEMORY_PLACEHOLDER",
+    "AssembledPrompt",
     "AssembledSteering",
     "ContextAssembler",
     "HeuristicTokenCounter",
     "ManifestConfig",
     "ManifestResult",
     "Precedence",
+    "PromptAssembler",
     "ResolvedSource",
     "SteeringFileResolver",
     "SteeringSource",

@@ -337,3 +337,48 @@ distinction between safe-to-include (context length) and not-safe-to-include (au
 the security principle of not echoing credentials. Auth/context-length error codes are
 normalized to `auth_failed` / `context_length_exceeded` regardless of the provider's
 internal code, giving the UI a stable branch target.
+
+---
+
+## 2026-08-13 — TD-305: Cache-aware prompt assembly
+
+### 1. Stable-prefix order implemented in `PromptAssembler`
+
+**Decision:** Added `core/tstd/context/prompt.py` with `PromptAssembler` and `AssembledPrompt`.
+The system prompt is assembled in the stable-prefix order from spec §4.5: base prompt →
+steering → memory placeholder → workspace manifest, with the conversation appended per turn
+by the loop.
+
+**Rationale:** Blocks 1-2 (base + steering) are the provider prefix-cache target. The
+assembler returns the full text, the prefix (blocks 1-2), its SHA-256 hash, and its token
+count so tests and logs can assert byte-identity across turns.
+
+### 2. Memory placeholder
+
+**Decision:** The brain tier's memory slot is occupied by `MEMORY_PLACEHOLDER`
+(`<!-- memory: none loaded for this session -->`) until the memory story lands (spec §5).
+
+**Rationale:** Keeps the memory block positionally stable in the prompt so a real memory
+block can slot in without reordering the cache prefix (spec §4.5 calls this block "memory
+placeholder"). Worker/validator never carry the memory slot (spec §4.6).
+
+### 3. Loop wiring
+
+**Decision:** `agent_loop` accepts an optional `PromptAssembler` (built from
+`session.workspace_path` when absent) and re-assembles the system message at the start of
+each turn, replacing the placeholder system prompt.
+
+**Rationale:** The tier changes per turn (brain → worker), and per-tier context differs
+(TD-508), so the system message must be re-assembled when the active tier changes. The
+steering block bytes stay identical when files don't change, preserving the cache prefix.
+
+### 4. Cache observability
+
+**Decision:** The turn-start log carries `cache_prefix_hash` and `cache_prefix_tokens`; the
+turn-complete log carries `cache_prefix_hash` and `cache_ratio`. `CostTracker` gained
+`turn_cache_ratio()`, `turn_cached_tokens()`, `turn_uncached_tokens()`, and
+`turn_cache_ratio` in `summary()`.
+
+**Rationale:** Criterion 3 requires the cache hit rate to be observable in logs and in the
+cost breakdown. The provider's `Usage.cached_prompt_tokens` was already tracked (TD-304);
+the new helpers surface the ratio derived from it.
