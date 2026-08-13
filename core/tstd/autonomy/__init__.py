@@ -13,12 +13,16 @@ from .classifier import (
     DecisionRequest,
     Rule,
 )
+from .worker import AmbiguousClassifier, build_classifier_prompt, parse_decision
 
 __all__ = [
+    "AmbiguousClassifier",
     "Boundary",
     "Classification",
     "DecisionClass",
     "DecisionClassifier",
     "DecisionRequest",
     "Rule",
+    "build_classifier_prompt",
+    "parse_decision",
 ]
