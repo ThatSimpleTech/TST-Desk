@@ -189,6 +189,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.turn_cost)).toBe(true);
     expect(isNumber(m.session_cost)).toBe(true);
     expect(isNumber(m.total_cost)).toBe(true);
+    expect(isNumber(m.classifier_cost)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
   });
 
