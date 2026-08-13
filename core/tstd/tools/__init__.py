@@ -12,6 +12,7 @@ from .dispatch import (
     ValidationError,
     build_decision_request,
 )
+from .handlers import fs_list, fs_read, register_builtin_handlers
 from .registry import Tool, ToolRegistry, UnknownToolError, create_registry
 
 __all__ = [
@@ -24,4 +25,7 @@ __all__ = [
     "ValidationError",
     "build_decision_request",
     "create_registry",
+    "fs_list",
+    "fs_read",
+    "register_builtin_handlers",
 ]

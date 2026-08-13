@@ -1,0 +1,132 @@
+"""Built-in tool handlers — filesystem read tools (TD-603).
+
+The read handlers consume paths that the boundary guard (TD-602) has
+already canonicalized and checked: dispatch refuses out-of-workspace or
+Windows-unsafe paths before a handler runs, so handlers receive a valid
+in-workspace path and only need to deal with file-level concerns —
+binary/encoding refusal, line windows, truncation with stated totals,
+and ignore-aware listing.
+
+Handlers are thin async wrappers: the blocking filesystem work runs in a
+worker thread via ``asyncio.to_thread`` so the event loop never stalls
+(AGENTS.md §6).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import fnmatch
+import os
+from pathlib import Path
+
+from ..context.manifest import _FALLBACK_IGNORE
+from .dispatch import ToolDispatcher
+
+# Handler-level cap on formatted lines.  Dispatch additionally caps the
+# returned string's byte length with its own truncation marker.
+_MAX_READ_LINES = 2000
+# Bytes probed at the start of a file for binary detection (NUL).
+_BINARY_PROBE = 1024
+
+
+def _looks_binary(target: Path) -> bool:
+    """Whether *target*'s head contains NUL bytes (a binary signature)."""
+    with target.open("rb") as f:
+        head = f.read(_BINARY_PROBE)
+    return b"\x00" in head
+
+
+def _read_file(target: Path, limit: int, offset: int) -> str:
+    """Read *target* with optional line ranges; numbered lines.
+
+    Refuses binary files and non-UTF-8 content with an explanatory
+    message rather than dumping bytes.  Output is capped at
+    ``_MAX_READ_LINES`` formatted lines; when truncated by the cap, a
+    marker states the file's total line count and byte size.
+    """
+    if not target.exists():
+        return f"Error: file not found: {target}"
+    if target.is_dir():
+        return f"Error: '{target}' is a directory; use fs_list to list it"
+    if _looks_binary(target):
+        return (
+            f"Error: refused to read '{target}' — binary file "
+            "(NUL bytes detected in the first chunk)"
+        )
+
+    try:
+        content = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return (
+            f"Error: refused to read '{target}' — content is not valid UTF-8 "
+            "(possible binary or legacy encoding)"
+        )
+    except OSError as e:
+        return f"Error: could not read '{target}': {e}"
+
+    lines = content.splitlines()
+    total = len(lines)
+    start = offset - 1 if offset > 0 else 0
+    window = limit if limit and limit > 0 else _MAX_READ_LINES
+    end = min(start + window, total)
+    if start >= total:
+        return "(no lines in range)"
+
+    rendered = "\n".join(f"{i}: {line}" for i, line in enumerate(lines[start:end], start=start + 1))
+    # The truncation marker states totals only when the cap cut the
+    # output — an explicit limit window is a window, not truncation.
+    if end < total and not (limit and limit > 0):
+        rendered += f"\n… [truncated: {total} lines, {target.stat().st_size} bytes total]"
+    return rendered
+
+
+def _list_dir(root: Path, pattern: str, recursive: bool) -> str:
+    """List entries under *root*, filtered by a glob *pattern*.
+
+    Respects the manifest's ignore rules (``node_modules``,
+    ``__pycache__``, ``.venv``, ``.git``, ``.tst``).  Output is one
+    relative path per line, sorted; "(no matches)" when nothing matches.
+    """
+    if not root.exists():
+        return f"Error: directory not found: {root}"
+    if not root.is_dir():
+        return f"Error: '{root}' is not a directory; use fs_read to read a file"
+
+    results: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if d not in _FALLBACK_IGNORE)
+        if not recursive:
+            dirnames.clear()  # root-level entries only
+        for name in sorted(filenames):
+            if not fnmatch.fnmatchcase(name, pattern):
+                continue
+            results.append(str((Path(dirpath) / name).relative_to(root)))
+
+    if not results:
+        return "(no matches)"
+    return "\n".join(results)
+
+
+async def fs_read(session: object, path: str, limit: int = 0, offset: int = 0) -> str:
+    """Read a file with optional line ranges; numbered lines (TD-603)."""
+    return await asyncio.to_thread(_read_file, Path(path), limit, offset)
+
+
+async def fs_list(
+    session: object,
+    path: str,
+    pattern: str = "*",
+    recursive: bool = False,
+) -> str:
+    """List entries under *path*, filtered by a glob *pattern* (TD-603)."""
+    return await asyncio.to_thread(_list_dir, Path(path), pattern, recursive)
+
+
+def register_builtin_handlers(dispatcher: ToolDispatcher) -> None:
+    """Register the built-in tool handlers on *dispatcher*.
+
+    Write and shell handlers arrive with their stories (TD-604, TD-605);
+    until then those tools return the dispatcher's "no handler" error.
+    """
+    dispatcher.register_handler("fs_read", fs_read)
+    dispatcher.register_handler("fs_list", fs_list)

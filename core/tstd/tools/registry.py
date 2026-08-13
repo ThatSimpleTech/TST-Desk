@@ -228,6 +228,39 @@ def _register_builtins(registry: ToolRegistry) -> None:
 
     registry.register(
         Tool(
+            name="fs_list",
+            description="List files and directories under the given path, "
+            "optionally filtered by a glob pattern. "
+            "Respects ignore rules (node_modules, __pycache__, .venv, .git, .tst). "
+            "Use recursive=True for a full subtree listing.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path of the directory to list",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern to filter entries (default: * = all)",
+                        "default": "*",
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "List subdirectories recursively (default: false)",
+                        "default": False,
+                    },
+                },
+                "required": ["path"],
+            },
+            side_effect_class="auto",
+            parallel_safe=True,
+            path_fields=("path",),
+        )
+    )
+
+    registry.register(
+        Tool(
             name="fs_write",
             description="Write content to a file at the given path. "
             "Creates parent directories if they do not exist. "
