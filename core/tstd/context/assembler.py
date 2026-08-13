@@ -28,6 +28,7 @@ from pathlib import Path
 from ..logging import get_logger
 from .discover import Precedence, SteeringFileResolver, SteeringSource
 from .frontmatter import parse_frontmatter
+from .imports import ImportDirective, process_imports
 
 log = get_logger("tstd.context")
 
@@ -52,6 +53,9 @@ class ResolvedSource:
         active: ``True`` when this source is included in the assembled
             block.  Path-scoped rules that match no touched path are
             ``False``.
+        imports: Resolved ``@path`` import directives within this
+            source (TD-504).  Empty for sources with no imports or for
+            inactive sources (their imports are not processed).
     """
 
     path: Path
@@ -62,6 +66,7 @@ class ResolvedSource:
     shadowed_path: Path | None = None
     applies_to: tuple[str, ...] | None = None
     active: bool = True
+    imports: tuple[ImportDirective, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,7 @@ class AssembledSteering:
 
     block: str
     sources: list[ResolvedSource]
+    import_issues: tuple[str, ...] = ()
 
 
 class ContextAssembler:
@@ -117,6 +123,7 @@ class ContextAssembler:
         sources = self._resolver.resolve(workspace_path)
         resolved: list[ResolvedSource] = []
         parts: list[str] = []
+        all_issues: list[str] = []
         for source in sources:
             content = self._read(source.path)
             if content is None:
@@ -135,6 +142,18 @@ class ContextAssembler:
                     if matched_paths is not None:
                         active = _any_path_matches(matched_paths, applies_to)
 
+            # Process imports only for active sources — an inactive
+            # scoped rule's imports would otherwise produce spurious
+            # warnings the user never asked to load.
+            imports: tuple[ImportDirective, ...] = ()
+            if active:
+                body, imports, issues = process_imports(
+                    body,
+                    source.path,
+                    home_dir=self._resolver.home_dir,
+                )
+                all_issues.extend(issues)
+
             resolved.append(
                 ResolvedSource(
                     path=source.path,
@@ -145,11 +164,16 @@ class ContextAssembler:
                     shadowed_path=source.shadowed_path,
                     applies_to=applies_to,
                     active=active,
+                    imports=imports,
                 )
             )
             if active:
                 parts.append(self._render(source, body))
-        return AssembledSteering(block="\n".join(parts), sources=resolved)
+        return AssembledSteering(
+            block="\n".join(parts),
+            sources=resolved,
+            import_issues=tuple(all_issues),
+        )
 
     @staticmethod
     def _read(path: Path) -> str | None:
