@@ -427,3 +427,58 @@ union, carrying `prefix_hash`, `prefix_tokens`, and `source_count`.
 **Rationale:** The timeline needs a typed, distinct announcement of a reload (vs. a generic
 log line). It complements the existing `InstructionStack` event, which carries the full
 resolved stack for the inspector.
+
+---
+
+## 2026-08-13 — TD-901: Audit store
+
+Decisions made while building the append-only SQLite audit store.
+
+### 1. Shared redaction helper extracted from the logging filter
+
+**Decision:** `redact_secrets(text)` now lives as a module-level function in
+`tstd/logging.py`; `SecretsRedactionFilter` delegates to it, and the audit store scrubs
+tool arguments with it before insert.
+
+**Rationale:** Criterion 4 requires arguments scrubbed "through the same redaction filter
+as logs." A shared *function* over the same `SECRET_PATTERNS` list is that requirement made
+structural: a pattern added once protects logs and the audit database at the same time.
+
+### 2. `costs` is a VIEW over `model_calls`, not a table
+
+**Decision:** The sixth schema object is a view aggregating `model_calls` by
+(session, turn, tier, day), with classifier cost kept on its own column.
+
+**Rationale:** Rollup rows would duplicate truth in a store that can never UPDATE them;
+any later-scrubbed insert would leave the aggregate permanently wrong. A view computes on
+read, keeping one source of truth. Indices on `model_calls(session_id)` and
+`model_calls(ts)` keep the view's group-bys off full scans for the queries the UI makes
+(timeline per session, cost meter per session/day, decisions panel per session).
+
+### 3. One row per *completed* tool call — never insert-then-patch
+
+**Decision:** `tool_calls` rows are inserted after the call resolves, carrying status and
+result hash together. There is no "pending" row that would need an UPDATE later.
+
+**Rationale:** Preserves append-only as a physical fact. The TD-902 writer pairs
+`ToolCall`/`ToolResult` events by `tool_call_id` before inserting; a call that never
+resolves is recorded as `status='error'` (or `'refused'` for boundary refusals) with a
+NULL result hash.
+
+### 4. Timestamps are UTC epoch seconds (REAL)
+
+**Decision:** All `ts` columns are seconds since the Unix epoch. Day buckets derive via
+`datetime(ts, 'unixepoch', 'localtime')`.
+
+**Rationale:** Sortable, comparable, and timezone-safe at the storage layer; local-day
+grouping (needed by per-day cost queries) happens at query time, matching how
+`CostTracker` reports "today" in local time.
+
+### 5. Migration steps carry their version stamp inside their transaction
+
+**Decision:** `MIGRATIONS` is an ordered tuple of SQL scripts; each step runs as
+`BEGIN; <schema>; INSERT INTO schema_migrations; COMMIT;` via `executescript`.
+
+**Rationale:** `executescript` autocommits per statement, so the transaction must live in
+the script text for a failed step to roll back atomically with its version stamp. Tested
+by `test_failed_migration_rolls_back_atomically`.
