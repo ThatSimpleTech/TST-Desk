@@ -22,15 +22,20 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..logging import get_logger
 from .discover import Precedence, SteeringFileResolver, SteeringSource
 from .frontmatter import parse_frontmatter
 from .imports import ImportDirective, process_imports
+from .tokens import HeuristicTokenCounter, TokenCount, TokenCounter
 
 log = get_logger("tstd.context")
+
+# Files longer than this get a soft warning: adherence drops on long
+# steering files (spec §4.3, TD-506).
+LINE_LIMIT = 200
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,11 @@ class ResolvedSource:
         imports: Resolved ``@path`` import directives within this
             source (TD-504).  Empty for sources with no imports or for
             inactive sources (their imports are not processed).
+        token_count: Token count for this source's content with the
+            counting method (TD-506).
+        line_count: Number of lines in this source's content.
+        warnings: Soft warnings about this source (e.g. exceeding the
+            line limit), for the inspector (TD-506).
     """
 
     path: Path
@@ -67,6 +77,9 @@ class ResolvedSource:
     applies_to: tuple[str, ...] | None = None
     active: bool = True
     imports: tuple[ImportDirective, ...] = ()
+    token_count: TokenCount = field(default_factory=lambda: TokenCount(count=0, method=""))
+    line_count: int = 0
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,6 +97,7 @@ class AssembledSteering:
     block: str
     sources: list[ResolvedSource]
     import_issues: tuple[str, ...] = ()
+    total_tokens: TokenCount = field(default_factory=lambda: TokenCount(count=0, method=""))
 
 
 class ContextAssembler:
@@ -93,8 +107,13 @@ class ContextAssembler:
     content overrides earlier content when rules conflict.
     """
 
-    def __init__(self, resolver: SteeringFileResolver | None = None) -> None:
+    def __init__(
+        self,
+        resolver: SteeringFileResolver | None = None,
+        token_counter: TokenCounter | None = None,
+    ) -> None:
         self._resolver = resolver or SteeringFileResolver()
+        self._token_counter = token_counter or HeuristicTokenCounter()
 
     async def assemble(
         self,
@@ -165,6 +184,15 @@ class ContextAssembler:
                     applies_to=applies_to,
                     active=active,
                     imports=imports,
+                    token_count=self._token_counter.count(body),
+                    line_count=body.count("\n") + 1,
+                    warnings=(
+                        f"file exceeds {LINE_LIMIT} lines; "
+                        f"long files measurably reduce adherence — "
+                        f"see the steering authoring guide",
+                    )
+                    if body.count("\n") + 1 > LINE_LIMIT
+                    else (),
                 )
             )
             if active:
@@ -173,7 +201,18 @@ class ContextAssembler:
             block="\n".join(parts),
             sources=resolved,
             import_issues=tuple(all_issues),
+            total_tokens=self._sum_tokens(resolved),
         )
+
+    @staticmethod
+    def _sum_tokens(sources: list[ResolvedSource]) -> TokenCount:
+        """Total tokens across active sources, with the counting method."""
+        active = [s for s in sources if s.active]
+        if not active:
+            return TokenCount(count=0, method="")
+        method = active[0].token_count.method
+        total = sum(s.token_count.count for s in active)
+        return TokenCount(count=total, method=method)
 
     @staticmethod
     def _read(path: Path) -> str | None:
