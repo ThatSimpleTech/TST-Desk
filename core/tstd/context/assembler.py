@@ -5,6 +5,13 @@ single steering block consumed by the prompt assembler (TD-305).
 Each file is wrapped in a provenance comment naming its source so the
 model knows where a rule came from (spec §4.1).
 
+**Path-scoped rules (TD-503).**  ``.tst/rules/*.md`` files may carry YAML
+frontmatter with an ``appliesTo`` array of glob patterns.  The assembler
+accepts ``matched_paths`` — paths the session has touched — and excludes
+rules whose globs match none of them.  Inactive rules are still present in
+``sources`` (for the inspector) but absent from the ``block`` (for the
+model).
+
 The primary public API is ``ContextAssembler.assemble()``, which runs
 filesystem I/O in a worker thread via ``asyncio.to_thread`` so the
 event loop is never blocked (AGENTS.md §6).  ``assemble_sync()`` is
@@ -14,11 +21,13 @@ available for synchronous contexts (tests, CLI).
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..logging import get_logger
 from .discover import Precedence, SteeringFileResolver, SteeringSource
+from .frontmatter import parse_frontmatter
 
 log = get_logger("tstd.context")
 
@@ -30,13 +39,19 @@ class ResolvedSource:
     Attributes:
         path: Absolute path of the steering file.
         precedence: Precedence level.
-        content: Raw file contents decoded as UTF-8.
+        content: Raw file contents decoded as UTF-8 (frontmatter stripped
+            for rule files).
         subtree: Workspace-relative subtree for nested files, else None.
         is_fallback: ``True`` when this source is a ``CLAUDE.md`` used
             because ``AGENTS.md`` is absent at the same path.
         shadowed_path: When this source is an ``AGENTS.md`` that
             outranks a present ``CLAUDE.md`` at the same location, this
             holds the path of the shadowed ``CLAUDE.md``.
+        applies_to: Parsed ``appliesTo`` glob patterns from frontmatter
+            (rule files only), or ``None`` for non-rule sources.
+        active: ``True`` when this source is included in the assembled
+            block.  Path-scoped rules that match no touched path are
+            ``False``.
     """
 
     path: Path
@@ -45,6 +60,8 @@ class ResolvedSource:
     subtree: str | None = None
     is_fallback: bool = False
     shadowed_path: Path | None = None
+    applies_to: tuple[str, ...] | None = None
+    active: bool = True
 
 
 @dataclass(frozen=True)
@@ -53,8 +70,10 @@ class AssembledSteering:
 
     Attributes:
         block: Concatenated steering content with provenance comments
-            naming each source file.
+            naming each source file.  Only active sources appear here.
         sources: Every resolved source, lowest → highest precedence.
+            Inactive sources are included (for the inspector) but absent
+            from the block.
     """
 
     block: str
@@ -71,15 +90,29 @@ class ContextAssembler:
     def __init__(self, resolver: SteeringFileResolver | None = None) -> None:
         self._resolver = resolver or SteeringFileResolver()
 
-    async def assemble(self, workspace_path: str | Path) -> AssembledSteering:
+    async def assemble(
+        self,
+        workspace_path: str | Path,
+        matched_paths: set[str] | None = None,
+    ) -> AssembledSteering:
         """Resolve and assemble steering for *workspace_path*.
+
+        Args:
+            workspace_path: Path to the workspace root.
+            matched_paths: Set of workspace-relative paths the session
+                has touched.  Path-scoped rules whose globs match none
+                of these are excluded from the block.
 
         Runs the filesystem work in a worker thread so the event loop
         is never blocked (AGENTS.md §6).
         """
-        return await asyncio.to_thread(self.assemble_sync, workspace_path)
+        return await asyncio.to_thread(self.assemble_sync, workspace_path, matched_paths)
 
-    def assemble_sync(self, workspace_path: str | Path) -> AssembledSteering:
+    def assemble_sync(
+        self,
+        workspace_path: str | Path,
+        matched_paths: set[str] | None = None,
+    ) -> AssembledSteering:
         """Synchronous variant of :meth:`assemble` (tests, CLI)."""
         sources = self._resolver.resolve(workspace_path)
         resolved: list[ResolvedSource] = []
@@ -88,17 +121,34 @@ class ContextAssembler:
             content = self._read(source.path)
             if content is None:
                 continue  # missing or unreadable → not an error
+
+            # Parse frontmatter for rule files
+            applies_to: tuple[str, ...] | None = None
+            active = True
+            body = content
+
+            if source.precedence == Precedence.RULES:
+                metadata, body = parse_frontmatter(content)
+                raw_applies_to = metadata.get("appliesTo", [])
+                if isinstance(raw_applies_to, list) and raw_applies_to:
+                    applies_to = tuple(str(p) for p in raw_applies_to)
+                    if matched_paths is not None:
+                        active = _any_path_matches(matched_paths, applies_to)
+
             resolved.append(
                 ResolvedSource(
                     path=source.path,
                     precedence=source.precedence,
-                    content=content,
+                    content=body,
                     subtree=source.subtree,
                     is_fallback=source.is_fallback,
                     shadowed_path=source.shadowed_path,
+                    applies_to=applies_to,
+                    active=active,
                 )
             )
-            parts.append(self._render(source, content))
+            if active:
+                parts.append(self._render(source, body))
         return AssembledSteering(block="\n".join(parts), sources=resolved)
 
     @staticmethod
@@ -142,3 +192,87 @@ class ContextAssembler:
             parts_list.append(f": {source.subtree}")
         parts_list.append(")")
         return f"<!-- from: {source.path} {''.join(parts_list)} -->\n{content}"
+
+
+# ── Glob matching ──────────────────────────────────────────────────────────
+
+
+def _glob_to_re(pattern: str) -> re.Pattern[str]:
+    """Convert a glob pattern to a compiled regex.
+
+    Supports ``*`` (any chars except ``/``), ``**`` (any chars including
+    ``/``), ``?`` (single char except ``/``), and ``[seq]`` / ``[!seq]``
+    character classes.
+    """
+    regex_parts: list[str] = []
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "*" and i + 1 < len(pattern) and pattern[i + 1] == "*":
+            # ** — match everything including path separators.
+            regex_parts.append(".*")
+            i += 2
+            # Skip the trailing / that often follows **
+            if i < len(pattern) and pattern[i] == "/":
+                i += 1
+        elif c == "*":
+            regex_parts.append("[^/]*")
+            i += 1
+        elif c == "?":
+            regex_parts.append("[^/]")
+            i += 1
+        elif c == "[":
+            j = i + 1
+            negated = False
+            if j < len(pattern) and pattern[j] in ("!", "^"):
+                negated = True
+                j += 1
+            cls_parts: list[str] = ["[^" if negated else "["]
+            while j < len(pattern) and pattern[j] != "]":
+                ch = pattern[j]
+                if ch == "\\":
+                    cls_parts.append("\\\\")
+                else:
+                    cls_parts.append(ch)  # not escaped — ranges like a-z work
+                j += 1
+            if j < len(pattern):
+                cls_parts.append("]")
+                i = j + 1
+            else:
+                # No closing bracket — treat as literal
+                regex_parts.append(re.escape(c))
+                i += 1
+                continue
+            regex_parts.append("".join(cls_parts))
+        else:
+            regex_parts.append(re.escape(c))
+            i += 1
+
+    return re.compile(f"^{''.join(regex_parts)}$")
+
+
+def _any_path_matches(paths: set[str], patterns: tuple[str, ...]) -> bool:
+    """Return True if any *path* matches any of the *patterns*.
+
+    Patterns without a ``/`` are matched at any depth (like ``.gitignore``
+    convention).  Patterns with a ``/`` match the full path from the
+    workspace root.
+    """
+    for path in paths:
+        posix = path.replace("\\", "/")  # normalise Windows paths
+        for pattern in patterns:
+            if _path_matches_glob(posix, pattern):
+                return True
+    return False
+
+
+def _path_matches_glob(path: str, pattern: str) -> bool:
+    """Check if a single *path* matches a single *pattern*.
+
+    Patterns without ``/`` are matched against the basename at any depth.
+    """
+    if "/" not in pattern and pattern != "**":
+        # Match at any depth — like .gitignore convention.
+        pattern = f"**/{pattern}"
+    regex = _glob_to_re(pattern)
+    return bool(regex.match(path))
