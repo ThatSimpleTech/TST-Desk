@@ -32,12 +32,19 @@ class ResolvedSource:
         precedence: Precedence level.
         content: Raw file contents decoded as UTF-8.
         subtree: Workspace-relative subtree for nested files, else None.
+        is_fallback: ``True`` when this source is a ``CLAUDE.md`` used
+            because ``AGENTS.md`` is absent at the same path.
+        shadowed_path: When this source is an ``AGENTS.md`` that
+            outranks a present ``CLAUDE.md`` at the same location, this
+            holds the path of the shadowed ``CLAUDE.md``.
     """
 
     path: Path
     precedence: Precedence
     content: str
     subtree: str | None = None
+    is_fallback: bool = False
+    shadowed_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +94,8 @@ class ContextAssembler:
                     precedence=source.precedence,
                     content=content,
                     subtree=source.subtree,
+                    is_fallback=source.is_fallback,
+                    shadowed_path=source.shadowed_path,
                 )
             )
             parts.append(self._render(source, content))
@@ -120,11 +129,16 @@ class ContextAssembler:
 
         Returns a string like::
 
-            <!-- from: /home/user/workspace/AGENTS.md (workspace) -->
+            <!-- from: /path/AGENTS.md (workspace) -->
             <content>
+
+        When the source is a ``CLAUDE.md`` fallback, the label becomes
+        e.g. ``(workspace, claude fallback)``.
         """
+        parts_list: list[str] = [f"({source.precedence.label}"]
+        if source.is_fallback:
+            parts_list.append(", claude fallback")
         if source.subtree is not None:
-            scope = f"({source.precedence.label}: {source.subtree})"
-        else:
-            scope = f"({source.precedence.label})"
-        return f"<!-- from: {source.path} {scope} -->\n{content}"
+            parts_list.append(f": {source.subtree}")
+        parts_list.append(")")
+        return f"<!-- from: {source.path} {''.join(parts_list)} -->\n{content}"
