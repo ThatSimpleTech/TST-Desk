@@ -161,7 +161,11 @@ class AuditStore:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path)
+        # check_same_thread=False: the TD-902 writer drives the store via
+        # asyncio.to_thread, whose worker pool is not one fixed thread.
+        # Safety comes from the writer's single drain task serializing
+        # every call, not from sqlite's thread affinity.
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._migrate(self._conn, MIGRATIONS)

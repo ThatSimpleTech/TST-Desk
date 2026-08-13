@@ -7,6 +7,7 @@ cache rate, never the input rate.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import TYPE_CHECKING
@@ -100,8 +101,25 @@ class CostTracker:
         self._calls: list[CallRecord] = []
         self._turn_calls: list[CallRecord] = []
         self._session_start = datetime.now()
+        self._listeners: list[Callable[[CallRecord, bool], None]] = []
 
     # ── Recording ────────────────────────────────────────────────────
+
+    def add_listener(self, listener: Callable[[CallRecord, bool], None]) -> None:
+        """Register a sink called with ``(record, is_classifier)`` after
+        every recorded call.
+
+        This is the audit trail's feed (TD-902): every model call passes
+        through this tracker, so one listener here guarantees the audit
+        store sees them all without the loop knowing the store exists.
+        Listeners must be fast and non-blocking — they run inside the
+        agent loop.
+        """
+        self._listeners.append(listener)
+
+    def _notify(self, record: CallRecord, is_classifier: bool) -> None:
+        for listener in self._listeners:
+            listener(record, is_classifier)
 
     def begin_turn(self) -> None:
         """Start a new turn. Resets the turn-level accumulator."""
@@ -140,6 +158,7 @@ class CostTracker:
         )
         self._calls.append(record)
         self._turn_calls.append(record)
+        self._notify(record, is_classifier=False)
         return cost
 
     # ── Aggregation ──────────────────────────────────────────────────
