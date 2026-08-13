@@ -255,6 +255,9 @@ class CostUpdate(DaemonEvent):
     turn_cost: float = Field(ge=0)
     session_cost: float = Field(ge=0)
     total_cost: float = Field(ge=0)
+    # Decision-classifier worker calls (TD-703), tracked separately from
+    # main-loop cost.
+    classifier_cost: float = Field(default=0.0, ge=0)
 
 
 class TurnComplete(DaemonEvent):

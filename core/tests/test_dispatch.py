@@ -7,9 +7,11 @@ to the model, multi-round-trip tool call loops).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from tstd.autonomy import Boundary, DecisionClassifier
+from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClassifier
 from tstd.config import ModelConfig, Preset, TierConfig
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
@@ -23,14 +25,23 @@ from tstd.tools import Tool, ToolDispatcher, ToolRegistry
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 
-def make_classifier(workspace: str = "/tmp/ws") -> DecisionClassifier:
-    """A decision classifier over a stub workspace for dispatch tests.
+async def _stub_worker(prompt: str) -> str:
+    """Stub worker-tier classifier: always answers B (fail toward asking)."""
+    return "B"
 
-    TD-702 makes classification a mandatory chokepoint: a tool reaching
+
+def make_classifier(workspace: str = "/tmp/ws") -> AmbiguousClassifier:
+    """A classifier over a stub workspace for dispatch tests.
+
+    TD-702/703 make classification a mandatory chokepoint: a tool reaching
     execution without a classifier raises ``UnclassifiedToolCall``.  These
-    dispatcher-mechanics tests attach one so dispatch itself is exercised.
+    dispatcher-mechanics tests attach one with a stub worker so dispatch
+    itself is exercised; ambiguous calls classify as B.
     """
-    return DecisionClassifier(Boundary(workspace_root=workspace))
+    return AmbiguousClassifier(
+        static=DecisionClassifier(Boundary(workspace_root=Path(workspace))),
+        call_worker=_stub_worker,
+    )
 
 
 def make_config() -> ModelConfig:

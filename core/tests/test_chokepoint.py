@@ -24,6 +24,7 @@ import pytest
 import tstd
 from tests.test_dispatch import make_config, start_loop, wait_for_turn
 from tstd.autonomy import (
+    AmbiguousClassifier,
     Boundary,
     Classification,
     DecisionClass,
@@ -67,13 +68,21 @@ def make_tool(
     )
 
 
+async def _stub_worker(prompt: str) -> str:
+    """Stub worker-tier classifier: always answers B (fail toward asking)."""
+    return "B"
+
+
 def make_dispatcher(
     registry: ToolRegistry, workspace: Path, path_field: str = "path"
 ) -> ToolDispatcher:
     """A dispatcher with a classifier over *workspace* and a writing handler."""
     dispatcher = ToolDispatcher(
         registry,
-        classifier=DecisionClassifier(Boundary(workspace_root=workspace)),
+        classifier=AmbiguousClassifier(
+            static=DecisionClassifier(Boundary(workspace_root=workspace)),
+            call_worker=_stub_worker,
+        ),
     )
 
     async def write_handler(session: object, path: str, content: str = "") -> str:
@@ -141,20 +150,21 @@ class TestClassificationPrecedesExecution:
 
         registry = ToolRegistry()
         registry.register(make_tool("fs_edit", path_fields=("path",), mutates=True))
-        classifier = RecordingClassifier(Boundary(workspace_root=tmp_path))
+        spy = RecordingClassifier(Boundary(workspace_root=tmp_path))
+        classifier = AmbiguousClassifier(static=spy, call_worker=_stub_worker)
         dispatcher = ToolDispatcher(registry, classifier=classifier)
 
         async def handler(session: object, path: str) -> str:
             # The handler must observe classification already happened.
-            classifier.handler_ran = True
-            assert classifier.classified_before
+            spy.handler_ran = True
+            assert spy.classified_before
             return "ok"
 
         dispatcher.register_handler("fs_edit", handler)
 
         result = await dispatcher.dispatch("c1", "fs_edit", {"path": str(tmp_path / "a.txt")})
         assert result.status == "success"
-        assert classifier.handler_ran
+        assert spy.handler_ran
 
 
 # ── Criterion 1 + 3: class attached to result and to the event ─────────

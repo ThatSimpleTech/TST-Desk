@@ -25,7 +25,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from .autonomy import Boundary, DecisionClass, DecisionClassifier
+from .autonomy import AmbiguousClassifier, Boundary, DecisionClass, DecisionClassifier
 from .config import ModelConfig
 from .context import PromptAssembler
 from .context.stack import build_instruction_stack
@@ -36,6 +36,7 @@ from .protocol import ToolCall as ToolCallEvent
 from .protocol import ToolResult as ToolResultEvent
 from .provider import (
     ChatCompletionRequest,
+    ChatCompletionResponse,
     ChatMessage,
     FunctionCall,
     ProviderError,
@@ -69,6 +70,14 @@ class ProviderLike(Protocol):
         self,
         request: ChatCompletionRequest,
     ) -> AsyncIterator[StreamChunk | ProviderError]: ...
+
+    async def chat_completion(
+        self,
+        request: ChatCompletionRequest,
+    ) -> ChatCompletionResponse | ProviderError:
+        """Send a single non-streaming completion request."""
+
+        ...
 
 
 log = get_logger("tstd.loop")
@@ -246,7 +255,7 @@ async def _build_assistant_tool_call(
             tool = dispatcher.registry.get(tc_name)
             if tool is not None and dispatcher.classifier is not None:
                 request = build_decision_request(tool, dict(parsed_args))
-                cls = dispatcher.classifier.classify(request).decision_class
+                cls = (await dispatcher.classifier.classify(request)).decision_class
                 decision_class = _to_literal(cls)
 
         await session.event_log.add(
@@ -358,17 +367,41 @@ async def agent_loop(
     # ── Conversation state ──────────────────────────────────────────
     assembler = prompt_assembler or PromptAssembler(session.workspace_path)
 
-    # Decision classifier chokepoint (TD-702, prime §2.6).  Every tool
-    # call routes through it; the boundary is the session's workspace.
-    if tool_dispatcher is not None and tool_dispatcher.classifier is None:
-        tool_dispatcher.classifier = DecisionClassifier(
-            Boundary(workspace_root=Path(session.workspace_path))
-        )
     # Conversation messages only; the system message is assembled per
     # turn below (TD-305).
     messages: list[ChatMessage] = []
     tracker = CostTracker(config)
     provider: ProviderLike | None = None  # resolved lazily before first use
+
+    # Decision classifier chokepoint (TD-702/703, prime §2.6).  Every tool
+    # call routes through it: the static rule table first; ambiguous cases
+    # go to a worker-tier call (TD-703) that defaults to B, never A.  The
+    # boundary is the session's workspace.  The worker call is a single-shot
+    # completion on the worker tier's model, tracked as separate
+    # classifier cost (it never touches the main turn accounting).
+    if tool_dispatcher is not None and tool_dispatcher.classifier is None:
+
+        async def _worker_classifier(prompt: str) -> str:
+            if provider is None:
+                raise RuntimeError("classifier worker call before provider ready")
+            worker_cfg = config.tier("worker")
+            request = ChatCompletionRequest(
+                model=worker_cfg.slug,
+                messages=[ChatMessage(role="user", content=prompt)],
+                max_tokens=8,
+                temperature=0.0,
+            )
+            resp = await provider.chat_completion(request)
+            if isinstance(resp, ProviderError):
+                raise RuntimeError(f"classifier worker call failed: {resp.message}")
+            if resp.usage is not None:
+                tracker.record_classifier("worker", resp.usage, worker_cfg)
+            return resp.message.content or ""
+
+        tool_dispatcher.classifier = AmbiguousClassifier(
+            static=DecisionClassifier(Boundary(workspace_root=Path(session.workspace_path))),
+            call_worker=_worker_classifier,
+        )
 
     # Pre-compute tool definitions if we have a registry
     tool_definitions: list[ProviderToolDefinition] | None = None

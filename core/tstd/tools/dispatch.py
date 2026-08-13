@@ -17,7 +17,7 @@ from typing import Any, Literal
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
 
-from ..autonomy import DecisionClass, DecisionClassifier, DecisionRequest
+from ..autonomy import AmbiguousClassifier, DecisionClass, DecisionRequest
 from ..logging import get_logger
 from .registry import Tool, ToolRegistry
 
@@ -131,7 +131,7 @@ class ToolDispatcher:
         self,
         registry: ToolRegistry,
         max_result_chars: int = 50_000,
-        classifier: DecisionClassifier | None = None,
+        classifier: AmbiguousClassifier | None = None,
     ) -> None:
         self.registry = registry
         self.max_result_chars = max_result_chars
@@ -220,7 +220,7 @@ class ToolDispatcher:
         if self.classifier is None:
             raise UnclassifiedToolCall(name)
         request = build_decision_request(tool, arguments)
-        classification = self.classifier.classify(request)
+        classification = await self.classifier.classify(request)
         decision_class = classification.decision_class
 
         try:

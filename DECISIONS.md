@@ -532,3 +532,63 @@ session's append-only event log — the v0.1 audit trail — before execution.
 `tool_call` event; in v0.1 these are the same append-only log. E9 (TD-901)
 will persist the log as the dedicated audit store; no new protocol surface
 was needed.
+
+---
+
+## 2026-08-13 — TD-703: Ambiguous-case classifier call
+
+Decisions made while wiring the worker-tier fallback for cases the static
+rule table cannot decide.
+
+### 1. `AmbiguousClassifier` wraps the static table; `classify` is async
+
+**Decision:** A new `AmbiguousClassifier(static, call_worker)` consults the
+static `DecisionClassifier` first and short-circuits when a rule fires; only
+ambiguous results go to the worker tier. Its `classify` is async because the
+fallback makes a model call; the dispatcher and loop await it.
+
+**Rationale:** Keeps the static rule table (TD-701) pure and synchronous for
+its table-driven tests while the chokepoint gains the worker fallback without
+an alternate dispatch path. Static cases never pay for a model call.
+
+### 2. Cache key is (tool, canonical arguments) — the safe reading of "argument-shape"
+
+**Decision:** The session cache is keyed by `(tool_name, canonical JSON of
+the argument dict)`, bounded at 256 entries with oldest-first eviction.
+
+**Rationale:** "Argument-shape" is read as the canonical form of the
+arguments: identical tool calls (the common repeat) hit the cache; calls with
+different arguments never share an entry. Caching by key/types alone could
+misclassify a different shell command from a cached one — unsafe for a
+security classifier. Bound prevents unbounded session growth.
+
+### 3. The worker call bypasses `TierRouter` accounting
+
+**Decision:** The classifier call is a single-shot, non-streaming completion
+on the worker tier's configured model, made directly against the provider —
+it never calls `TierRouter.record_turn_start/success/failure`.
+
+**Rationale:** Router turn accounting drives main-loop tier rotation and
+failure escalation; classifier calls are auxiliary and must not consume lead
+turns or trigger escalation. `ProviderLike` was extended with the
+non-streaming `chat_completion` method both providers already implemented.
+
+### 4. Fail toward B, never A
+
+**Decision:** Any worker exception, empty response, or unparseable response
+classifies as **B**, and the outcome is cached.
+
+**Rationale:** Spec §12.2: fail toward asking, not toward acting. The B
+default is a "surface in the summary" class, so a broken classifier degrades
+to review, never to silent action.
+
+### 5. Classifier cost is separate accounting
+
+**Decision:** `CostTracker` gained `record_classifier()`/`classifier_cost()`/
+`classifier_call_count()`; classifier calls are stored in their own list and
+never folded into turn/session/day totals. `summary()` and the `CostUpdate`
+event (new `classifier_cost` field, default 0) expose it.
+
+**Rationale:** Criterion 4 requires the cost visible in the breakdown but
+separately — folding it into main-loop cost would hide the price of the
+ambiguity fallback and misattribute spend to the agent's own turns.
