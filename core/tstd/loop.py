@@ -25,13 +25,20 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from .autonomy import AmbiguousClassifier, Boundary, DecisionClass, DecisionClassifier
+from .autonomy import (
+    AmbiguousClassifier,
+    Boundary,
+    Checkpointer,
+    DecisionClass,
+    DecisionClassifier,
+)
 from .config import ModelConfig
 from .context import PromptAssembler
 from .context.stack import build_instruction_stack
 from .cost import CostTracker
 from .logging import get_logger
 from .protocol import AssistantDelta, SteeringReloaded, TurnComplete
+from .protocol import CheckpointNotice as CheckpointNoticeEvent
 from .protocol import ToolCall as ToolCallEvent
 from .protocol import ToolResult as ToolResultEvent
 from .provider import (
@@ -319,6 +326,17 @@ async def _dispatch_and_append_results(
                 seq=1,
             )
         )
+        # One-time checkpoint degradation notices (TD-705), e.g. a
+        # non-git workspace or pre-existing uncommitted changes.
+        if r.checkpoint_notice is not None:
+            await session.event_log.add(
+                CheckpointNoticeEvent(
+                    session_id=session.id,
+                    code=r.checkpoint_notice.code,
+                    message=r.checkpoint_notice.message,
+                    seq=1,
+                )
+            )
 
         messages.append(
             ChatMessage(
@@ -410,6 +428,13 @@ async def agent_loop(
         # backs the guard that refuses out-of-bounds path access.
         if tool_dispatcher.path_guard is None:
             tool_dispatcher.path_guard = PathGuard(boundary)
+
+        # Checkpoint commits (TD-705): successful path-bearing mutations
+        # commit to the session branch ``tst/session/<id>`` — the undo
+        # stack.  Non-git workspaces degrade gracefully inside the
+        # checkpointer.
+        if tool_dispatcher.checkpointer is None:
+            tool_dispatcher.checkpointer = Checkpointer(Path(session.workspace_path), session.id)
 
     # Pre-compute tool definitions if we have a registry
     tool_definitions: list[ProviderToolDefinition] | None = None

@@ -10,73 +10,28 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
 
-from ..autonomy import AmbiguousClassifier, DecisionClass, DecisionRequest
+from ..autonomy import AmbiguousClassifier, Checkpointer, DecisionClass, DecisionRequest
 from ..logging import get_logger
 from .boundary import PathGuard, RefusalError
 from .registry import Tool, ToolRegistry
+from .results import ToolResult, ValidationError, truncate_output
+
+__all__ = [
+    "ToolDispatcher",
+    "ToolResult",
+    "UnclassifiedToolCall",
+    "ValidationError",
+    "build_decision_request",
+    "truncate_output",
+]
 
 log = get_logger("tstd.dispatch")
-
-# ── Result types ────────────────────────────────────────────────────────
-
-
-@dataclass
-class ToolResult:
-    """The result of executing a tool call.
-
-    Attributes:
-        tool_call_id: Matches the tool call's ID from the model.
-        name: The tool name.
-        status: ``success`` or ``error``.
-        output: Text output (or error message).
-        truncated: Whether the output was truncated to the cap.
-        error_code: For ``error`` status, a machine-readable code.
-        decision_class: Class assigned by the decision classifier (TD-702).
-    """
-
-    tool_call_id: str
-    name: str
-    status: Literal["success", "error"]
-    output: str
-    truncated: bool = False
-    error_code: str | None = None
-    # Decision class assigned by the classifier chokepoint (TD-702).
-    decision_class: DecisionClass | None = None
-
-
-@dataclass
-class ValidationError:
-    """Arguments failed validation against the tool's schema.
-
-    Returned to the model so it can correct itself.
-    """
-
-    tool_call_id: str
-    name: str
-    message: str
-
-
-# ── Truncation ──────────────────────────────────────────────────────────
-
-_TRUNCATION_MARKER = "\n\n┈─[truncated — results exceed output cap]─┈"
-
-
-def truncate_output(output: str, max_chars: int) -> tuple[str, bool]:
-    """Truncate *output* to *max_chars* with a visible truncation marker.
-
-    Returns the (possibly truncated) text and a ``truncated`` flag.
-    """
-    if not max_chars or len(output) <= max_chars:
-        return output, False
-    truncated = output[: max_chars - len(_TRUNCATION_MARKER)]
-    return truncated + _TRUNCATION_MARKER, True
 
 
 class UnclassifiedToolCall(Exception):
@@ -134,6 +89,7 @@ class ToolDispatcher:
         max_result_chars: int = 50_000,
         classifier: AmbiguousClassifier | None = None,
         path_guard: PathGuard | None = None,
+        checkpointer: Checkpointer | None = None,
     ) -> None:
         self.registry = registry
         self.max_result_chars = max_result_chars
@@ -145,6 +101,11 @@ class ToolDispatcher:
         # refused before execution when the guard is missing or the
         # target crosses the boundary.
         self.path_guard = path_guard
+        # The checkpoint committer (TD-705).  Successful mutating tools
+        # with path fields are checkpointed to the session branch; a
+        # missing checkpointer silently skips checkpointing (tests wire
+        # one explicitly, agent_loop wires one by default).
+        self.checkpointer = checkpointer
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
 
     # ── Handler registration ──────────────────────────────────────────
@@ -233,6 +194,8 @@ class ToolDispatcher:
         # Path-bearing tools are refused before the handler runs: no
         # guard attached is a bypass; a target crossing the boundary is a
         # refusal with a clear error.  Handlers receive validated paths.
+        # Canonical write targets are kept for checkpointing (TD-705).
+        canonical_writes: dict[str, Path] = {}
         if tool.path_fields:
             if self.path_guard is None:
                 raise UnclassifiedToolCall(
@@ -244,7 +207,7 @@ class ToolDispatcher:
                     if not isinstance(raw, str):
                         continue  # absent/optional path field
                     if tool.mutates:
-                        self.path_guard.check_write(raw)
+                        canonical_writes[field] = self.path_guard.check_write(raw)
                     else:
                         self.path_guard.check_read(raw)
             except RefusalError as e:
@@ -293,6 +256,34 @@ class ToolDispatcher:
                 error_code="handler_error",
             )
 
+        # 3.3 Checkpoint commit (TD-705).  Successful path-bearing
+        # mutations are committed to the session branch so every write is
+        # attributable to a revertable commit.  Checkpointing is
+        # best-effort: it must never fail the write itself.
+        checkpoint_commit: str | None = None
+        checkpoint_notice = None
+        if (
+            tool.mutates
+            and canonical_writes
+            and self.checkpointer is not None
+            and session is not None
+        ):
+            try:
+                outcome = await self.checkpointer.checkpoint(
+                    list(canonical_writes.values()),
+                    tool_name=name,
+                    tool_call_id=tool_call_id,
+                    decision_class=decision_class,
+                    decision_rule=classification.rule.id if classification.rule else None,
+                )
+                checkpoint_commit = outcome.commit
+                checkpoint_notice = outcome.notice
+            except Exception:  # defense in depth; checkpoint traps its own errors
+                log.exception(
+                    "checkpoint raised unexpectedly",
+                    extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
+                )
+
         # 4. Truncate
         truncated_output, truncated = truncate_output(output, self.max_result_chars)
         return ToolResult(
@@ -302,6 +293,8 @@ class ToolDispatcher:
             output=truncated_output,
             truncated=truncated,
             decision_class=decision_class,
+            checkpoint_commit=checkpoint_commit,
+            checkpoint_notice=checkpoint_notice,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────

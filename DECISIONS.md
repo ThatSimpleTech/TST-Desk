@@ -703,3 +703,81 @@ refuse with an explanatory message instead of dumping bytes.
 **Rationale:** The model should never receive raw binary or mojibake bytes —
 an explanatory refusal lets it pick another path (e.g., hash the file,
 inspect via shell once TD-605 lands).
+
+---
+
+## 2026-08-13 — TD-705: Checkpoint commits
+
+Decisions made while building the session-branch checkpointer.
+
+### 1. Plumbing-only snapshots over a throwaway index
+
+**Decision:** Checkpoints are built with `read-tree` + `add` + `write-tree`
++ `commit-tree` under a temporary `GIT_INDEX_FILE`, then published with a
+single `update-ref` of `refs/heads/tst/session/<id>`. No command the module
+runs ever reads or writes HEAD, the user's index, or the working tree.
+
+**Rationale:** "Pre-existing uncommitted user changes are never clobbered"
+has to be a structural guarantee, not a careful-usage one. Porcelain
+(`add`/`commit` against the real index) can stash, refresh, or conflict with
+user state; plumbing against a private index cannot.
+
+### 2. Parent chain is session tip → HEAD → none
+
+**Decision:** Each checkpoint's parent is the previous checkpoint if the
+session branch exists, else HEAD, else no parent (unborn HEAD repos).
+Dirty working-tree changes outside the written paths are neither captured
+nor disturbed.
+
+**Rationale:** The session branch is the undo stack (spec §12.8), so its
+history must be a clean chain of the agent's writes on top of whatever the
+user had committed. Seeding from HEAD keeps the first checkpoint reviewable
+as a normal diff against the user's last commit.
+
+### 3. Dirty baselines are reported once, then checkpointing continues
+
+**Decision:** At the first checkpoint in a repo with uncommitted changes,
+the user gets one `dirty_baseline` notice; checkpointing proceeds anyway.
+A rebase in progress is different: checkpoints are *skipped* (not disabled)
+until it ends, with one `rebase_in_progress` notice.
+
+**Rationale:** Dirty state is common and harmless to snapshot from (we only
+capture the committed tree plus our own writes), so it warrants a notice,
+not a stop. Mid-rebase, the repo's state is genuinely in flux and the user
+is driving — writing refs then would be noise at best, so we stand down and
+resume.
+
+### 4. Degradation is informed-once, sticky per kind, never fatal
+
+**Decision:** A non-git workspace disables checkpointing for the session
+with one `no_git` notice. Every notice code is delivered at most once per
+session via the `checkpoint_notice` daemon event. A checkpoint failure can
+never fail the write that triggered it.
+
+**Rationale:** The feature is an enhancement, not a precondition — the
+acceptance criteria require everything else to keep working. Repeating the
+same notice on every write would be spam; the event log keeps the first one
+for the audit trail.
+
+### 5. Fixed agent identity, independent of user git config
+
+**Decision:** Checkpoint commits are authored as `TST Desk
+<tstdesk@localhost>` via per-invocation environment variables, never the
+user's configured identity.
+
+**Rationale:** Checkpoints must work in repos with no user config (fresh
+clones, CI checkouts) and must be visibly agent-authored in `git log` so a
+human reviewing the branch can tell the undo stack from their own history.
+
+### 6. The seam lives in the dispatcher, after handler success
+
+**Decision:** `ToolDispatcher.dispatch` checkpoints after a successful
+handler, using the canonical write paths captured by the boundary guard,
+only for mutating tools with path fields and an attached session. The
+result carries `checkpoint_commit` / `checkpoint_notice`; the loop mirrors
+the notice into the event log.
+
+**Rationale:** Same shape as the classifier chokepoint and the boundary
+guard — enforcement in the tool layer, not per-handler, so a future write
+tool cannot forget to checkpoint. Canonical paths (not raw model arguments)
+guarantee the snapshot covers exactly what the guard approved.

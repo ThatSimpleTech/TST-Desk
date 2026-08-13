@@ -247,6 +247,19 @@ class DecisionLogged(DaemonEvent):
     commit: str
 
 
+class CheckpointNotice(DaemonEvent):
+    """A one-time checkpoint degradation notice (TD-705).
+
+    Emitted at most once per code per session — e.g. the workspace is
+    not a git repository, or has pre-existing uncommitted changes.
+    """
+
+    type: Literal["checkpoint_notice"] = "checkpoint_notice"
+    session_id: str
+    code: str
+    message: str
+
+
 class CostUpdate(DaemonEvent):
     """Accrued cost for the session."""
 
@@ -337,6 +350,7 @@ DaemonEventT = Annotated[
     | ToolResult
     | ApprovalRequest
     | DecisionLogged
+    | CheckpointNotice
     | CostUpdate
     | TurnComplete
     | SteeringReloaded
@@ -372,6 +386,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tool_result",
         "approval_request",
         "decision_logged",
+        "checkpoint_notice",
         "cost_update",
         "turn_complete",
         "steering_reloaded",

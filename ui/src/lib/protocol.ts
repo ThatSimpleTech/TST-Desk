@@ -141,6 +141,13 @@ export interface DecisionLogged extends DaemonEvent {
   commit: string;
 }
 
+export interface CheckpointNotice extends DaemonEvent {
+  type: "checkpoint_notice";
+  session_id: string;
+  code: string;
+  message: string;
+}
+
 export interface CostUpdate extends DaemonEvent {
   type: "cost_update";
   session_id: string;
@@ -174,6 +181,7 @@ export type DaemonEventUnion =
   | ToolResult
   | ApprovalRequest
   | DecisionLogged
+  | CheckpointNotice
   | CostUpdate
   | TurnComplete
   | Error;
