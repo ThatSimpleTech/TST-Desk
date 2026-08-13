@@ -11,7 +11,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
@@ -39,7 +39,7 @@ class ToolResult:
 
     tool_call_id: str
     name: str
-    status: str  # "success" | "error"
+    status: Literal["success", "error"]
     output: str
     truncated: bool = False
     error_code: str | None = None

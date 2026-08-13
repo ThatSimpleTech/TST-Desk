@@ -12,6 +12,7 @@ import pytest
 from tstd.config import ModelConfig, Preset, TierConfig
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
+from tstd.protocol import ToolCall as ToolCallEvent
 from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.protocol import TurnComplete
 from tstd.router import TierRouter
@@ -498,6 +499,48 @@ class TestLoopIntegration:
 
         await runner.cancel()
 
+    async def test_dispatch_event_ordering(self) -> None:
+        """tool_call emitted before tool_result, both before turn_complete, in seq order."""
+        session = Session("/tmp/ws")
+        router = TierRouter(lead_turns=3)
+        config = make_config()
+        _registry, dispatcher = make_registry_and_dispatcher()
+
+        mock = MockProvider(
+            sequences={
+                "test-brain": [
+                    Script(
+                        kind="tool_call",
+                        tool_name="echo",
+                        tool_arguments='{"message": "ordered"}',
+                    ),
+                    Script(kind="stream", content="Done"),
+                ]
+            }
+        )
+
+        runner = await start_loop(session, router, mock, config, _registry, dispatcher)
+        await session.add_user_message("Test ordering")
+        await wait_for_turn(session, 1)
+        await runner.cancel()
+
+        # Collect events in seq order
+        events = sorted(session.event_log.all_events, key=lambda e: e.seq)
+        seqs_of: dict[str, list[int]] = {}
+        for e in events:
+            seqs_of.setdefault(e.type, []).append(e.seq)
+
+        # Both tool_call and tool_result fire exactly once
+        assert len(seqs_of["tool_call"]) == 1
+        assert len(seqs_of["tool_result"]) == 1
+        # tool_call strictly precedes tool_result
+        assert seqs_of["tool_call"][0] < seqs_of["tool_result"][0]
+        # tool_result precedes turn_complete
+        assert seqs_of["tool_result"][0] < seqs_of["turn_complete"][0]
+        # seq is contiguous
+        all_seqs = [e.seq for e in events]
+        assert all_seqs == list(range(1, len(all_seqs) + 1))
+
     async def test_tool_definitions_sent_to_provider(self) -> None:
         """When a registry is provided, tool definitions are sent to the model."""
         session = Session("/tmp/ws")
@@ -548,8 +591,6 @@ class TestWithoutDispatcher:
         await wait_for_turn(session, 1)
 
         # Tool calls are emitted as events but no ToolResult
-        from tstd.protocol import ToolCall as ToolCallEvent
-
         tool_events = [e for e in session.event_log.all_events if isinstance(e, ToolCallEvent)]
         assert len(tool_events) == 1
         tool_results = [e for e in session.event_log.all_events if isinstance(e, ToolResultEvent)]
