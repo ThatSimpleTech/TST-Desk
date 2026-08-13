@@ -129,7 +129,32 @@ naming the unknown type, so the client can degrade.
 
 ---
 
-## 2026-08-13 — TD-508: Per-tier context routing
+## 2026-08-13 — TD-305: Track merge strategy
+
+### 1. Merge of E3/E4/E6 track
+
+**Decision:** Merged `td/402-tool-dispatch` (E3/E4/E6 track tip) into the E5 context track at
+`8f8f0c5` using `git merge --no-ff`. Auto-resolved cleanly by the `ort` strategy with no
+manual conflict resolution needed.
+
+**Rationale:** The two tracks were largely disjoint — the E3/E4/E6 track contributed ~30 files
+(provider, session, loop, tools, config, cost, keychain, mock, tests) while the E5 track
+contributed the `context/` package. The shared files that both tracks touched were:
+
+| File | Resolution |
+|------|-----------|
+| `core/tstd/context/__init__.py` | E5 full package vs. E3 empty stub → auto-kept E5 |
+| `core/tstd/protocol.py` | Both tracks added messages; auto-union succeeded |
+| `core/tstd/daemon.py` | Both modified; auto-merged cleanly |
+| `core/tstd/ws.py` | Both modified; auto-merged cleanly |
+| `core/tstd/router.py` | Content-identical (git cherry-pick + original) → auto-kept |
+| `core/tstd/tools/__init__.py` | E5 empty stub vs. E3 full module → auto-kept E3 |
+| `core/pyproject.toml` | Both added deps; auto-union succeeded |
+| `DECISIONS.md` | Both added entries; auto-union succeeded |
+
+**Post-merge fix:** Added `types-jsonschema` to dev dependencies (pre-existing gap in the
+E3/E4/E6 track — `jsonschema` is used by `dispatch.py` but lacked type stubs, breaking
+`mypy --strict`).
 
 Decisions made during the per-tier context assembly design.
 
