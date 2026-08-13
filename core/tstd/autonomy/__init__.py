@@ -5,6 +5,7 @@ immediately — the classifier makes interactive mode better right away
 (spec §12.9).
 """
 
+from .checkpoint import Checkpointer, CheckpointOutcome, Notice
 from .classifier import (
     Boundary,
     Classification,
@@ -18,10 +19,13 @@ from .worker import AmbiguousClassifier, build_classifier_prompt, parse_decision
 __all__ = [
     "AmbiguousClassifier",
     "Boundary",
+    "CheckpointOutcome",
+    "Checkpointer",
     "Classification",
     "DecisionClass",
     "DecisionClassifier",
     "DecisionRequest",
+    "Notice",
     "Rule",
     "build_classifier_prompt",
     "parse_decision",

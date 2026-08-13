@@ -121,9 +121,16 @@
     "why": "Ruff format",
     "commit": "abc123"
   },
+  "checkpoint_notice": {
+    "type": "checkpoint_notice",
+    "seq": 9,
+    "session_id": "sess-1",
+    "code": "dirty_baseline",
+    "message": "This workspace has uncommitted changes."
+  },
   "cost_update": {
     "type": "cost_update",
-    "seq": 9,
+    "seq": 10,
     "session_id": "sess-1",
     "turn_cost": 0.05,
     "session_cost": 0.5,
@@ -132,7 +139,7 @@
   },
   "turn_complete": {
     "type": "turn_complete",
-    "seq": 10,
+    "seq": 11,
     "session_id": "sess-1",
     "tokens": 1500,
     "cost": 0.03,
@@ -141,14 +148,14 @@
   },
   "error": {
     "type": "error",
-    "seq": 11,
+    "seq": 12,
     "session_id": null,
     "code": "test",
     "message": "fail"
   },
   "error_with_session": {
     "type": "error",
-    "seq": 12,
+    "seq": 13,
     "session_id": "sess-1",
     "code": "test",
     "message": "fail"

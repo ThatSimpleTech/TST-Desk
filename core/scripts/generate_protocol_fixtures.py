@@ -20,6 +20,7 @@ from tstd.protocol import (
     AssistantDelta,
     Attach,
     Cancel,
+    CheckpointNotice,
     CostUpdate,
     DecisionLogged,
     Deny,
@@ -94,12 +95,18 @@ FIXTURES = {
         commit="abc123",
         seq=8,
     ),
+    "checkpoint_notice": CheckpointNotice(
+        session_id="sess-1",
+        code="dirty_baseline",
+        message="This workspace has uncommitted changes.",
+        seq=9,
+    ),
     "cost_update": CostUpdate(
         session_id="sess-1",
         turn_cost=0.05,
         session_cost=0.50,
         total_cost=1.20,
-        seq=9,
+        seq=10,
     ),
     "turn_complete": TurnComplete(
         session_id="sess-1",
@@ -107,10 +114,10 @@ FIXTURES = {
         cost=0.03,
         tier="worker",
         duration=2.5,
-        seq=10,
+        seq=11,
     ),
-    "error": Error(code="test", message="fail", seq=11),
-    "error_with_session": Error(session_id="sess-1", code="test", message="fail", seq=12),
+    "error": Error(code="test", message="fail", seq=12),
+    "error_with_session": Error(session_id="sess-1", code="test", message="fail", seq=13),
 }
 
 

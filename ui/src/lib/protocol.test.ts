@@ -22,6 +22,7 @@ import type {
   ToolResult,
   ApprovalRequest,
   DecisionLogged,
+  CheckpointNotice,
   CostUpdate,
   TurnComplete,
   Error,
@@ -183,6 +184,15 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("checkpoint_notice", () => {
+    const m = fixtures.checkpoint_notice as CheckpointNotice;
+    expect(m.type).toBe("checkpoint_notice");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.code)).toBe(true);
+    expect(isString(m.message)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
   it("cost_update", () => {
     const m = fixtures.cost_update as CostUpdate;
     expect(m.type).toBe("cost_update");
@@ -234,7 +244,8 @@ describe("All fixtures have required shape", () => {
     const eventTypes = [
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
       "tool_result_truncated", "approval_request", "decision_logged",
-      "cost_update", "turn_complete", "error", "error_with_session",
+      "checkpoint_notice", "cost_update", "turn_complete", "error",
+      "error_with_session",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
