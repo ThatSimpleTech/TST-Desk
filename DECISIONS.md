@@ -657,3 +657,49 @@ to record `decision_class=C` on the result.
 or see the guard's refusal semantics, so the enforcement layer overrides the
 class to C when it refuses — a boundary refusal is definitionally "anything
 the charter forbids" (§12.2).
+
+---
+
+## 2026-08-13 — TD-603: Filesystem read tools
+
+Decisions made while building the read handlers.
+
+### 1. Handlers are thin async wrappers over sync cores
+
+**Decision:** `fs_read`/`fs_list` are async handlers that delegate the
+blocking filesystem work to sync helpers via `asyncio.to_thread`.
+
+**Rationale:** AGENTS.md §6 forbids blocking calls in the event loop; the
+dispatch chokepoint awaits handlers, so any blocking I/O there would stall
+the session. The sync cores stay unit-testable without an event loop.
+
+### 2. `fs_list` reuses the manifest's ignore set
+
+**Decision:** Directory listing prunes the same `_FALLBACK_IGNORE` dirs the
+workspace manifest prunes (`node_modules`, `__pycache__`, `.venv`, `.git`,
+`.tst`).
+
+**Rationale:** One ignore set for the workspace keeps listings and the
+manifest consistent. Gitignore-native listing (via `git ls-files
+--exclude-standard`) exists in the manifest and can be reused later if
+subdirectory listings need it; the fallback set covers the practical junk
+dirs for v0.1.
+
+### 3. Truncation marker states totals, and only for cap-truncation
+
+**Decision:** The read handler caps formatted output at 2000 lines; when the
+cap cuts a file, a marker states total lines and bytes. An explicit
+`limit`/`offset` window is a window — no marker.
+
+**Rationale:** "Large files truncated with explicit markers and a stated
+total size" (criterion 4) refers to the cap; labelling an explicit window
+"truncated" would mislead the model about the file's length.
+
+### 4. Binary and encoding refusal lives at the handler
+
+**Decision:** NUL-bytes-in-head detection and UTF-8 decode failure both
+refuse with an explanatory message instead of dumping bytes.
+
+**Rationale:** The model should never receive raw binary or mojibake bytes —
+an explanatory refusal lets it pick another path (e.g., hash the file,
+inspect via shell once TD-605 lands).
