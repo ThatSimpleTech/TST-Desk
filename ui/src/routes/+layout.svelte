@@ -9,4 +9,15 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-{@render children()}
+<main class="app-frame">
+	{@render children()}
+</main>
+
+<style>
+	.app-frame {
+		display: flex;
+		flex-direction: column;
+		height: 100vh;
+		overflow: hidden;
+	}
+</style>

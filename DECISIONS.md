@@ -427,3 +427,61 @@ union, carrying `prefix_hash`, `prefix_tokens`, and `source_count`.
 **Rationale:** The timeline needs a typed, distinct announcement of a reload (vs. a generic
 log line). It complements the existing `InstructionStack` event, which carries the full
 resolved stack for the inspector.
+## 2026-08-13 — TD-1001: Application shell
+
+Decisions made during the application shell build.
+
+### 1. Window-state persistence plugin
+
+**Decision:** Use the official `tauri-plugin-window-state` (v2) to persist window
+size/position state across launches.
+
+**Rationale:** Persisting window geometry is a solved problem in Tauri v2 — the official
+plugin writes the state to disk and restores it on launch. A custom mechanism (manual
+save/load of bounds) would reimplement the same logic with more surface area and platform
+edge cases (multi-display, maximized state). The plugin is first-party and permissively
+licensed. The window keeps native chrome; geometry persistence is the only behavior
+added by the host.
+
+### 2. Divider position via `localStorage`
+
+**Decision:** The split-pane divider position persists to the webview's `localStorage`,
+not to a Rust-side file or the window-state plugin.
+
+**Rationale:** The divider is a frontend layout concern with no daemon or host contract.
+`localStorage` inside the Tauri webview outlives relaunches and is the simplest correct
+place for a per-workspace UI preference. Reading it is synchronous and avoids a Rust/Tauri
+round trip. This keeps the host thin (AGENTS.md §6).
+
+### 3. Native window chrome
+
+**Decision:** Keep the default native title bar / window decorations in v0.1; no custom
+frameless titlebar.
+
+**Rationale:** Native chrome is the most robust cross-platform choice with zero additional
+dragging/hit-testing code. A custom titlebar is a stylistic enhancement that adds
+platform-specific complexity (macOS traffic lights, Windows caption buttons) with no
+v0.1 acceptance criterion requiring it. Deferred; revisit if a later story mandates it.
+
+### 4. Theme via `prefers-color-scheme`
+
+**Decision:** Light/dark theme is driven by the CSS `prefers-color-scheme` media query
+over semantic token variables; the daemon/host sends no theme signal.
+
+**Rationale:** TD-1001's criterion 5 is "themes following the OS preference." A media-query
+approach needs no JavaScript state and no host wiring, and automatically follows the OS
+setting at runtime. Semantic tokens mean components never reference raw colors, so the
+theme switch needs no component changes. A user-overridable theme is a future, optional
+enhancement.
+
+### 5. Static adapter for Tauri packaging
+
+**Decision:** Use `@sveltejs/adapter-static` (SPA mode: `ssr = false`,
+`prerender = true`, `fallback: '200.html'`) instead of `@sveltejs/adapter-auto`.
+
+**Rationale:** `adapter-auto` detects no production environment for an embedded
+Tauri build and emits nothing, leaving `tauri build` without its `frontendDist`
+input (`ui/build`). adapter-static emits a prerendered `index.html` plus a
+fallback shell — all the webview needs. The UI has no server runtime by design
+(AGENTS.md §1), so nothing is lost by dropping SSR. adapter-static is
+first-party and MIT-licensed.
