@@ -276,7 +276,7 @@ async def _dispatch_and_append_results(
             ToolResultEvent(
                 session_id=session.id,
                 tool_call_id=r.tool_call_id,
-                status=r.status,  # type: ignore[arg-type]
+                status=r.status,
                 output=r.output,
                 truncated=r.truncated,
                 seq=1,

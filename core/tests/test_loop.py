@@ -15,8 +15,10 @@ from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
 from tstd.protocol import AssistantDelta, TurnComplete
 from tstd.protocol import ToolCall as ToolCallEvent
+from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
+from tstd.tools import Tool, ToolDispatcher, ToolRegistry
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -185,6 +187,141 @@ class TestMultiTurn:
         assert tc.tier == "brain"
 
         await runner.cancel()
+
+
+# ── Turn lifecycle event ordering (TD-403) ─────────────────────────────
+
+
+class TestTurnEventOrdering:
+    def _event_types(self, events) -> list[tuple[int, str]]:
+        """Return [(seq, type)] for the given events, in seq order."""
+        return [(e.seq, e.type) for e in sorted(events, key=lambda e: e.seq)]
+
+    async def test_text_turn_emits_deltas_then_turn_complete(self) -> None:
+        """A text turn: assistant_delta chunks then a single turn_complete."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="one two three")})
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Count to three")
+        await wait_for_turn(session, 1)
+        await runner.cancel()
+
+        deltas = [e for e in session.event_log.all_events if isinstance(e, AssistantDelta)]
+        completes = [e for e in session.event_log.all_events if isinstance(e, TurnComplete)]
+        assert len(deltas) == 3  # "one", " two", " three"
+        assert len(completes) == 1
+
+        # Every delta appears before the turn_complete
+        last_delta_seq = max(e.seq for e in deltas)
+        complete_seq = completes[0].seq
+        assert last_delta_seq < complete_seq
+
+    async def test_tool_call_turn_ordering(self) -> None:
+        """tool_call before tool_result (when dispatched), then turn_complete."""
+        session = Session("/tmp/ws")
+        router = TierRouter(lead_turns=3)
+        config = make_config()
+        registry = ToolRegistry()
+        registry.register(
+            Tool(
+                name="echo",
+                parameters={
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                },
+                side_effect_class="auto",
+                parallel_safe=True,
+            )
+        )
+        dispatcher = ToolDispatcher(registry)
+
+        async def echo_handler(session, message):
+            return f"Echo: {message}"
+
+        dispatcher.register_handler("echo", echo_handler)
+
+        mock = MockProvider(
+            sequences={
+                "test-brain": [
+                    Script(
+                        kind="tool_call",
+                        tool_name="echo",
+                        tool_arguments='{"message": "hi"}',
+                    ),
+                    Script(kind="stream", content="Done"),
+                ]
+            }
+        )
+
+        factory = mock_factory(mock)
+        runner = SessionRunner(
+            session,
+            loop_factory=lambda s: agent_loop(
+                s, router, factory, config, tool_registry=registry, tool_dispatcher=dispatcher
+            ),
+        )
+        await runner.start()
+        await session.add_user_message("Say hi")
+        await wait_for_turn(session, 1)
+        await runner.cancel()
+
+        ordered = self._event_types(session.event_log.all_events)
+
+        # Exact per-type ordering across the whole turn:
+        # any assistant_delta (content) < any tool_call < any tool_result < turn_complete
+        seq_of_type: dict[str, list[int]] = {}
+        for seq, typ in ordered:
+            seq_of_type.setdefault(typ, []).append(seq)
+        assert seq_of_type["tool_call"]
+        assert seq_of_type["tool_result"]
+        assert seq_of_type["turn_complete"]
+        assert max(seq_of_type["tool_call"]) < max(seq_of_type["tool_result"])
+        assert max(seq_of_type["tool_result"]) < max(seq_of_type["turn_complete"])
+
+    async def test_no_dispatcher_emits_tool_call_but_no_tool_result(self) -> None:
+        """Tool_call emitted, no tool_result, turn_complete still arrives."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(
+                    kind="tool_call",
+                    tool_name="echo",
+                    tool_arguments='{"message": "hi"}',
+                )
+            }
+        )
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Say hi")
+        tc = await wait_for_turn(session, 1)
+        await runner.cancel()
+
+        tool_calls = [e for e in session.event_log.all_events if isinstance(e, ToolCallEvent)]
+        tool_results = [e for e in session.event_log.all_events if isinstance(e, ToolResultEvent)]
+        assert len(tool_calls) == 1
+        assert len(tool_results) == 0
+        assert isinstance(tc, TurnComplete)
+
+    async def test_seq_is_monotonic_and_contiguous(self) -> None:
+        """Every event carries a strictly increasing, gap-free seq."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="A B C D")})
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Hi")
+        await wait_for_turn(session, 1)
+        await runner.cancel()
+
+        seqs = sorted(e.seq for e in session.event_log.all_events)
+        assert seqs == list(range(1, len(seqs) + 1))
 
 
 # ── Tool calls ──────────────────────────────────────────────────────────
