@@ -19,6 +19,7 @@ from jsonschema import validate as validate_schema
 
 from ..autonomy import AmbiguousClassifier, DecisionClass, DecisionRequest
 from ..logging import get_logger
+from .boundary import PathGuard, RefusalError
 from .registry import Tool, ToolRegistry
 
 log = get_logger("tstd.dispatch")
@@ -132,6 +133,7 @@ class ToolDispatcher:
         registry: ToolRegistry,
         max_result_chars: int = 50_000,
         classifier: AmbiguousClassifier | None = None,
+        path_guard: PathGuard | None = None,
     ) -> None:
         self.registry = registry
         self.max_result_chars = max_result_chars
@@ -139,6 +141,10 @@ class ToolDispatcher:
         # handler without a classifier attached raises ``UnclassifiedToolCall``
         # — the chokepoint refuses to execute unclassified actions.
         self.classifier = classifier
+        # The path boundary guard (TD-602).  Path-bearing tools are
+        # refused before execution when the guard is missing or the
+        # target crosses the boundary.
+        self.path_guard = path_guard
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
 
     # ── Handler registration ──────────────────────────────────────────
@@ -222,6 +228,49 @@ class ToolDispatcher:
         request = build_decision_request(tool, arguments)
         classification = await self.classifier.classify(request)
         decision_class = classification.decision_class
+
+        # 3.2 Path boundary enforcement (TD-602, security-critical).
+        # Path-bearing tools are refused before the handler runs: no
+        # guard attached is a bypass; a target crossing the boundary is a
+        # refusal with a clear error.  Handlers receive validated paths.
+        if tool.path_fields:
+            if self.path_guard is None:
+                raise UnclassifiedToolCall(
+                    f"path-bearing tool '{name}' reached execution without a path guard"
+                )
+            try:
+                for field in tool.path_fields:
+                    raw = arguments.get(field)
+                    if not isinstance(raw, str):
+                        continue  # absent/optional path field
+                    if tool.mutates:
+                        self.path_guard.check_write(raw)
+                    else:
+                        self.path_guard.check_read(raw)
+            except RefusalError as e:
+                log.warning(
+                    "boundary refusal",
+                    extra={
+                        "extra_fields": {
+                            "tool_call_id": tool_call_id,
+                            "tool": name,
+                            "code": e.code,
+                            "path": str(e.path),
+                        }
+                    },
+                )
+                # Boundary refusals are definitionally Class C (§12.2:
+                # "anything the charter forbids"), even when the static
+                # table classified the call differently (e.g. hardlinks).
+                decision_class = DecisionClass.C
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    name=name,
+                    status="error",
+                    output=f"Refused: {e.reason}",
+                    error_code="boundary_refusal",
+                    decision_class=decision_class,
+                )
 
         try:
             output = await handler(session=session, **arguments)

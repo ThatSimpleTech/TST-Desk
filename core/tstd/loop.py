@@ -51,6 +51,7 @@ from .provider import (
 from .router import TierName, TierRouter
 from .session import Session
 from .tools import ToolDispatcher, ToolRegistry
+from .tools.boundary import PathGuard
 from .tools.dispatch import build_decision_request
 
 
@@ -379,29 +380,36 @@ async def agent_loop(
     # boundary is the session's workspace.  The worker call is a single-shot
     # completion on the worker tier's model, tracked as separate
     # classifier cost (it never touches the main turn accounting).
-    if tool_dispatcher is not None and tool_dispatcher.classifier is None:
+    if tool_dispatcher is not None:
+        boundary = Boundary(workspace_root=Path(session.workspace_path))
+        if tool_dispatcher.classifier is None:
 
-        async def _worker_classifier(prompt: str) -> str:
-            if provider is None:
-                raise RuntimeError("classifier worker call before provider ready")
-            worker_cfg = config.tier("worker")
-            request = ChatCompletionRequest(
-                model=worker_cfg.slug,
-                messages=[ChatMessage(role="user", content=prompt)],
-                max_tokens=8,
-                temperature=0.0,
+            async def _worker_classifier(prompt: str) -> str:
+                if provider is None:
+                    raise RuntimeError("classifier worker call before provider ready")
+                worker_cfg = config.tier("worker")
+                request = ChatCompletionRequest(
+                    model=worker_cfg.slug,
+                    messages=[ChatMessage(role="user", content=prompt)],
+                    max_tokens=8,
+                    temperature=0.0,
+                )
+                resp = await provider.chat_completion(request)
+                if isinstance(resp, ProviderError):
+                    raise RuntimeError(f"classifier worker call failed: {resp.message}")
+                if resp.usage is not None:
+                    tracker.record_classifier("worker", resp.usage, worker_cfg)
+                return resp.message.content or ""
+
+            tool_dispatcher.classifier = AmbiguousClassifier(
+                static=DecisionClassifier(boundary),
+                call_worker=_worker_classifier,
             )
-            resp = await provider.chat_completion(request)
-            if isinstance(resp, ProviderError):
-                raise RuntimeError(f"classifier worker call failed: {resp.message}")
-            if resp.usage is not None:
-                tracker.record_classifier("worker", resp.usage, worker_cfg)
-            return resp.message.content or ""
 
-        tool_dispatcher.classifier = AmbiguousClassifier(
-            static=DecisionClassifier(Boundary(workspace_root=Path(session.workspace_path))),
-            call_worker=_worker_classifier,
-        )
+        # Path boundary enforcement (TD-602): the same workspace boundary
+        # backs the guard that refuses out-of-bounds path access.
+        if tool_dispatcher.path_guard is None:
+            tool_dispatcher.path_guard = PathGuard(boundary)
 
     # Pre-compute tool definitions if we have a registry
     tool_definitions: list[ProviderToolDefinition] | None = None

@@ -146,7 +146,7 @@ class Classification:
 # ── Path resolution helpers ────────────────────────────────────────────
 
 
-def _canonical(path: Path) -> Path:
+def canonical_path(path: Path) -> Path:
     """Resolve *path* to an absolute, symlink-free canonical form.
 
     Symlink traversal is resolved here so a symlink inside the workspace
@@ -156,22 +156,22 @@ def _canonical(path: Path) -> Path:
     return Path(os.path.abspath(os.path.realpath(path)))
 
 
-def _is_in_workspace(boundary: Boundary, path: Path) -> bool:
+def is_in_workspace(boundary: Boundary, path: Path) -> bool:
     """Whether *path* resolves to the workspace root or below it."""
     if boundary.workspace_root is None:
         return False
-    return _canonical(path).is_relative_to(_canonical(boundary.workspace_root))
+    return canonical_path(path).is_relative_to(canonical_path(boundary.workspace_root))
 
 
-def _relative_parts(path: Path, workspace_root: Path) -> list[str]:
+def relative_parts(path: Path, workspace_root: Path) -> list[str]:
     """Path segments of *path* relative to *workspace_root*, or ``[]`` if outside."""
     try:
-        return list(_canonical(path).relative_to(_canonical(workspace_root)).parts)
+        return list(canonical_path(path).relative_to(canonical_path(workspace_root)).parts)
     except ValueError:
         return []
 
 
-def _path_matches(pattern: str, rel_parts: list[str]) -> bool:
+def path_matches(pattern: str, rel_parts: list[str]) -> bool:
     """Match a workspace-relative path against a writable glob *pattern*.
 
     ``**`` spans zero or more segments; a pattern with no ``/`` matches the
@@ -184,33 +184,33 @@ def _path_matches(pattern: str, rel_parts: list[str]) -> bool:
             return True
         # Slash-less pattern matches the basename at any depth.
         return bool(rel_parts) and any(fnmatch.fnmatchcase(seg, pat) for seg in rel_parts)
-    return _match_segments(pat_parts, list(rel_parts))
+    return match_segments(pat_parts, list(rel_parts))
 
 
-def _match_segments(pat_parts: list[str], path_parts: list[str]) -> bool:
+def match_segments(pat_parts: list[str], path_parts: list[str]) -> bool:
     """Segment-wise recursive matcher with ``**`` support."""
     if not pat_parts:
         return not path_parts
     head = pat_parts[0]
     if head == "**":
         for i in range(len(path_parts) + 1):
-            if _match_segments(pat_parts[1:], path_parts[i:]):
+            if match_segments(pat_parts[1:], path_parts[i:]):
                 return True
         return False
     if not path_parts:
         return False
     if fnmatch.fnmatchcase(path_parts[0], head):
-        return _match_segments(pat_parts[1:], path_parts[1:])
+        return match_segments(pat_parts[1:], path_parts[1:])
     return False
 
 
-def _is_steering_write(boundary: Boundary, path: Path) -> bool:
+def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
     Steering files — ``AGENTS.md``, ``CLAUDE.md``, and anything under
     ``.tst/rules/`` — are read-only to the filesystem tool, unconditionally.
     """
-    relative = _relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
+    relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
     if not relative:
         return False
     basename = relative[-1].upper()
@@ -219,16 +219,16 @@ def _is_steering_write(boundary: Boundary, path: Path) -> bool:
     return tuple(relative[:2]) == _STEERING_RULES_DIR_PARTS
 
 
-def _writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:
+def writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:
     """Whether every write target falls within ``writable_patterns``."""
     if boundary.workspace_root is None:
         return False
     for write in request.writes:
-        rel_parts = _relative_parts(write, boundary.workspace_root)
+        rel_parts = relative_parts(write, boundary.workspace_root)
         if not rel_parts:
             # Write resolves outside the workspace — handled as C by another rule.
             return False
-        if not any(_path_matches(p, rel_parts) for p in boundary.writable_patterns):
+        if not any(path_matches(p, rel_parts) for p in boundary.writable_patterns):
             return False
     return True
 
@@ -236,9 +236,21 @@ def _writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool
 # ── The rules (declared, in priority order) ────────────────────────────
 
 
+def _rule_unsafe_path(req: DecisionRequest, boundary: Boundary) -> bool:
+    """A path the call touches has a Windows-unsafe form (TD-602).
+
+    Drive-relative/absolute, UNC, 8.3 short names, and alternate data
+    streams are refused fail-closed by the guard; the classifier mirrors
+    that so the audit event carries C for these refusals too.
+    """
+    from ..tools.boundary import windows_unsafe_reason  # local import: no cycle
+
+    return any(windows_unsafe_reason(str(p)) is not None for p in (*req.reads, *req.writes))
+
+
 def _rule_outside_workspace(req: DecisionRequest, boundary: Boundary) -> bool:
     """Any path the call touches resolves outside the workspace root."""
-    return any(not _is_in_workspace(boundary, p) for p in (*req.reads, *req.writes))
+    return any(not is_in_workspace(boundary, p) for p in (*req.reads, *req.writes))
 
 
 def _rule_network_new_host(req: DecisionRequest, boundary: Boundary) -> bool:
@@ -248,7 +260,7 @@ def _rule_network_new_host(req: DecisionRequest, boundary: Boundary) -> bool:
 
 def _rule_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
     """The call writes a steering file, regardless of writable_paths."""
-    return req.is_mutation and any(_is_steering_write(boundary, p) for p in req.writes)
+    return req.is_mutation and any(is_steering_write(boundary, p) for p in req.writes)
 
 
 def _rule_cap_exceeded(req: DecisionRequest, boundary: Boundary) -> bool:
@@ -262,11 +274,33 @@ def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
         return False
     # The C-worthy writes (outside workspace / steering / cap) already
     # fired above; only reach this rule when none of them applied.
-    all_in_workspace = all(_is_in_workspace(boundary, p) for p in req.writes)
-    return all_in_workspace and _writes_match_writable(boundary, req)
+    all_in_workspace = all(is_in_workspace(boundary, p) for p in req.writes)
+    return all_in_workspace and writes_match_writable(boundary, req)
+
+
+def _rule_outside_writable(req: DecisionRequest, boundary: Boundary) -> bool:
+    """An in-workspace write outside the declared ``writable_paths``.
+
+    The charter's boundary forbids it (spec §12.2 "anything the charter
+    forbids" → C), and the boundary guard refuses it at the tool layer
+    (TD-602).  Making it a C rule keeps classification, enforcement, and
+    the audit record consistent: the ``tool_call`` event carries C.
+    """
+    if not req.is_mutation or not req.writes:
+        return False
+    # Steering / outside-workspace writes fired earlier; only in-workspace
+    # writes reach here.
+    all_in_workspace = all(is_in_workspace(boundary, p) for p in req.writes)
+    return all_in_workspace and not writes_match_writable(boundary, req)
 
 
 RULE_TABLE: tuple[Rule, ...] = (
+    Rule(
+        id="boundary-unsafe-path",
+        description="action touches a path with a Windows-unsafe form",
+        decision_class=DecisionClass.C,
+        match=_rule_unsafe_path,
+    ),
     Rule(
         id="path-outside-workspace",
         description="action touches a path outside the workspace",
@@ -290,6 +324,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="a declared spend/wall-clock/iteration cap is exceeded",
         decision_class=DecisionClass.C,
         match=_rule_cap_exceeded,
+    ),
+    Rule(
+        id="path-outside-writable",
+        description="action writes in-workspace but outside writable_paths",
+        decision_class=DecisionClass.C,
+        match=_rule_outside_writable,
     ),
     Rule(
         id="in-workspace-edit",
