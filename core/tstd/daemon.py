@@ -17,7 +17,9 @@ from typing import Any
 
 import websockets.exceptions
 
+from .config import cached_config
 from .logging import get_logger, setup_logging, user_data_dir
+from .loop import agent_loop
 from .protocol import (
     Attach,
     Cancel,
@@ -29,6 +31,8 @@ from .protocol import (
     build_error,
     parse_client_message,
 )
+from .provider import ProviderClient
+from .router import TierRouter
 from .session import Session, SessionRegistry, SessionRunner
 from .ws import WebSocketServer
 
@@ -55,12 +59,18 @@ class Daemon:
         await daemon.run()
     """
 
-    def __init__(self, data_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: Path | None = None,
+        provider: ProviderClient | None = None,
+    ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
         self._tasks: list[asyncio.Task[Any]] = []
         self.session_registry = SessionRegistry()
+        self.config = cached_config()
+        self._provider = provider
         # session_id -> set of attached connections
         self._attached_clients: dict[str, set[Any]] = {}
         # (connection, session_id) -> streaming task
@@ -70,6 +80,17 @@ class Daemon:
             message_handler=self._handle_message,
             on_disconnect=self._on_connection_closed,
         )
+
+    async def _ensure_provider(self) -> ProviderClient:
+        """Create the shared provider client on first use.
+
+        Uses the brain tier's base URL for the OpenAI-compatible endpoint;
+        the API key comes from the OS keychain.
+        """
+        if self._provider is None:
+            tier_cfg = self.config.tier("brain")
+            self._provider = await ProviderClient.from_keychain(tier_cfg.base_url)
+        return self._provider
 
     async def run(self) -> None:
         """Start the daemon and run until shutdown is requested."""
@@ -144,7 +165,19 @@ class Daemon:
 
         if isinstance(msg, OpenWorkspace):
             sess = await self.session_registry.create(msg.path)
-            runner = SessionRunner(sess)
+            router = TierRouter()
+
+            # Provider is created lazily via a factory closure so that
+            # sessions can be opened and attached without requiring a key
+            # to be present.  The provider is only needed when the loop
+            # processes its first user message.
+            async def get_provider() -> ProviderClient:
+                return await self._ensure_provider()
+
+            runner = SessionRunner(
+                sess,
+                loop_factory=lambda s: agent_loop(s, router, get_provider, self.config),
+            )
             await runner.start()
             await self.session_registry.register_runner(sess.id, runner)
             self.state.active_sessions += 1
@@ -170,8 +203,9 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
+            await found.add_user_message(msg.content)
             log.info(
-                "user message",
+                "user message enqueued",
                 extra={
                     "extra_fields": {
                         "session_id": msg.session_id,
