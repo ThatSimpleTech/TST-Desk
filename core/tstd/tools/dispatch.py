@@ -11,11 +11,13 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
 
+from ..autonomy import DecisionClass, DecisionClassifier, DecisionRequest
 from ..logging import get_logger
 from .registry import Tool, ToolRegistry
 
@@ -35,6 +37,7 @@ class ToolResult:
         output: Text output (or error message).
         truncated: Whether the output was truncated to the cap.
         error_code: For ``error`` status, a machine-readable code.
+        decision_class: Class assigned by the decision classifier (TD-702).
     """
 
     tool_call_id: str
@@ -43,6 +46,8 @@ class ToolResult:
     output: str
     truncated: bool = False
     error_code: str | None = None
+    # Decision class assigned by the classifier chokepoint (TD-702).
+    decision_class: DecisionClass | None = None
 
 
 @dataclass
@@ -73,6 +78,42 @@ def truncate_output(output: str, max_chars: int) -> tuple[str, bool]:
     return truncated + _TRUNCATION_MARKER, True
 
 
+class UnclassifiedToolCall(Exception):
+    """A tool reached execution without a decision classifier attached.
+
+    Raising here is the chokepoint guarantee (prime directive §2.6): no
+    tool executes unless the decision classifier has been run over the
+    call.  Reaching the handler unclassified is a bypass, not a state the
+    engine falls into by default.
+    """
+
+
+def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionRequest:
+    """Reduce a tool call to the signals the decision classifier needs.
+
+    Uses the tool's declared ``path_fields`` / ``host_fields`` / ``mutates``
+    metadata (TD-702) — never heuristics over raw argument text.  Read
+    tools expose their ``path_fields`` as reads; mutating tools expose them
+    as write targets.
+    """
+    paths = tuple(Path(arguments[f]) for f in tool.path_fields if isinstance(arguments.get(f), str))
+    hosts = frozenset(arguments[f] for f in tool.host_fields if isinstance(arguments.get(f), str))
+    if tool.mutates:
+        writes = paths
+        reads: tuple[Path, ...] = ()
+    else:
+        writes = ()
+        reads = paths
+    return DecisionRequest(
+        tool_name=tool.name,
+        arguments=dict(arguments),
+        writes=writes,
+        reads=reads,
+        hosts=hosts,
+        is_mutation=tool.mutates,
+    )
+
+
 # ── Tool dispatcher ─────────────────────────────────────────────────────
 
 
@@ -90,9 +131,14 @@ class ToolDispatcher:
         self,
         registry: ToolRegistry,
         max_result_chars: int = 50_000,
+        classifier: DecisionClassifier | None = None,
     ) -> None:
         self.registry = registry
         self.max_result_chars = max_result_chars
+        # The decision classifier (TD-702).  A tool call reaching the
+        # handler without a classifier attached raises ``UnclassifiedToolCall``
+        # — the chokepoint refuses to execute unclassified actions.
+        self.classifier = classifier
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
 
     # ── Handler registration ──────────────────────────────────────────
@@ -168,6 +214,15 @@ class ToolDispatcher:
                 error_code="no_handler",
             )
 
+        # 3.1 Decision classifier chokepoint (TD-702, prime §2.6).
+        # Classification precedes execution.  A call that reaches this
+        # point without a classifier attached is a bypass and raises.
+        if self.classifier is None:
+            raise UnclassifiedToolCall(name)
+        request = build_decision_request(tool, arguments)
+        classification = self.classifier.classify(request)
+        decision_class = classification.decision_class
+
         try:
             output = await handler(session=session, **arguments)
         except Exception as e:
@@ -197,6 +252,7 @@ class ToolDispatcher:
             status="success",
             output=truncated_output,
             truncated=truncated,
+            decision_class=decision_class,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────
@@ -276,18 +332,3 @@ class ToolDispatcher:
                 f"Expected schema: {json.dumps(tool.parameters, indent=2)}"
             )
         return None
-
-
-# ── Classifier placeholder (TD-702) ─────────────────────────────────────
-
-
-def classify_tool_call(tool: Tool, arguments: dict[str, Any], session: Any = None) -> str:
-    """Classify a tool call for the approval gate.
-
-    Placeholder until TD-702 (decision classifier) is built.
-    Currently returns the tool's static side_effect_class.
-
-    Returns:
-        One of ``"auto"``, ``"ask"``, ``"never"``.
-    """
-    return tool.side_effect_class

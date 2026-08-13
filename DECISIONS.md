@@ -476,3 +476,59 @@ a steering-file write lands on C.
 First-match-wins with C-first makes irreversibility outrank reversibility
 deterministically, and every classification records the firing rule's id for
 explainability.
+
+---
+
+## 2026-08-13 — TD-702: Classifier chokepoint
+
+Decisions made while making the decision classifier a mandatory gate on tool
+execution (prime directive §2.6).
+
+### 1. Guard at the execution boundary, not the call site
+
+**Decision:** `ToolDispatcher.dispatch` raises `UnclassifiedToolCall` when a
+tool reaches its handler without a classifier attached. The loop is the only
+production dispatch path; it attaches a `DecisionClassifier` built from the
+session's workspace boundary and classifies every call before dispatch.
+
+**Rationale:** Enforcing the chokepoint inside `dispatch()` — where the tool
+handler is about to run — makes "no bypass path" a runtime guarantee rather
+than a convention. Any future dispatch call site inherits the guard: a tool
+cannot execute without a classifier. Criterion 4 is the same guard: reaching
+execution unclassified (classifier absent) raises immediately.
+
+### 2. `Tool` declares classifier-relevant metadata
+
+**Decision:** `Tool` gained `path_fields`, `host_fields`, and `mutates`
+(backward-compatible defaults), and `build_decision_request()` reduces a tool
+call to a `DecisionRequest` using that metadata — never heuristics over raw
+argument text.
+
+**Rationale:** The rule table (TD-701) classifies over resolved signals
+(reads/writes/hosts/mutation). Per-tool explicit declaration is the only
+reliable way to extract those signals; guessing from argument shapes would
+both miss cases and misfire on opaque ones. Built-ins were annotated
+(`fs_read` read+path, `fs_write` write+path, `shell` mutates).
+
+### 3. Ambiguous is not unclassified
+
+**Decision:** A call the static table cannot decide (`decision_class is None`)
+still executes with the class recorded as `None`; the guard raises only when
+no classifier ran at all.
+
+**Rationale:** Ambiguous cases are TD-703's job (worker-tier model call,
+defaulting to B). Raising on them now would break every shell-style call
+before TD-703 exists. The chokepoint's job in TD-702 is to guarantee
+classification *happened* — the class being `None` is a legitimate
+classification outcome until TD-703 lands.
+
+### 4. Audit attachment is the `tool_call` event
+
+**Decision:** The decision class is attached to the `ToolCall` event (which
+already carried `decision_class`, previously always `None`), emitted into the
+session's append-only event log — the v0.1 audit trail — before execution.
+
+**Rationale:** Criterion 3 requires the class on the audit record and the
+`tool_call` event; in v0.1 these are the same append-only log. E9 (TD-901)
+will persist the log as the dedicated audit store; no new protocol surface
+was needed.

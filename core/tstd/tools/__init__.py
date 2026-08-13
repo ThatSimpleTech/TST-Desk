@@ -5,7 +5,13 @@ The tool dispatcher (TD-402) handles parsing, validation, and execution
 of tool calls from the model.
 """
 
-from .dispatch import ToolDispatcher, ToolResult, ValidationError, classify_tool_call
+from .dispatch import (
+    ToolDispatcher,
+    ToolResult,
+    UnclassifiedToolCall,
+    ValidationError,
+    build_decision_request,
+)
 from .registry import Tool, ToolRegistry, UnknownToolError, create_registry
 
 __all__ = [
@@ -13,8 +19,9 @@ __all__ = [
     "ToolDispatcher",
     "ToolRegistry",
     "ToolResult",
+    "UnclassifiedToolCall",
     "UnknownToolError",
     "ValidationError",
-    "classify_tool_call",
+    "build_decision_request",
     "create_registry",
 ]
