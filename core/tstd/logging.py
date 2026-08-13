@@ -42,6 +42,18 @@ def user_data_dir() -> Path:
     return Path.home() / ".local" / "share" / "tst-desk"
 
 
+def redact_secrets(text: str) -> str:
+    """Replace known credential patterns in *text* with ``[REDACTED]``.
+
+    This is the single redaction implementation shared by every output
+    path — logs (SecretsRedactionFilter) and the audit store (TD-901) —
+    so a pattern added here protects all of them at once.
+    """
+    for pattern in SECRET_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
 class SecretsRedactionFilter(logging.Filter):
     """Redact known credential patterns from log records.
 
@@ -51,15 +63,13 @@ class SecretsRedactionFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         if record.msg:
-            for pattern in SECRET_PATTERNS:
-                record.msg = pattern.sub("[REDACTED]", record.msg)
+            record.msg = redact_secrets(record.msg)
         # Also redact args that are strings
         if record.args:
             args = list(record.args)
             for i, arg in enumerate(args):
                 if isinstance(arg, str):
-                    for pattern in SECRET_PATTERNS:
-                        args[i] = pattern.sub("[REDACTED]", arg)
+                    args[i] = redact_secrets(arg)
             record.args = tuple(args)
         return True
 
