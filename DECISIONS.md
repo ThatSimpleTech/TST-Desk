@@ -208,3 +208,107 @@ hatch.
 **Rationale:** A scary confirmation is a UX band-aid, not a real safety boundary. Containers
 provide actual isolation — the "wall" the spec describes in §12. v0.1 defers autonomy mode
 to a later milestone, but the architecture must be built to require this.
+## 2026-08-12 — TD-401: Agent loop
+
+Decisions made during the loop port from tst-cua.
+
+### 1. Provider factory pattern
+
+**Decision:** The loop accepts a `Callable[[], Awaitable[ProviderLike]]` (provider
+factory) instead of a `ProviderLike` instance.
+
+**Rationale:** Sessions can be opened and attached without any provider being
+available. The provider is created lazily on first user message, so the daemon
+does not need a keychain entry at startup. This also makes the loop fully
+testable — tests pass a simple factory that returns a `MockProvider`.
+
+### 2. ProviderLike protocol
+
+**Decision:** A structural `Protocol` (not an ABC) defines the provider interface
+the loop talks to.
+
+**Rationale:** Both `ProviderClient` (network) and `MockProvider` (offline) satisfy
+the protocol structurally without inheritance. This enforces the "provider-agnostic"
+requirement in the acceptance criteria without coupling the loop to either
+implementation.
+
+### 3. User message queue on Session
+
+**Decision:** Added an `asyncio.Queue[str]` to the `Session` class, with
+`add_user_message()` and `wait_for_user_message()` methods.
+
+**Rationale:** Decouples the WebSocket connection from the agent loop. The daemon
+writes to the queue; the loop reads from it. This is the mechanism that makes
+prime directive §2.5 ("the daemon owns sessions; the window is only a viewer")
+concrete — the loop never blocks on a socket.
+
+### 4. Message list copy in provider requests
+
+**Decision:** `_stream_turn` copies the messages list before passing it to the
+provider.
+
+**Rationale:** The loop mutates the messages list after the provider call
+(appending the assistant response). Without a copy, the provider would see
+post-stream mutations in its stored request, producing confusing aliasing bugs
+in the audit trail and tests.
+
+### 5. Deviation from REUSE.md
+
+The tst-cua loop structure is `plan → gate → act → verify → reconcile`. TD-401
+implements `plan → act → record` with placeholders for `gate` (decision
+classifier, E7) and `verify` (validator tier, E8). This is not a deviation from
+the intent — the REUSE.md explicitly identifies these as later stories and the
+current structure is a correct subset. The full structure is assembled
+incrementally across TD-402, TD-403, E7, and E8.
+
+
+
+## 2026-08-12 — TD-306: Resilience
+
+Decisions made during resilience implementation.
+
+### 1. Retry strategy
+
+**Decision:** Exponential backoff with jitter, bounded attempts. Retry on 429, 5xx, and
+connection errors. Non-retryable errors (auth, context-length, parse) never retried.
+`Retry-After` header overrides the computed delay (max with exponential base).
+
+**Rationale:** Standard industry practice. The backlog explicitly specifies this pattern.
+
+### 2. Default-on retry
+
+**Decision:** `ProviderClient` retries by default (`RetryConfig` with `max_retries=3`).
+Callers can disable by passing `RetryConfig(max_retries=0)`.
+
+**Rationale:** Resilience is on by default so the loop (TD-401) gets it for free. Existing
+single-shot tests opt out with `max_retries=0`.
+
+### 3. Retry scope for streaming
+
+**Decision:** Retry on initial connection only (before any content chunk). Mid-stream
+failures produce a clean `stream_interrupted` error without retrying.
+
+**Rationale:** Retrying a mid-stream drop would re-send the entire request and re-stream
+from scratch, producing duplicate content chunks that the consumer cannot deduplicate.
+
+### 4. Stream interruption detection
+
+**Decision:** `_stream_once` tracks in-flight tool-call state. If the stream ends without
+a `finish_reason` while a tool call is in progress, a `stream_interrupted` `ProviderError`
+is yielded. The consumer can detect this and discard the partial tool call.
+
+**Rationale:** The consumer (loop) must never dispatch a half-parsed tool call. The
+`ProviderClient` guarantees this by emitting a typed error at the protocol level.
+
+### 5. Error message strategy
+
+**Decision:** Auth failures (401) and context-length errors (413) get actionable messages
+replacing the provider's generic error text. The provider's original detail is appended to
+context-length messages (safe, no secrets) but excluded from auth messages (risk of key
+echo in provider error body).
+
+**Rationale:** Users should see a fix instruction, not a raw provider error. The
+distinction between safe-to-include (context length) and not-safe-to-include (auth) follows
+the security principle of not echoing credentials. Auth/context-length error codes are
+normalized to `auth_failed` / `context_length_exceeded` regardless of the provider's
+internal code, giving the UI a stable branch target.
