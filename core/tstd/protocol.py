@@ -268,6 +268,39 @@ class TurnComplete(DaemonEvent):
     duration: float = Field(ge=0)
 
 
+class SteeringReloaded(DaemonEvent):
+    """Emitted when steering files are re-resolved after a detected change."""
+
+    type: Literal["steering_reloaded"] = "steering_reloaded"
+    session_id: str
+    prefix_hash: str
+    prefix_tokens: int = Field(ge=0)
+    source_count: int = Field(ge=0)
+
+
+class InstructionStackEntry(BaseModel):
+    """One resolved steering source in the instruction stack."""
+
+    path: str
+    precedence: str
+    active: bool = True
+    tokens: int = Field(ge=0)
+    token_method: str
+    warnings: list[str] = Field(default_factory=list)
+    subtree: str | None = None
+    is_fallback: bool = False
+
+
+class InstructionStack(DaemonEvent):
+    """Response to ``get_instruction_stack``: the resolved stack with counts."""
+
+    type: Literal["instruction_stack"] = "instruction_stack"
+    session_id: str
+    sources: list[InstructionStackEntry] = Field(default_factory=list)
+    total_tokens: int = Field(ge=0)
+    token_method: str
+
+
 class Error(DaemonEvent):
     """A typed error, usually in response to a bad message."""
 
@@ -303,6 +336,8 @@ DaemonEventT = Annotated[
     | DecisionLogged
     | CostUpdate
     | TurnComplete
+    | SteeringReloaded
+    | InstructionStack
     | Error,
     Field(discriminator="type"),
 ]
@@ -336,6 +371,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "decision_logged",
         "cost_update",
         "turn_complete",
+        "steering_reloaded",
+        "instruction_stack",
         "error",
     }
 )
