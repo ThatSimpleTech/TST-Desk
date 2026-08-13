@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.28.1",
     "httpx-sse>=0.4.3",
+    "jsonschema>=4.26.0",
     "pydantic>=2",
     "pyyaml>=6.0",
     "websockets>=17.0.1",
