@@ -427,3 +427,52 @@ union, carrying `prefix_hash`, `prefix_tokens`, and `source_count`.
 **Rationale:** The timeline needs a typed, distinct announcement of a reload (vs. a generic
 log line). It complements the existing `InstructionStack` event, which carries the full
 resolved stack for the inspector.
+
+---
+
+## 2026-08-13 — TD-701: Decision classifier
+
+Decisions made during the decision-class model and rule table design.
+
+### 1. Classifier consumes a reduced `DecisionRequest`, not raw tool args
+
+**Decision:** `DecisionClassifier.classify(DecisionRequest)` where
+`DecisionRequest` carries already-resolved signals — `reads`, `writes`,
+`hosts`, `is_mutation` — rather than parsing raw tool arguments internally.
+
+**Rationale:** Path and host extraction from tool arguments is tool-specific
+and belongs with the dispatch chokepoint (TD-702) that knows each tool's
+schema. Keeping the classifier purely over resolved signals makes the rule
+table a pure table and trivially testable case-by-case; TD-702 builds the
+`DecisionRequest` from a validated tool call.
+
+### 2. Reads outside the workspace are Class C, matching the criterion verbatim
+
+**Decision:** The `path-outside-workspace` rule fires on any referenced path
+— reads included — not just writes.
+
+**Rationale:** TD-701's criterion says "any path outside the workspace → C",
+unqualified. Reads outside `writable_paths` are already refused by TD-602's
+boundary enforcement; mirroring that at the classifier keeps the wall
+single-sourced.
+
+### 3. Writable glob semantics reuse TD-503 `appliesTo` semantics
+
+**Decision:** `writable_patterns` match relative paths with `**` (zero-or-more
+segments) and slash-less patterns match the basename at any depth, the same
+semantics as TD-503 path-scoped rules.
+
+**Rationale:** One consistent glob dialect across steering scoping and the
+autonomy boundary avoids two subtly-different path-matching behaviours.
+
+### 4. Rule table is a declarative tuple, first-match-wins, C-before-A
+
+**Decision:** `RULE_TABLE` is a tuple of `Rule(id, description, class, match)`
+evaluated in priority order; irreversible Class C rules are declared before
+the reversible Class A rule so a write that is both an in-workspace edit and
+a steering-file write lands on C.
+
+**Rationale:** "Rule table is data, not scattered conditionals" (TD-701).
+First-match-wins with C-first makes irreversibility outrank reversibility
+deterministically, and every classification records the firing rule's id for
+explainability.
