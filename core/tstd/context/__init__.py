@@ -7,6 +7,14 @@ from .assembler import AssembledSteering, ContextAssembler, ResolvedSource
 from .discover import Precedence, SteeringFileResolver, SteeringSource
 from .manifest import ManifestConfig, ManifestResult, WorkspaceManifest
 from .stack import build_instruction_stack
+from .tier import (
+    DEFAULT_VALIDATOR_SUBSET,
+    TierContext,
+    TierContextConfig,
+    assemble_for_tier,
+    assemble_for_tier_sync,
+    default_config_for_tier,
+)
 from .tokens import (
     HeuristicTokenCounter,
     TiktokenTokenCounter,
@@ -16,6 +24,7 @@ from .tokens import (
 )
 
 __all__ = [
+    "DEFAULT_VALIDATOR_SUBSET",
     "AssembledSteering",
     "ContextAssembler",
     "HeuristicTokenCounter",
@@ -25,10 +34,15 @@ __all__ = [
     "ResolvedSource",
     "SteeringFileResolver",
     "SteeringSource",
+    "TierContext",
+    "TierContextConfig",
     "TiktokenTokenCounter",
     "TokenCount",
     "TokenCounter",
     "WorkspaceManifest",
+    "assemble_for_tier",
+    "assemble_for_tier_sync",
     "build_instruction_stack",
+    "default_config_for_tier",
     "make_token_counter",
 ]
