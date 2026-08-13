@@ -10,6 +10,7 @@ Used by every loop and router test (AGENTS.md §7).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Literal
@@ -49,6 +50,9 @@ class Script:
             response.
         retry_after: ``Retry-After`` value (seconds) attached to error
             responses when ``fail_times`` applies.
+        chunk_delay: Seconds to ``await asyncio.sleep()`` between stream
+            chunks.  Used by cancellation tests so the mock doesn't complete
+            before the test can cancel.
         prompt_tokens / completion_tokens / cached_tokens: usage figures.
     """
 
@@ -62,6 +66,7 @@ class Script:
     error_code: str = ""
     fail_times: int = 0
     retry_after: float | None = None
+    chunk_delay: float = 0.0
     prompt_tokens: int = DEFAULT_PROMPT_TOKENS
     completion_tokens: int = DEFAULT_COMPLETION_TOKENS
     cached_tokens: int = DEFAULT_CACHED_TOKENS
@@ -263,6 +268,11 @@ class MockProvider:
     async def _render_stream(self, script: Script, model: str) -> AsyncIterator[StreamChunk]:
         chunk_id = f"mock-stream-{model}"
 
+        # Helper: optional delay between chunks for cancellation tests
+        async def _maybe_delay() -> None:
+            if script.chunk_delay > 0:
+                await asyncio.sleep(script.chunk_delay)
+
         if script.kind == "stream_interrupted":
             # Emit tool-call deltas then stop WITHOUT finish_reason (clean
             # close).  Simulates a provider that drops the connection mid-tool-call.
@@ -300,6 +310,7 @@ class MockProvider:
 
         if script.kind == "tool_call":
             # Emit role chunk, then arguments, then finish chunk with usage.
+            await _maybe_delay()
             yield StreamChunk(
                 id=chunk_id,
                 delta=Delta(
@@ -315,6 +326,7 @@ class MockProvider:
                 ),
                 finish_reason=None,
             )
+            await _maybe_delay()
             yield StreamChunk(
                 id=chunk_id,
                 delta=Delta(
@@ -329,6 +341,7 @@ class MockProvider:
                 ),
                 finish_reason=None,
             )
+            await _maybe_delay()
             yield StreamChunk(
                 id=chunk_id,
                 delta=Delta(),
@@ -341,17 +354,20 @@ class MockProvider:
         # accumulate deltas rather than assume one chunk per response.
         words = script.content.split(" ") if script.content else []
         if words:
+            await _maybe_delay()
             yield StreamChunk(
                 id=chunk_id,
                 delta=Delta(content=" ".join(words[:1])),
                 finish_reason=None,
             )
             for i in range(1, len(words)):
+                await _maybe_delay()
                 yield StreamChunk(
                     id=chunk_id,
                     delta=Delta(content=f" {words[i]}" if i > 0 else words[i]),
                     finish_reason=None,
                 )
+        await _maybe_delay()
         yield StreamChunk(
             id=chunk_id,
             delta=Delta(),

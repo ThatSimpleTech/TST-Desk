@@ -18,6 +18,7 @@ added in E7 (autonomy hooks) and E8 (approvals).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -166,6 +167,9 @@ async def _stream_and_parse(
     error_msg = ""
 
     async for chunk in _stream_turn(provider, model_slug, messages, tool_definitions):
+        if session.cancel_requested:
+            return collected_content, tool_calls, True, "cancelled"
+
         if isinstance(chunk, ProviderError):
             return collected_content, tool_calls, True, chunk.message
 
@@ -266,6 +270,10 @@ async def _dispatch_and_append_results(
                 parsed_args = {"_raw": tc_args_str}
 
         dispatch_items.append((tc_id, tc_name, parsed_args))
+
+    # Skip dispatch if the session was cancelled during streaming
+    if session.cancel_requested:
+        return
 
     # Dispatch (parallel-safe tools run concurrently)
     results = await dispatcher.dispatch_many(dispatch_items, session)
@@ -383,6 +391,11 @@ async def agent_loop(
 
             # 2d. Handle failure
             if failed:
+                # If the session was cancelled during streaming, bail out
+                # without emitting a turn_complete or recording a failure.
+                if session.cancel_requested:
+                    break
+
                 router.record_failure()
                 messages.append(
                     ChatMessage(
@@ -420,9 +433,16 @@ async def agent_loop(
 
                 # 2g. Execute tool calls via dispatcher (if available)
                 if tool_dispatcher is not None:
+                    # Yield control so the event loop can process cancellation
+                    # between the ToolCall event emission and the dispatch.
+                    # 0.05s is enough for the test to detect the event and cancel.
+                    await asyncio.sleep(0.05)
                     await _dispatch_and_append_results(
                         tool_dispatcher, session, messages, tool_calls
                     )
+                    # If cancelled during dispatch, exit the tool-call loop
+                    if session.cancel_requested:
+                        break
                     # Loop back to call the provider again with tool results
                     continue
                 # Without a dispatcher, fall through to emit turn_complete
