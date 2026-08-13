@@ -9,11 +9,15 @@ Spec §4.1: loaded at session start, lowest → highest precedence:
     | Rules dir    | ``<workspace>/.tst/rules/*.md`` |
     | Directory    | ``<workspace>/**/AGENTS.md``  |
 
+**CLAUDE.md fallback (TD-502).** At any path, if ``AGENTS.md`` is absent
+and ``CLAUDE.md`` is present, ``CLAUDE.md`` is used.  If both are present,
+``AGENTS.md`` wins and the shadowing is recorded in ``shadowed_path``.
+The global level also checks ``~/.claude/CLAUDE.md`` as the last resort.
+
 The resolver returns *existing* files only, so missing files are not
-errors — they simply never appear.  Nested ``AGENTS.md`` files carry
-their workspace-relative subtree so consumers can scope them: a nested
-file applies to its subtree only, and a deeper file overrides a
-shallower one within the nested level.
+errors — they simply never appear.  Nested steering files carry their
+workspace-relative subtree so consumers can scope them: a file applies
+to its subtree only, and a deeper file overrides a shallower one.
 
 Discovery does filesystem I/O synchronously (matching ``config.py``).
 Async callers wrap it in ``asyncio.to_thread`` — see
@@ -27,10 +31,11 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-# Directories never searched for nested AGENTS.md: VCS metadata and
-# per-workspace runtime state. Everything else is fair game — steering
-# files can legitimately live anywhere in a repo tree.
-_SKIP_DIRS = {".git", ".tst", ".tstdesk", "__pycache__"}
+# Directories never searched for nested steering files: VCS metadata,
+# per-workspace runtime state, and known tool convention directories.
+# Everything else is fair game — steering files can legitimately live
+# anywhere in a repo tree.
+_SKIP_DIRS = {".git", ".tst", ".tstdesk", ".claude", "__pycache__"}
 
 
 class Precedence(IntEnum):
@@ -62,14 +67,22 @@ class SteeringSource:
     Attributes:
         path: Absolute path to the steering file.
         precedence: Precedence level (higher overrides lower).
-        subtree: For nested ``AGENTS.md`` files, the workspace-relative
-            directory the file applies to (e.g. ``"src/api"``), or
-            ``None`` for non-nested sources.
+        subtree: For nested files, the workspace-relative directory the
+            file applies to (e.g. ``"src/api"``), or ``None`` for
+            non-nested sources.
+        is_fallback: ``True`` when this source is a ``CLAUDE.md`` used
+            because ``AGENTS.md`` is absent at the same path.
+        shadowed_path: When this source is an ``AGENTS.md`` that
+            outranks a present ``CLAUDE.md`` at the same location, this
+            field holds the path of the shadowed ``CLAUDE.md``.  ``None``
+            when no shadowing occurs.
     """
 
     path: Path
     precedence: Precedence
     subtree: str | None = None
+    is_fallback: bool = False
+    shadowed_path: Path | None = None
 
 
 class SteeringFileResolver:
@@ -101,14 +114,38 @@ class SteeringFileResolver:
         sources: list[SteeringSource] = []
 
         # 1. User global — personal preferences across all workspaces.
-        global_path = self._home / ".tstdesk" / "AGENTS.md"
-        if global_path.exists():
-            sources.append(SteeringSource(path=global_path, precedence=Precedence.USER_GLOBAL))
+        #    Falls back to ~/.claude/CLAUDE.md (the Claude Code convention).
+        global_agents = self._home / ".tstdesk" / "AGENTS.md"
+        global_claude = self._home / ".claude" / "CLAUDE.md"
+        if global_agents.exists():
+            shadowed = global_claude if global_claude.exists() else None
+            sources.append(
+                SteeringSource(
+                    path=global_agents,
+                    precedence=Precedence.USER_GLOBAL,
+                    shadowed_path=shadowed,
+                )
+            )
+        elif global_claude.exists():
+            sources.append(
+                SteeringSource(
+                    path=global_claude,
+                    precedence=Precedence.USER_GLOBAL,
+                    is_fallback=True,
+                )
+            )
 
         # 2. Workspace root — team conventions, git-tracked.
-        root_path = workspace / "AGENTS.md"
-        if root_path.exists():
-            sources.append(SteeringSource(path=root_path, precedence=Precedence.WORKSPACE))
+        root_result = self._agents_or_claude(workspace)
+        if root_result is not None:
+            sources.append(
+                SteeringSource(
+                    path=root_result[0],
+                    precedence=Precedence.WORKSPACE,
+                    is_fallback=root_result[1],
+                    shadowed_path=root_result[2],
+                )
+            )
 
         # 3. Rules dir — modular rules, sorted by name for determinism.
         rules_dir = workspace / ".tst" / "rules"
@@ -117,35 +154,67 @@ class SteeringFileResolver:
             for rule_path in sorted(rules_dir.glob("*.md"))
         )
 
-        # 4. Nested — subtree-specific AGENTS.md, shallowest first so
-        #    deeper (more specific) files come later and override.
+        # 4. Nested — subtree-specific steering files, shallowest first
+        #    so deeper (more specific) files come later and override.
         sources.extend(self._nested_sources(workspace))
 
         return sources
 
-    def _nested_sources(self, workspace: Path) -> list[SteeringSource]:
-        """Find nested AGENTS.md files below the workspace root.
+    @staticmethod
+    def _agents_or_claude(
+        directory: Path,
+    ) -> tuple[Path, bool, Path | None] | None:
+        """Resolve one directory's steering file.
 
-        Skips ``_SKIP_DIRS`` (VCS metadata, runtime state) and does not
-        follow directory symlinks, so discovery cannot loop or escape
-        the workspace.  Returns sources ordered by depth (shallowest
-        first), then by subtree path for determinism.
+        Returns ``(chosen_path, is_fallback, shadowed_path)`` or
+        ``None`` when neither ``AGENTS.md`` nor ``CLAUDE.md`` exists.
+
+        * ``AGENTS.md`` wins when both are present; ``shadowed_path``
+          records the ``CLAUDE.md``.
+        * If only ``CLAUDE.md`` exists, ``is_fallback`` is ``True``.
         """
-        found: list[tuple[int, str, Path]] = []
-        for root, dirs, files in os.walk(workspace, followlinks=False):
+        agents = directory / "AGENTS.md"
+        claude = directory / "CLAUDE.md"
+        agents_exists = agents.exists()
+        claude_exists = claude.exists()
+
+        if agents_exists:
+            return agents, False, (claude if claude_exists else None)
+        if claude_exists:
+            return claude, True, None
+        return None
+
+    def _nested_sources(self, workspace: Path) -> list[SteeringSource]:
+        """Find nested steering files below the workspace root.
+
+        Skips ``_SKIP_DIRS`` (VCS metadata, runtime state, tool
+        convention directories) and does not follow directory symlinks.
+        Returns sources ordered by depth (shallowest first), then by
+        subtree path for determinism.
+        """
+        found: list[tuple[int, str, Path, bool, Path | None]] = []
+        for root, dirs, _files in os.walk(workspace, followlinks=False):
             # Prune skip dirs in place so os.walk does not descend into them.
             dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS)
-            if "AGENTS.md" not in files:
-                continue
             root_path = Path(root)
             if root_path == workspace:
                 continue  # workspace root is handled as its own level
+            result = self._agents_or_claude(root_path)
+            if result is None:
+                continue
+            chosen_path, is_fallback, shadowed = result
             rel = root_path.relative_to(workspace)
             subtree = str(rel) if rel.parts else "."
-            found.append((len(rel.parts), subtree, root_path / "AGENTS.md"))
+            found.append((len(rel.parts), subtree, chosen_path, is_fallback, shadowed))
 
         found.sort(key=lambda item: (item[0], item[1]))
         return [
-            SteeringSource(path=path, precedence=Precedence.NESTED, subtree=subtree)
-            for _, subtree, path in found
+            SteeringSource(
+                path=path,
+                precedence=Precedence.NESTED,
+                subtree=subtree,
+                is_fallback=is_fallback,
+                shadowed_path=shadowed,
+            )
+            for _, subtree, path, is_fallback, shadowed in found
         ]
