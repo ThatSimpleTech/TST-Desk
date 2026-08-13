@@ -152,6 +152,23 @@ class CostTracker:
         """Total tokens consumed in the current turn."""
         return sum(c.prompt_tokens + c.completion_tokens for c in self._turn_calls)
 
+    def turn_cached_tokens(self) -> int:
+        """Total cached prompt tokens in the current turn."""
+        return sum(c.cached_prompt_tokens for c in self._turn_calls)
+
+    def turn_uncached_tokens(self) -> int:
+        """Total uncached prompt tokens in the current turn."""
+        return sum(c.uncached_prompt_tokens for c in self._turn_calls)
+
+    def turn_cache_ratio(self) -> float:
+        """Cache hit ratio for the current turn (0.0 to 1.0).
+
+        Returns 0.0 if no prompt tokens were consumed this turn.
+        """
+        total = sum(c.prompt_tokens for c in self._turn_calls)
+        cached = sum(c.cached_prompt_tokens for c in self._turn_calls)
+        return cached / total if total > 0 else 0.0
+
     def session_cost(self) -> float:
         """Total cost of this session (dollars)."""
         return round(sum(c.cost for c in self._calls), 6)
@@ -210,6 +227,7 @@ class CostTracker:
         return {
             "turn_cost": self.turn_cost(),
             "turn_tokens": self.turn_tokens(),
+            "turn_cache_ratio": round(self.turn_cache_ratio(), 4),
             "session_cost": self.session_cost(),
             "session_tokens": self.session_tokens(),
             "day_cost": self.day_cost(),
