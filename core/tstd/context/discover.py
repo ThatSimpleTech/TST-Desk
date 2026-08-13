@@ -101,6 +101,15 @@ class SteeringFileResolver:
         """
         self._home = Path(home_dir).expanduser() if home_dir is not None else Path.home()
 
+    @property
+    def home_dir(self) -> Path:
+        """The home directory used for global-steering and ~ expansion.
+
+        Exposed for import resolution (TD-504) to share the same test
+        seam as discovery.
+        """
+        return self._home
+
     def resolve(self, workspace_path: str | Path) -> list[SteeringSource]:
         """Discover steering files for *workspace_path*.
 
