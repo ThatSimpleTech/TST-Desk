@@ -382,3 +382,48 @@ turn-complete log carries `cache_prefix_hash` and `cache_ratio`. `CostTracker` g
 **Rationale:** Criterion 3 requires the cache hit rate to be observable in logs and in the
 cost breakdown. The provider's `Usage.cached_prompt_tokens` was already tracked (TD-304);
 the new helpers surface the ratio derived from it.
+
+---
+
+## 2026-08-13 — TD-509: Hot reload
+
+### 1. Change detection strategy
+
+**Decision:** No filesystem watcher. The loop already re-resolves steering every turn via
+`PromptAssembler` (which re-reads files), so detection is done by comparing the assembled
+steering prefix hash (`prefix_hash`) against the previous turn's hash. On change, the loop
+emits a new `SteeringReloaded` protocol event plus a fresh `InstructionStack` event to the
+session event log.
+
+**Rationale:** The session event log is already broadcast to the UI by the daemon, so
+emitting there announces the reload in the timeline (criterion 2) and pushes the updated
+stack to the inspector. A filesystem watcher (e.g. watchdog) would add a dependency and
+thread to solve a problem the per-turn re-resolution already handles.
+
+### 2. Debounce
+
+**Decision:** Turn-boundary hash comparison IS the debounce. Rapid successive saves between
+turns collapse into one reload event (the loop only sees the final state when it assembles
+the next turn's prompt).
+
+**Rationale:** Criterion 4 requires debouncing against rapid saves. Since there is no
+filesystem notification, there is no event flood — one `SteeringReloaded` per changed
+state. Verified by `test_rapid_saves_single_reload`.
+
+### 3. `TierContext`/`AssembledPrompt` carry `AssembledSteering`
+
+**Decision:** `TierContext` and `AssembledPrompt` now carry the underlying
+`AssembledSteering` (previously discarded after assembly). `SteeringReloaded.source_count`
+and the pushed `InstructionStack` event are built from it.
+
+**Rationale:** The loop needs the resolved sources to build the inspector event; discarding
+them forced a duplicate re-resolution. Carrying them through is the minimal change.
+
+### 4. Protocol addition
+
+**Decision:** Added `SteeringReloaded` (type `steering_reloaded`) to the daemon event
+union, carrying `prefix_hash`, `prefix_tokens`, and `source_count`.
+
+**Rationale:** The timeline needs a typed, distinct announcement of a reload (vs. a generic
+log line). It complements the existing `InstructionStack` event, which carries the full
+resolved stack for the inspector.

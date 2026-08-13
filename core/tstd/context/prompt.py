@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..router import TierName
+from .assembler import AssembledSteering
 from .manifest import ManifestConfig, WorkspaceManifest
 from .tier import TierContextConfig, assemble_for_tier_sync
 from .tokens import heuristic_count
@@ -57,6 +58,9 @@ class AssembledPrompt:
             prefix-cache target.
         prefix_hash: SHA-256 of *prefix*.
         prefix_tokens: Heuristic token count of *prefix*.
+        steering: The underlying :class:`AssembledSteering` from the
+            context assembler.  Carried so the loop can emit the
+            instruction stack and detect steering changes (TD-509).
     """
 
     tier: TierName
@@ -64,6 +68,7 @@ class AssembledPrompt:
     prefix: str
     prefix_hash: str
     prefix_tokens: int
+    steering: AssembledSteering
 
 
 class PromptAssembler:
@@ -178,6 +183,7 @@ class PromptAssembler:
             prefix=prefix,
             prefix_hash=prefix_hash,
             prefix_tokens=heuristic_count(prefix).count,
+            steering=context.steering,
         )
         self.last_assembled = assembled
         return assembled

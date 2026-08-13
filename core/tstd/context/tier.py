@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..router import TierName
-from .assembler import ContextAssembler, _path_matches_glob
+from .assembler import AssembledSteering, ContextAssembler, _path_matches_glob
 from .discover import SteeringFileResolver, SteeringSource
 
 # ── Default validator subset ────────────────────────────────────────────
@@ -93,6 +93,7 @@ class TierContext:
 
     tier: TierName
     blocks: dict[str, str]
+    steering: AssembledSteering
 
     @property
     def text(self) -> str:
@@ -214,7 +215,7 @@ def assemble_for_tier_sync(
         if test_output is not None:
             blocks["test_output"] = test_output
 
-    return TierContext(tier=tier, blocks=blocks)
+    return TierContext(tier=tier, blocks=blocks, steering=assembled)
 
 
 async def assemble_for_tier(

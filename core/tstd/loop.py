@@ -26,9 +26,10 @@ from typing import Any, Protocol
 
 from .config import ModelConfig
 from .context import PromptAssembler
+from .context.stack import build_instruction_stack
 from .cost import CostTracker
 from .logging import get_logger
-from .protocol import AssistantDelta, TurnComplete
+from .protocol import AssistantDelta, SteeringReloaded, TurnComplete
 from .protocol import ToolCall as ToolCallEvent
 from .protocol import ToolResult as ToolResultEvent
 from .provider import (
@@ -343,6 +344,9 @@ async def agent_loop(
     if tool_registry is not None:
         tool_definitions = tool_registry.to_provider_definitions()
 
+    # Tracks the last steering prefix hash for change detection (TD-509).
+    _last_prefix_hash: str | None = None
+
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:
         # 1. Wait for user input
@@ -372,6 +376,37 @@ async def agent_loop(
                 messages[0] = ChatMessage(role="system", content=assembled.text)
             else:
                 messages.insert(0, ChatMessage(role="system", content=assembled.text))
+
+            # 2b.1 Steering hot reload (TD-509): when the steering
+            #     prefix hash differs from the last turn's, steering
+            #     files changed.  Announce the reload in the timeline
+            #     and push an updated instruction stack to the
+            #     inspector.  Turn-boundary comparison debounces rapid
+            #     successive saves — one event per changed state.
+            if _last_prefix_hash is not None and assembled.prefix_hash != _last_prefix_hash:
+                await session.event_log.add(
+                    SteeringReloaded(
+                        session_id=session.id,
+                        prefix_hash=assembled.prefix_hash,
+                        prefix_tokens=assembled.prefix_tokens,
+                        source_count=len(assembled.steering.sources),
+                        seq=1,  # overwritten by the event log
+                    )
+                )
+                await session.event_log.add(
+                    build_instruction_stack(session.id, assembled.steering, seq=1)
+                )
+                log.info(
+                    "steering reloaded",
+                    extra={
+                        "extra_fields": {
+                            "session_id": session.id,
+                            "prefix_hash": assembled.prefix_hash,
+                            "prefix_tokens": assembled.prefix_tokens,
+                        }
+                    },
+                )
+            _last_prefix_hash = assembled.prefix_hash
 
             log.info(
                 "turn start",
