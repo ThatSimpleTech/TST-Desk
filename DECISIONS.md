@@ -592,3 +592,68 @@ event (new `classifier_cost` field, default 0) expose it.
 **Rationale:** Criterion 4 requires the cost visible in the breakdown but
 separately — folding it into main-loop cost would hide the price of the
 ambiguity fallback and misattribute spend to the agent's own turns.
+
+---
+
+## 2026-08-13 — TD-602: Path boundary enforcement
+
+Decisions made while building the path boundary guard.
+
+### 1. Enforcement lives in the dispatch execution path, not per-handler
+
+**Decision:** A `PathGuard` is attached to the `ToolDispatcher` (like the
+classifier chokepoint); `dispatch()` refuses any path-bearing tool call
+before the handler runs. A path-bearing tool reaching the handler without a
+guard attached raises (no bypass for the boundary, mirroring prime §2.6).
+
+**Rationale:** "Enforced in the tool itself" (criterion 5) means the tool
+layer — and dispatch is the tool layer. Handlers (TD-604) receive
+already-canonicalized, already-checked paths, so enforcement can never be
+skipped by a handler that forgets its own check.
+
+### 2. Shared path primitives live in `autonomy/classifier.py`; `tools/boundary.py` owns enforcement
+
+**Decision:** Canonicalization, workspace membership, writable-glob
+matching, and steering-file detection stay in the classifier (promoted to
+public names); the guard imports them and adds the enforcement semantics
+(RefusalError, refusal order, hardlink and Windows-unsafe checks).
+
+**Rationale:** One source of truth for the primitives the classifier and the
+guard both need; importing them from the classifier into `tools/boundary.py`
+avoids an import cycle (the classifier must not import tools at module
+load).
+
+### 3. Hardlinks: refuse in-place writes to nlink > 1 files
+
+**Decision:** `check_write` refuses any write whose target already exists
+with `st_nlink > 1`.
+
+**Rationale:** A hardlink inside the workspace can alias a file outside it,
+and an in-place write would modify the shared inode — realpath cannot see
+this. The sanctioned path is atomic temp-file + rename (TD-604), which
+replaces the directory entry and never touches the external inode. Fresh
+files (no stat) are unaffected.
+
+### 4. Windows-unsafe forms are refused fail-closed on every platform
+
+**Decision:** Drive-relative/absolute (`C:foo`), UNC (`\\server\share`),
+8.3 short names (`PROGRA~1`), and ADS (`file:stream`) are refused on all
+operating systems, not just Windows.
+
+**Rationale:** A workspace may be shared or moved across OSes; a path that is
+harmless on macOS can alias a different file on Windows. Native Windows
+semantics are exercised by the existing `windows-latest` CI runner
+(skipped locally).
+
+### 5. Refusals are Class C everywhere
+
+**Decision:** The classifier gained two rules — `boundary-unsafe-path` (C)
+for Windows-unsafe forms and `path-outside-writable` (C) for in-workspace
+writes outside `writable_paths` — and `dispatch()` forces any guard refusal
+to record `decision_class=C` on the result.
+
+**Rationale:** Criterion 6: refusals log as Class C on the audit trail
+(`tool_call` event + result). The classifier cannot stat files (hardlinks)
+or see the guard's refusal semantics, so the enforcement layer overrides the
+class to C when it refuses — a boundary refusal is definitionally "anything
+the charter forbids" (§12.2).

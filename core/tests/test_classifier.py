@@ -267,6 +267,74 @@ class TestInWorkspaceEdit:
         assert not fired_as(decision, "in-workspace-edit")
 
 
+# ── Rule: in-workspace write outside writable_paths → C (TD-602) ───────
+
+
+class TestUnsafePath:
+    def test_windows_unsafe_write_is_c(self) -> None:
+        decision = classify(
+            boundary(),
+            req(tool_name="fs_write", writes=(Path("C:foo"),), is_mutation=True),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "boundary-unsafe-path")
+
+    def test_windows_unsafe_read_is_c(self) -> None:
+        decision = classify(boundary(), req(tool_name="fs_read", reads=(Path(r"\\s\share\x"),)))
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "boundary-unsafe-path")
+
+    def test_ordinary_path_is_not_this_rule(self) -> None:
+        decision = classify(
+            boundary(),
+            req(tool_name="fs_edit", writes=(WS / "src" / "a.py",), is_mutation=True),
+        )
+        assert not fired_as(decision, "boundary-unsafe-path")
+
+
+class TestPathOutsideWritable:
+    def test_write_outside_writable_patterns_is_c(self) -> None:
+        # The charter's boundary forbids it → C, matching the guard refusal.
+        decision = classify(
+            boundary(writable_patterns=("src/**",)),
+            req(tool_name="fs_write", writes=(WS / "other" / "x.md",), is_mutation=True),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "path-outside-writable")
+
+    def test_write_within_writable_patterns_is_not_c(self) -> None:
+        decision = classify(
+            boundary(writable_patterns=("src/**",)),
+            req(tool_name="fs_write", writes=(WS / "src" / "a.py",), is_mutation=True),
+        )
+        assert not fired_as(decision, "path-outside-writable")
+
+    def test_read_only_is_not_this_rule(self) -> None:
+        decision = classify(
+            boundary(writable_patterns=("src/**",)),
+            req(tool_name="fs_read", reads=(WS / "lib" / "a.py",)),
+        )
+        assert not fired_as(decision, "path-outside-writable")
+
+    def test_outside_workspace_outranks_writable(self) -> None:
+        # A write outside the workspace is C via path-outside-workspace
+        # (declared first), not via the writable rule.
+        decision = classify(
+            boundary(writable_patterns=("src/**",)),
+            req(tool_name="fs_write", writes=(Path("/tmp/x"),), is_mutation=True),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "path-outside-workspace")
+
+    def test_steering_write_outranks_writable(self) -> None:
+        decision = classify(
+            boundary(writable_patterns=("**",)),
+            req(tool_name="fs_write", writes=(WS / "AGENTS.md",), is_mutation=True),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "steering-file-write")
+
+
 # ── Ambiguous cases → unclassified ─────────────────────────────────────
 
 

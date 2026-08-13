@@ -33,9 +33,11 @@ from tstd.autonomy import (
 )
 from tstd.mock import MockProvider, Script
 from tstd.protocol import ToolCall as ToolCallEvent
+from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
 from tstd.session import Session
 from tstd.tools import Tool, ToolDispatcher, ToolRegistry, UnclassifiedToolCall
+from tstd.tools.boundary import PathGuard
 
 
 def _write_file(path: str, content: str) -> None:
@@ -74,15 +76,20 @@ async def _stub_worker(prompt: str) -> str:
 
 
 def make_dispatcher(
-    registry: ToolRegistry, workspace: Path, path_field: str = "path"
+    registry: ToolRegistry,
+    workspace: Path,
+    path_field: str = "path",
+    writable: tuple[str, ...] | None = None,
 ) -> ToolDispatcher:
-    """A dispatcher with a classifier over *workspace* and a writing handler."""
+    """A dispatcher with a classifier and path guard over *workspace*."""
+    boundary = Boundary(workspace_root=workspace, writable_patterns=writable or ("**",))
     dispatcher = ToolDispatcher(
         registry,
         classifier=AmbiguousClassifier(
-            static=DecisionClassifier(Boundary(workspace_root=workspace)),
+            static=DecisionClassifier(boundary),
             call_worker=_stub_worker,
         ),
+        path_guard=PathGuard(boundary),
     )
 
     async def write_handler(session: object, path: str, content: str = "") -> str:
@@ -152,7 +159,11 @@ class TestClassificationPrecedesExecution:
         registry.register(make_tool("fs_edit", path_fields=("path",), mutates=True))
         spy = RecordingClassifier(Boundary(workspace_root=tmp_path))
         classifier = AmbiguousClassifier(static=spy, call_worker=_stub_worker)
-        dispatcher = ToolDispatcher(registry, classifier=classifier)
+        dispatcher = ToolDispatcher(
+            registry,
+            classifier=classifier,
+            path_guard=PathGuard(Boundary(workspace_root=tmp_path)),
+        )
 
         async def handler(session: object, path: str) -> str:
             # The handler must observe classification already happened.
@@ -187,7 +198,28 @@ class TestClassAttached:
         outside = tmp_path.parent / "outside.txt"
 
         result = await dispatcher.dispatch("c1", "fs_edit", {"path": str(outside)})
-        assert result.status == "success"
+        # The guard refuses before the handler runs; the refusal carries C.
+        assert result.status == "error"
+        assert result.error_code == "boundary_refusal"
+        assert result.decision_class is DecisionClass.C
+
+    async def test_hardlink_write_refused_and_forced_c(self, tmp_path: Path) -> None:
+        # The classifier sees an in-workspace edit (A); the guard's
+        # hardlink refusal must still record Class C (criterion 6).
+        import os
+
+        outside = tmp_path.parent / "outside.txt"
+        outside.write_text("shared inode")
+        target = tmp_path / "innocent.txt"
+        os.link(outside, target)
+
+        registry = ToolRegistry()
+        registry.register(make_tool("fs_edit", path_fields=("path",), mutates=True))
+        dispatcher = make_dispatcher(registry, tmp_path)
+
+        result = await dispatcher.dispatch("c1", "fs_edit", {"path": str(target)})
+        assert result.status == "error"
+        assert result.error_code == "boundary_refusal"
         assert result.decision_class is DecisionClass.C
 
     async def test_tool_call_event_carries_class(self, tmp_path: Path) -> None:
@@ -225,6 +257,61 @@ class TestClassAttached:
         assert len(events) == 1
         # In-workspace write ⟹ Class A, recorded on the audit-log event.
         assert events[0].decision_class == "A"
+
+        await runner.cancel()
+
+
+class TestBoundaryRefusalAudit:
+    async def test_refused_write_logs_class_c_and_refuses(self, tmp_path: Path) -> None:
+        """A boundary-refused write carries Class C on the audit event."""
+        ws = tmp_path
+        session = Session(str(ws))
+        router = TierRouter(lead_turns=3)
+        config = make_config()
+        registry = ToolRegistry()
+        registry.register(make_tool("fs_edit", path_fields=("path",), mutates=True))
+        # Restrictive writable paths: src/** only.
+        dispatcher = make_dispatcher(registry, ws, writable=("src/**",))
+        handler_ran = False
+
+        async def never_runs(session: object, path: str) -> str:
+            nonlocal handler_ran
+            handler_ran = True
+            return "should not run"
+
+        dispatcher.register_handler("fs_edit", never_runs)
+
+        mock = MockProvider(
+            sequences={
+                "test-brain": [
+                    Script(
+                        kind="tool_call",
+                        tool_name="fs_edit",
+                        tool_arguments=f'{{"path": "{ws / "README.md"}"}}',
+                    ),
+                    Script(kind="stream", content="Done"),
+                ]
+            }
+        )
+
+        runner = await start_loop(session, router, mock, config, registry, dispatcher)
+        await session.add_user_message("Write README")
+        await wait_for_turn(session, 1)
+
+        events = [
+            e
+            for e in session.event_log.all_events
+            if isinstance(e, ToolCallEvent) and e.name == "fs_edit"
+        ]
+        assert len(events) == 1
+        # In-workspace but outside writable_paths ⟹ C (TD-602 rule).
+        assert events[0].decision_class == "C"
+
+        results = [e for e in session.event_log.all_events if isinstance(e, ToolResultEvent)]
+        assert len(results) == 1
+        assert results[0].status == "error"
+        assert "Refused" in results[0].output
+        assert handler_ran is False  # the handler never executed
 
         await runner.cancel()
 
