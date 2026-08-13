@@ -127,7 +127,8 @@
     "session_id": "sess-1",
     "turn_cost": 0.05,
     "session_cost": 0.5,
-    "total_cost": 1.2
+    "total_cost": 1.2,
+    "classifier_cost": 0.0
   },
   "turn_complete": {
     "type": "turn_complete",

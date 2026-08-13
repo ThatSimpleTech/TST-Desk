@@ -147,6 +147,7 @@ export interface CostUpdate extends DaemonEvent {
   turn_cost: number;
   session_cost: number;
   total_cost: number;
+  classifier_cost: number;
 }
 
 export interface TurnComplete extends DaemonEvent {
