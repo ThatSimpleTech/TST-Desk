@@ -480,6 +480,136 @@ class TestRunnerIntegration:
         assert runner.is_running is False
 
 
+# ── Cancellation (TD-404) ──────────────────────────────────────────────
+
+
+class TestCancellation:
+    async def test_cancellation_during_streaming(self) -> None:
+        """Cancelling mid-stream stops the turn and preserves partial events."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        # Stream with chunk_delay so we can cancel mid-stream
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(
+                    kind="stream",
+                    content="one two three four five",
+                    chunk_delay=0.05,
+                )
+            }
+        )
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Hi")
+
+        # Wait for streaming to start (first delta appears)
+        for _ in range(50):
+            deltas = [e for e in session.event_log.all_events if isinstance(e, AssistantDelta)]
+            if len(deltas) >= 1:
+                break
+            await asyncio.sleep(0.02)
+
+        # Cancel mid-stream
+        await runner.cancel()
+        assert session.state == "cancelled"
+
+        # The event log is append-only — partial deltas are preserved
+        deltas = [e for e in session.event_log.all_events if isinstance(e, AssistantDelta)]
+        text = "".join(d.delta for d in deltas)
+        assert text.startswith("one")  # at least the first word was streamed
+        # No turn_complete was emitted for the cancelled turn
+        completes = [e for e in session.event_log.all_events if isinstance(e, TurnComplete)]
+        assert len(completes) == 0
+
+    async def test_cancellation_during_tool_dispatch(self) -> None:
+        """Cancelling before tool dispatch skips execution."""
+        session = Session("/tmp/ws")
+        router = TierRouter(lead_turns=3)
+        config = make_config()
+        registry = ToolRegistry()
+        registry.register(
+            Tool(
+                name="slow_tool",
+                parameters={
+                    "type": "object",
+                    "properties": {"delay": {"type": "number", "default": 0.5}},
+                    "required": [],
+                },
+                side_effect_class="auto",
+                parallel_safe=False,
+            )
+        )
+        dispatcher = ToolDispatcher(registry)
+
+        call_count = 0
+
+        async def slow_handler(session, delay=0.5):
+            nonlocal call_count
+            call_count += 1
+            await asyncio.sleep(delay)
+            return "Done"
+
+        dispatcher.register_handler("slow_tool", slow_handler)
+
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(
+                    kind="tool_call",
+                    tool_name="slow_tool",
+                    tool_arguments="{}",
+                    chunk_delay=0.05,
+                )
+            }
+        )
+
+        factory = mock_factory(mock)
+        runner = SessionRunner(
+            session,
+            loop_factory=lambda s: agent_loop(
+                s, router, factory, config, tool_registry=registry, tool_dispatcher=dispatcher
+            ),
+        )
+        await runner.start()
+        await session.add_user_message("Run slow tool")
+
+        # Wait for the tool call event to be emitted
+        for _ in range(50):
+            tool_events = [e for e in session.event_log.all_events if isinstance(e, ToolCallEvent)]
+            if tool_events:
+                break
+            await asyncio.sleep(0.02)
+
+        # Cancel before the tool executes
+        await runner.cancel()
+        assert session.state == "cancelled"
+
+        # The tool handler should not have been called
+        assert call_count == 0
+
+    async def test_cancellation_returns_no_orphaned_tasks(self) -> None:
+        """After cancellation, no tasks remain in the event loop."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Hello")})
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Hi")
+        await asyncio.sleep(0.05)
+        await runner.cancel()
+
+        # The session's runner task should be done
+        assert runner.is_running is False
+        # The session's task should be done
+        assert runner._task is None or runner._task.done()
+
+        # No pending tasks other than the test runner itself
+        tasks = [t for t in asyncio.all_tasks() if not t.done()]
+        # The only remaining task should be the test runner
+        assert len(tasks) <= 1
+
+
 # ── Provider-agnostic ───────────────────────────────────────────────────
 
 
