@@ -40,6 +40,11 @@ class Tool:
         side_effect_class: Approval gate classification.
         parallel_safe: If True, multiple instances of this tool may be
             executed concurrently without conflict.
+        path_fields: Argument keys holding file paths the tool reads or
+            writes, used to build a ``DecisionRequest`` for the classifier.
+        host_fields: Argument keys holding network hosts the tool reaches.
+        mutates: True when the tool changes state (a write), so its
+            ``path_fields`` are treated as write targets.
     """
 
     name: str
@@ -47,6 +52,13 @@ class Tool:
     parameters: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}})
     side_effect_class: SideEffectClass = "auto"
     parallel_safe: bool = False
+    # Decision-classifier metadata (TD-702): which argument keys are file
+    # paths, which are network hosts, and whether the tool mutates state.
+    # The classifier reduces a call to these signals so the rule table can
+    # classify it without a model call.  Explicit, per-tool — no heuristics.
+    path_fields: tuple[str, ...] = ()
+    host_fields: tuple[str, ...] = ()
+    mutates: bool = False
 
     def __post_init__(self) -> None:
         """Validate basic invariants."""
@@ -210,6 +222,7 @@ def _register_builtins(registry: ToolRegistry) -> None:
             },
             side_effect_class="auto",
             parallel_safe=True,
+            path_fields=("path",),
         )
     )
 
@@ -240,6 +253,8 @@ def _register_builtins(registry: ToolRegistry) -> None:
             },
             side_effect_class="ask",
             parallel_safe=False,
+            path_fields=("path",),
+            mutates=True,
         )
     )
 
@@ -266,6 +281,7 @@ def _register_builtins(registry: ToolRegistry) -> None:
             },
             side_effect_class="ask",
             parallel_safe=False,
+            mutates=True,
         )
     )
 

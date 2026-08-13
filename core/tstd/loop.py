@@ -22,8 +22,10 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Literal, Protocol
 
+from .autonomy import Boundary, DecisionClass, DecisionClassifier
 from .config import ModelConfig
 from .context import PromptAssembler
 from .context.stack import build_instruction_stack
@@ -48,6 +50,7 @@ from .provider import (
 from .router import TierName, TierRouter
 from .session import Session
 from .tools import ToolDispatcher, ToolRegistry
+from .tools.dispatch import build_decision_request
 
 
 class ProviderLike(Protocol):
@@ -69,6 +72,13 @@ class ProviderLike(Protocol):
 
 
 log = get_logger("tstd.loop")
+
+
+def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
+    """Convert a decision class enum to the wire-format literal string."""
+    if cls is None:
+        return None
+    return cls.value
 
 
 def _stream_turn(
@@ -191,10 +201,14 @@ async def _stream_and_parse(
 async def _build_assistant_tool_call(
     session: Session,
     tool_calls: dict[int, dict[str, str | int]],
+    dispatcher: ToolDispatcher | None = None,
 ) -> list[ProviderToolCall]:
     """Build provider-format tool calls from the accumulated deltas.
 
-    Emits a ``ToolCall`` event for each tool call.
+    Emits a ``ToolCall`` event for each tool call, classifying each via
+    the dispatcher's classifier so the event carries the decision class
+    (TD-702).  The classification is attached to the session's append-only
+    event log — the audit record — *before* the tool executes.
 
     Returns:
         A list of ``ProviderToolCall`` objects ready to append to the
@@ -225,13 +239,23 @@ async def _build_assistant_tool_call(
                 parsed_args = json.loads(tc_args)
             except json.JSONDecodeError:
                 parsed_args = {"_raw": tc_args}
+
+        # Classify now (before execution) so the event carries the class.
+        decision_class: Literal["A", "B", "C"] | None = None
+        if dispatcher is not None:
+            tool = dispatcher.registry.get(tc_name)
+            if tool is not None and dispatcher.classifier is not None:
+                request = build_decision_request(tool, dict(parsed_args))
+                cls = dispatcher.classifier.classify(request).decision_class
+                decision_class = _to_literal(cls)
+
         await session.event_log.add(
             ToolCallEvent(
                 session_id=session.id,
                 tool_call_id=tc_id,
                 name=tc_name,
                 arguments=parsed_args,
-                decision_class=None,
+                decision_class=decision_class,
                 seq=1,
             )
         )
@@ -333,6 +357,13 @@ async def agent_loop(
     """
     # ── Conversation state ──────────────────────────────────────────
     assembler = prompt_assembler or PromptAssembler(session.workspace_path)
+
+    # Decision classifier chokepoint (TD-702, prime §2.6).  Every tool
+    # call routes through it; the boundary is the session's workspace.
+    if tool_dispatcher is not None and tool_dispatcher.classifier is None:
+        tool_dispatcher.classifier = DecisionClassifier(
+            Boundary(workspace_root=Path(session.workspace_path))
+        )
     # Conversation messages only; the system message is assembled per
     # turn below (TD-305).
     messages: list[ChatMessage] = []
@@ -471,7 +502,9 @@ async def agent_loop(
 
             # 2f. Append assistant response to conversation
             if tool_calls:
-                provider_tool_calls = await _build_assistant_tool_call(session, tool_calls)
+                provider_tool_calls = await _build_assistant_tool_call(
+                    session, tool_calls, tool_dispatcher
+                )
                 messages.append(
                     ChatMessage(
                         role="assistant",
