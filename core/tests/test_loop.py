@@ -1,0 +1,381 @@
+"""Tests for the agent loop (TD-401).
+
+Covers: loop inside SessionRunner, tier routing through the router,
+provider-agnostic behaviour (MockProvider), tool call handling, and
+multi-turn conversation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+
+from tstd.config import ModelConfig, Preset, TierConfig
+from tstd.loop import agent_loop
+from tstd.mock import MockProvider, Script
+from tstd.protocol import AssistantDelta, TurnComplete
+from tstd.protocol import ToolCall as ToolCallEvent
+from tstd.router import TierRouter
+from tstd.session import Session, SessionRunner
+
+# ── Helpers ─────────────────────────────────────────────────────────────
+
+
+def make_config() -> ModelConfig:
+    """A minimal ModelConfig with distinct model slugs per tier."""
+
+    def tier(slug: str) -> TierConfig:
+        return TierConfig(
+            slug=slug,
+            base_url="http://mock.local/v1",
+            input_price=1.0,
+            output_price=2.0,
+            cache_read_price=0.5,
+            context_window=100_000,
+            max_output_tokens=1_000,
+        )
+
+    return ModelConfig(
+        presets={
+            "test": Preset(
+                brain=tier("test-brain"),
+                worker=tier("test-worker"),
+                validator=tier("test-validator"),
+            ),
+        },
+        active_preset="test",
+    )
+
+
+def mock_factory(mock: MockProvider) -> Callable[[], Awaitable[MockProvider]]:
+    """Return a factory that always returns the given mock."""
+
+    async def _factory() -> MockProvider:
+        return mock
+
+    return _factory
+
+
+async def wait_for_turn(session: Session, n: int, _timeout: float = 3.0) -> TurnComplete:
+    """Wait until the n-th TurnComplete event exists and return it."""
+    deadline = asyncio.get_running_loop().time() + _timeout
+    while asyncio.get_running_loop().time() < deadline:
+        completes = [e for e in session.event_log.all_events if isinstance(e, TurnComplete)]
+        if len(completes) >= n:
+            return completes[n - 1]
+        await asyncio.sleep(0.02)
+    raise TimeoutError(f"turn {n} did not complete within {_timeout}s")
+
+
+async def start_loop(
+    session: Session,
+    router: TierRouter,
+    mock: MockProvider,
+    config: ModelConfig,
+) -> SessionRunner:
+    """Start a SessionRunner running the real agent loop."""
+    factory = mock_factory(mock)
+    runner = SessionRunner(
+        session,
+        loop_factory=lambda s: agent_loop(s, router, factory, config),
+    )
+    await runner.start()
+    return runner
+
+
+# ── Multi-turn conversation ─────────────────────────────────────────────
+
+
+class TestMultiTurn:
+    async def test_text_conversation_routes_tiers(self) -> None:
+        """Brain handles first 2 turns, worker takes over on turn 3."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(kind="stream", content="Brain reply"),
+                "test-worker": Script(kind="stream", content="Worker reply"),
+            }
+        )
+
+        runner = await start_loop(session, router, mock, config)
+
+        await session.add_user_message("First")
+        tc1 = await wait_for_turn(session, 1)
+        assert tc1.tier == "brain"
+
+        await session.add_user_message("Second")
+        tc2 = await wait_for_turn(session, 2)
+        assert tc2.tier == "brain"
+
+        await session.add_user_message("Third")
+        tc3 = await wait_for_turn(session, 3)
+        assert tc3.tier == "worker"
+
+        # The mock should have been called with the right models
+        assert mock.calls[0].model == "test-brain"
+        assert mock.calls[1].model == "test-brain"
+        assert mock.calls[2].model == "test-worker"
+
+        await runner.cancel()
+
+    async def test_conversation_history_grows(self) -> None:
+        """Each turn appends user + assistant messages to the request."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(kind="stream", content="Reply one"),
+                "test-worker": Script(kind="stream", content="Reply two"),
+            }
+        )
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Hello")
+        await wait_for_turn(session, 1)
+
+        await session.add_user_message("Again")
+        await wait_for_turn(session, 2)
+
+        # Second request carries both turns of history
+        second_request = mock.calls[1]
+        roles = [m.role for m in second_request.messages]
+        contents = [m.content for m in second_request.messages]
+        assert roles == ["system", "user", "assistant", "user"]
+        assert contents[1] == "Hello"
+        assert contents[2] == "Reply one"
+        assert contents[3] == "Again"
+
+        await runner.cancel()
+
+    async def test_assistant_deltas_streamed(self) -> None:
+        """Text deltas are emitted as AssistantDelta events."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(
+            scripts={"test-brain": Script(kind="stream", content="Hello brave world")}
+        )
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Hi")
+        tc = await wait_for_turn(session, 1)
+
+        deltas = [e for e in session.event_log.all_events if isinstance(e, AssistantDelta)]
+        text = "".join(d.delta for d in deltas)
+        assert text == "Hello brave world"
+        assert tc.tokens > 0  # usage recorded
+
+        await runner.cancel()
+
+    async def test_turn_complete_carries_cost_and_duration(self) -> None:
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="X")})
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Hi")
+        tc = await wait_for_turn(session, 1)
+
+        assert tc.cost > 0  # priced from mock usage
+        assert tc.duration >= 0
+        assert tc.tier == "brain"
+
+        await runner.cancel()
+
+
+# ── Tool calls ──────────────────────────────────────────────────────────
+
+
+class TestToolCalls:
+    async def test_tool_call_turn_emits_events(self) -> None:
+        """A turn with tool calls emits ToolCall events and completes."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(
+                    kind="tool_call",
+                    tool_name="fs_read",
+                    tool_arguments='{"path": "/tmp/x.txt"}',
+                )
+            }
+        )
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Read the file")
+        await wait_for_turn(session, 1)
+
+        tool_events = [e for e in session.event_log.all_events if isinstance(e, ToolCallEvent)]
+        assert len(tool_events) == 1
+        ev = tool_events[0]
+        assert ev.name == "fs_read"
+        assert ev.arguments == {"path": "/tmp/x.txt"}
+        assert ev.tool_call_id == "call_mock_1"
+
+        await runner.cancel()
+
+    async def test_tool_call_followed_by_text_turn(self) -> None:
+        """Multi-turn: tool call turn, then a text turn, both succeed."""
+        session = Session("/tmp/ws")
+        router = TierRouter(lead_turns=3)  # keep everything on brain
+        config = make_config()
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(
+                    kind="tool_call",
+                    tool_name="fs_read",
+                    tool_arguments='{"path": "/a"}',
+                )
+            }
+        )
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Read /a")
+        await wait_for_turn(session, 1)
+
+        # Now script the second turn to reply with text
+        mock.script(
+            "test-brain",
+            Script(kind="stream", content="Here is the content"),
+        )
+        await session.add_user_message("Summarize it")
+        tc2 = await wait_for_turn(session, 2)
+
+        # Conversation history includes the assistant tool_call message
+        second_request = mock.calls[1]
+        roles = [m.role for m in second_request.messages]
+        assert "assistant" in roles
+        assert tc2.tier == "brain"
+
+        await runner.cancel()
+
+
+# ── Error handling ──────────────────────────────────────────────────────
+
+
+class TestErrors:
+    async def test_provider_error_records_failure(self) -> None:
+        """A provider error fails the turn and continues to the next."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(
+                    kind="error",
+                    error_code="server_error",
+                    status_code=500,
+                    content="boom",
+                )
+            }
+        )
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Do something")
+        await wait_for_turn(session, 1)
+
+        # Failure is recorded in the router
+        assert router.consecutive_failures == 1
+
+        # The session is still alive — a second message works
+        mock.script("test-brain", Script(kind="stream", content="Recovered"))
+        await session.add_user_message("Try again")
+        tc2 = await wait_for_turn(session, 2)
+        assert tc2.tier == "brain"
+
+        # Success resets the failure counter
+        assert router.consecutive_failures == 0
+
+        await runner.cancel()
+
+    async def test_rate_limit_records_failure(self) -> None:
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="rate_limit", content="slow down")})
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Go")
+        await wait_for_turn(session, 1)
+        assert router.consecutive_failures == 1
+
+        await runner.cancel()
+
+
+# ── Runner integration ──────────────────────────────────────────────────
+
+
+class TestRunnerIntegration:
+    async def test_loop_runs_inside_session_runner(self) -> None:
+        """The real loop runs in SessionRunner and completes state-wise."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Hello")})
+
+        runner = await start_loop(session, router, mock, config)
+        assert session.state == "running"
+
+        await session.add_user_message("Hello")
+        await wait_for_turn(session, 1)
+
+        await runner.cancel()
+        assert session.state == "cancelled"
+
+    async def test_cancellation_during_wait(self) -> None:
+        """Cancelling while the loop waits for input ends it cleanly."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="X")})
+
+        runner = await start_loop(session, router, mock, config)
+        await asyncio.sleep(0.05)
+        assert runner.is_running is True
+
+        await runner.cancel()
+        assert session.state == "cancelled"
+        assert runner.is_running is False
+
+
+# ── Provider-agnostic ───────────────────────────────────────────────────
+
+
+class TestProviderAgnostic:
+    async def test_two_mock_instances_behave_identically(self) -> None:
+        """Swapping the provider (same script) yields the same events."""
+        results: list[str] = []
+
+        for _ in range(2):
+            session = Session("/tmp/ws")
+            router = TierRouter()
+            config = make_config()
+            mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Same reply")})
+            runner = await start_loop(session, router, mock, config)
+            await session.add_user_message("Hi")
+            await wait_for_turn(session, 1)
+            deltas = "".join(
+                e.delta for e in session.event_log.all_events if isinstance(e, AssistantDelta)
+            )
+            results.append(deltas)
+            await runner.cancel()
+
+        assert results[0] == results[1] == "Same reply"
+
+    async def test_loop_does_not_require_network(self) -> None:
+        """The loop works fully offline with the mock provider."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Offline ok")})
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("ping")
+        tc = await wait_for_turn(session, 1)
+        assert tc.tokens > 0
+        await runner.cancel()

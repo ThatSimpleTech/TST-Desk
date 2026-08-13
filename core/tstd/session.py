@@ -134,6 +134,7 @@ class Session:
         self._state = "idle"
         self.event_log = SessionEventLog()
         self._cancel_event = asyncio.Event()
+        self._user_message_queue: asyncio.Queue[str] = asyncio.Queue()
 
     @property
     def state(self) -> str:
@@ -174,6 +175,27 @@ class Session:
     async def wait_for_cancel(self) -> None:
         """Block until cancellation is requested."""
         await self._cancel_event.wait()
+
+    # ── User message queue ──────────────────────────────────────────
+
+    async def add_user_message(self, content: str) -> None:
+        """Enqueue a user message for the agent loop to process."""
+        self._user_message_queue.put_nowait(content)
+
+    async def wait_for_user_message(self) -> str | None:
+        """Wait for the next user message.
+
+        Returns the message content, or ``None`` if the session is
+        cancelled while waiting.  Uses a short poll so cancellation is
+        responsive.
+        """
+        while True:
+            if self._cancel_event.is_set():
+                return None
+            try:
+                return self._user_message_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                await asyncio.sleep(0.05)
 
     @property
     def summary(self) -> dict[str, Any]:

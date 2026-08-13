@@ -133,6 +133,61 @@ hatch.
 **Rationale:** A scary confirmation is a UX band-aid, not a real safety boundary. Containers
 provide actual isolation — the "wall" the spec describes in §12. v0.1 defers autonomy mode
 to a later milestone, but the architecture must be built to require this.
+## 2026-08-12 — TD-401: Agent loop
+
+Decisions made during the loop port from tst-cua.
+
+### 1. Provider factory pattern
+
+**Decision:** The loop accepts a `Callable[[], Awaitable[ProviderLike]]` (provider
+factory) instead of a `ProviderLike` instance.
+
+**Rationale:** Sessions can be opened and attached without any provider being
+available. The provider is created lazily on first user message, so the daemon
+does not need a keychain entry at startup. This also makes the loop fully
+testable — tests pass a simple factory that returns a `MockProvider`.
+
+### 2. ProviderLike protocol
+
+**Decision:** A structural `Protocol` (not an ABC) defines the provider interface
+the loop talks to.
+
+**Rationale:** Both `ProviderClient` (network) and `MockProvider` (offline) satisfy
+the protocol structurally without inheritance. This enforces the "provider-agnostic"
+requirement in the acceptance criteria without coupling the loop to either
+implementation.
+
+### 3. User message queue on Session
+
+**Decision:** Added an `asyncio.Queue[str]` to the `Session` class, with
+`add_user_message()` and `wait_for_user_message()` methods.
+
+**Rationale:** Decouples the WebSocket connection from the agent loop. The daemon
+writes to the queue; the loop reads from it. This is the mechanism that makes
+prime directive §2.5 ("the daemon owns sessions; the window is only a viewer")
+concrete — the loop never blocks on a socket.
+
+### 4. Message list copy in provider requests
+
+**Decision:** `_stream_turn` copies the messages list before passing it to the
+provider.
+
+**Rationale:** The loop mutates the messages list after the provider call
+(appending the assistant response). Without a copy, the provider would see
+post-stream mutations in its stored request, producing confusing aliasing bugs
+in the audit trail and tests.
+
+### 5. Deviation from REUSE.md
+
+The tst-cua loop structure is `plan → gate → act → verify → reconcile`. TD-401
+implements `plan → act → record` with placeholders for `gate` (decision
+classifier, E7) and `verify` (validator tier, E8). This is not a deviation from
+the intent — the REUSE.md explicitly identifies these as later stories and the
+current structure is a correct subset. The full structure is assembled
+incrementally across TD-402, TD-403, E7, and E8.
+
+
+
 ## 2026-08-12 — TD-306: Resilience
 
 Decisions made during resilience implementation.
