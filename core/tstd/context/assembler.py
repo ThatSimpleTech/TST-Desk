@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -119,6 +120,7 @@ class ContextAssembler:
         self,
         workspace_path: str | Path,
         matched_paths: set[str] | None = None,
+        source_filter: Callable[[SteeringSource], bool] | None = None,
     ) -> AssembledSteering:
         """Resolve and assemble steering for *workspace_path*.
 
@@ -127,16 +129,25 @@ class ContextAssembler:
             matched_paths: Set of workspace-relative paths the session
                 has touched.  Path-scoped rules whose globs match none
                 of these are excluded from the block.
+            source_filter: Optional predicate that selects which
+                steering sources to include in the block and in the
+                ``sources`` list.  Sources that fail the filter are
+                skipped entirely (no import processing, no rendering).
+                Used by the validator tier (TD-508) to select only
+                standards/conventions rules.
 
         Runs the filesystem work in a worker thread so the event loop
         is never blocked (AGENTS.md §6).
         """
-        return await asyncio.to_thread(self.assemble_sync, workspace_path, matched_paths)
+        return await asyncio.to_thread(
+            self.assemble_sync, workspace_path, matched_paths, source_filter
+        )
 
     def assemble_sync(
         self,
         workspace_path: str | Path,
         matched_paths: set[str] | None = None,
+        source_filter: Callable[[SteeringSource], bool] | None = None,
     ) -> AssembledSteering:
         """Synchronous variant of :meth:`assemble` (tests, CLI)."""
         sources = self._resolver.resolve(workspace_path)
@@ -144,6 +155,8 @@ class ContextAssembler:
         parts: list[str] = []
         all_issues: list[str] = []
         for source in sources:
+            if source_filter is not None and not source_filter(source):
+                continue  # not part of this tier's context (TD-508)
             content = self._read(source.path)
             if content is None:
                 continue  # missing or unreadable → not an error
