@@ -81,7 +81,9 @@ class MockProvider:
     """In-process provider that returns scripted responses.
 
     Scripts are keyed by model name. An optional default script handles any
-    model without an explicit script.
+    model without an explicit script.  An optional sequence of scripts per
+    model plays one script per call in order, then falls back to the
+    regular script/default (useful for tool-call round-trip tests).
 
     Usage::
 
@@ -90,15 +92,28 @@ class MockProvider:
             default=Script(kind="stream", content="Default reply"),
         )
         response = await mock.chat_completion(ChatCompletionRequest(...))
+
+        # Deterministic multi-call sequence:
+        mock = MockProvider(
+            sequences={
+                "brain": [
+                    Script(kind="tool_call", tool_name="echo", tool_arguments='{"m": "x"}'),
+                    Script(kind="stream", content="Done"),
+                ]
+            }
+        )
     """
 
     def __init__(
         self,
         scripts: Mapping[str, Script] | None = None,
         default: Script | None = None,
+        sequences: Mapping[str, list[Script]] | None = None,
     ) -> None:
         self._scripts: dict[str, Script] = dict(scripts or {})
         self._default = default or Script(kind="text", content="Hello from mock provider")
+        self._sequences: dict[str, list[Script]] = dict(sequences or {})
+        self._seq_pos: dict[str, int] = {}
         # Every request is recorded so tests can assert what was sent.
         self.calls: list[ChatCompletionRequest] = []
         # Per-model call counter for fail_times support.
@@ -109,6 +124,13 @@ class MockProvider:
         self._scripts[model] = script
 
     def _script_for(self, model: str) -> Script:
+        # A sequence plays one script per call, in order.
+        seq = self._sequences.get(model)
+        if seq is not None:
+            pos = self._seq_pos.get(model, 0)
+            if pos < len(seq):
+                self._seq_pos[model] = pos + 1
+                return seq[pos]
         return self._scripts.get(model, self._default)
 
     async def chat_completion(
