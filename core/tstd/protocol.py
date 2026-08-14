@@ -173,6 +173,18 @@ class GetInstructionStack(ClientMessage):
     session_id: str
 
 
+class Shutdown(ClientMessage):
+    """Ask the daemon to shut down cleanly (sent by the supervising host)."""
+
+    type: Literal["shutdown"] = "shutdown"
+
+
+class ListSessions(ClientMessage):
+    """Request the current session list (id, workspace, state, timestamps)."""
+
+    type: Literal["list_sessions"] = "list_sessions"
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -190,7 +202,15 @@ class SessionState(DaemonEvent):
 
     type: Literal["session_state"] = "session_state"
     session_id: str
-    state: Literal["idle", "running", "awaiting_approval", "complete", "failed", "cancelled"]
+    state: Literal[
+        "idle",
+        "running",
+        "awaiting_approval",
+        "complete",
+        "failed",
+        "cancelled",
+        "interrupted",
+    ]
     reason: str | None = None
 
 
@@ -346,6 +366,37 @@ class InstructionStack(DaemonEvent):
     token_method: str
 
 
+class SessionSummary(BaseModel):
+    """One entry in a ``session_list`` response."""
+
+    session_id: str
+    workspace_path: str
+    state: Literal[
+        "idle",
+        "running",
+        "awaiting_approval",
+        "complete",
+        "failed",
+        "cancelled",
+        "interrupted",
+    ]
+    created_at: str
+    updated_at: str
+    event_count: int = Field(ge=0)
+
+
+class SessionList(DaemonEvent):
+    """Response to ``list_sessions``: the current session list.
+
+    Connection-scoped (like ``ready``), so its seq is fixed at 1 rather than
+    riding the session log.
+    """
+
+    type: Literal["session_list"] = "session_list"
+    seq: int = 1
+    sessions: list[SessionSummary] = Field(default_factory=list)
+
+
 class Error(DaemonEvent):
     """A typed error, usually in response to a bad message."""
 
@@ -367,7 +418,9 @@ ClientMessageT = Annotated[
     | Attach
     | Detach
     | SetTier
-    | GetInstructionStack,
+    | GetInstructionStack
+    | Shutdown
+    | ListSessions,
     Field(discriminator="type"),
 ]
 
@@ -386,6 +439,7 @@ DaemonEventT = Annotated[
     | ContextCompacted
     | SteeringReloaded
     | InstructionStack
+    | SessionList
     | Error,
     Field(discriminator="type"),
 ]
@@ -406,6 +460,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "detach",
         "set_tier",
         "get_instruction_stack",
+        "shutdown",
+        "list_sessions",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -424,6 +480,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "context_compacted",
         "steering_reloaded",
         "instruction_stack",
+        "session_list",
         "error",
     }
 )

@@ -126,6 +126,9 @@ class Session:
         "complete": set(),
         "failed": set(),
         "cancelled": set(),
+        # `interrupted` is a terminal tombstone: the daemon died while the
+        # session was alive. No event log survived, so it can never resume.
+        "interrupted": set(),
     }
 
     def __init__(self, workspace_path: str) -> None:
@@ -135,6 +138,25 @@ class Session:
         self.event_log = SessionEventLog()
         self._cancel_event = asyncio.Event()
         self._user_message_queue: asyncio.Queue[str] = asyncio.Queue()
+
+    @classmethod
+    def restore(
+        cls,
+        session_id: str,
+        workspace_path: str,
+        state: str = "interrupted",
+    ) -> Session:
+        """Recreate a session tombstone after a daemon restart (TD-1002).
+
+        The persisted registry knows the session existed and its workspace,
+        but the in-memory event log did not survive, so the loop can never
+        resume. A session that was terminal before the crash keeps its
+        terminal ``state``; anything still alive comes back ``interrupted``.
+        """
+        session = cls(workspace_path)
+        session.id = session_id
+        session._state = state
+        return session
 
     @property
     def state(self) -> str:
@@ -318,6 +340,22 @@ class SessionRegistry:
                 }
             },
         )
+        return session
+
+    async def restore(
+        self,
+        session_id: str,
+        workspace_path: str,
+        state: str = "interrupted",
+    ) -> Session:
+        """Re-insert a persisted session tombstone after a restart (TD-1002).
+
+        The session gets no runner — there is no event log to resume and
+        nothing to supervise.
+        """
+        session = Session.restore(session_id, workspace_path, state)
+        async with self._lock:
+            self._sessions[session.id] = session
         return session
 
     async def register_runner(self, session_id: str, runner: SessionRunner) -> None:

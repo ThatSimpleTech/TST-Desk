@@ -1168,3 +1168,83 @@ input (`ui/build`). adapter-static emits a prerendered `index.html` plus a
 fallback shell — all the webview needs. The UI has no server runtime by design
 (AGENTS.md §1), so nothing is lost by dropping SSR. adapter-static is
 first-party and MIT-licensed.
+
+---
+
+## 2026-08-13 — TD-1002: Daemon supervision
+
+Class B — recorded per AGENTS.md §5.
+
+### 1. Spawn resolution order
+
+**Decision:** `$TSTD_PATH` env → `tstd` on PATH (`which` crate) → dev/`debug_assertions`
+fallback. The fallback prefers the core venv's `tstd` script directly
+(`../core/.venv/bin/tstd`), and only falls back to `uv run --directory ../core tstd` if that
+is absent.
+
+**Rationale:** `uv run` inserts a wrapper process: the daemon becomes a *grandchild*, so its
+port-file `pid` never matches the host's direct child pid, which breaks pid-keyed stale-file
+detection. Spawning the shebang script directly keeps the daemon pid = the host's child. This
+was caught by the `daemon_supervision` integration test (port file pid 3983 vs uv pid 3981).
+
+### 2. Port-file hygiene
+
+**Decision:** `port.json` carries `{port, token, pid}`, written atomically (tmp + rename, mode
+0600), deleted on clean stop. The host waits for a file whose embedded `pid` equals the child
+it spawned.
+
+**Rationale:** After a SIGKILL crash the old port file lingers; mere existence is not "the new
+daemon is up." Keying on pid (or better, the fresh token) closes that race. Mirrors the Python
+integration test's pid-keyed wait.
+
+### 3. Graceful shutdown is one cross-platform path
+
+**Decision:** A new client message `{"type":"shutdown"}` makes the daemon stop cleanly (exit
+0, port file removed). The host falls back to `SIGKILL` after a 5 s grace.
+
+**Rationale:** A single WS shutdown path avoids SIGTERM-works-only-on-Unix and stdin-EOF
+platform splits. The host does not await a WS close-ack after sending `shutdown` — the daemon
+tears down the connection during its own shutdown, so a close handshake can race into a hang.
+
+### 4. Host quit paths (macOS)
+
+**Decision:** Intercept the X-button via `CloseRequested` + `api.prevent_close()` → async
+clean shutdown → `app.exit(0)`, with a `TODO(v0.3)` marker for detached sessions. The catch-all
+is `RunEvent::Exit` (best-effort synchronous kill by pid), NOT `ExitRequested`, which macOS
+raising semantics make unreliable.
+
+**Rationale:** Tauri 2 does not reliably raise `ExitRequested` on Cmd+Q/dock quit
+(tauri#13778/#9198). The daemon's own `--parent-pid` watchdog is the real no-orphan guarantee
+for force-quit; the host kill is best-effort window-closing.
+
+### 5. Orphan prevention is daemon-side
+
+**Decision:** `--parent-pid` flag; a watchdog task polls host liveness (POSIX `os.kill(pid,0)`,
+Windows `ctypes` OpenProcess) 1×/s and shuts down if the host dies.
+
+**Rationale:** Only a daemon-side watchdog survives `kill -9` of the host; no destructor or
+`RunEvent` on the host does.
+
+### 6. Session persistence for restart
+
+**Decision:** `sessions.json` snapshot in the data dir (atomic, 0600). Non-terminal sessions
+rehydrate as new state `interrupted`. New protocol pair `list_sessions` → `session_list`.
+
+**Rationale:** UI rule "never derives truth it wasn't given" forces daemon-side persistence.
+Durable event log is explicitly v0.3 (TD-205); v0.1 persists only the registry list, and
+rehydrated live sessions are tombstones.
+
+### 7. Platform + packaging scope
+
+**Decision:** macOS-only for this story. Windows/Linux build, packaging, and manual
+no-orphan verification are deferred to the packaging milestone.
+
+**Rationale:** User decision: develop now, package later. The watchdog and shutdown code are
+written cross-platform, so the packaging pass needs to confirm, not redesign.
+
+### 8. Verification documentation
+
+**Decision:** No new verification `.md`. TD-1002's acceptance checkboxes are ticked in
+`docs/tst-desk-backlog.md` with a completion note.
+
+**Rationale:** User instruction: the backlog is where completed-story notes go.

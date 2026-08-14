@@ -9,11 +9,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import os
 import signal
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import websockets.exceptions
 
@@ -26,16 +27,25 @@ from .protocol import (
     Attach,
     Cancel,
     ClientMessageT,
+    DaemonEvent,
     Detach,
     HandshakeError,
+    ListSessions,
     OpenWorkspace,
+    SessionList,
+    SessionSummary,
+    Shutdown,
     UserMessage,
     build_error,
     parse_client_message,
 )
+from .protocol import (
+    SessionState as SessionStateEvent,
+)
 from .provider import ProviderClient
 from .router import TierRouter
-from .session import Session, SessionRegistry, SessionRunner
+from .session import Session, SessionEventLog, SessionRegistry, SessionRunner
+from .session_store import SessionStore
 from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
@@ -53,6 +63,45 @@ class DaemonState:
         return time.time() - self.started_at
 
 
+def _parent_alive(pid: int) -> bool:
+    """Return True if the process with the given PID is alive.
+
+    Used by the orphan-prevention watchdog. Kept cross-platform even though
+    this story exercises macOS only:
+      - POSIX: ``os.kill(pid, 0)`` probes liveness without signalling.
+      - Windows: a limited OpenProcess probe (best-effort).
+    """
+    if os.name == "nt":
+        return _win_parent_alive(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Exists but not ours — still alive.
+        return True
+    return True
+
+
+def _win_parent_alive(pid: int) -> bool:
+    """Probe a Windows process with a limited-query handle (best-effort)."""
+    try:
+        import ctypes
+
+        process_query_limited = 0x1000
+        # ``ctypes.windll`` exists only on Windows; mypy's macOS stubs omit it.
+        handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[attr-defined]
+            process_query_limited, False, pid
+        )
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        return True
+    except Exception:
+        # Degrade to "alive" so a watchdog bug never spuriously kills us.
+        return True
+
+
 class Daemon:
     """Async daemon process with clean startup and shutdown.
 
@@ -65,17 +114,22 @@ class Daemon:
         self,
         data_dir: Path | None = None,
         provider: ProviderClient | None = None,
+        parent_pid: int | None = None,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
         self._tasks: list[asyncio.Task[Any]] = []
         self.session_registry = SessionRegistry()
+        self._session_store = SessionStore(self.data_dir)
         self.config = cached_config()
         self._provider = provider
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
         self._audit_writer: AuditWriter | None = None
+        # When set, a watchdog task shuts the daemon down if this host dies.
+        self._parent_pid = parent_pid
+        self._parent_poll_interval = 1.0
         # session_id -> set of attached connections
         self._attached_clients: dict[str, set[Any]] = {}
         # (connection, session_id) -> streaming task
@@ -107,10 +161,20 @@ class Daemon:
         # Ensure data directory exists
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
+        # Rehydrate the session list from the durable snapshot before we
+        # start serving, so a client connecting after a crash sees the
+        # same sessions it had (marked interrupted where they were live).
+        await self._restore_sessions()
+
         # Register signal handlers
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self._on_signal)
+
+        # If the host told us its PID, watch it: if the host dies (including
+        # by force-quit) we must not become an orphan.
+        if self._parent_pid is not None:
+            self._tasks.append(asyncio.create_task(self._parent_watchdog(self._parent_pid)))
 
         # Start subsystems
         try:
@@ -136,10 +200,25 @@ class Daemon:
         """Graceful shutdown: cancel tasks, close sockets, flush state."""
         log.info("shutting down")
 
-        # Stop the WebSocket server
+        # Stop the WebSocket server (closes clients and removes the port file)
         await self.ws_server.stop()
 
-        # Cancel all running tasks
+        # Stop session loops
+        sessions = await self.session_registry.list_sessions()
+        for session in sessions:
+            runner = self.session_registry.get_runner(session.id)
+            if runner is not None:
+                await runner.cancel()
+
+        # Cancel streaming tasks
+        for task in list(self._streaming_tasks.values()):
+            if not task.done():
+                task.cancel()
+        if self._streaming_tasks:
+            await asyncio.gather(*self._streaming_tasks.values(), return_exceptions=True)
+            self._streaming_tasks.clear()
+
+        # Cancel remaining daemon tasks (e.g. the parent watchdog)
         for task in self._tasks:
             task.cancel()
         if self._tasks:
@@ -157,6 +236,50 @@ class Daemon:
         """Handle OS signals for graceful shutdown."""
         log.info("signal received")
         self._shutdown_event.set()
+
+    async def _restore_sessions(self) -> None:
+        """Rehydrate the registry from the durable session snapshot.
+
+        Sessions that were terminal when the daemon last ran keep their
+        terminal state; anything still alive is marked ``interrupted`` (its
+        event log did not survive, so it can never resume).
+        """
+        terminal = {"complete", "failed", "cancelled"}
+        for record in self._session_store.records():
+            final_state = record.state if record.state in terminal else "interrupted"
+            await self.session_registry.restore(
+                record.session_id, record.workspace_path, final_state
+            )
+            if final_state != record.state:
+                await self._session_store.update_state(record.session_id, final_state)
+            log.info(
+                "restored session",
+                extra={
+                    "extra_fields": {
+                        "session_id": record.session_id,
+                        "state": final_state,
+                    }
+                },
+            )
+
+    async def _parent_watchdog(self, parent_pid: int) -> None:
+        """Poll the host's liveness and shut down if it dies (TD-1002).
+
+        The host can be force-killed in a way no destructor catches, so the
+        daemon must notice on its own. ``--parent-pid`` is the contract that
+        makes this testable without the real Tauri host.
+        """
+        while not self._shutdown_event.is_set():
+            if not _parent_alive(parent_pid):
+                log.warning("parent process gone, shutting down to avoid orphan")
+                self._shutdown_event.set()
+                return
+            await asyncio.sleep(self._parent_poll_interval)
+
+    async def _on_session_event(self, event: DaemonEvent, _log: SessionEventLog) -> None:
+        """Persist session state transitions so the list survives restart."""
+        if isinstance(event, SessionStateEvent):
+            await self._session_store.update_state(event.session_id, event.state)
 
     @staticmethod
     def _version() -> str:
@@ -177,6 +300,11 @@ class Daemon:
 
         if isinstance(msg, OpenWorkspace):
             sess = await self.session_registry.create(msg.path)
+            # Persist the new session and keep its state durable going forward.
+            await self._session_store.upsert(sess.id, msg.path, sess.state)
+            # Bound method vs the ``__call__``-shaped EventSubscriber protocol:
+            # mypy can't confirm the shapes line up, though they are identical.
+            sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
             router = TierRouter()
 
             # Provider is created lazily via a factory closure so that
@@ -259,6 +387,14 @@ class Daemon:
         if isinstance(msg, Detach):
             return await self._handle_detach(msg, _connection)
 
+        if isinstance(msg, ListSessions):
+            return await self._handle_list_sessions()
+
+        if isinstance(msg, Shutdown):
+            log.info("shutdown requested via websocket")
+            self._shutdown_event.set()
+            return None
+
         return None
 
     async def _handle_attach(self, msg: Attach, session: Session, connection: Any) -> str | None:
@@ -293,6 +429,23 @@ class Daemon:
         task = asyncio.create_task(_stream())
         self._streaming_tasks[conn_key] = task
         return None
+
+    async def _handle_list_sessions(self) -> str:
+        """Build the durable session list as a ``session_list`` event."""
+        summaries: list[SessionSummary] = []
+        for record in self._session_store.records():
+            sess = self.session_registry.get(record.session_id)
+            summaries.append(
+                SessionSummary(
+                    session_id=record.session_id,
+                    workspace_path=record.workspace_path,
+                    state=cast(Any, record.state),
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                    event_count=sess.event_log.last_seq if sess else 0,
+                )
+            )
+        return SessionList(seq=1, sessions=summaries).model_dump_json()
 
     async def _handle_detach(self, msg: Detach, connection: Any) -> str | None:
         """Handle a detach: stop streaming without affecting the session."""
@@ -345,13 +498,20 @@ def main() -> None:
         help="Log level (DEBUG, INFO, WARNING, ERROR)",
     )
     parser.add_argument("--data-dir", default=None, help="Override the user data directory")
+    parser.add_argument(
+        "--parent-pid",
+        type=int,
+        default=None,
+        help="Host process PID to watch: if it exits, the daemon shuts down "
+        "instead of becoming an orphan (set by the Tauri host).",
+    )
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir) if args.data_dir else None
     setup_logging(level=args.log_level)
 
     async def _run() -> None:
-        daemon = Daemon(data_dir=data_dir)
+        daemon = Daemon(data_dir=data_dir, parent_pid=args.parent_pid)
         await daemon.run()
 
     with contextlib.suppress(KeyboardInterrupt):
