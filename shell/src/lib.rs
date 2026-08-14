@@ -21,6 +21,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        // TD-1201: the stack panel opens resolved steering files in the
+        // system editor. Paths come from the daemon's assembled stack.
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
