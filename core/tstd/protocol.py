@@ -16,6 +16,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from .logging import redact_secrets
+
 # Current protocol version
 PROTOCOL_VERSION = 1
 MIN_PROTOCOL_VERSION = 1
@@ -581,8 +583,13 @@ def build_hello_ack() -> str:
 
 
 def build_error(code: str, message: str) -> str:
-    """Build a typed error message."""
-    return json.dumps({"type": "error", "code": code, "message": message})
+    """Build a typed error message.
+
+    The message passes through the shared redaction chokepoint (TD-1405):
+    this envelope bypasses the event log — it is written straight to the
+    socket — so it must scrub here rather than rely on ``event_log.add``.
+    """
+    return json.dumps({"type": "error", "code": code, "message": redact_secrets(message)})
 
 
 def validate_hello(hello: Hello) -> None:

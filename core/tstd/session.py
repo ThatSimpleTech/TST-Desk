@@ -13,8 +13,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any, ClassVar, Protocol, cast
 
 from .boundary_config import BoundaryConfig
-from .logging import get_logger
-from .protocol import DaemonEvent
+from .logging import get_logger, redact_secrets, redact_structure
+from .protocol import DaemonEvent, Error, ShellOutput, ToolCall, ToolResult
 from .protocol import SessionState as SessionStateEvent
 
 log = get_logger("tstd.session")
@@ -22,6 +22,31 @@ log = get_logger("tstd.session")
 
 class SessionError(Exception):
     """Session-related error."""
+
+
+def _redact_event(event: DaemonEvent) -> DaemonEvent:
+    """Scrub secret-shaped text before an event is stored or broadcast (TD-1405).
+
+    The event log is the single pipeline feeding client replay, the
+    WebSocket broadcast, and the audit writer — redacting at insertion
+    covers all three at once.  The model's conversation is built from
+    dispatch results, not logged events, so execution is unaffected, and
+    the caller's own event object is left untouched (a copy is stored).
+    """
+    if isinstance(event, ToolCall):
+        return event.model_copy(update={"arguments": redact_structure(event.arguments)})
+    if isinstance(event, ToolResult):
+        update: dict[str, Any] = {"output": redact_secrets(event.output)}
+        if event.diff is not None:
+            update["diff"] = redact_secrets(event.diff)
+        return event.model_copy(update=update)
+    if isinstance(event, ShellOutput):
+        return event.model_copy(update={"chunk": redact_secrets(event.chunk)})
+    if isinstance(event, Error):
+        return event.model_copy(update={"message": redact_secrets(event.message)})
+    if isinstance(event, SessionStateEvent) and event.reason is not None:
+        return event.model_copy(update={"reason": redact_secrets(event.reason)})
+    return event
 
 
 # ── Event log ──────────────────────────────────────────────────────────
@@ -68,6 +93,7 @@ class SessionEventLog:
         Returns:
             The event with its seq set, for convenience.
         """
+        event = _redact_event(event)
         async with self._lock:
             self._seq += 1
             # Pydantic v2 allows attribute assignment on non-frozen models
