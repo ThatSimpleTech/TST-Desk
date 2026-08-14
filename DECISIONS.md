@@ -2455,3 +2455,45 @@ component, and CI never sets the flag, so gate mode is the default. The
 app tree stays browser-typed; the recorder's node fs access sits behind a
 four-line ambient shim (``node-test-shims.d.ts``) rather than pulling
 @types/node into the project for one script-like test.
+
+## 2026-08-14 — TD-1202: Decisions ledger panel
+
+### 1. No new wire — the stream already carries everything
+
+**Decision:** the panel filters ``decision_logged`` (TD-704) out of the
+existing session stream on the client; per-session scoping, class
+filtering, and the revert command are all computed client-side. The undo
+command is derived — ``git revert <sha>`` — exactly as the ledger writer
+computes it in ``core/tstd/autonomy/ledger.py``, so the copy matches the
+markdown.
+
+**Rationale:** TD-704 put class/what/why/commit on the event precisely so
+reviewers would not need a second channel. A ``list_decisions`` verb would
+re-implement replay the client already gets from attach.
+
+### 2. Density is the interface
+
+**Decision:** one line per decision — class chip, ``what``, short SHA —
+with click-to-expand for the ``why`` and the revert button. Class filter
+chips (A/B/C/All) sit in the header. The AC's "under a minute for a full
+session of Class A" is met structurally: the A filter is one click and
+each row costs a glance.
+
+**Rationale:** Any design that shows rationale by default turns the
+scannable list back into prose. The A/B/C classes exist to be a filter,
+not a label.
+
+### 3. Link-out via a zero-dep shell command, with a path fallback
+
+**Decision:** the panel opens ``<workspace>/.tst/autonomy/DECISIONS.md``
+through a new ``open_path`` Tauri command (``open`` / ``cmd /c start`` /
+``xdg-open`` — no plugin added, no capability change). In a bare browser
+(dev), the click falls back to copying the path. The relative ledger
+location is a house constant mirrored from ``autonomy/ledger.py`` and
+pinned by a test on the value.
+
+**Rationale:** ``@tauri-apps/plugin-opener`` would drag a Rust + JS
+dependency and a capabilities row through packaging for one click; the
+std-command spelling is fifteen lines and covers the three CI platforms.
+The path-always-visible footer means the fallback never leaves the user
+without the destination.

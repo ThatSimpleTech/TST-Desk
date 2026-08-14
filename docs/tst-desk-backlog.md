@@ -1083,12 +1083,12 @@ Tauri window once TD-1004's chat pane drives real turns.
 **Size:** 3 · **Depends on:** TD-704, TD-1003
 
 **Acceptance criteria:**
-- [ ] Session decisions listed with class, choice, rationale, and commit
-- [ ] Filterable by class
-- [ ] Each entry offers a copyable revert command
-- [ ] **Reviewing a full session of Class A decisions takes under a minute** — the density
+- [x] Session decisions listed with class, choice, rationale, and commit
+- [x] Filterable by class
+- [x] Each entry offers a copyable revert command
+- [x] **Reviewing a full session of Class A decisions takes under a minute** — the density
       target that makes the whole autonomy trade work
-- [ ] Links out to the markdown ledger file
+- [x] Links out to the markdown ledger file
 
 ---
 
