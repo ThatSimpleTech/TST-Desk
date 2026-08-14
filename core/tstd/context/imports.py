@@ -91,6 +91,19 @@ def _resolve_path(raw: str, base_dir: Path, home_dir: Path) -> Path:
     return (base_dir / p).resolve()
 
 
+def _is_outside(path: Path, workspace: Path) -> bool:
+    """Return ``True`` when *path* is not within *workspace*.
+
+    Both paths must already be absolute and resolved so the comparison is
+    canonical (TD-602 orders every path check this way).
+    """
+    try:
+        path.relative_to(workspace)
+        return False
+    except ValueError:
+        return True
+
+
 def _collect_issues(imports: tuple[ImportDirective, ...]) -> list[str]:
     """Flatten all issues from an import tree into a single list."""
     issues: list[str] = []
@@ -106,6 +119,11 @@ def process_imports(
     source_path: Path,
     home_dir: Path,
     chain: tuple[Path, ...] = (),
+    *,
+    workspace_path: Path | None = None,
+    approved: frozenset[Path] = frozenset(),
+    denied: frozenset[Path] = frozenset(),
+    pending: set[Path] | None = None,
 ) -> tuple[str, tuple[ImportDirective, ...], list[str]]:
     """Process import directives in *content*.
 
@@ -117,6 +135,19 @@ def process_imports(
         home_dir: Home directory for ``~`` expansion.
         chain: Tuple of absolute paths currently in the import chain
             (for cycle detection).  Empty for the top-level call.
+        workspace_path: Absolute, resolved workspace root.  When set,
+            imports resolving outside it are gated (TD-505): approved
+            paths are read, denied paths are omitted with a warning, and
+            everything else is collected in *pending* and omitted until
+            the loop resolves approval.  ``None`` disables the gate
+            (backward-compatible with direct resolution tests).
+        approved: Absolute paths of external imports the user has already
+            approved for this workspace.
+        denied: Absolute paths of external imports the user denied this
+            session.  They are omitted and not re-prompted.
+        pending: Mutable set that collects external-import paths awaiting
+            approval.  Shared across recursive calls so a nested import
+            discovered after an approval is still surfaced to the loop.
 
     Returns:
         ``(processed_content, imports, issues)``:
@@ -129,6 +160,8 @@ def process_imports(
     out_lines: list[str] = []
     import_list: list[ImportDirective] = []
     all_issues: list[str] = []
+    if pending is None:
+        pending = set()
 
     for _, line, in_fence in lines:
         if in_fence:
@@ -176,6 +209,32 @@ def process_imports(
             out_lines.append(f"<!-- max import depth {MAX_IMPORT_DEPTH} exceeded: {full_chain} -->")
             continue
 
+        # ── External-import gate (TD-505) ───────────────────────────
+        # An import resolving outside the workspace is an untrusted-file
+        # read (Class C).  Approved paths read normally; denied paths are
+        # omitted with a warning; anything else is omitted and collected
+        # in *pending* for the loop to raise an approval request.  A
+        # missing external file is "not found", not "awaiting approval" —
+        # there is nothing to read, so nothing to approve.
+        if (
+            workspace_path is not None
+            and _is_outside(resolved_path, workspace_path)
+            and resolved_path not in approved
+        ):
+            if resolved_path in denied:
+                issue = f"external import denied: {resolved_path}"
+            elif not resolved_path.exists():
+                issue = f"import file not found: {resolved_path}"
+            else:
+                pending.add(resolved_path)
+                issue = f"external import awaiting approval: {resolved_path}"
+            import_list.append(
+                ImportDirective(path=resolved_path, content=None, issue=issue, depth=depth)
+            )
+            all_issues.append(issue)
+            out_lines.append(f"<!-- {issue} -->")
+            continue
+
         # ── Read the imported file ─────────────────────────────────
         if not resolved_path.exists():
             import_list.append(
@@ -207,7 +266,14 @@ def process_imports(
 
         # ── Recurse for nested imports ─────────────────────────────
         processed, nested, nested_issues = process_imports(
-            imported_content, resolved_path, home_dir, (*chain, resolved_path)
+            imported_content,
+            resolved_path,
+            home_dir,
+            (*chain, resolved_path),
+            workspace_path=workspace_path,
+            approved=approved,
+            denied=denied,
+            pending=pending,
         )
         all_issues.extend(nested_issues)
 

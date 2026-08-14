@@ -37,10 +37,12 @@ class PendingApproval:
 
     Carries the call's tool, arguments, and decision class so the daemon can
     generate the "always allow" rule without re-deriving them (TD-803).
+    ``tool`` is ``None`` for external-import approvals (TD-505), which are
+    class-C and can never be always-allowed.
     """
 
     future: asyncio.Future[tuple[bool, str | None]]
-    tool: Tool
+    tool: Tool | None
     arguments: dict[str, Any]
     decision_class: DecisionClass
 
@@ -307,6 +309,20 @@ class Session:
         if self._state != "awaiting_approval":
             await self.set_state("awaiting_approval", reason=reason)
 
+        return await self._await_approval_resolution(tool_call_id, fut)
+
+    async def _await_approval_resolution(
+        self,
+        tool_call_id: str,
+        fut: asyncio.Future[tuple[bool, str | None]],
+    ) -> ApprovalOutcome:
+        """Await a parked approval with the configured timeout.
+
+        Cleans up the pending record and restores ``running`` when the
+        last approval resolves.  Timeout is treated as a denial (TD-802).
+        Shared by tool-call (TD-802) and external-import (TD-505)
+        approvals.
+        """
         timeout = self.policy.approval_timeout_seconds
         timed_out = False
         try:
@@ -332,6 +348,45 @@ class Session:
                 False, f"Approval timed out after {timeout}s — treated as denial"
             )
         return ApprovalOutcome(False, f"Denied by user: {detail}" if detail else "Denied by user")
+
+    async def request_import_approval(self, path: Path) -> ApprovalOutcome:
+        """Park the session awaiting approval to read an external import (TD-505).
+
+        Reuses the same pending-future machinery as tool-call approvals, so
+        ``approve``/``deny`` from any attached client resolves it and a
+        disconnect leaves it parked.  The ``approval_request`` event carries
+        a synthetic ``tool_call_id`` and ``tool_name="external_import"``; the
+        class is always C (an untrusted-file-read), so ``always_allow`` is
+        never offered.
+        """
+        from .protocol import ApprovalRequest as ApprovalRequestEvent
+
+        tool_call_id = f"external-import:{path}"
+        fut: asyncio.Future[tuple[bool, str | None]] = asyncio.get_running_loop().create_future()
+        self._pending_approvals[tool_call_id] = PendingApproval(
+            future=fut,
+            tool=None,
+            arguments={"path": str(path)},
+            decision_class=DecisionClass.C,
+        )
+        reason = "import from outside the workspace"
+        await self.event_log.add(
+            ApprovalRequestEvent(
+                session_id=self.id,
+                tool_call_id=tool_call_id,
+                tool_name="external_import",
+                arguments={"path": str(path)},
+                decision_class="C",
+                summary=f"Read {path}",
+                reason=reason,
+                proposed_always_allow=None,
+                seq=1,
+            )
+        )
+        if self._state != "awaiting_approval":
+            await self.set_state("awaiting_approval", reason=reason)
+
+        return await self._await_approval_resolution(tool_call_id, fut)
 
     def get_pending_approval(self, tool_call_id: str) -> PendingApproval | None:
         """Return the metadata for a parked approval, or ``None`` if none.

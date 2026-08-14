@@ -93,12 +93,17 @@ class AssembledSteering:
         sources: Every resolved source, lowest → highest precedence.
             Inactive sources are included (for the inspector) but absent
             from the block.
+        import_issues: Flat list of import warnings/errors (TD-504/505).
+        pending_imports: External-import paths awaiting approval (TD-505),
+            deduplicated and sorted for determinism.  The loop raises an
+            approval request for each before the turn proceeds.
     """
 
     block: str
     sources: list[ResolvedSource]
     import_issues: tuple[str, ...] = ()
     total_tokens: TokenCount = field(default_factory=lambda: TokenCount(count=0, method=""))
+    pending_imports: tuple[Path, ...] = ()
 
 
 class ContextAssembler:
@@ -121,6 +126,8 @@ class ContextAssembler:
         workspace_path: str | Path,
         matched_paths: set[str] | None = None,
         source_filter: Callable[[SteeringSource], bool] | None = None,
+        approved_imports: frozenset[Path] = frozenset(),
+        denied_imports: frozenset[Path] = frozenset(),
     ) -> AssembledSteering:
         """Resolve and assemble steering for *workspace_path*.
 
@@ -135,12 +142,22 @@ class ContextAssembler:
                 skipped entirely (no import processing, no rendering).
                 Used by the validator tier (TD-508) to select only
                 standards/conventions rules.
+            approved_imports: External-import paths the user has approved
+                for this workspace (TD-505).  Passed through to import
+                resolution.
+            denied_imports: External-import paths denied this session
+                (TD-505).  Passed through to import resolution.
 
         Runs the filesystem work in a worker thread so the event loop
         is never blocked (AGENTS.md §6).
         """
         return await asyncio.to_thread(
-            self.assemble_sync, workspace_path, matched_paths, source_filter
+            self.assemble_sync,
+            workspace_path,
+            matched_paths,
+            source_filter,
+            approved_imports,
+            denied_imports,
         )
 
     def assemble_sync(
@@ -148,12 +165,16 @@ class ContextAssembler:
         workspace_path: str | Path,
         matched_paths: set[str] | None = None,
         source_filter: Callable[[SteeringSource], bool] | None = None,
+        approved_imports: frozenset[Path] = frozenset(),
+        denied_imports: frozenset[Path] = frozenset(),
     ) -> AssembledSteering:
         """Synchronous variant of :meth:`assemble` (tests, CLI)."""
         sources = self._resolver.resolve(workspace_path)
         resolved: list[ResolvedSource] = []
         parts: list[str] = []
         all_issues: list[str] = []
+        pending: set[Path] = set()
+        workspace_root = Path(workspace_path).resolve()
         for source in sources:
             if source_filter is not None and not source_filter(source):
                 continue  # not part of this tier's context (TD-508)
@@ -183,6 +204,10 @@ class ContextAssembler:
                     body,
                     source.path,
                     home_dir=self._resolver.home_dir,
+                    workspace_path=workspace_root,
+                    approved=approved_imports,
+                    denied=denied_imports,
+                    pending=pending,
                 )
                 all_issues.extend(issues)
 
@@ -215,6 +240,7 @@ class ContextAssembler:
             sources=resolved,
             import_issues=tuple(all_issues),
             total_tokens=self._sum_tokens(resolved),
+            pending_imports=tuple(sorted(pending)),
         )
 
     @staticmethod
