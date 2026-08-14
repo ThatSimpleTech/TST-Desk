@@ -117,13 +117,15 @@ class Session:
 
     State machine:
         idle → running → awaiting_approval → running → complete / failed / cancelled
+        running → paused (cap fault) → running (resume)
     """
 
     # Valid state transitions: current_state → {allowed_next_states}
     VALID_TRANSITIONS: ClassVar[dict[str, set[str]]] = {
         "idle": {"running"},
-        "running": {"awaiting_approval", "complete", "failed", "cancelled"},
+        "running": {"awaiting_approval", "paused", "complete", "failed", "cancelled"},
         "awaiting_approval": {"running", "cancelled"},
+        "paused": {"running", "cancelled"},
         "complete": set(),
         "failed": set(),
         "cancelled": set(),
@@ -136,6 +138,7 @@ class Session:
         self.event_log = SessionEventLog()
         self._cancel_event = asyncio.Event()
         self._user_message_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._resume_event = asyncio.Event()
         # Workspace boundary (TD-706), resolved by the daemon on open.
         self.boundary_config = BoundaryConfig()
 
@@ -168,8 +171,10 @@ class Session:
     async def cancel(self) -> None:
         """Request cancellation of this session."""
         self._cancel_event.set()
-        if self._state in ("running", "awaiting_approval"):
+        if self._state in ("running", "awaiting_approval", "paused"):
             await self.set_state("cancelled", reason="cancelled by user")
+        # Wake a loop parked in wait_for_resume so it observes cancellation.
+        self._resume_event.set()
 
     @property
     def cancel_requested(self) -> bool:
@@ -178,6 +183,31 @@ class Session:
     async def wait_for_cancel(self) -> None:
         """Block until cancellation is requested."""
         await self._cancel_event.wait()
+
+    # ── Cap pause (TD-707) ──────────────────────────────────────────
+
+    async def pause_at_cap(self, reason: str) -> None:
+        """Enter the paused-at-cap state (a fault report, not approval).
+
+        The loop parks in ``wait_for_resume`` until the user raises the
+        cap and the daemon signals ``resume``.
+        """
+        self._resume_event.clear()
+        await self.set_state("paused", reason=reason)
+
+    async def wait_for_resume(self) -> None:
+        """Block until the user resumes the session (or it is cancelled).
+
+        Waits without spinning or polling; the daemon's ``resume``
+        handler signals the event.
+        """
+        await self._resume_event.wait()
+
+    async def resume(self) -> None:
+        """Resume from a cap pause; the loop re-checks caps next call."""
+        self._resume_event.set()
+        if self._state == "paused":
+            await self.set_state("running", reason="resumed after cap adjustment")
 
     # ── User message queue ──────────────────────────────────────────
 

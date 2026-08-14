@@ -136,6 +136,18 @@ class Deny(ClientMessage):
     reason: str | None = None
 
 
+class Resume(ClientMessage):
+    """Resume a session paused at a declared cap (TD-707).
+
+    The user raises the cap (editing ``.tst/config.yaml``) and resumes;
+    the daemon reloads the boundary and the loop re-checks caps before
+    its next model call.
+    """
+
+    type: Literal["resume"] = "resume"
+    session_id: str
+
+
 class Cancel(ClientMessage):
     """Cancel a running session."""
 
@@ -190,7 +202,9 @@ class SessionState(DaemonEvent):
 
     type: Literal["session_state"] = "session_state"
     session_id: str
-    state: Literal["idle", "running", "awaiting_approval", "complete", "failed", "cancelled"]
+    state: Literal[
+        "idle", "running", "awaiting_approval", "paused", "complete", "failed", "cancelled"
+    ]
     reason: str | None = None
 
 
@@ -355,6 +369,7 @@ ClientMessageT = Annotated[
     | UserMessage
     | Approve
     | Deny
+    | Resume
     | Cancel
     | Attach
     | Detach
@@ -392,6 +407,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "user_message",
         "approve",
         "deny",
+        "resume",
         "cancel",
         "attach",
         "detach",

@@ -31,6 +31,7 @@ from tstd.protocol import (
     Hello,
     OpenWorkspace,
     Ready,
+    Resume,
     SessionState,
     SetTier,
     ToolCall,
@@ -47,6 +48,7 @@ FIXTURES = {
     "approve": Approve(session_id="sess-1", tool_call_id="tc-1"),
     "deny": Deny(session_id="sess-1", tool_call_id="tc-1", reason="not safe"),
     "deny_no_reason": Deny(session_id="sess-1", tool_call_id="tc-1"),
+    "resume": Resume(session_id="sess-1"),
     "cancel": Cancel(session_id="sess-1"),
     "attach": Attach(session_id="sess-1", from_seq=5),
     "detach": Detach(session_id="sess-1"),
@@ -55,6 +57,12 @@ FIXTURES = {
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
+    "session_state_paused": SessionState(
+        session_id="sess-1",
+        state="paused",
+        reason="spend cap exceeded: $0.0205 >= $0.01",
+        seq=2,
+    ),
     "assistant_delta": AssistantDelta(session_id="sess-1", delta="Hello ", seq=3),
     "tool_call": ToolCall(
         session_id="sess-1",
