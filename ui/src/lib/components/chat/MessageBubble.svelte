@@ -1,22 +1,38 @@
 <script lang="ts">
-	// One conversation message (TD-1004). Assistant messages render markdown;
-	// user messages render as plain text with newlines preserved. The cursor
-	// marks an assistant message that is still streaming.
+	// One conversation message (TD-1004, restyled TD-1603). Assistant messages
+	// render full-width on the canvas — no bubble, no avatar — with a hairline
+	// opening each new turn. User messages keep a right-aligned warm-tan
+	// bubble at ≈80% max width. The streaming caret takes the accent.
+	// Assistant messages render markdown; user messages render as plain text
+	// with newlines preserved.
 	import type { ChatMessage } from "../../chat-store";
 	import Markdown from "./Markdown.svelte";
 
-	let { message }: { message: ChatMessage } = $props();
+	let {
+		message,
+		first = false,
+	}: {
+		message: ChatMessage;
+		/** First row of the conversation: suppresses the turn hairline. */
+		first?: boolean;
+	} = $props();
 </script>
 
-<div class="row" class:user={message.role === "user"}>
-	<div class="bubble" class:user={message.role === "user"} class:assistant={message.role === "assistant"}>
-		{#if message.role === "assistant"}
+<div
+	class="row"
+	class:user={message.role === "user"}
+	class:turn-start={message.role === "user" && !first}
+>
+	{#if message.role === "assistant"}
+		<div class="assistant-msg">
 			<Markdown text={message.text} />
 			{#if !message.complete}<span class="cursor" aria-hidden="true">▍</span>{/if}
-		{:else}
+		</div>
+	{:else}
+		<div class="bubble">
 			<p class="user-text">{message.text}</p>
-		{/if}
-	</div>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -28,24 +44,28 @@
 		justify-content: flex-end;
 	}
 
+	/* A hairline, not a bubble, marks where one turn ends and the next
+	   begins. */
+	.turn-start {
+		margin-top: var(--space-2);
+		padding-top: var(--space-5);
+		border-top: var(--border-width) solid var(--color-hairline);
+	}
+
+	.assistant-msg {
+		width: 100%;
+		color: var(--color-ink);
+	}
+
 	.bubble {
-		max-width: 85%;
-		padding: var(--space-3) var(--space-4);
+		max-width: 80%;
+		padding: var(--space-2) var(--space-4);
 		border-radius: var(--radius-lg);
+		border-bottom-right-radius: var(--radius-sm);
+		background: var(--color-user-bubble);
+		color: var(--color-ink);
 		font-size: var(--text-base);
 		line-height: var(--leading-normal);
-	}
-
-	.bubble.assistant {
-		color: var(--color-text);
-		background: var(--color-bg-subtle);
-		border-bottom-left-radius: var(--radius-sm);
-	}
-
-	.bubble.user {
-		color: var(--color-accent-text);
-		background: var(--color-accent);
-		border-bottom-right-radius: var(--radius-sm);
 	}
 
 	.user-text {
@@ -55,13 +75,19 @@
 
 	.cursor {
 		display: inline-block;
-		color: var(--color-text-muted);
+		color: var(--color-accent);
 		animation: blink 1s step-start infinite;
 	}
 
 	@keyframes blink {
 		50% {
 			opacity: 0;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.cursor {
+			animation: none;
 		}
 	}
 </style>
