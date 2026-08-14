@@ -5,9 +5,10 @@
 	// order from the daemon, per-file token counts and total come from the
 	// same payload, and the cache badge reports the provider-observed state
 	// (never inferred here — "unknown until a turn runs" is a real answer).
-	// The loop pushes a fresh stack on every steering hot reload (TD-509),
-	// so what you see is live. Clicking a file opens it in the system
-	// editor via tauri-plugin-opener.
+	// The loop pushes a fresh stack when steering changes at a turn
+	// boundary (TD-509), and this view re-queries on mount and session
+	// switch. Clicking a file opens it in the system editor via
+	// tauri-plugin-opener.
 	import { onMount } from 'svelte';
 	import { session } from '../session-status.svelte.js';
 	import { initStack, refreshStack, stack, teardownStack } from '../stack-store.svelte.js';
@@ -57,10 +58,14 @@
 							<span class="chip chip-off">not in prompt</span>
 						{/if}
 						{#if entry.applies_to}
-							<span class="chip" class:chip-on={entry.active} class:chip-off={!entry.active}>
-								{entry.active ? 'matched' : 'unmatched'}
-							</span>
-							<span class="globs" title="appliesTo">{entry.applies_to.join(', ')}</span>
+							<!-- TD-503's touch-tracking is not plumbed yet (no caller
+							     passes matched_paths), so scoped rules are always
+							     loaded. Show prompt membership, not a match verdict;
+							     'matched/unmatched' lands with the tracking. -->
+							{#if entry.active}
+								<span class="chip chip-on">in prompt</span>
+							{/if}
+							<span class="globs" title="appliesTo — path-scoped rule">{entry.applies_to.join(', ')}</span>
 						{/if}
 						{#if entry.subtree}
 							<span class="scope">subtree {entry.subtree}</span>
@@ -69,7 +74,7 @@
 							<span class="chip chip-note">CLAUDE.md fallback</span>
 						{/if}
 						{#if entry.shadowed_path}
-							<span class="shadowed" title={entry.shadowed_path}>
+							<span class="chip chip-note" title={entry.shadowed_path}>
 								shadows {baseName(entry.shadowed_path)}
 							</span>
 						{/if}
