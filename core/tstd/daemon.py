@@ -1061,10 +1061,11 @@ class Daemon:
         """Assemble and answer with the session's current instruction stack.
 
         Direct response, not logged — turn-time snapshots already land in
-        the event log via the steering-reload push (TD-509).  Path-scope
-        matching reflects assembly context: this on-demand assembly has no
-        turn's matched paths, so path-scoped rules show inactive here until
-        a turn snapshot replays (TD-1201 documents the semantics).
+        the event log via the steering-reload push (TD-509).  No production
+        call site passes ``matched_paths`` (TD-503's touch-tracking is not
+        plumbed), so path-scoped rules currently assemble active here and
+        in every push; the panel labels them by prompt membership, not by
+        a match verdict.
         """
         found = self.session_registry.get(msg.session_id)
         if found is None:

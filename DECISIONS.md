@@ -2624,10 +2624,13 @@ UI cannot infer: zero cached tokens is a miss, but before any turn the
 honest answer is "unknown" — so the field is nullable and the panel says
 so rather than implying a miss.
 
-**Path-scope caveat:** on-demand assembly has no ``matched_paths`` (no turn
-is running), so path-scoped rules answer as unmatched. Turn-time and
-hot-reload pushes carry the real flags; the panel reflects whichever it
-last received.
+**Path-scope caveat (corrected at integration):** no production call site
+passes ``matched_paths`` — TD-503's touch-tracking was never plumbed — so
+path-scoped rules assemble active in every response and push, and the
+"unmatched" state is unreachable today. The panel therefore labels scoped
+rules by prompt membership ("in prompt" / "not in prompt"), not by a match
+verdict; "matched/unmatched" and TD-1201's third acceptance criterion land
+with the touch-tracking story.
 
 ### 2. Inspector fields are additive-optional; protocol version unchanged
 
