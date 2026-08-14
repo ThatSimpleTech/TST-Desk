@@ -2009,6 +2009,45 @@ touches the protocol schema, the TS mirror, and the fixture generator. The
 timeline (TD-1005) can render `import_issues` when it consumes assembly
 warnings — a follow-up if a dedicated event is wanted.
 
+### 6. Follow-ups from post-integration verification (same day)
+
+Post-integration verification found four gaps; all but one closed in
+`td/505-import-approval-followups`:
+
+1. **Sticky approval card.** The import approval carries a synthetic
+   `tool_call_id` that never reaches the dispatcher, so no `tool_result`
+   ever paired with it — the approval card stuck and the timeline entry
+   never resolved. `request_import_approval` now emits a `ToolResult`
+   event on resolution: `success` on approve, `error` with
+   `error_code="approval_denied"` on deny/timeout. No UI change needed —
+   the approval store and timeline already key off that pairing.
+2. **Malformed config crashed the loop.** `load_approved_imports` at loop
+   start was unguarded, so one bad `.tst/config.yaml` killed every session
+   at first message. Load now falls back to an empty allowlist with a
+   warning (the daemon's existing tolerate-and-warn pattern), and the
+   same guard wraps the save — a failed write keeps the approval
+   in-memory for the session instead of crashing mid-turn.
+3. **Inspectors ignored the allowlist.** Doctor's steering check and
+   `get_instruction_stack` assembled without the durable allowlist, so
+   approved imports still showed "awaiting approval" in both views. Both
+   now forward it via a shared helper. Denied imports are *not*
+   forwarded: denials are session-scoped by design and the inspectors are
+   workspace-scoped views — "would prompt on a new session" is the honest
+   durable answer.
+4. **Comment-destroying config save** (not fixed): `save_approved_imports`
+   round-trips through `yaml.safe_load`/`safe_dump`, discarding comments
+   and formatting — systemic to `save_policy` too. Deferred as its own
+   story.
+
+**Swap-attack tradeoff (documenting, not changing).** The allowlist is
+path-only: a file approved once can later be *replaced* (different content,
+same path) without re-prompting. A content-hashed allowlist would
+re-prompt on any change — safer, but it re-prompts on every legitimate
+edit too, which trains users to rubber-stamp. Path-only matches how the
+rest of the file-based trust model works (steering files themselves are
+read fresh every turn without hashing). Recorded here so the tradeoff is
+visible; revisit if threat models change.
+
 ## 2026-08-14 — TD-1005: Activity timeline
 
 Class B — recorded per AGENTS.md §5.

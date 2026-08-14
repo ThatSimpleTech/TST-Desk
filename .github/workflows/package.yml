@@ -86,6 +86,15 @@ jobs:
           kill $PID || true
           test -f "$DATA/port.json"
           ls shell/target/release/bundle/dmg/*.dmg
+          # TD-1301 AC: launches with no Python installed. Scrub PATH to an
+          # empty dir for the sidecar process only — a PyInstaller binary
+          # must serve with zero interpreters reachable.
+          NOPATH=$(mktemp -d)
+          DATA2=$(mktemp -d)
+          env -i PATH="$NOPATH" "$SIDECAR" --data-dir "$DATA2" --log-level INFO & PID2=$!
+          for i in $(seq 1 100); do [ -f "$DATA2/port.json" ] && break; sleep 0.1; done
+          kill $PID2 || true
+          test -f "$DATA2/port.json"
 
       - name: Smoke the bundled sidecar (Linux)
         if: runner.os == 'Linux'
@@ -103,6 +112,15 @@ jobs:
           for i in $(seq 1 100); do [ -f "$DATA/port.json" ] && break; sleep 0.1; done
           kill $PID || true
           test -f "$DATA/port.json"
+          # TD-1301 AC: the bare ubuntu image ships no Python at all — the
+          # strictest no-Python machine available in CI.
+          docker run --rm -v "$PWD/extracted:/app:ro" ubuntu:22.04 sh -c '
+            DATA=$(mktemp -d)
+            /app/usr/bin/tstd --data-dir "$DATA" --log-level INFO & PID=$!
+            for i in $(seq 1 100); do [ -f "$DATA/port.json" ] && break; sleep 0.1; done
+            kill $PID || true
+            test -f "$DATA/port.json"
+          '
 
       - name: Smoke the bundled sidecar (Windows)
         if: runner.os == 'Windows'
@@ -121,6 +139,17 @@ jobs:
           Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           if (-not (Test-Path (Join-Path $data "port.json"))) { throw "bundled sidecar did not serve" }
           Get-ChildItem shell/target/release/bundle/msi/*.msi
+          # TD-1301 AC: relaunch with PATH reduced to System32 so no Python
+          # install is reachable; the bundled runtime must serve anyway.
+          $data2 = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ([guid]::NewGuid()))
+          $savedPath = $env:PATH
+          $env:PATH = "C:\Windows\System32"
+          $proc2 = Start-Process $sidecar.FullName -ArgumentList "--data-dir `"$data2`" --log-level INFO" -PassThru
+          $env:PATH = $savedPath
+          $deadline2 = (Get-Date).AddSeconds(30)
+          while (-not (Test-Path (Join-Path $data2 "port.json")) -and (Get-Date) -lt $deadline2) { Start-Sleep -Milliseconds 100 }
+          Stop-Process -Id $proc2.Id -Force -ErrorAction SilentlyContinue
+          if (-not (Test-Path (Join-Path $data2 "port.json"))) { throw "sidecar did not serve with no Python on PATH" }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
