@@ -11,6 +11,9 @@ import type {
   UserMessage,
   Approve,
   Deny,
+  AlwaysAllow,
+  ListPolicyRules,
+  RevokePolicyRule,
   Resume,
   Cancel,
   Attach,
@@ -37,6 +40,8 @@ import type {
   TierSwitched,
   InstructionStack,
   SessionList,
+  PolicyRules,
+  PolicyRuleSummary,
   Error,
 } from "./protocol";
 
@@ -96,6 +101,27 @@ describe("Client message fixtures match TypeScript types", () => {
     // deny_no_reason has null reason
     const m2 = fixtures.deny_no_reason as Deny;
     expect(m2.reason).toBeNull();
+  });
+
+  it("always_allow", () => {
+    const m = fixtures.always_allow as AlwaysAllow;
+    expect(m.type).toBe("always_allow");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.tool_call_id)).toBe(true);
+  });
+
+  it("list_policy_rules", () => {
+    const m = fixtures.list_policy_rules as ListPolicyRules;
+    expect(m.type).toBe("list_policy_rules");
+    expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("revoke_policy_rule", () => {
+    const m = fixtures.revoke_policy_rule as RevokePolicyRule;
+    expect(m.type).toBe("revoke_policy_rule");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.tool)).toBe(true);
+    expect(isString(m.args)).toBe(true);
   });
 
   it("cancel", () => {
@@ -232,6 +258,28 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("approval_request carries the always-allow proposal", () => {
+    const m = fixtures.approval_request_always_allow as ApprovalRequest;
+    expect(m.type).toBe("approval_request");
+    expect(m.decision_class).toBe("B");
+    const proposal = m.proposed_always_allow as PolicyRuleSummary;
+    expect(isString(proposal.tool)).toBe(true);
+    expect(isString(proposal.args)).toBe(true);
+    expect(proposal.effect).toBe("auto");
+  });
+
+  it("policy_rules", () => {
+    const m = fixtures.policy_rules as PolicyRules;
+    expect(m.type).toBe("policy_rules");
+    expect(Array.isArray(m.rules)).toBe(true);
+    expect(m.rules.length).toBeGreaterThan(0);
+    for (const rule of m.rules) {
+      expect(isString(rule.tool)).toBe(true);
+      expect(isString(rule.args)).toBe(true);
+      expect(["auto", "ask", "never"]).toContain(rule.effect);
+    }
+  });
+
   it("decision_logged", () => {
     const m = fixtures.decision_logged as DecisionLogged;
     expect(m.type).toBe("decision_logged");
@@ -342,7 +390,8 @@ describe("All fixtures have required shape", () => {
   it("every client message has a type field", () => {
     const clientTypes = [
       "hello", "open_workspace", "user_message", "approve", "deny",
-      "deny_no_reason", "cancel", "attach", "detach", "set_tier",
+      "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
+      "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
     ];
     for (const key of clientTypes) {
@@ -355,10 +404,11 @@ describe("All fixtures have required shape", () => {
     const eventTypes = [
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "shell_output",
-      "approval_request", "decision_logged", "checkpoint_notice", "cost_update",
-      "boundary_update", "turn_complete", "tier_state", "context_compacted",
-      "steering_reloaded", "tier_switched", "instruction_stack",
-      "session_list", "error", "error_with_session",
+      "approval_request", "approval_request_always_allow", "decision_logged",
+      "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
+      "tier_state", "context_compacted", "steering_reloaded", "tier_switched",
+      "instruction_stack", "session_list", "policy_rules", "error",
+      "error_with_session",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

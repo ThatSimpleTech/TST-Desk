@@ -10,13 +10,15 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 from .autonomy.classifier import DecisionClass
 from .boundary_config import BoundaryConfig
 from .logging import get_logger, redact_secrets, redact_structure
-from .policy import ApprovalOutcome, PolicyConfig
-from .protocol import DaemonEvent, Error, ShellOutput, ToolCall, ToolResult
+from .policy import ApprovalOutcome, PolicyConfig, propose_always_allow
+from .protocol import DaemonEvent, Error, PolicyRuleSummary, ShellOutput, ToolCall, ToolResult
 from .protocol import SessionState as SessionStateEvent
 
 if TYPE_CHECKING:
@@ -28,6 +30,20 @@ log = get_logger("tstd.session")
 
 class SessionError(Exception):
     """Session-related error."""
+
+
+@dataclass
+class PendingApproval:
+    """A parked approval and the metadata needed to act on it (TD-802/803).
+
+    Carries the call's tool, arguments, and decision class so the daemon can
+    generate the "always allow" rule without re-deriving them (TD-803).
+    """
+
+    future: asyncio.Future[tuple[bool, str | None]]
+    tool: Tool
+    arguments: dict[str, Any]
+    decision_class: DecisionClass
 
 
 def _redact_event(event: DaemonEvent) -> DaemonEvent:
@@ -182,10 +198,11 @@ class Session:
         self.router: TierRouter | None = None
         # Approval policy (TD-801), resolved by the daemon on open.
         self.policy = PolicyConfig()
-        # Pending approval futures (TD-802), owned by the session — NOT
-        # by any websocket — so a client disconnect leaves them parked
-        # and resumable (prime directive §2.5).
-        self._pending_approvals: dict[str, asyncio.Future[tuple[bool, str | None]]] = {}
+        # Pending approvals (TD-802), owned by the session — NOT by any
+        # websocket — so a client disconnect leaves them parked and
+        # resumable (prime directive §2.5).  Each record carries the call
+        # metadata (TD-803) so "always allow" can generate its rule.
+        self._pending_approvals: dict[str, PendingApproval] = {}
 
     @classmethod
     def restore(
@@ -236,8 +253,8 @@ class Session:
         """Request cancellation of this session."""
         self._cancel_event.set()
         # Wake any parked approvals so their dispatchers unwind.
-        for fut in self._pending_approvals.values():
-            fut.cancel()
+        for pending in self._pending_approvals.values():
+            pending.future.cancel()
         if self._state in ("running", "awaiting_approval", "paused"):
             await self.set_state("cancelled", reason="cancelled by user")
         # Wake a loop parked in wait_for_resume so it observes cancellation.
@@ -266,7 +283,13 @@ class Session:
         from .protocol import ApprovalRequest as ApprovalRequestEvent
 
         fut: asyncio.Future[tuple[bool, str | None]] = asyncio.get_running_loop().create_future()
-        self._pending_approvals[tool_call_id] = fut
+        self._pending_approvals[tool_call_id] = PendingApproval(
+            future=fut, tool=tool, arguments=arguments, decision_class=decision_class
+        )
+        # The rule "always allow" would write (TD-803), surfaced on the
+        # card so the user sees it before committing to save it.  None for
+        # a class-C call — the boundary can never be always-allowed.
+        proposed = propose_always_allow(tool, arguments, decision_class, Path(self.workspace_path))
         await self.event_log.add(
             ApprovalRequestEvent(
                 session_id=self.id,
@@ -276,6 +299,13 @@ class Session:
                 decision_class=cast(Any, decision_class.value),
                 summary=summary,
                 reason=reason,
+                proposed_always_allow=(
+                    PolicyRuleSummary(
+                        tool=proposed.tool, args=proposed.args, effect=proposed.effect
+                    )
+                    if proposed is not None
+                    else None
+                ),
                 seq=1,
             )
         )
@@ -308,6 +338,13 @@ class Session:
             )
         return ApprovalOutcome(False, f"Denied by user: {detail}" if detail else "Denied by user")
 
+    def get_pending_approval(self, tool_call_id: str) -> PendingApproval | None:
+        """Return the metadata for a parked approval, or ``None`` if none.
+
+        The daemon uses this to generate the always-allow rule (TD-803).
+        """
+        return self._pending_approvals.get(tool_call_id)
+
     def resolve_approval(
         self, tool_call_id: str, approved: bool, detail: str | None = None
     ) -> bool:
@@ -317,10 +354,10 @@ class Session:
         already resolved, or timed out) so the daemon can answer with a
         typed error.
         """
-        fut = self._pending_approvals.get(tool_call_id)
-        if fut is None or fut.done():
+        pending = self._pending_approvals.get(tool_call_id)
+        if pending is None or pending.future.done():
             return False
-        fut.set_result((approved, detail))
+        pending.future.set_result((approved, detail))
         return True
 
     @property

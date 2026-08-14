@@ -1949,6 +1949,7 @@ rather than in one sweep over five lanes' files.
 **Also fixed (first-run defects):** rust leg now installs the Linux system
 deps package.yml already used (glib-sys build scripts need webkit/appindicator
 headers); typescript leg now installs uv before the protocol-fixtures step.
+
 ## 2026-08-14 — TD-1005: Activity timeline
 
 Class B — recorded per AGENTS.md §5.
@@ -2152,3 +2153,33 @@ dict needed its own cleanup and duplicated what the registry already keys).
 The events stay distinct: the timeline wants a compact transition row, the
 title bar wants the full state (override + slugs) — each consumer reads only
 what it needs.
+
+## 2026-08-14 — TD-803: Always-allow
+
+Decisions made during the always-allow build.
+
+### 1. Rule lifecycle is a daemon API, not file editing
+
+**Decision:** "Always allow" writes a rule via an `always_allow` daemon
+message; settings lists and revokes rules via `list_policy_rules` and
+`revoke_policy_rule` messages.  The settings UI does not edit
+`.tst/config.yaml` directly (contrast TD-707's cap-raising flow, where the
+user edits the file and sends `resume`).
+
+**Rationale:** "Always allow" originates as a one-click approval-card
+action, so it needs a daemon message regardless.  Routing list/revoke
+through the same channel keeps the policy file format an implementation
+detail of the daemon (the window stays a viewer, prime §2.5) and funnels
+every mutation through the atomic, section-preserving `save_policy` write
+(TD-801 §4).
+
+### 2. A saved rule's identity is `(tool, args)`
+
+**Decision:** `add_rule` and `remove_rule` key on the `(tool, args)` pair.
+`add_rule` replaces any existing rule with the same pair (idempotent), and
+`revoke_policy_rule` removes by that pair.
+
+**Rationale:** `PolicyRule` has no unique id; `(tool, args)` is the
+narrowest stable identity that distinguishes two rules.  Idempotent add
+keeps re-affirming "always allow" for the same call from piling up
+duplicate rules in the settings list.

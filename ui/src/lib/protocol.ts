@@ -44,6 +44,24 @@ export interface Deny extends ClientMessage {
   reason?: string | null;
 }
 
+export interface AlwaysAllow extends ClientMessage {
+  type: "always_allow";
+  session_id: string;
+  tool_call_id: string;
+}
+
+export interface ListPolicyRules extends ClientMessage {
+  type: "list_policy_rules";
+  session_id: string;
+}
+
+export interface RevokePolicyRule extends ClientMessage {
+  type: "revoke_policy_rule";
+  session_id: string;
+  tool: string;
+  args: string;
+}
+
 export interface Resume extends ClientMessage {
   type: "resume";
   session_id: string;
@@ -90,6 +108,9 @@ export type ClientMessageUnion =
   | UserMessage
   | Approve
   | Deny
+  | AlwaysAllow
+  | ListPolicyRules
+  | RevokePolicyRule
   | Resume
   | Cancel
   | Attach
@@ -161,6 +182,12 @@ export interface ShellOutput extends DaemonEvent {
   chunk: string;
 }
 
+export interface PolicyRuleSummary {
+  tool: string;
+  args: string;
+  effect: "auto" | "ask" | "never";
+}
+
 export interface ApprovalRequest extends DaemonEvent {
   type: "approval_request";
   session_id: string;
@@ -170,6 +197,7 @@ export interface ApprovalRequest extends DaemonEvent {
   decision_class: "A" | "B" | "C";
   summary: string;
   reason: string;
+  proposed_always_allow?: PolicyRuleSummary | null;
 }
 
 export interface DecisionLogged extends DaemonEvent {
@@ -271,6 +299,12 @@ export interface SessionList extends DaemonEvent {
   sessions: SessionSummary[];
 }
 
+export interface PolicyRules extends DaemonEvent {
+  type: "policy_rules";
+  seq: number;
+  rules: PolicyRuleSummary[];
+}
+
 export interface Error extends DaemonEvent {
   type: "error";
   session_id?: string | null;
@@ -313,4 +347,5 @@ export type DaemonEventUnion =
   | TierSwitched
   | InstructionStack
   | SessionList
+  | PolicyRules
   | Error;

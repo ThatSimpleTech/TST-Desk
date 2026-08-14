@@ -24,8 +24,9 @@ from .boundary_config import boundary_source, load_workspace_boundary
 from .config import ConfigError, ModelConfig, cached_config
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
-from .policy import load_policy
+from .policy import add_rule, load_policy, propose_always_allow, remove_rule, save_policy
 from .protocol import (
+    AlwaysAllow,
     Approve,
     Attach,
     Cancel,
@@ -34,9 +35,13 @@ from .protocol import (
     Deny,
     Detach,
     HandshakeError,
+    ListPolicyRules,
     ListSessions,
     OpenWorkspace,
+    PolicyRules,
+    PolicyRuleSummary,
     Resume,
+    RevokePolicyRule,
     SessionList,
     SessionSummary,
     SetTier,
@@ -557,6 +562,80 @@ class Daemon:
                     f"No pending approval {msg.tool_call_id!r} in session {msg.session_id!r}",
                 )
             return None
+
+        if isinstance(msg, AlwaysAllow):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            pending = found.get_pending_approval(msg.tool_call_id)
+            if pending is None:
+                return build_error(
+                    "no_pending_approval",
+                    f"No pending approval {msg.tool_call_id!r} in session {msg.session_id!r}",
+                )
+            # The narrowest rule, never a blanket grant; None when the
+            # call is a class-C decision (TD-803 criterion 4).
+            rule = propose_always_allow(
+                pending.tool,
+                pending.arguments,
+                pending.decision_class,
+                Path(found.workspace_path),
+            )
+            if rule is None:
+                return build_error(
+                    "class_c_not_always_allowable",
+                    "Class C actions can never be always-allowed",
+                )
+            found.policy = add_rule(found.policy, rule)
+            try:
+                save_policy(found.workspace_path, found.policy)
+            except ConfigError as e:
+                return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            # Resolve the parked call as approved so the loop proceeds.
+            found.resolve_approval(msg.tool_call_id, True)
+            return None
+
+        if isinstance(msg, ListPolicyRules):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            return PolicyRules(
+                seq=1,
+                rules=[
+                    PolicyRuleSummary(tool=r.tool, args=r.args, effect=r.effect)
+                    for r in found.policy.rules
+                ],
+            ).model_dump_json()
+
+        if isinstance(msg, RevokePolicyRule):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            if not remove_rule(found.policy, msg.tool, msg.args):
+                return build_error(
+                    "policy_rule_not_found",
+                    f"No policy rule {msg.tool!r}: {msg.args!r} to revoke",
+                )
+            try:
+                save_policy(found.workspace_path, found.policy)
+            except ConfigError as e:
+                return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            return PolicyRules(
+                seq=1,
+                rules=[
+                    PolicyRuleSummary(tool=r.tool, args=r.args, effect=r.effect)
+                    for r in found.policy.rules
+                ],
+            ).model_dump_json()
 
         if isinstance(msg, Attach):
             found = self.session_registry.get(msg.session_id)
