@@ -1774,3 +1774,17 @@ surface.
 **Class B** — packaging architecture, recorded here; clean-VM launch
 verification stays a manual step alongside TD-1302's per-platform
 installs.
+
+## 2026-08-14 — TD-1301 addendum: externalBin injected at package time
+
+**Decision:** `shell/tauri.conf.json` does NOT carry `externalBin`.
+`tauri-build` validates sidecar paths at compile time for every
+`cargo build/test/clippy`, so a committed entry hard-breaks the Rust
+lane (CI clippy job, local cargo test) whenever `shell/binaries/` is
+absent — which is always, since the artifact is gitignored.  Instead
+`ui/package.json`'s `tauri:build` passes
+`--config '{"bundle":{"externalBin":["binaries/tstd"]}}'`, and
+`beforeBuildCommand` builds the sidecar first.  Dev builds and cargo
+tooling never see the entry; the packaged app always does.
+
+**Class B** — corrects the TD-1301 wiring one integration later.
