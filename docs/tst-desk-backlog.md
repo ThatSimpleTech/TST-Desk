@@ -1284,6 +1284,36 @@ persisted and broadcast. The two skip-marked tests in
 
 ---
 
+### TD-1406 — Windows CI parity
+**Size:** 5 · **Depends on:** TD-1402
+
+Found by the first green-mypy Windows leg (2026-08-14): the pytest suite was
+never exercised on Windows while mypy was red, and ~110 tests failed at once.
+The daemon's `add_signal_handler` cascade is fixed; the rest of the suite is
+made platform-honest (posix-separator manifests, cross-platform test commands,
+`skipif(win32)` where OS semantics genuinely diverge). What remains is the
+product-semantics work the skips point at.
+
+**Acceptance criteria:**
+- [ ] Boundary guard semantics decided for Windows absolute paths: today every
+      drive-letter path is refused `windows_unsafe` on every platform
+      (TD-1402's fail-closed choice), which means the model cannot use
+      absolute in-workspace paths on Windows. Either containment-checked
+      drive-absolute paths become legal on win32, or the refusal copy teaches
+      the relative-path idiom — decide, implement, unskip the guard tests
+- [ ] 8.3 short-name handling on Windows temp/user dirs (`RUNNER~1`): alias
+      expansion vs. refusal, so legitimate absolute paths under short-named
+      ancestors aren't collateral
+- [ ] File-permission stories (session store, port file) get real Windows ACLs
+      or a documented no-op, and the `restricted_mode` tests unskip
+- [ ] Shell-tool process-group kill semantics verified on Windows
+      (CREATE_NEW_PROCESS_GROUP + taskkill/TerminateJobObject), skipped
+      cancel/timeout tests unskipped
+- [ ] Parent-watchdog liveness probe works on Windows (OpenProcess) or the
+      watchdog is documented POSIX-only
+
+---
+
 ## Epic E15 — Documentation
 
 ---
