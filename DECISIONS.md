@@ -847,3 +847,52 @@ atomic write rather than dropping the flag.
 **Rationale:** The schema is already promised to the model; removing a
 declared argument would be a protocol regression. Append reuses the same
 atomic path, so it costs nothing extra.
+## 2026-08-13 — TD-1402: Security suite
+
+### 1. Redaction filter argument bug fixed, not accommodated
+
+**Decision:** `SecretsRedactionFilter` redacted `%s`-style log args by re-substituting from
+the *original* argument for each pattern (`args[i] = pattern.sub(..., arg)`), so any
+pattern after the matching one overwrote the redaction. Only entries matching the last
+pattern in `SECRET_PATTERNS` survived. Fixed to accumulate on the narrowed value
+(`arg = pattern.sub(...); args[i] = arg`).
+
+**Rationale:** The suite found a live leak: any credential logged as a positional arg
+(`logger.info("key %s", key)`) was redacted only if it was a private-key header. A security
+suite that documents known-broken behavior instead of pinning the fix would be security
+theater. One-line fix, no contract change.
+
+### 2. Unimplemented surfaces are skip-marked, not quietly absent
+
+**Decision:** Criteria with no implementation surface to test — tool-level steering refusal
+(TD-604 pending), environment sanitization (TD-605 pending), and redaction of audit/event
+surfaces and error strings (no story exists) — are `pytest.skip` markers with reasons that
+name the dependency, so the gaps print on every run (`rs` lines) instead of vanishing from
+the count.
+
+**Rationale:** "Every test in this suite is a release blocker" only holds if the gaps stay
+visible. Skips with reasons are the honest midpoint between absent tests (invisible) and
+`xfail` (implies the code exists and misbehaves — it doesn't exist). The skip bodies state
+the target invariant so unskipping is mechanical. The audit/event redaction gap needs a new
+backlog story; flagged in the story report.
+
+### 3. Suite asserts structural invariants, not just behaviors
+
+**Decision:** Three tests pin structure rather than behavior: C-rule precedence in
+`RULE_TABLE` (an A rule evaluated before a C rule is an auto-approval bypass), dispatch
+call-site confinement (a new `.dispatch(`/`dispatch_many(` caller is a new chokepoint risk),
+and the absence of a `host` parameter on `WebSocketServer.start` (loopback is hardcoded; a
+host knob must route through `validate_interface`).
+
+**Rationale:** Behavior tests prove today's code is safe; structural tests force the
+conversation when tomorrow's code changes the preconditions. In a suite whose every test is
+a release blocker, shape-level guards are the cheap half of the defense.
+
+### 4. Branch base
+
+**Decision:** Branched from `da1f2db` (the TD-602/702/603 integration tip) rather than
+main; the suite tests machinery that does not exist on main. Adds one test file plus the
+one-line logging fix. Merge order: after the TD-605 chain lands on main.
+
+**Rationale:** Same chained-branch pattern as TD-903 on TD-901. New-file-only diffs rebase
+trivially; the logging touch is byte-compatible with both parents.
