@@ -7,7 +7,7 @@
 	// lives in the composer's send→stop morph; Esc cancels too (TD-1609).
 	// Presentational composition only — protocol state lives in the stores.
 	import { onMount } from "svelte";
-	import { cancelTurn, chat, initChat, sendUserMessage, teardownChat } from "../../chat-store.svelte.js";
+	import { cancelTurn, chat, initChat, retryLastUserMessage, sendUserMessage, teardownChat } from "../../chat-store.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
 	import { canSend, showCancel } from "../../chat-store";
 	import { greetingForHour, SUGGESTIONS } from "../../greeting";
@@ -42,7 +42,11 @@
 				</div>
 			</div>
 		{:else}
-			<MessageList messages={chat.messages} />
+			<MessageList
+				messages={chat.messages}
+				turnLive={showCancel(chat.turnState)}
+				onretry={retryLastUserMessage}
+			/>
 		{/if}
 		<Composer
 			disabled={!canSend(chat.sessionId, ws.state)}
