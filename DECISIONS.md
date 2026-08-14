@@ -2497,3 +2497,71 @@ dependency and a capabilities row through packaging for one click; the
 std-command spelling is fifteen lines and covers the three CI platforms.
 The path-always-visible footer means the fallback never leaves the user
 without the destination.
+
+## 2026-08-14 — TD-1103: Workspace management
+
+### 1. Refuse, don't silently succeed
+
+**Decision:** ``open_workspace`` now validates ``is_dir()`` before creating
+anything and returns a typed ``workspace_not_found`` error through the
+existing ``build_error`` dispatch idiom. Previously a nonexistent path
+silently produced a session, one the UI could never render correctly.
+
+**Rationale:** the failure was invisible — an absent workspace yielded a
+live session id and a store row pointing at nothing. A hard refusal at
+dispatch is where the UI can recover: the recents-menu toast explains the
+folder moved or was deleted and points at both remedies (re-pick the new
+location, remove the stale entry). Seven daemon tests used ``/tmp/test``
+as a magic path and now open real tmp dirs — that was the tell that the
+absence of validation had leaked into the test suite's assumptions.
+
+### 2. Scaffolding is documentation, not configuration
+
+**Decision:** first open of a workspace plants
+``.tst/config.yaml`` as a fully commented template — every line a
+comment, so ``yaml.safe_load`` yields ``None`` and the loaders map
+``None`` to defaults (one-line change in each of ``load_workspace_boundary``
+and ``load_policy``; ``save_policy`` treats ``None`` as an empty section
+map). The scaffold never overwrites an existing file.
+
+**Rationale:** a template with real values pins them at scaffold time —
+every knob later changes its default and stale workspaces would silently
+diverge. Comments-as-documentation means "absent" and "scaffolded"
+behave identically, and ``boundary_source`` keeps reporting the real
+file path (which now exists and is worth showing the user). The cost was
+three ``None`` branches in loaders; the alternative — parse comments to
+distinguish template from user content — is machinery for no behavior
+difference.
+
+### 3. No new wire — the daemon already knows the recents
+
+**Decision:** the recents menu derives from the ``session_list`` event the
+UI already receives (dedupe by ``workspace_path``, newest first, cap 12),
+and per-entry removal is a UI-side hide-list persisted to localStorage
+under ``tstdesk.hiddenRecentWorkspaces``. The daemon's session history is
+untouched by removal.
+
+**Rationale:** added a ``remove_recent`` command to the protocol would
+put UI preference state (what the user wants to see) into the daemon's
+session record (what happened), and would need its own ack + tests +
+fixtures for zero behavior the user can tell apart. localStorage is
+where UI-only preferences live; the hide-list survives restarts, and a
+moved workspace stays discoverable by re-picking it — a fresh session
+on the new path appends a new recents entry, which is the desired
+understanding, not a bug to prevent.
+
+### 4. AC4 is a property of the loop, so pin it at the loop
+
+**Decision:** "switching workspaces re-resolves steering" is guaranteed
+by construction (each session's loop builds its own ``PromptAssembler``
+from ``session.workspace_path`` at loop.py), so the pin is a loop-level
+test: two workspaces with distinct marker AGENTS.md files, one turn
+each, and the system messages the mock provider received must carry the
+right marker — never the other's.
+
+**Rationale:** the cheapest place to break this property in the future
+is exactly the seam the test guards: a shared assembler, a cached
+prompt keyed on the wrong thing, a workspace mutation mid-session.
+Asserting on the content the provider received pins the user-visible
+outcome (the model sees this workspace's rules), which survives any
+internal refactor of how the assembler is built.

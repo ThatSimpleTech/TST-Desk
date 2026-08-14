@@ -155,5 +155,15 @@ export function sessionStateCopy(state: string, reason: string | null): NoticeSp
 
 /** Copy for a daemon `error` event: code + daemon-authored message (already human). */
 export function daemonErrorCopy(code: string, message: string): NoticeSpec {
+	if (code === "workspace_not_found") {
+		// TD-1103: the user tried to open a path that doesn't exist (usually
+		// from the recents menu — the folder was moved or deleted). The fix
+		// is picking the folder again, so the copy points at the picker.
+		return {
+			severity: "toast",
+			title: "Workspace not found",
+			body: `${message} If it moved, open the new location with the 📁 picker and remove the stale entry from the workspace menu.`,
+		};
+	}
 	return { severity: "toast", title: `Daemon error: ${code}`, body: message };
 }
