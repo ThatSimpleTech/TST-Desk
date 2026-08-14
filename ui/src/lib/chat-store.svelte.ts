@@ -38,4 +38,5 @@ export function teardownChat(): void {
 }
 
 export const sendUserMessage: (text: string) => boolean = store.sendUserMessage;
+export const retryLastUserMessage: () => boolean = store.retryLastUserMessage;
 export const cancelTurn: () => boolean = store.cancelTurn;
