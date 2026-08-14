@@ -1123,9 +1123,14 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 
 **Acceptance criteria:**
 - [ ] Tagged release builds all platforms and publishes artifacts
-- [ ] Checksums published
-- [ ] Changelog generated from commits
-- [ ] Version consistent across host, daemon, and UI, asserted by test
+      (release.yml fires on v*, reuses the package.yml matrix, publishes via
+      `gh release create` — verified end to end on the first tag push)
+- [x] Checksums published (SHA256SUMS.txt across all four artifacts)
+- [x] Changelog generated from commits (`core/scripts/changelog.py`, grouped
+      by TD-### convention, merges excluded)
+- [x] Version consistent across host, daemon, and UI, asserted by test
+      (`core/tests/test_version_consistency.py`; release job re-asserts the
+      tag equals all four. Caught ui/package.json at 0.0.1 → 0.1.0.)
 
 ---
 

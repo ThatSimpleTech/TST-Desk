@@ -1802,3 +1802,20 @@ Program membership, a Windows EV/OV certificate, plus notarization and
 signing steps wired into every release build — real money and, more to the
 point, secrets and infra the release pipeline does not yet have a home
 for.  For an internal v0.1 with named users, the warning text is enough.
+
+## 2026-08-14 — TD-1303: Release workflow shape
+
+**Decision:** `package.yml` stays the platform builder (plus a
+`workflow_call` trigger); `release.yml` fires on `v*` tags, reuses that
+matrix, and only publishes — checksums, changelog, `gh release create`.
+Tag validity is gated twice: a release-job step asserts the tag equals all
+four component versions, and `core/tests/test_version_consistency.py`
+fails CI the moment the files drift.
+
+**Rationale:** one build definition (no divergent packaging between
+validation and release), and the changelog is generated from the
+`TD-###: subject` convention rather than maintained by hand — the
+convention was already universal, so the generator is a regexp, not a new
+discipline. TD-1303 found ui/package.json at 0.0.1 while the rest
+sat at 0.1.0; the test exists precisely because that drift is invisible
+until release day.
