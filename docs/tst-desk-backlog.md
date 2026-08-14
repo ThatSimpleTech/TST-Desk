@@ -1083,10 +1083,17 @@ extended and regenerated (29 fixtures). Verified: 33 vitest tests pass, `svelte-
 where this schedule most likely slips. Start early, timebox, and escalate if it resists.
 
 **Acceptance criteria:**
-- [ ] Python runtime and dependencies bundled — user needs no system Python
+- [x] Python runtime and dependencies bundled — user needs no system Python
+      (PyInstaller onefile sidecar, `core/scripts/build_sidecar.py` →
+      `shell/binaries/tstd-<triple>`; smoke-launched with no system Python involved)
 - [ ] App launches on a machine with no Python installed, verified on a clean VM per platform
-- [ ] Bundle size documented and justified
-- [ ] Daemon startup under three seconds on a mid-range machine
+      (manual release step — no clean VM available in this environment; the
+      sidecar itself boots and serves standalone, so this verifies the Tauri
+      bundle around it. Belongs with TD-1302's clean-VM installs.)
+- [x] Bundle size documented and justified (18.9 MB aarch64-apple-darwin —
+      see DECISIONS.md 2026-08-14)
+- [x] Daemon startup under three seconds on a mid-range machine
+      (2.0 s to port.json on an M-series host, measured by the build smoke test)
 
 ---
 

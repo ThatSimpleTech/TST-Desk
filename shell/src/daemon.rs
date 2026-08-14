@@ -283,20 +283,36 @@ fn crash_backoff(restart: u32) -> Duration {
     Duration::from_millis(500 * restart as u64)
 }
 
-/// Resolve the `tstd` command. Order: `$TSTD_PATH`, `tstd` on PATH, and, in
-/// debug (dev) builds, `uv run --directory <repo>/core tstd` as a fallback.
+/// Resolve the `tstd` command. Order: `$TSTD_PATH`, the bundled sidecar
+/// (TD-1301), `tstd` on PATH, and, in debug (dev) builds, `uv run
+/// --directory <repo>/core tstd` as a fallback.
 fn resolve_command() -> Result<Vec<String>, String> {
     let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
     let which = |name: &str| which::which(name).ok();
-    resolve_with(env, which)
+    resolve_with(env, which, bundled_sidecar)
+}
+
+/// The PyInstaller-built daemon shipped inside the app bundle (TD-1301).
+/// Tauri copies `externalBin` entries next to the app executable under
+/// their plain name, so the lookup is an exe-sibling `tstd`.
+fn bundled_sidecar() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let candidate = exe
+        .parent()?
+        .join(format!("tstd{}", std::env::consts::EXE_SUFFIX));
+    candidate.is_file().then_some(candidate)
 }
 
 fn resolve_with(
     env: impl Fn(&str) -> Option<String>,
     which: impl Fn(&str) -> Option<PathBuf>,
+    sidecar: impl Fn() -> Option<PathBuf>,
 ) -> Result<Vec<String>, String> {
     if let Some(p) = env("TSTD_PATH") {
         return Ok(vec![p]);
+    }
+    if let Some(p) = sidecar() {
+        return Ok(vec![p.display().to_string()]);
     }
     if let Some(p) = which("tstd") {
         return Ok(vec![p.display().to_string()]);
@@ -306,7 +322,7 @@ fn resolve_with(
         // Dev fallback: the core workspace's own venv. We spawn the script
         // directly (a shebang exec) so the daemon pid is our direct child —
         // `uv run` inserts a wrapper process, which would break the port
-        // file's pid match. Packaged builds resolve a bundled sidecar here.
+        // file's pid match.
         let core = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -483,16 +499,35 @@ mod tests {
 
     #[test]
     fn tstd_path_env_wins_resolution() {
-        let argv = resolve_with(|name| (name == "TSTD_PATH").then(|| "/custom/tstd".into()), |_| None)
-            .unwrap();
+        let argv = resolve_with(
+            |name| (name == "TSTD_PATH").then(|| "/custom/tstd".into()),
+            |_| None,
+            || Some(PathBuf::from("/bundle/tstd")),
+        )
+        .unwrap();
         assert_eq!(argv, vec!["/custom/tstd".to_string()]);
     }
 
     #[test]
+    fn bundled_sidecar_wins_over_path() {
+        // The version-locked binary inside the bundle beats whatever a
+        // user happens to have installed on PATH (TD-1301).
+        let argv = resolve_with(
+            |_| None,
+            |name| (name == "tstd").then(|| PathBuf::from("/usr/local/bin/tstd")),
+            || Some(PathBuf::from("/bundle/tstd")),
+        )
+        .unwrap();
+        assert_eq!(argv, vec!["/bundle/tstd".to_string()]);
+    }
+
+    #[test]
     fn which_wins_over_uv_fallback() {
-        let argv = resolve_with(|_| None, |name| {
-            (name == "tstd").then(|| PathBuf::from("/usr/local/bin/tstd"))
-        })
+        let argv = resolve_with(
+            |_| None,
+            |name| (name == "tstd").then(|| PathBuf::from("/usr/local/bin/tstd")),
+            || None,
+        )
         .unwrap();
         assert_eq!(argv, vec!["/usr/local/bin/tstd".to_string()]);
     }
@@ -503,7 +538,7 @@ mod tests {
         // or `uv run ... tstd`. Either way the last token names tstd.
         #[cfg(debug_assertions)]
         {
-            let argv = resolve_with(|_| None, |_| None).unwrap();
+            let argv = resolve_with(|_| None, |_| None, || None).unwrap();
             assert!(!argv.is_empty());
             assert!(argv.last().unwrap().ends_with("tstd"));
         }
