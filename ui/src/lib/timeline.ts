@@ -2,8 +2,11 @@
 //
 // Pure, DOM-free transformation of daemon events into a chronological list
 // of timeline entries. Kept free of runes and Tauri imports so it unit-tests
-// under vitest's node environment (like splitpane.ts); the Svelte component
-// wraps a Timeline instance in `$state` to get reactivity.
+// under vitest's node environment (like splitpane.ts). Reactivity comes from
+// storage injection: timeline-store.svelte.ts constructs the Timeline over a
+// `$state` array, so every write below flows through the reactive proxy —
+// appends invalidate the list, and in-place shell-buffer writes invalidate
+// the entry. Tests just pass a plain array (or nothing).
 //
 // Responsibilities:
 //   - one entry per meaningful event, in seq order (AC #1)
@@ -163,7 +166,12 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
 
 /** Accumulates a session's events into an ordered list of timeline entries. */
 export class Timeline {
-  private _entries: TimelineEntry[] = [];
+  private _entries: TimelineEntry[];
+
+  /** Storage is injected so the caller can supply a reactive (`$state`) array. */
+  constructor(storage: TimelineEntry[] = []) {
+    this._entries = storage;
+  }
 
   /** The chronological entries, in arrival (seq) order. */
   get entries(): readonly TimelineEntry[] {
@@ -191,9 +199,9 @@ export class Timeline {
     for (const event of events) this.push(event);
   }
 
-  /** Drop all entries. */
+  /** Drop all entries. Mutates in place — reassigning would detach injected reactive storage. */
   clear(): void {
-    this._entries = [];
+    this._entries.length = 0;
   }
 
   /** Append a shell_output chunk to the live buffer of its tool_call entry. */

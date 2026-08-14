@@ -13,7 +13,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { DaemonEventUnion } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 import { ProtocolClient, type ConnectionState, type SocketLike } from "./client";
 
 export interface DaemonStatus {
@@ -30,14 +30,34 @@ export const daemon = $state<DaemonStatus>({ state: "stopped", port: null, resta
 // Latest validated daemon event, for subscribers that want the stream.
 export const lastEvent = $state<{ event: DaemonEventUnion | null }>({ event: null });
 
-type EventListener = (event: DaemonEventUnion) => void;
-// Fan-out listeners (e.g. the activity timeline) for every validated event.
-const eventListeners = new Set<EventListener>();
+// Synchronous event fan-out (TD-1004). Consumers that append to a log (chat,
+// timeline) cannot ride `lastEvent` — two events inside one effect flush
+// would drop the first. Handlers run in the client's sink, in receive order.
+const eventSubs = new Set<(event: DaemonEventUnion) => void>();
 
 /** Subscribe to every validated daemon event. Returns an unsubscribe fn. */
-export function onEvent(listener: EventListener): () => void {
-  eventListeners.add(listener);
-  return () => eventListeners.delete(listener);
+export function onDaemonEvent(handler: (event: DaemonEventUnion) => void): () => void {
+  eventSubs.add(handler);
+  return () => {
+    eventSubs.delete(handler);
+  };
+}
+
+/** Alias kept for the activity timeline lane (TD-1005/1007). */
+export const onEvent = onDaemonEvent;
+
+/** Send a client→daemon message. False when no handshaken socket exists. */
+export function sendToDaemon(msg: ClientMessageUnion): boolean {
+  return client?.send(msg) ?? false;
+}
+
+/** Attach/detach a session's event stream on the shared connection. */
+export function attachToSession(sessionId: string): void {
+  client?.attach(sessionId);
+}
+
+export function detachFromSession(sessionId: string): void {
+  client?.detach(sessionId);
 }
 
 function makeClient(): void {
@@ -58,7 +78,7 @@ function makeClient(): void {
     {
       onEvent(event) {
         lastEvent.event = event;
-        for (const listener of eventListeners) listener(event);
+        for (const sub of eventSubs) sub(event);
       },
       onStateChange(state) {
         ws.state = state;

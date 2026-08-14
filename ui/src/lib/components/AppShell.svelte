@@ -8,8 +8,9 @@
 	import SplitPane from './SplitPane.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
 	import ActivityTimeline from './ActivityTimeline.svelte';
-	import { onEvent } from '../connection-status';
-	import { push } from '../timeline-store';
+	import { onEvent } from '../connection-status.svelte.js';
+	import { push } from '../timeline-store.svelte.js';
+	import ChatPane from './chat/ChatPane.svelte';
 
 	// Feed every daemon event into the timeline for the lifetime of the shell.
 	onMount(() => onEvent(push));
@@ -24,7 +25,7 @@
 <div class="shell-body">
 	<SplitPane>
 		{#snippet left()}
-			<section class="pane-chat" aria-label="Chat pane"></section>
+			<section class="pane-chat" aria-label="Chat pane"><ChatPane /></section>
 		{/snippet}
 		{#snippet right()}
 			<section class="pane-activity" aria-label="Activity pane">

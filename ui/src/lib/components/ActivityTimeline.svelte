@@ -6,7 +6,7 @@
 	// the DOM small (AC #7). Rows expand inline for full detail; expansion
 	// changes one row's height, which the overscan buffer absorbs without
 	// affecting the window math.
-	import { entries } from '../timeline-store';
+	import { entries } from '../timeline-store.svelte.js';
 	import { computeWindow } from '../virtualization';
 	import TimelineEntryRow from './TimelineEntryRow.svelte';
 
