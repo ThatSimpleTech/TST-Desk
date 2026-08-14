@@ -2349,3 +2349,61 @@ file — instead of a YAML round-trip that would strip the shipped file's
 comments. The live daemon applies the change on ``model_copy`` so the
 ``lru_cache``-backed shared config instance is never mutated under other
 consumers.
+
+## 2026-08-14 — TD-1104: Diagnostics (doctor view)
+
+### 1. Key validity and provider reachability share one probe
+
+**Decision:** ``run_diagnostics`` makes at most one live call — the same
+one-token probe TD-1101's ``validate_api_key`` performs — and derives both
+the ``api_key`` and ``provider`` rows from its outcome. ``auth_failed``
+(401) proves reachability while invalidating the key, so the provider row
+reads *ok* in the same report that fails the key. A transport failure
+proves nothing about the key, so the key row reads *skip* with detail
+pointing at the connectivity problem instead.
+
+**Rationale:** Two probes would double the cost and the failure modes
+without buying information. The single-probe reading of each error code is
+exact: 401 can only come from a reached provider.
+
+### 2. The report rides the connection-scoped ``seq=1`` channel
+
+**Decision:** ``diagnostics_report`` is connection-scoped (no
+``session_id``, fixed ``seq=1``), same as ``setup_state`` and
+``policy_rules``. Diagnostics describe the daemon and the user's
+environment, not any session; the workspace and steering rows resolve
+"which workspace" from the most-recent session record, and are *skip*
+rows when no session exists.
+
+**Rationale:** A session-scoped report would force the pane to pick a
+session before asking, and the checks aren't about one. ``seq=1`` keeps
+the client's gap-detector out of a stream the session log doesn't own.
+
+### 3. Fix text speaks UI, not CLI
+
+**Decision:** every failure row's ``fix`` names a thing in the app the
+user can do — "open the wizard from the gear in the title bar", "open
+Doctor again after reconnecting" — never a shell command. The ``skip``
+rows still explain themselves ("not checked — no API key").
+
+**Rationale:** The doctor view is the fallback when the app itself is the
+nearest thing the user trusts; a user who came to fix the desktop app
+should not be sent to a terminal to fix it.
+
+### 4. Paths scrubbed at the rows; secrets scrubbed at the copy boundary
+
+**Decision:** rows that would otherwise embed absolute local paths — the
+workspace row's "{workspace} is writable", steering import issues — are
+scrubbed where the row is built: the workspace is named by basename, and
+import-issue paths are relativized against the workspace (home paths
+become ``~/…``). ``Copy report`` additionally passes the whole assembled
+text through ``redact()`` — the same pass TD-1008's diagnostics copy
+uses — so secret-shaped tokens inside any row's ``detail`` or ``fix``
+never reach the clipboard. The pane shows the same scrubbed rows; no
+absolute local path ever touches the wire.
+
+**Rationale:** TD-1008's diagnostics keep local paths out of pasteable
+output by exclusion; here the rows *want* to name folders, so they get
+just-enough-to-locate forms instead. Redaction at the copy boundary is
+the belt to that: a future check that embeds a key-shaped string can't
+leak in the pasteable artifact even if its row forgot to scrub.
