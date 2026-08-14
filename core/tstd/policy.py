@@ -314,3 +314,51 @@ def save_policy(workspace: str | Path, config: PolicyConfig) -> None:
     except BaseException:
         os.unlink(tmp)
         raise
+
+
+# ── Always-allow (TD-803) ──────────────────────────────────────────────
+
+
+def propose_always_allow(
+    tool: Tool,
+    arguments: dict[str, Any],
+    decision_class: DecisionClass,
+    workspace: Path | None = None,
+) -> PolicyRule | None:
+    """Generate the narrowest "always allow" rule for a classified call.
+
+    The rule is scoped to the exact argument summary — never a blanket
+    ``args="**"`` grant for the whole tool.  A class-C call returns ``None``:
+    the boundary can never be always-allowed, regardless of how the rule is
+    phrased (criterion 4).
+    """
+    if decision_class is DecisionClass.C:
+        return None
+    return PolicyRule(
+        tool=tool.name,
+        args=summarize_arguments(tool, arguments, workspace),
+        effect="auto",
+    )
+
+
+def add_rule(config: PolicyConfig, rule: PolicyRule) -> PolicyConfig:
+    """Add a rule, replacing any existing rule with the same ``(tool, args)``.
+
+    Idempotent so re-affirming "always allow" for the same call doesn't pile
+    up duplicate rules (they would shadow each other and make the settings
+    list noisy).
+    """
+    config.rules = [r for r in config.rules if (r.tool, r.args) != (rule.tool, rule.args)]
+    config.rules.append(rule)
+    return config
+
+
+def remove_rule(config: PolicyConfig, tool: str, args: str) -> bool:
+    """Remove every rule matching ``(tool, args)``; return whether any changed.
+
+    ``(tool, args)`` is the rule identity used for individual revocation in
+    settings (TD-803).
+    """
+    before = len(config.rules)
+    config.rules = [r for r in config.rules if (r.tool, r.args) != (tool, args)]
+    return len(config.rules) < before

@@ -33,6 +33,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "cost_update",
   "boundary_update",
   "turn_complete",
+  "tier_state",
   "context_compacted",
   "steering_reloaded",
   "tier_switched",
@@ -138,22 +139,34 @@ export class ProtocolClient {
   detach(sessionId: string): void {
     this.attachedSessions.delete(sessionId);
     this.lastSeqBySession.delete(sessionId);
-    if (this.socket && this.handshake === "idle") {
-      this.socket.send(JSON.stringify({ type: "detach", session_id: sessionId }));
-    }
+    this.send({ type: "detach", session_id: sessionId });
   }
 
   /**
-   * Send a client message over the live socket. Returns false (never throws)
-   * when the socket is not open and handshaken — callers keep the pending
-   * state shown rather than assuming the send succeeded (TD-1007). The
-   * connection state is the unambiguous handshake signal: `handshake` alone
-   * is "idle" both before the socket opens and after the ack.
+   * Send a client→daemon message. Returns false (and sends nothing) unless
+   * the socket is open and handshaken, so callers can decide whether an
+   * optimistic local update is warranted (TD-1007).
+   *
+   * Guarding on `state === "connected"` is the unambiguous handshake signal:
+   * `handshake` is "idle" both before the socket opens and after the ack,
+   * and it stays "idle" across a reconnect while `this.socket` still points
+   * at the closed socket — so a `handshake`-only guard would throw on a dead
+   * socket mid-reconnect.
    */
   send(msg: ClientMessageUnion): boolean {
     if (!this.socket || this.state !== "connected") return false;
     this.socket.send(JSON.stringify(msg));
     return true;
+  }
+
+  /** Open a workspace directory; the daemon answers with session_state. */
+  openWorkspace(path: string): void {
+    this.send({ type: "open_workspace", path });
+  }
+
+  /** Pin a session's model tier (TD-1006). The daemon acks with tier_state. */
+  setTier(sessionId: string, tier: "brain" | "worker" | "validator"): void {
+    this.send({ type: "set_tier", session_id: sessionId, tier });
   }
 
   /** Start the client: resolve daemon info and open the first connection. */
@@ -164,8 +177,7 @@ export class ProtocolClient {
 
   private sendAttach(sessionId: string, fromSeq: number): void {
     // Only meaningful on an open, handshaken socket.
-    if (!this.socket || this.handshake !== "idle") return;
-    this.socket.send(JSON.stringify({ type: "attach", session_id: sessionId, from_seq: fromSeq }));
+    this.send({ type: "attach", session_id: sessionId, from_seq: fromSeq });
   }
 
   /** Permanently stop: close the socket, cancel retries, mark stopped. */
@@ -242,14 +254,17 @@ export class ProtocolClient {
     // anything we missed while offline.
     if (type === "hello_ack") {
       this.handshake = "idle";
-      if (this.hasConnectedOnce) {
+      const reconnecting = this.hasConnectedOnce;
+      this.hasConnectedOnce = true;
+      this.reconnectAttempt = 0;
+      // Mark connected before re-attaching: `send` guards on the connected
+      // state, and the re-attach below must pass that guard (see send()).
+      this.setState("connected");
+      if (reconnecting) {
         for (const sessionId of this.attachedSessions) {
           this.sendAttach(sessionId, this.lastSeq(sessionId) + 1);
         }
       }
-      this.hasConnectedOnce = true;
-      this.reconnectAttempt = 0;
-      this.setState("connected");
       return;
     }
 

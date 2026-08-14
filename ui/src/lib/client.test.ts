@@ -292,3 +292,88 @@ describe("unknown event tolerance", () => {
     warn.mockRestore();
   });
 });
+describe("send (TD-1004)", () => {
+  it("writes the message on a handshaken socket and returns true", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    const ok = h.client.send({ type: "cancel", session_id: "s1" });
+    expect(ok).toBe(true);
+    const last = JSON.parse(h.sockets[0].sent[h.sockets[0].sent.length - 1]);
+    expect(last).toEqual({ type: "cancel", session_id: "s1" });
+    h.client.stop();
+  });
+
+  it("returns false and sends nothing once stopped", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.stop();
+    const wireCount = h.sockets[0].sent.length;
+    expect(h.client.send({ type: "cancel", session_id: "s1" })).toBe(false);
+    expect(h.sockets[0].sent.length).toBe(wireCount);
+    h.client.stop();
+  });
+});
+
+describe("session control messages (TD-1006)", () => {
+  it("sends open_workspace and set_tier after the handshake", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+
+    h.client.openWorkspace("/Users/me/project");
+    h.client.setTier("sess-1", "worker");
+
+    const sent = h.sockets[0].sent.map((raw) => JSON.parse(raw));
+    // [0] is the hello frame from the handshake.
+    expect(sent[1]).toEqual({ type: "open_workspace", path: "/Users/me/project" });
+    expect(sent[2]).toEqual({ type: "set_tier", session_id: "sess-1", tier: "worker" });
+    h.client.stop();
+  });
+
+  it("does not send before the handshake completes", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.sockets[0].onopen?.(); // hello sent, but no hello_ack yet
+
+    h.client.openWorkspace("/tmp/x");
+    h.client.setTier("sess-1", "brain");
+
+    // Only the hello frame went out.
+    expect(h.sockets[0].sent.length).toBe(1);
+    h.client.stop();
+  });
+
+  it("accepts tier_state, boundary_update, shell_output, checkpoint_notice, context_compacted as known events", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.attach("sess-1");
+
+    const events = [
+      { type: "session_state", session_id: "sess-1", state: "running", seq: 1 },
+      {
+        type: "boundary_update", session_id: "sess-1", seq: 2,
+        writable_paths: ["**"], allowed_commands: [], network: "deny",
+        spend_usd: 25, wall_clock_hours: 8, max_iterations: 200, source: "defaults",
+      },
+      {
+        type: "tier_state", session_id: "sess-1", seq: 3, tier: "brain", override: null,
+        model_slugs: { brain: "b", worker: "w", validator: "v" },
+      },
+      { type: "shell_output", session_id: "sess-1", tool_call_id: "tc-1", stream: "stdout", chunk: "hi\n", seq: 4 },
+      { type: "checkpoint_notice", session_id: "sess-1", code: "no_git", message: "m", seq: 5 },
+      {
+        type: "context_compacted", session_id: "sess-1", seq: 6,
+        dropped_messages: 4, kept_messages: 2, tokens_before: 900, tokens_after: 500,
+      },
+    ];
+    for (const e of events) h.servers[0].push(JSON.stringify(e));
+
+    // Every one reached the sink, none warned as unknown.
+    expect(h.onEvent).toHaveBeenCalledTimes(events.length);
+    expect(h.client.lastSeq("sess-1")).toBe(6);
+    h.client.stop();
+  });
+});

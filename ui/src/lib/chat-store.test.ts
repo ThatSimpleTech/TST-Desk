@@ -1,0 +1,248 @@
+// Chat store behavior tests (TD-1004). Node environment, no DOM: the store
+// is pure logic with injected transport deps, so these tests drive it exactly
+// the way the connection fan-out and the components do.
+
+import { describe, it, expect } from "vitest";
+import {
+  canSend,
+  createChatState,
+  createChatStore,
+  shouldSubmit,
+  showCancel,
+  type ChatDeps,
+} from "./chat-store";
+import type { ClientMessageUnion, DaemonEventUnion, SessionState } from "./protocol";
+
+function fakeDeps(sendResult = true) {
+  const sent: ClientMessageUnion[] = [];
+  const attached: string[] = [];
+  const detached: string[] = [];
+  const deps: ChatDeps = {
+    send: (msg) => {
+      sent.push(msg);
+      return sendResult;
+    },
+    attach: (id) => {
+      attached.push(id);
+    },
+    detach: (id) => {
+      detached.push(id);
+    },
+  };
+  return { deps, sent, attached, detached };
+}
+
+function delta(sessionId: string, text: string): DaemonEventUnion {
+  return { type: "assistant_delta", session_id: sessionId, delta: text, seq: 1 };
+}
+
+function turnComplete(sessionId: string): DaemonEventUnion {
+  return { type: "turn_complete", session_id: sessionId, tokens: 1, cost: 0, tier: "worker", duration: 0, failed: false, error_code: null, seq: 2 };
+}
+
+function sessionState(sessionId: string, state: SessionState["state"]): DaemonEventUnion {
+  return { type: "session_state", session_id: sessionId, state, seq: 3 };
+}
+
+type Summary = { id: string; updated: string; state?: SessionSummaryState };
+type SessionSummaryState = "idle" | "running" | "awaiting_approval" | "complete" | "failed" | "cancelled" | "interrupted";
+
+function sessionList(summaries: Summary[]): DaemonEventUnion {
+  return {
+    type: "session_list",
+    seq: 4,
+    sessions: summaries.map((s) => ({
+      session_id: s.id,
+      workspace_path: "/workspace",
+      state: s.state ?? "idle",
+      created_at: s.updated,
+      updated_at: s.updated,
+      event_count: 0,
+    })),
+  };
+}
+
+function boundStore(sendResult = true) {
+  const { deps, sent, attached, detached } = fakeDeps(sendResult);
+  const state = createChatState();
+  const store = createChatStore(deps, state);
+  store.applyEvent(sessionList([{ id: "s1", updated: "2026-08-14T10:00:00Z", state: "idle" }]));
+  return { store, state, sent, attached, detached };
+}
+
+describe("session binding", () => {
+  it("binds the most recently updated session and attaches", () => {
+    const { deps, attached } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(
+      sessionList([
+        { id: "old", updated: "2026-08-13T09:00:00Z" },
+        { id: "new", updated: "2026-08-14T10:00:00Z" },
+      ]),
+    );
+    expect(state.sessionId).toBe("new");
+    expect(attached).toEqual(["new"]);
+  });
+
+  it("keeps the current session while the daemon still lists it", () => {
+    const { store, state, attached } = boundStore();
+    store.applyEvent(sessionList([{ id: "s1", updated: "2026-08-14T11:00:00Z" }, { id: "s2", updated: "2026-08-14T12:00:00Z" }]));
+    expect(state.sessionId).toBe("s1");
+    expect(attached).toEqual(["s1"]);
+  });
+
+  it("switches when the current session disappears", () => {
+    const { store, state, attached, detached } = boundStore();
+    store.applyEvent(delta("s1", "hello"));
+    store.applyEvent(sessionList([{ id: "s2", updated: "2026-08-14T12:00:00Z", state: "running" }]));
+    expect(state.sessionId).toBe("s2");
+    expect(state.turnState).toBe("running");
+    expect(state.messages).toEqual([]);
+    expect(detached).toEqual(["s1"]);
+    expect(attached).toEqual(["s1", "s2"]);
+  });
+
+  it("clears the session when the list empties", () => {
+    const { store, state, detached } = boundStore();
+    store.applyEvent(sessionList([]));
+    expect(state.sessionId).toBeNull();
+    expect(state.turnState).toBeNull();
+    expect(detached).toEqual(["s1"]);
+  });
+});
+
+describe("streaming assistant output", () => {
+  it("first delta opens a message, later deltas append to the same object", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(delta("s1", "Hello"));
+    expect(state.messages).toHaveLength(1);
+    const message = state.messages[0];
+    expect(message.role).toBe("assistant");
+    expect(message.complete).toBe(false);
+    store.applyEvent(delta("s1", ", world"));
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]).toBe(message); // identity stable — no row re-mount
+    expect(state.messages[0].text).toBe("Hello, world");
+  });
+
+  it("turn_complete seals the message; the next delta opens a new one", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(delta("s1", "first"));
+    store.applyEvent(turnComplete("s1"));
+    expect(state.messages[0].complete).toBe(true);
+    store.applyEvent(delta("s1", "second"));
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[1].text).toBe("second");
+    expect(state.messages[1].complete).toBe(false);
+  });
+
+  it("rebuilds full history from an attach replay through the same reducer", () => {
+    const { store, state } = boundStore();
+    // What the daemon replays on attach: the whole event log in order.
+    const replay: DaemonEventUnion[] = [
+      delta("s1", "Answer one."),
+      turnComplete("s1"),
+      delta("s1", "Answer"),
+      delta("s1", " two."),
+      turnComplete("s1"),
+      sessionState("s1", "idle"),
+    ];
+    for (const event of replay) store.applyEvent(event);
+    expect(state.messages.map((m) => m.text)).toEqual(["Answer one.", "Answer two."]);
+    expect(state.messages.every((m) => m.complete)).toBe(true);
+    expect(state.turnState).toBe("idle");
+  });
+
+  it("seals an in-flight message on terminal session states", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(delta("s1", "partial"));
+    store.applyEvent(sessionState("s1", "cancelled"));
+    expect(state.messages[0].complete).toBe(true);
+    expect(state.turnState).toBe("cancelled");
+  });
+
+  it("ignores events for sessions that are not bound", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(delta("elsewhere", "noise"));
+    store.applyEvent(sessionState("elsewhere", "running"));
+    expect(state.messages).toEqual([]);
+    expect(state.turnState).toBe("idle");
+  });
+});
+
+describe("sending and cancelling", () => {
+  it("sendUserMessage echoes locally and puts user_message on the wire", () => {
+    const { store, state, sent } = boundStore();
+    const ok = store.sendUserMessage("  fix the tests  ");
+    expect(ok).toBe(true);
+    expect(sent).toEqual([{ type: "user_message", session_id: "s1", content: "fix the tests" }]);
+    expect(state.messages[0]).toMatchObject({ role: "user", text: "fix the tests", complete: true });
+  });
+
+  it("sendUserMessage refuses empty content and missing session", () => {
+    const { store, sent } = boundStore();
+    expect(store.sendUserMessage("   ")).toBe(false);
+    const { deps, sent: sent2 } = fakeDeps();
+    const loose = createChatStore(deps, createChatState());
+    expect(loose.sendUserMessage("hi")).toBe(false);
+    expect(sent).toEqual([]);
+    expect(sent2).toEqual([]);
+  });
+
+  it("sendUserMessage does not echo when the wire send fails", () => {
+    const { store, state } = boundStore(false);
+    expect(store.sendUserMessage("hello")).toBe(false);
+    expect(state.messages).toEqual([]);
+  });
+
+  it("cancelTurn sends cancel with the active session id", () => {
+    const { store, sent } = boundStore();
+    expect(store.cancelTurn()).toBe(true);
+    expect(sent).toEqual([{ type: "cancel", session_id: "s1" }]);
+  });
+
+  it("cancelTurn refuses without a session", () => {
+    const { deps, sent } = fakeDeps();
+    const store = createChatStore(deps, createChatState());
+    expect(store.cancelTurn()).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it("refreshSessions asks the daemon for the list", () => {
+    const { store, sent } = boundStore();
+    store.refreshSessions();
+    expect(sent).toEqual([{ type: "list_sessions" }]);
+  });
+
+  it("dispose detaches and clears", () => {
+    const { store, state, detached } = boundStore();
+    store.applyEvent(delta("s1", "text"));
+    store.dispose();
+    expect(detached).toEqual(["s1"]);
+    expect(state).toMatchObject({ sessionId: null, turnState: null, messages: [] });
+  });
+});
+
+describe("composer and control predicates", () => {
+  it("Enter submits, Shift+Enter newlines, other keys do nothing", () => {
+    expect(shouldSubmit("Enter", false)).toBe(true);
+    expect(shouldSubmit("Enter", true)).toBe(false);
+    expect(shouldSubmit("a", false)).toBe(false);
+  });
+
+  it("cancel shows whenever a turn is live", () => {
+    expect(showCancel("running")).toBe(true);
+    expect(showCancel("awaiting_approval")).toBe(true);
+    expect(showCancel("idle")).toBe(false);
+    expect(showCancel("complete")).toBe(false);
+    expect(showCancel(null)).toBe(false);
+  });
+
+  it("composer enables only with a session and a live socket", () => {
+    expect(canSend("s1", "connected")).toBe(true);
+    expect(canSend(null, "connected")).toBe(false);
+    expect(canSend("s1", "reconnecting")).toBe(false);
+    expect(canSend("s1", "disconnected")).toBe(false);
+  });
+});

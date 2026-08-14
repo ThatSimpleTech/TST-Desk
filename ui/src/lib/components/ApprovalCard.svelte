@@ -5,8 +5,8 @@
 	// Focus moves here on appearance (AC #3) so keyboard users land on the
 	// decision they must make.
 	import { onMount } from 'svelte';
-	import { isDangerous } from '../approval';
-	import { approve, deny } from '../approval-store';
+	import { alwaysAllowLabel, isAlwaysAllowable, isDangerous } from '../approval';
+	import { alwaysAllow, approve, deny } from '../approval-store.svelte.js';
 	import type { PendingApproval } from '../approval';
 
 	interface Props {
@@ -16,6 +16,8 @@
 	let { approval }: Props = $props();
 
 	let dangerous = $derived(isDangerous(approval));
+	let alwaysAllowable = $derived(isAlwaysAllowable(approval));
+	let ruleLabel = $derived(alwaysAllowLabel(approval));
 	let note = $state('');
 	let cardEl: HTMLElement | null = null;
 
@@ -64,6 +66,15 @@
 		/>
 		<div class="buttons">
 			<button class="btn btn--approve" type="button" onclick={() => approve(approval)}>Approve</button>
+			{#if alwaysAllowable}
+				<button
+					class="btn btn--always"
+					type="button"
+					onclick={() => alwaysAllow(approval)}
+					title={ruleLabel}
+					aria-label={`Always allow in this workspace: ${ruleLabel}`}
+				>Always allow in this workspace</button>
+			{/if}
 			<button class="btn btn--deny" type="button" onclick={() => deny(approval, note)}>Deny</button>
 		</div>
 	</footer>
@@ -218,5 +229,16 @@
 	.btn--deny:hover {
 		background: var(--color-danger);
 		color: var(--color-accent-text);
+	}
+
+	.btn--always {
+		background: transparent;
+		color: var(--color-text);
+		border-color: var(--color-border);
+	}
+
+	.btn--always:hover {
+		background: var(--color-bg-subtle);
+		border-color: var(--color-text-secondary);
 	}
 </style>
