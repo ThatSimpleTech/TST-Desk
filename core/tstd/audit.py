@@ -80,7 +80,7 @@ CREATE TABLE decisions (
     decision_class TEXT NOT NULL CHECK(decision_class IN ('A', 'B', 'C')),
     what TEXT NOT NULL,
     why TEXT NOT NULL,
-    commit_sha TEXT NOT NULL,
+    commit_sha TEXT NULL,
     ts REAL NOT NULL
 );
 CREATE INDEX idx_decisions_session ON decisions(session_id, ts);
@@ -273,10 +273,14 @@ class AuditStore:
         decision_class: DecisionClass,
         what: str,
         why: str,
-        commit_sha: str,
+        commit_sha: str | None,
         ts: float | None = None,
     ) -> int:
-        """Record a classified decision (mirrors the TD-704 ledger entry)."""
+        """Record a classified decision (mirrors the TD-704 ledger entry).
+
+        ``commit_sha`` is NULL for Class B decisions: the TD-704 rule
+        binds Class A to a commit but Class B stands on judgment alone.
+        """
         cur = self._conn.execute(
             "INSERT INTO decisions (session_id, decision_class, what, why, commit_sha, ts)"
             " VALUES (?, ?, ?, ?, ?, ?)",
