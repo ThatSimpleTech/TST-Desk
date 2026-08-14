@@ -10,7 +10,11 @@ actionable error messages that name the offending key.
 
 from __future__ import annotations
 
+import contextlib
+import os
+import re
 import shutil
+import tempfile
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
@@ -107,6 +111,45 @@ def ensure_user_config(path: Path | None = None) -> Path:
             resources.files("tstd").joinpath(_DEFAULT_CONFIG_RESOURCE).open("rb"),
             config_path.open("wb"),
         )
+    return config_path
+
+
+def save_active_preset(name: str, path: Path | None = None) -> Path:
+    """Persist ``active_preset: <name>`` in the user config (TD-1101).
+
+    The shipped config is comment-heavy and survives a PyYAML round-trip
+    poorly, so instead of dumping we surgically rewrite the single top-level
+    ``active_preset:`` line — appending it when absent.  The write is atomic
+    (same-directory temp file + ``os.replace``), so a crash mid-write never
+    leaves a torn config.
+
+    Returns the path written.  Raises ``ConfigError`` if the name is not a
+    declared preset of the loaded config.
+    """
+    config_path = ensure_user_config(path)
+    config = load_config(config_path)
+    if name not in config.presets:
+        raise ConfigError(
+            f"Unknown preset {name!r}; declared presets: {', '.join(sorted(config.presets))}"
+        )
+
+    text = config_path.read_text(encoding="utf-8")
+    new_line = f"active_preset: {name}"
+    pattern = re.compile(r"^active_preset:.*$", re.MULTILINE)
+    if pattern.search(text):
+        text = pattern.sub(new_line, text, count=1)
+    else:
+        text = text.rstrip("\n") + "\n\n" + new_line + "\n"
+
+    fd, tmp_name = tempfile.mkstemp(dir=config_path.parent, prefix=config_path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp_name, config_path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
     return config_path
 
 

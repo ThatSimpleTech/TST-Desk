@@ -42,6 +42,12 @@ import type {
   SessionList,
   PolicyRules,
   PolicyRuleSummary,
+  GetSetupState,
+  SetApiKey,
+  ValidateApiKey,
+  SetPreset,
+  SetupState,
+  ApiKeyValidated,
   Error,
 } from "./protocol";
 
@@ -162,6 +168,29 @@ describe("Client message fixtures match TypeScript types", () => {
   it("list_sessions", () => {
     const m = fixtures.list_sessions as ListSessions;
     expect(m.type).toBe("list_sessions");
+  });
+
+  // TD-1101 first-run wizard
+  it("get_setup_state", () => {
+    const m = fixtures.get_setup_state as GetSetupState;
+    expect(m.type).toBe("get_setup_state");
+  });
+
+  it("set_api_key", () => {
+    const m = fixtures.set_api_key as SetApiKey;
+    expect(m.type).toBe("set_api_key");
+    expect(isString(m.api_key)).toBe(true);
+  });
+
+  it("validate_api_key", () => {
+    const m = fixtures.validate_api_key as ValidateApiKey;
+    expect(m.type).toBe("validate_api_key");
+  });
+
+  it("set_preset", () => {
+    const m = fixtures.set_preset as SetPreset;
+    expect(m.type).toBe("set_preset");
+    expect(isString(m.name)).toBe(true);
   });
 
   // hello_ack is out-of-band and unsequenced: daemon→client, no seq.
@@ -386,6 +415,27 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("setup_state", () => {
+    // TD-1101: connection-scoped (no session_id), seq=1 like policy_rules.
+    const m = fixtures.setup_state as SetupState;
+    expect(m.type).toBe("setup_state");
+    expect(isBoolean(m.has_api_key)).toBe(true);
+    expect(Array.isArray(m.presets)).toBe(true);
+    expect(m.presets.every(isString)).toBe(true);
+    expect(isString(m.active_preset)).toBe(true);
+    expect(m.seq).toBe(1);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("api_key_validated", () => {
+    const m = fixtures.api_key_validated as ApiKeyValidated;
+    expect(m.type).toBe("api_key_validated");
+    expect(isBoolean(m.ok)).toBe(true);
+    expect(isString(m.detail)).toBe(true);
+    expect(m.seq).toBe(1);
+    expect("session_id" in m).toBe(false);
+  });
+
   it("error", () => {
     const m = fixtures.error as Error;
     expect(m.type).toBe("error");
@@ -407,6 +457,7 @@ describe("All fixtures have required shape", () => {
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
+      "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -422,7 +473,7 @@ describe("All fixtures have required shape", () => {
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "tier_switched",
       "instruction_stack", "session_list", "policy_rules", "error",
-      "error_with_session",
+      "error_with_session", "setup_state", "api_key_validated",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

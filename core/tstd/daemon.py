@@ -21,12 +21,14 @@ import websockets.exceptions
 from .audit import AuditStore
 from .audit_writer import AuditWriter
 from .boundary_config import boundary_source, load_workspace_boundary
-from .config import ConfigError, ModelConfig, cached_config
+from .config import ConfigError, ModelConfig, cached_config, save_active_preset
+from .keychain import KeychainError, get_api_key, store_api_key
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .policy import add_rule, load_policy, propose_always_allow, remove_rule, save_policy
 from .protocol import (
     AlwaysAllow,
+    ApiKeyValidated,
     Approve,
     Attach,
     Cancel,
@@ -34,6 +36,7 @@ from .protocol import (
     DaemonEvent,
     Deny,
     Detach,
+    GetSetupState,
     HandshakeError,
     ListPolicyRules,
     ListSessions,
@@ -44,10 +47,14 @@ from .protocol import (
     RevokePolicyRule,
     SessionList,
     SessionSummary,
+    SetApiKey,
+    SetPreset,
     SetTier,
+    SetupState,
     Shutdown,
     TierState,
     UserMessage,
+    ValidateApiKey,
     build_error,
     parse_client_message,
 )
@@ -60,7 +67,13 @@ from .protocol import (
 from .protocol import (
     TierSwitched as TierSwitchedEvent,
 )
-from .provider import ProviderClient
+from .provider import (
+    ChatCompletionRequest,
+    ChatMessage,
+    ProviderClient,
+    ProviderError,
+    auth_failure_message,
+)
 from .router import TIER_NAMES, TierRouter
 from .session import Session, SessionEventLog, SessionRegistry, SessionRunner
 from .session_store import SessionStore
@@ -107,14 +120,16 @@ def _win_parent_alive(pid: int) -> bool:
     try:
         import ctypes
 
+        # ``ctypes.windll`` exists only on Windows and is absent from mypy's
+        # POSIX stubs; getattr keeps one spelling clean on every platform.
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            return True  # unreachable — caller gates on os.name == "nt"
         process_query_limited = 0x1000
-        # ``ctypes.windll`` exists only on Windows; mypy's macOS stubs omit it.
-        handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[attr-defined]
-            process_query_limited, False, pid
-        )
+        handle = windll.kernel32.OpenProcess(process_query_limited, False, pid)
         if not handle:
             return False
-        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        windll.kernel32.CloseHandle(handle)
         return True
     except Exception:
         # Degrade to "alive" so a watchdog bug never spuriously kills us.
@@ -180,6 +195,53 @@ class Daemon:
             tier_cfg = self.config.tier("brain")
             self._provider = await ProviderClient.from_keychain(tier_cfg.base_url)
         return self._provider
+
+    async def _setup_state_event(self) -> SetupState:
+        """Current onboarding state (TD-1101): key presence + preset choice.
+
+        ``has_api_key`` is the wizard's first-run signal; presence is probed
+        from the keychain, so it survives daemon restarts and never touches
+        the key value itself.
+        """
+        try:
+            await get_api_key()
+            has_api_key = True
+        except KeychainError:
+            has_api_key = False
+        return SetupState(
+            seq=1,
+            has_api_key=has_api_key,
+            presets=sorted(self.config.presets),
+            active_preset=self.config.active_preset,
+        )
+
+    async def _validate_api_key(self) -> ApiKeyValidated:
+        """Probe the stored key with one cheap live call (TD-1101).
+
+        A one-token completion against the active preset's brain tier: the
+        cheapest request that still proves the key authenticates.  The key
+        value never appears in the response — success names the keychain
+        account, failure carries actionable text.
+        """
+        tier_cfg = self.config.tier("brain")
+        try:
+            client = await ProviderClient.from_keychain(tier_cfg.base_url)
+        except KeychainError as e:
+            return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+        response = await client.chat_completion(
+            ChatCompletionRequest(
+                model=tier_cfg.slug,
+                messages=[ChatMessage(role="user", content="ok")],
+                max_tokens=1,
+                stream=False,
+            )
+        )
+        if isinstance(response, ProviderError):
+            detail = auth_failure_message() if response.code == "auth_failed" else response.message
+            return ApiKeyValidated(seq=1, ok=False, detail=detail)
+        return ApiKeyValidated(
+            seq=1, ok=True, detail="Key accepted by the active preset's provider."
+        )
 
     async def run(self) -> None:
         """Start the daemon and run until shutdown is requested."""
@@ -651,6 +713,43 @@ class Daemon:
 
         if isinstance(msg, ListSessions):
             return await self._handle_list_sessions()
+
+        # ── Onboarding (TD-1101 first-run wizard) ────────────────────
+        if isinstance(msg, GetSetupState):
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetApiKey):
+            try:
+                await store_api_key(msg.api_key)
+            except (KeychainError, NotImplementedError) as e:
+                return build_error("key_store_failed", f"Could not store the API key: {e}")
+            # Never log the key; the ack is a refreshed setup_state.
+            log.info("api key stored in keychain")
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, ValidateApiKey):
+            return (await self._validate_api_key()).model_dump_json()
+
+        if isinstance(msg, SetPreset):
+            if msg.name not in self.config.presets:
+                return build_error(
+                    "unknown_preset",
+                    f"Unknown preset {msg.name!r}; declared: "
+                    f"{', '.join(sorted(self.config.presets))}",
+                )
+            try:
+                save_active_preset(msg.name)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            # New sessions route on the new preset immediately; existing
+            # sessions keep the tier slugs they opened with.  model_copy
+            # keeps the process-wide cached instance untouched.
+            self.config = self.config.model_copy(update={"active_preset": msg.name})
+            log.info(
+                "active preset changed",
+                extra={"extra_fields": {"preset": msg.name}},
+            )
+            return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, Shutdown):
             log.info("shutdown requested via websocket")

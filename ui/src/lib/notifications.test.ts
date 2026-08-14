@@ -6,8 +6,10 @@
 // the redaction rules on the diagnostics report.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import pkg from "../../package.json";
 import type { DaemonEventUnion } from "./protocol";
 import { sessionStateCopy, turnFailureCopy } from "./error-copy";
+import { redact } from "./redact";
 import {
   TOAST_TIMEOUT_MS,
   banners,
@@ -44,6 +46,12 @@ function sessionState(state: string, reason?: string): DaemonEventUnion {
     seq: 10,
   } as DaemonEventUnion;
 }
+
+// Synthetic credentials, joined at runtime: no real-looking literal ever
+// sits in this file for a secret scanner (or a skimming human) to find.
+const FAKE_SK = "sk-" + "abcdefghij1234567890abcd";
+const FAKE_GHP = "ghp_" + "abcdefghijklmnopqrstuvwx";
+const FAKE_AKIA = "AKIA" + "IOSFODNN7EXAMPLE";
 
 beforeEach(() => {
   clearNotifications();
@@ -91,10 +99,29 @@ describe("error copy", () => {
     }
   });
 
+  it("each cap pause names the field to raise", () => {
+    expect(sessionStateCopy("paused", "spend cap exceeded: 1 >= 0.5")?.body).toContain("spend_usd");
+    expect(sessionStateCopy("paused", "wall-clock cap exceeded: 1 >= 0.5")?.body).toContain("wall_clock_hours");
+    expect(sessionStateCopy("paused", "iteration cap exceeded: 1 >= 0.5")?.body).toContain("max_iterations");
+  });
+
+  it("transport and parse failures get tailored toasts, not the fallback", () => {
+    for (const code of ["timeout", "connection_error", "request_error", "parse_error", "stream_interrupted"]) {
+      const spec = turnFailureCopy(code);
+      expect(spec?.severity).toBe("toast");
+      expect(spec?.title).not.toBe("Turn failed");
+    }
+  });
+
   it("a failed session is a banner; normal states stay quiet", () => {
     expect(sessionStateCopy("failed", "boom")?.severity).toBe("banner");
     expect(sessionStateCopy("running", null)).toBeNull();
-    expect(sessionStateCopy("interrupted", null)).toBeNull();
+  });
+
+  it("an interrupted session is a tombstone banner — it cannot resume", () => {
+    const spec = sessionStateCopy("interrupted", null);
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.body).toMatch(/new session/i);
   });
 });
 
@@ -157,6 +184,12 @@ describe("notification routing", () => {
     expect(toasts[0].body).toBe("unknown message type");
   });
 
+  it("an interrupted session raises the tombstone banner", () => {
+    notifyEvent(sessionState("interrupted"));
+    expect(banners).toHaveLength(1);
+    expect(banners[0].title).toBe("Session can’t be resumed");
+  });
+
   it("dismiss removes a banner immediately", () => {
     notifyEvent(turnComplete("auth_failed"));
     const id = banners[0].id;
@@ -165,7 +198,38 @@ describe("notification routing", () => {
   });
 });
 
+describe("redact (diagnostics belt)", () => {
+  it("covers the core secret patterns, dashed keys, and Bearer", () => {
+    expect(redact(`key ${FAKE_SK} here`)).toBe("key [REDACTED] here");
+    expect(redact(FAKE_GHP)).toBe("[REDACTED]");
+    expect(redact(FAKE_AKIA)).toBe("[REDACTED]");
+    expect(redact(`Authorization: Bearer ${FAKE_SK}`)).toBe("Authorization: [REDACTED]");
+    // The core-mirrored pattern consumes the header's marker dashes too.
+    expect(redact("-----BEGIN RSA PRIVATE KEY")).toBe("[REDACTED]");
+    expect(redact("nothing secret")).toBe("nothing secret");
+  });
+});
+
 describe("diagnostics", () => {
+  it("names the UI version and lists live notifications", () => {
+    notifyEvent(turnComplete("auth_failed"));
+    const report = buildDiagnostics({ ws: "connected", daemonState: "connected", daemonRestart: 0 });
+    expect(report).toContain(`ui ${pkg.version}`);
+    expect(report).toContain("notification [banner] API key rejected");
+  });
+
+  it("wire text in the report passes through redact", () => {
+    notifyEvent({
+      type: "error",
+      code: "bad_request",
+      message: `rejected key ${FAKE_SK}`,
+      seq: 3,
+    } as DaemonEventUnion);
+    const report = buildDiagnostics({ ws: "connected", daemonState: "connected", daemonRestart: 0 });
+    expect(report).not.toContain(FAKE_SK);
+    expect(report).toContain("[REDACTED]");
+  });
+
   it("buildDiagnostics redacts paths and content but keeps state and events", () => {
     const running = sessionState("running");
     notifyEvent({ type: "ready", version: "0.3.1", protocol_version: 1, seq: 0 } as DaemonEventUnion);
