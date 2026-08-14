@@ -14,7 +14,7 @@
 		"test:watch": "vitest",
 		"tauri": "TAURI_APP_PATH=../shell tauri",
 		"tauri:dev": "TAURI_APP_PATH=../shell tauri dev",
-		"tauri:build": "TAURI_APP_PATH=../shell tauri build"
+		"tauri:build": "TAURI_APP_PATH=../shell tauri build --config '{\"bundle\":{\"externalBin\":[\"binaries/tstd\"]}}'"
 	},
 	"dependencies": {
 		"@tauri-apps/api": "^2.9.0"
