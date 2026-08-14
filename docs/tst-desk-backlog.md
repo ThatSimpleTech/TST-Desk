@@ -43,7 +43,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M0 — Decisions** | E1 | Open decisions answered, repo scaffolded, CI green on an empty build |
 | **M1 — Headless core** | E2, E3, E4, E5, E6, E7, E8, E9 | A scripted request runs end-to-end from a CLI harness, with steering loaded, tools dispatched, decisions classified, cost accounted, all under test |
 | **M2 — The window** | E10, E11, E12 | A human does the same thing through the app, never touching a terminal |
-| **M3 — Shippable** | E13, E14, E15, E16 | A stranger can install and use it from a fresh machine |
+| **M3 — Shippable** | E13, E14, E15, E16, E17 | A stranger can install and use it from a fresh machine |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -1091,6 +1091,39 @@ error.
 
 ---
 
+### TD-1105 — Keychain locked/drift error surface
+**Size:** 1 · **Depends on:** TD-1102
+
+**Acceptance criteria:**
+- [ ] A locked or password-drifted login keychain (macOS "user name or passphrase
+      not correct" / `SecKeychainItemCreateFromContent` failures) maps to actionable
+      copy: what happened, and how to fix it (Keychain Access → unlock or update
+      password), not raw `security` stderr
+- [ ] Store failure offers a retry path after the user unlocks the keychain
+
+**Notes:** first observed 2026-08-14 on an AD-bound Mac after a domain password
+change — `security add-generic-password` fails machine-wide until the keychain
+is re-keyed; verified the daemon's exec-array invocation is not the cause.
+Coordinate with TD-1102's wizard rework (integrate that lane first; this lands
+on top).
+
+---
+
+### TD-1106 — Validate works on the entered key
+**Size:** 1 · **Depends on:** TD-1102
+
+**Acceptance criteria:**
+- [ ] The wizard's Validate action checks the key currently typed in the field
+      with the provider, regardless of stored state
+- [ ] Store and Validate are independent; a failed or skipped store never
+      dead-ends the step
+
+**Notes:** observed 2026-08-14: Validate was gated on `hasApiKey`, so any
+keychain failure made both buttons unreachable at once. Same TD-1102
+coordination note as TD-1105.
+
+---
+
 ## Epic E12 — Instruction inspector
 
 **Goal:** answer "did my rules take effect?" with a pane instead of guesswork. Spec §4.4.
@@ -1654,6 +1687,176 @@ Nine new vitest cases pin the layer order and the inert combos; vitest
 
 ---
 
+## Epic E17 — Familiarity II
+
+**Goal:** the furniture pass — the structures a person reaches for in the first
+five minutes. Source: the 2026-08-14 reverse-engineering pass (Tier 2 of the
+familiarity ladder). Ordered by familiarity-per-effort; each story lands on the
+E16 visual identity. Everything here builds over existing seams — sidebar and
+notifications first, because they change how the app is used every day.
+
+---
+
+### TD-1701 — Session sidebar
+**Size:** 3 · **Depends on:** TD-1005, TD-1601, TD-1608
+
+**Acceptance criteria:**
+- [ ] A ≈260px left rail lists the workspace's sessions — live and interrupted —
+      newest first, with a state indicator per row
+- [ ] Clicking a session attaches the window to it; the attached session is marked
+- [ ] A New-session action creates and attaches a fresh session in the current
+      workspace
+- [ ] The rail collapses to an icon strip and the collapsed state persists
+- [ ] A filter field narrows the list client-side
+- [ ] E16 tokens, type roles, and icon map throughout; no emoji
+
+**Notes:** protocol discovery first — `list_sessions` and attach/detach/replay
+(TD-206) exist. If only `open_workspace` creates sessions, add a `new_session`
+verb in `session_store`/protocol (core change is in scope for this story;
+keep it minimal — the heavy session lifecycle stays where it is). Rename/star/
+delete wait for durable history (v0.3); rows are keyed by session id. User
+request 2026-08-14: "the collapsible chat history on the left, like Claude."
+
+---
+
+### TD-1702 — OS notifications
+**Size:** 2 · **Depends on:** TD-1007
+
+**Acceptance criteria:**
+- [ ] OS notification when an approval is requested and the window is unfocused;
+      clicking it focuses the window on the approval card
+- [ ] OS notification on turn completion when unfocused
+- [ ] No notification when the window is focused
+- [ ] Permission request happens lazily, on first qualifying event — never
+      upfront
+
+**Notes:** `tauri-plugin-notification`; permission comes from the plugin's
+request API. The approval notification is the one that makes the app feel like
+a coworker.
+
+---
+
+### TD-1703 — Settings screen v1
+**Size:** 3 · **Depends on:** TD-1106, TD-1701
+
+**Acceptance criteria:**
+- [ ] In-app settings page with left-nav sections, reached from the title-bar
+      gear (gear stops reopening the wizard)
+- [ ] Appearance section: light / system / dark, overriding
+      `prefers-color-scheme`
+- [ ] Model section: preset and tier slugs readable, editing writes through to
+      `config.yaml`
+- [ ] Policy section: persisted always-allow rules listed with revoke
+- [ ] Key section: re-enter / remove stored key (TD-1102's flows, surfaced here)
+
+**Notes:** the wizard stays for first run; ⌘, retargets to this screen. Policy
+list/revoke may need protocol messages — check what TD-803 landed before
+assuming.
+
+---
+
+### TD-1704 — Queue and steer UI
+**Size:** 2 · **Depends on:** TD-1004
+
+**Acceptance criteria:**
+- [ ] Sending while a turn runs queues the message; queued rows render with
+      send-now and remove
+- [ ] Editing a queued row replaces its text
+- [ ] Empty-queue state is invisible (no chrome when nothing is queued)
+
+**Notes:** the daemon already queues user messages (E4); this is presentation.
+Drag-to-reorder is a follow-up if the rows prove useful.
+
+---
+
+### TD-1705 — Files pane
+**Size:** 3 · **Depends on:** TD-1005, TD-1701
+
+**Acceptance criteria:**
+- [ ] A Files tab beside Activity aggregates the session's write diffs from the
+      event stream: file list, per-file diff view, running totals
+- [ ] Empty state explains what will appear here
+- [ ] Clicking a file can open it via the existing opener integration
+
+**Notes:** spec §3's right-pane tab. Data is already in the timeline events;
+this is aggregation and presentation, no new core events.
+
+---
+
+### TD-1706 — Usage and cost view
+**Size:** 3 · **Depends on:** TD-903
+
+**Acceptance criteria:**
+- [ ] A usage view shows session/day/week token and cost rollups from the audit
+      store, broken out by tier
+- [ ] Export buttons reuse the existing JSONL/CSV export
+- [ ] The title-bar meter's hover panel links here
+
+**Notes:** aggregation queries exist (TD-903); verify which export affordances
+are already wired before adding UI.
+
+---
+
+### TD-1707 — Command palette
+**Size:** 2 · **Depends on:** TD-1701, TD-1703
+
+**Acceptance criteria:**
+- [ ] ⌘K opens a palette over sessions and actions (new session, attach, open
+      decisions/doctor/stack/settings, toggle theme)
+- [ ] Fuzzy match, full keyboard operation, Esc dismisses
+- [ ] Palette entries reuse the icon map
+
+**Notes:** lands after the sidebar and settings so it has things to command.
+
+---
+
+### TD-1708 — Edit and retry branching
+**Size:** 5 · **Depends on:** TD-1606
+
+**Acceptance criteria:**
+- [ ] Editing a past user message forks the conversation from that point and
+      resends
+- [ ] Branch navigation (‹ ›) on edited messages and retried assistant turns
+- [ ] Daemon-side fork covered by core tests; replay shows the active branch
+
+**Notes:** needs daemon conversation forking and protocol additions; the
+backlog's sizing reflects that. Retry-without-edit stays the TD-1606 behavior.
+
+---
+
+### TD-1709 — Attachments v1
+**Size:** 3 · **Depends on:** TD-1004
+
+**Acceptance criteria:**
+- [ ] Text files attach to a message as context chips (picker, drag-drop, paste)
+- [ ] Attachments travel with `user_message` within configured caps and render
+      as chips in the sent row
+- [ ] Oversize/binary attachment attempts fail with actionable copy
+
+**Notes:** images deliberately split out — vision support depends on the user's
+chosen models and needs capability detection first.
+
+---
+
+### TD-1710 — Browser computer-use and Screen pane
+**Size:** 8 · **Depends on:** TD-1007
+
+**Acceptance criteria:**
+- [ ] `files_102.zip` unpacked into the tree first — it is the only copy of the
+      `tst-cua` driver source
+- [ ] BrowserDriver runs against a real browser (Playwright persistent profile);
+      six-verb actions surface as tools through the existing approval gate
+- [ ] A Screen tab in the right pane streams browser screenshots so the session
+      is watchable
+- [ ] Failure modes (driver crash, stalled page, denied action) land as normal
+      timeline entries
+
+**Notes:** the wow story. Browser-only — whole-desktop AX stays v0.4 (TCC
+friction, per-app quirks, boundary model for screen actions). Driver bring-up
+on real hardware is where the estimate lives; timebox and record deviations.
+
+---
+
 # Post-v0.1 backlog
 
 Named, sequenced, and deliberately not decomposed. Do not build these.
@@ -1691,9 +1894,9 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
-| M2 The window | E10–E12 | 14 | 51 |
-| M3 Shippable | E13–E16 | 20 | 58 |
-| **Total v0.1** | **16** | **84** | **267** |
+| M2 The window | E10–E12 | 16 | 53 |
+| M3 Shippable | E13–E17 | 30 | 92 |
+| **Total v0.1** | **17** | **96** | **303** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
