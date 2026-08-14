@@ -12,6 +12,7 @@ from pathlib import Path
 
 from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClassifier
 from tstd.tools import (
+    Tool,
     ToolDispatcher,
     create_registry,
     fs_list,
@@ -186,8 +187,19 @@ class TestDispatchIntegration:
         assert result.output == "a.py"
 
     async def test_unknown_handler_still_clear(self, tmp_path: Path) -> None:
-        # shell is registered but its handler lands in TD-605.
-        dispatcher = make_dispatcher(tmp_path)
-        result = await dispatcher.dispatch("c1", "shell", {"command": "echo hi"})
+        # Every builtin has a handler now; a registered-but-handler-less
+        # tool must still fail with a clean no_handler error.
+        registry = create_registry()
+        registry.register(Tool(name="ghost_probe", description="registered, never executed"))
+        boundary = Boundary(workspace_root=tmp_path)
+        dispatcher = ToolDispatcher(
+            registry,
+            classifier=AmbiguousClassifier(
+                static=DecisionClassifier(boundary),
+                call_worker=_stub_worker,
+            ),
+            path_guard=PathGuard(boundary),
+        )
+        result = await dispatcher.dispatch("c1", "ghost_probe", {})
         assert result.status == "error"
         assert result.error_code == "no_handler"

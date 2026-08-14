@@ -60,7 +60,7 @@ def _read_file(path: str) -> str:
     return Path(path).read_text()
 
 
-async def _write_handler(session: object, path: str, content: str) -> str:
+async def _write_handler(session: object, path: str, content: str, tool_call_id: str = "") -> str:
     _write_file(path, content)
     return f"wrote {len(content)} chars"
 
@@ -113,7 +113,9 @@ class TestDispatcherSeam:
         registry.register(make_write_tool(name="fs_read", mutates=False))
         dispatcher = make_dispatcher(repo, registry)
 
-        async def read_handler(session: object, path: str, content: str) -> str:
+        async def read_handler(
+            session: object, path: str, content: str, tool_call_id: str = ""
+        ) -> str:
             return _read_file(path)
 
         dispatcher.register_handler("fs_read", read_handler)
@@ -146,7 +148,9 @@ class TestDispatcherSeam:
         session = Session(str(repo))
         dispatcher = make_dispatcher(repo, make_write_registry())
 
-        async def failing_handler(session: object, path: str, content: str) -> str:
+        async def failing_handler(
+            session: object, path: str, content: str, tool_call_id: str = ""
+        ) -> str:
             raise OSError("disk on fire")
 
         dispatcher.register_handler("fs_write", failing_handler)

@@ -28,6 +28,7 @@ from tstd.protocol import (
     Ready,
     SessionState,
     SetTier,
+    ShellOutput,
     ToolCall,
     ToolResult,
     TurnComplete,
@@ -214,6 +215,43 @@ class TestDaemonEvents:
         back = _roundtrip(evt)
         assert isinstance(back, ToolResult)
         assert back.truncated is True
+
+    def test_shell_output(self) -> None:
+        evt = ShellOutput(
+            session_id="sess-1",
+            tool_call_id="tc-1",
+            stream="stdout",
+            chunk="hello\n",
+            seq=13,
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, ShellOutput)
+        assert back.tool_call_id == "tc-1"
+        assert back.stream == "stdout"
+        assert back.chunk == "hello\n"
+        assert back.seq == 13
+
+    def test_shell_output_stderr(self) -> None:
+        evt = ShellOutput(
+            session_id="sess-1",
+            tool_call_id="tc-1",
+            stream="stderr",
+            chunk="boom",
+            seq=14,
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, ShellOutput)
+        assert back.stream == "stderr"
+
+    def test_shell_output_invalid_stream(self) -> None:
+        with pytest.raises(ValidationError):
+            ShellOutput(
+                session_id="sess-1",
+                tool_call_id="tc-1",
+                stream="stdin",  # type: ignore[arg-type]
+                chunk="x",
+                seq=15,
+            )
 
     def test_approval_request(self) -> None:
         evt = ApprovalRequest(

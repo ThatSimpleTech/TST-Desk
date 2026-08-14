@@ -1054,3 +1054,56 @@ atomic write rather than dropping the flag.
 **Rationale:** The schema is already promised to the model; removing a
 declared argument would be a protocol regression. Append reuses the same
 atomic path, so it costs nothing extra.
+## 2026-08-13 — TD-605: Shell execution
+
+Decisions made while building the shell handler.
+
+### 1. Every handler receives `tool_call_id` as a keyword argument
+
+**Decision:** Dispatch calls `handler(session=session, tool_call_id=tool_call_id,
+**arguments)`; all handlers accept a trailing `tool_call_id: str = ""`
+parameter even when they ignore it.
+
+**Rationale:** `shell_output` timeline events must carry the invocation id
+so the UI can attach streamed output to the tool call that produced it.
+Alternatives — positional correlation, signature inspection, side channels —
+all made the UI derive truth it was never given. A uniform kwarg is boring,
+explicit, and keeps direct test calls (`fs_read(None, path)`) working.
+
+### 2. Streamed output is a first-class daemon event
+
+**Decision:** New `shell_output` protocol event (`session_id`,
+`tool_call_id`, `stream: "stdout" | "stderr"`, `chunk`) appended to the
+session event log per chunk as output arrives.
+
+**Rationale:** "Streamed to the timeline as they arrived, not buffered to
+the end" (criterion 3) means the timeline — the event log — must receive
+chunks live. Reusing `tool_result` or `assistant_delta` would either buffer
+to the end or mislabel command output as model speech.
+
+### 3. Timeout and cancel are results; refusals are errors
+
+**Decision:** A timed-out or cancelled command returns `status="success"`
+with a leading marker line (`timed out after Ns — process group killed` /
+`cancelled — process group killed`) and whatever output was captured; the
+process group is SIGKILLed with no SIGTERM grace. `status="error"` is
+reserved for refusals and infrastructure failures (allowlist, bad timeout,
+missing workspace, spawn failure).
+
+**Rationale:** Criterion 5 establishes that execution facts are results the
+model reasons about; criterion 2 wants the command dead on timeout, and a
+grace period turns a deadline into a suggestion. A child killed by SIGKILL
+reports `-9` as its exit code — consistent with shell convention.
+
+### 4. Allowlist matches the resolved binary, fail-closed
+
+**Decision:** With `allowed_commands` set, each top-level segment's leading
+binary is resolved with `shutil.which` and matched by basename;
+unresolvable binaries, unparseable segments, and backtick substitution are
+refused. Wrapper binaries (`sh -c`, `sudo`, `env`) match as themselves.
+
+**Rationale:** Matching the resolved basename lets `git` and `/usr/bin/git`
+both match `git` while defeating PATH-shadowing; refusing the unparseable
+keeps the check fail-closed. Wrappers are deliberately not pierced — the
+allowlist is a policy rail, not a sandbox, and spec §12.5's container is
+the real isolation boundary for autonomous runs.
