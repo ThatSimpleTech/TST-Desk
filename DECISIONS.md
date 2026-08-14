@@ -1646,3 +1646,34 @@ planning).  A render proxy — protocol ingestion, store update — would
 measure the wrong thing and give false comfort under the criterion's
 name.  When TD-1005 lands, the metric gets a measurer and a baseline in
 one follow-up.
+
+## 2026-08-14 — TD-1301: Python runtime bundling (sidecar)
+
+**Decision:** Ship the daemon as a PyInstaller onefile sidecar
+(`shell/binaries/tstd-<host triple>`, Tauri `externalBin` convention),
+built by `core/scripts/build_sidecar.py`.  Resolution order in
+`shell/src/daemon.rs`: `$TSTD_PATH` → bundled sidecar (exe sibling) →
+`tstd` on PATH → dev fallback (venv / `uv run`, debug builds only).
+
+**Why onefile over onedir or embed-Python:** Tauri's `externalBin`
+expects a single executable next to the app binary; onedir would need a
+bundle-layout carve-out per platform, and embedding a Python.framework
+by hand is the schedule risk this story exists to burn down.  Onefile
+pays an unpack-to-temp cost at boot — measured 2.0 s to `port.json` on
+an M-series host, inside the 3 s budget.  Revisit only if the budget
+tightens.
+
+**Why the sidecar beats PATH:** the shell and daemon are version-locked
+(protocol handshake, port-file contract); a user-installed `tstd` of a
+different vintage must not win.  `$TSTD_PATH` stays the explicit escape
+hatch for development against a packaged shell.
+
+**Bundle size:** 18.9 MB (aarch64-apple-darwin) — interpreter plus the
+daemon's dependency closure.  Documented per the acceptance criterion;
+justified against the fallback (requiring system Python + guided
+installer), which trades 19 MB of download for a per-user support
+surface.
+
+**Class B** — packaging architecture, recorded here; clean-VM launch
+verification stays a manual step alongside TD-1302's per-platform
+installs.
