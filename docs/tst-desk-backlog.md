@@ -897,10 +897,24 @@ daemon-status event the supervisor now emits; the banner lands in TD-1003.
 **Size:** 3 · **Depends on:** TD-1001, TD-204
 
 **Acceptance criteria:**
-- [ ] Typed WebSocket client with automatic reconnect and backoff
-- [ ] Reconnect re-attaches with `from_seq` and replays missed events — no gaps, no duplicates
-- [ ] Connection state visible in the UI
-- [ ] Unknown event types ignored gracefully with a console warning, never a crash
+- [x] Typed WebSocket client with automatic reconnect and backoff
+- [x] Reconnect re-attaches with `from_seq` and replays missed events — no gaps, no duplicates
+- [x] Connection state visible in the UI
+- [x] Unknown event types ignored gracefully with a console warning, never a crash
+
+**Completed (2026-08-13):** `ProtocolClient` (`ui/src/lib/client.ts`) with injection-safe
+transport (browser `WebSocket` or a test fake). hello/hello_ack handshake; reconnect with
+exponential backoff capped at 15s and a live `reconnecting` state; re-attach every known
+session at `from_seq = lastSeq+1` on reconnect so the daemon replays missed events; per-
+session gap/duplicate gating (seq ≤ last → drop, seq > last+1 → force a fresh attach);
+unknown event types warn via `console.warn` and advance the seen seq without ever crashing.
+Connection state surfaces through `ui/src/lib/connection-status.ts` (Svelte 5 runes store,
+host `daemon-status` event + real socket state) and a token-styled banner. `protocol.ts`
+synced with `core/tstd/protocol.py` (added `shutdown`, `list_sessions`, `hello_ack`,
+`steering_reloaded`, `instruction_stack`, `session_list`, `interrupted`); fixture generator
+extended and regenerated (29 fixtures). Verified: 33 vitest tests pass, `svelte-check`/tsc
+0 errors, 547 Python tests pass. UI must be exercised end-to-end in a live Tauri window
+(TD-1004's chat pane will drive real attaches).
 
 ---
 

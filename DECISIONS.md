@@ -505,3 +505,66 @@ written cross-platform, so the packaging pass needs to confirm, not redesign.
 `docs/tst-desk-backlog.md` with a completion note.
 
 **Rationale:** User instruction: the backlog is where completed-story notes go.
+
+---
+
+## 2026-08-13 — TD-1003: Protocol client
+
+### 1. WebSocket transport is injected, not imported.
+
+**Decision:** `ProtocolClient` takes a `socketFactory` and a `getDaemonInfo` provider (
+`ClientOptions` in `ui/src/lib/client.ts`); it never imports `WebSocket` or Tauri APIs.
+
+**Rationale:** This is what makes the reconnect/backoff/gap logic unit-testable under vitest's
+node environment with a fake socket, and it keeps the client pure. Tauri wiring lives one layer
+up in `connection-status.ts`. TD-1003-1.
+
+### 2. No gaps / no duplicates is enforced client-side by sequence gating.
+
+**Decision:** Per session, accept an event only if its `seq` advances `lastSeq` by exactly one.
+`seq <= lastSeq` is a duplicate and is dropped; `seq > lastSeq+1` is a gap and triggers a forced
+re-attach at `from_seq = lastSeq+1`. Unknown event types still advance the seen `seq` so a
+future type never fires a false gap on the next known event.
+
+**Rationale:** The daemon's per-session log is the source of truth and its `seq` advances for
+every event it emits (including types the TS mirror may not know). Advancing seen-seq on
+unknowns and gating on the known stream is the only way to honor "no gaps, no duplicates"
+without a durable server-side cursor (which is v0.3, TD-205).
+
+### 3. Reconnect re-attaches every known session rather than re-sending a batch cursor.
+
+**Decision:** On `hello_ack` of a reconnection, the client sends `attach{session_id,
+from_seq: lastSeq+1}` for each attached session, letting the daemon's existing `events_from`
+replay replay exactly the missed-tail.
+
+**Rationale:** Reuses the attach/replay mechanism the daemon already implements
+(`Daemon._handle_attach`), rather than inventing a new bulk-catchup message. Only sessions the
+client is actively following are re-attached.
+
+### 4. Connection state combines the real socket state with the host's supervision event.
+
+**Decision:** The `connection-status.ts` store exposes `ws` (socket state: disconnected /
+connecting / connected / reconnecting / stopped, from actual socket transitions) and `daemon`
+(read only from the host's `daemon-status` Tauri event: starting / connected / crashed /
+stopping / stopped plus port/restart). The banner renders from both.
+
+**Rationale:** AGENTS §6 — "the UI never derives truth it wasn't given." `ws` is derived from
+the live socket; `daemon` is forwarded verbatim from the supervisor. The UI infers nothing.
+
+### 5. `protocol.ts` stays a hand-mirror kept in sync by the fixture generator.
+
+**Decision:** The TD-1003 additions to `ui/src/lib/protocol.ts` (Shutdown, ListSessions,
+HelloAck, SteeringReloaded, InstructionStack/Entry, SessionList/Summary, `interrupted`) are
+added to `core/scripts/generate_protocol_fixtures.py` and re-generated, and asserted by
+`protocol.test.ts`.
+
+**Rationale:** Continues the existing TD-204 §4 cross-language sync strategy — one generator,
+one shared JSON snapshot, asserts both directions, rather than two drifting copies.
+
+### 6. Unknown event types dropped with a warning, never forwarded or fatal.
+
+**Decision:** `dispatch` checks `type` against `KNOWN_EVENT_TYPES`; any unknown type logs a
+`console.warn` and is not forwarded to `onEvent`.
+
+**Rationale:** Meets the "never a crash" criterion against unknown future event types, while
+still advancing the sequence cursor (see 2) so downstream gap detection stays honest.
