@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ws, daemon } from './connection-status';
+	import { ws, daemon } from './connection-status.svelte.js';
 
 	// Presentational only: both values come straight from the store, which
 	// reads them from the host event and the real socket (AGENTS §6 — the UI

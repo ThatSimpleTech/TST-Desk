@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
-	import { connect, disconnect } from '$lib/connection-status';
+	import { connect, disconnect } from '$lib/connection-status.svelte.js';
 
 	let { children } = $props();
 

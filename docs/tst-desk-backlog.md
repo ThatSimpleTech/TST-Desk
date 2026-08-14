@@ -984,11 +984,11 @@ Tauri window once TD-1004's chat pane drives real turns.
 **Size:** 3 · **Depends on:** TD-1003
 
 **Acceptance criteria:**
-- [ ] Workspace name with a picker
-- [ ] Active brain/worker/validator slugs, clickable to switch
-- [ ] **Live cost meter** updating as costs accrue, with a hover breakdown by tier
-- [ ] Session state indicator (idle / running / awaiting approval / paused at cap)
-- [ ] Boundary indicator showing the current wall
+- [x] Workspace name with a picker
+- [x] Active brain/worker/validator slugs, clickable to switch
+- [x] **Live cost meter** updating as costs accrue, with a hover breakdown by tier
+- [x] Session state indicator (idle / running / awaiting approval / paused at cap)
+- [x] Boundary indicator showing the current wall
 
 ---
 
@@ -1021,10 +1021,10 @@ distinguish a denial from a handler error.
 **Size:** 2 · **Depends on:** TD-1003
 
 **Acceptance criteria:**
-- [ ] Errors surface as actionable messages naming the fix, never raw tracebacks
-- [ ] Auth failures, missing keys, and cap pauses each have tailored, specific copy
-- [ ] Non-blocking toasts for transient issues; persistent banners for blocking ones
-- [ ] A "copy diagnostics" action produces a redacted, pasteable report
+- [x] Errors surface as actionable messages naming the fix, never raw tracebacks
+- [x] Auth failures, missing keys, and cap pauses each have tailored, specific copy
+- [x] Non-blocking toasts for transient issues; persistent banners for blocking ones
+- [x] A "copy diagnostics" action produces a redacted, pasteable report
 
 ---
 

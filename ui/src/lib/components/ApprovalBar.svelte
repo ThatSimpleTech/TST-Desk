@@ -2,7 +2,7 @@
 	// Approval bar (TD-1007): the shell footer that hosts every pending
 	// approval card. Renders nothing while there is nothing to decide, so the
 	// panes keep the full height; a card appearing reserves the footer space.
-	import { pending } from '../approval-store';
+	import { pending } from '../approval-store.svelte.js';
 	import ApprovalCard from './ApprovalCard.svelte';
 </script>
 

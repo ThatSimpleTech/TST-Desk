@@ -138,7 +138,7 @@ describe("eventToEntry", () => {
     for (const e of [
       evt({ type: "assistant_delta", session_id: "s1", delta: "hi", seq: 1 }),
       evt({ type: "session_state", session_id: "s1", state: "running", seq: 1 }),
-      evt({ type: "turn_complete", session_id: "s1", tokens: 1, cost: 0, tier: "worker", duration: 1, seq: 1 }),
+      evt({ type: "turn_complete", session_id: "s1", tokens: 1, cost: 0, tier: "worker", duration: 1, failed: false, error_code: null, seq: 1 }),
       evt({
         type: "shell_output",
         session_id: "s1",
