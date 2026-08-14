@@ -69,6 +69,20 @@ To bypass the hooks (e.g. for a false positive):
 git commit --no-verify
 ```
 
+## Installing an unsigned build
+
+v0.1 builds are not code-signed or notarized (see `DECISIONS.md`, 2026-08-14).
+Each OS will warn on first launch; that is expected, not a defect.
+
+- **macOS** — Gatekeeper blocks the unsigned app. Right-click the app and
+  choose **Open**, then confirm in the dialog (once per install). If the file
+  was download-quarantined and the Open trick does not appear:
+  `xattr -d com.apple.quarantine "/Applications/TST Desk.app"`.
+- **Windows** — SmartScreen shows "Windows protected your PC". Click
+  **More info → Run anyway**.
+- **Linux** — no signing warning. For the AppImage, `chmod +x` and run; the
+  `.deb` installs with `sudo dpkg -i`.
+
 ## Status
 
 v0.1 — in development. See [`docs/tst-desk-backlog.md`](docs/tst-desk-backlog.md) for the

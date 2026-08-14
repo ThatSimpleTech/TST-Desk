@@ -1788,3 +1788,17 @@ absent — which is always, since the artifact is gitignored.  Instead
 tooling never see the entry; the packaged app always does.
 
 **Class B** — corrects the TD-1301 wiring one integration later.
+
+## 2026-08-14 — TD-1302: Ship v0.1 unsigned
+
+**Decision:** v0.1 bundles ship without code signing or notarization.
+Per-platform first-run warnings are documented in the README.  Revisit for
+v0.2 or the first external-user release, whichever comes first.
+
+**Benefit of signing:** removes the Gatekeeper/SmartScreen first-run
+friction; macOS notarization is effectively required for a broad audience
+(right-click-Open is a power-user answer).  **Cost:** an Apple Developer
+Program membership, a Windows EV/OV certificate, plus notarization and
+signing steps wired into every release build — real money and, more to the
+point, secrets and infra the release pipeline does not yet have a home
+for.  For an internal v0.1 with named users, the warning text is enough.
