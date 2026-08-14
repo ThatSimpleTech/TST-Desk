@@ -224,6 +224,63 @@ describe("sending and cancelling", () => {
   });
 });
 
+describe("retry (TD-1606)", () => {
+  it("resends the last user message verbatim as a new user_message", () => {
+    const { store, state, sent } = boundStore();
+    store.sendUserMessage("first prompt");
+    store.applyEvent(delta("s1", "answer one"));
+    store.applyEvent(turnComplete("s1"));
+    store.sendUserMessage("second prompt");
+    store.applyEvent(delta("s1", "answer two"));
+    store.applyEvent(turnComplete("s1"));
+    expect(store.retryLastUserMessage()).toBe(true);
+    expect(sent.filter((m) => m.type === "user_message")).toEqual([
+      { type: "user_message", session_id: "s1", content: "first prompt" },
+      { type: "user_message", session_id: "s1", content: "second prompt" },
+      { type: "user_message", session_id: "s1", content: "second prompt" },
+    ]);
+    // The resend appends a new row: the protocol has no edit/fork, so the
+    // duplication is the honest record of the retry.
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual([
+      "first prompt",
+      "second prompt",
+      "second prompt",
+    ]);
+  });
+
+  it("refuses while a turn is running or awaiting approval", () => {
+    const { store, state, sent } = boundStore();
+    store.sendUserMessage("do the thing");
+    state.turnState = "running";
+    expect(store.retryLastUserMessage()).toBe(false);
+    state.turnState = "awaiting_approval";
+    expect(store.retryLastUserMessage()).toBe(false);
+    expect(sent.filter((m) => m.type === "user_message")).toHaveLength(1);
+  });
+
+  it("refuses when no user message exists or no session is bound", () => {
+    const { store, sent } = boundStore();
+    expect(store.retryLastUserMessage()).toBe(false);
+    const { deps, sent: sent2 } = fakeDeps();
+    const loose = createChatStore(deps, createChatState());
+    expect(loose.retryLastUserMessage()).toBe(false);
+    expect(sent).toEqual([]);
+    expect(sent2).toEqual([]);
+  });
+
+  it("stamps every message with a client-side seen-at time", () => {
+    const { store, state } = boundStore();
+    const before = Date.now();
+    store.sendUserMessage("hello");
+    store.applyEvent(delta("s1", "hi"));
+    const after = Date.now();
+    for (const m of state.messages) {
+      expect(m.at).toBeGreaterThanOrEqual(before);
+      expect(m.at).toBeLessThanOrEqual(after);
+    }
+  });
+});
+
 describe("composer and control predicates", () => {
   it("Enter submits, Shift+Enter newlines, other keys do nothing", () => {
     expect(shouldSubmit("Enter", false)).toBe(true);

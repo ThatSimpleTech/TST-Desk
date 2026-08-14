@@ -19,6 +19,9 @@ export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   complete: boolean;
+  /** Epoch ms when the client first saw the message (send echo or first
+   *  delta). Replayed history stamps attach time — display-only (TD-1606). */
+  at: number;
 }
 
 export interface ChatState {
@@ -37,6 +40,7 @@ export interface ChatStore {
   state: ChatState;
   applyEvent(event: DaemonEventUnion): void;
   sendUserMessage(text: string): boolean;
+  retryLastUserMessage(): boolean;
   cancelTurn(): boolean;
   refreshSessions(): boolean;
   dispose(): void;
@@ -76,6 +80,18 @@ function isTerminal(state: SessionState["state"]): boolean {
 export function createChatStore(deps: ChatDeps, state: ChatState = createChatState()): ChatStore {
   let nextId = 0;
 
+  // Closure-level so retryLastUserMessage can call it without `this` —
+  // the reactive shell re-exports these methods detached.
+  function sendUserMessageToWire(text: string): boolean {
+    const content = text.trim();
+    if (state.sessionId === null || content === "") return false;
+    const sent = deps.send({ type: "user_message", session_id: state.sessionId, content });
+    if (!sent) return false;
+    nextId += 1;
+    state.messages.push({ id: `m${nextId}`, role: "user", text: content, complete: true, at: Date.now() });
+    return true;
+  }
+
   function sealInFlightAssistant(): void {
     const last = state.messages[state.messages.length - 1];
     if (last !== undefined && last.role === "assistant" && !last.complete) {
@@ -111,6 +127,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
               role: "assistant",
               text: event.delta,
               complete: false,
+              at: Date.now(),
             });
           }
           return;
@@ -150,14 +167,19 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       }
     },
 
-    sendUserMessage(text: string): boolean {
-      const content = text.trim();
-      if (state.sessionId === null || content === "") return false;
-      const sent = deps.send({ type: "user_message", session_id: state.sessionId, content });
-      if (!sent) return false;
-      nextId += 1;
-      state.messages.push({ id: `m${nextId}`, role: "user", text: content, complete: true });
-      return true;
+    sendUserMessage: sendUserMessageToWire,
+
+    /** Retry (TD-1606): resend the last user message verbatim over the same
+     *  user_message wire message, refused while a turn is live. Today's
+     *  protocol has no edit/fork, so the resend appends a new row — that
+     *  duplication is the honest record. */
+    retryLastUserMessage(): boolean {
+      if (showCancel(state.turnState)) return false;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const message = state.messages[i];
+        if (message.role === "user") return sendUserMessageToWire(message.text);
+      }
+      return false;
     },
 
     cancelTurn(): boolean {
