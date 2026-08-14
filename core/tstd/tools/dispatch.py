@@ -19,6 +19,7 @@ from jsonschema import validate as validate_schema
 from ..autonomy import AmbiguousClassifier, Checkpointer, DecisionClass, DecisionRequest
 from ..logging import get_logger
 from .boundary import PathGuard, RefusalError
+from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry
 from .results import ToolResult, ValidationError, truncate_output
 
@@ -235,6 +236,15 @@ class ToolDispatcher:
                     decision_class=decision_class,
                 )
 
+        # 3.25 Diff snapshot (TD-604).  A successful mutation reports the
+        # change it made: snapshot the canonical write targets before the
+        # handler runs, then diff against their state afterwards.
+        before_snapshots: dict[str, str | None] = {}
+        if tool.mutates and canonical_writes:
+            before_snapshots = {
+                field: snapshot_text(canonical) for field, canonical in canonical_writes.items()
+            }
+
         try:
             output = await handler(session=session, **arguments)
         except Exception as e:
@@ -284,6 +294,19 @@ class ToolDispatcher:
                     extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
                 )
 
+        # 3.4 Diff of the write (TD-604), for display on the tool_result.
+        diff_text: str | None = None
+        if tool.mutates and canonical_writes:
+            sections: list[str] = []
+            for field, canonical in canonical_writes.items():
+                section = render_diff(
+                    before_snapshots.get(field), snapshot_text(canonical), str(canonical)
+                )
+                if section:
+                    sections.append(section)
+            if sections:
+                diff_text, _ = truncate_output("\n\n".join(sections), self.max_result_chars)
+
         # 4. Truncate
         truncated_output, truncated = truncate_output(output, self.max_result_chars)
         return ToolResult(
@@ -295,6 +318,7 @@ class ToolDispatcher:
             decision_class=decision_class,
             checkpoint_commit=checkpoint_commit,
             checkpoint_notice=checkpoint_notice,
+            diff=diff_text,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────

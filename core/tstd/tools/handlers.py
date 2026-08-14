@@ -21,6 +21,7 @@ from pathlib import Path
 
 from ..context.manifest import _FALLBACK_IGNORE
 from .dispatch import ToolDispatcher
+from .write import fs_edit, fs_write
 
 # Handler-level cap on formatted lines.  Dispatch additionally caps the
 # returned string's byte length with its own truncation marker.
@@ -125,8 +126,10 @@ async def fs_list(
 def register_builtin_handlers(dispatcher: ToolDispatcher) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
-    Write and shell handlers arrive with their stories (TD-604, TD-605);
-    until then those tools return the dispatcher's "no handler" error.
+    The shell handler arrives with its story (TD-605); until then that
+    tool returns the dispatcher's "no handler" error.
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
+    dispatcher.register_handler("fs_write", fs_write)
+    dispatcher.register_handler("fs_edit", fs_edit)

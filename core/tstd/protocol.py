@@ -222,6 +222,8 @@ class ToolResult(DaemonEvent):
     status: Literal["success", "error"]
     output: str
     truncated: bool = False
+    # Unified diff of what a write changed (TD-604), for display.
+    diff: str | None = None
 
 
 class ApprovalRequest(DaemonEvent):

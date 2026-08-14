@@ -186,10 +186,8 @@ class TestDispatchIntegration:
         assert result.output == "a.py"
 
     async def test_unknown_handler_still_clear(self, tmp_path: Path) -> None:
-        # fs_write is registered but its handler lands in TD-604.
+        # shell is registered but its handler lands in TD-605.
         dispatcher = make_dispatcher(tmp_path)
-        result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(tmp_path / "x.txt"), "content": "x"}
-        )
+        result = await dispatcher.dispatch("c1", "shell", {"command": "echo hi"})
         assert result.status == "error"
         assert result.error_code == "no_handler"
