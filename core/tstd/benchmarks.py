@@ -1,7 +1,6 @@
 """Performance baselines (TD-1404).
 
-Measures the four core metrics the story names, with the fifth (timeline
-render at 1000 entries) pending TD-1005's component:
+Measures the four core metrics the story names:
 
 - ``daemon_cold_start`` — Daemon() to a connectable WebSocket
   (``port.json`` written), the harness's readiness signal.
@@ -14,6 +13,11 @@ render at 1000 entries) pending TD-1005's component:
   ``assistant_delta`` with an instant mock provider.  This measures the
   internal pipeline (assembly, routing, event fan-out), not network or
   model time — the baseline metadata says so.
+
+The fifth metric, ``timeline_render_1000``, is measured by the UI bench
+(ui/src/lib/timeline-bench.test.ts) — pytest cannot mount a Svelte
+component — and gated there against the same perf_baselines.json; it is
+listed in ``UI_MEASURED`` so a missing baseline row fails loudly here too.
 
 ``tests/test_benchmarks.py`` compares a fresh measurement against the
 committed ``tests/perf_baselines.json`` and fails beyond the stated
@@ -263,8 +267,12 @@ MEASURERS: dict[str, Callable[[Path], Awaitable[float]]] = {
 }
 
 # Named-but-unmeasurable metrics, with the story that unblocks them.
-PENDING: dict[str, str] = {
-    "timeline_render_1000": "TD-1005",  # needs the timeline component
+PENDING: dict[str, str] = {}
+
+# Metrics pytest cannot measure (they need the Svelte component tree), gated
+# by the UI bench against the same perf_baselines.json instead (TD-1404).
+UI_MEASURED: dict[str, str] = {
+    "timeline_render_1000": "ui/src/lib/timeline-bench.test.ts",
 }
 
 
@@ -283,10 +291,12 @@ class BenchReport:
 
 
 async def run_all(scratch: Path) -> BenchReport:
-    """Measure every metric; each repetition gets a fresh scratch dir."""
+    """Measure every core metric; each repetition gets a fresh scratch dir.
+
+    UI-measured metrics (``UI_MEASURED``) are left untouched — the UI bench
+    owns their values in the shared baselines file.
+    """
     report = BenchReport()
     for name, measurer in MEASURERS.items():
         report.metrics[name] = await measurer(scratch / name)
-    for name in PENDING:
-        report.metrics[name] = None
     return report
