@@ -343,11 +343,15 @@
         "token_method": "cl100k_base",
         "warnings": [],
         "subtree": null,
-        "is_fallback": false
+        "is_fallback": false,
+        "shadowed_path": null,
+        "applies_to": null,
+        "imports": []
       }
     ],
     "total_tokens": 500,
-    "token_method": "cl100k_base"
+    "token_method": "cl100k_base",
+    "last_cached_tokens": null
   },
   "context_compacted": {
     "type": "context_compacted",

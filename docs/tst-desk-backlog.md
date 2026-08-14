@@ -504,12 +504,19 @@ day one with nothing to port. Do not treat it as an edge case.
 **Acceptance criteria:**
 - [x] `.tst/rules/*.md` support frontmatter with an `appliesTo` array of glob patterns
 - [x] Rules without `appliesTo` always load
-- [x] Rules with `appliesTo` load only when the session touches a matching file
-- [x] Activation is dynamic — a rule that becomes relevant mid-session is injected, and the
+- [ ] Rules with `appliesTo` load only when the session touches a matching file
+- [ ] Activation is dynamic — a rule that becomes relevant mid-session is injected, and the
       injection is announced in the timeline
 - [x] Glob matching tested against: exact paths, `*`, `**`, extension patterns, negation if
       supported, and paths with spaces or unicode
-- [x] Unmatched rules are visible in the inspector as inactive, with their cost shown as zero
+- [ ] Unmatched rules are visible in the inspector as inactive, with their cost shown as zero
+
+**Reopened (2026-08-14, found by TD-1201 verification):** the glob mechanism is built and
+tested (`ContextAssembler.assemble(matched_paths=…)`), but no production call site ever
+passes `matched_paths` — the loop and the daemon both assemble with `None`, so scoped
+rules always load and boxes 3, 4, 6 are not true in the shipped product. Needs a
+touch-tracking story: record the paths a session touches (fs tool calls), thread them
+into turn-time assembly, announce mid-session activations in the timeline.
 
 **Notes:** This is the mechanism that keeps a large ruleset affordable. Spec §4.3.
 
@@ -1091,14 +1098,31 @@ error.
 **Size:** 3 · **Depends on:** TD-506, TD-1003
 
 **Acceptance criteria:**
-- [ ] Lists every steering source in precedence order with per-file token counts
-- [ ] Shows total token cost and whether the block is currently cached
+- [x] Lists every steering source in precedence order with per-file token counts
+- [x] Shows total token cost and whether the block is currently cached
 - [ ] Path-scoped rules show matched or unmatched, and what they matched
-- [ ] `CLAUDE.md` fallbacks and shadowed files clearly labeled
-- [ ] Imports shown nested under their importer
-- [ ] Files over 200 lines flagged with the adherence warning
-- [ ] Clicking a file opens it in the system editor
-- [ ] Live-updates on hot reload
+- [x] `CLAUDE.md` fallbacks and shadowed files clearly labeled
+- [x] Imports shown nested under their importer
+- [x] Files over 200 lines flagged with the adherence warning
+- [x] Clicking a file opens it in the system editor
+- [x] Live-updates on hot reload
+
+**Completed (2026-08-14):** `get_instruction_stack` assembles on demand in the daemon
+handler (`_handle_get_instruction_stack`) and the loop re-pushes a full stack when the
+steering prefix hash changes at a turn boundary (TD-509); `InstructionStack` carries
+`last_cached_tokens` (provider-observed, `None` before the first turn). `StackPanel.svelte`
+sits behind an Activity | Stack tab strip, renders sources in payload order with per-file
+tokens, total + three-state cache badge (unknown / miss / cached N), fallback and
+"shadows …" chips, imports indented by depth under their importer, and the 200-line
+adherence warning. Clicking a file goes through `open-file.ts` → `tauri-plugin-opener`
+(capability scoped to `opener:allow-open-path` only), no-op outside the shell. Verified by
+three independent probes (synthetic workspace payload, UI rendering, shell/push paths):
+vitest 253/253, svelte-check 0/0 (286 files), pytest 1035/2 skipped, e2e OVERALL PASS.
+**AC 3 stays open:** no production call site passes `matched_paths` (TD-503's
+touch-tracking was never plumbed), so scoped rules always assemble active and
+"unmatched" is unreachable; the panel labels scoped rules "in prompt" / "not in prompt"
+rather than a match verdict, and the concrete matched paths are not in the schema.
+Ticks when the touch-tracking story lands.
 
 ---
 

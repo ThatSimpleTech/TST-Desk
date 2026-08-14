@@ -442,6 +442,9 @@ async def agent_loop(
     # turn below (TD-305).
     messages: list[ChatMessage] = []
     tracker = CostTracker(config)
+    # TD-1201: reachable from the daemon so get_instruction_stack can
+    # report provider-observed cache state.
+    session.cost_tracker = tracker
     # TD-902: feed every recorded model call to the audit writer. The
     # sink only enqueues — it can never block or fail the loop.
     if audit_sink is not None:
@@ -630,7 +633,12 @@ async def agent_loop(
                     )
                 )
                 await session.event_log.add(
-                    build_instruction_stack(session.id, assembled.steering, seq=1)
+                    build_instruction_stack(
+                        session.id,
+                        assembled.steering,
+                        seq=1,
+                        last_cached_tokens=tracker.last_cached_prompt_tokens,
+                    )
                 )
                 log.info(
                     "steering reloaded",

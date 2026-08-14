@@ -31,6 +31,8 @@ from .boundary_config import (
 )
 from .config import ConfigError, ModelConfig, cached_config, save_active_preset
 from .context.assembler import ContextAssembler
+from .context.prompt import PromptAssembler
+from .context.stack import build_instruction_stack
 from .keychain import KeychainError, get_api_key, store_api_key
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
@@ -47,6 +49,7 @@ from .protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    GetInstructionStack,
     GetSetupState,
     HandshakeError,
     ListPolicyRules,
@@ -960,6 +963,9 @@ class Daemon:
         if isinstance(msg, ListSessions):
             return await self._handle_list_sessions()
 
+        if isinstance(msg, GetInstructionStack):
+            return await self._handle_get_instruction_stack(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -1057,6 +1063,34 @@ class Daemon:
                 )
             )
         return SessionList(seq=1, sessions=summaries).model_dump_json()
+
+    async def _handle_get_instruction_stack(self, msg: GetInstructionStack) -> str:
+        """Assemble and answer with the session's current instruction stack.
+
+        Direct response, not logged — turn-time snapshots already land in
+        the event log via the steering-reload push (TD-509).  No production
+        call site passes ``matched_paths`` (TD-503's touch-tracking is not
+        plumbed), so path-scoped rules currently assemble active here and
+        in every push; the panel labels them by prompt membership, not by
+        a match verdict.
+        """
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+            )
+        tier = found.router.active_tier if found.router is not None else "brain"
+        assembled = await PromptAssembler(found.workspace_path).assemble(tier)
+        cached = (
+            found.cost_tracker.last_cached_prompt_tokens if found.cost_tracker is not None else None
+        )
+        return build_instruction_stack(
+            found.id,
+            assembled.steering,
+            seq=1,
+            last_cached_tokens=cached,
+        ).model_dump_json()
 
     async def _handle_detach(self, msg: Detach, connection: Any) -> str | None:
         """Handle a detach: stop streaming without affecting the session."""

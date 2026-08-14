@@ -3,14 +3,16 @@
 	// Left = chat pane, right = activity pane. The title bar (TD-1006) and
 	// connection banner (TD-1003) sit in the shell header so daemon/socket
 	// state is visible at all times. The activity pane hosts the activity
-	// timeline (TD-1005), fed live from the daemon event stream. Failure
-	// notices (TD-1008) render as banners under the header (blocking) or
-	// toasts bottom-right (transient); the footer hosts pending approval
+	// timeline (TD-1005), fed live from the daemon event stream, and the
+	// resolved-stack panel (TD-1201) behind an Activity | Stack tab strip.
+	// Failure notices (TD-1008) render as banners under the header (blocking)
+	// or toasts bottom-right (transient); the footer hosts pending approval
 	// cards (TD-1007).
 	import { onMount } from 'svelte';
 	import SplitPane from './SplitPane.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
 	import ActivityTimeline from './ActivityTimeline.svelte';
+	import StackPanel from './StackPanel.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
 	import { push } from '../timeline-store.svelte.js';
@@ -42,6 +44,8 @@
 			offDecisions();
 		};
 	});
+
+	let rightTab = $state<'activity' | 'stack'>('activity');
 </script>
 
 <header class="shell-header">
@@ -83,8 +87,32 @@
 			<section class="pane-chat" aria-label="Chat pane"><ChatPane /></section>
 		{/snippet}
 		{#snippet right()}
-			<section class="pane-activity" aria-label="Activity pane">
-				<ActivityTimeline />
+			<section class="pane-activity" aria-label="Activity and stack pane">
+				<div class="pane-tabs" role="tablist" aria-label="Right pane views">
+					<button
+						role="tab"
+						aria-selected={rightTab === 'activity'}
+						class="tab"
+						class:tab-active={rightTab === 'activity'}
+						onclick={() => (rightTab = 'activity')}
+					>
+						Activity
+					</button>
+					<button
+						role="tab"
+						aria-selected={rightTab === 'stack'}
+						class="tab"
+						class:tab-active={rightTab === 'stack'}
+						onclick={() => (rightTab = 'stack')}
+					>
+						Stack
+					</button>
+				</div>
+				{#if rightTab === 'activity'}
+					<ActivityTimeline />
+				{:else}
+					<StackPanel />
+				{/if}
 			</section>
 		{/snippet}
 	</SplitPane>
@@ -152,5 +180,41 @@
 	/* Subtle tonal separation so the two-pane split reads at a glance. */
 	.pane-activity {
 		background: var(--color-bg-subtle);
+		display: flex;
+		flex-direction: column;
+	}
+
+	.pane-tabs {
+		display: flex;
+		gap: var(--space-1);
+		padding: var(--space-2) var(--space-4) 0;
+		border-bottom: var(--border-width) solid var(--color-border);
+		flex-shrink: 0;
+	}
+
+	.tab {
+		padding: var(--space-1) var(--space-3);
+		border: none;
+		border-bottom: 2px solid transparent;
+		background: none;
+		color: var(--color-text-muted);
+		font-size: var(--text-sm);
+		cursor: pointer;
+	}
+
+	.tab:hover {
+		color: var(--color-text);
+	}
+
+	.tab-active {
+		color: var(--color-text);
+		font-weight: var(--weight-semibold);
+		border-bottom-color: var(--color-info);
+	}
+
+	.pane-activity > :global(.timeline),
+	.pane-activity > :global(.stack-panel) {
+		flex: 1;
+		min-height: 0;
 	}
 </style>
