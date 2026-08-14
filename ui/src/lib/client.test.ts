@@ -128,6 +128,36 @@ describe("handshake", () => {
   });
 });
 
+describe("send", () => {
+  it("sends a client message on a handshaken socket and reports success", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    expect(h.client.connectionState).toBe("connected");
+
+    const ok = h.client.send({ type: "approve", session_id: "sess-1", tool_call_id: "tc-1" });
+    expect(ok).toBe(true);
+    const sent = JSON.parse(h.sockets[0].sent.at(-1)!);
+    expect(sent).toEqual({ type: "approve", session_id: "sess-1", tool_call_id: "tc-1" });
+  });
+
+  it("returns false and sends nothing when not connected", async () => {
+    const h = buildClient();
+    await h.client.start();
+    // The socket exists but hello_ack never arrived — not handshaken.
+    h.sockets[0].onopen?.();
+    const ok = h.client.send({
+      type: "deny",
+      session_id: "sess-1",
+      tool_call_id: "tc-1",
+      reason: "not safe",
+    });
+    expect(ok).toBe(false);
+    // Only the hello handshake frame is on the wire.
+    expect(h.sockets[0].sent.length).toBe(1);
+  });
+});
+
 describe("reconnect and backoff", () => {
   it("reconnects after an unexpected close and backs off exponentially", async () => {
     const h = buildClient({ baseBackoffMs: 5, maxBackoffMs: 20 });

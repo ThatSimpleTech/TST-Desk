@@ -109,6 +109,7 @@ class TestDaemonRestartIntegration:
             try:
                 info = await _wait_for_port_file(create_port_file_path(data_dir), daemon.pid)
                 ws = await _connect(info)
+                (data_dir / "workspace").mkdir()
                 session_id = await _open_workspace(ws, str(data_dir / "workspace"))
                 await ws.close()
                 assert sessions_file.exists(), "session should be persisted before crash"

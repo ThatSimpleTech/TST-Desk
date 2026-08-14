@@ -166,6 +166,7 @@ class TestApproveDeny:
         results = tool_results(session)
         assert results[0].status == "success"
         assert results[0].output == "Echo: hello"
+        assert results[0].error_code is None  # a successful run carries no code
         assert session.state == "running"
 
     async def test_deny_returns_structured_message_to_model(self, tmp_path: Path) -> None:
@@ -184,6 +185,8 @@ class TestApproveDeny:
         results = tool_results(session)
         assert results[0].status == "error"
         assert results[0].output == "Denied by user: not safe"
+        # A denial is distinguishable from a generic error on the wire (TD-1007).
+        assert results[0].error_code == "approval_denied"
 
         # The model observed the structured denial and chose another path:
         # the follow-up turn carries it as the tool-role message (calls also
@@ -351,6 +354,7 @@ class TestNever:
         results = tool_results(session)
         assert results[0].status == "error"
         assert results[0].output.startswith("Refused by policy: policy rule `echo: **` → never")
+        assert results[0].error_code == "policy_denied"
         assert session.state == "running"
 
     async def test_ask_without_handler_is_a_chokepoint_bypass(self, tmp_path: Path) -> None:
