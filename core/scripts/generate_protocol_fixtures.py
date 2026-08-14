@@ -29,6 +29,8 @@ from tstd.protocol import (
     DecisionLogged,
     Deny,
     Detach,
+    DiagnosticCheck,
+    DiagnosticsReport,
     Error,
     GetInstructionStack,
     GetSetupState,
@@ -42,6 +44,7 @@ from tstd.protocol import (
     Ready,
     Resume,
     RevokePolicyRule,
+    RunDiagnostics,
     SessionList,
     SessionState,
     SetApiKey,
@@ -84,6 +87,8 @@ FIXTURES = {
     "set_api_key": SetApiKey(api_key="sk-or-test-key"),
     "validate_api_key": ValidateApiKey(),
     "set_preset": SetPreset(name="tst-default"),
+    # Diagnostics (TD-1104 doctor)
+    "run_diagnostics": RunDiagnostics(),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
@@ -289,6 +294,23 @@ FIXTURES = {
         active_preset="tst-default",
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
+    # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so
+    # consumers see every status — the fail row carries the concrete fix.
+    "diagnostics_report": DiagnosticsReport(
+        checks=[
+            DiagnosticCheck(name="daemon", status="ok", detail="responding (v0.1.0, up 3.2s)"),
+            DiagnosticCheck(
+                name="api_key",
+                status="fail",
+                detail="no API key stored in the keychain",
+                fix="Open the wizard (gear in the title bar) and store one.",
+            ),
+            DiagnosticCheck(name="provider", status="skip", detail="not checked — no API key"),
+            DiagnosticCheck(name="git", status="ok", detail="git version 2.50.0 (/usr/bin/git)"),
+            DiagnosticCheck(name="workspace", status="ok", detail="project is writable"),
+            DiagnosticCheck(name="steering", status="ok", detail="3 steering source(s) parsed"),
+        ]
+    ),
 }
 
 

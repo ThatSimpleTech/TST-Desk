@@ -16,17 +16,22 @@
 	import NotificationBanner from '../NotificationBanner.svelte';
 	import ToastStack from '../ToastStack.svelte';
 	import WizardPane from './WizardPane.svelte';
+	import DoctorPane from './DoctorPane.svelte';
 	import { start as startOnboarding, reopen as reopenWizard } from '../onboarding.svelte.js';
+	import { startDoctor, runDoctor } from '../doctor.svelte.js';
 
 	// Feed every daemon event into the timeline for the lifetime of the shell,
 	// and start first-run detection (TD-1101) — the wizard probes setup state
-	// after each handshake and opens when no API key is stored.
+	// after each handshake and opens when no API key is stored. The doctor
+	// subscription (TD-1104) listens for diagnostics reports.
 	onMount(() => {
 		const offTimeline = onEvent(push);
 		const offWizard = startOnboarding();
+		const offDoctor = startDoctor();
 		return () => {
 			offTimeline();
 			offWizard();
+			offDoctor();
 		};
 	});
 </script>
@@ -35,6 +40,14 @@
 	<span class="shell-title">TST Desk</span>
 	<TitleBar />
 	<span class="shell-spacer"></span>
+	<!-- Run the doctor (TD-1104) at any time. -->
+	<button
+		class="shell-gear"
+		type="button"
+		title="Doctor"
+		aria-label="Run doctor diagnostics"
+		onclick={runDoctor}>🩺</button
+	>
 	<!-- Revisit first-run setup (TD-1101) at any time. -->
 	<button
 		class="shell-gear"
@@ -63,6 +76,7 @@
 
 <ToastStack />
 <WizardPane />
+<DoctorPane />
 
 <style>
 	.shell-header {

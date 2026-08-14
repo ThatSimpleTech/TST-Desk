@@ -1051,10 +1051,10 @@ Tauri window once TD-1004's chat pane drives real turns.
 **Size:** 2 · **Depends on:** TD-1101
 
 **Acceptance criteria:**
-- [ ] A doctor view checking: daemon reachable, key present and valid, provider reachable,
+- [x] A doctor view checking: daemon reachable, key present and valid, provider reachable,
       git available, workspace writable, steering files parseable
-- [ ] Each failure states the specific fix
-- [ ] Output copyable as redacted text for bug reports
+- [x] Each failure states the specific fix
+- [x] Output copyable as redacted text for bug reports
 
 ---
 
