@@ -22,6 +22,8 @@ from .audit import AuditStore
 from .audit_writer import AuditWriter
 from .boundary_config import boundary_source, load_workspace_boundary
 from .config import ConfigError, ModelConfig, cached_config
+from .context.prompt import PromptAssembler
+from .context.stack import build_instruction_stack
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .policy import add_rule, load_policy, propose_always_allow, remove_rule, save_policy
@@ -34,6 +36,7 @@ from .protocol import (
     DaemonEvent,
     Deny,
     Detach,
+    GetInstructionStack,
     HandshakeError,
     ListPolicyRules,
     ListSessions,
@@ -652,6 +655,9 @@ class Daemon:
         if isinstance(msg, ListSessions):
             return await self._handle_list_sessions()
 
+        if isinstance(msg, GetInstructionStack):
+            return await self._handle_get_instruction_stack(msg)
+
         if isinstance(msg, Shutdown):
             log.info("shutdown requested via websocket")
             self._shutdown_event.set()
@@ -708,6 +714,33 @@ class Daemon:
                 )
             )
         return SessionList(seq=1, sessions=summaries).model_dump_json()
+
+    async def _handle_get_instruction_stack(self, msg: GetInstructionStack) -> str:
+        """Assemble and answer with the session's current instruction stack.
+
+        Direct response, not logged — turn-time snapshots already land in
+        the event log via the steering-reload push (TD-509).  Path-scope
+        matching reflects assembly context: this on-demand assembly has no
+        turn's matched paths, so path-scoped rules show inactive here until
+        a turn snapshot replays (TD-1201 documents the semantics).
+        """
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+            )
+        tier = found.router.active_tier if found.router is not None else "brain"
+        assembled = await PromptAssembler(found.workspace_path).assemble(tier)
+        cached = (
+            found.cost_tracker.last_cached_prompt_tokens if found.cost_tracker is not None else None
+        )
+        return build_instruction_stack(
+            found.id,
+            assembled.steering,
+            seq=1,
+            last_cached_tokens=cached,
+        ).model_dump_json()
 
     async def _handle_detach(self, msg: Detach, connection: Any) -> str | None:
         """Handle a detach: stop streaming without affecting the session."""

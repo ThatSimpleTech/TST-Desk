@@ -1,0 +1,174 @@
+// Instruction-stack store tests (TD-1201).
+
+import { describe, expect, it } from "vitest";
+import type { ClientMessageUnion, DaemonEventUnion, InstructionStack, InstructionStackEntry } from "./protocol";
+import {
+	cacheLabel,
+	clearStack,
+	createStackState,
+	createStackStore,
+	formatTokens,
+	type StackState,
+} from "./stack-store";
+
+function entry(overrides: Partial<InstructionStackEntry> = {}): InstructionStackEntry {
+	return {
+		path: "/ws/AGENTS.md",
+		precedence: "workspace",
+		active: true,
+		tokens: 120,
+		token_method: "exact",
+		warnings: [],
+		is_fallback: false,
+		...overrides,
+	};
+}
+
+function stackEvent(overrides: Partial<InstructionStack> = {}): InstructionStack {
+	return {
+		type: "instruction_stack",
+		seq: 1,
+		session_id: "s1",
+		sources: [entry()],
+		total_tokens: 120,
+		token_method: "exact",
+		last_cached_tokens: null,
+		...overrides,
+	};
+}
+
+function harness(): { state: StackState; sent: ClientMessageUnion[]; store: ReturnType<typeof createStackStore> } {
+	const state = createStackState();
+	const sent: ClientMessageUnion[] = [];
+	const store = createStackStore({ send: (msg) => (sent.push(msg), true) }, state);
+	return { state, sent, store };
+}
+
+describe("applyEvent", () => {
+	it("replaces state on instruction_stack for the attached session", () => {
+		const { state, store } = harness();
+		const event = stackEvent({ last_cached_tokens: 512 });
+		expect(store.applyEvent(event, "s1")).toBe(true);
+		expect(state.sessionId).toBe("s1");
+		expect(state.sources).toEqual(event.sources);
+		expect(state.totalTokens).toBe(120);
+		expect(state.tokenMethod).toBe("exact");
+		expect(state.lastCachedTokens).toBe(512);
+		expect(state.loaded).toBe(true);
+	});
+
+	it("a second push replaces the first (hot reload live-update)", () => {
+		const { state, store } = harness();
+		store.applyEvent(stackEvent(), "s1");
+		const reloaded = stackEvent({
+			seq: 2,
+			sources: [entry({ path: "/ws/nested/AGENTS.md", tokens: 40 })],
+			total_tokens: 160,
+		});
+		expect(store.applyEvent(reloaded, "s1")).toBe(true);
+		expect(state.sources.map((e) => e.path)).toEqual(["/ws/nested/AGENTS.md"]);
+		expect(state.totalTokens).toBe(160);
+	});
+
+	it("ignores other event types", () => {
+		const { state, store } = harness();
+		const other = {
+			type: "session_state",
+			seq: 3,
+			session_id: "s1",
+			state: "idle",
+		} as DaemonEventUnion;
+		expect(store.applyEvent(other, "s1")).toBe(false);
+		expect(state.loaded).toBe(false);
+	});
+
+	it("ignores stacks pushed for another session", () => {
+		const { state, store } = harness();
+		expect(store.applyEvent(stackEvent({ session_id: "s2" }), "s1")).toBe(false);
+		expect(state.loaded).toBe(false);
+	});
+
+	it("a missing last_cached_tokens becomes null, not zero", () => {
+		const { state, store } = harness();
+		const event = stackEvent();
+		delete event.last_cached_tokens;
+		store.applyEvent(event, "s1");
+		expect(state.lastCachedTokens).toBeNull();
+	});
+});
+
+describe("refresh", () => {
+	it("sends get_instruction_stack for the attached session", () => {
+		const { sent, store } = harness();
+		expect(store.refresh("s1")).toBe(true);
+		expect(sent).toEqual([{ type: "get_instruction_stack", session_id: "s1" }]);
+	});
+
+	it("with no session attached it clears state and sends nothing", () => {
+		const { state, sent, store } = harness();
+		store.applyEvent(stackEvent(), "s1");
+		expect(store.refresh(null)).toBe(false);
+		expect(sent).toEqual([]);
+		expect(state.loaded).toBe(false);
+		expect(state.sessionId).toBeNull();
+	});
+
+	it("drops the stale view when the session switched", () => {
+		const { state, sent, store } = harness();
+		store.applyEvent(stackEvent(), "s1");
+		expect(store.refresh("s2")).toBe(true);
+		expect(sent).toEqual([{ type: "get_instruction_stack", session_id: "s2" }]);
+		expect(state.loaded).toBe(false);
+		expect(state.sources).toEqual([]);
+	});
+
+	it("keeps the current view when re-asked for the same session", () => {
+		const { state, store } = harness();
+		store.applyEvent(stackEvent(), "s1");
+		store.refresh("s1");
+		expect(state.loaded).toBe(true);
+		expect(state.sources).toHaveLength(1);
+	});
+
+	it("reports a dead socket as false", () => {
+		const state = createStackState();
+		const store = createStackStore({ send: () => false }, state);
+		expect(store.refresh("s1")).toBe(false);
+	});
+});
+
+describe("clear", () => {
+	it("clears a populated state", () => {
+		const state = createStackState();
+		const store = createStackStore({ send: () => true }, state);
+		store.applyEvent(stackEvent(), "s1");
+		store.clear();
+		expect(state).toEqual(createStackState());
+	});
+
+	it("clearStack matches createStackState", () => {
+		const state = createStackState();
+		state.sessionId = "s1";
+		state.loaded = true;
+		clearStack(state);
+		expect(state).toEqual(createStackState());
+	});
+});
+
+describe("labels", () => {
+	it("formatTokens groups thousands", () => {
+		expect(formatTokens(1200000)).toBe("1,200,000");
+	});
+
+	it("cacheLabel is honest before the first turn", () => {
+		expect(cacheLabel(null)).toContain("unknown");
+	});
+
+	it("cacheLabel reports a miss", () => {
+		expect(cacheLabel(0)).toBe("cache miss");
+	});
+
+	it("cacheLabel reports a hit with the token count", () => {
+		expect(cacheLabel(4200)).toBe("cached 4,200 tokens");
+	});
+});

@@ -476,6 +476,20 @@ class TierSwitched(DaemonEvent):
     previous: Literal["brain", "worker", "validator"] | None = None
 
 
+class ImportedFile(BaseModel):
+    """One resolved ``@path`` import, flattened with its nesting depth.
+
+    ``depth`` 1 is a direct import of the source carrying it; deeper
+    values nest under the preceding entry one level up (TD-1201 renders
+    the tree from this). ``issue`` is set when resolution failed (missing
+    file, cycle, depth exceeded) so the panel can flag it in place.
+    """
+
+    path: str
+    depth: int = Field(ge=1)
+    issue: str | None = None
+
+
 class InstructionStackEntry(BaseModel):
     """One resolved steering source in the instruction stack."""
 
@@ -487,6 +501,13 @@ class InstructionStackEntry(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     subtree: str | None = None
     is_fallback: bool = False
+    # Path of the ``CLAUDE.md`` this source shadows (it is an AGENTS.md at
+    # the same location), when applicable (TD-1201).
+    shadowed_path: str | None = None
+    # ``appliesTo`` globs from rule-file frontmatter — what a path-scoped
+    # rule matched against (TD-1201).
+    applies_to: list[str] | None = None
+    imports: list[ImportedFile] = Field(default_factory=list)
 
 
 class InstructionStack(DaemonEvent):
@@ -497,6 +518,10 @@ class InstructionStack(DaemonEvent):
     sources: list[InstructionStackEntry] = Field(default_factory=list)
     total_tokens: int = Field(ge=0)
     token_method: str
+    # Cached prompt tokens observed on the most recent provider call
+    # (TD-1201's "is the block currently cached"). ``None`` before the
+    # first turn — cache state is a provider-side fact, unknown until one.
+    last_cached_tokens: int | None = None
 
 
 class SessionSummary(BaseModel):

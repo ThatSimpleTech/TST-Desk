@@ -22,6 +22,7 @@ from .protocol import DaemonEvent, Error, PolicyRuleSummary, ShellOutput, ToolCa
 from .protocol import SessionState as SessionStateEvent
 
 if TYPE_CHECKING:
+    from .cost import CostTracker
     from .router import TierRouter
     from .tools.registry import Tool
 
@@ -196,6 +197,9 @@ class Session:
         # ``set_tier`` message reaches the loop's router. ``None`` on a
         # restored tombstone — its loop is gone for good.
         self.router: TierRouter | None = None
+        # Cost tracker (TD-1201), attached by the loop at startup so the
+        # daemon can answer cache-state queries. Same tombstone rule.
+        self.cost_tracker: CostTracker | None = None
         # Approval policy (TD-801), resolved by the daemon on open.
         self.policy = PolicyConfig()
         # Pending approvals (TD-802), owned by the session — NOT by any
