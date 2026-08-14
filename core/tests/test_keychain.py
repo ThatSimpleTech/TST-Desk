@@ -5,8 +5,12 @@ Uses a mock backend so tests are deterministic and offline.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
+import tstd.keychain as kc_mod
+import tstd.keychain_windows as keychain_windows  # must import off-Windows
 from tstd.keychain import (
     KeychainBackend,
     KeychainError,
@@ -144,3 +148,81 @@ class TestProviderKeychainIntegration:
         """from_keychain should raise KeychainError when no key is stored."""
         with pytest.raises(KeychainError, match="not found"):
             await ProviderClient.from_keychain(base_url="http://test.local/v1")
+
+
+class TestWindowsBackend:
+    """Windows Credential Manager backend (TD-1102), ctypes seam mocked.
+
+    Importing tstd.keychain_windows at module load (above) is itself the
+    assertion that the module imports cleanly off Windows.
+    """
+
+    async def test_get_decodes_utf16_blob(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            keychain_windows, "_cred_read", lambda target: "sekret".encode("utf-16-le")
+        )
+        backend = keychain_windows.WindowsCredentialManager()
+        assert await backend.get_secret("tst-openrouter") == "sekret"
+
+    async def test_get_strips_a_trailing_terminator(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Credentials written by other tools may carry a NUL terminator.
+        monkeypatch.setattr(
+            keychain_windows,
+            "_cred_read",
+            lambda target: "sekret\x00".encode("utf-16-le"),
+        )
+        backend = keychain_windows.WindowsCredentialManager()
+        assert await backend.get_secret("tst-openrouter") == "sekret"
+
+    async def test_get_not_found_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _raise(target: str) -> bytes:
+            raise KeychainError("API key not found in Windows Credential Manager")
+
+        monkeypatch.setattr(keychain_windows, "_cred_read", _raise)
+        backend = keychain_windows.WindowsCredentialManager()
+        with pytest.raises(KeychainError, match="not found"):
+            await backend.get_secret("tst-openrouter")
+
+    async def test_store_encodes_utf16_under_service_target(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def _write(target: str, blob: bytes, username: str) -> None:
+            captured.update(target=target, blob=blob, username=username)
+
+        monkeypatch.setattr(keychain_windows, "_cred_write", _write)
+        backend = keychain_windows.WindowsCredentialManager()
+        await backend.set_secret("tst-openrouter", "sekret")
+        assert captured["target"] == "com.thatsimpletech.tstdesk:tst-openrouter"
+        assert captured["blob"] == "sekret".encode("utf-16-le")
+        assert captured["username"] == "tst-openrouter"
+
+    async def test_delete_targets_service_account(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: list[str] = []
+        monkeypatch.setattr(keychain_windows, "_cred_delete", captured.append)
+        backend = keychain_windows.WindowsCredentialManager()
+        await backend.delete_secret("tst-openrouter")
+        assert captured == ["com.thatsimpletech.tstdesk:tst-openrouter"]
+
+
+class TestBackendDispatch:
+    """_detect_backend picks the platform backend (TD-1102 adds win32)."""
+
+    def test_win32_dispatches_to_credential_manager(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        backend = kc_mod._detect_backend()
+        assert isinstance(backend, keychain_windows.WindowsCredentialManager)
+
+    def test_darwin_dispatches_to_macos(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        assert isinstance(kc_mod._detect_backend(), kc_mod.MacOSKeychain)
+
+    def test_linux_dispatches_to_secret_service(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert isinstance(kc_mod._detect_backend(), kc_mod.LinuxSecretService)
+
+    def test_unknown_platform_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "plan9")
+        with pytest.raises(KeychainError, match="Unsupported platform"):
+            kc_mod._detect_backend()

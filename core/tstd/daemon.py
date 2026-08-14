@@ -27,7 +27,7 @@ from .audit_writer import AuditWriter
 from .boundary_config import boundary_source, load_workspace_boundary
 from .config import ConfigError, ModelConfig, cached_config, save_active_preset
 from .context.assembler import ContextAssembler
-from .keychain import KeychainError, get_api_key, store_api_key
+from .keychain import KeychainError, delete_api_key, get_api_key, store_api_key
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .policy import add_rule, load_policy, propose_always_allow, remove_rule, save_policy
@@ -39,6 +39,7 @@ from .protocol import (
     Cancel,
     ClientMessageT,
     DaemonEvent,
+    DeleteApiKey,
     Deny,
     Detach,
     DiagnosticCheck,
@@ -951,6 +952,16 @@ class Daemon:
 
         if isinstance(msg, ValidateApiKey):
             return (await self._validate_api_key()).model_dump_json()
+
+        if isinstance(msg, DeleteApiKey):
+            # TD-1102: key removable from settings. Same ack pattern as
+            # set_api_key — the fresh setup_state flips has_api_key.
+            try:
+                await delete_api_key(msg.provider)
+            except (KeychainError, NotImplementedError) as e:
+                return build_error("key_delete_failed", f"Could not remove the API key: {e}")
+            log.info("api key removed from keychain")
+            return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetPreset):
             if msg.name not in self.config.presets:

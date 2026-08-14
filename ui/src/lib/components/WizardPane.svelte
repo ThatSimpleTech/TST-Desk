@@ -11,6 +11,7 @@
 		closeWizard,
 		storeKey,
 		validateKey,
+		removeKey,
 		choosePreset,
 		chooseWorkspace,
 		finish,
@@ -85,6 +86,11 @@
 						disabled={!onboarding.hasApiKey || onboarding.validating}
 						onclick={validateKey}>Validate</button
 					>
+					{#if onboarding.hasApiKey}
+						<button class="btn btn--ghost" type="button" onclick={removeKey}>
+							Remove stored key
+						</button>
+					{/if}
 					<button class="btn btn--primary" type="button" onclick={nextStep}>Continue</button>
 					<button class="btn btn--ghost" type="button" onclick={nextStep}>
 						Skip — chats fail until a key is stored
