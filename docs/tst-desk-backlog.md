@@ -1182,11 +1182,11 @@ persisted and broadcast. The two skip-marked tests in
 `core/tests/test_security_suite.py` (section 4) pin the expected behavior.
 
 **Acceptance criteria:**
-- [ ] Audit-store writes pass through `redact_secrets` (arguments, output, diffs)
-- [ ] Daemon events carrying tool arguments/results are redacted before broadcast
-- [ ] Error messages surfaced to clients pass through the same chokepoint
-- [ ] Both skip-marked TD-1402 tests run green, unskipped
-- [ ] A positive control proves benign text survives redaction byte-identical
+- [x] Audit-store writes pass through `redact_secrets` (arguments, output, diffs)
+- [x] Daemon events carrying tool arguments/results are redacted before broadcast
+- [x] Error messages surfaced to clients pass through the same chokepoint
+- [x] Both skip-marked TD-1402 tests run green, unskipped
+- [x] A positive control proves benign text survives redaction byte-identical
 
 ---
 

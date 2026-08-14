@@ -1549,3 +1549,60 @@ stream cannot prove initial resolution.
 
 **Rationale:** The criterion is that steering reached the model. The recorded
 request is the ground truth of that, and the mock already records it.
+
+---
+
+## 2026-08-13 — TD-1405: Audit and event surface redaction
+
+**Context:** TD-1402 found that `redact_secrets` guarded only the log
+stream: tool-call arguments and results flowed into the event log — and
+from there to client replay, the WebSocket broadcast, and the audit
+writer — unredacted. Two section-4 tests were skip-marked against this
+story.
+
+### 1. The event log's `add()` is the redaction chokepoint
+
+**Decision:** `SessionEventLog.add()` stores and broadcasts a redacted
+*copy* of every event (`_redact_event`): `ToolCall.arguments` (recursive
+`redact_structure`, promoted from audit.py to logging.py so both
+pipelines share one implementation), `ToolResult.output`/`diff`,
+`ShellOutput.chunk`, `Error.message`, and `SessionState.reason`.
+
+**Rationale:** Every consumer — replay, broadcast, the TD-902 audit
+writer — reads events out of `add()`. Redacting at insertion covers all
+three with one transform. The loop builds the model's tool messages from
+dispatch results, not from logged events, so execution and the file on
+disk keep the exact bytes (asserted in the suite).
+
+### 2. `build_error` scrubs at construction
+
+**Decision:** `build_error()` passes its message through
+`redact_secrets` directly.
+
+**Rationale:** The error envelope is written straight to the socket and
+never passes through the event log, so the chokepoint cannot see it.
+This is the only bypass of `add()` among client-visible surfaces.
+
+### 3. The audit store keeps its own scrub
+
+**Decision:** `AuditStore.append_tool_call` still scrubs arguments
+itself (now via the shared `redact_structure`), even though the writer's
+feed is already redacted upstream. Result output remains a SHA-256 hash
+— now of the redacted text.
+
+**Rationale:** Defense in depth at the persistence boundary costs one
+idempotent pass. Hashing redacted output also closes a side channel: a
+stored hash can no longer be rainbow-tabled back to a known secret
+shape.
+
+### 4. What is deliberately not redacted
+
+**Decision:** User messages and assistant deltas pass through
+unredacted.
+
+**Rationale:** The user's own message goes to the model verbatim by
+design — redacting the stored copy would fork the transcript from what
+the model saw. Deltas are the model's own stream; the exfiltration
+vector the story closes is tool payloads and errors, and the known-shape
+patterns (API keys, PEM headers) do not appear in ordinary prose.
+Recorded here so the exclusion is a decision, not an omission.
