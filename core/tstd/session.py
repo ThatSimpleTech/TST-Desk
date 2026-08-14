@@ -395,7 +395,25 @@ class Session:
         if self._state != "awaiting_approval":
             await self.set_state("awaiting_approval", reason=reason)
 
-        return await self._await_approval_resolution(tool_call_id, fut)
+        outcome = await self._await_approval_resolution(tool_call_id, fut)
+        # Emit a tool_result for the synthetic id so clients clear the
+        # approval card and resolve the timeline entry — the approval store
+        # only splices a card on a tool_result matching its tool_call_id,
+        # and this id never reaches the dispatcher, so without this the
+        # card would stick for the rest of the session.
+        await self.event_log.add(
+            ToolResult(
+                session_id=self.id,
+                tool_call_id=tool_call_id,
+                status="success" if outcome.approved else "error",
+                output=(
+                    f"Approved external import: {path}" if outcome.approved else outcome.message
+                ),
+                error_code=None if outcome.approved else "approval_denied",
+                seq=1,
+            )
+        )
+        return outcome
 
     def get_pending_approval(self, tool_call_id: str) -> PendingApproval | None:
         """Return the metadata for a parked approval, or ``None`` if none.

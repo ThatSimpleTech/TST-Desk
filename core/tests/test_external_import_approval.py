@@ -11,11 +11,15 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from tests.test_dispatch import make_config, start_loop, wait_for_turn
+from tstd.config import ConfigError
 from tstd.context import ContextAssembler, SteeringFileResolver
 from tstd.mock import MockProvider, Script
 from tstd.policy import PolicyConfig, load_approved_imports, save_approved_imports
 from tstd.protocol import ApprovalRequest as ApprovalRequestEvent
+from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
 from tstd.session import Session
 
@@ -187,6 +191,69 @@ class TestRequestImportApproval:
         assert "timed out" in outcome.message
 
 
+# ── Resolution events (approval-card clearing) ───────────────────────────
+
+
+class TestImportApprovalToolResult:
+    """Resolving an import approval emits a ``tool_result`` for its synthetic
+    id — clients only clear the approval card on a matching tool_result, and
+    this id never reaches the dispatcher, so nothing else pairs with it."""
+
+    def _tool_result(self, session: Session, tool_call_id: str) -> ToolResultEvent:
+        for event in session.event_log.all_events:
+            if isinstance(event, ToolResultEvent) and event.tool_call_id == tool_call_id:
+                return event
+        raise AssertionError(f"no tool_result for {tool_call_id}")
+
+    async def test_approve_emits_success_tool_result(self, tmp_path: Path) -> None:
+        session = Session(str(tmp_path / "ws"))
+        await session.set_state("running")
+        path = (tmp_path / "external.md").resolve()
+
+        task = asyncio.create_task(session.request_import_approval(path))
+        req = await _wait_for_approval(session)
+        session.resolve_approval(req.tool_call_id, True)
+        outcome = await task
+
+        assert outcome.approved is True
+        result = self._tool_result(session, req.tool_call_id)
+        assert result.status == "success"
+        assert result.error_code is None
+        assert str(path) in result.output
+        # The result lands after the request so the card can pair with it.
+        assert result.seq > req.seq
+
+    async def test_deny_emits_error_tool_result(self, tmp_path: Path) -> None:
+        session = Session(str(tmp_path / "ws"))
+        await session.set_state("running")
+        path = (tmp_path / "external.md").resolve()
+
+        task = asyncio.create_task(session.request_import_approval(path))
+        req = await _wait_for_approval(session)
+        session.resolve_approval(req.tool_call_id, False, "not now")
+        outcome = await task
+
+        assert outcome.approved is False
+        result = self._tool_result(session, req.tool_call_id)
+        assert result.status == "error"
+        assert result.error_code == "approval_denied"
+        assert "not now" in result.output
+
+    async def test_timeout_emits_error_tool_result(self, tmp_path: Path) -> None:
+        session = Session(str(tmp_path / "ws"))
+        session.policy = PolicyConfig(approval_timeout_seconds=0.1)
+        await session.set_state("running")
+        path = (tmp_path / "external.md").resolve()
+
+        outcome = await session.request_import_approval(path)
+
+        assert outcome.approved is False
+        result = self._tool_result(session, f"external-import:{path}")
+        assert result.status == "error"
+        assert result.error_code == "approval_denied"
+        assert "timed out" in result.output
+
+
 # ── Loop-level gate ──────────────────────────────────────────────────────
 
 
@@ -235,3 +302,55 @@ class TestLoopApprovalGate:
 
         # Denial is not persisted; the allowlist stays empty.
         assert load_approved_imports(ws) == frozenset()
+
+
+# ── Malformed config tolerance ───────────────────────────────────────────
+
+_MALFORMED_CONFIG = "policy:\n  rules: [\n"
+
+
+class TestMalformedConfig:
+    """A broken ``.tst/config.yaml`` must not kill the loop: the durable
+    allowlist falls back to empty at startup, and an approval stays
+    in-memory when the save cannot round-trip the file."""
+
+    async def test_loop_starts_and_prompts_with_empty_allowlist(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"
+        external = (tmp_path / "external.md").resolve()
+        _write(ws / "AGENTS.md", f"Root.\n@{external}")
+        _write(external, "External content.")
+        _write(ws / ".tst" / "config.yaml", _MALFORMED_CONFIG)
+
+        session = Session(str(ws))
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Reply")})
+        await start_loop(session, TierRouter(), mock, make_config())
+
+        await session.add_user_message("hello")
+        # Would time out if loading the allowlist had crashed the loop.
+        req = await _wait_for_approval(session)
+
+        assert session.resolve_approval(req.tool_call_id, True)
+        await wait_for_turn(session, 1)
+
+    async def test_approval_survives_failed_persistence(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"
+        external = (tmp_path / "external.md").resolve()
+        _write(ws / "AGENTS.md", f"Root.\n@{external}")
+        _write(external, "External content.")
+        _write(ws / ".tst" / "config.yaml", _MALFORMED_CONFIG)
+
+        session = Session(str(ws))
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Reply")})
+        await start_loop(session, TierRouter(), mock, make_config())
+
+        await session.add_user_message("hello")
+        req = await _wait_for_approval(session)
+        session.resolve_approval(req.tool_call_id, True)
+        await wait_for_turn(session, 1)
+
+        # The turn assembled with the import inlined despite the failed write.
+        assert mock.calls
+        assert any("External content." in (m.content or "") for m in mock.calls[0].messages)
+        # The file is still the malformed original — the save failed safely.
+        with pytest.raises(ConfigError):
+            load_approved_imports(ws)
