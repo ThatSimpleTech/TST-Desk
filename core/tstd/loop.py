@@ -31,6 +31,7 @@ from .autonomy import (
     Checkpointer,
     DecisionClass,
     DecisionClassifier,
+    DecisionLedger,
 )
 from .config import ModelConfig
 from .context import PromptAssembler
@@ -462,6 +463,11 @@ async def agent_loop(
         # checkpointer.
         if tool_dispatcher.checkpointer is None:
             tool_dispatcher.checkpointer = Checkpointer(Path(session.workspace_path), session.id)
+
+        # Decisions ledger (TD-704): Class A/B decisions that execute
+        # append to .tst/autonomy/DECISIONS.md and emit decision_logged.
+        if tool_dispatcher.ledger is None:
+            tool_dispatcher.ledger = DecisionLedger(session.workspace_path)
 
     # Pre-compute tool definitions if we have a registry
     tool_definitions: list[ProviderToolDefinition] | None = None

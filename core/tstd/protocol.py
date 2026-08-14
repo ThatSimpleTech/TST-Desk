@@ -260,7 +260,9 @@ class DecisionLogged(DaemonEvent):
     decision_class: Literal["A", "B", "C"]
     what: str
     why: str
-    commit: str
+    # The revertable commit SHA; ``None`` for an uncommitted Class B
+    # entry (Class A always names one — TD-704 AC 3).
+    commit: str | None = None
 
 
 class CheckpointNotice(DaemonEvent):

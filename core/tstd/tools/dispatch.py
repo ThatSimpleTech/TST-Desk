@@ -11,13 +11,21 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
 
-from ..autonomy import AmbiguousClassifier, Checkpointer, DecisionClass, DecisionRequest
+from ..autonomy import (
+    AmbiguousClassifier,
+    Checkpointer,
+    DecisionClass,
+    DecisionLedger,
+    DecisionRequest,
+    LedgerEntry,
+)
 from ..logging import get_logger
+from ..protocol import DecisionLogged as DecisionLoggedEvent
 from .boundary import PathGuard, RefusalError
 from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry
@@ -91,6 +99,7 @@ class ToolDispatcher:
         classifier: AmbiguousClassifier | None = None,
         path_guard: PathGuard | None = None,
         checkpointer: Checkpointer | None = None,
+        ledger: DecisionLedger | None = None,
     ) -> None:
         self.registry = registry
         self.max_result_chars = max_result_chars
@@ -107,6 +116,9 @@ class ToolDispatcher:
         # missing checkpointer silently skips checkpointing (tests wire
         # one explicitly, agent_loop wires one by default).
         self.checkpointer = checkpointer
+        # The decisions ledger (TD-704).  Class A/B decisions that
+        # execute append to .tst/autonomy/DECISIONS.md.
+        self.ledger = ledger
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
 
     # ── Handler registration ──────────────────────────────────────────
@@ -309,6 +321,59 @@ class ToolDispatcher:
 
         # 4. Truncate
         truncated_output, truncated = truncate_output(output, self.max_result_chars)
+
+        # 4.1 Decisions ledger (TD-704).  A Class A/B decision that
+        #     executed appends to .tst/autonomy/DECISIONS.md and emits
+        #     decision_logged.  Best-effort: the ledger must never fail
+        #     the tool result.  Class A without a commit is refused by
+        #     the ledger (an action that cannot be attributed to a
+        #     commit is not Class A) and skipped, not misrecorded.
+        if (
+            decision_class is not None
+            and decision_class.value in ("A", "B")
+            and self.ledger is not None
+            and session is not None
+        ):
+            try:
+                dc = cast(Literal["A", "B"], decision_class.value)
+                what = f"{name} {json.dumps(arguments, sort_keys=True)[:200]}"
+                why = (
+                    classification.reason
+                    or (classification.rule.id if classification.rule else "")
+                    or f"classified {dc}"
+                )
+                entry = LedgerEntry(
+                    decision_class=dc,
+                    what=what,
+                    why=why,
+                    commit=checkpoint_commit,
+                )
+                try:
+                    await self.ledger.append(entry)
+                except ValueError:
+                    pass  # Class A without a commit — not logged as A (AC 3)
+                else:
+                    await session.event_log.add(
+                        DecisionLoggedEvent(
+                            session_id=session.id,
+                            decision_class=dc,
+                            what=entry.what,
+                            why=entry.why,
+                            commit=entry.commit,
+                            seq=1,  # overwritten by the event log
+                        )
+                    )
+            except Exception:
+                log.exception(
+                    "ledger append failed",
+                    extra={
+                        "extra_fields": {
+                            "tool_call_id": tool_call_id,
+                            "tool": name,
+                        }
+                    },
+                )
+
         return ToolResult(
             tool_call_id=tool_call_id,
             name=name,
