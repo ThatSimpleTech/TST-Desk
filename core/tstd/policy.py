@@ -346,6 +346,9 @@ def load_approved_imports(workspace: str | Path) -> frozenset[Path]:
         data: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML in {path}: {e}") from e
+    # An empty or comment-only file (the TD-1103 scaffold) means no approvals.
+    if data is None:
+        return frozenset()
     if not isinstance(data, dict):
         raise ConfigError(f"{path} must contain a YAML mapping at the top level")
 
@@ -375,6 +378,8 @@ def save_approved_imports(workspace: str | Path, paths: Iterable[Path]) -> None:
             loaded: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as e:
             raise ConfigError(f"Invalid YAML in {path}: {e}") from e
+        if loaded is None:
+            loaded = {}  # empty or comment-only file — start sections fresh
         if not isinstance(loaded, dict):
             raise ConfigError(f"{path} must contain a YAML mapping at the top level")
         existing = loaded
