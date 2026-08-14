@@ -10,6 +10,7 @@
 	import { createAutoScroll, type AutoScroll } from "../../autoscroll";
 	import type { ChatMessage } from "../../chat-store";
 	import MessageBubble from "./MessageBubble.svelte";
+	import Icon from "../Icon.svelte";
 
 	let { messages }: { messages: ChatMessage[] } = $props();
 
@@ -72,13 +73,15 @@
 		<div class="sizer" style="height: {$virtualizer.getTotalSize()}px;">
 			{#each $virtualizer.getVirtualItems() as row (row.key)}
 				<div class="row" data-index={row.index} use:measure style="transform: translateY({row.start}px);">
-					<MessageBubble message={messages[row.index]} />
+					<MessageBubble message={messages[row.index]} first={row.index === 0} />
 				</div>
 			{/each}
 		</div>
 	</div>
 	{#if auto !== null && !auto.pinned}
-		<button class="jump" type="button" onclick={() => auto?.jumpToLatest()}>↓ Jump to latest</button>
+		<button class="jump" type="button" onclick={() => auto?.jumpToLatest()}>
+			<Icon name="chevron-down" size={14} /> Jump to latest
+		</button>
 	{/if}
 </div>
 
@@ -112,6 +115,9 @@
 	}
 
 	.jump {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
 		position: absolute;
 		bottom: var(--space-4);
 		left: 50%;
