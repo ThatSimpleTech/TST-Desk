@@ -1949,3 +1949,64 @@ rather than in one sweep over five lanes' files.
 **Also fixed (first-run defects):** rust leg now installs the Linux system
 deps package.yml already used (glib-sys build scripts need webkit/appindicator
 headers); typescript leg now installs uv before the protocol-fixtures step.
+
+---
+
+## 2026-08-14 — TD-1005: Activity timeline
+
+Class B — recorded per AGENTS.md §5.
+
+### 1. New `tier_switched` daemon event
+
+**Decision:** Added a `TierSwitched` event (`type: "tier_switched"`) to the daemon event
+union, carrying `session_id`, `tier`, and `previous`. The `set_tier` message handler
+(`Daemon._handle_set_tier`) applies the `TierRouter` override and appends the event to the
+session log so the timeline can show manual routing changes.
+
+**Rationale:** Criterion 1 lists "tier switches" as a first-class timeline entry, but the
+closed daemon→client event set had nothing that announced one — `set_tier` applied the
+router override silently. One typed event keeps the timeline honest (the UI never derives
+truth it wasn't given, AGENTS §6) and makes the TS mirror addition trivial.
+
+### 2. Pure store + thin runes wrapper split
+
+**Decision:** `timeline.ts` holds the `Timeline` class and `eventToEntry` mapping with no
+runes/DOM/Tauri imports; `timeline-store.ts` is a runes singleton that wraps it and reassigns
+`entries = [...timeline.entries]` on every push.
+
+**Rationale:** `timeline.ts` unit-tests under vitest's node environment (which has no Svelte
+transform); `timeline-store.ts` mirrors the existing `connection-status.ts` runes pattern and
+stays untested, same as the splitpane.ts (pure) / SplitPane.svelte (presentational) split.
+Reassigning the list (not mutating) is what makes Svelte reliably invalidate after a
+`shell_output` chunk mutates an existing entry's stdout/stderr buffer in place.
+
+### 3. Shell streaming merges into the parent tool call
+
+**Decision:** `shell_output` events (tool `shell`) append their `chunk` to the parent
+`tool_call` entry's `stdout`/`stderr` buffer, keyed by `tool_call_id`; orphan chunks (no
+matching tool call yet) are dropped rather than buffered.
+
+**Rationale:** The timeline is chronological *entries*, not a raw event dump — a shell command
+is one row whose output grows live under it, not a dozen chunk rows. Dropping orphans is the
+simple, correct read of "the daemon is the source of truth": a chunk with no call is a gap
+the client cannot reconcile, and buffering it would let the UI fabricate ordering the daemon
+never sent.
+
+### 4. Virtualization: fixed 32px rows + inline expansion
+
+**Decision:** Collapsed rows are exactly 32px (border-box), so `computeWindow` math needs no
+measurement. Expanding a row sets `.row.expanded { height: auto }` and the 5-row overscan
+buffer absorbs the single-row height change without re-running the window.
+
+**Rationale:** Virtualizing variable-height rows requires measuring every rendered row; fixed
+collapsed heights make the window arithmetic trivial and O(1). One expanded row at a time
+(only the focused row) is a deliberate product simplification — the overscan buffer is sized
+to absorb one growth spike, which is all the single-expanded-row interaction model produces.
+
+### 5. Backlog completion note, no new verification doc
+
+**Decision:** TD-1005's acceptance checkboxes are ticked in `docs/tst-desk-backlog.md` with a
+completion note; no separate verification `.md`.
+
+**Rationale:** User instruction (recorded in TD-1002 §8): the backlog is where completed-story
+notes go.

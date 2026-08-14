@@ -243,6 +243,22 @@
     "total_tokens": 500,
     "token_method": "cl100k_base"
   },
+  "context_compacted": {
+    "type": "context_compacted",
+    "seq": 18,
+    "session_id": "sess-1",
+    "dropped_messages": 12,
+    "kept_messages": 8,
+    "tokens_before": 12000,
+    "tokens_after": 4000
+  },
+  "tier_switched": {
+    "type": "tier_switched",
+    "seq": 19,
+    "session_id": "sess-1",
+    "tier": "worker",
+    "previous": "brain"
+  },
   "session_list": {
     "type": "session_list",
     "seq": 1,

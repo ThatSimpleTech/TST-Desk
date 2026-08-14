@@ -943,14 +943,30 @@ extended and regenerated (29 fixtures). Verified: 33 vitest tests pass, `svelte-
 **This pane is the product.** Spec §3.
 
 **Acceptance criteria:**
-- [ ] Chronological entries for tool calls, results, decisions, tier switches, compaction,
+- [x] Chronological entries for tool calls, results, decisions, tier switches, compaction,
       steering reloads, and errors
-- [ ] Each entry expandable for full arguments and output
-- [ ] File writes show a syntax-highlighted diff
-- [ ] Shell commands show streaming output live
-- [ ] Decision entries show the class and the rule that fired
-- [ ] Visually distinct treatment per entry type; scannable at a glance
-- [ ] Virtualized — a thousand-entry session stays responsive
+- [x] Each entry expandable for full arguments and output
+- [x] File writes show a syntax-highlighted diff
+- [x] Shell commands show streaming output live
+- [x] Decision entries show the class and the rule that fired
+- [x] Visually distinct treatment per entry type; scannable at a glance
+- [x] Virtualized — a thousand-entry session stays responsive
+
+**Completed (2026-08-14):** Pure, runes-free `ui/src/lib/timeline.ts` maps each validated
+daemon event to a `TimelineEntry` (tool call/result, decision, tier switch, compaction,
+steering reload, error); `shell_output` chunks merge live into their parent tool call's
+stdout/stderr buffer. `timeline-store.ts` is the thin Svelte 5 runes singleton over it
+(reassigns `entries` per push so in-place shell buffers still invalidate). `virtualization.ts`
+computes a fixed-row window (`computeWindow`) with overscan; `ActivityTimeline.svelte` renders
+it with `bind:clientHeight` + scroll, inline expansion via `expandedId`; `TimelineEntryRow.svelte`
+shows the tone marker, kind label, title, preview, and expanded args/output/diff (diff
+highlighted via `classifyDiffLine`) and the decision class + rule. `entry-view.ts` holds the
+visual classification. `connection-status.ts` gained an `onEvent` fan-out; `AppShell.svelte`
+mounts `ActivityTimeline` fed by `onEvent(push)`. The daemon now emits a `tier_switched` event
+when `set_tier` applies a manual override (new `_handle_set_tier` handler + 3 integration
+tests). Verified: 87 vitest tests pass, `svelte-check`/tsc 0 errors, 905 Python tests pass
+(4 skipped), fixtures regenerated (35). Timeline wiring is exercised end-to-end in the live
+Tauri window once TD-1004's chat pane drives real turns.
 
 ---
 

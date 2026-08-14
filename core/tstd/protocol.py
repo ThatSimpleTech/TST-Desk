@@ -385,6 +385,20 @@ class SteeringReloaded(DaemonEvent):
     source_count: int = Field(ge=0)
 
 
+class TierSwitched(DaemonEvent):
+    """Emitted when a session's active tier is overridden via ``set_tier``.
+
+    The timeline shows this as an explicit entry so a manual routing change
+    is visible alongside the automatic tier decisions (TD-1005). ``previous``
+    records the tier before the override so the entry reads as a transition.
+    """
+
+    type: Literal["tier_switched"] = "tier_switched"
+    session_id: str
+    tier: Literal["brain", "worker", "validator"]
+    previous: Literal["brain", "worker", "validator"] | None = None
+
+
 class InstructionStackEntry(BaseModel):
     """One resolved steering source in the instruction stack."""
 
@@ -482,6 +496,7 @@ DaemonEventT = Annotated[
     | TurnComplete
     | ContextCompacted
     | SteeringReloaded
+    | TierSwitched
     | InstructionStack
     | SessionList
     | Error,
@@ -525,6 +540,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "turn_complete",
         "context_compacted",
         "steering_reloaded",
+        "tier_switched",
         "instruction_stack",
         "session_list",
         "error",
