@@ -111,6 +111,8 @@ class PromptAssembler:
         memory: str | None = None,
         diff: str | None = None,
         test_output: str | None = None,
+        approved_imports: frozenset[Path] = frozenset(),
+        denied_imports: frozenset[Path] = frozenset(),
     ) -> AssembledPrompt:
         """Assemble the system prompt for *tier*.
 
@@ -125,6 +127,8 @@ class PromptAssembler:
             memory=memory,
             diff=diff,
             test_output=test_output,
+            approved_imports=approved_imports,
+            denied_imports=denied_imports,
         )
 
     def assemble_sync(
@@ -136,6 +140,8 @@ class PromptAssembler:
         memory: str | None = None,
         diff: str | None = None,
         test_output: str | None = None,
+        approved_imports: frozenset[Path] = frozenset(),
+        denied_imports: frozenset[Path] = frozenset(),
     ) -> AssembledPrompt:
         """Synchronous variant of :meth:`assemble` (tests, CLI)."""
         # The brain tier carries the workspace manifest; others don't.
@@ -162,6 +168,8 @@ class PromptAssembler:
             diff=diff,
             test_output=test_output,
             config=self._tier_config,
+            approved_imports=approved_imports,
+            denied_imports=denied_imports,
         )
 
         # Stable-prefix order: base first, then the tier blocks in

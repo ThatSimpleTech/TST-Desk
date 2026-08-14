@@ -42,6 +42,7 @@ from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
 from .keychain import KeychainError
 from .logging import get_logger
+from .policy import load_approved_imports, save_approved_imports
 from .protocol import AssistantDelta, ContextCompacted, SteeringReloaded, TierState, TurnComplete
 from .protocol import CheckpointNotice as CheckpointNoticeEvent
 from .protocol import ToolCall as ToolCallEvent
@@ -432,6 +433,11 @@ async def agent_loop(
     # ── Conversation state ──────────────────────────────────────────
     assembler = prompt_assembler or PromptAssembler(session.workspace_path)
 
+    # External-import approvals (TD-505): approved paths are durable per
+    # workspace; denied paths are session-scoped and not re-prompted.
+    approved_imports: set[Path] = set(load_approved_imports(session.workspace_path))
+    denied_imports: set[Path] = set()
+
     # Conversation messages only; the system message is assembled per
     # turn below (TD-305).
     messages: list[ChatMessage] = []
@@ -567,11 +573,41 @@ async def agent_loop(
             turn_start = time.time()
 
             # 2b. Assemble the per-tier system prompt in stable-prefix
-            #     order (TD-305) and place it before the conversation.
-            assembled = await assembler.assemble(
-                tier,
-                task=user_content if tier == "worker" else None,
-            )
+            #     order (TD-305), gating external imports (TD-505): an
+            #     import resolving outside the workspace parks the session
+            #     for approval before the turn proceeds.  The gate loops
+            #     because approving one file can reveal nested external
+            #     imports (bounded by TD-504's max depth 4).
+            while True:
+                assembled = await assembler.assemble(
+                    tier,
+                    task=user_content if tier == "worker" else None,
+                    approved_imports=frozenset(approved_imports),
+                    denied_imports=frozenset(denied_imports),
+                )
+                pending = [p for p in assembled.steering.pending_imports if p not in denied_imports]
+                if not pending:
+                    break
+                approved_any = False
+                for path in pending:
+                    outcome = await session.request_import_approval(path)
+                    if outcome.approved:
+                        approved_imports.add(path)
+                        approved_any = True
+                    else:
+                        denied_imports.add(path)
+                        log.warning(
+                            "external import denied",
+                            extra={
+                                "extra_fields": {
+                                    "session_id": session.id,
+                                    "path": str(path),
+                                }
+                            },
+                        )
+                if approved_any:
+                    save_approved_imports(session.workspace_path, approved_imports)
+
             if messages and messages[0].role == "system":
                 messages[0] = ChatMessage(role="system", content=assembled.text)
             else:

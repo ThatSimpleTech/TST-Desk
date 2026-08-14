@@ -877,6 +877,13 @@ class Daemon:
                     "no_pending_approval",
                     f"No pending approval {msg.tool_call_id!r} in session {msg.session_id!r}",
                 )
+            # External-import approvals (TD-505) have no tool; they are
+            # class-C reads and can never be always-allowed (TD-803 c4).
+            if pending.tool is None:
+                return build_error(
+                    "class_c_not_always_allowable",
+                    "External imports can never be always-allowed",
+                )
             # The narrowest rule, never a blanket grant; None when the
             # call is a class-C decision (TD-803 criterion 4).
             rule = propose_always_allow(

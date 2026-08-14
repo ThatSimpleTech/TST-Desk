@@ -1950,6 +1950,65 @@ rather than in one sweep over five lanes' files.
 deps package.yml already used (glib-sys build scripts need webkit/appindicator
 headers); typescript leg now installs uv before the protocol-fixtures step.
 
+## 2026-08-14 — TD-505: external import approval
+
+Spec §4.2 says imports from outside the workspace prompt for approval, but is
+silent on the mechanism. Four structural choices, recorded here.
+
+### 1. Reuse the tool-call approval machinery
+
+**Decision:** `Session.request_import_approval(path)` reuses the TD-802/803
+pending-future machinery, emitting an `approval_request` event with
+`tool_call_id="external-import:<path>"`, `tool_name="external_import"`,
+`decision_class="C"`, and `proposed_always_allow=None`.
+
+**Rationale:** An external import is an untrusted-file-read, i.e. class C, so
+it can never be always-allowed. Reusing the existing event + park/approve/deny/
+timeout/replay/redaction paths avoids any new protocol message, and TD-1007's
+approval card renders it unchanged.
+
+### 2. Allowlist lives in `.tst/config.yaml`
+
+**Decision:** A top-level `approved_external_imports: [...]` key, loaded and
+saved section-preservingly (`load_approved_imports`/`save_approved_imports`),
+atomic write.
+
+**Rationale:** "Remembered per workspace per file path" implies durable state.
+`.tst/config.yaml` is already the per-workspace trust store (boundary TD-706,
+policy TD-801), so a separate file/loader adds nothing.
+
+### 3. Approval persists; denial is session-scoped
+
+**Decision:** Approved paths are written to the allowlist; denied paths are
+held in memory for the session and omitted with a warning, but not persisted.
+
+**Rationale:** The criteria only require *approval* to be remembered. A denied
+import still re-prompts on the next session, which keeps the door open for the
+user to change their mind.
+
+### 4. Two-phase assembly with a fixpoint gate
+
+**Decision:** The sync import resolver detects external imports, omits
+unapproved ones, and collects them as `pending_imports` on `AssembledSteering`;
+the async loop then raises one approval per pending path and re-assembles until
+none remain.
+
+**Rationale:** Import resolution runs in a worker thread (`asyncio.to_thread`),
+but approval is inherently async (parks the session). The fixpoint loop handles
+nested external imports revealed only after an approval, bounded by TD-504's
+max depth 4.
+
+### 5. Denial warning surfaces via `import_issues` + structured log
+
+**Decision:** No new timeline event type; a denied import records
+`external import denied: <path>` in the assembly's `import_issues` and a
+structured warning log line.
+
+**Rationale:** There is no generic "warning" daemon event today; adding one
+touches the protocol schema, the TS mirror, and the fixture generator. The
+timeline (TD-1005) can render `import_issues` when it consumes assembly
+warnings — a follow-up if a dedicated event is wanted.
+
 ## 2026-08-14 — TD-1005: Activity timeline
 
 Class B — recorded per AGENTS.md §5.

@@ -533,9 +533,9 @@ day one with nothing to port. Do not treat it as an edge case.
 **Size:** 2 · **Depends on:** TD-504, TD-802
 
 **Acceptance criteria:**
-- [ ] First import from outside the workspace raises an approval request naming the file
-- [ ] Approval is remembered per workspace per file path
-- [ ] Denial omits the import and continues with a warning in the timeline
+- [x] First import from outside the workspace raises an approval request naming the file
+- [x] Approval is remembered per workspace per file path
+- [x] Denial omits the import and continues with a warning in the timeline
 
 ---
 
