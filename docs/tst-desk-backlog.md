@@ -43,7 +43,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M0 — Decisions** | E1 | Open decisions answered, repo scaffolded, CI green on an empty build |
 | **M1 — Headless core** | E2, E3, E4, E5, E6, E7, E8, E9 | A scripted request runs end-to-end from a CLI harness, with steering loaded, tools dispatched, decisions classified, cost accounted, all under test |
 | **M2 — The window** | E10, E11, E12 | A human does the same thing through the app, never touching a terminal |
-| **M3 — Shippable** | E13, E14, E15 | A stranger can install and use it from a fresh machine |
+| **M3 — Shippable** | E13, E14, E15, E16 | A stranger can install and use it from a fresh machine |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -60,6 +60,9 @@ E1 Foundation
                                                                             └─> E12 Inspector
 E13 Packaging ─> E14 Testing (continuous) ─> E15 Docs
 ```
+
+E16 Familiarity hangs off E10 (shell) and E8 (approvals): it restyles the window
+and ships the TD-1007 approval cards, the last unchecked M2 interaction.
 
 E14 is not a phase at the end. Tests are written with each story. The E14 stories cover
 cross-cutting suites and CI gates that don't belong to a single feature.
@@ -1330,6 +1333,168 @@ persisted and broadcast. The two skip-marked tests in
 
 ---
 
+## Epic E16 — Familiarity
+
+**Goal:** close the recognition gap. The window should read as a warm, quiet,
+serif-accented agent workspace in the Claude Desktop family — without sanding off
+the differentiators (cost meter, tier chips, decisions ledger, boundary indicator,
+doctor). Source: 2026-08-14 reverse-engineering pass over the shipping Claude
+desktop (features, UX flows, design language). These stories are chrome and
+surface only; no architecture changes.
+
+**The line we walk:** evoke the family — warm paper ground, scarce warm accent,
+serif display type, hairline separation, quiet motion — with our own hex values,
+our own mark, and our own copy voice. Do not lift Claude's exact palette
+(`#FAF9F5`, `#D97757`), name, glyph, or greeting strings.
+
+---
+
+### TD-1601 — Warm-paper palette and radii
+**Size:** 1 · **Depends on:** TD-1001
+
+**Acceptance criteria:**
+- [ ] Light theme: warm paper ground, white reserved for lifted surfaces, warm
+      ink text, warm hairline borders — no pure-white page background, no cool grays
+- [ ] Accent is a rust-family hue on our own hex, used only for send/active/links/
+      key actions — never decorative
+- [ ] Dark theme: warm charcoal ground with elevated surfaces; accent lightened
+      for contrast
+- [ ] Radii scale with element size (small controls ≈8px, cards 12–16px, composer
+      ≈24px); shadows ≤ ~6% alpha, hairlines do the separation work
+- [ ] Changes confined to design tokens + global CSS; vitest and svelte-check green
+
+**Notes:** all in `ui/src/lib/tokens.css` (+ `app.css` if ground rules live there).
+Light: ground `#F8F6F1`, lifted `#FFFFFF`, ink `#191817`, secondary `#5C574D`,
+hairline `#E4E0D8`, user bubble `#E9E3D6`, accent `#B4532A` / hover `#9A4523`,
+on-accent `#FFFFFF`; semantic ok `#3E7A4E`, warn `#9A6A1B`, err `#A0432E`.
+Dark: ground `#232320`, elevated `#2C2C28`, ink `#EDEAE3`, secondary `#A39E93`,
+hairline `#3D3D37`, user bubble `#3A382F`, accent `#D0794F`.
+
+---
+
+### TD-1602 — Typography
+**Size:** 2 · **Depends on:** TD-1601
+
+**Acceptance criteria:**
+- [ ] Source Serif 4 vendored into the repo (woff2 + OFL license file); no CDN or
+      runtime fetch
+- [ ] Serif carries display/greeting/headings at light weight with ≈−0.02em
+      tracking; system sans carries UI; mono carries code, tokens, and cost figures
+- [ ] Type roles defined as tokens with a documented fallback chain
+- [ ] Bundle size impact recorded in `DECISIONS.md`
+
+**Notes:** woff2 into `ui/static/fonts/` with `OFL.txt`; `@font-face` with
+`font-display: swap`. Display stack `"Source Serif 4", Georgia, serif`; keep the
+existing system sans and `ui-monospace` stacks. Weights 400–500 only — the voice
+stays light.
+
+---
+
+### TD-1603 — Bubble-less assistant messages
+**Size:** 2 · **Depends on:** TD-1601
+
+**Acceptance criteria:**
+- [ ] Assistant messages render full-width on the canvas — no bubble, no avatar,
+      hairline separation between turns
+- [ ] User messages keep a right-aligned warm-tan bubble at max-width ≈80%
+- [ ] Streaming caret recolored to the accent
+- [ ] Markdown, code blocks, and copy affordances still work; existing component
+      tests updated
+
+**Notes:** `MessageBubble.svelte` and its consumers. This is the change that
+removes the "generic chat app" read.
+
+---
+
+### TD-1604 — Composer card and centered column
+**Size:** 2 · **Depends on:** TD-1601
+
+**Acceptance criteria:**
+- [ ] Chat column centered at max-width ≈760px, held on wide windows
+- [ ] Composer is a lifted white card: ≈24px radius, 1px hairline border, whisper
+      shadow
+- [ ] Send is a circular accent button that morphs to stop while a turn runs
+- [ ] One-line plain disclaimer beneath the composer, in our own words
+
+**Notes:** `Composer.svelte`, `ChatPane.svelte`. Disclaimer suggestion:
+"TST Desk can make mistakes — check its work."
+
+---
+
+### TD-1605 — Greeting empty state
+**Size:** 1 · **Depends on:** TD-1602
+
+**Acceptance criteria:**
+- [ ] Empty chat shows a time-aware serif greeting (morning / afternoon / evening
+      by local hour)
+- [ ] Three suggestion chips in product voice insert their text into the composer
+      (insert, not auto-send)
+- [ ] Hidden once messages exist, including after attach/replay with history
+
+**Notes:** `ChatPane.svelte` empty branch. Chip copy is ours:
+"Review this repo", "Find what's failing", "Explain this codebase".
+
+---
+
+### TD-1606 — Hover message actions
+**Size:** 2 · **Depends on:** TD-1603
+
+**Acceptance criteria:**
+- [ ] Assistant messages show a hover-only action bar: copy (markdown source) and
+      retry
+- [ ] Retry resends the last user message; hidden or disabled while a turn runs
+- [ ] Timestamp available on hover
+- [ ] Actions keyboard-reachable with visible focus
+
+**Notes:** retry works over today's protocol (`user_message` resend); edit/branch
+is deliberately out — it needs daemon-side conversation forking.
+
+---
+
+### TD-1607 — Working shimmer
+**Size:** 2 · **Depends on:** TD-1004
+
+**Acceptance criteria:**
+- [ ] Between send and first token, a shimmering "Working…" line — CSS shimmer,
+      no spinner
+- [ ] Collapses to a static duration line when the turn completes
+- [ ] Honors `prefers-reduced-motion`
+- [ ] No layout shift on appear/disappear
+
+**Notes:** chat-store already sees turn start and first `assistant_delta`; track
+an `awaitingFirstToken` flag there. The duration line is the "Thought for Ns"
+analog.
+
+---
+
+### TD-1608 — Icon pass and favicon
+**Size:** 2 · **Depends on:** TD-1601
+
+**Acceptance criteria:**
+- [ ] No emoji left in chrome (header buttons, send, panes); inline outline SVGs
+      throughout — ≈1.5px stroke, sized to text, fill only for active state
+- [ ] Icons defined once in a shared map/component, not pasted per call site
+- [ ] Default Svelte favicon replaced with our own mark
+
+**Notes:** Lucide-style 24px viewBox paths, `currentColor`. The 📜 🩺 ⚙ header
+buttons are the loudest "hack project" tell. Tauri bundle icons stay with E13.
+
+---
+
+### TD-1609 — Dark code theme and first shortcuts
+**Size:** 1 · **Depends on:** TD-1601
+
+**Acceptance criteria:**
+- [ ] Code blocks theme-aware in dark mode — no light-on-light highlight.js theme
+- [ ] Esc cancels the running turn; ⌘, reopens the wizard
+- [ ] Shortcuts discoverable (title attributes or a hint line)
+
+**Notes:** `Markdown.svelte` currently imports light-only `github.css`; replace
+with a token-driven hljs theme or a media-scoped dual import. Esc wires to the
+existing cancel path.
+
+---
+
 # Post-v0.1 backlog
 
 Named, sequenced, and deliberately not decomposed. Do not build these.
@@ -1368,8 +1533,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
 | M2 The window | E10–E12 | 14 | 51 |
-| M3 Shippable | E13–E15 | 11 | 43 |
-| **Total v0.1** | **15** | **75** | **252** |
+| M3 Shippable | E13–E16 | 20 | 58 |
+| **Total v0.1** | **16** | **84** | **267** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
