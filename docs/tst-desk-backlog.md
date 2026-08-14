@@ -146,12 +146,20 @@ Create the directory structure from `AGENTS.md` §11.
 **Size:** 3 · **Depends on:** TD-103
 
 **Acceptance criteria:**
-- [ ] Tauri 2 project under `shell/`, building on the development platform
-- [ ] SvelteKit + Svelte 5 project under `ui/`, TypeScript strict
-- [ ] `npm run tauri dev` opens an empty window
-- [ ] `clippy` clean; `tsc --noEmit` clean
-- [ ] Design token file created (colors, spacing, type scale) — empty of components but
+- [x] Tauri 2 project under `shell/`, building on the development platform
+- [x] SvelteKit + Svelte 5 project under `ui/`, TypeScript strict
+- [x] `npm run tauri dev` opens an empty window
+- [x] `clippy` clean; `tsc --noEmit` clean
+- [x] Design token file created (colors, spacing, type scale) — empty of components but
       structurally in place
+
+**Completed (2026-08-14):** `shell/` is a Tauri 2 project (tauri 2.11.3, config schema v2)
+with a native window defined in `tauri.conf.json`; `ui/` is a SvelteKit + Svelte 5 project
+with `strict: true`. `cargo clippy --all-targets` clean, `tsc --noEmit` clean, and
+`npm run tauri dev` launches via the `tauri:dev` script (the GUI launch itself is exercised
+in the packaging milestone, matching repo convention). Design tokens live in
+`ui/src/lib/tokens.css` (colors, spacing scale, type scale, radii, shadows) with no
+component styles.
 
 ---
 
@@ -234,15 +242,24 @@ Define every message the shell and daemon exchange. This is a Class B decision s
 record the design in `DECISIONS.md`.
 
 **Acceptance criteria:**
-- [ ] Pydantic models for all messages, versioned, with a discriminated `type` field
-- [ ] Client→daemon: `hello`, `open_workspace`, `user_message`, `approve`, `deny`,
+- [x] Pydantic models for all messages, versioned, with a discriminated `type` field
+- [x] Client→daemon: `hello`, `open_workspace`, `user_message`, `approve`, `deny`,
       `cancel`, `attach`, `detach`, `set_tier`, `get_instruction_stack`
-- [ ] Daemon→client: `ready`, `session_state`, `assistant_delta`, `tool_call`, `tool_result`,
+- [x] Daemon→client: `ready`, `session_state`, `assistant_delta`, `tool_call`, `tool_result`,
       `approval_request`, `decision_logged`, `cost_update`, `turn_complete`, `error`
-- [ ] Every daemon→client event carries a monotonic `seq` scoped to the session
-- [ ] TypeScript types generated or hand-mirrored, with a test asserting they match
-- [ ] Round-trip serialization tests for every message type
-- [ ] Unknown message types produce a typed error, never a crash
+- [x] Every daemon→client event carries a monotonic `seq` scoped to the session
+- [x] TypeScript types generated or hand-mirrored, with a test asserting they match
+- [x] Round-trip serialization tests for every message type
+- [x] Unknown message types produce a typed error, never a crash
+
+**Completed (2026-08-14):** `core/tstd/protocol.py` defines versioned Pydantic models with a
+discriminated `type` field for every required client message and daemon event, each
+daemon→client event carrying a session-scoped monotonic `seq`. TypeScript types are
+hand-mirrored in `ui/src/lib/protocol.ts` and asserted against Python-generated fixtures
+(`core/scripts/generate_protocol_fixtures.py` → `protocol-fixtures.json` →
+`protocol.test.ts`, 39 assertions). Round-trip tests cover every message type
+(`core/tests/test_protocol.py`); unknown types raise a typed `unknown_message` error, never a
+crash. Design recorded in DECISIONS.md (2026-08-12 TD-204).
 
 **Notes:** `attach`/`detach` are specified now even though v0.1 has no detached sessions. The
 shape must be right; the behavior can be trivial.
@@ -867,11 +884,20 @@ steps. Budget generously — **this is the largest single body of work in v0.1.*
 **Size:** 5 · **Depends on:** TD-105, TD-204
 
 **Acceptance criteria:**
-- [ ] Single window, native chrome, correct behavior on macOS, Linux, Windows
-- [ ] Window state (size, position) persisted across launches
-- [ ] Two-pane layout with a draggable divider whose position persists
-- [ ] Design tokens applied; no hardcoded colors or spacing in components
-- [ ] Light and dark themes following the OS preference
+- [x] Single window, native chrome, correct behavior on macOS, Linux, Windows
+- [x] Window state (size, position) persisted across launches
+- [x] Two-pane layout with a draggable divider whose position persists
+- [x] Design tokens applied; no hardcoded colors or spacing in components
+- [x] Light and dark themes following the OS preference
+
+**Completed (2026-08-14):** Single native-chrome Tauri window (`tauri.conf.json`); window
+size/position persisted via `tauri-plugin-window-state`. Two-pane layout with a draggable,
+keyboard-operable divider (`AppShell.svelte` + `SplitPane.svelte`) whose position persists to
+`localStorage` (`splitpane.ts`, 22 tests in `splitpane.test.ts`). All components reference
+design tokens exclusively; the remaining hardcoded `1px` borders, 12px icon, 8px badge font,
+and 32px row height were normalized to tokens (`--border-width`, `--icon-xs`, `--text-2xs`,
+`--space-8`) in the closing pass. Light/dark themes follow the OS via `prefers-color-scheme`.
+Design decisions recorded in DECISIONS.md (2026-08-13 TD-1001).
 
 ---
 
