@@ -1,0 +1,133 @@
+name: Package
+
+# TD-1302: per-platform bundles.  Runs on main (keeps artifacts fresh) and
+# on demand.  TD-1303 builds the tagged-release publishing on top of this.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # runner label drives both the Tauri target and the PyInstaller
+          # sidecar triple; artifact names follow tauri's bundle layout.
+          - os: macos-latest # aarch64-apple-darwin
+            platform: macos-arm64
+          - os: macos-13 # x86_64-apple-darwin (Intel runner)
+            platform: macos-x86_64
+          - os: ubuntu-latest # x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+          - os: windows-latest # x86_64-pc-windows-msvc
+            platform: windows-x86_64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux WebKit dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install Rust toolchain
+        run: rustup component add clippy
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      # beforeBuildCommand builds the sidecar (core/scripts/build_sidecar.py,
+      # which also smoke-launches it) and the UI; the --config in tauri:build
+      # injects bundle.externalBin so the sidecar ships inside the bundle.
+      # TAURI_BUNDLER_DMG_IGNORE_CI=false: tauri skips .dmg packaging on CI
+      # by default (Finder AppleScript styling is flaky headless); runners
+      # handle it — the dev host noted in the backlog entry could not.
+      - name: Build the app bundle
+        run: npm run tauri:build
+        working-directory: ui
+        env:
+          TAURI_BUNDLER_DMG_IGNORE_CI: "false"
+
+      # The smoke test treats the runner as the clean machine: install the
+      # produced bundle, find the bundled tstd sidecar inside it, and prove
+      # it serves a port file with no system Python involved.
+      - name: Smoke the bundled sidecar (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          APP=$(ls -d shell/target/release/bundle/macos/*.app | head -1)
+          SIDECAR="$APP/Contents/MacOS/tstd"
+          test -x "$SIDECAR"
+          DATA=$(mktemp -d)
+          "$SIDECAR" --data-dir "$DATA" --log-level INFO & PID=$!
+          for i in $(seq 1 100); do [ -f "$DATA/port.json" ] && break; sleep 0.1; done
+          kill $PID || true
+          test -f "$DATA/port.json"
+          ls shell/target/release/bundle/dmg/*.dmg
+
+      - name: Smoke the bundled sidecar (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          SIDECAR=shell/target/release/bundle/appimage/*.AppImage
+          ls $SIDECAR
+          # AppImage bundles mount the whole app; the deb tree shows the
+          # sidecar at its installed exe-sibling path instead.
+          cd shell/target/release/bundle/deb
+          dpkg-deb -x *.deb extracted
+          BIN=$(ls extracted/usr/bin/tstd)
+          DATA=$(mktemp -d)
+          "$PWD/$BIN" --data-dir "$DATA" --log-level INFO & PID=$!
+          for i in $(seq 1 100); do [ -f "$DATA/port.json" ] && break; sleep 0.1; done
+          kill $PID || true
+          test -f "$DATA/port.json"
+
+      - name: Smoke the bundled sidecar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sidecar = Get-ChildItem shell/target/release/bundle/msi -Recurse -Filter tstd.exe -ErrorAction SilentlyContinue
+          if (-not $sidecar) {
+            # MSI is an installer database; check the raw exe-sibling layout
+            # tauri stages next to the release binary instead.
+            $sidecar = Get-Item shell/target/release/tstd.exe
+          }
+          $data = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ([guid]::NewGuid()))
+          $proc = Start-Process $sidecar.FullName -ArgumentList "--data-dir `"$data`" --log-level INFO" -PassThru
+          $deadline = (Get-Date).AddSeconds(30)
+          while (-not (Test-Path (Join-Path $data "port.json")) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          if (-not (Test-Path (Join-Path $data "port.json"))) { throw "bundled sidecar did not serve" }
+          Get-ChildItem shell/target/release/bundle/msi/*.msi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tst-desk-${{ matrix.platform }}
+          path: |
+            shell/target/release/bundle/dmg/*.dmg
+            shell/target/release/bundle/appimage/*.AppImage
+            shell/target/release/bundle/deb/*.deb
+            shell/target/release/bundle/msi/*.msi
+          if-no-files-found: error

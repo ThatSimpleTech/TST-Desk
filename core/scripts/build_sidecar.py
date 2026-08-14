@@ -62,9 +62,12 @@ def build(triple: str) -> Path:
             cmd += ["--add-data", f"{src}:{dest}"]
         cmd.append(str(ENTRY))
         subprocess.run(cmd, check=True, cwd=CORE)
+        # PyInstaller appends .exe on Windows, and Tauri's externalBin
+        # lookup expects the suffix on the triplet file name too.
+        suffix = ".exe" if sys.platform == "win32" else ""
         BINARIES.mkdir(parents=True, exist_ok=True)
-        target = BINARIES / f"tstd-{triple}"
-        shutil.move(str(Path(work) / "tstd"), target)
+        target = BINARIES / f"tstd-{triple}{suffix}"
+        shutil.move(str(Path(work) / f"tstd{suffix}"), target)
         target.chmod(0o755)
         return target
 

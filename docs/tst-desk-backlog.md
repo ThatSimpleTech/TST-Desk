@@ -1102,10 +1102,19 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 
 **Acceptance criteria:**
 - [ ] macOS `.dmg` (arm64 and x86_64), Linux AppImage and `.deb`, Windows `.msi`
+      (CI matrix in `.github/workflows/package.yml`: macos-latest, macos-13,
+      ubuntu-latest, windows-latest.  macOS arm64 verified locally to `.app`
+      level — the bundled sidecar serves `port.json` with no system Python.
+      The local `.dmg` step needs Finder automation rights this dev host
+      lacks (AppleEvent -1712); runners get TAURI_BUNDLER_DMG_IGNORE_CI=false.
+      Ticks when the first main run produces four artifacts.)
 - [ ] Each installs and runs on a clean VM
-- [ ] Unsigned-binary warnings documented in the README with per-platform instructions
-- [ ] Signing decision recorded in `DECISIONS.md` — cost and benefit stated, deferral is
-      acceptable for v0.1
+      (each matrix leg treats its fresh runner as the clean machine:
+      install/extract the bundle, run the bundled sidecar, assert the port
+      file.  Ticks when that first run is green.)
+- [x] Unsigned-binary warnings documented in the README with per-platform instructions
+- [x] Signing decision recorded in `DECISIONS.md` — cost and benefit stated, deferral is
+      acceptable for v0.1 (deferred, 2026-08-14)
 
 ---
 
