@@ -415,7 +415,11 @@ async def agent_loop(
     # completion on the worker tier's model, tracked as separate
     # classifier cost (it never touches the main turn accounting).
     if tool_dispatcher is not None:
-        boundary = Boundary(workspace_root=Path(session.workspace_path))
+        boundary = Boundary(
+            workspace_root=Path(session.workspace_path),
+            writable_patterns=tuple(session.boundary_config.boundary.writable_paths),
+            allowed_hosts=session.boundary_config.allowed_hosts,
+        )
         if tool_dispatcher.classifier is None:
 
             async def _worker_classifier(prompt: str) -> str:

@@ -1054,6 +1054,9 @@ atomic write rather than dropping the flag.
 **Rationale:** The schema is already promised to the model; removing a
 declared argument would be a protocol regression. Append reuses the same
 atomic path, so it costs nothing extra.
+
+---
+
 ## 2026-08-13 — TD-605: Shell execution
 
 Decisions made while building the shell handler.
@@ -1281,3 +1284,116 @@ provenance), and an unclosed code fence in an imported file protects @-directive
 **Rationale:** A test suite that silently "fixes" behavior by asserting changed expectations
 hides the change. Pinning documents intent for the reviewer; changing either behavior is a
 separate story with its own decision trail.
+
+---
+
+## 2026-08-13 — TD-1402: Security suite
+
+### 1. Redaction filter argument bug fixed, not accommodated
+
+**Decision:** `SecretsRedactionFilter` redacted `%s`-style log args by re-substituting from
+the *original* argument for each pattern (`args[i] = pattern.sub(..., arg)`), so any
+pattern after the matching one overwrote the redaction. Only entries matching the last
+pattern in `SECRET_PATTERNS` survived. Fixed to accumulate on the narrowed value
+(`arg = pattern.sub(...); args[i] = arg`).
+
+**Rationale:** The suite found a live leak: any credential logged as a positional arg
+(`logger.info("key %s", key)`) was redacted only if it was a private-key header. A security
+suite that documents known-broken behavior instead of pinning the fix would be security
+theater. One-line fix, no contract change.
+
+### 2. Unimplemented surfaces are skip-marked, not quietly absent
+
+**Decision:** Criteria with no implementation surface to test — tool-level steering refusal
+(TD-604 pending), environment sanitization (TD-605 pending), and redaction of audit/event
+surfaces and error strings (no story exists) — are `pytest.skip` markers with reasons that
+name the dependency, so the gaps print on every run (`rs` lines) instead of vanishing from
+the count.
+
+**Rationale:** "Every test in this suite is a release blocker" only holds if the gaps stay
+visible. Skips with reasons are the honest midpoint between absent tests (invisible) and
+`xfail` (implies the code exists and misbehaves — it doesn't exist). The skip bodies state
+the target invariant so unskipping is mechanical. The audit/event redaction gap needs a new
+backlog story; flagged in the story report.
+
+### 3. Suite asserts structural invariants, not just behaviors
+
+**Decision:** Three tests pin structure rather than behavior: C-rule precedence in
+`RULE_TABLE` (an A rule evaluated before a C rule is an auto-approval bypass), dispatch
+call-site confinement (a new `.dispatch(`/`dispatch_many(` caller is a new chokepoint risk),
+and the absence of a `host` parameter on `WebSocketServer.start` (loopback is hardcoded; a
+host knob must route through `validate_interface`).
+
+**Rationale:** Behavior tests prove today's code is safe; structural tests force the
+conversation when tomorrow's code changes the preconditions. In a suite whose every test is
+a release blocker, shape-level guards are the cheap half of the defense.
+
+### 4. Branch base
+
+**Decision:** Branched from `da1f2db` (the TD-602/702/603 integration tip) rather than
+main; the suite tests machinery that does not exist on main. Adds one test file plus the
+one-line logging fix. Merge order: after the TD-605 chain lands on main.
+
+**Rationale:** Same chained-branch pattern as TD-903 on TD-901. New-file-only diffs rebase
+trivially; the logging touch is byte-compatible with both parents.
+
+---
+
+## 2026-08-13 — TD-706: Boundary configuration
+
+Decisions made while adding `.tst/config.yaml`.
+
+### 1. Config shape mirrors the spec §12.4 charter
+
+**Decision:** `.tst/config.yaml` uses nested `boundary:` (`writable_paths`,
+`allowed_commands`, `network`) and `caps:` (`spend_usd`, `wall_clock_hours`,
+`max_iterations`) sections, validated by pydantic with errors that name the
+offending key.
+
+**Rationale:** Same shape as the charter contract in the spec, so a charter
+section maps onto config one-to-one; TD-801 later adds `policy:` beside
+`boundary:`/`caps:`.
+
+### 2. Defaults: workspace-only writes, no network, conservative cap
+
+**Decision:** Absent config → `writable_paths: ["**"]`, `network: "deny"`,
+`spend_usd: 25.00`, `wall_clock_hours: 8.0`, `max_iterations: 200`.
+
+**Rationale:** Criterion 2. "Deny" maps to an empty `allowed_hosts` so any
+network call is Class C; `["**"]` keeps writes inside the workspace.
+
+### 3. The boundary resolves once, at workspace open
+
+**Decision:** The daemon loads the config on `open_workspace`, stamps it on
+the session, emits a new `boundary_update` event (after `session_state`), and
+the loop builds the classifier/guard `Boundary` from it — `writable_paths` →
+`writable_patterns`, `network` → `allowed_hosts`. A bad config falls back to
+defaults with the actionable error logged and surfaced in the event
+`source`; the workspace still opens.
+
+**Rationale:** One resolution point keeps classifier, guard, and UI agreeing
+on the same wall. Refusing to open on a bad config would brick the workspace
+over a typo; defaults-plus-surfaced-error is friendlier and still loud.
+
+### 4. `.tst/config.yaml` is not steering-refused (for now)
+
+**Decision:** The config file stays outside the PD §2.4 steering list
+(AGENTS.md/CLAUDE.md/.tst/rules), matching the TD-1402 security suite's
+explicit contract.
+
+**Rationale:** PD §2.4's list is literal and the config only takes effect at
+open — a mid-session write cannot move the running wall. **Open security
+question:** a poisoned config *would* widen the boundary on the next
+workspace open (the agent writing its own future wall). Closing that hole
+means making `.tst/config.yaml` steering-refused, which overrides the
+TD-1402 test — flagging for the user rather than silently changing another
+story's security contract.
+
+### 5. New event shifts replay seq expectations
+
+**Decision:** `boundary_update` is a logged event (seq 2 after
+`session_state`), so attach/replay tests' hardcoded seq numbers were updated.
+
+**Rationale:** Events are seq-numbered and append-only; any new open-time
+event shifts subsequent seqs. The UI round-trip fixture gained a
+`boundary_update` sample.

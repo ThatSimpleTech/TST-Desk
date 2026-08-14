@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any, ClassVar, Protocol, cast
 
+from .boundary_config import BoundaryConfig
 from .logging import get_logger
 from .protocol import DaemonEvent
 from .protocol import SessionState as SessionStateEvent
@@ -138,6 +139,8 @@ class Session:
         self.event_log = SessionEventLog()
         self._cancel_event = asyncio.Event()
         self._user_message_queue: asyncio.Queue[str] = asyncio.Queue()
+        # Workspace boundary (TD-706), resolved by the daemon on open.
+        self.boundary_config = BoundaryConfig()
 
     @classmethod
     def restore(
