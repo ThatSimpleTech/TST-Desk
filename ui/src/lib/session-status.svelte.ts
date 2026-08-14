@@ -1,0 +1,142 @@
+// Session-scoped state store (TD-1006).
+//
+// Reduces the daemon event stream into the fields the title bar shows:
+// session id + workspace path, state indicator, live cost with a per-tier
+// breakdown, the current tier + slugs, and the boundary ("wall").
+//
+// v0.1 is single-workspace: the first session_state event we see adopts
+// that session, and every session-scoped event afterwards is filtered to
+// it. Multi-session routing belongs to whichever story introduces a
+// second session.
+//
+// Pure TypeScript — no Tauri imports — so vitest can drive the reducer.
+
+import type { ProtocolClient } from "./client";
+import type { BoundaryUpdate, DaemonEventUnion } from "./protocol";
+
+export type SessionIndicator =
+  | "none"
+  | "idle"
+  | "running"
+  | "awaiting_approval"
+  | "paused"
+  | "complete"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export const session = $state({
+  sessionId: null as string | null,
+  /** Path we opened (client-side knowledge; events don't echo it). */
+  workspacePath: null as string | null,
+  state: "none" as SessionIndicator,
+  reason: null as string | null,
+  cost: {
+    turn: 0,
+    session: 0,
+    total: 0,
+    classifier: 0,
+    byTier: {} as Record<string, number>,
+  },
+  boundary: null as Pick<
+    BoundaryUpdate,
+    "writable_paths" | "allowed_commands" | "network" | "spend_usd" | "wall_clock_hours" | "max_iterations" | "source"
+  > | null,
+  tier: "brain" as "brain" | "worker" | "validator",
+  tierOverride: null as "brain" | "worker" | "validator" | null,
+  modelSlugs: {} as Record<string, string>,
+});
+
+let client: ProtocolClient | null = null;
+/** The path of an open_workspace we've sent but not yet seen answered. */
+let pendingPath: string | null = null;
+
+/** Hand the store the live client. Called by connection-status. */
+export function bindClient(c: ProtocolClient | null): void {
+  client = c;
+}
+
+/** Clear everything (called when the connection is torn down). */
+export function resetSession(): void {
+  session.sessionId = null;
+  session.workspacePath = null;
+  session.state = "none";
+  session.reason = null;
+  session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
+  session.boundary = null;
+  session.tier = "brain";
+  session.tierOverride = null;
+  session.modelSlugs = {};
+  pendingPath = null;
+}
+
+/** Reduce one validated daemon event into the store. */
+export function ingestEvent(event: DaemonEventUnion): void {
+  if (event.type === "session_state") {
+    // Adopt the first session we hear of. The open_workspace reply is a
+    // session_state event, so a plain open lands here.
+    if (session.sessionId === null) {
+      session.sessionId = event.session_id;
+      if (pendingPath !== null) {
+        session.workspacePath = pendingPath;
+        pendingPath = null;
+      }
+      // Follow the session: replay starts at the client's last seen seq,
+      // so nothing from open (boundary/tier) is lost.
+      client?.attach(event.session_id);
+    }
+    if (event.session_id !== session.sessionId) return;
+    session.state = event.state;
+    session.reason = event.reason ?? null;
+    return;
+  }
+
+  // Remaining cases are session-scoped: ignore anything not ours.
+  if (!("session_id" in event) || event.session_id !== session.sessionId) return;
+
+  switch (event.type) {
+    case "boundary_update":
+      session.boundary = {
+        writable_paths: event.writable_paths,
+        allowed_commands: event.allowed_commands,
+        network: event.network,
+        spend_usd: event.spend_usd,
+        wall_clock_hours: event.wall_clock_hours,
+        max_iterations: event.max_iterations,
+        source: event.source,
+      };
+      break;
+    case "tier_state":
+      session.tier = event.tier;
+      session.tierOverride = event.override ?? null;
+      session.modelSlugs = event.model_slugs;
+      break;
+    case "cost_update":
+      session.cost = {
+        turn: event.turn_cost,
+        session: event.session_cost,
+        total: event.total_cost,
+        classifier: event.classifier_cost,
+        byTier: { ...event.cost_by_tier },
+      };
+      break;
+  }
+}
+
+/** Ask the daemon to open a workspace (the title bar's picker action). */
+export function openWorkspace(path: string): void {
+  pendingPath = path;
+  client?.openWorkspace(path);
+}
+
+/** Pin a tier on the active session (a chip click). */
+export function setTier(tier: "brain" | "worker" | "validator"): void {
+  if (session.sessionId === null) return;
+  client?.setTier(session.sessionId, tier);
+}
+
+/** Display name for the workspace row: basename of the path. */
+export function workspaceName(path: string): string {
+  const parts = path.split(/[\\/]/).filter((p) => p.length > 0);
+  return parts[parts.length - 1] ?? path;
+}

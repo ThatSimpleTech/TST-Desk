@@ -2008,3 +2008,237 @@ structured warning log line.
 touches the protocol schema, the TS mirror, and the fixture generator. The
 timeline (TD-1005) can render `import_issues` when it consumes assembly
 warnings — a follow-up if a dedicated event is wanted.
+
+## 2026-08-14 — TD-1005: Activity timeline
+
+Class B — recorded per AGENTS.md §5.
+
+### 1. New `tier_switched` daemon event
+
+**Decision:** Added a `TierSwitched` event (`type: "tier_switched"`) to the daemon event
+union, carrying `session_id`, `tier`, and `previous`. The `set_tier` message handler
+(`Daemon._handle_set_tier`) applies the `TierRouter` override and appends the event to the
+session log so the timeline can show manual routing changes.
+
+**Rationale:** Criterion 1 lists "tier switches" as a first-class timeline entry, but the
+closed daemon→client event set had nothing that announced one — `set_tier` applied the
+router override silently. One typed event keeps the timeline honest (the UI never derives
+truth it wasn't given, AGENTS §6) and makes the TS mirror addition trivial.
+
+### 2. Pure store + thin runes wrapper split
+
+**Decision:** `timeline.ts` holds the `Timeline` class and `eventToEntry` mapping with no
+runes/DOM/Tauri imports; `timeline-store.ts` is a runes singleton that wraps it and reassigns
+`entries = [...timeline.entries]` on every push.
+
+**Rationale:** `timeline.ts` unit-tests under vitest's node environment (which has no Svelte
+transform); `timeline-store.ts` mirrors the existing `connection-status.ts` runes pattern and
+stays untested, same as the splitpane.ts (pure) / SplitPane.svelte (presentational) split.
+Reassigning the list (not mutating) is what makes Svelte reliably invalidate after a
+`shell_output` chunk mutates an existing entry's stdout/stderr buffer in place.
+
+### 3. Shell streaming merges into the parent tool call
+
+**Decision:** `shell_output` events (tool `shell`) append their `chunk` to the parent
+`tool_call` entry's `stdout`/`stderr` buffer, keyed by `tool_call_id`; orphan chunks (no
+matching tool call yet) are dropped rather than buffered.
+
+**Rationale:** The timeline is chronological *entries*, not a raw event dump — a shell command
+is one row whose output grows live under it, not a dozen chunk rows. Dropping orphans is the
+simple, correct read of "the daemon is the source of truth": a chunk with no call is a gap
+the client cannot reconcile, and buffering it would let the UI fabricate ordering the daemon
+never sent.
+
+### 4. Virtualization: fixed 32px rows + inline expansion
+
+**Decision:** Collapsed rows are exactly 32px (border-box), so `computeWindow` math needs no
+measurement. Expanding a row sets `.row.expanded { height: auto }` and the 5-row overscan
+buffer absorbs the single-row height change without re-running the window.
+
+**Rationale:** Virtualizing variable-height rows requires measuring every rendered row; fixed
+collapsed heights make the window arithmetic trivial and O(1). One expanded row at a time
+(only the focused row) is a deliberate product simplification — the overscan buffer is sized
+to absorb one growth spike, which is all the single-expanded-row interaction model produces.
+
+### 5. Backlog completion note, no new verification doc
+
+**Decision:** TD-1005's acceptance checkboxes are ticked in `docs/tst-desk-backlog.md` with a
+completion note; no separate verification `.md`.
+
+**Rationale:** User instruction (recorded in TD-1002 §8): the backlog is where completed-story
+notes go.
+## 2026-08-14 — TD-1004: Chat pane
+
+### 1. Rune-using modules are `*.svelte.ts`, imported as `.svelte.js`
+
+**Decision:** `connection-status.ts` was renamed to
+`connection-status.svelte.ts` (a `git mv`, not a rewrite), and every module
+that uses runes must carry the `.svelte.ts` suffix. Import sites spell the
+specifier as `*.svelte.js` explicitly — extensionless imports do not
+resolve `.svelte.ts` under Vite 8/rolldown.
+
+**Rationale:** vite-plugin-svelte only compiles runes in `.svelte` and
+`.svelte.ts`/`.svelte.js` files. A `$state` in a plain `.ts` file ships to
+the bundle untransformed and throws `ReferenceError` at load — this was
+latent on main for `connection-status.ts` and would have bricked the app on
+first real render. The naming convention makes rune usage visible in the
+file listing and lets the compiler guard it.
+
+### 2. UI modules never touch `ProtocolClient` directly
+
+**Decision:** `client.ts` gained a general `send(msg)` (returns `false`
+instead of writing when the socket isn't handshaken-idle), and
+`connection-status.svelte.ts` re-exports the chat-facing surface:
+`onDaemonEvent` (subscribe fan-out), `sendToDaemon`, `attachToSession`,
+`detachFromSession`. Chat store and components import only from there.
+
+**Rationale:** One WebSocket, one handshake, one owner. Fan-out keeps every
+pane off its own connection and keeps client lifecycle (reconnect, seq
+tracking) in exactly one place, matching the TD-1003 boundary.
+
+### 3. Markdown pipeline: marked + highlight.js + DOMPurify
+
+**Decision:** Assistant text renders through marked (parse) → highlight.js
+(fenced code) → DOMPurify (sanitize) before `{@html}`. Code blocks carry a
+copy button wired by one delegated click handler. Tests run under jsdom,
+not happy-dom.
+
+**Rationale:** Model output is untrusted HTML-adjacent content, so
+sanitization is mandatory (prime directives). DOMPurify ≥ 3.4.8 is broken
+under happy-dom — happy-dom's `Node.prototype.nodeName` getter defeats the
+anti-clobbering fix (cure53/DOMPurify#1496), silently dropping allowed tags
+and potentially retaining disallowed ones; upstream explicitly does not
+support it. jsdom is DOMPurify's tested environment. The app itself is
+unaffected (real WebKit webview).
+
+### 4. Virtualization via @tanstack/svelte-virtual
+
+**Decision:** Long conversations are windowed with `createVirtualizer`
+(estimate 96px, overscan 6, `getItemKey` on message id), rows absolutely
+positioned inside a full-height sizer, measured dynamically via
+`measureElement`. The reactive `count` is driven by `setOptions` inside an
+`$effect`, never captured at construction.
+
+**Rationale:** AC — "Conversation history scrollable and virtualized for
+long sessions." svelte-virtual is the maintained Svelte binding over
+tanstack virtual-core; dynamic measurement handles variable-height markdown
+without per-message size bookkeeping.
+
+### 5. Session binding follows `list_sessions`, newest `updated_at` wins
+
+**Decision:** The chat store binds the most recently updated session from
+`session_list` events (requested at init), keeps the current session while
+the daemon still lists it, and switches (detach old, clear, attach new)
+when it disappears. Attach replays full history through the same reducer as
+live events — there is no separate history path.
+
+**Rationale:** The daemon owns sessions (prime directives); the UI asks
+(`list_sessions` is answered by `daemon._handle_list_sessions`) rather than
+inferring liveness. One reducer for replay and live streams guarantees
+identical rendering for both.
+
+### 6. Cancel shows for `running` and `awaiting_approval`
+
+**Decision:** `showCancel` returns true for both `running` and
+`awaiting_approval` turn states.
+
+**Rationale:** The criterion says "whenever a turn is running"; an approval
+wait is still a live turn the user must be able to abort. Deliberate
+superset, recorded so a future tightening is a conscious change.
+
+### 7. Streaming appends in place — stable row identity
+
+**Decision:** `assistant_delta` mutates the last assistant message's `text`
+in place (same object) when the turn is incomplete; only a new turn pushes
+a new message object. Rows render in a keyed each-block; the scrollbar
+gutter is reserved with `scrollbar-gutter: stable`.
+
+**Rationale:** AC — "Streaming assistant output rendered smoothly, without
+layout jump." Stable identity means the keyed list never re-mounts a row
+mid-stream; the reserved gutter keeps the scrollbar's arrival from
+reflowing the conversation.
+
+## 2026-08-14 — `tier_state` event and live `cost_update` on the wire (TD-1006)
+
+**Decision:** A new `tier_state` event carries `{tier, override, model_slugs}`
+and is emitted at exactly three points: after `boundary_update` at
+`open_workspace`, as the ack of a `set_tier` message, and at turn start only
+when the tier actually changed (midtier handoffs/escalations).
+
+**Rationale:** AC 2 (tier chips showing active tier and slugs, clickable to
+switch) needs the tier before any turn runs and needs an ack when the user
+pins one. Emitting only on change in the loop keeps repetitions off the wire;
+clients that attach mid-session already get the open-time snapshot replayed.
+`override` rides the same event so the pin marker needs no second channel.
+
+**Decision:** `cost_update` is emitted per model call (and per classifier
+call) from inside the loop, and gains `cost_by_tier`; classifier spend is
+excluded from the per-tier map because it already rides `classifier_cost`.
+
+**Rationale:** AC 3 — "live cost meter updating as costs accrue" — means per
+call, not per turn; the tracker already aggregates, so emission is an
+`event_log.add` at the point of `record`, keeping one source of truth.
+
+**Decision:** The shell grants only `dialog:allow-open` for the workspace
+picker; read/write filesystem permissions are refused outright.
+
+**Rationale:** Least privilege — the picked path goes to the daemon over the
+protocol, where TD-706's boundary validation applies; the UI process never
+needs filesystem access itself.
+
+**Decision:** Session state is a Svelte 5 rune module
+(`session-status.svelte.ts`), and `vitest.config.ts` now loads the
+`@sveltejs/vite-plugin-svelte` plugin so `.svelte.ts` modules resolve in the
+test pipeline; imports use the documented `./x.svelte.js` specifier.
+
+**Rationale:** Runes in module scope only compile in `.svelte.ts` files, and
+vitest (plain node env) resolves/compiles them only with the plugin loaded;
+the sibling `connection-status.ts` store relies on the same pattern with no
+test import, which this makes one consistent idiom.
+
+## 2026-08-14 — `set_tier` unification at the TD-1005/TD-1006 seam
+
+**Decision:** TD-1005 and TD-1006 both grew a `set_tier` handler in parallel.
+The merged daemon keeps one handler (TD-1006's richer error model:
+`session_not_found` / `session_not_live` / `bad_request`) that emits both
+events — `tier_switched` (transition, `previous` recorded) for the timeline,
+then the `tier_state` snapshot ack for the title bar. The router reference
+lives on the session (`sess.router`); the parallel daemon-side
+`_tier_routers` dict was dropped.
+
+**Rationale:** One owner of the mutation keeps the two events consistent by
+construction, and the session is the natural lifetime for the router (the
+dict needed its own cleanup and duplicated what the registry already keys).
+The events stay distinct: the timeline wants a compact transition row, the
+title bar wants the full state (override + slugs) — each consumer reads only
+what it needs.
+
+## 2026-08-14 — TD-803: Always-allow
+
+Decisions made during the always-allow build.
+
+### 1. Rule lifecycle is a daemon API, not file editing
+
+**Decision:** "Always allow" writes a rule via an `always_allow` daemon
+message; settings lists and revokes rules via `list_policy_rules` and
+`revoke_policy_rule` messages.  The settings UI does not edit
+`.tst/config.yaml` directly (contrast TD-707's cap-raising flow, where the
+user edits the file and sends `resume`).
+
+**Rationale:** "Always allow" originates as a one-click approval-card
+action, so it needs a daemon message regardless.  Routing list/revoke
+through the same channel keeps the policy file format an implementation
+detail of the daemon (the window stays a viewer, prime §2.5) and funnels
+every mutation through the atomic, section-preserving `save_policy` write
+(TD-801 §4).
+
+### 2. A saved rule's identity is `(tool, args)`
+
+**Decision:** `add_rule` and `remove_rule` key on the `(tool, args)` pair.
+`add_rule` replaces any existing rule with the same pair (idempotent), and
+`revoke_policy_rule` removes by that pair.
+
+**Rationale:** `PolicyRule` has no unique id; `(tool, args)` is the
+narrowest stable identity that distinguishes two rules.  Idempotent add
+keeps re-affirming "always allow" for the same call from piling up
+duplicate rules in the settings list.

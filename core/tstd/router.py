@@ -154,6 +154,12 @@ class TierRouter:
         """Whether a runtime override is active."""
         return self._override is not None
 
+    @property
+    def override(self) -> TierName | None:
+        """The pinned override tier (TD-1006), or ``None`` when routing
+        normally."""
+        return self._override
+
     def reset(self) -> None:
         """Reset the router to its initial state (for a new session)."""
         self._turn_count = 0

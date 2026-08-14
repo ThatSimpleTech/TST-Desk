@@ -220,6 +220,17 @@ class CostTracker:
         """Total cost of this session (dollars)."""
         return round(sum(c.cost for c in self._calls), 6)
 
+    def cost_by_tier(self) -> dict[str, float]:
+        """Session spend per tier (dollars), tiers with spend only (TD-1006).
+
+        Classifier calls are excluded — they surface via
+        :meth:`classifier_cost`.
+        """
+        by_tier: dict[str, float] = {}
+        for c in self._calls:
+            by_tier[c.tier] = by_tier.get(c.tier, 0.0) + c.cost
+        return {tier: round(cost, 6) for tier, cost in by_tier.items()}
+
     def session_tokens(self) -> int:
         """Total tokens consumed in this session."""
         return sum(c.prompt_tokens + c.completion_tokens for c in self._calls)
@@ -270,6 +281,7 @@ class CostTracker:
             session_cost=self.session_cost(),
             total_cost=self.day_cost(),
             classifier_cost=self.classifier_cost(),
+            cost_by_tier=self.cost_by_tier(),
             seq=1,  # overwritten by the event log
         )
 

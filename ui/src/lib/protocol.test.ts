@@ -33,8 +33,11 @@ import type {
   DecisionLogged,
   CheckpointNotice,
   CostUpdate,
+  TierState,
   TurnComplete,
+  ContextCompacted,
   SteeringReloaded,
+  TierSwitched,
   InstructionStack,
   SessionList,
   PolicyRules,
@@ -303,7 +306,20 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.session_cost)).toBe(true);
     expect(isNumber(m.total_cost)).toBe(true);
     expect(isNumber(m.classifier_cost)).toBe(true);
+    expect(typeof m.cost_by_tier).toBe("object");
+    expect(Object.values(m.cost_by_tier).every(isNumber)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("tier_state", () => {
+    const m = fixtures.tier_state as TierState;
+    expect(m.type).toBe("tier_state");
+    expect(["brain", "worker", "validator"]).toContain(m.tier);
+    expect(m.override).toBeNull();
+    expect(isString(m.model_slugs.brain)).toBe(true);
+    const ov = fixtures.tier_state_override as TierState;
+    expect(ov.tier).toBe("validator");
+    expect(ov.override).toBe("validator");
   });
 
   it("boundary_update", () => {
@@ -326,6 +342,33 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.cost)).toBe(true);
     expect(m.tier).toBe("worker");
     expect(isNumber(m.duration)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("context_compacted", () => {
+    const m = fixtures.context_compacted as ContextCompacted;
+    expect(m.type).toBe("context_compacted");
+    expect(isNumber(m.dropped_messages)).toBe(true);
+    expect(isNumber(m.kept_messages)).toBe(true);
+    expect(isNumber(m.tokens_before)).toBe(true);
+    expect(isNumber(m.tokens_after)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("steering_reloaded", () => {
+    const m = fixtures.steering_reloaded as SteeringReloaded;
+    expect(m.type).toBe("steering_reloaded");
+    expect(isString(m.prefix_hash)).toBe(true);
+    expect(isNumber(m.prefix_tokens)).toBe(true);
+    expect(isNumber(m.source_count)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("tier_switched", () => {
+    const m = fixtures.tier_switched as TierSwitched;
+    expect(m.type).toBe("tier_switched");
+    expect(m.tier).toBe("worker");
+    expect(m.previous).toBe("brain");
     expect(isNumber(m.seq)).toBe(true);
   });
 
@@ -362,8 +405,10 @@ describe("All fixtures have required shape", () => {
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "shell_output",
       "approval_request", "approval_request_always_allow", "decision_logged",
-      "checkpoint_notice", "cost_update", "turn_complete", "policy_rules",
-      "error", "error_with_session",
+      "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
+      "tier_state", "context_compacted", "steering_reloaded", "tier_switched",
+      "instruction_stack", "session_list", "policy_rules", "error",
+      "error_with_session",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

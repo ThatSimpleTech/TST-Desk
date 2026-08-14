@@ -42,7 +42,7 @@ from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
 from .logging import get_logger
 from .policy import load_approved_imports, save_approved_imports
-from .protocol import AssistantDelta, ContextCompacted, SteeringReloaded, TurnComplete
+from .protocol import AssistantDelta, ContextCompacted, SteeringReloaded, TierState, TurnComplete
 from .protocol import CheckpointNotice as CheckpointNoticeEvent
 from .protocol import ToolCall as ToolCallEvent
 from .protocol import ToolResult as ToolResultEvent
@@ -60,7 +60,7 @@ from .provider import (
 from .provider import (
     ToolDefinition as ProviderToolDefinition,
 )
-from .router import TierName, TierRouter
+from .router import TIER_NAMES, TierName, TierRouter
 from .session import Session
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
@@ -238,6 +238,9 @@ async def _stream_and_parse(
 
         if chunk.finish_reason and chunk.usage:
             tracker.record(tier, chunk.usage, tier_cfg)
+            # TD-1006: the cost meter updates as costs accrue — one
+            # cost_update per recorded call, not one per turn.
+            await session.event_log.add(tracker.emit_cost_update(session.id))
 
     return collected_content, tool_calls, failed, error_msg
 
@@ -466,6 +469,8 @@ async def agent_loop(
                     raise RuntimeError(f"classifier worker call failed: {resp.message}")
                 if resp.usage is not None:
                     tracker.record_classifier("worker", resp.usage, worker_cfg)
+                    # Classifier cost shows up in the meter too (TD-1006).
+                    await session.event_log.add(tracker.emit_cost_update(session.id))
                 return resp.message.content or ""
 
             tool_dispatcher.classifier = AmbiguousClassifier(
@@ -517,6 +522,11 @@ async def agent_loop(
     _session_start = time.time()
     _iterations = 0
 
+    # Tier visibility (TD-1006): slugs for the wire, and the last tier the
+    # UI was told about so tier_state only fires on change.
+    _model_slugs: dict[str, str] = {name: config.tier(name).slug for name in TIER_NAMES}
+    _last_reported_tier: TierName | None = None
+
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:
         # 1. Wait for user input
@@ -532,6 +542,20 @@ async def agent_loop(
         while True:
             # 2a. Determine active tier via router
             tier = router.record_turn_start()
+            if tier != _last_reported_tier:
+                _last_reported_tier = tier
+                # TD-1006: tell the title bar which tier (and slug) is
+                # live — lead-turns handoffs and failure escalations
+                # included, not just manual set_tier overrides.
+                await session.event_log.add(
+                    TierState(
+                        session_id=session.id,
+                        tier=tier,
+                        override=router.override,
+                        model_slugs=_model_slugs,
+                        seq=1,
+                    )
+                )
             tier_cfg = config.tier(tier)
             tracker.begin_turn()
             turn_start = time.time()
