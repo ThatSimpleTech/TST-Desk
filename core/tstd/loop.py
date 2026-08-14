@@ -43,7 +43,14 @@ from .cost import CallRecord, CostTracker
 from .keychain import KeychainError
 from .logging import get_logger
 from .policy import load_approved_imports, save_approved_imports
-from .protocol import AssistantDelta, ContextCompacted, SteeringReloaded, TierState, TurnComplete
+from .protocol import (
+    AssistantDelta,
+    ContextCompacted,
+    RuleActivated,
+    SteeringReloaded,
+    TierState,
+    TurnComplete,
+)
 from .protocol import CheckpointNotice as CheckpointNoticeEvent
 from .protocol import ToolCall as ToolCallEvent
 from .protocol import ToolResult as ToolResultEvent
@@ -176,6 +183,17 @@ async def _emit_turn_complete(
             seq=1,  # overwritten by event log
         )
     )
+
+
+def _rule_rel_path(session: Session, path: Path) -> str:
+    """Render a rule's source path workspace-relative for the timeline."""
+    try:
+        return path.relative_to(Path(session.workspace_path)).as_posix()
+    except ValueError:
+        try:
+            return path.resolve().relative_to(Path(session.workspace_path).resolve()).as_posix()
+        except ValueError:
+            return path.name
 
 
 def _parse_tool_call_stream(
@@ -544,6 +562,10 @@ async def agent_loop(
     # Tracks the last steering prefix hash for change detection (TD-509).
     _last_prefix_hash: str | None = None
 
+    # TD-503: path-scoped rules active at the last assembly, so a rule
+    # newly matched by a touched file is announced in the timeline.
+    _last_active_rules: set[str] | None = None
+
     # One token counter per model slug (TD-405); encoders load once.
     _token_counters: dict[str, TokenCounter] = {}
 
@@ -600,6 +622,7 @@ async def agent_loop(
                 assembled = await assembler.assemble(
                     tier,
                     task=user_content if tier == "worker" else None,
+                    matched_paths=set(session.touched_paths),
                     approved_imports=frozenset(approved_imports),
                     denied_imports=frozenset(denied_imports),
                 )
@@ -639,6 +662,28 @@ async def agent_loop(
                                 }
                             },
                         )
+
+            # 2b.2 Path-scoped rule activation (TD-503).  The assembler
+            #     marks a scoped rule active once its globs match a file
+            #     the session has touched; a rule that newly activates
+            #     mid-session is announced in the timeline so context
+            #     changes are never silent.  The first assembly of the
+            #     session is the baseline, not an activation.
+            active_rules = {
+                _rule_rel_path(session, s.path)
+                for s in assembled.steering.sources
+                if s.applies_to is not None and s.active
+            }
+            if _last_active_rules is not None:
+                for rule_path in sorted(active_rules - _last_active_rules):
+                    await session.event_log.add(
+                        RuleActivated(
+                            session_id=session.id,
+                            rule_path=rule_path,
+                            seq=1,  # overwritten by the event log
+                        )
+                    )
+            _last_active_rules = active_rules
 
             if messages and messages[0].role == "system":
                 messages[0] = ChatMessage(role="system", content=assembled.text)

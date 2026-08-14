@@ -370,6 +370,19 @@ class ToolDispatcher:
                 error_code="handler_error",
             )
 
+        # 3.2.1 Touch-tracking (TD-503).  The handler ran, so the call's
+        #      path targets are genuinely in play: record them on the
+        #      session so path-scoped steering rules can activate at the
+        #      next assembly.  Refusals and handler errors returned above
+        #      never reach here — only real touches count.
+        if session is not None and tool.path_fields:
+            record = getattr(session, "record_touched", None)
+            if record is not None:
+                touched = [
+                    arguments[f] for f in tool.path_fields if isinstance(arguments.get(f), str)
+                ]
+                record(touched)
+
         # 3.3 Checkpoint commit (TD-705).  Successful path-bearing
         # mutations are committed to the session branch so every write is
         # attributable to a revertable commit.  Checkpointing is
