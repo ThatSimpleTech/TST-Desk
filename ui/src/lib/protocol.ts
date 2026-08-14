@@ -71,6 +71,14 @@ export interface GetInstructionStack extends ClientMessage {
   session_id: string;
 }
 
+export interface Shutdown extends ClientMessage {
+  type: "shutdown";
+}
+
+export interface ListSessions extends ClientMessage {
+  type: "list_sessions";
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -81,9 +89,17 @@ export type ClientMessageUnion =
   | Attach
   | Detach
   | SetTier
-  | GetInstructionStack;
+  | GetInstructionStack
+  | Shutdown
+  | ListSessions;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
+
+/** Out-of-band handshake reply to `hello`. Not a sequenced daemon event. */
+export interface HelloAck {
+  type: "hello_ack";
+  version: number;
+}
 
 export interface Ready extends DaemonEvent {
   type: "ready";
@@ -94,7 +110,14 @@ export interface Ready extends DaemonEvent {
 export interface SessionState extends DaemonEvent {
   type: "session_state";
   session_id: string;
-  state: "idle" | "running" | "awaiting_approval" | "complete" | "failed" | "cancelled";
+  state:
+    | "idle"
+    | "running"
+    | "awaiting_approval"
+    | "complete"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
   reason?: string | null;
 }
 
@@ -158,6 +181,48 @@ export interface TurnComplete extends DaemonEvent {
   duration: number;
 }
 
+export interface SteeringReloaded extends DaemonEvent {
+  type: "steering_reloaded";
+  session_id: string;
+  prefix_hash: string;
+  prefix_tokens: number;
+  source_count: number;
+}
+
+export interface InstructionStackEntry {
+  path: string;
+  precedence: string;
+  active: boolean;
+  tokens: number;
+  token_method: string;
+  warnings: string[];
+  subtree?: string | null;
+  is_fallback: boolean;
+}
+
+export interface InstructionStack extends DaemonEvent {
+  type: "instruction_stack";
+  session_id: string;
+  sources: InstructionStackEntry[];
+  total_tokens: number;
+  token_method: string;
+}
+
+export interface SessionSummary {
+  session_id: string;
+  workspace_path: string;
+  state: "idle" | "running" | "awaiting_approval" | "complete" | "failed" | "cancelled" | "interrupted";
+  created_at: string;
+  updated_at: string;
+  event_count: number;
+}
+
+export interface SessionList extends DaemonEvent {
+  type: "session_list";
+  seq: number;
+  sessions: SessionSummary[];
+}
+
 export interface Error extends DaemonEvent {
   type: "error";
   session_id?: string | null;
@@ -175,4 +240,7 @@ export type DaemonEventUnion =
   | DecisionLogged
   | CostUpdate
   | TurnComplete
+  | SteeringReloaded
+  | InstructionStack
+  | SessionList
   | Error;

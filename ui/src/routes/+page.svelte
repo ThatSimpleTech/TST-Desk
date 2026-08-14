@@ -1,2 +1,16 @@
-<h1>Welcome to SvelteKit</h1>
-<p>Visit <a href="https://svelte.dev/docs/kit">svelte.dev/docs/kit</a> to read the documentation</p>
+<script lang="ts">
+	import ConnectionBanner from '$lib/ConnectionBanner.svelte';
+</script>
+
+<header>
+	<ConnectionBanner />
+</header>
+
+<h1>TST Desk</h1>
+<p>Agent workspace</p>
+
+<style>
+	header {
+		padding: var(--space-3) var(--space-4);
+	}
+</style>

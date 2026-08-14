@@ -1,8 +1,15 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
+	import { connect, disconnect } from '$lib/connection-status';
 
 	let { children } = $props();
+
+	onMount(() => {
+		connect();
+		return disconnect;
+	});
 </script>
 
 <svelte:head>
