@@ -193,6 +193,18 @@ class TestPersistence:
         assert cfg.rules == []
         assert cfg.class_c_default == "ask"
 
+    def test_comment_only_file_returns_defaults(self, tmp_path: Path) -> None:
+        # The TD-1103 scaffolded template is comment-only: YAML parses it
+        # as None, which means defaults, not ConfigError — and save_policy
+        # must round-trip through that same file.
+        config_path = tmp_path / ".tst" / "config.yaml"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text("# boundary settings\n# nothing yet\n", encoding="utf-8")
+        cfg = load_policy(tmp_path)
+        assert cfg.rules == []
+        save_policy(tmp_path, PolicyConfig(rules=[_rule("shell", "ls", "auto")]))
+        assert load_policy(tmp_path).rules == [_rule("shell", "ls", "auto")]
+
     def test_round_trip(self, tmp_path: Path) -> None:
         cfg = PolicyConfig(
             rules=[_rule("fs_write", "src/**", "ask"), _rule("shell", "npm *", "auto")],
