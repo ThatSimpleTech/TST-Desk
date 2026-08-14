@@ -37,6 +37,8 @@ export const ICONS = {
 		'<path d="M12 17h.01"/>',
 	/** Send message (composer). */
 	'arrow-up': '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
+	/** Stop the running turn (composer morph). Rendered filled. */
+	stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
 	/** Disclosure affordance (workspace menu). */
 	'chevron-down': '<path d="m6 9 6 6 6-6"/>',
 } as const;
