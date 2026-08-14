@@ -1,0 +1,54 @@
+name: Release
+
+# TD-1303: pushing a vX.Y.Z tag bundles every platform (via package.yml's
+# reusable job), then publishes a GitHub release with the artifacts, their
+# SHA-256 checksums, and a changelog generated from story commits.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  bundle:
+    uses: ./.github/workflows/package.yml
+
+  publish:
+    needs: bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Tag must match the component versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for f in shell/tauri.conf.json ui/package.json; do
+            v=$(grep -m1 '"version"' "$f" | sed 's/[^0-9.]//g')
+            [ "$v" = "$tag" ] || { echo "tag $tag != $f version $v"; exit 1; }
+          done
+          for f in core/pyproject.toml shell/Cargo.toml; do
+            v=$(grep -m1 '^version' "$f" | sed 's/[^0-9.]//g')
+            [ "$v" = "$tag" ] || { echo "tag $tag != $f version $v"; exit 1; }
+          done
+
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt
+
+      - name: Changelog
+        working-directory: core
+        run: uv run python scripts/changelog.py > ../CHANGELOG_RELEASE.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "TST Desk $GITHUB_REF_NAME" --notes-file CHANGELOG_RELEASE.md dist/*
