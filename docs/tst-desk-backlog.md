@@ -1123,11 +1123,17 @@ Story-level tests belong to their stories. These are the suites that span featur
 **Size:** 5 · **Depends on:** TD-401, TD-605
 
 **Acceptance criteria:**
-- [ ] A CLI harness runs a scripted session against the mock provider with no UI
-- [ ] Covers: workspace open → steering resolution → user message → tool call →
+- [x] A CLI harness runs a scripted session against the mock provider with no UI
+- [x] Covers: workspace open → steering resolution → user message → tool call →
       classification → approval → execution → checkpoint → ledger → cost accounting
-- [ ] Runs in CI in under sixty seconds
-- [ ] **This harness is the M1 exit criterion**
+- [x] Runs in CI in under sixty seconds
+- [x] **This harness is the M1 exit criterion**
+
+Done (2026-08-13): `tstd.e2e_harness` + `core/scripts/e2e_headless.py`, pinned in
+CI as `tests/test_e2e_headless.py`. Runs in ~1s. Approval is asserted at the
+protocol surface (the gate itself is TD-802); steering is proven via the mock's
+recorded system prompt. This story also wired the builtin tool stack into the
+daemon's `open_workspace` — daemon sessions previously had no dispatcher.
 
 ---
 
