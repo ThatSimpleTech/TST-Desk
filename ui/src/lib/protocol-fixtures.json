@@ -230,7 +230,20 @@
     "tokens": 1500,
     "cost": 0.03,
     "tier": "worker",
-    "duration": 2.5
+    "duration": 2.5,
+    "failed": false,
+    "error_code": null
+  },
+  "turn_complete_failed": {
+    "type": "turn_complete",
+    "seq": 13,
+    "session_id": "sess-1",
+    "tokens": 0,
+    "cost": 0.0,
+    "tier": "brain",
+    "duration": 0.4,
+    "failed": true,
+    "error_code": "auth_failed"
   },
   "tier_state": {
     "type": "tier_state",
