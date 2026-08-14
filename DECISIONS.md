@@ -896,3 +896,64 @@ one-line logging fix. Merge order: after the TD-605 chain lands on main.
 
 **Rationale:** Same chained-branch pattern as TD-903 on TD-901. New-file-only diffs rebase
 trivially; the logging touch is byte-compatible with both parents.
+
+---
+
+## 2026-08-13 — TD-706: Boundary configuration
+
+Decisions made while adding `.tst/config.yaml`.
+
+### 1. Config shape mirrors the spec §12.4 charter
+
+**Decision:** `.tst/config.yaml` uses nested `boundary:` (`writable_paths`,
+`allowed_commands`, `network`) and `caps:` (`spend_usd`, `wall_clock_hours`,
+`max_iterations`) sections, validated by pydantic with errors that name the
+offending key.
+
+**Rationale:** Same shape as the charter contract in the spec, so a charter
+section maps onto config one-to-one; TD-801 later adds `policy:` beside
+`boundary:`/`caps:`.
+
+### 2. Defaults: workspace-only writes, no network, conservative cap
+
+**Decision:** Absent config → `writable_paths: ["**"]`, `network: "deny"`,
+`spend_usd: 25.00`, `wall_clock_hours: 8.0`, `max_iterations: 200`.
+
+**Rationale:** Criterion 2. "Deny" maps to an empty `allowed_hosts` so any
+network call is Class C; `["**"]` keeps writes inside the workspace.
+
+### 3. The boundary resolves once, at workspace open
+
+**Decision:** The daemon loads the config on `open_workspace`, stamps it on
+the session, emits a new `boundary_update` event (after `session_state`), and
+the loop builds the classifier/guard `Boundary` from it — `writable_paths` →
+`writable_patterns`, `network` → `allowed_hosts`. A bad config falls back to
+defaults with the actionable error logged and surfaced in the event
+`source`; the workspace still opens.
+
+**Rationale:** One resolution point keeps classifier, guard, and UI agreeing
+on the same wall. Refusing to open on a bad config would brick the workspace
+over a typo; defaults-plus-surfaced-error is friendlier and still loud.
+
+### 4. `.tst/config.yaml` is not steering-refused (for now)
+
+**Decision:** The config file stays outside the PD §2.4 steering list
+(AGENTS.md/CLAUDE.md/.tst/rules), matching the TD-1402 security suite's
+explicit contract.
+
+**Rationale:** PD §2.4's list is literal and the config only takes effect at
+open — a mid-session write cannot move the running wall. **Open security
+question:** a poisoned config *would* widen the boundary on the next
+workspace open (the agent writing its own future wall). Closing that hole
+means making `.tst/config.yaml` steering-refused, which overrides the
+TD-1402 test — flagging for the user rather than silently changing another
+story's security contract.
+
+### 5. New event shifts replay seq expectations
+
+**Decision:** `boundary_update` is a logged event (seq 2 after
+`session_state`), so attach/replay tests' hardcoded seq numbers were updated.
+
+**Rationale:** Events are seq-numbered and append-only; any new open-time
+event shifts subsequent seqs. The UI round-trip fixture gained a
+`boundary_update` sample.

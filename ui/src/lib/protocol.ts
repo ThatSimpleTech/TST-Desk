@@ -158,6 +158,18 @@ export interface CostUpdate extends DaemonEvent {
   classifier_cost: number;
 }
 
+export interface BoundaryUpdate extends DaemonEvent {
+  type: "boundary_update";
+  session_id: string;
+  writable_paths: string[];
+  allowed_commands: string[];
+  network: string | string[];
+  spend_usd: number;
+  wall_clock_hours: number;
+  max_iterations: number;
+  source: string;
+}
+
 export interface TurnComplete extends DaemonEvent {
   type: "turn_complete";
   session_id: string;
@@ -184,5 +196,6 @@ export type DaemonEventUnion =
   | DecisionLogged
   | CheckpointNotice
   | CostUpdate
+  | BoundaryUpdate
   | TurnComplete
   | Error;
