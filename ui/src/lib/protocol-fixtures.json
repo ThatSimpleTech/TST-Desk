@@ -139,6 +139,7 @@
     "status": "success",
     "output": "file content",
     "truncated": false,
+    "error_code": null,
     "diff": null
   },
   "tool_result_truncated": {
@@ -149,6 +150,7 @@
     "status": "error",
     "output": "too long",
     "truncated": true,
+    "error_code": null,
     "diff": null
   },
   "tool_result_diff": {
@@ -159,7 +161,19 @@
     "status": "success",
     "output": "wrote 12 bytes; overwrote test.txt",
     "truncated": false,
+    "error_code": null,
     "diff": "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line"
+  },
+  "tool_result_denied": {
+    "type": "tool_result",
+    "seq": 20,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "status": "error",
+    "output": "Denied by user: not safe",
+    "truncated": false,
+    "error_code": "approval_denied",
+    "diff": null
   },
   "approval_request": {
     "type": "approval_request",
