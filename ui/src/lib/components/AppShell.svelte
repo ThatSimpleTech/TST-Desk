@@ -3,7 +3,8 @@
 	// Left = chat pane, right = activity pane. The connection banner (TD-1003)
 	// sits in the shell header so daemon/socket state is visible at all times.
 	// The activity pane hosts the activity timeline (TD-1005), fed live from
-	// the daemon event stream.
+	// the daemon event stream. Failure notices (TD-1008) render as banners
+	// under the header (blocking) or toasts bottom-right (transient).
 	import { onMount } from 'svelte';
 	import SplitPane from './SplitPane.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
@@ -12,6 +13,8 @@
 	import { push } from '../timeline-store.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
 	import TitleBar from './TitleBar.svelte';
+	import NotificationBanner from '../NotificationBanner.svelte';
+	import ToastStack from '../ToastStack.svelte';
 
 	// Feed every daemon event into the timeline for the lifetime of the shell.
 	onMount(() => onEvent(push));
@@ -23,6 +26,8 @@
 	<span class="shell-spacer"></span>
 	<ConnectionBanner />
 </header>
+
+<NotificationBanner />
 
 <div class="shell-body">
 	<SplitPane>
@@ -36,6 +41,8 @@
 		{/snippet}
 	</SplitPane>
 </div>
+
+<ToastStack />
 
 <style>
 	.shell-header {

@@ -40,6 +40,7 @@ from .context import PromptAssembler
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
+from .keychain import KeychainError
 from .logging import get_logger
 from .protocol import AssistantDelta, ContextCompacted, SteeringReloaded, TierState, TurnComplete
 from .protocol import CheckpointNotice as CheckpointNoticeEvent
@@ -154,8 +155,13 @@ async def _emit_turn_complete(
     turn_start: float,
     tracker: CostTracker,
     failed: bool = False,
+    error_code: str | None = None,
 ) -> None:
-    """Emit a ``turn_complete`` event with cost and duration."""
+    """Emit a ``turn_complete`` event with cost and duration.
+
+    ``failed``/``error_code`` make a failed turn machine-visible so the UI
+    can key tailored copy off the provider's typed code (TD-1008).
+    """
     duration = time.time() - turn_start
     await session.event_log.add(
         TurnComplete(
@@ -164,6 +170,8 @@ async def _emit_turn_complete(
             cost=tracker.turn_cost(),
             tier=tier,
             duration=round(duration, 3),
+            failed=failed,
+            error_code=error_code,
             seq=1,  # overwritten by event log
         )
     )
@@ -203,23 +211,26 @@ async def _stream_and_parse(
     tracker: CostTracker,
     tier: TierName,
     tier_cfg: Any,
-) -> tuple[str, dict[int, dict[str, str | int]], bool, str]:
+) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None]:
     """Call the provider, stream deltas, and accumulate tool calls.
 
     Returns:
-        A tuple of ``(collected_content, tool_calls, failed, error_msg)``.
+        A tuple of ``(collected_content, tool_calls, failed, error_msg,
+        error_code)``. ``error_code`` is the provider's typed code (e.g.
+        ``auth_failed``) so clients can key tailored copy off it (TD-1008).
     """
     collected_content = ""
     tool_calls: dict[int, dict[str, str | int]] = {}
     failed = False
     error_msg = ""
+    error_code: str | None = None
 
     async for chunk in _stream_turn(provider, model_slug, messages, tool_definitions):
         if session.cancel_requested:
-            return collected_content, tool_calls, True, "cancelled"
+            return collected_content, tool_calls, True, "cancelled", None
 
         if isinstance(chunk, ProviderError):
-            return collected_content, tool_calls, True, chunk.message
+            return collected_content, tool_calls, True, chunk.message, chunk.code
 
         # Stream content delta
         if chunk.delta.content:
@@ -241,7 +252,7 @@ async def _stream_and_parse(
             # cost_update per recorded call, not one per turn.
             await session.event_log.add(tracker.emit_cost_update(session.id))
 
-    return collected_content, tool_calls, failed, error_msg
+    return collected_content, tool_calls, failed, error_msg, error_code
 
 
 async def _build_assistant_tool_call(
@@ -648,9 +659,33 @@ async def agent_loop(
                 },
             )
 
-            # 2c. Resolve provider lazily on first use
+            # 2c. Resolve provider lazily on first use. A missing keychain
+            #     entry fails the *turn*, not the session (TD-1008): the
+            #     conversation survives, the user stores a key, and the next
+            #     message retries — _ensure_provider only caches on success.
             if provider is None:
-                provider = await provider_factory()
+                try:
+                    provider = await provider_factory()
+                except KeychainError as e:
+                    messages.append(
+                        ChatMessage(
+                            role="assistant",
+                            content=f"I encountered an error: {e}",
+                        )
+                    )
+                    await _emit_turn_complete(
+                        session,
+                        tier,
+                        turn_start,
+                        tracker,
+                        failed=True,
+                        error_code="missing_api_key",
+                    )
+                    log.warning(
+                        "turn failed: no API key in keychain",
+                        extra={"extra_fields": {"session_id": session.id}},
+                    )
+                    break
 
             # 2c.5 Cap enforcement (TD-707).  Before every model call,
             #     a declared cap that is exceeded parks the session in a
@@ -675,7 +710,7 @@ async def agent_loop(
             _iterations += 1
 
             # 2d. Call provider (streaming)
-            collected_content, tool_calls, failed, error_msg = await _stream_and_parse(
+            collected_content, tool_calls, failed, error_msg, error_code = await _stream_and_parse(
                 provider,
                 tier_cfg.slug,
                 messages,
@@ -700,7 +735,9 @@ async def agent_loop(
                         content=f"I encountered an error: {error_msg}",
                     )
                 )
-                await _emit_turn_complete(session, tier, turn_start, tracker, failed=True)
+                await _emit_turn_complete(
+                    session, tier, turn_start, tracker, failed=True, error_code=error_code
+                )
                 log.warning(
                     "turn failed",
                     extra={

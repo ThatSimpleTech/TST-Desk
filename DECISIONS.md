@@ -2183,3 +2183,67 @@ every mutation through the atomic, section-preserving `save_policy` write
 narrowest stable identity that distinguishes two rules.  Idempotent add
 keeps re-affirming "always allow" for the same call from piling up
 duplicate rules in the settings list.
+
+## 2026-08-14 — TD-1008: Errors and notifications
+
+Decisions made during the errors-and-notifications build.
+
+### 1. A failed turn is machine-visible on the wire, distinct from a failed session
+
+**Decision:** ``turn_complete`` carries ``failed`` + ``error_code`` (the
+provider's typed code, e.g. ``auth_failed``, ``rate_limited``).  A turn that
+ends on a provider error is a *turn* failure — the session keeps running and
+the assistant message with the actionable text is in the transcript — while a
+``session_state: failed`` remains reserved for loop-level death.
+
+**Rationale:** Notifications need a typed cause to tailor copy, and the two
+lifetimes genuinely differ: a 429 kills the turn, not the conversation.
+Explicitly, the taxonomy now lives in two wire channels: daemon *command*
+errors ride ``error`` events (bad_request, session_not_found, ...), while
+*turn* failures ride the ``turn_complete`` fields — nobody should go looking
+for a turn failure in the error channel.  The
+alternative — bubbling provider errors into session failure — would strand
+recoverable conversations and give the UI nothing actionable.
+
+### 2. A missing keychain key fails the turn, not the session
+
+**Decision:** ``KeychainError`` during lazy provider resolution appends the
+actionable assistant message, emits ``error_code: "missing_api_key"``, and
+breaks the turn.  The provider is cached only on success, so storing the key
+and resending retries the same conversation.
+
+**Rationale:** TD-1001's first-run flow means "no key yet" is a normal state,
+not a crash.  Session-death would force reopening the workspace after the
+user stores the key — pure friction on the most common first-run failure.
+
+### 3. Notice severity comes from a pure copy table; dedupe is by cause
+
+**Decision:** ``error-copy.ts`` maps each typed cause to
+``{severity, title, body}`` — banners only for user-must-act blockers
+(missing/rejected key, forbidden, cap pauses, session failure), toasts for
+transient or maybe-works-next-time failures (429/5xx, context overflow).
+The store dedupes by a per-cause key so repeats update in place, toasts
+self-expire, and a ``session_state: running`` (resume) clears the blocker
+banners — work flowing again is the fix being confirmed.
+
+**Rationale:** Keeping copy in one reviewable table satisfies "actionable,
+never raw tracebacks" by construction; severity-by-cause prevents the two
+failure modes the AC names — a blocking error that scrolls away as a toast,
+ and a transient 429 pinned as a banner crying wolf.
+
+Broader copy rows (interruption, timeouts, transport/parse failures) and a wider
+client-side redaction mirror came from the parallel TD-1008 draft built in
+``wt-td1008``; the two lanes converged on this single wire design, and those
+additions are grafted onto this table rather than shipped as a second system.
+
+### 4. Diagnostics are assembled from states and event metadata, never content
+
+**Decision:** "Copy diagnostics" (on every blocking banner) writes a redacted
+report: daemon + protocol versions, ws/daemon/session state, cost totals,
+and the last 25 event types with seqs.  It never includes message content,
+tool arguments, or filesystem paths.
+
+**Rationale:** The report is meant to be pasted into a bug report — anything
+content-bearing would leak the user's code into whatever tracker receives
+it.  Event types + seqs carry the diagnostic signal (what happened, in what
+order) without the payload.
