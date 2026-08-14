@@ -13,7 +13,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { DaemonEventUnion } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 import { ProtocolClient, type ConnectionState, type SocketLike } from "./client";
 
 export interface DaemonStatus {
@@ -29,6 +29,33 @@ export const ws = $state<{ state: ConnectionState }>({ state: "disconnected" });
 export const daemon = $state<DaemonStatus>({ state: "stopped", port: null, restart: 0 });
 // Latest validated daemon event, for subscribers that want the stream.
 export const lastEvent = $state<{ event: DaemonEventUnion | null }>({ event: null });
+
+// Synchronous event fan-out (TD-1004). Consumers that append to a log (chat,
+// timeline) cannot ride `lastEvent` — two events inside one effect flush
+// would drop the first. Handlers run in the client's sink, in receive order.
+const eventSubs = new Set<(event: DaemonEventUnion) => void>();
+
+/** Subscribe to every validated daemon event. Returns an unsubscribe fn. */
+export function onDaemonEvent(handler: (event: DaemonEventUnion) => void): () => void {
+  eventSubs.add(handler);
+  return () => {
+    eventSubs.delete(handler);
+  };
+}
+
+/** Send a client→daemon message. False when no handshaken socket exists. */
+export function sendToDaemon(msg: ClientMessageUnion): boolean {
+  return client?.send(msg) ?? false;
+}
+
+/** Attach/detach a session's event stream on the shared connection. */
+export function attachToSession(sessionId: string): void {
+  client?.attach(sessionId);
+}
+
+export function detachFromSession(sessionId: string): void {
+  client?.detach(sessionId);
+}
 
 function makeClient(): void {
   client = new ProtocolClient(
@@ -48,6 +75,7 @@ function makeClient(): void {
     {
       onEvent(event) {
         lastEvent.event = event;
+        for (const sub of eventSubs) sub(event);
       },
       onStateChange(state) {
         ws.state = state;

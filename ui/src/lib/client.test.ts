@@ -262,3 +262,25 @@ describe("unknown event tolerance", () => {
     warn.mockRestore();
   });
 });
+describe("send (TD-1004)", () => {
+  it("writes the message on a handshaken socket and returns true", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    const ok = h.client.send({ type: "cancel", session_id: "s1" });
+    expect(ok).toBe(true);
+    const last = JSON.parse(h.sockets[0].sent[h.sockets[0].sent.length - 1]);
+    expect(last).toEqual({ type: "cancel", session_id: "s1" });
+    h.client.stop();
+  });
+
+  it("returns false and sends nothing once stopped", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.stop();
+    const wireCount = h.sockets[0].sent.length;
+    expect(h.client.send({ type: "cancel", session_id: "s1" })).toBe(false);
+    expect(h.sockets[0].sent.length).toBe(wireCount);
+  });
+});
