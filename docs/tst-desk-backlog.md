@@ -1209,7 +1209,7 @@ daemon's `open_workspace` — daemon sessions previously had no dispatcher.
 **Size:** 3 · **Depends on:** TD-1401
 
 **Acceptance criteria:**
-- [ ] Measured and recorded: daemon cold start, session start on a large repo, steering
+- [x] Measured and recorded: daemon cold start, session start on a large repo, steering
       resolution, first token latency (all four live in `core/tests/perf_baselines.json`);
       timeline render at 1000 entries pending TD-1005's timeline component
 - [x] Baselines committed; CI flags regressions beyond a stated threshold

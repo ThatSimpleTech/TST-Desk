@@ -2407,3 +2407,51 @@ output by exclusion; here the rows *want* to name folders, so they get
 just-enough-to-locate forms instead. Redaction at the copy boundary is
 the belt to that: a future check that embeds a key-shaped string can't
 leak in the pasteable artifact even if its row forgot to scrub.
+
+## 2026-08-14 — TD-1404: Timeline render baseline
+
+### 1. The timeline gate lives in vitest, not pytest
+
+**Decision:** ``timeline_render_1000`` is measured and gated by
+``ui/src/lib/timeline-bench.test.ts`` under jsdom — pytest cannot mount a
+Svelte component. Both sides read the same committed
+``core/tests/perf_baselines.json`` with the same threshold (3x baseline or
+baseline + 250 ms). Core keeps the row honest from its side: the metric
+moved from ``PENDING`` to a new ``UI_MEASURED`` map, and
+``test_ui_measured_metrics_have_baselines`` fails if the row is missing
+or null.
+
+**Rationale:** One baselines file, one threshold, whichever runner can
+actually exercise the surface owns the measurement. A deleted row now
+fails in both suites.
+
+### 2. What the number measures
+
+**Decision:** the bench pushes 1000 synthesized daemon events (a
+session-realistic mix: deltas, tool calls with their shell_output chunks,
+results, decisions, errors) through the real ``push()`` store path, then
+mounts ``ActivityTimeline`` and flushes one frame. The push loop is the
+term that scales with entry count — each shell chunk linear-scans for its
+parent row — while the render is windowed by TD-1005's virtualization
+(~30 rows for the stubbed 640px viewport in jsdom), i.e. constant vs
+entry count by design. The JSON metadata states that jsdom measures
+Svelte DOM work, not browser layout or paint.
+
+**Rationale:** A regression someone introduces in the per-event path is
+what a 1000-entry live session would feel as sag; windowed paint staying
+flat is the property the virtualizer was bought for.
+
+### 3. Recording is an env-flagged vitest run
+
+**Decision:** ``BENCH_RECORD=1 npx vitest run src/lib/timeline-bench.test.ts``
+writes the fresh median into the shared JSON (clearing the pending marker
+and declaring the row ui-measured) instead of asserting. Core's
+``scripts/benchmarks.py --record`` conversely preserves the UI-measured
+row when re-baselining the four core metrics — each runner owns its own
+rows and must never clobber the other's.
+
+**Rationale:** Only the vitest pipeline can compile and mount the
+component, and CI never sets the flag, so gate mode is the default. The
+app tree stays browser-typed; the recorder's node fs access sits behind a
+four-line ambient shim (``node-test-shims.d.ts``) rather than pulling
+@types/node into the project for one script-like test.
