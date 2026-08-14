@@ -30,7 +30,9 @@ import type {
   CheckpointNotice,
   CostUpdate,
   TurnComplete,
+  ContextCompacted,
   SteeringReloaded,
+  TierSwitched,
   InstructionStack,
   SessionList,
   Error,
@@ -265,6 +267,33 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("context_compacted", () => {
+    const m = fixtures.context_compacted as ContextCompacted;
+    expect(m.type).toBe("context_compacted");
+    expect(isNumber(m.dropped_messages)).toBe(true);
+    expect(isNumber(m.kept_messages)).toBe(true);
+    expect(isNumber(m.tokens_before)).toBe(true);
+    expect(isNumber(m.tokens_after)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("steering_reloaded", () => {
+    const m = fixtures.steering_reloaded as SteeringReloaded;
+    expect(m.type).toBe("steering_reloaded");
+    expect(isString(m.prefix_hash)).toBe(true);
+    expect(isNumber(m.prefix_tokens)).toBe(true);
+    expect(isNumber(m.source_count)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("tier_switched", () => {
+    const m = fixtures.tier_switched as TierSwitched;
+    expect(m.type).toBe("tier_switched");
+    expect(m.tier).toBe("worker");
+    expect(m.previous).toBe("brain");
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
   it("error", () => {
     const m = fixtures.error as Error;
     expect(m.type).toBe("error");
@@ -297,7 +326,9 @@ describe("All fixtures have required shape", () => {
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "shell_output",
       "approval_request", "decision_logged", "checkpoint_notice", "cost_update",
-      "turn_complete", "error", "error_with_session",
+      "boundary_update", "turn_complete", "context_compacted",
+      "steering_reloaded", "tier_switched", "instruction_stack",
+      "session_list", "error", "error_with_session",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

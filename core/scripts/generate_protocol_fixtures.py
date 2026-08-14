@@ -22,6 +22,7 @@ from tstd.protocol import (
     BoundaryUpdate,
     Cancel,
     CheckpointNotice,
+    ContextCompacted,
     CostUpdate,
     DecisionLogged,
     Deny,
@@ -39,6 +40,7 @@ from tstd.protocol import (
     ShellOutput,
     Shutdown,
     SteeringReloaded,
+    TierSwitched,
     ToolCall,
     ToolResult,
     TurnComplete,
@@ -173,6 +175,20 @@ FIXTURES = {
         total_tokens=500,
         token_method="cl100k_base",
         seq=17,
+    ),
+    "context_compacted": ContextCompacted(
+        session_id="sess-1",
+        dropped_messages=12,
+        kept_messages=8,
+        tokens_before=12000,
+        tokens_after=4000,
+        seq=18,
+    ),
+    "tier_switched": TierSwitched(
+        session_id="sess-1",
+        tier="worker",
+        previous="brain",
+        seq=19,
     ),
     "session_list": SessionList(
         sessions=[
