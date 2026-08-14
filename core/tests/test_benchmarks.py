@@ -55,3 +55,13 @@ def test_pending_metrics_name_their_blocker() -> None:
     for metric, story in payload["pending"].items():
         assert payload["metrics"].get(metric) is None
         assert story.startswith("TD-")
+
+
+def test_ui_measured_metrics_have_baselines() -> None:
+    """UI-measured metrics are gated by the UI bench, but a deleted or null
+    row in the shared file must fail loudly here too."""
+    payload = _payload()
+    assert payload.get("ui_measured") == list(benchmarks.UI_MEASURED)
+    for metric in benchmarks.UI_MEASURED:
+        value = payload["metrics"].get(metric)
+        assert isinstance(value, (int, float)), f"{metric} missing — run the UI bench to record"

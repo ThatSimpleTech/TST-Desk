@@ -83,10 +83,10 @@ repo layout, `tst-cua` reuse strategy, Goose's role, license, frontend framework
 and autonomy isolation policy. Record the answers.
 
 **Acceptance criteria:**
-- [ ] All seven decisions asked in a single message, each with a recommendation and rationale
-- [ ] Answers recorded in `DECISIONS.md` with date
-- [ ] Any answer that contradicts the spec is flagged, and the spec is updated to match
-- [ ] No implementation work started before answers received
+- [x] All seven decisions asked in a single message, each with a recommendation and rationale
+- [x] Answers recorded in `DECISIONS.md` with date
+- [x] Any answer that contradicts the spec is flagged, and the spec is updated to match
+- [x] No implementation work started before answers received
 
 **Notes:** Do not offer defaults as a way of avoiding the question. The user explicitly wants
 to decide these.
@@ -100,13 +100,13 @@ Read the existing `tst-cua` repository in full. Produce `docs/REUSE.md` describi
 reused as-is, what will be adapted, and what will be written fresh.
 
 **Acceptance criteria:**
-- [ ] Every module in `tst-cua` classified: reuse / adapt / ignore / defer-to-later-phase
-- [ ] The agent loop specifically assessed — its control flow, its tool interface, its
+- [x] Every module in `tst-cua` classified: reuse / adapt / ignore / defer-to-later-phase
+- [x] The agent loop specifically assessed — its control flow, its tool interface, its
       assumptions about providers — with a statement of what must change for the 3-tier router
-- [ ] Driver code (Atspi/Darwin/Browser/Mock) marked **defer to v0.4** but noted as intact
-- [ ] The Mock driver assessed for reuse as the v0.1 test harness (likely valuable now)
-- [ ] Report identifies any coupling that would make later computer-use integration painful
-- [ ] Report reviewed with the user before porting begins
+- [x] Driver code (Atspi/Darwin/Browser/Mock) marked **defer to v0.4** but noted as intact
+- [x] The Mock driver assessed for reuse as the v0.1 test harness (likely valuable now)
+- [x] Report identifies any coupling that would make later computer-use integration painful
+- [x] Report reviewed with the user before porting begins
 
 **Notes:** This is the highest-leverage hour in the project. A wrong reuse decision here costs
 days later. Do not skim the code.
@@ -119,12 +119,12 @@ days later. Do not skim the code.
 Create the directory structure from `AGENTS.md` §11.
 
 **Acceptance criteria:**
-- [ ] Directory tree matches `AGENTS.md` §11 exactly
-- [ ] `LICENSE` present, matching the TD-101 answer
-- [ ] `README.md` skeleton with one-paragraph pitch and a placeholder quickstart
-- [ ] `AGENTS.md` and `docs/` populated with the three companion documents
-- [ ] `DECISIONS.md` created with the TD-101 answers as its first entries
-- [ ] `.gitignore` excludes `.tst/` runtime state, build artifacts, `.env`, and keychain
+- [x] Directory tree matches `AGENTS.md` §11 exactly
+- [x] `LICENSE` present, matching the TD-101 answer
+- [x] `README.md` skeleton with one-paragraph pitch and a placeholder quickstart
+- [x] `AGENTS.md` and `docs/` populated with the three companion documents
+- [x] `DECISIONS.md` created with the TD-101 answers as its first entries
+- [x] `.gitignore` excludes `.tst/` runtime state, build artifacts, `.env`, and keychain
       material — but **not** `.tst/rules/`
 
 ---
@@ -133,12 +133,12 @@ Create the directory structure from `AGENTS.md` §11.
 **Size:** 2 · **Depends on:** TD-103
 
 **Acceptance criteria:**
-- [ ] `uv` project initialized under `core/` with `pyproject.toml`, Python 3.11+
-- [ ] `ruff` configured for lint and format
-- [ ] `mypy` configured in strict mode
-- [ ] `pytest` with `pytest-asyncio` configured
-- [ ] `uv run pytest` passes on an empty suite
-- [ ] `uv run ruff check` and `uv run mypy` clean
+- [x] `uv` project initialized under `core/` with `pyproject.toml`, Python 3.11+
+- [x] `ruff` configured for lint and format
+- [x] `mypy` configured in strict mode
+- [x] `pytest` with `pytest-asyncio` configured
+- [x] `uv run pytest` passes on an empty suite
+- [x] `uv run ruff check` and `uv run mypy` clean
 
 ---
 
@@ -146,11 +146,11 @@ Create the directory structure from `AGENTS.md` §11.
 **Size:** 3 · **Depends on:** TD-103
 
 **Acceptance criteria:**
-- [ ] Tauri 2 project under `shell/`, building on the development platform
-- [ ] SvelteKit + Svelte 5 project under `ui/`, TypeScript strict
-- [ ] `npm run tauri dev` opens an empty window
-- [ ] `clippy` clean; `tsc --noEmit` clean
-- [ ] Design token file created (colors, spacing, type scale) — empty of components but
+- [x] Tauri 2 project under `shell/`, building on the development platform
+- [x] SvelteKit + Svelte 5 project under `ui/`, TypeScript strict
+- [x] `npm run tauri dev` opens an empty window
+- [x] `clippy` clean; `tsc --noEmit` clean
+- [x] Design token file created (colors, spacing, type scale) — empty of components but
       structurally in place
 
 ---
@@ -159,12 +159,12 @@ Create the directory structure from `AGENTS.md` §11.
 **Size:** 3 · **Depends on:** TD-104, TD-105
 
 **Acceptance criteria:**
-- [ ] CI runs on push and PR
-- [ ] Jobs: Python lint, Python typecheck, Python tests, Rust clippy, TypeScript typecheck,
+- [x] CI runs on push and PR
+- [x] Jobs: Python lint, Python typecheck, Python tests, Rust clippy, TypeScript typecheck,
       frontend build
-- [ ] Build matrix covers macOS, Linux, Windows
-- [ ] Pipeline is green on the empty scaffold
-- [ ] Failing any job blocks merge
+- [x] Build matrix covers macOS, Linux, Windows
+- [x] Pipeline is green on the empty scaffold
+- [x] Failing any job blocks merge
 
 ---
 
@@ -172,9 +172,9 @@ Create the directory structure from `AGENTS.md` §11.
 **Size:** 1 · **Depends on:** TD-104, TD-105
 
 **Acceptance criteria:**
-- [ ] Hooks run `ruff format`, `ruff check`, and secret detection on staged files
-- [ ] A commit containing a plausible API key pattern is rejected
-- [ ] Hook install documented in `README.md`
+- [x] Hooks run `ruff format`, `ruff check`, and secret detection on staged files
+- [x] A commit containing a plausible API key pattern is rejected
+- [x] Hook install documented in `README.md`
 
 ---
 
@@ -192,12 +192,12 @@ session-ownership model right here or pay for it in v0.3.
 **Size:** 3 · **Depends on:** TD-104
 
 **Acceptance criteria:**
-- [ ] `tstd` starts as an async process with clean startup and shutdown
-- [ ] Structured logging (JSON lines) to a rotating file under the user data directory
-- [ ] Log level configurable; secrets redacted by a logging filter, verified by test
-- [ ] `SIGTERM` and `SIGINT` trigger graceful shutdown: sessions notified, sockets closed,
+- [x] `tstd` starts as an async process with clean startup and shutdown
+- [x] Structured logging (JSON lines) to a rotating file under the user data directory
+- [x] Log level configurable; secrets redacted by a logging filter, verified by test
+- [x] `SIGTERM` and `SIGINT` trigger graceful shutdown: sessions notified, sockets closed,
       state flushed
-- [ ] Health endpoint or event returning version, uptime, and active session count
+- [x] Health endpoint or event returning version, uptime, and active session count
 
 ---
 
@@ -205,12 +205,12 @@ session-ownership model right here or pay for it in v0.3.
 **Size:** 3 · **Depends on:** TD-201
 
 **Acceptance criteria:**
-- [ ] Server binds `127.0.0.1` on an ephemeral port
-- [ ] Port and auth token written to a port file in the user data directory, mode `0600`
-- [ ] **A test asserts the server refuses to bind any non-loopback interface** — this
+- [x] Server binds `127.0.0.1` on an ephemeral port
+- [x] Port and auth token written to a port file in the user data directory, mode `0600`
+- [x] **A test asserts the server refuses to bind any non-loopback interface** — this
       enforces prime directive §2.1 in code, not convention
-- [ ] Multiple simultaneous client connections supported
-- [ ] Client disconnect does not disturb daemon state
+- [x] Multiple simultaneous client connections supported
+- [x] Client disconnect does not disturb daemon state
 
 ---
 
@@ -220,10 +220,10 @@ session-ownership model right here or pay for it in v0.3.
 Even on loopback, other local processes can connect. Require a token.
 
 **Acceptance criteria:**
-- [ ] Client presents the token from the port file in a `hello` message
-- [ ] Bad or missing token closes the connection with a typed error, and is logged
-- [ ] Handshake negotiates protocol version; mismatch produces an actionable error message
-- [ ] Token rotates on daemon restart
+- [x] Client presents the token from the port file in a `hello` message
+- [x] Bad or missing token closes the connection with a typed error, and is logged
+- [x] Handshake negotiates protocol version; mismatch produces an actionable error message
+- [x] Token rotates on daemon restart
 
 ---
 
@@ -234,15 +234,15 @@ Define every message the shell and daemon exchange. This is a Class B decision s
 record the design in `DECISIONS.md`.
 
 **Acceptance criteria:**
-- [ ] Pydantic models for all messages, versioned, with a discriminated `type` field
-- [ ] Client→daemon: `hello`, `open_workspace`, `user_message`, `approve`, `deny`,
+- [x] Pydantic models for all messages, versioned, with a discriminated `type` field
+- [x] Client→daemon: `hello`, `open_workspace`, `user_message`, `approve`, `deny`,
       `cancel`, `attach`, `detach`, `set_tier`, `get_instruction_stack`
-- [ ] Daemon→client: `ready`, `session_state`, `assistant_delta`, `tool_call`, `tool_result`,
+- [x] Daemon→client: `ready`, `session_state`, `assistant_delta`, `tool_call`, `tool_result`,
       `approval_request`, `decision_logged`, `cost_update`, `turn_complete`, `error`
-- [ ] Every daemon→client event carries a monotonic `seq` scoped to the session
-- [ ] TypeScript types generated or hand-mirrored, with a test asserting they match
-- [ ] Round-trip serialization tests for every message type
-- [ ] Unknown message types produce a typed error, never a crash
+- [x] Every daemon→client event carries a monotonic `seq` scoped to the session
+- [x] TypeScript types generated or hand-mirrored, with a test asserting they match
+- [x] Round-trip serialization tests for every message type
+- [x] Unknown message types produce a typed error, never a crash
 
 **Notes:** `attach`/`detach` are specified now even though v0.1 has no detached sessions. The
 shape must be right; the behavior can be trivial.
@@ -255,16 +255,16 @@ shape must be right; the behavior can be trivial.
 **The most important story in M1.** The session owns the loop. The socket is a viewer.
 
 **Acceptance criteria:**
-- [ ] `Session` has an id, a workspace path, a state machine
+- [x] `Session` has an id, a workspace path, a state machine
       (`idle` → `running` → `awaiting_approval` → `running` → `complete` / `failed` /
       `cancelled`), and an event log
-- [ ] `SessionRunner` executes the loop as an asyncio task **owned by the daemon, not by any
+- [x] `SessionRunner` executes the loop as an asyncio task **owned by the daemon, not by any
       connection**
-- [ ] **Test: a session started over a connection continues running after that connection is
+- [x] **Test: a session started over a connection continues running after that connection is
       closed**, and its events continue to accumulate
-- [ ] Event log is append-only in memory with monotonic `seq` (durable persistence is v0.3)
-- [ ] Session registry supports lookup, list, and cancel
-- [ ] Cancelling a session interrupts the loop cleanly, mid-tool if necessary
+- [x] Event log is append-only in memory with monotonic `seq` (durable persistence is v0.3)
+- [x] Session registry supports lookup, list, and cancel
+- [x] Cancelling a session interrupts the loop cleanly, mid-tool if necessary
 
 ---
 
@@ -272,11 +272,11 @@ shape must be right; the behavior can be trivial.
 **Size:** 3 · **Depends on:** TD-205
 
 **Acceptance criteria:**
-- [ ] `attach{session_id, from_seq}` replays all events from `from_seq` then streams live
-- [ ] Replay and live stream produce no gaps and no duplicates under a concurrent-write test
-- [ ] `detach` stops streaming without affecting the session
-- [ ] Attaching to an unknown session returns a typed error
-- [ ] Two clients attached to one session both receive all events
+- [x] `attach{session_id, from_seq}` replays all events from `from_seq` then streams live
+- [x] Replay and live stream produce no gaps and no duplicates under a concurrent-write test
+- [x] `detach` stops streaming without affecting the session
+- [x] Attaching to an unknown session returns a typed error
+- [x] Two clients attached to one session both receive all events
 
 ---
 
@@ -284,10 +284,10 @@ shape must be right; the behavior can be trivial.
 **Size:** 2 · **Depends on:** TD-205
 
 **Acceptance criteria:**
-- [ ] An exception inside one session's loop fails only that session; others continue
-- [ ] Failure emits a `session_state` event with a readable reason and full traceback in logs
-- [ ] Daemon crash leaves no corrupt state that prevents restart
-- [ ] Stale port file from a dead daemon is detected and replaced on startup
+- [x] An exception inside one session's loop fails only that session; others continue
+- [x] Failure emits a `session_state` event with a readable reason and full traceback in logs
+- [x] Daemon crash leaves no corrupt state that prevents restart
+- [x] Stale port file from a dead daemon is detected and replaced on startup
 
 ---
 
@@ -301,13 +301,13 @@ shape must be right; the behavior can be trivial.
 **Size:** 3 · **Depends on:** TD-201
 
 **Acceptance criteria:**
-- [ ] Async `httpx` client against an OpenAI-compatible `/v1/chat/completions`
-- [ ] Streaming responses yielded as deltas
-- [ ] Tool/function calling supported in both request and response parsing
-- [ ] Base URL configurable — **verified against OpenRouter and against a local vLLM-style
+- [x] Async `httpx` client against an OpenAI-compatible `/v1/chat/completions`
+- [x] Streaming responses yielded as deltas
+- [x] Tool/function calling supported in both request and response parsing
+- [x] Base URL configurable — **verified against OpenRouter and against a local vLLM-style
       endpoint with no code change** (the EZER path must work by configuration alone)
-- [ ] API key read from OS keychain, never from config or environment files
-- [ ] Timeouts on connect, read, and total
+- [x] API key read from OS keychain, never from config or environment files
+- [x] Timeouts on connect, read, and total
 
 ---
 
@@ -315,13 +315,13 @@ shape must be right; the behavior can be trivial.
 **Size:** 2 · **Depends on:** TD-301
 
 **Acceptance criteria:**
-- [ ] `config.yaml` defines per-tier: slug, base URL, input price, output price, cache-read
+- [x] `config.yaml` defines per-tier: slug, base URL, input price, output price, cache-read
       price, context window, max output tokens
-- [ ] Ships with the TST default stack from spec §7 (Kimi K3 / DeepSeek V4 Flash /
+- [x] Ships with the TST default stack from spec §7 (Kimi K3 / DeepSeek V4 Flash /
       DeepSeek V4 Pro) and the documented swaps as commented alternatives
-- [ ] Presets: `tst-default`, `budget`, `local`
-- [ ] Config validated on load with actionable error messages naming the offending key
-- [ ] **No model slug, price, or URL appears anywhere in source code** — asserted by a test
+- [x] Presets: `tst-default`, `budget`, `local`
+- [x] Config validated on load with actionable error messages naming the offending key
+- [x] **No model slug, price, or URL appears anywhere in source code** — asserted by a test
       that greps the codebase for known slugs
 
 **Notes:** The model landscape moves weekly. Users must update models without a release.
@@ -332,13 +332,13 @@ shape must be right; the behavior can be trivial.
 **Size:** 3 · **Depends on:** TD-302
 
 **Acceptance criteria:**
-- [ ] Brain tier handles the first `lead_turns` turns (default 2, configurable), then worker
+- [x] Brain tier handles the first `lead_turns` turns (default 2, configurable), then worker
       takes over
-- [ ] Validator invoked on demand, not on a schedule, in v0.1
-- [ ] Escalation path: worker may hand back to brain on repeated failure, with a configurable
+- [x] Validator invoked on demand, not on a schedule, in v0.1
+- [x] Escalation path: worker may hand back to brain on repeated failure, with a configurable
       threshold
-- [ ] Active tier is emitted to the client on every turn
-- [ ] Runtime tier override via `set_tier` takes effect on the next turn
+- [x] Active tier is emitted to the client on every turn
+- [x] Runtime tier override via `set_tier` takes effect on the next turn
 
 ---
 
@@ -346,12 +346,12 @@ shape must be right; the behavior can be trivial.
 **Size:** 3 · **Depends on:** TD-302
 
 **Acceptance criteria:**
-- [ ] Every call records prompt tokens, cached prompt tokens, completion tokens, model, and
+- [x] Every call records prompt tokens, cached prompt tokens, completion tokens, model, and
       computed cost
-- [ ] Cache-read tokens priced at the cache rate, not the input rate
-- [ ] Cost aggregated per turn, per session, and per day
-- [ ] `cost_update` events emitted as costs accrue
-- [ ] **Unit tests with hand-computed expected dollar figures** for each tier, including a
+- [x] Cache-read tokens priced at the cache rate, not the input rate
+- [x] Cost aggregated per turn, per session, and per day
+- [x] `cost_update` events emitted as costs accrue
+- [x] **Unit tests with hand-computed expected dollar figures** for each tier, including a
       mixed cached/uncached case
 
 ---
@@ -360,11 +360,11 @@ shape must be right; the behavior can be trivial.
 **Size:** 3 · **Depends on:** TD-303, TD-501
 
 **Acceptance criteria:**
-- [ ] Prompt assembled in the stable-prefix order from spec §4.5: base prompt → steering →
+- [x] Prompt assembled in the stable-prefix order from spec §4.5: base prompt → steering →
       memory placeholder → workspace manifest → conversation
-- [ ] Blocks 1–2 are byte-identical across turns when their source files have not changed —
+- [x] Blocks 1–2 are byte-identical across turns when their source files have not changed —
       asserted by a test hashing the prefix across a multi-turn session
-- [ ] Cache hit rate observable in logs and in the cost breakdown
+- [x] Cache hit rate observable in logs and in the cost breakdown
 
 **Notes:** This story is worth more than it looks. On a long session, prefix caching is the
 difference between $2.80/M and $0.30/M on the brain tier.
@@ -375,12 +375,12 @@ difference between $2.80/M and $0.30/M on the brain tier.
 **Size:** 3 · **Depends on:** TD-301
 
 **Acceptance criteria:**
-- [ ] Retry with exponential backoff and jitter on 429 and 5xx; bounded attempts
-- [ ] `Retry-After` honored when present
-- [ ] Context-length errors surface as a typed, actionable error, not a generic failure
-- [ ] Auth failures produce a message telling the user exactly what to fix
-- [ ] Partial stream interruption recovers or fails cleanly — never emits a half-parsed tool call
-- [ ] All failure modes covered by tests against the mock provider
+- [x] Retry with exponential backoff and jitter on 429 and 5xx; bounded attempts
+- [x] `Retry-After` honored when present
+- [x] Context-length errors surface as a typed, actionable error, not a generic failure
+- [x] Auth failures produce a message telling the user exactly what to fix
+- [x] Partial stream interruption recovers or fails cleanly — never emits a half-parsed tool call
+- [x] All failure modes covered by tests against the mock provider
 
 ---
 
@@ -388,11 +388,11 @@ difference between $2.80/M and $0.30/M on the brain tier.
 **Size:** 2 · **Depends on:** TD-301
 
 **Acceptance criteria:**
-- [ ] Scripted responses: plain text, streaming text, tool calls, malformed output, errors,
+- [x] Scripted responses: plain text, streaming text, tool calls, malformed output, errors,
       rate limits
-- [ ] Deterministic and offline — no network, no spend
-- [ ] Returns realistic usage numbers so cost tests are meaningful
-- [ ] Used by every loop and router test
+- [x] Deterministic and offline — no network, no spend
+- [x] Returns realistic usage numbers so cost tests are meaningful
+- [x] Used by every loop and router test
 
 ---
 
@@ -406,11 +406,11 @@ difference between $2.80/M and $0.30/M on the brain tier.
 **Size:** 5 · **Depends on:** TD-102, TD-303, TD-307
 
 **Acceptance criteria:**
-- [ ] Loop runs inside `SessionRunner`
-- [ ] Provider calls go through the router, not directly to a client
-- [ ] Reuse matches the TD-102 report; any deviation recorded in `DECISIONS.md`
-- [ ] Loop is provider-agnostic — no vendor-specific assumptions in control flow
-- [ ] Multi-turn conversation with tool calls passes against the mock provider
+- [x] Loop runs inside `SessionRunner`
+- [x] Provider calls go through the router, not directly to a client
+- [x] Reuse matches the TD-102 report; any deviation recorded in `DECISIONS.md`
+- [x] Loop is provider-agnostic — no vendor-specific assumptions in control flow
+- [x] Multi-turn conversation with tool calls passes against the mock provider
 
 ---
 
@@ -418,12 +418,12 @@ difference between $2.80/M and $0.30/M on the brain tier.
 **Size:** 3 · **Depends on:** TD-401, TD-601
 
 **Acceptance criteria:**
-- [ ] Tool calls parsed, validated against the tool's schema, and dispatched
-- [ ] Invalid arguments return a structured error **to the model** so it can correct itself,
+- [x] Tool calls parsed, validated against the tool's schema, and dispatched
+- [x] Invalid arguments return a structured error **to the model** so it can correct itself,
       rather than failing the turn
-- [ ] Parallel tool calls executed concurrently where the tools declare themselves safe for it
-- [ ] Results truncated to a configurable cap with clear truncation markers
-- [ ] Every dispatch passes through the classifier (TD-702)
+- [x] Parallel tool calls executed concurrently where the tools declare themselves safe for it
+- [x] Results truncated to a configurable cap with clear truncation markers
+- [x] Every dispatch passes through the classifier (TD-702)
 
 ---
 
@@ -431,11 +431,11 @@ difference between $2.80/M and $0.30/M on the brain tier.
 **Size:** 2 · **Depends on:** TD-401, TD-204
 
 **Acceptance criteria:**
-- [ ] `assistant_delta` streamed token-by-token
-- [ ] `tool_call` emitted before execution with name and arguments
-- [ ] `tool_result` emitted after, with status and a display-safe summary
-- [ ] `turn_complete` carries tokens, cost, tier used, and duration
-- [ ] Event ordering is deterministic and covered by test
+- [x] `assistant_delta` streamed token-by-token
+- [x] `tool_call` emitted before execution with name and arguments
+- [x] `tool_result` emitted after, with status and a display-safe summary
+- [x] `turn_complete` carries tokens, cost, tier used, and duration
+- [x] Event ordering is deterministic and covered by test
 
 ---
 
@@ -443,10 +443,10 @@ difference between $2.80/M and $0.30/M on the brain tier.
 **Size:** 3 · **Depends on:** TD-401
 
 **Acceptance criteria:**
-- [ ] `cancel` interrupts an in-flight model stream within one second
-- [ ] A running shell command is terminated, and its process group with it
-- [ ] Session ends in `cancelled` with partial work preserved and visible
-- [ ] No orphaned processes or leaked tasks — asserted by test
+- [x] `cancel` interrupts an in-flight model stream within one second
+- [x] A running shell command is terminated, and its process group with it
+- [x] Session ends in `cancelled` with partial work preserved and visible
+- [x] No orphaned processes or leaked tasks — asserted by test
 
 ---
 
@@ -454,12 +454,12 @@ difference between $2.80/M and $0.30/M on the brain tier.
 **Size:** 5 · **Depends on:** TD-401, TD-305
 
 **Acceptance criteria:**
-- [ ] Token budget tracked against the tier's context window
-- [ ] Approaching the limit triggers compaction of older conversation turns
-- [ ] **Steering block and workspace manifest are re-injected after compaction, re-read from
+- [x] Token budget tracked against the tier's context window
+- [x] Approaching the limit triggers compaction of older conversation turns
+- [x] **Steering block and workspace manifest are re-injected after compaction, re-read from
       disk** — instructions must survive compaction
-- [ ] Compaction is announced in the activity timeline, never silent
-- [ ] Test: a session that exceeds the window continues correctly and still obeys steering rules
+- [x] Compaction is announced in the activity timeline, never silent
+- [x] Test: a session that exceeds the window continues correctly and still obeys steering rules
 
 ---
 
@@ -474,12 +474,12 @@ coverage requirement in the project alongside E7.**
 **Size:** 5 · **Depends on:** TD-201
 
 **Acceptance criteria:**
-- [ ] Resolves, lowest to highest precedence: `~/.tstdesk/AGENTS.md` → `<workspace>/AGENTS.md`
+- [x] Resolves, lowest to highest precedence: `~/.tstdesk/AGENTS.md` → `<workspace>/AGENTS.md`
       → `<workspace>/.tst/rules/*.md` → nested `<workspace>/**/AGENTS.md`
-- [ ] Nested files apply to their subtree only
-- [ ] Concatenated into one block with provenance comments naming each source file
-- [ ] Missing files are not errors
-- [ ] Table-driven tests over a fixture workspace covering: none present, each level alone,
+- [x] Nested files apply to their subtree only
+- [x] Concatenated into one block with provenance comments naming each source file
+- [x] Missing files are not errors
+- [x] Table-driven tests over a fixture workspace covering: none present, each level alone,
       all levels together, conflicting rules, deeply nested
 
 ---
@@ -488,10 +488,10 @@ coverage requirement in the project alongside E7.**
 **Size:** 2 · **Depends on:** TD-501
 
 **Acceptance criteria:**
-- [ ] At any path, if `AGENTS.md` is absent and `CLAUDE.md` is present, `CLAUDE.md` is used
-- [ ] If both are present, `AGENTS.md` wins and the shadowing is noted in the inspector
-- [ ] Applies at every level including `~/.claude/CLAUDE.md` for the global scope
-- [ ] Test: a workspace containing only `CLAUDE.md` files loads with full fidelity
+- [x] At any path, if `AGENTS.md` is absent and `CLAUDE.md` is present, `CLAUDE.md` is used
+- [x] If both are present, `AGENTS.md` wins and the shadowing is noted in the inspector
+- [x] Applies at every level including `~/.claude/CLAUDE.md` for the global scope
+- [x] Test: a workspace containing only `CLAUDE.md` files loads with full fidelity
 
 **Notes:** This is an adoption feature. Existing repos configured for other tools must work on
 day one with nothing to port. Do not treat it as an edge case.
@@ -502,14 +502,14 @@ day one with nothing to port. Do not treat it as an edge case.
 **Size:** 5 · **Depends on:** TD-501
 
 **Acceptance criteria:**
-- [ ] `.tst/rules/*.md` support frontmatter with an `appliesTo` array of glob patterns
-- [ ] Rules without `appliesTo` always load
-- [ ] Rules with `appliesTo` load only when the session touches a matching file
-- [ ] Activation is dynamic — a rule that becomes relevant mid-session is injected, and the
+- [x] `.tst/rules/*.md` support frontmatter with an `appliesTo` array of glob patterns
+- [x] Rules without `appliesTo` always load
+- [x] Rules with `appliesTo` load only when the session touches a matching file
+- [x] Activation is dynamic — a rule that becomes relevant mid-session is injected, and the
       injection is announced in the timeline
-- [ ] Glob matching tested against: exact paths, `*`, `**`, extension patterns, negation if
+- [x] Glob matching tested against: exact paths, `*`, `**`, extension patterns, negation if
       supported, and paths with spaces or unicode
-- [ ] Unmatched rules are visible in the inspector as inactive, with their cost shown as zero
+- [x] Unmatched rules are visible in the inspector as inactive, with their cost shown as zero
 
 **Notes:** This is the mechanism that keeps a large ruleset affordable. Spec §4.3.
 
@@ -519,13 +519,13 @@ day one with nothing to port. Do not treat it as an edge case.
 **Size:** 5 · **Depends on:** TD-501
 
 **Acceptance criteria:**
-- [ ] `@path/to/file.md` resolved, relative and absolute, including `~` expansion
-- [ ] Recursive imports to a maximum depth of 4; exceeding it is a clear error naming the chain
-- [ ] Cycles detected and reported with the full cycle path, never infinite-looping
-- [ ] **Import directives inside fenced code blocks and inline code spans are not evaluated** —
+- [x] `@path/to/file.md` resolved, relative and absolute, including `~` expansion
+- [x] Recursive imports to a maximum depth of 4; exceeding it is a clear error naming the chain
+- [x] Cycles detected and reported with the full cycle path, never infinite-looping
+- [x] **Import directives inside fenced code blocks and inline code spans are not evaluated** —
       documentation about imports must be safe to write
-- [ ] Missing import files produce a warning naming the file, and do not abort the session
-- [ ] Imported content carries provenance to its own file, not the importer
+- [x] Missing import files produce a warning naming the file, and do not abort the session
+- [x] Imported content carries provenance to its own file, not the importer
 
 ---
 
@@ -543,12 +543,12 @@ day one with nothing to port. Do not treat it as an edge case.
 **Size:** 3 · **Depends on:** TD-501
 
 **Acceptance criteria:**
-- [ ] Per-source token counts computed with the tier's tokenizer where available, or a
+- [x] Per-source token counts computed with the tier's tokenizer where available, or a
       documented approximation with the method stated in the UI
-- [ ] Total steering budget reported
-- [ ] **A file exceeding 200 lines produces a soft warning in the inspector**, citing reduced
+- [x] Total steering budget reported
+- [x] **A file exceeding 200 lines produces a soft warning in the inspector**, citing reduced
       adherence, with a link to the authoring guide
-- [ ] Counts available via `get_instruction_stack`
+- [x] Counts available via `get_instruction_stack`
 
 ---
 
@@ -556,10 +556,10 @@ day one with nothing to port. Do not treat it as an edge case.
 **Size:** 3 · **Depends on:** TD-501
 
 **Acceptance criteria:**
-- [ ] File tree built from the workspace, honoring `.gitignore` and a configurable ignore list
-- [ ] Depth and entry count capped, with truncation clearly marked
-- [ ] Rebuilt on change with debounce, not on every turn
-- [ ] Large repositories (100k+ files) do not stall session start — verified with a synthetic tree
+- [x] File tree built from the workspace, honoring `.gitignore` and a configurable ignore list
+- [x] Depth and entry count capped, with truncation clearly marked
+- [x] Rebuilt on change with debounce, not on every turn
+- [x] Large repositories (100k+ files) do not stall session start — verified with a synthetic tree
 
 ---
 
@@ -567,11 +567,11 @@ day one with nothing to port. Do not treat it as an edge case.
 **Size:** 3 · **Depends on:** TD-501, TD-303
 
 **Acceptance criteria:**
-- [ ] Brain receives full steering plus manifest
-- [ ] Worker receives steering plus current task and relevant files, no manifest
-- [ ] Validator receives only the standards/conventions subset plus the diff and test output
-- [ ] Subset selection is configurable, with a documented default
-- [ ] Test asserts each tier's assembled prompt contains and excludes the expected blocks
+- [x] Brain receives full steering plus manifest
+- [x] Worker receives steering plus current task and relevant files, no manifest
+- [x] Validator receives only the standards/conventions subset plus the diff and test output
+- [x] Subset selection is configurable, with a documented default
+- [x] Test asserts each tier's assembled prompt contains and excludes the expected blocks
 
 **Notes:** Keeping validator context tight is what holds it near $0.08/session. Spec §4.6.
 
@@ -581,10 +581,10 @@ day one with nothing to port. Do not treat it as an edge case.
 **Size:** 2 · **Depends on:** TD-501
 
 **Acceptance criteria:**
-- [ ] Steering file edits are detected and re-resolved without restarting the session
-- [ ] Reload announced in the timeline and reflected in the inspector
-- [ ] Cache prefix invalidation handled correctly on reload
-- [ ] Debounced against rapid successive saves
+- [x] Steering file edits are detected and re-resolved without restarting the session
+- [x] Reload announced in the timeline and reflected in the inspector
+- [x] Cache prefix invalidation handled correctly on reload
+- [x] Debounced against rapid successive saves
 
 ---
 
@@ -599,10 +599,10 @@ control, not a convenience.
 **Size:** 3 · **Depends on:** TD-201
 
 **Acceptance criteria:**
-- [ ] Tools declare name, description, JSON schema, side-effect class, and parallel-safety
-- [ ] Registry produces provider-format tool definitions
-- [ ] Registration is explicit; no dynamic discovery in v0.1
-- [ ] Unknown tool names return a structured error to the model
+- [x] Tools declare name, description, JSON schema, side-effect class, and parallel-safety
+- [x] Registry produces provider-format tool definitions
+- [x] Registration is explicit; no dynamic discovery in v0.1
+- [x] Unknown tool names return a structured error to the model
 
 ---
 
@@ -612,15 +612,15 @@ control, not a convenience.
 **Security-critical. Write the attacks as tests first.**
 
 **Acceptance criteria:**
-- [ ] Every path resolved to canonical absolute form before any check
-- [ ] Access outside `writable_paths` refused with a clear error
-- [ ] **Traversal blocked:** `../` sequences, absolute paths, symlinks pointing outside the
+- [x] Every path resolved to canonical absolute form before any check
+- [x] Access outside `writable_paths` refused with a clear error
+- [x] **Traversal blocked:** `../` sequences, absolute paths, symlinks pointing outside the
       workspace, hardlinks, and paths that become external only after resolution
-- [ ] Windows-specific cases covered: drive-relative paths, UNC paths, `8.3` short names,
+- [x] Windows-specific cases covered: drive-relative paths, UNC paths, `8.3` short names,
       alternate data streams
-- [ ] **Writes to `AGENTS.md`, `CLAUDE.md`, and `.tst/rules/**` are refused unconditionally**,
+- [x] **Writes to `AGENTS.md`, `CLAUDE.md`, and `.tst/rules/**` are refused unconditionally**,
       enforced in the tool itself (prime directive §2.4)
-- [ ] Refusals are logged to the audit trail as Class C events
+- [x] Refusals are logged to the audit trail as Class C events
 
 ---
 
@@ -628,11 +628,11 @@ control, not a convenience.
 **Size:** 2 · **Depends on:** TD-602
 
 **Acceptance criteria:**
-- [ ] `fs_read` with optional line ranges; returns content with line numbers
-- [ ] `fs_list` and glob search, respecting ignore rules
-- [ ] Binary files detected and refused with an explanatory message rather than dumping bytes
-- [ ] Large files truncated with explicit markers and a stated total size
-- [ ] Encoding errors handled without crashing
+- [x] `fs_read` with optional line ranges; returns content with line numbers
+- [x] `fs_list` and glob search, respecting ignore rules
+- [x] Binary files detected and refused with an explanatory message rather than dumping bytes
+- [x] Large files truncated with explicit markers and a stated total size
+- [x] Encoding errors handled without crashing
 
 ---
 
@@ -640,12 +640,12 @@ control, not a convenience.
 **Size:** 3 · **Depends on:** TD-602, TD-705
 
 **Acceptance criteria:**
-- [ ] `fs_write` creates or overwrites; parent directories created as needed
-- [ ] `fs_edit` performs exact string replacement, failing loudly if the target is absent or
+- [x] `fs_write` creates or overwrites; parent directories created as needed
+- [x] `fs_edit` performs exact string replacement, failing loudly if the target is absent or
       ambiguous
-- [ ] Every write produces a diff in the `tool_result` for display
-- [ ] Writes are atomic (temp file plus rename) — no partial file on failure
-- [ ] Every write is checkpointed per TD-705
+- [x] Every write produces a diff in the `tool_result` for display
+- [x] Writes are atomic (temp file plus rename) — no partial file on failure
+- [x] Every write is checkpointed per TD-705
 
 ---
 
@@ -653,14 +653,14 @@ control, not a convenience.
 **Size:** 5 · **Depends on:** TD-602
 
 **Acceptance criteria:**
-- [ ] Commands run with the workspace as working directory
-- [ ] Configurable timeout; process group killed on timeout or cancel
-- [ ] stdout and stderr streamed to the timeline as they arrive, not buffered to the end
-- [ ] Output capped with truncation markers
-- [ ] Exit code returned; non-zero is a normal result the model can reason about, not an error
-- [ ] Environment sanitized: no API keys, no keychain material, no tokens passed to child
+- [x] Commands run with the workspace as working directory
+- [x] Configurable timeout; process group killed on timeout or cancel
+- [x] stdout and stderr streamed to the timeline as they arrive, not buffered to the end
+- [x] Output capped with truncation markers
+- [x] Exit code returned; non-zero is a normal result the model can reason about, not an error
+- [x] Environment sanitized: no API keys, no keychain material, no tokens passed to child
       processes — asserted by test
-- [ ] `allowed_commands` allowlist enforced when configured, matching on the resolved binary
+- [x] `allowed_commands` allowlist enforced when configured, matching on the resolved binary
 
 ---
 
@@ -676,12 +676,12 @@ Spec §12.
 **Size:** 3 · **Depends on:** TD-601
 
 **Acceptance criteria:**
-- [ ] Classes A, B, C modeled per spec §12.2
-- [ ] Static rule table classifies unambiguous cases without a model call: any path outside the
+- [x] Classes A, B, C modeled per spec §12.2
+- [x] Static rule table classifies unambiguous cases without a model call: any path outside the
       workspace → C; any network call to a new host → C; steering-file write → C; cap exceeded
       → C; in-workspace source edit within `writable_paths` → A
-- [ ] Rule table is data, not scattered conditionals, and is unit-tested case by case
-- [ ] Every classification records which rule fired, for explainability
+- [x] Rule table is data, not scattered conditionals, and is unit-tested case by case
+- [x] Every classification records which rule fired, for explainability
 
 ---
 
@@ -689,11 +689,11 @@ Spec §12.
 **Size:** 3 · **Depends on:** TD-701, TD-402
 
 **Acceptance criteria:**
-- [ ] **Every tool dispatch routes through the classifier. There is no bypass path** — asserted
+- [x] **Every tool dispatch routes through the classifier. There is no bypass path** — asserted
       by a test that enumerates dispatch call sites
-- [ ] Classification precedes execution and precedes any approval decision
-- [ ] Class is attached to the audit record and to the `tool_call` event
-- [ ] A tool that somehow reaches execution unclassified raises immediately rather than
+- [x] Classification precedes execution and precedes any approval decision
+- [x] Class is attached to the audit record and to the `tool_call` event
+- [x] A tool that somehow reaches execution unclassified raises immediately rather than
       proceeding
 
 ---
@@ -702,11 +702,11 @@ Spec §12.
 **Size:** 3 · **Depends on:** TD-702, TD-303
 
 **Acceptance criteria:**
-- [ ] Cases the rule table cannot decide are classified by a **worker-tier** call with a
+- [x] Cases the rule table cannot decide are classified by a **worker-tier** call with a
       tight, cached prompt
-- [ ] Result cached per (tool, argument-shape) within a session to avoid repeat cost
-- [ ] Classifier failure defaults to **B**, never to A — fail toward asking, not toward acting
-- [ ] Classifier cost is tracked separately and visible in the cost breakdown
+- [x] Result cached per (tool, argument-shape) within a session to avoid repeat cost
+- [x] Classifier failure defaults to **B**, never to A — fail toward asking, not toward acting
+- [x] Classifier cost is tracked separately and visible in the cost breakdown
 
 ---
 
@@ -734,13 +734,13 @@ checkmarks were not.)
 **Size:** 5 · **Depends on:** TD-604
 
 **Acceptance criteria:**
-- [ ] Each meaningful unit of work commits to a session branch `tst/session/<id>`
-- [ ] **Never commits to `main`**
-- [ ] Commit message references the decision and session
-- [ ] Non-git workspaces degrade gracefully: feature disabled, user informed once, everything
+- [x] Each meaningful unit of work commits to a session branch `tst/session/<id>`
+- [x] **Never commits to `main`**
+- [x] Commit message references the decision and session
+- [x] Non-git workspaces degrade gracefully: feature disabled, user informed once, everything
       else still works
-- [ ] Pre-existing uncommitted user changes are never clobbered — detected and reported first
-- [ ] Test covers: clean repo, dirty repo, no repo, detached HEAD, mid-rebase
+- [x] Pre-existing uncommitted user changes are never clobbered — detected and reported first
+- [x] Test covers: clean repo, dirty repo, no repo, detached HEAD, mid-rebase
 
 **Notes:** The branch is the undo stack, the audit trail, and the review surface. This story is
 what makes aggressive Class A behavior safe.
@@ -751,12 +751,12 @@ what makes aggressive Class A behavior safe.
 **Size:** 2 · **Depends on:** TD-602
 
 **Acceptance criteria:**
-- [ ] `.tst/config.yaml` defines `writable_paths`, `allowed_commands`, `network`, and caps
+- [x] `.tst/config.yaml` defines `writable_paths`, `allowed_commands`, `network`, and caps
       (`spend_usd`, `wall_clock_hours`, `max_iterations`)
-- [ ] Sensible defaults applied when the file is absent: workspace-only writes, no network,
+- [x] Sensible defaults applied when the file is absent: workspace-only writes, no network,
       conservative spend cap
-- [ ] Validated on load with actionable errors
-- [ ] Boundary visible in the UI so the user always knows the current wall
+- [x] Validated on load with actionable errors
+- [x] Boundary visible in the UI so the user always knows the current wall
 
 ---
 
@@ -764,12 +764,12 @@ what makes aggressive Class A behavior safe.
 **Size:** 3 · **Depends on:** TD-706, TD-304
 
 **Acceptance criteria:**
-- [ ] Spend cap checked before each model call; exceeding it pauses the session
-- [ ] Wall-clock and iteration caps enforced
-- [ ] Pause is a **fault report**, not an approval request — session enters a distinct state
+- [x] Spend cap checked before each model call; exceeding it pauses the session
+- [x] Wall-clock and iteration caps enforced
+- [x] Pause is a **fault report**, not an approval request — session enters a distinct state
       with a clear summary
-- [ ] User can raise the cap and resume without losing session state
-- [ ] Test: a session with a $0.01 cap halts on the first call and reports correctly
+- [x] User can raise the cap and resume without losing session state
+- [x] Test: a session with a $0.01 cap halts on the first call and reports correctly
 
 ---
 
@@ -781,11 +781,11 @@ what makes aggressive Class A behavior safe.
 **Size:** 3 · **Depends on:** TD-706
 
 **Acceptance criteria:**
-- [ ] Policy maps (tool, argument pattern) → `auto` | `ask` | `never`
-- [ ] Defaults derive from decision class: A → auto, B → ask, C → ask-or-never per config
-- [ ] Persisted per workspace in `.tst/config.yaml`
-- [ ] Most-specific pattern wins; precedence tested
-- [ ] Policy never grants what the boundary forbids — boundary always wins
+- [x] Policy maps (tool, argument pattern) → `auto` | `ask` | `never`
+- [x] Defaults derive from decision class: A → auto, B → ask, C → ask-or-never per config
+- [x] Persisted per workspace in `.tst/config.yaml`
+- [x] Most-specific pattern wins; precedence tested
+- [x] Policy never grants what the boundary forbids — boundary always wins
 
 ---
 
@@ -817,11 +817,11 @@ client messages round-trip through the daemon handler (`_handle_approve`/`_handl
 **Size:** 2 · **Depends on:** TD-802
 
 **Acceptance criteria:**
-- [ ] "Always allow in this workspace" writes a policy rule scoped as narrowly as the request
+- [x] "Always allow in this workspace" writes a policy rule scoped as narrowly as the request
       allows — never a blanket grant for the whole tool
-- [ ] The generated rule is shown to the user before it is saved
-- [ ] Saved rules are listed and individually revocable in settings
-- [ ] Class C actions can never be always-allowed
+- [x] The generated rule is shown to the user before it is saved
+- [x] Saved rules are listed and individually revocable in settings
+- [x] Class C actions can never be always-allowed
 
 ---
 
@@ -877,11 +877,11 @@ steps. Budget generously — **this is the largest single body of work in v0.1.*
 **Size:** 5 · **Depends on:** TD-105, TD-204
 
 **Acceptance criteria:**
-- [ ] Single window, native chrome, correct behavior on macOS, Linux, Windows
-- [ ] Window state (size, position) persisted across launches
-- [ ] Two-pane layout with a draggable divider whose position persists
-- [ ] Design tokens applied; no hardcoded colors or spacing in components
-- [ ] Light and dark themes following the OS preference
+- [x] Single window, native chrome, correct behavior on macOS, Linux, Windows
+- [x] Window state (size, position) persisted across launches
+- [x] Two-pane layout with a draggable divider whose position persists
+- [x] Design tokens applied; no hardcoded colors or spacing in components
+- [x] Light and dark themes following the OS preference
 
 ---
 
@@ -894,7 +894,7 @@ steps. Budget generously — **this is the largest single body of work in v0.1.*
       list intact
 - [x] Closing the window shuts the daemon down cleanly in v0.1 — with a `TODO(v0.3)` marking
       where detached-session behavior will diverge
-- [ ] No orphaned `tstd` processes after quit under any exit path, including force-quit —
+- [x] No orphaned `tstd` processes after quit under any exit path, including force-quit —
       verified manually on each platform and documented
 
 **Completed (2026-08-13):** Rust host spawns the daemon, waits on the port file keyed by pid,
@@ -938,12 +938,12 @@ extended and regenerated (29 fixtures). Verified: 33 vitest tests pass, `svelte-
 **Size:** 5 · **Depends on:** TD-1003
 
 **Acceptance criteria:**
-- [ ] Multi-line composer with submit-on-Enter and newline-on-Shift-Enter
-- [ ] Streaming assistant output rendered smoothly, without layout jump
-- [ ] Markdown rendering with syntax-highlighted code blocks and copy buttons
-- [ ] Auto-scroll that stops when the user scrolls up, with a jump-to-latest affordance
-- [ ] Conversation history scrollable and virtualized for long sessions
-- [ ] Cancel button available whenever a turn is running
+- [x] Multi-line composer with submit-on-Enter and newline-on-Shift-Enter
+- [x] Streaming assistant output rendered smoothly, without layout jump
+- [x] Markdown rendering with syntax-highlighted code blocks and copy buttons
+- [x] Auto-scroll that stops when the user scrolls up, with a jump-to-latest affordance
+- [x] Conversation history scrollable and virtualized for long sessions
+- [x] Cancel button available whenever a turn is running
 
 ---
 
@@ -1074,10 +1074,10 @@ error.
 **Size:** 2 · **Depends on:** TD-1101
 
 **Acceptance criteria:**
-- [ ] A doctor view checking: daemon reachable, key present and valid, provider reachable,
+- [x] A doctor view checking: daemon reachable, key present and valid, provider reachable,
       git available, workspace writable, steering files parseable
-- [ ] Each failure states the specific fix
-- [ ] Output copyable as redacted text for bug reports
+- [x] Each failure states the specific fix
+- [x] Output copyable as redacted text for bug reports
 
 ---
 
@@ -1106,12 +1106,12 @@ error.
 **Size:** 3 · **Depends on:** TD-704, TD-1003
 
 **Acceptance criteria:**
-- [ ] Session decisions listed with class, choice, rationale, and commit
-- [ ] Filterable by class
-- [ ] Each entry offers a copyable revert command
-- [ ] **Reviewing a full session of Class A decisions takes under a minute** — the density
+- [x] Session decisions listed with class, choice, rationale, and commit
+- [x] Filterable by class
+- [x] Each entry offers a copyable revert command
+- [x] **Reviewing a full session of Class A decisions takes under a minute** — the density
       target that makes the whole autonomy trade work
-- [ ] Links out to the markdown ledger file
+- [x] Links out to the markdown ledger file
 
 ---
 
@@ -1232,7 +1232,7 @@ daemon's `open_workspace` — daemon sessions previously had no dispatcher.
 **Size:** 3 · **Depends on:** TD-1401
 
 **Acceptance criteria:**
-- [ ] Measured and recorded: daemon cold start, session start on a large repo, steering
+- [x] Measured and recorded: daemon cold start, session start on a large repo, steering
       resolution, first token latency (all four live in `core/tests/perf_baselines.json`);
       timeline render at 1000 entries pending TD-1005's timeline component
 - [x] Baselines committed; CI flags regressions beyond a stated threshold

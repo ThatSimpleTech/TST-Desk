@@ -2391,3 +2391,151 @@ file — instead of a YAML round-trip that would strip the shipped file's
 comments. The live daemon applies the change on ``model_copy`` so the
 ``lru_cache``-backed shared config instance is never mutated under other
 consumers.
+
+## 2026-08-14 — TD-1104: Diagnostics (doctor view)
+
+### 1. Key validity and provider reachability share one probe
+
+**Decision:** ``run_diagnostics`` makes at most one live call — the same
+one-token probe TD-1101's ``validate_api_key`` performs — and derives both
+the ``api_key`` and ``provider`` rows from its outcome. ``auth_failed``
+(401) proves reachability while invalidating the key, so the provider row
+reads *ok* in the same report that fails the key. A transport failure
+proves nothing about the key, so the key row reads *skip* with detail
+pointing at the connectivity problem instead.
+
+**Rationale:** Two probes would double the cost and the failure modes
+without buying information. The single-probe reading of each error code is
+exact: 401 can only come from a reached provider.
+
+### 2. The report rides the connection-scoped ``seq=1`` channel
+
+**Decision:** ``diagnostics_report`` is connection-scoped (no
+``session_id``, fixed ``seq=1``), same as ``setup_state`` and
+``policy_rules``. Diagnostics describe the daemon and the user's
+environment, not any session; the workspace and steering rows resolve
+"which workspace" from the most-recent session record, and are *skip*
+rows when no session exists.
+
+**Rationale:** A session-scoped report would force the pane to pick a
+session before asking, and the checks aren't about one. ``seq=1`` keeps
+the client's gap-detector out of a stream the session log doesn't own.
+
+### 3. Fix text speaks UI, not CLI
+
+**Decision:** every failure row's ``fix`` names a thing in the app the
+user can do — "open the wizard from the gear in the title bar", "open
+Doctor again after reconnecting" — never a shell command. The ``skip``
+rows still explain themselves ("not checked — no API key").
+
+**Rationale:** The doctor view is the fallback when the app itself is the
+nearest thing the user trusts; a user who came to fix the desktop app
+should not be sent to a terminal to fix it.
+
+### 4. Paths scrubbed at the rows; secrets scrubbed at the copy boundary
+
+**Decision:** rows that would otherwise embed absolute local paths — the
+workspace row's "{workspace} is writable", steering import issues — are
+scrubbed where the row is built: the workspace is named by basename, and
+import-issue paths are relativized against the workspace (home paths
+become ``~/…``). ``Copy report`` additionally passes the whole assembled
+text through ``redact()`` — the same pass TD-1008's diagnostics copy
+uses — so secret-shaped tokens inside any row's ``detail`` or ``fix``
+never reach the clipboard. The pane shows the same scrubbed rows; no
+absolute local path ever touches the wire.
+
+**Rationale:** TD-1008's diagnostics keep local paths out of pasteable
+output by exclusion; here the rows *want* to name folders, so they get
+just-enough-to-locate forms instead. Redaction at the copy boundary is
+the belt to that: a future check that embeds a key-shaped string can't
+leak in the pasteable artifact even if its row forgot to scrub.
+
+## 2026-08-14 — TD-1404: Timeline render baseline
+
+### 1. The timeline gate lives in vitest, not pytest
+
+**Decision:** ``timeline_render_1000`` is measured and gated by
+``ui/src/lib/timeline-bench.test.ts`` under jsdom — pytest cannot mount a
+Svelte component. Both sides read the same committed
+``core/tests/perf_baselines.json`` with the same threshold (3x baseline or
+baseline + 250 ms). Core keeps the row honest from its side: the metric
+moved from ``PENDING`` to a new ``UI_MEASURED`` map, and
+``test_ui_measured_metrics_have_baselines`` fails if the row is missing
+or null.
+
+**Rationale:** One baselines file, one threshold, whichever runner can
+actually exercise the surface owns the measurement. A deleted row now
+fails in both suites.
+
+### 2. What the number measures
+
+**Decision:** the bench pushes 1000 synthesized daemon events (a
+session-realistic mix: deltas, tool calls with their shell_output chunks,
+results, decisions, errors) through the real ``push()`` store path, then
+mounts ``ActivityTimeline`` and flushes one frame. The push loop is the
+term that scales with entry count — each shell chunk linear-scans for its
+parent row — while the render is windowed by TD-1005's virtualization
+(~30 rows for the stubbed 640px viewport in jsdom), i.e. constant vs
+entry count by design. The JSON metadata states that jsdom measures
+Svelte DOM work, not browser layout or paint.
+
+**Rationale:** A regression someone introduces in the per-event path is
+what a 1000-entry live session would feel as sag; windowed paint staying
+flat is the property the virtualizer was bought for.
+
+### 3. Recording is an env-flagged vitest run
+
+**Decision:** ``BENCH_RECORD=1 npx vitest run src/lib/timeline-bench.test.ts``
+writes the fresh median into the shared JSON (clearing the pending marker
+and declaring the row ui-measured) instead of asserting. Core's
+``scripts/benchmarks.py --record`` conversely preserves the UI-measured
+row when re-baselining the four core metrics — each runner owns its own
+rows and must never clobber the other's.
+
+**Rationale:** Only the vitest pipeline can compile and mount the
+component, and CI never sets the flag, so gate mode is the default. The
+app tree stays browser-typed; the recorder's node fs access sits behind a
+four-line ambient shim (``node-test-shims.d.ts``) rather than pulling
+@types/node into the project for one script-like test.
+
+## 2026-08-14 — TD-1202: Decisions ledger panel
+
+### 1. No new wire — the stream already carries everything
+
+**Decision:** the panel filters ``decision_logged`` (TD-704) out of the
+existing session stream on the client; per-session scoping, class
+filtering, and the revert command are all computed client-side. The undo
+command is derived — ``git revert <sha>`` — exactly as the ledger writer
+computes it in ``core/tstd/autonomy/ledger.py``, so the copy matches the
+markdown.
+
+**Rationale:** TD-704 put class/what/why/commit on the event precisely so
+reviewers would not need a second channel. A ``list_decisions`` verb would
+re-implement replay the client already gets from attach.
+
+### 2. Density is the interface
+
+**Decision:** one line per decision — class chip, ``what``, short SHA —
+with click-to-expand for the ``why`` and the revert button. Class filter
+chips (A/B/C/All) sit in the header. The AC's "under a minute for a full
+session of Class A" is met structurally: the A filter is one click and
+each row costs a glance.
+
+**Rationale:** Any design that shows rationale by default turns the
+scannable list back into prose. The A/B/C classes exist to be a filter,
+not a label.
+
+### 3. Link-out via a zero-dep shell command, with a path fallback
+
+**Decision:** the panel opens ``<workspace>/.tst/autonomy/DECISIONS.md``
+through a new ``open_path`` Tauri command (``open`` / ``cmd /c start`` /
+``xdg-open`` — no plugin added, no capability change). In a bare browser
+(dev), the click falls back to copying the path. The relative ledger
+location is a house constant mirrored from ``autonomy/ledger.py`` and
+pinned by a test on the value.
+
+**Rationale:** ``@tauri-apps/plugin-opener`` would drag a Rust + JS
+dependency and a capabilities row through packaging for one click; the
+std-command spelling is fifteen lines and covers the three CI platforms.
+The path-always-visible footer means the fallback never leaves the user
+without the destination.
