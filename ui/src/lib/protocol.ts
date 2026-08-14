@@ -255,6 +255,10 @@ export interface TurnComplete extends DaemonEvent {
   cost: number;
   tier: "brain" | "worker" | "validator";
   duration: number;
+  // TD-1008: a failed turn (provider/keychain error) is machine-visible so
+  // notifications can key tailored copy off the typed cause.
+  failed: boolean;
+  error_code: string | null;
 }
 
 export interface SteeringReloaded extends DaemonEvent {
