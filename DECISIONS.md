@@ -1549,4 +1549,3 @@ stream cannot prove initial resolution.
 
 **Rationale:** The criterion is that steering reached the model. The recorded
 request is the ground truth of that, and the mock already records it.
->>>>>>> td/1401-headless-harness
