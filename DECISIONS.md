@@ -542,3 +542,37 @@ only after a write has succeeded. Writes never stop.
 **Rationale:** "Degrades loudly" is a user-experience requirement, not a log volume. One
 banner per failure burst tells the user the trail is incomplete; a per-write notification
 would drown the timeline during a persistent disk fault.
+
+---
+
+## TD-903 — Cost aggregation and export
+
+### 1. Aggregates return raw SUM precision
+
+**Decision:** `cost_by_*` return the SQLite SUM unrounded. Presentation formatting is the
+consumer's job.
+
+**Rationale:** The story's property test requires aggregates to equal the sum of the
+individual records; rounding to 6 decimals inside the store broke that equality by up to
+5e-7 per bucket. An audit number that doesn't match its own receipts is worse than an
+ugly float.
+
+### 2. Query/export layer is a sibling module, not more of `audit.py`
+
+**Decision:** `audit_queries.py` holds the read side (aggregations, exports); `audit.py`
+stays the write-only append path plus schema.
+
+**Rationale:** The append-only write path is the audited surface — keeping it small keeps it
+reviewable. The read side will grow (dashboards, CLIs, rollups) without touching it. The
+queries read `store._conn` in-package rather than growing a public read API on the store:
+same-module-package access is the pragmatic seam; the writer already serializes access.
+
+### 3. Exports carry individual records, not aggregates
+
+**Decision:** JSONL/CSV export one row per `model_calls` record (with `is_classifier` and
+ISO-8601 UTC timestamp), not pre-aggregated buckets.
+
+**Rationale:** Aggregates are always recomputable from the records; the reverse isn't.
+The export exists for reconciliation against provider billing — which is per-call. The
+`model` slug is the user's own configured data, included so bills reconcile (prime
+directive §7 restricts slugs in code, not in the user's records).
