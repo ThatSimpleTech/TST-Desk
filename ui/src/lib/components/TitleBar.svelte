@@ -19,6 +19,7 @@
 		startWorkspaces,
 	} from '../workspaces.svelte.js';
 	import { onMount } from 'svelte';
+	import Icon from './Icon.svelte';
 
 	const TIERS = ['brain', 'worker', 'validator'] as const;
 
@@ -89,7 +90,7 @@
 
 <div class="titlebar">
 	<!-- Workspace: the name opens the recents menu (TD-1103 quick switch +
-	     per-entry remove); the 📁 entry in the menu is the picker. -->
+	     per-entry remove); the folder entry in the menu is the picker. -->
 	<div class="ws-wrap">
 		<button
 			class="workspace"
@@ -99,16 +100,9 @@
 			onclick={toggleWorkspaceMenu}
 			title={session.workspacePath ?? 'Open a workspace'}
 		>
-			<svg class="folder" viewBox="0 0 16 16" aria-hidden="true">
-				<path
-					d="M1.5 3.5a1 1 0 0 1 1-1h3.19a1 1 0 0 1 .78.37l.94 1.13h6.09a1 1 0 0 1 1 1V12.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9z"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="1.2"
-				/>
-			</svg>
+			<span class="folder"><Icon name="folder" size={12} /></span>
 			<span>{displayName ?? 'Open workspace…'}</span>
-			<span class="chevron" aria-hidden="true">▾</span>
+			<span class="chevron" aria-hidden="true"><Icon name="chevron-down" size={10} /></span>
 		</button>
 
 		{#if workspaces.menuOpen}
@@ -140,14 +134,14 @@
 							aria-label="Remove {workspaceName(recent.path)} from recents"
 							title="Remove from recents"
 							onclick={() => hideRecent(recent.path)}
-						>✕</button>
+						><Icon name="x" size={10} /></button>
 					</div>
 				{/each}
 				{#if visibleRecents().length > 0}
 					<div class="ws-sep" aria-hidden="true"></div>
 				{/if}
 				<button class="ws-open" type="button" role="menuitem" onclick={pick}>
-					📁 Open folder…
+					<Icon name="folder" size={12} /> Open folder…
 				</button>
 			</div>
 		{/if}
@@ -243,8 +237,7 @@
 	}
 
 	.folder {
-		width: 12px;
-		height: 12px;
+		display: inline-flex;
 		flex-shrink: 0;
 		color: var(--color-text-secondary);
 	}
@@ -255,7 +248,7 @@
 	}
 
 	.chevron {
-		font-size: 8px;
+		display: inline-flex;
 		color: var(--color-text-secondary);
 	}
 

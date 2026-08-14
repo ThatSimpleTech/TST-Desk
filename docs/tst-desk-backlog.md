@@ -1353,15 +1353,15 @@ our own mark, and our own copy voice. Do not lift Claude's exact palette
 **Size:** 1 · **Depends on:** TD-1001
 
 **Acceptance criteria:**
-- [ ] Light theme: warm paper ground, white reserved for lifted surfaces, warm
+- [x] Light theme: warm paper ground, white reserved for lifted surfaces, warm
       ink text, warm hairline borders — no pure-white page background, no cool grays
-- [ ] Accent is a rust-family hue on our own hex, used only for send/active/links/
+- [x] Accent is a rust-family hue on our own hex, used only for send/active/links/
       key actions — never decorative
-- [ ] Dark theme: warm charcoal ground with elevated surfaces; accent lightened
+- [x] Dark theme: warm charcoal ground with elevated surfaces; accent lightened
       for contrast
-- [ ] Radii scale with element size (small controls ≈8px, cards 12–16px, composer
+- [x] Radii scale with element size (small controls ≈8px, cards 12–16px, composer
       ≈24px); shadows ≤ ~6% alpha, hairlines do the separation work
-- [ ] Changes confined to design tokens + global CSS; vitest and svelte-check green
+- [x] Changes confined to design tokens + global CSS; vitest and svelte-check green
 
 **Notes:** all in `ui/src/lib/tokens.css` (+ `app.css` if ground rules live there).
 Light: ground `#F8F6F1`, lifted `#FFFFFF`, ink `#191817`, secondary `#5C574D`,
@@ -1370,23 +1370,53 @@ on-accent `#FFFFFF`; semantic ok `#3E7A4E`, warn `#9A6A1B`, err `#A0432E`.
 Dark: ground `#232320`, elevated `#2C2C28`, ink `#EDEAE3`, secondary `#A39E93`,
 hairline `#3D3D37`, user bubble `#3A382F`, accent `#D0794F`.
 
+**Completed (2026-08-14):** `ui/src/lib/tokens.css` rewritten around a canonical
+semantic set — `--color-ground` / `--color-lifted` / `--color-sunken` surfaces,
+`--color-ink` ramp (secondary/muted), `--color-hairline`, `--color-user-bubble`
+(staged for TD-1603), `--color-accent` / `--color-accent-hover` /
+`--color-on-accent`, `--color-ok` / `--color-warn` / `--color-err` — with the
+exact hex values from the Notes in both themes; every pre-TD-1601 name kept as a
+legacy alias (`--color-bg`, `--color-text`, `--color-success`, …) so no component
+needed a touch. Derived values the Notes didn't pin are documented in the file:
+sunken washes, muted ink, dark accent-hover, and lifted dark status hues.
+`--color-info` aliases the accent — running/active read as rust, not a cool hue.
+Radii re-scaled to 8/12/16/24 (`--radius-sm/md/lg/xl`) and shadows capped at
+4–6% alpha on a warm near-black, going near-silent on dark so the hairline
+carries separation. The accent-colored user bubble is deliberately unchanged —
+recoloring it to `--color-user-bubble` is TD-1603's move. Verified token-only:
+vitest 253/253, svelte-check 0/0 (286 files), `vite build` clean.
+
 ---
 
 ### TD-1602 — Typography
 **Size:** 2 · **Depends on:** TD-1601
 
 **Acceptance criteria:**
-- [ ] Source Serif 4 vendored into the repo (woff2 + OFL license file); no CDN or
+- [x] Source Serif 4 vendored into the repo (woff2 + OFL license file); no CDN or
       runtime fetch
-- [ ] Serif carries display/greeting/headings at light weight with ≈−0.02em
+- [x] Serif carries display/greeting/headings at light weight with ≈−0.02em
       tracking; system sans carries UI; mono carries code, tokens, and cost figures
-- [ ] Type roles defined as tokens with a documented fallback chain
-- [ ] Bundle size impact recorded in `DECISIONS.md`
+- [x] Type roles defined as tokens with a documented fallback chain
+- [x] Bundle size impact recorded in `DECISIONS.md`
 
 **Notes:** woff2 into `ui/static/fonts/` with `OFL.txt`; `@font-face` with
 `font-display: swap`. Display stack `"Source Serif 4", Georgia, serif`; keep the
 existing system sans and `ui-monospace` stacks. Weights 400–500 only — the voice
 stays light.
+
+**Completed (2026-08-14):** Source Serif 4 latin woff2 (400 + 500, Fontsource
+files via jsDelivr, verified `wOF2` magic and `file(1)` identification — not HTML
+error pages) vendored to `ui/static/fonts/` with the SIL OFL 1.1 text from
+google/fonts as `OFL.txt`; 41,616 bytes of font payload, recorded in
+DECISIONS.md. Two `@font-face` blocks with `font-display: swap` live in
+`app.css`. Type roles are tokens in `tokens.css` with documented fallbacks:
+`--font-display` (`'Source Serif 4', Georgia, serif`), `--font-sans` (system
+stack; `--font-family` aliased to it), `--font-mono` (ui-monospace stack), plus
+`--tracking-display: -0.02em`. The serif already renders at weight 500 on the
+shell wordmark, markdown h1–h4, and the wizard/doctor/decisions pane titles;
+five hardcoded `ui-monospace, monospace` stacks now route through `--font-mono`.
+The greeting itself lands with TD-1605. vitest 253/253, svelte-check 0/0
+(286 files), `vite build` clean with the fonts emitted to `build/fonts/`.
 
 ---
 
@@ -1471,13 +1501,29 @@ analog.
 **Size:** 2 · **Depends on:** TD-1601
 
 **Acceptance criteria:**
-- [ ] No emoji left in chrome (header buttons, send, panes); inline outline SVGs
+- [x] No emoji left in chrome (header buttons, send, panes); inline outline SVGs
       throughout — ≈1.5px stroke, sized to text, fill only for active state
-- [ ] Icons defined once in a shared map/component, not pasted per call site
-- [ ] Default Svelte favicon replaced with our own mark
+- [x] Icons defined once in a shared map/component, not pasted per call site
+- [x] Default Svelte favicon replaced with our own mark
 
 **Notes:** Lucide-style 24px viewBox paths, `currentColor`. The 📜 🩺 ⚙ header
 buttons are the loudest "hack project" tell. Tauri bundle icons stay with E13.
+
+**Completed (2026-08-14):** Ten glyphs defined once in `ui/src/lib/icons.ts`
+(scroll, stethoscope, settings, folder, x, check, minus, alert, arrow-up,
+chevron-down) and rendered by one `Icon.svelte` — 24px viewBox, 1.5px
+`currentColor` stroke, round caps/joins, `fill` reserved for active states,
+default size 1em (sized to text) with a px override. Emoji are out of the
+chrome: the 📜/🩺/⚙ header buttons, the title bar's folder/chevron/remove
+glyphs and menu picker row, the composer's ↑ send, both pane ✕ closers, the
+wizard preset ✓, the stack panel's ⚠ badges, and the doctor row marks (the
+copied text report keeps its ASCII ✓/✗ on purpose — plain text is the right
+medium there; its tests still pin those strings). The last product emoji, a 📁
+in the workspace-not-found toast copy, became the words "folder picker". The
+favicon is an original mark: rust rounded square carrying a minimal desk
+outline (top, leg, drawer pedestal) in warm paper, no borrowed logo. The
+streaming caret `▍` stays — TD-1603 owns its recolor. vitest 253/253,
+svelte-check 0/0 (288 files), `vite build` clean.
 
 ---
 
@@ -1485,13 +1531,28 @@ buttons are the loudest "hack project" tell. Tauri bundle icons stay with E13.
 **Size:** 1 · **Depends on:** TD-1601
 
 **Acceptance criteria:**
-- [ ] Code blocks theme-aware in dark mode — no light-on-light highlight.js theme
-- [ ] Esc cancels the running turn; ⌘, reopens the wizard
-- [ ] Shortcuts discoverable (title attributes or a hint line)
+- [x] Code blocks theme-aware in dark mode — no light-on-light highlight.js theme
+- [x] Esc cancels the running turn; ⌘, reopens the wizard
+- [x] Shortcuts discoverable (title attributes or a hint line)
 
 **Notes:** `Markdown.svelte` currently imports light-only `github.css`; replace
 with a token-driven hljs theme or a media-scoped dual import. Esc wires to the
 existing cancel path.
+
+**Completed (2026-08-14):** `Markdown.svelte` now imports
+`ui/src/lib/hljs-theme.css` instead of highlight.js's light-only `github.css`;
+the theme maps the common hljs classes to new `--syn-comment` / `--syn-keyword`
+/ `--syn-string` / `--syn-number` / `--syn-title` tokens defined per color
+scheme in `tokens.css` (dark lifts each warm hue), so code blocks follow the
+palette and dark mode has no light-on-light. Shortcuts are a pure, rune-free
+`resolveShortcut()` in `ui/src/lib/shortcuts.ts` wired through
+`<svelte:window>` in `AppShell`: Esc peels layers — an open workspace menu
+closes, an open modal (wizard/doctor/decisions) eats it, otherwise a live turn
+(`showCancel`) cancels through the chat store's existing `cancel` message —
+and ⌘, (Ctrl+, off-mac) reopens the wizard. Discoverable via titles: the
+cancel button reads "Cancel turn (Esc)", the wizard gear "Setup wizard (⌘,)".
+Nine new vitest cases pin the layer order and the inert combos; vitest
+262/262, svelte-check 0/0 (290 files), `vite build` clean.
 
 ---
 

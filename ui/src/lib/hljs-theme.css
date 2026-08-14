@@ -1,0 +1,66 @@
+/* TST Desk — highlight.js theme (TD-1609)
+ *
+ * Token-driven: every hue is a --syn-* token from tokens.css, so code blocks
+ * follow the warm palette in both themes with no light-on-light dark mode.
+ * Imported by Markdown.svelte in place of highlight.js's light-only
+ * github.css. Class coverage mirrors the common hljs grammars.
+ */
+
+.hljs {
+	color: var(--color-ink);
+}
+
+.hljs-comment,
+.hljs-quote {
+	color: var(--syn-comment);
+	font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-tag,
+.hljs-meta {
+	color: var(--syn-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-meta .hljs-string {
+	color: var(--syn-string);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+	color: var(--syn-number);
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-name,
+.hljs-section,
+.hljs-built_in,
+.hljs-type {
+	color: var(--syn-title);
+}
+
+.hljs-deletion {
+	color: var(--color-err);
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: var(--weight-bold);
+}
+
+.hljs-link {
+	text-decoration: underline;
+}
