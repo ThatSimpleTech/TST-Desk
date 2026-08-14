@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 import { ProtocolClient, type ConnectionState, type SocketLike } from "./client";
+import { bindClient, ingestEvent, resetSession } from "./session-status.svelte.js";
 
 export interface DaemonStatus {
   state: "starting" | "connected" | "crashed" | "stopping" | "stopped";
@@ -79,12 +80,14 @@ function makeClient(): void {
       onEvent(event) {
         lastEvent.event = event;
         for (const sub of eventSubs) sub(event);
+        ingestEvent(event); // wire the session reducer (TD-1006)
       },
       onStateChange(state) {
         ws.state = state;
       },
     },
   );
+  bindClient(client);
 }
 
 /** Bring the daemon connection up and start following host supervision events. */
@@ -105,6 +108,8 @@ export async function connect(): Promise<void> {
 export function disconnect(): void {
   client?.stop();
   client = null;
+  bindClient(null);
+  resetSession();
   unlistenDaemon?.();
   unlistenDaemon = null;
   ws.state = "stopped";

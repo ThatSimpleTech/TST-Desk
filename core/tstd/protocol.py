@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 
 from .logging import redact_secrets
+from .router import TierName
 
 # Current protocol version
 PROTOCOL_VERSION = 1
@@ -330,6 +331,27 @@ class CostUpdate(DaemonEvent):
     # Decision-classifier worker calls (TD-703), tracked separately from
     # main-loop cost.
     classifier_cost: float = Field(default=0.0, ge=0)
+    # Per-tier session spend (TD-1006) — keys are tier names that spent.
+    # Powers the title bar's hover breakdown. Classifier calls go to
+    # classifier_cost, not here.
+    cost_by_tier: dict[str, float] = Field(default_factory=dict)
+
+
+class TierState(DaemonEvent):
+    """Active model tier and configured slugs (TD-1006).
+
+    Emitted when a session opens, when a ``set_tier`` override lands, and
+    whenever the router changes tier between turns (lead-turns handoff,
+    failure escalation). ``tier`` is what handles the next turn;
+    ``override`` is the pinned override when the user picked one.
+    """
+
+    type: Literal["tier_state"] = "tier_state"
+    session_id: str
+    tier: TierName
+    override: TierName | None = None
+    # tier name → configured model slug, "brain"/"worker"/"validator".
+    model_slugs: dict[str, str] = Field(default_factory=dict)
 
 
 class BoundaryUpdate(DaemonEvent):
@@ -494,6 +516,7 @@ DaemonEventT = Annotated[
     | CostUpdate
     | BoundaryUpdate
     | TurnComplete
+    | TierState
     | ContextCompacted
     | SteeringReloaded
     | TierSwitched
@@ -538,6 +561,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "cost_update",
         "boundary_update",
         "turn_complete",
+        "tier_state",
         "context_compacted",
         "steering_reloaded",
         "tier_switched",

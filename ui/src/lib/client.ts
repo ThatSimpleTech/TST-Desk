@@ -33,6 +33,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "cost_update",
   "boundary_update",
   "turn_complete",
+  "tier_state",
   "context_compacted",
   "steering_reloaded",
   "tier_switched",
@@ -150,6 +151,16 @@ export class ProtocolClient {
     if (!this.socket || this.handshake !== "idle") return false;
     this.socket.send(JSON.stringify(msg));
     return true;
+  }
+
+  /** Open a workspace directory; the daemon answers with session_state. */
+  openWorkspace(path: string): void {
+    this.send({ type: "open_workspace", path });
+  }
+
+  /** Pin a session's model tier (TD-1006). The daemon acks with tier_state. */
+  setTier(sessionId: string, tier: "brain" | "worker" | "validator"): void {
+    this.send({ type: "set_tier", session_id: sessionId, tier });
   }
 
   /** Start the client: resolve daemon info and open the first connection. */

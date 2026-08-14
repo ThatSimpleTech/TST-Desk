@@ -165,7 +165,11 @@
     "turn_cost": 0.05,
     "session_cost": 0.5,
     "total_cost": 1.2,
-    "classifier_cost": 0.0
+    "classifier_cost": 0.01,
+    "cost_by_tier": {
+      "brain": 0.4,
+      "worker": 0.1
+    }
   },
   "boundary_update": {
     "type": "boundary_update",
@@ -193,6 +197,30 @@
     "cost": 0.03,
     "tier": "worker",
     "duration": 2.5
+  },
+  "tier_state": {
+    "type": "tier_state",
+    "seq": 18,
+    "session_id": "sess-1",
+    "tier": "brain",
+    "override": null,
+    "model_slugs": {
+      "brain": "test-brain-slug",
+      "worker": "test-worker-slug",
+      "validator": "test-validator-slug"
+    }
+  },
+  "tier_state_override": {
+    "type": "tier_state",
+    "seq": 19,
+    "session_id": "sess-1",
+    "tier": "validator",
+    "override": "validator",
+    "model_slugs": {
+      "brain": "test-brain-slug",
+      "worker": "test-worker-slug",
+      "validator": "test-validator-slug"
+    }
   },
   "error": {
     "type": "error",
