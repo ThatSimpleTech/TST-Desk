@@ -427,3 +427,118 @@ union, carrying `prefix_hash`, `prefix_tokens`, and `source_count`.
 **Rationale:** The timeline needs a typed, distinct announcement of a reload (vs. a generic
 log line). It complements the existing `InstructionStack` event, which carries the full
 resolved stack for the inspector.
+
+---
+
+## 2026-08-13 — TD-901: Audit store
+
+Decisions made while building the append-only SQLite audit store.
+
+### 1. Shared redaction helper extracted from the logging filter
+
+**Decision:** `redact_secrets(text)` now lives as a module-level function in
+`tstd/logging.py`; `SecretsRedactionFilter` delegates to it, and the audit store scrubs
+tool arguments with it before insert.
+
+**Rationale:** Criterion 4 requires arguments scrubbed "through the same redaction filter
+as logs." A shared *function* over the same `SECRET_PATTERNS` list is that requirement made
+structural: a pattern added once protects logs and the audit database at the same time.
+
+### 2. `costs` is a VIEW over `model_calls`, not a table
+
+**Decision:** The sixth schema object is a view aggregating `model_calls` by
+(session, turn, tier, day), with classifier cost kept on its own column.
+
+**Rationale:** Rollup rows would duplicate truth in a store that can never UPDATE them;
+any later-scrubbed insert would leave the aggregate permanently wrong. A view computes on
+read, keeping one source of truth. Indices on `model_calls(session_id)` and
+`model_calls(ts)` keep the view's group-bys off full scans for the queries the UI makes
+(timeline per session, cost meter per session/day, decisions panel per session).
+
+### 3. One row per *completed* tool call — never insert-then-patch
+
+**Decision:** `tool_calls` rows are inserted after the call resolves, carrying status and
+result hash together. There is no "pending" row that would need an UPDATE later.
+
+**Rationale:** Preserves append-only as a physical fact. The TD-902 writer pairs
+`ToolCall`/`ToolResult` events by `tool_call_id` before inserting; a call that never
+resolves is recorded as `status='error'` (or `'refused'` for boundary refusals) with a
+NULL result hash.
+
+### 4. Timestamps are UTC epoch seconds (REAL)
+
+**Decision:** All `ts` columns are seconds since the Unix epoch. Day buckets derive via
+`datetime(ts, 'unixepoch', 'localtime')`.
+
+**Rationale:** Sortable, comparable, and timezone-safe at the storage layer; local-day
+grouping (needed by per-day cost queries) happens at query time, matching how
+`CostTracker` reports "today" in local time.
+
+### 5. Migration steps carry their version stamp inside their transaction
+
+**Decision:** `MIGRATIONS` is an ordered tuple of SQL scripts; each step runs as
+`BEGIN; <schema>; INSERT INTO schema_migrations; COMMIT;` via `executescript`.
+
+**Rationale:** `executescript` autocommits per statement, so the transaction must live in
+the script text for a failed step to roll back atomically with its version stamp. Tested
+by `test_failed_migration_rolls_back_atomically`.
+
+---
+
+## 2026-08-13 — TD-902: Audit writer
+
+Decisions made while wiring the audit store to live sessions.
+
+### 1. Event-sourced recording — no new protocol events
+
+**Decision:** The writer subscribes to each session's append-only event log and records
+turns, tool calls/results, and decisions from `TurnComplete` / `ToolCall` / `ToolResult` /
+`DecisionLogged` events. No event type was added to the protocol.
+
+**Rationale:** TD-204's daemon→client event set is deliberately closed for v0.1 (the shell
+is built against it). The event log already carries everything the audit trail needs except
+per-call model detail (see §2). The event-driven seam also means the loop never knows the
+store exists — recording cannot change loop behavior, and failure in the audit path cannot
+fail a turn.
+
+### 2. Model calls flow through a `CostTracker` listener, not events
+
+**Decision:** `CostTracker` gained `add_listener(callback)` — invoked with
+`(record, is_classifier)` after every recorded call; the loop attaches a forwarding closure
+when the daemon passes an `audit_sink` (new optional `agent_loop` parameter).
+
+**Rationale:** Every provider call already passes through `CostTracker.record()` (and, once
+the E7 track merges, `record_classifier()`), so one listener there observes all spend without
+touching the provider or the protocol. Note for the merge: `record_classifier()` must call
+`_notify(record, is_classifier=True)` when TD-703 lands here — the flag and API already exist.
+
+### 3. Turn model calls are buffered, then inserted with their turn row
+
+**Decision:** `record_model_call` buffers non-classifier calls per session; the `TurnComplete`
+handler inserts the turn row and its model calls in one store op so `turn_id` is set at insert
+time. Buffered calls flush unlinked (`turn_id=NULL`) on terminal session state or writer close.
+
+**Rationale:** The store is append-only — no backfill UPDATE is possible. Buffering is safe
+because both producer (cost listener) and consumer (event subscriber) run on the same event
+loop thread; a cancelled or failed turn emits no `TurnComplete`, so the terminal-state and
+shutdown flushes keep the spend record complete (a lost cost record is an audit defect).
+
+### 4. Refusals are stored as `status='refused'`
+
+**Decision:** A `ToolResult` with `status='error'` whose call carried `decision_class='C'` is
+stored with status `refused`.
+
+**Rationale:** TD-602 forces class C onto boundary refusals; mapping them apart from ordinary
+tool errors makes Class C refusals directly queryable (TD-902 criterion 4) and matches the
+store's `CHECK` constraint vocabulary. On this branch `decision_class` is still always NULL
+(TD-702 lands on the E7 track) — the mapping activates when that merges, no further change.
+
+### 5. Failure reporting is edge-triggered
+
+**Decision:** On a store write failure the writer logs the exception and emits one typed
+`error` event (`audit_write_failed`) into the affected session's timeline; it reports again
+only after a write has succeeded. Writes never stop.
+
+**Rationale:** "Degrades loudly" is a user-experience requirement, not a log volume. One
+banner per failure burst tells the user the trail is incomplete; a per-write notification
+would drown the timeline during a persistent disk fault.
