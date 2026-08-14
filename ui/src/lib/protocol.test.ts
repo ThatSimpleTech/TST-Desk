@@ -42,6 +42,14 @@ import type {
   SessionList,
   PolicyRules,
   PolicyRuleSummary,
+  GetSetupState,
+  SetApiKey,
+  ValidateApiKey,
+  SetPreset,
+  SetupState,
+  ApiKeyValidated,
+  RunDiagnostics,
+  DiagnosticsReport,
   Error,
 } from "./protocol";
 
@@ -164,6 +172,35 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(m.type).toBe("list_sessions");
   });
 
+  // TD-1101 first-run wizard
+  it("get_setup_state", () => {
+    const m = fixtures.get_setup_state as GetSetupState;
+    expect(m.type).toBe("get_setup_state");
+  });
+
+  it("set_api_key", () => {
+    const m = fixtures.set_api_key as SetApiKey;
+    expect(m.type).toBe("set_api_key");
+    expect(isString(m.api_key)).toBe(true);
+  });
+
+  it("validate_api_key", () => {
+    const m = fixtures.validate_api_key as ValidateApiKey;
+    expect(m.type).toBe("validate_api_key");
+  });
+
+  it("set_preset", () => {
+    const m = fixtures.set_preset as SetPreset;
+    expect(m.type).toBe("set_preset");
+    expect(isString(m.name)).toBe(true);
+  });
+
+  // TD-1104 doctor
+  it("run_diagnostics", () => {
+    const m = fixtures.run_diagnostics as RunDiagnostics;
+    expect(m.type).toBe("run_diagnostics");
+  });
+
   // hello_ack is out-of-band and unsequenced: daemon→client, no seq.
   it("hello_ack", () => {
     const m = fixtures.hello_ack as HelloAck;
@@ -235,6 +272,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const m3 = fixtures.tool_result_diff as ToolResult;
     expect(isString(m3.diff)).toBe(true);
     expect(m3.diff).toContain("--- a/test.txt");
+    // denial variant carries the machine-readable error_code (TD-1007)
+    const m4 = fixtures.tool_result_denied as ToolResult;
+    expect(m4.status).toBe("error");
+    expect(m4.error_code).toBe("approval_denied");
   });
 
   it("shell_output", () => {
@@ -382,6 +423,44 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("setup_state", () => {
+    // TD-1101: connection-scoped (no session_id), seq=1 like policy_rules.
+    const m = fixtures.setup_state as SetupState;
+    expect(m.type).toBe("setup_state");
+    expect(isBoolean(m.has_api_key)).toBe(true);
+    expect(Array.isArray(m.presets)).toBe(true);
+    expect(m.presets.every(isString)).toBe(true);
+    expect(isString(m.active_preset)).toBe(true);
+    expect(m.seq).toBe(1);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("api_key_validated", () => {
+    const m = fixtures.api_key_validated as ApiKeyValidated;
+    expect(m.type).toBe("api_key_validated");
+    expect(isBoolean(m.ok)).toBe(true);
+    expect(isString(m.detail)).toBe(true);
+    expect(m.seq).toBe(1);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("diagnostics_report", () => {
+    // TD-1104: connection-scoped (no session_id), seq=1 like setup_state.
+    const m = fixtures.diagnostics_report as DiagnosticsReport;
+    expect(m.type).toBe("diagnostics_report");
+    expect(m.seq).toBe(1);
+    expect("session_id" in m).toBe(false);
+    expect(Array.isArray(m.checks)).toBe(true);
+    expect(m.checks.length).toBeGreaterThan(0);
+    for (const c of m.checks) {
+      expect(isString(c.name)).toBe(true);
+      expect(["ok", "fail", "skip"]).toContain(c.status);
+      expect(isString(c.detail)).toBe(true);
+      // `fix` is present-and-string on fails, absent or null otherwise.
+      if (c.status === "fail") expect(typeof c.fix).toBe("string");
+    }
+  });
+
   it("error", () => {
     const m = fixtures.error as Error;
     expect(m.type).toBe("error");
@@ -403,6 +482,8 @@ describe("All fixtures have required shape", () => {
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
+      "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
+      "run_diagnostics",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -413,12 +494,13 @@ describe("All fixtures have required shape", () => {
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
-      "tool_result_truncated", "tool_result_diff", "shell_output",
-      "approval_request", "approval_request_always_allow", "decision_logged",
+      "tool_result_truncated", "tool_result_diff", "tool_result_denied",
+      "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "tier_switched",
       "instruction_stack", "session_list", "policy_rules", "error",
-      "error_with_session",
+      "error_with_session", "setup_state", "api_key_validated",
+      "diagnostics_report",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

@@ -41,7 +41,7 @@ async def _open_workspace(ws: Any, path: str) -> dict[str, Any]:
 
 class TestAttachDetachIntegration:
     @pytest.mark.asyncio
-    async def test_attach_replays_events_from_seq(self) -> None:
+    async def test_attach_replays_events_from_seq(self, tmp_path: Path) -> None:
         """attach with from_seq replays events starting at that seq."""
         with tempfile.TemporaryDirectory() as tmp:
             daemon = Daemon(data_dir=Path(tmp))
@@ -57,7 +57,7 @@ class TestAttachDetachIntegration:
             ws = await _connect_and_handshake(uri, daemon.ws_server.token)
 
             # Open a workspace — creates a session
-            session_state = await _open_workspace(ws, "/tmp/test")
+            session_state = await _open_workspace(ws, str(tmp_path))
             assert session_state["type"] == "session_state"
             session_id = session_state["session_id"]
 
@@ -93,7 +93,7 @@ class TestAttachDetachIntegration:
             await asyncio.gather(daemon_task, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_attach_streams_live_events(self) -> None:
+    async def test_attach_streams_live_events(self, tmp_path: Path) -> None:
         """After replay, new events stream live to the attached client."""
         with tempfile.TemporaryDirectory() as tmp:
             daemon = Daemon(data_dir=Path(tmp))
@@ -106,7 +106,7 @@ class TestAttachDetachIntegration:
 
             uri = f"ws://127.0.0.1:{daemon.ws_server.port}"
             ws = await _connect_and_handshake(uri, daemon.ws_server.token)
-            session_state = await _open_workspace(ws, "/tmp/test")
+            session_state = await _open_workspace(ws, str(tmp_path))
             session_id = session_state["session_id"]
 
             session = daemon.session_registry.get(session_id)
@@ -130,7 +130,7 @@ class TestAttachDetachIntegration:
             await asyncio.gather(daemon_task, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_no_gaps_no_duplicates_under_concurrent_write(self) -> None:
+    async def test_no_gaps_no_duplicates_under_concurrent_write(self, tmp_path: Path) -> None:
         """Replay and live stream produce no gaps and no duplicates
         while events are being written concurrently."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -144,7 +144,7 @@ class TestAttachDetachIntegration:
 
             uri = f"ws://127.0.0.1:{daemon.ws_server.port}"
             ws = await _connect_and_handshake(uri, daemon.ws_server.token)
-            session_state = await _open_workspace(ws, "/tmp/test")
+            session_state = await _open_workspace(ws, str(tmp_path))
             session_id = session_state["session_id"]
             session = daemon.session_registry.get(session_id)
             assert session is not None
@@ -183,7 +183,7 @@ class TestAttachDetachIntegration:
             await asyncio.gather(daemon_task, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_detach_stops_streaming(self) -> None:
+    async def test_detach_stops_streaming(self, tmp_path: Path) -> None:
         """detach stops the live stream without affecting the session."""
         with tempfile.TemporaryDirectory() as tmp:
             daemon = Daemon(data_dir=Path(tmp))
@@ -196,7 +196,7 @@ class TestAttachDetachIntegration:
 
             uri = f"ws://127.0.0.1:{daemon.ws_server.port}"
             ws = await _connect_and_handshake(uri, daemon.ws_server.token)
-            session_state = await _open_workspace(ws, "/tmp/test")
+            session_state = await _open_workspace(ws, str(tmp_path))
             session_id = session_state["session_id"]
             session = daemon.session_registry.get(session_id)
             assert session is not None
@@ -254,7 +254,7 @@ class TestAttachDetachIntegration:
             await asyncio.gather(daemon_task, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_two_clients_receive_all_events(self) -> None:
+    async def test_two_clients_receive_all_events(self, tmp_path: Path) -> None:
         """Two clients attached to one session both receive all events."""
         with tempfile.TemporaryDirectory() as tmp:
             daemon = Daemon(data_dir=Path(tmp))
@@ -270,7 +270,7 @@ class TestAttachDetachIntegration:
             ws2 = await _connect_and_handshake(uri, daemon.ws_server.token)
 
             # Client 1 opens the workspace
-            session_state = await _open_workspace(ws1, "/tmp/test")
+            session_state = await _open_workspace(ws1, str(tmp_path))
             session_id = session_state["session_id"]
             session = daemon.session_registry.get(session_id)
             assert session is not None

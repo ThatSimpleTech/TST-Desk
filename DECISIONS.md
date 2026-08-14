@@ -2243,6 +2243,48 @@ narrowest stable identity that distinguishes two rules.  Idempotent add
 keeps re-affirming "always allow" for the same call from piling up
 duplicate rules in the settings list.
 
+## 2026-08-14 — TD-1007: Approval cards
+
+Decisions made during the approval-card build, completed on top of TD-803's
+always-allow daemon support.
+
+### 1. The "Always allow" button is TD-1007's; the rule lifecycle is TD-803's
+
+**Decision:** The card's third action — "Always allow in this workspace" —
+lives in TD-1007. It renders only when the daemon's `approval_request`
+carries a `proposed_always_allow` rule, and clicking it sends the
+`always_allow` client message that TD-803's daemon already handles (narrow
+rule generation, `(tool, args)` identity, class-C refusal).
+
+**Rationale:** TD-803 built the whole rule lifecycle but no UI; TD-1007 owns
+the card. Splitting the button out would have meant TD-1007 reimplementing
+rule generation (a collision), while leaving it out left AC #2 unmet. The
+card is a thin client of TD-803's message, so the two lanes never overlap.
+
+### 2. The button is gated on a non-null proposal, not on the class alone
+
+**Decision:** `isAlwaysAllowable` returns true only when
+`proposedAlwaysAllow !== null` and `decisionClass !== 'C'`. The class check
+is defensive: the daemon never proposes a rule for class C, so a proposal
+already implies allowability, but the explicit guard keeps the wall absolute
+even if a future proposal leaked a class-C effect.
+
+**Rationale:** The button must never offer to auto-approve a class-C call
+(the wall). Deriving the button's presence from the daemon's own proposal
+means the UI never invents a rule the policy model didn't already accept.
+
+### 3. The store mutates an exported `$state` array instead of reassigning it
+
+**Decision:** `approval-store.svelte.ts` exports `const pending = $state(...)`
+and mutates it with `push`/`splice`. Reassigning (`pending = [...pending]`)
+is rejected by the Svelte 5 / rolldown compiler (`state_invalid_export`):
+an exported `$state` binding may only be mutated in place.
+
+**Rationale:** The list has to be reactive and exportable to the card/bar.
+In-place mutation goes through the deep proxy (same as timeline-store and
+chat-store), so reassignment — the old Svelte 4 store idiom — is neither
+needed nor allowed.
+
 ## 2026-08-14 — TD-1008: Errors and notifications
 
 Decisions made during the errors-and-notifications build.
@@ -2353,3 +2395,274 @@ exclusions stand: no message content, tool arguments, or filesystem paths.
 redacts at event-log insertion; this pass at the report boundary means the
 UI never has to trust that every future daemon path remembered — the belt
 to its suspenders.
+
+## 2026-08-14 — TD-1101: First-run wizard
+
+### 1. The first-run signal is a keychain probe, not a disk artifact
+
+**Decision:** ``get_setup_state`` answers ``has_api_key`` by probing the OS
+keychain; there is no "setup complete" flag file anywhere.
+
+**Rationale:** A flag file lies in both directions — it survives a key being
+deleted (says set up when it is not) and a key hand-stored before first
+launch (says first run when it is not). The keychain is the source of truth
+for credentials, so it is the source of truth for "has this machine ever
+been set up".
+
+### 2. Setup events ride the connection-scoped channel
+
+**Decision:** ``setup_state`` and ``api_key_validated`` carry ``seq: 1``
+and no ``session_id``, the same convention as ``session_list`` and
+``policy_rules``. ``set_api_key`` and ``set_preset`` are acked with a fresh
+``setup_state`` so one message type keeps the wizard consistent.
+
+### 3. The wizard probes on the client's `connected` transition — `ready` is never emitted
+
+**Decision:** The onboarding store sends ``get_setup_state`` when the
+protocol client reports ``connected``, via a small state fan-out on
+connection-status. The ``ready`` event declared in the wire schema ("Sent
+after a successful handshake") is not emitted by the daemon and stays that
+way: adding a frame after every handshake would rewrite recv-ordering
+assumptions in six daemon test suites to deliver a signal the client
+already has. ``notifications.svelte.ts``'s ``ready`` arm (daemon version
+for diagnostics) remains inert until someone needs it enough to pay that
+cost.
+
+**Rationale:** Occam. The handshake-complete moment is observable
+client-side; the probe is idempotent and reconnect-safe either way.
+
+### 4. Key validation is one live call, one token
+
+**Decision:** ``validate_api_key`` builds the provider client from the
+keychain against the active brain's base URL and asks for ``max_tokens=1``
+on a throwaway "ok" message. A 401 maps to keychain-fix copy; anything else
+surfaces the provider's own error text. The success reply never names the
+key.
+
+**Rationale:** Cheapest possible proof the key works end-to-end; validating
+a fake endpoint would teach the user nothing about their actual route.
+
+### 5. The daemon writes config surgically and never mutates the cached copy
+
+**Decision:** ``set_preset`` persists by rewriting (or appending) the single
+top-level ``active_preset:`` line — atomically, via a same-directory temp
+file — instead of a YAML round-trip that would strip the shipped file's
+comments. The live daemon applies the change on ``model_copy`` so the
+``lru_cache``-backed shared config instance is never mutated under other
+consumers.
+
+## 2026-08-14 — TD-1104: Diagnostics (doctor view)
+
+### 1. Key validity and provider reachability share one probe
+
+**Decision:** ``run_diagnostics`` makes at most one live call — the same
+one-token probe TD-1101's ``validate_api_key`` performs — and derives both
+the ``api_key`` and ``provider`` rows from its outcome. ``auth_failed``
+(401) proves reachability while invalidating the key, so the provider row
+reads *ok* in the same report that fails the key. A transport failure
+proves nothing about the key, so the key row reads *skip* with detail
+pointing at the connectivity problem instead.
+
+**Rationale:** Two probes would double the cost and the failure modes
+without buying information. The single-probe reading of each error code is
+exact: 401 can only come from a reached provider.
+
+### 2. The report rides the connection-scoped ``seq=1`` channel
+
+**Decision:** ``diagnostics_report`` is connection-scoped (no
+``session_id``, fixed ``seq=1``), same as ``setup_state`` and
+``policy_rules``. Diagnostics describe the daemon and the user's
+environment, not any session; the workspace and steering rows resolve
+"which workspace" from the most-recent session record, and are *skip*
+rows when no session exists.
+
+**Rationale:** A session-scoped report would force the pane to pick a
+session before asking, and the checks aren't about one. ``seq=1`` keeps
+the client's gap-detector out of a stream the session log doesn't own.
+
+### 3. Fix text speaks UI, not CLI
+
+**Decision:** every failure row's ``fix`` names a thing in the app the
+user can do — "open the wizard from the gear in the title bar", "open
+Doctor again after reconnecting" — never a shell command. The ``skip``
+rows still explain themselves ("not checked — no API key").
+
+**Rationale:** The doctor view is the fallback when the app itself is the
+nearest thing the user trusts; a user who came to fix the desktop app
+should not be sent to a terminal to fix it.
+
+### 4. Paths scrubbed at the rows; secrets scrubbed at the copy boundary
+
+**Decision:** rows that would otherwise embed absolute local paths — the
+workspace row's "{workspace} is writable", steering import issues — are
+scrubbed where the row is built: the workspace is named by basename, and
+import-issue paths are relativized against the workspace (home paths
+become ``~/…``). ``Copy report`` additionally passes the whole assembled
+text through ``redact()`` — the same pass TD-1008's diagnostics copy
+uses — so secret-shaped tokens inside any row's ``detail`` or ``fix``
+never reach the clipboard. The pane shows the same scrubbed rows; no
+absolute local path ever touches the wire.
+
+**Rationale:** TD-1008's diagnostics keep local paths out of pasteable
+output by exclusion; here the rows *want* to name folders, so they get
+just-enough-to-locate forms instead. Redaction at the copy boundary is
+the belt to that: a future check that embeds a key-shaped string can't
+leak in the pasteable artifact even if its row forgot to scrub.
+
+## 2026-08-14 — TD-1404: Timeline render baseline
+
+### 1. The timeline gate lives in vitest, not pytest
+
+**Decision:** ``timeline_render_1000`` is measured and gated by
+``ui/src/lib/timeline-bench.test.ts`` under jsdom — pytest cannot mount a
+Svelte component. Both sides read the same committed
+``core/tests/perf_baselines.json`` with the same threshold (3x baseline or
+baseline + 250 ms). Core keeps the row honest from its side: the metric
+moved from ``PENDING`` to a new ``UI_MEASURED`` map, and
+``test_ui_measured_metrics_have_baselines`` fails if the row is missing
+or null.
+
+**Rationale:** One baselines file, one threshold, whichever runner can
+actually exercise the surface owns the measurement. A deleted row now
+fails in both suites.
+
+### 2. What the number measures
+
+**Decision:** the bench pushes 1000 synthesized daemon events (a
+session-realistic mix: deltas, tool calls with their shell_output chunks,
+results, decisions, errors) through the real ``push()`` store path, then
+mounts ``ActivityTimeline`` and flushes one frame. The push loop is the
+term that scales with entry count — each shell chunk linear-scans for its
+parent row — while the render is windowed by TD-1005's virtualization
+(~30 rows for the stubbed 640px viewport in jsdom), i.e. constant vs
+entry count by design. The JSON metadata states that jsdom measures
+Svelte DOM work, not browser layout or paint.
+
+**Rationale:** A regression someone introduces in the per-event path is
+what a 1000-entry live session would feel as sag; windowed paint staying
+flat is the property the virtualizer was bought for.
+
+### 3. Recording is an env-flagged vitest run
+
+**Decision:** ``BENCH_RECORD=1 npx vitest run src/lib/timeline-bench.test.ts``
+writes the fresh median into the shared JSON (clearing the pending marker
+and declaring the row ui-measured) instead of asserting. Core's
+``scripts/benchmarks.py --record`` conversely preserves the UI-measured
+row when re-baselining the four core metrics — each runner owns its own
+rows and must never clobber the other's.
+
+**Rationale:** Only the vitest pipeline can compile and mount the
+component, and CI never sets the flag, so gate mode is the default. The
+app tree stays browser-typed; the recorder's node fs access sits behind a
+four-line ambient shim (``node-test-shims.d.ts``) rather than pulling
+@types/node into the project for one script-like test.
+
+## 2026-08-14 — TD-1202: Decisions ledger panel
+
+### 1. No new wire — the stream already carries everything
+
+**Decision:** the panel filters ``decision_logged`` (TD-704) out of the
+existing session stream on the client; per-session scoping, class
+filtering, and the revert command are all computed client-side. The undo
+command is derived — ``git revert <sha>`` — exactly as the ledger writer
+computes it in ``core/tstd/autonomy/ledger.py``, so the copy matches the
+markdown.
+
+**Rationale:** TD-704 put class/what/why/commit on the event precisely so
+reviewers would not need a second channel. A ``list_decisions`` verb would
+re-implement replay the client already gets from attach.
+
+### 2. Density is the interface
+
+**Decision:** one line per decision — class chip, ``what``, short SHA —
+with click-to-expand for the ``why`` and the revert button. Class filter
+chips (A/B/C/All) sit in the header. The AC's "under a minute for a full
+session of Class A" is met structurally: the A filter is one click and
+each row costs a glance.
+
+**Rationale:** Any design that shows rationale by default turns the
+scannable list back into prose. The A/B/C classes exist to be a filter,
+not a label.
+
+### 3. Link-out via a zero-dep shell command, with a path fallback
+
+**Decision:** the panel opens ``<workspace>/.tst/autonomy/DECISIONS.md``
+through a new ``open_path`` Tauri command (``open`` / ``cmd /c start`` /
+``xdg-open`` — no plugin added, no capability change). In a bare browser
+(dev), the click falls back to copying the path. The relative ledger
+location is a house constant mirrored from ``autonomy/ledger.py`` and
+pinned by a test on the value.
+
+**Rationale:** ``@tauri-apps/plugin-opener`` would drag a Rust + JS
+dependency and a capabilities row through packaging for one click; the
+std-command spelling is fifteen lines and covers the three CI platforms.
+The path-always-visible footer means the fallback never leaves the user
+without the destination.
+
+## 2026-08-14 — TD-1103: Workspace management
+
+### 1. Refuse, don't silently succeed
+
+**Decision:** ``open_workspace`` now validates ``is_dir()`` before creating
+anything and returns a typed ``workspace_not_found`` error through the
+existing ``build_error`` dispatch idiom. Previously a nonexistent path
+silently produced a session, one the UI could never render correctly.
+
+**Rationale:** the failure was invisible — an absent workspace yielded a
+live session id and a store row pointing at nothing. A hard refusal at
+dispatch is where the UI can recover: the recents-menu toast explains the
+folder moved or was deleted and points at both remedies (re-pick the new
+location, remove the stale entry). Seven daemon tests used ``/tmp/test``
+as a magic path and now open real tmp dirs — that was the tell that the
+absence of validation had leaked into the test suite's assumptions.
+
+### 2. Scaffolding is documentation, not configuration
+
+**Decision:** first open of a workspace plants
+``.tst/config.yaml`` as a fully commented template — every line a
+comment, so ``yaml.safe_load`` yields ``None`` and the loaders map
+``None`` to defaults (one-line change in each of ``load_workspace_boundary``
+and ``load_policy``; ``save_policy`` treats ``None`` as an empty section
+map). The scaffold never overwrites an existing file.
+
+**Rationale:** a template with real values pins them at scaffold time —
+every knob later changes its default and stale workspaces would silently
+diverge. Comments-as-documentation means "absent" and "scaffolded"
+behave identically, and ``boundary_source`` keeps reporting the real
+file path (which now exists and is worth showing the user). The cost was
+three ``None`` branches in loaders; the alternative — parse comments to
+distinguish template from user content — is machinery for no behavior
+difference.
+
+### 3. No new wire — the daemon already knows the recents
+
+**Decision:** the recents menu derives from the ``session_list`` event the
+UI already receives (dedupe by ``workspace_path``, newest first, cap 12),
+and per-entry removal is a UI-side hide-list persisted to localStorage
+under ``tstdesk.hiddenRecentWorkspaces``. The daemon's session history is
+untouched by removal.
+
+**Rationale:** added a ``remove_recent`` command to the protocol would
+put UI preference state (what the user wants to see) into the daemon's
+session record (what happened), and would need its own ack + tests +
+fixtures for zero behavior the user can tell apart. localStorage is
+where UI-only preferences live; the hide-list survives restarts, and a
+moved workspace stays discoverable by re-picking it — a fresh session
+on the new path appends a new recents entry, which is the desired
+understanding, not a bug to prevent.
+
+### 4. AC4 is a property of the loop, so pin it at the loop
+
+**Decision:** "switching workspaces re-resolves steering" is guaranteed
+by construction (each session's loop builds its own ``PromptAssembler``
+from ``session.workspace_path`` at loop.py), so the pin is a loop-level
+test: two workspaces with distinct marker AGENTS.md files, one turn
+each, and the system messages the mock provider received must carry the
+right marker — never the other's.
+
+**Rationale:** the cheapest place to break this property in the future
+is exactly the seam the test guards: a shared assembler, a cached
+prompt keyed on the wrong thing, a workspace mutation mid-session.
+Asserting on the content the provider received pins the user-visible
+outcome (the model sees this workspace's rules), which survives any
+internal refactor of how the assembler is built.
