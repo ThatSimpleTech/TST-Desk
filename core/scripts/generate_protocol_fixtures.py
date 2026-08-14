@@ -31,6 +31,7 @@ from tstd.protocol import (
     Ready,
     SessionState,
     SetTier,
+    ShellOutput,
     ToolCall,
     ToolResult,
     TurnComplete,
@@ -111,6 +112,13 @@ FIXTURES = {
     ),
     "error": Error(code="test", message="fail", seq=11),
     "error_with_session": Error(session_id="sess-1", code="test", message="fail", seq=12),
+    "shell_output": ShellOutput(
+        session_id="sess-1",
+        tool_call_id="tc-1",
+        stream="stdout",
+        chunk="hello\n",
+        seq=13,
+    ),
 }
 
 

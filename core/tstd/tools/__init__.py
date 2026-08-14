@@ -14,8 +14,10 @@ from .dispatch import (
 )
 from .handlers import fs_list, fs_read, register_builtin_handlers
 from .registry import Tool, ToolRegistry, UnknownToolError, create_registry
+from .shell import ShellPolicy, run_shell
 
 __all__ = [
+    "ShellPolicy",
     "Tool",
     "ToolDispatcher",
     "ToolRegistry",
@@ -28,4 +30,5 @@ __all__ = [
     "fs_list",
     "fs_read",
     "register_builtin_handlers",
+    "run_shell",
 ]

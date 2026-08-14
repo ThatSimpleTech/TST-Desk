@@ -20,6 +20,7 @@ import type {
   AssistantDelta,
   ToolCall,
   ToolResult,
+  ShellOutput,
   ApprovalRequest,
   DecisionLogged,
   CostUpdate,
@@ -164,6 +165,16 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m2.status).toBe("error");
   });
 
+  it("shell_output", () => {
+    const m = fixtures.shell_output as ShellOutput;
+    expect(m.type).toBe("shell_output");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.tool_call_id)).toBe(true);
+    expect(m.stream).toBe("stdout");
+    expect(isString(m.chunk)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
   it("approval_request", () => {
     const m = fixtures.approval_request as ApprovalRequest;
     expect(m.type).toBe("approval_request");
@@ -233,8 +244,9 @@ describe("All fixtures have required shape", () => {
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
-      "tool_result_truncated", "approval_request", "decision_logged",
-      "cost_update", "turn_complete", "error", "error_with_session",
+      "tool_result_truncated", "shell_output", "approval_request",
+      "decision_logged", "cost_update", "turn_complete", "error",
+      "error_with_session",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

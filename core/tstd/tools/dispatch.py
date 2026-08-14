@@ -152,8 +152,9 @@ class ToolDispatcher:
     def register_handler(self, name: str, handler: Callable[..., Awaitable[str]]) -> None:
         """Register a handler for a tool.
 
-        The handler is an async callable that receives the parsed arguments
-        (as keyword arguments) and returns a string result.
+        The handler is an async callable that receives ``session`` and
+        ``tool_call_id`` plus the parsed arguments (all as keyword
+        arguments) and returns a string result.
 
         Raises:
             KeyError: If the tool name is not registered in the registry.
@@ -273,7 +274,7 @@ class ToolDispatcher:
                 )
 
         try:
-            output = await handler(session=session, **arguments)
+            output = await handler(session=session, tool_call_id=tool_call_id, **arguments)
         except Exception as e:
             log.exception(
                 "tool handler failed",
