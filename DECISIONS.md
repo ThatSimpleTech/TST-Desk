@@ -3019,3 +3019,22 @@ fixture root in both its native and posix spellings.
 **Rationale:** Same rule as the first pass (prompt text is POSIX-separated
 everywhere) — these were the stragglers that only surface when the
 separator differs from the golden's.
+
+## 2026-08-14 — TD-1406: Windows CI parity (path surfaces)
+
+### 1. Every model-facing path surface speaks POSIX
+
+**Decision:** Discovery subtree labels (`discover.py`), `fs_list` output
+(`handlers.py`), and validator-subset glob matching (`tier.py`) all render
+`as_posix()` instead of the OS-native string. The test workarounds that
+compared separator-insensitively are removed — the suite now pins forward
+slashes directly.
+
+**Rationale:** The second pass established the rule for prompt text and
+goldens; these were the remaining producers. The `tier.py` case was a real
+break, not cosmetic: subset patterns compile to `/`-separated regexes, so
+on Windows even a basename pattern (`AGENTS.md` → `**/AGENTS.md`) never
+matched a backslash path and the validator tier silently assembled with no
+steering at all. `fs_list` output feeds the model paths it quotes back
+into later tool calls, and subtree labels land in the steering block —
+both must be stable across platforms.
