@@ -149,6 +149,24 @@
     "total_cost": 1.2,
     "classifier_cost": 0.0
   },
+  "boundary_update": {
+    "type": "boundary_update",
+    "seq": 12,
+    "session_id": "sess-1",
+    "writable_paths": [
+      "src/**",
+      "tests/**"
+    ],
+    "allowed_commands": [
+      "cargo",
+      "git"
+    ],
+    "network": "deny",
+    "spend_usd": 25.0,
+    "wall_clock_hours": 8.0,
+    "max_iterations": 200,
+    "source": "defaults"
+  },
   "turn_complete": {
     "type": "turn_complete",
     "seq": 12,
