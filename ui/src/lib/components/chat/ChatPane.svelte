@@ -21,6 +21,7 @@
 			<button
 				class="cancel"
 				type="button"
+				title="Cancel turn (Esc)"
 				onclick={() => {
 					cancelTurn();
 				}}
