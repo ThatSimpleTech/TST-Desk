@@ -239,7 +239,7 @@ class TestTurnEventOrdering:
         )
         dispatcher = ToolDispatcher(registry)
 
-        async def echo_handler(session, message):
+        async def echo_handler(session, message, tool_call_id=""):
             return f"Echo: {message}"
 
         dispatcher.register_handler("echo", echo_handler)
@@ -544,7 +544,7 @@ class TestCancellation:
 
         call_count = 0
 
-        async def slow_handler(session, delay=0.5):
+        async def slow_handler(session, delay=0.5, tool_call_id=""):
             nonlocal call_count
             call_count += 1
             await asyncio.sleep(delay)

@@ -122,6 +122,14 @@ export interface ToolResult extends DaemonEvent {
   truncated: boolean;
 }
 
+export interface ShellOutput extends DaemonEvent {
+  type: "shell_output";
+  session_id: string;
+  tool_call_id: string;
+  stream: "stdout" | "stderr";
+  chunk: string;
+}
+
 export interface ApprovalRequest extends DaemonEvent {
   type: "approval_request";
   session_id: string;
@@ -172,6 +180,7 @@ export type DaemonEventUnion =
   | AssistantDelta
   | ToolCall
   | ToolResult
+  | ShellOutput
   | ApprovalRequest
   | DecisionLogged
   | CostUpdate

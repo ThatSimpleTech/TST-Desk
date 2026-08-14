@@ -152,5 +152,13 @@
     "session_id": "sess-1",
     "code": "test",
     "message": "fail"
+  },
+  "shell_output": {
+    "type": "shell_output",
+    "seq": 13,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "stream": "stdout",
+    "chunk": "hello\n"
   }
 }
