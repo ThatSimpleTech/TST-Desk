@@ -12,7 +12,7 @@
 // vitest's node environment with a fake transport, and in the webview with
 // the browser's WebSocket. No Tauri APIs are imported here.
 
-import type { DaemonEventUnion } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 
 /**
  * The daemon event types this client version understands. Messages whose
@@ -138,9 +138,18 @@ export class ProtocolClient {
   detach(sessionId: string): void {
     this.attachedSessions.delete(sessionId);
     this.lastSeqBySession.delete(sessionId);
-    if (this.socket && this.handshake === "idle") {
-      this.socket.send(JSON.stringify({ type: "detach", session_id: sessionId }));
-    }
+    this.send({ type: "detach", session_id: sessionId });
+  }
+
+  /**
+   * Send a client→daemon message. Returns false (and sends nothing) unless
+   * the socket is open and handshaken, so callers can decide whether an
+   * optimistic local update is warranted.
+   */
+  send(msg: ClientMessageUnion): boolean {
+    if (!this.socket || this.handshake !== "idle") return false;
+    this.socket.send(JSON.stringify(msg));
+    return true;
   }
 
   /** Start the client: resolve daemon info and open the first connection. */
@@ -151,8 +160,7 @@ export class ProtocolClient {
 
   private sendAttach(sessionId: string, fromSeq: number): void {
     // Only meaningful on an open, handshaken socket.
-    if (!this.socket || this.handshake !== "idle") return;
-    this.socket.send(JSON.stringify({ type: "attach", session_id: sessionId, from_seq: fromSeq }));
+    this.send({ type: "attach", session_id: sessionId, from_seq: fromSeq });
   }
 
   /** Permanently stop: close the socket, cancel retries, mark stopped. */
