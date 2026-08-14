@@ -100,6 +100,7 @@ class CostTracker:
         self._config = config
         self._calls: list[CallRecord] = []
         self._turn_calls: list[CallRecord] = []
+        self._classifier_calls: list[CallRecord] = []
         self._session_start = datetime.now()
         self._listeners: list[Callable[[CallRecord, bool], None]] = []
 
@@ -137,6 +138,36 @@ class CostTracker:
         Returns:
             The computed cost of this call in dollars.
         """
+        record, cost = self._build_record(tier, usage, cfg)
+        self._calls.append(record)
+        self._turn_calls.append(record)
+        self._notify(record, is_classifier=False)
+        return cost
+
+    def record_classifier(
+        self,
+        tier: TierName,
+        usage: Usage,
+        cfg: TierConfig | None = None,
+    ) -> float:
+        """Record a decision-classifier API call, tracked separately.
+
+        Classifier calls (TD-703) are accounted apart from the turn/session
+        totals so the ambiguity fallback is visible on its own breakdown
+        line rather than folded into main-loop cost.
+        """
+        record, cost = self._build_record(tier, usage, cfg)
+        self._classifier_calls.append(record)
+        self._notify(record, is_classifier=True)
+        return cost
+
+    def _build_record(
+        self,
+        tier: TierName,
+        usage: Usage,
+        cfg: TierConfig | None = None,
+    ) -> tuple[CallRecord, float]:
+        """Build a CallRecord for *usage* and compute its dollar cost."""
         tier_cfg = cfg or self._config.tier(tier)
         cost = compute_call_cost(usage, tier_cfg)
         uncached = max(0, usage.prompt_tokens - usage.cached_prompt_tokens)
@@ -156,10 +187,7 @@ class CostTracker:
             completion_cost=completion_cost,
             cost=cost,
         )
-        self._calls.append(record)
-        self._turn_calls.append(record)
-        self._notify(record, is_classifier=False)
-        return cost
+        return record, cost
 
     # ── Aggregation ──────────────────────────────────────────────────
 
@@ -213,6 +241,16 @@ class CostTracker:
             if c.timestamp.date() == today
         )
 
+    # ── Classifier cost (TD-703) ─────────────────────────────────────
+
+    def classifier_cost(self) -> float:
+        """Total cost of decision-classifier worker calls (dollars)."""
+        return round(sum(c.cost for c in self._classifier_calls), 6)
+
+    def classifier_call_count(self) -> int:
+        """Number of decision-classifier worker calls made."""
+        return len(self._classifier_calls)
+
     # ── Emission ─────────────────────────────────────────────────────
 
     def emit_cost_update(self, session_id: str) -> CostUpdate:
@@ -231,6 +269,7 @@ class CostTracker:
             turn_cost=self.turn_cost(),
             session_cost=self.session_cost(),
             total_cost=self.day_cost(),
+            classifier_cost=self.classifier_cost(),
             seq=1,  # overwritten by the event log
         )
 
@@ -252,4 +291,6 @@ class CostTracker:
             "day_cost": self.day_cost(),
             "day_tokens": self.day_tokens(),
             "call_count": len(self._calls),
+            "classifier_cost": self.classifier_cost(),
+            "classifier_call_count": self.classifier_call_count(),
         }

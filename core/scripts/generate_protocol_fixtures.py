@@ -20,6 +20,7 @@ from tstd.protocol import (
     AssistantDelta,
     Attach,
     Cancel,
+    CheckpointNotice,
     CostUpdate,
     DecisionLogged,
     Deny,
@@ -77,6 +78,14 @@ FIXTURES = {
         seq=6,
         truncated=True,
     ),
+    "tool_result_diff": ToolResult(
+        session_id="sess-1",
+        tool_call_id="tc-1",
+        status="success",
+        output="wrote 12 bytes; overwrote test.txt",
+        seq=7,
+        diff="--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line",
+    ),
     "approval_request": ApprovalRequest(
         session_id="sess-1",
         tool_call_id="tc-1",
@@ -84,7 +93,7 @@ FIXTURES = {
         arguments={"path": "test.txt"},
         decision_class="C",
         summary="Write to test.txt",
-        seq=7,
+        seq=8,
     ),
     "decision_logged": DecisionLogged(
         session_id="sess-1",
@@ -92,14 +101,20 @@ FIXTURES = {
         what="Formatted file",
         why="Ruff format",
         commit="abc123",
-        seq=8,
+        seq=9,
+    ),
+    "checkpoint_notice": CheckpointNotice(
+        session_id="sess-1",
+        code="dirty_baseline",
+        message="This workspace has uncommitted changes.",
+        seq=10,
     ),
     "cost_update": CostUpdate(
         session_id="sess-1",
         turn_cost=0.05,
         session_cost=0.50,
         total_cost=1.20,
-        seq=9,
+        seq=11,
     ),
     "turn_complete": TurnComplete(
         session_id="sess-1",
@@ -107,10 +122,10 @@ FIXTURES = {
         cost=0.03,
         tier="worker",
         duration=2.5,
-        seq=10,
+        seq=12,
     ),
-    "error": Error(code="test", message="fail", seq=11),
-    "error_with_session": Error(session_id="sess-1", code="test", message="fail", seq=12),
+    "error": Error(code="test", message="fail", seq=13),
+    "error_with_session": Error(session_id="sess-1", code="test", message="fail", seq=14),
 }
 
 

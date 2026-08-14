@@ -7,8 +7,11 @@ to the model, multi-round-trip tool call loops).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClassifier
 from tstd.config import ModelConfig, Preset, TierConfig
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
@@ -20,6 +23,25 @@ from tstd.session import Session, SessionRunner
 from tstd.tools import Tool, ToolDispatcher, ToolRegistry
 
 # ── Helpers ─────────────────────────────────────────────────────────────
+
+
+async def _stub_worker(prompt: str) -> str:
+    """Stub worker-tier classifier: always answers B (fail toward asking)."""
+    return "B"
+
+
+def make_classifier(workspace: str = "/tmp/ws") -> AmbiguousClassifier:
+    """A classifier over a stub workspace for dispatch tests.
+
+    TD-702/703 make classification a mandatory chokepoint: a tool reaching
+    execution without a classifier raises ``UnclassifiedToolCall``.  These
+    dispatcher-mechanics tests attach one with a stub worker so dispatch
+    itself is exercised; ambiguous calls classify as B.
+    """
+    return AmbiguousClassifier(
+        static=DecisionClassifier(Boundary(workspace_root=Path(workspace))),
+        call_worker=_stub_worker,
+    )
 
 
 def make_config() -> ModelConfig:
@@ -81,7 +103,7 @@ def make_registry_and_dispatcher() -> tuple[ToolRegistry, ToolDispatcher]:
         )
     )
 
-    dispatcher = ToolDispatcher(registry, max_result_chars=1000)
+    dispatcher = ToolDispatcher(registry, classifier=make_classifier(), max_result_chars=1000)
 
     async def echo_handler(session, message, count=1):
         return f"Echo: {message} (x{count})"
@@ -151,7 +173,7 @@ async def start_loop(
 class TestDispatcherValidation:
     def test_register_handler_requires_registered_tool(self) -> None:
         registry = ToolRegistry()
-        dispatcher = ToolDispatcher(registry)
+        dispatcher = ToolDispatcher(registry, classifier=make_classifier())
         with pytest.raises(KeyError):
             dispatcher.register_handler("unknown_tool", lambda: "x")
 
@@ -184,7 +206,7 @@ class TestDispatcherValidation:
                 parallel_safe=True,
             )
         )
-        dispatcher = ToolDispatcher(registry)
+        dispatcher = ToolDispatcher(registry, classifier=make_classifier())
         # Tool is registered but has no handler
         result = await dispatcher.dispatch("call_1", "orphan_tool", {})
         assert result.status == "error"
@@ -220,7 +242,7 @@ class TestDispatcherExecution:
                 parallel_safe=True,
             )
         )
-        dispatcher = ToolDispatcher(registry)
+        dispatcher = ToolDispatcher(registry, classifier=make_classifier())
 
         async def failing_handler(session, **kwargs):
             raise RuntimeError("Something went wrong")
@@ -247,7 +269,7 @@ class TestDispatcherTruncation:
                 parallel_safe=True,
             )
         )
-        dispatcher = ToolDispatcher(registry, max_result_chars=100)
+        dispatcher = ToolDispatcher(registry, classifier=make_classifier(), max_result_chars=100)
 
         async def big_handler(session, **kwargs):
             return "X" * 500
@@ -281,7 +303,7 @@ class TestDispatcherParallel:
                 parallel_safe=True,
             )
         )
-        dispatcher = ToolDispatcher(registry)
+        dispatcher = ToolDispatcher(registry, classifier=make_classifier())
 
         async def fast_handler(session, delay=0.05):
             import asyncio
@@ -323,7 +345,7 @@ class TestDispatcherParallel:
                 parallel_safe=False,
             )
         )
-        dispatcher = ToolDispatcher(registry)
+        dispatcher = ToolDispatcher(registry, classifier=make_classifier())
 
         async def seq_handler(session, delay=0.05):
             await asyncio.sleep(delay)
