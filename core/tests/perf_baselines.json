@@ -1,16 +1,17 @@
 {
-  "recorded_at": "2026-08-13",
+  "recorded_at": "2026-08-14",
   "unit": "seconds (median of repetitions)",
   "threshold": "fail when a fresh median exceeds 3x baseline or baseline + 0.25s",
-  "note": "first_token_latency uses an instant mock provider: it measures the internal pipeline, not network or model time.",
+  "note": "first_token_latency uses an instant mock provider: it measures the internal pipeline, not network or model time. timeline_render_1000 is measured by the UI bench under jsdom: Svelte DOM work, not browser layout or paint.",
   "metrics": {
-    "daemon_cold_start": 0.011120499926619232,
-    "session_start_large_repo": 0.01211370900273323,
-    "steering_resolution": 0.0025086249224841595,
-    "first_token_latency": 0.04137274995446205,
-    "timeline_render_1000": null
+    "daemon_cold_start": 0.010963791981339455,
+    "session_start_large_repo": 0.012780499993823469,
+    "steering_resolution": 0.0032977500231936574,
+    "first_token_latency": 0.041472290991805494,
+    "timeline_render_1000": 0.009685167000000092
   },
-  "pending": {
-    "timeline_render_1000": "TD-1005"
-  }
+  "pending": {},
+  "ui_measured": [
+    "timeline_render_1000"
+  ]
 }

@@ -102,6 +102,32 @@ export interface ListSessions extends ClientMessage {
   type: "list_sessions";
 }
 
+// ── Onboarding (TD-1101 first-run wizard) ────────────────────────────
+
+export interface GetSetupState extends ClientMessage {
+  type: "get_setup_state";
+}
+
+export interface SetApiKey extends ClientMessage {
+  type: "set_api_key";
+  api_key: string;
+}
+
+export interface ValidateApiKey extends ClientMessage {
+  type: "validate_api_key";
+}
+
+export interface SetPreset extends ClientMessage {
+  type: "set_preset";
+  name: string;
+}
+
+// ── Diagnostics (TD-1104 doctor) ─────────────────────────────────────
+
+export interface RunDiagnostics extends ClientMessage {
+  type: "run_diagnostics";
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -118,7 +144,12 @@ export type ClientMessageUnion =
   | SetTier
   | GetInstructionStack
   | Shutdown
-  | ListSessions;
+  | ListSessions
+  | GetSetupState
+  | SetApiKey
+  | ValidateApiKey
+  | SetPreset
+  | RunDiagnostics;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -171,6 +202,7 @@ export interface ToolResult extends DaemonEvent {
   status: "success" | "error";
   output: string;
   truncated: boolean;
+  error_code?: string | null;
   diff?: string | null;
 }
 
@@ -319,6 +351,42 @@ export interface PolicyRules extends DaemonEvent {
   rules: PolicyRuleSummary[];
 }
 
+// TD-1101 first-run wizard: the daemon's reply to get_setup_state
+// (and the ack for set_api_key / set_preset). has_api_key is the
+// first-run signal — probed from the keychain, never from disk.
+export interface SetupState extends DaemonEvent {
+  type: "setup_state";
+  seq: number;
+  has_api_key: boolean;
+  presets: string[];
+  active_preset: string;
+}
+
+// TD-1101: reply to validate_api_key — a one-token live probe of the
+// stored key. `detail` is actionable text; the key never appears.
+export interface ApiKeyValidated extends DaemonEvent {
+  type: "api_key_validated";
+  seq: number;
+  ok: boolean;
+  detail: string;
+}
+
+// TD-1104 doctor: one row per check. `skip` means not applicable (no key
+// to validate, no workspace open) — not a failure. `fix` is the concrete
+// remedy, present exactly when status is "fail".
+export interface DiagnosticCheck {
+  name: string;
+  status: "ok" | "fail" | "skip";
+  detail: string;
+  fix?: string | null;
+}
+
+export interface DiagnosticsReport extends DaemonEvent {
+  type: "diagnostics_report";
+  seq: number;
+  checks: DiagnosticCheck[];
+}
+
 export interface Error extends DaemonEvent {
   type: "error";
   session_id?: string | null;
@@ -362,4 +430,7 @@ export type DaemonEventUnion =
   | InstructionStack
   | SessionList
   | PolicyRules
+  | SetupState
+  | ApiKeyValidated
+  | DiagnosticsReport
   | Error;
