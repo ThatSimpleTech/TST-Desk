@@ -138,6 +138,35 @@ class Deny(ClientMessage):
     reason: str | None = None
 
 
+class AlwaysAllow(ClientMessage):
+    """Always-allow a pending tool call (TD-803).
+
+    Writes the narrowest policy rule for the call, then resolves the pending
+    approval as approved.  Rejected with ``class_c_not_always_allowable``
+    when the call is a class-C decision.
+    """
+
+    type: Literal["always_allow"] = "always_allow"
+    session_id: str
+    tool_call_id: str
+
+
+class ListPolicyRules(ClientMessage):
+    """List the workspace's saved policy rules (TD-803 settings)."""
+
+    type: Literal["list_policy_rules"] = "list_policy_rules"
+    session_id: str
+
+
+class RevokePolicyRule(ClientMessage):
+    """Remove a saved policy rule by ``(tool, args)`` (TD-803 settings)."""
+
+    type: Literal["revoke_policy_rule"] = "revoke_policy_rule"
+    session_id: str
+    tool: str
+    args: str
+
+
 class Resume(ClientMessage):
     """Resume a session paused at a declared cap (TD-707).
 
@@ -275,12 +304,29 @@ class ShellOutput(DaemonEvent):
     chunk: str
 
 
+class PolicyRuleSummary(BaseModel):
+    """A saved policy rule, surfaced to clients (TD-803).
+
+    ``(tool, args)`` is the identity used for individual revocation in
+    settings.
+    """
+
+    tool: str
+    args: str
+    effect: Literal["auto", "ask", "never"]
+
+
 class ApprovalRequest(DaemonEvent):
     """A request for user approval of a tool call (TD-802).
 
     ``summary`` is the human-readable action ("Run `npm test`");
     ``reason`` is why approval is required ("decision class B requires
     approval", "policy rule `shell: rm *` → ask").
+
+    ``proposed_always_allow`` (TD-803) is the rule that "always allow in
+    this workspace" would write, or ``None`` when the call is a class-C
+    decision that can never be always-allowed.  The client shows it before
+    the user commits to saving it.
     """
 
     type: Literal["approval_request"] = "approval_request"
@@ -291,6 +337,7 @@ class ApprovalRequest(DaemonEvent):
     decision_class: Literal["A", "B", "C"]
     summary: str
     reason: str
+    proposed_always_allow: PolicyRuleSummary | None = None
 
 
 class DecisionLogged(DaemonEvent):
@@ -439,6 +486,18 @@ class SessionList(DaemonEvent):
     sessions: list[SessionSummary] = Field(default_factory=list)
 
 
+class PolicyRules(DaemonEvent):
+    """Response to ``list_policy_rules`` / ``revoke_policy_rule`` (TD-803).
+
+    Carries the workspace's saved policy rules so the settings surface can
+    list and revoke them individually.
+    """
+
+    type: Literal["policy_rules"] = "policy_rules"
+    seq: int = 1
+    rules: list[PolicyRuleSummary] = Field(default_factory=list)
+
+
 class Error(DaemonEvent):
     """A typed error, usually in response to a bad message."""
 
@@ -456,6 +515,9 @@ ClientMessageT = Annotated[
     | UserMessage
     | Approve
     | Deny
+    | AlwaysAllow
+    | ListPolicyRules
+    | RevokePolicyRule
     | Resume
     | Cancel
     | Attach
@@ -484,6 +546,7 @@ DaemonEventT = Annotated[
     | SteeringReloaded
     | InstructionStack
     | SessionList
+    | PolicyRules
     | Error,
     Field(discriminator="type"),
 ]
@@ -499,6 +562,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "user_message",
         "approve",
         "deny",
+        "always_allow",
+        "list_policy_rules",
+        "revoke_policy_rule",
         "resume",
         "cancel",
         "attach",
@@ -527,6 +593,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "steering_reloaded",
         "instruction_stack",
         "session_list",
+        "policy_rules",
         "error",
     }
 )

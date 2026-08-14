@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from tstd.protocol import (
     PROTOCOL_VERSION,
+    AlwaysAllow,
     ApprovalRequest,
     Approve,
     AssistantDelta,
@@ -24,9 +25,13 @@ from tstd.protocol import (
     GetInstructionStack,
     HandshakeError,
     Hello,
+    ListPolicyRules,
     OpenWorkspace,
+    PolicyRules,
+    PolicyRuleSummary,
     Ready,
     Resume,
+    RevokePolicyRule,
     SessionState,
     SetTier,
     ShellOutput,
@@ -86,6 +91,24 @@ class TestClientMessages:
         back = _roundtrip(msg)
         assert isinstance(back, Deny)
         assert back.reason == "not safe"
+
+    def test_always_allow(self) -> None:
+        msg = AlwaysAllow(session_id="sess-1", tool_call_id="tc-1")
+        back = _roundtrip(msg)
+        assert isinstance(back, AlwaysAllow)
+        assert back.tool_call_id == "tc-1"
+
+    def test_list_policy_rules(self) -> None:
+        msg = ListPolicyRules(session_id="sess-1")
+        back = _roundtrip(msg)
+        assert isinstance(back, ListPolicyRules)
+
+    def test_revoke_policy_rule(self) -> None:
+        msg = RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *")
+        back = _roundtrip(msg)
+        assert isinstance(back, RevokePolicyRule)
+        assert back.tool == "shell"
+        assert back.args == "rm *"
 
     def test_resume(self) -> None:
         msg = Resume(session_id="sess-1")
@@ -276,6 +299,49 @@ class TestDaemonEvents:
         assert back.tool_name == "fs_write"
         assert back.decision_class == "C"
         assert back.summary == "Write to /tmp/test.txt"
+
+    def test_approval_request_proposal(self) -> None:
+        evt = ApprovalRequest(
+            session_id="sess-1",
+            tool_call_id="tc-2",
+            tool_name="shell",
+            arguments={"command": "npm test"},
+            decision_class="B",
+            summary="Run `npm test`",
+            reason="decision class B requires approval",
+            proposed_always_allow=PolicyRuleSummary(tool="shell", args="npm test", effect="auto"),
+            seq=6,
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, ApprovalRequest)
+        assert back.proposed_always_allow is not None
+        assert back.proposed_always_allow.tool == "shell"
+        assert back.proposed_always_allow.args == "npm test"
+        assert back.proposed_always_allow.effect == "auto"
+
+    def test_approval_request_no_proposal_for_class_c(self) -> None:
+        evt = ApprovalRequest(
+            session_id="sess-1",
+            tool_call_id="tc-3",
+            tool_name="fs_write",
+            arguments={"path": "/tmp/test.txt"},
+            decision_class="C",
+            summary="Write to /tmp/test.txt",
+            reason="decision class C requires approval",
+            seq=7,
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, ApprovalRequest)
+        assert back.proposed_always_allow is None
+
+    def test_policy_rules(self) -> None:
+        evt = PolicyRules(
+            seq=1,
+            rules=[PolicyRuleSummary(tool="shell", args="npm test", effect="auto")],
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, PolicyRules)
+        assert back.rules == [PolicyRuleSummary(tool="shell", args="npm test", effect="auto")]
 
     def test_decision_logged(self) -> None:
         evt = DecisionLogged(
