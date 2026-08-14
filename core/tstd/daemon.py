@@ -120,14 +120,16 @@ def _win_parent_alive(pid: int) -> bool:
     try:
         import ctypes
 
+        # ``ctypes.windll`` exists only on Windows and is absent from mypy's
+        # POSIX stubs; getattr keeps one spelling clean on every platform.
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            return True  # unreachable — caller gates on os.name == "nt"
         process_query_limited = 0x1000
-        # ``ctypes.windll`` exists only on Windows; mypy's macOS stubs omit it.
-        handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[attr-defined]
-            process_query_limited, False, pid
-        )
+        handle = windll.kernel32.OpenProcess(process_query_limited, False, pid)
         if not handle:
             return False
-        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        windll.kernel32.CloseHandle(handle)
         return True
     except Exception:
         # Degrade to "alive" so a watchdog bug never spuriously kills us.

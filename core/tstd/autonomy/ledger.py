@@ -10,15 +10,16 @@ attributed to a commit is **not** Class A.
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-try:  # POSIX advisory locks; Windows falls back to append-mode atomicity.
+# POSIX advisory locks; Windows falls back to append-mode atomicity.
+# (Platform-guarded import so mypy's win32 target never sees the name.)
+if sys.platform != "win32":
     import fcntl
-except ImportError:  # pragma: no cover - Windows
-    fcntl = None  # type: ignore[assignment]
 
 DecisionClassT = Literal["A", "B", "C"]
 
@@ -160,10 +161,10 @@ class DecisionLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as f:
             fd = f.fileno()
-            if fcntl is not None:
+            if sys.platform != "win32":
                 fcntl.flock(fd, fcntl.LOCK_EX)
             try:
                 f.write(rendered)
             finally:
-                if fcntl is not None:
+                if sys.platform != "win32":
                     fcntl.flock(fd, fcntl.LOCK_UN)
