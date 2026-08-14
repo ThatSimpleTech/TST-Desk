@@ -71,9 +71,17 @@
 	--space-12:  48px;
 	--space-16:  64px;
 
-	/* ---- Type scale ---- */
-	--font-family:         -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	/* ---- Type roles (TD-1602) ----
+	   Display: Source Serif 4 (vendored, ui/static/fonts) carries greetings and
+	   headings at 400–500 with tight tracking; the voice stays light.
+	   Sans: system stack carries all UI chrome.
+	   Mono: ui-monospace stack carries code, tokens, and cost figures. */
+	--font-display:        'Source Serif 4', Georgia, serif;
+	--font-sans:           -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 	--font-mono:           ui-monospace, 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+	--tracking-display:    -0.02em;
+	/* Legacy alias — use --font-sans in new code. */
+	--font-family:         var(--font-sans);
 
 	--text-xs:   0.75rem;   /* 12px */
 	--text-sm:   0.875rem;  /* 14px */

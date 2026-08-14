@@ -89,8 +89,10 @@
 
 	.title {
 		margin: 0;
+		font-family: var(--font-display);
 		font-size: var(--text-xl);
-		font-weight: var(--weight-semibold);
+		font-weight: var(--weight-medium);
+		letter-spacing: var(--tracking-display);
 		color: var(--color-text);
 	}
 
