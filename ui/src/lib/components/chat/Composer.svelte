@@ -2,6 +2,7 @@
 	// Message composer (TD-1004): multi-line, Enter submits, Shift+Enter
 	// newlines, auto-grows to eight rows before scrolling internally.
 	import { shouldSubmit } from "../../chat-store";
+	import Icon from "../Icon.svelte";
 
 	let {
 		disabled = false,
@@ -52,7 +53,9 @@
 		aria-label="Message composer"
 		onkeydown={handleKeydown}
 	></textarea>
-	<button type="button" class="send" {disabled} onclick={submit} aria-label="Send message">↑</button>
+	<button type="button" class="send" {disabled} onclick={submit} aria-label="Send message">
+		<Icon name="arrow-up" size={18} />
+	</button>
 </div>
 
 <style>
@@ -90,10 +93,12 @@
 	}
 
 	.send {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		flex-shrink: 0;
 		width: var(--space-8);
 		height: var(--space-8);
-		font-size: var(--text-lg);
 		color: var(--color-accent-text);
 		background: var(--color-accent);
 		border: none;

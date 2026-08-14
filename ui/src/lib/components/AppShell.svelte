@@ -23,6 +23,7 @@
 	import WizardPane from './WizardPane.svelte';
 	import DoctorPane from './DoctorPane.svelte';
 	import DecisionsPane from './DecisionsPane.svelte';
+	import Icon from './Icon.svelte';
 	import { start as startOnboarding, reopen as reopenWizard } from '../onboarding.svelte.js';
 	import { startDoctor, runDoctor } from '../doctor.svelte.js';
 	import { startDecisions, openDecisions } from '../decisions.svelte.js';
@@ -58,7 +59,7 @@
 		type="button"
 		title="Decisions"
 		aria-label="Open decisions ledger"
-		onclick={openDecisions}>📜</button
+		onclick={openDecisions}><Icon name="scroll" size={16} /></button
 	>
 	<!-- Run the doctor (TD-1104) at any time. -->
 	<button
@@ -66,7 +67,7 @@
 		type="button"
 		title="Doctor"
 		aria-label="Run doctor diagnostics"
-		onclick={runDoctor}>🩺</button
+		onclick={runDoctor}><Icon name="stethoscope" size={16} /></button
 	>
 	<!-- Revisit first-run setup (TD-1101) at any time. -->
 	<button
@@ -74,7 +75,7 @@
 		type="button"
 		title="Setup wizard"
 		aria-label="Open setup wizard"
-		onclick={reopenWizard}>⚙</button
+		onclick={reopenWizard}><Icon name="settings" size={16} /></button
 	>
 	<ConnectionBanner />
 </header>
@@ -149,8 +150,10 @@
 		flex: 1;
 	}
 
-	/* Revisit affordance for the setup wizard (TD-1101). */
+	/* Header affordances: decisions (TD-1202), doctor (TD-1104), wizard (TD-1101). */
 	.shell-gear {
+		display: inline-flex;
+		align-items: center;
 		border: none;
 		background: transparent;
 		font-size: var(--text-base);

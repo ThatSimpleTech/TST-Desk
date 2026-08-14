@@ -15,6 +15,7 @@
 		chooseWorkspace,
 		finish,
 	} from '../onboarding.svelte.js';
+	import Icon from './Icon.svelte';
 
 	let keyInput = $state('');
 
@@ -107,7 +108,9 @@
 							onclick={() => choosePreset(name)}
 						>
 							<span class="preset-name">{name}</span>
-							{#if name === onboarding.activePreset}<span class="preset-check">✓</span>{/if}
+							{#if name === onboarding.activePreset}
+								<span class="preset-check"><Icon name="check" size={14} /></span>
+							{/if}
 						</button>
 					{/each}
 				</div>
@@ -307,7 +310,7 @@
 	}
 
 	.preset-check {
+		display: inline-flex;
 		color: var(--color-accent);
-		font-weight: var(--weight-bold);
 	}
 </style>
