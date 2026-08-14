@@ -1424,15 +1424,26 @@ The greeting itself lands with TD-1605. vitest 253/253, svelte-check 0/0
 **Size:** 2 · **Depends on:** TD-1601
 
 **Acceptance criteria:**
-- [ ] Assistant messages render full-width on the canvas — no bubble, no avatar,
+- [x] Assistant messages render full-width on the canvas — no bubble, no avatar,
       hairline separation between turns
-- [ ] User messages keep a right-aligned warm-tan bubble at max-width ≈80%
-- [ ] Streaming caret recolored to the accent
-- [ ] Markdown, code blocks, and copy affordances still work; existing component
+- [x] User messages keep a right-aligned warm-tan bubble at max-width ≈80%
+- [x] Streaming caret recolored to the accent
+- [x] Markdown, code blocks, and copy affordances still work; existing component
       tests updated
 
 **Notes:** `MessageBubble.svelte` and its consumers. This is the change that
 removes the "generic chat app" read.
+
+**Completed (2026-08-14):** `MessageBubble.svelte` splits the two roles: assistant
+messages render full-width on the ground with no bubble and no avatar, while user
+messages keep a right-aligned bubble at `max-width: 80%` in `--color-user-bubble`
+with the bottom-right corner tightened to `--radius-sm`. The turn separator is a
+top hairline on non-first user rows, driven by an explicit `first` prop from
+`MessageList` — under `@tanstack/svelte-virtual` windowing, `:first-child` lies,
+so the row index decides. The streaming caret is `▍` recolored to `--color-accent`
+with the blink suppressed under `prefers-reduced-motion`. Markdown, highlighted
+code blocks, and the code-copy affordance went untouched; the in-pane copy button
+per message lands with TD-1606.
 
 ---
 
@@ -1440,14 +1451,26 @@ removes the "generic chat app" read.
 **Size:** 2 · **Depends on:** TD-1601
 
 **Acceptance criteria:**
-- [ ] Chat column centered at max-width ≈760px, held on wide windows
-- [ ] Composer is a lifted white card: ≈24px radius, 1px hairline border, whisper
+- [x] Chat column centered at max-width ≈760px, held on wide windows
+- [x] Composer is a lifted white card: ≈24px radius, 1px hairline border, whisper
       shadow
-- [ ] Send is a circular accent button that morphs to stop while a turn runs
-- [ ] One-line plain disclaimer beneath the composer, in our own words
+- [x] Send is a circular accent button that morphs to stop while a turn runs
+- [x] One-line plain disclaimer beneath the composer, in our own words
 
 **Notes:** `Composer.svelte`, `ChatPane.svelte`. Disclaimer suggestion:
 "TST Desk can make mistakes — check its work."
+
+**Completed (2026-08-14):** `ChatPane.svelte` holds the conversation and composer
+in one `.column` at `width: min(760px, 100%)`, margin-centered on wide windows.
+`Composer.svelte` renders as a lifted card — `--color-lifted` ground, 1px
+`--color-hairline`, `--radius-xl` (24px), `--shadow-sm` whisper — over a
+chromeless textarea, with the border taking the accent on `:focus-within`. The
+circular accent send button carries the TD-1608 `arrow-up`; while a turn runs
+(running or awaiting_approval, via `showCancel`) it morphs to a filled `stop`
+labelled "Stop generating (Esc)" and calls `oncancel`, matching the Esc shortcut
+from TD-1609. The old `.controls` cancel row is gone. The disclaimer sits beneath
+the card in centered `text-xs` ink-muted: "TST Desk can make mistakes — check its
+work."
 
 ---
 
@@ -1455,14 +1478,25 @@ removes the "generic chat app" read.
 **Size:** 1 · **Depends on:** TD-1602
 
 **Acceptance criteria:**
-- [ ] Empty chat shows a time-aware serif greeting (morning / afternoon / evening
+- [x] Empty chat shows a time-aware serif greeting (morning / afternoon / evening
       by local hour)
-- [ ] Three suggestion chips in product voice insert their text into the composer
+- [x] Three suggestion chips in product voice insert their text into the composer
       (insert, not auto-send)
-- [ ] Hidden once messages exist, including after attach/replay with history
+- [x] Hidden once messages exist, including after attach/replay with history
 
 **Notes:** `ChatPane.svelte` empty branch. Chip copy is ours:
 "Review this repo", "Find what's failing", "Explain this codebase".
+
+**Completed (2026-08-14):** `greeting.ts` owns the clock — `greetingForHour`
+returns "Good morning" (5–11), "Good afternoon" (12–16), or "Good evening"
+(otherwise), computed once per `ChatPane` mount so the greeting doesn't tick live
+as the hour rolls over — and the `SUGGESTIONS` constant with the three chips in
+product voice. `ChatPane`'s empty branch renders the greeting in
+`--font-display` at `text-3xl` with `--tracking-display`, not bold, and the chips
+write into the composer's draft through `bind:value` — insert, never auto-send.
+The branch is keyed on `chat.messages.length === 0`, and attach/replay rebuilds
+history through the same store, so any session with history hides it automatically.
+`greeting.test.ts` pins the boundaries and the chip copy (4 tests).
 
 ---
 
@@ -1470,14 +1504,31 @@ removes the "generic chat app" read.
 **Size:** 2 · **Depends on:** TD-1603
 
 **Acceptance criteria:**
-- [ ] Assistant messages show a hover-only action bar: copy (markdown source) and
+- [x] Assistant messages show a hover-only action bar: copy (markdown source) and
       retry
-- [ ] Retry resends the last user message; hidden or disabled while a turn runs
-- [ ] Timestamp available on hover
-- [ ] Actions keyboard-reachable with visible focus
+- [x] Retry resends the last user message; hidden or disabled while a turn runs
+- [x] Timestamp available on hover
+- [x] Actions keyboard-reachable with visible focus
 
 **Notes:** retry works over today's protocol (`user_message` resend); edit/branch
 is deliberately out — it needs daemon-side conversation forking.
+
+**Completed (2026-08-14):** Completed assistant messages carry a hover-only action
+bar in `MessageBubble.svelte`, also revealed on `:focus-within` so the buttons are
+keyboard-reachable with a visible `--color-accent` focus ring; the slot height is
+reserved so the reveal never reflows the transcript. Copy writes the raw markdown
+source via `navigator.clipboard` with the TD-1608 `copy` icon flipping to `check`
+for 1.5s as confirmation. Retry (TD-1608 `retry` icon) calls the new
+`ChatStore.retryLastUserMessage()` — it walks back to the most recent user row and
+resends it verbatim over the same `user_message` wire message, appending a new row
+(the protocol has no edit/fork, so the duplication is the honest record) and
+refusing while a turn is live; the store method is hoisted to a closure so the
+reactive shell's detached re-export keeps working. The hover timestamp reads local
+HH:MM from a new display-only `ChatMessage.at` stamped at first sight (send echo
+or first delta; replay stamps attach time). `MessageList` threads `turnLive` /
+`onretry`; `ChatPane` wires `showCancel(chat.turnState)` and
+`retryLastUserMessage`. Three new retry tests plus a seen-at stamp test in
+`chat-store.test.ts`; vitest 270/270, svelte-check 292 files 0/0.
 
 ---
 
@@ -1485,15 +1536,32 @@ is deliberately out — it needs daemon-side conversation forking.
 **Size:** 2 · **Depends on:** TD-1004
 
 **Acceptance criteria:**
-- [ ] Between send and first token, a shimmering "Working…" line — CSS shimmer,
+- [x] Between send and first token, a shimmering "Working…" line — CSS shimmer,
       no spinner
-- [ ] Collapses to a static duration line when the turn completes
-- [ ] Honors `prefers-reduced-motion`
-- [ ] No layout shift on appear/disappear
+- [x] Collapses to a static duration line when the turn completes
+- [x] Honors `prefers-reduced-motion`
+- [x] No layout shift on appear/disappear
 
 **Notes:** chat-store already sees turn start and first `assistant_delta`; track
 an `awaitingFirstToken` flag there. The duration line is the "Thought for Ns"
 analog.
+
+**Completed (2026-08-14):** `ChatState` gains `awaitingFirstToken` — raised on a
+successful send, lowered on the first `assistant_delta`, on any non-running
+`session_state`, and on `turn_complete`; a replayed "running" current-state event
+is guarded so it can't resurrect the shimmer over an actively streaming reply, and
+attaching to a session the daemon reports as running raises it history or not.
+`lastTurnDuration` is stamped from the daemon-measured `turn_complete.duration`
+(seconds) and cleared on the next send — the UI never clocks a turn itself
+(AGENTS §6). `ChatPane` holds a fixed-height `.turn-status` slot above the
+composer (shimmer and duration swap inside it, so the composer never moves,
+satisfying no-layout-shift), announced with `aria-live="polite"`. "Working…" is a
+CSS shimmer — a warm gradient swept across the glyphs via `background-clip: text`,
+no spinner — and `prefers-reduced-motion` trades the sweep for static ink-muted.
+`formatTurnDuration` never prints "0s" (floors at 1s) and rolls into "Xm Ys" past
+a minute; "Worked for …" is our wording, not Claude's. Six new tests cover the
+flag lifecycle, replayed-state guard, duration stamp/clear, and formatting;
+vitest 277/277, svelte-check 292 files 0/0, `vite build` clean.
 
 ---
 
