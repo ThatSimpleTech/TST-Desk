@@ -10,6 +10,7 @@
 	// cards (TD-1007).
 	import { onMount } from 'svelte';
 	import SplitPane from './SplitPane.svelte';
+	import SessionRail from './SessionRail.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
 	import ActivityTimeline from './ActivityTimeline.svelte';
 	import StackPanel from './StackPanel.svelte';
@@ -104,6 +105,8 @@
 <NotificationBanner />
 
 <div class="shell-body">
+	<!-- Session rail (TD-1701): collapsible session list at the left edge. -->
+	<SessionRail />
 	<SplitPane>
 		{#snippet left()}
 			<section class="pane-chat" aria-label="Chat pane"><ChatPane /></section>
@@ -194,6 +197,13 @@
 		flex: 1;
 		min-height: 0;
 		display: flex;
+	}
+
+	/* The split pane shares the flex line with the rail (TD-1701): grow into
+	   what the rail leaves, never push past it. */
+	.shell-body > :global(.splitpane) {
+		flex: 1;
+		min-width: 0;
 	}
 
 	.pane-chat,

@@ -111,6 +111,33 @@ describe("session binding", () => {
     expect(state.turnState).toBeNull();
     expect(detached).toEqual(["s1"]);
   });
+
+  it("rail selection detaches the old session and attaches the chosen one (TD-1701)", () => {
+    const { store, state, attached, detached } = boundStore();
+    store.applyEvent(delta("s1", "in flight"));
+    store.selectSession("s2", "interrupted");
+    expect(state.sessionId).toBe("s2");
+    expect(state.turnState).toBe("interrupted");
+    expect(state.messages).toEqual([]);
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(detached).toEqual(["s1"]);
+    expect(attached).toEqual(["s1", "s2"]); // s1 bound at start, s2 on select
+  });
+
+  it("rail selection of the attached session is a no-op", () => {
+    const { store, state, attached, detached } = boundStore();
+    store.applyEvent(delta("s1", "keep me"));
+    store.selectSession("s1", "idle");
+    expect(state.messages).toHaveLength(1);
+    expect(attached).toEqual(["s1"]);
+    expect(detached).toEqual([]);
+  });
+
+  it("rail selection of a running session shows the working shimmer", () => {
+    const { store, state } = boundStore();
+    store.selectSession("s2", "running");
+    expect(state.awaitingFirstToken).toBe(true);
+  });
 });
 
 describe("streaming assistant output", () => {

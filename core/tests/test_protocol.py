@@ -26,6 +26,7 @@ from tstd.protocol import (
     HandshakeError,
     Hello,
     ListPolicyRules,
+    NewSession,
     OpenWorkspace,
     PolicyRules,
     PolicyRuleSummary,
@@ -163,6 +164,12 @@ class TestClientMessages:
         msg = GetInstructionStack(session_id="sess-1")
         back = _roundtrip(msg)
         assert isinstance(back, GetInstructionStack)
+
+    def test_new_session(self) -> None:
+        msg = NewSession(session_id="sess-1")
+        back = _roundtrip(msg)
+        assert isinstance(back, NewSession)
+        assert back.session_id == "sess-1"
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────

@@ -169,6 +169,12 @@ export class ProtocolClient {
     this.send({ type: "open_workspace", path });
   }
 
+  /** Create a fresh session in an existing session's workspace (TD-1701).
+   *  The daemon answers with the new session's first event (session_state). */
+  newSession(anchorSessionId: string): boolean {
+    return this.send({ type: "new_session", session_id: anchorSessionId });
+  }
+
   /** Pin a session's model tier (TD-1006). The daemon acks with tier_state. */
   setTier(sessionId: string, tier: "brain" | "worker" | "validator"): void {
     this.send({ type: "set_tier", session_id: sessionId, tier });

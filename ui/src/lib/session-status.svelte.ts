@@ -129,6 +129,33 @@ export function openWorkspace(path: string): void {
   client?.openWorkspace(path);
 }
 
+/** Re-target this store at another live session (TD-1701 rail selection).
+ *
+ *  The rail knows the session's id, workspace, and last-reported state from
+ *  `session_list`; the attach replay then repopulates everything the log
+ *  carries (boundary, tier, cost, final state) — so session-derived fields
+ *  reset here instead of showing the previous session's numbers under the
+ *  new id. Attaching itself stays with the chat store, which owns the
+ *  attach/detach pairing. No-op when the store already follows this id.
+ */
+export function focusSession(
+  sessionId: string,
+  state: SessionIndicator,
+  workspacePath?: string,
+): void {
+  if (session.sessionId === sessionId) return;
+  session.sessionId = sessionId;
+  if (workspacePath !== undefined) session.workspacePath = workspacePath;
+  session.state = state;
+  session.reason = null;
+  session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
+  session.boundary = null;
+  session.tier = "brain";
+  session.tierOverride = null;
+  session.modelSlugs = {};
+  pendingPath = null;
+}
+
 /** Pin a tier on the active session (a chip click). */
 export function setTier(tier: "brain" | "worker" | "validator"): void {
   if (session.sessionId === null) return;
