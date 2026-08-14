@@ -52,6 +52,12 @@
     "type": "get_instruction_stack",
     "session_id": "sess-1"
   },
+  "shutdown": {
+    "type": "shutdown"
+  },
+  "list_sessions": {
+    "type": "list_sessions"
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -197,5 +203,50 @@
     "tool_call_id": "tc-1",
     "stream": "stdout",
     "chunk": "hello\n"
+  },
+  "steering_reloaded": {
+    "type": "steering_reloaded",
+    "seq": 16,
+    "session_id": "sess-1",
+    "prefix_hash": "abc123",
+    "prefix_tokens": 100,
+    "source_count": 3
+  },
+  "instruction_stack": {
+    "type": "instruction_stack",
+    "seq": 17,
+    "session_id": "sess-1",
+    "sources": [
+      {
+        "path": "CLAUDE.md",
+        "precedence": "project",
+        "active": true,
+        "tokens": 500,
+        "token_method": "cl100k_base",
+        "warnings": [],
+        "subtree": null,
+        "is_fallback": false
+      }
+    ],
+    "total_tokens": 500,
+    "token_method": "cl100k_base"
+  },
+  "session_list": {
+    "type": "session_list",
+    "seq": 1,
+    "sessions": [
+      {
+        "session_id": "sess-1",
+        "workspace_path": "/home/user/project",
+        "state": "interrupted",
+        "created_at": "2026-08-13T10:00:00Z",
+        "updated_at": "2026-08-13T10:00:00Z",
+        "event_count": 0
+      }
+    ]
+  },
+  "hello_ack": {
+    "type": "hello_ack",
+    "version": 1
   }
 }

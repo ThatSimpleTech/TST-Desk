@@ -1,0 +1,318 @@
+// Typed WebSocket client for the TST Desk daemon (TD-1003).
+//
+// Talks the daemon protocol (mirrored in `protocol.ts`) over a local WebSocket.
+// Responsibilities:
+//   - hello/hello_ack handshake, then forward sequenced daemon events
+//   - automatic reconnect with exponential backoff
+//   - re-attach with `from_seq` on reconnect to replay missed events
+//   - gap/duplicate detection on the per-session event sequence
+//   - tolerant handling of unknown event types (warn, never crash)
+//
+// The WebSocket constructor is injected so the client runs in a test under
+// vitest's node environment with a fake transport, and in the webview with
+// the browser's WebSocket. No Tauri APIs are imported here.
+
+import type { DaemonEventUnion } from "./protocol";
+
+/**
+ * The daemon event types this client version understands. Messages whose
+ * `type` is not here are still seq-advancing but are dropped with a warning.
+ * TypeScript cannot enumerate a union's literal members at runtime, so this
+ * mirrors `DaemonEventUnion` explicitly and must be kept in sync with it.
+ */
+const KNOWN_EVENT_TYPES = new Set([
+  "ready",
+  "session_state",
+  "assistant_delta",
+  "tool_call",
+  "tool_result",
+  "approval_request",
+  "decision_logged",
+  "cost_update",
+  "turn_complete",
+  "steering_reloaded",
+  "instruction_stack",
+  "session_list",
+  "error",
+]);
+
+/**
+ * Minimal surface of a WebSocket the client depends on.
+ *
+ * Handler fields are writable and accept an optional event argument so both
+ * the browser `WebSocket` (whose callbacks receive an `Event`) and a test fake
+ * (invoked with none) satisfy the type.
+ */
+export interface SocketLike {
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  onopen: (() => void) | null;
+  onmessage: ((ev: { data: unknown }) => void) | null;
+  onclose: (() => void) | null;
+  onerror: (() => void) | null;
+}
+
+export type SocketFactory = (url: string) => SocketLike;
+
+export type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting" | "stopped";
+
+/** A handler receiving a parsed, validated daemon event. */
+export type EventHandler = (event: DaemonEventUnion) => void;
+
+/** Gets the live daemon {port, token}. Injected so tests supply a stub. */
+export type DaemonInfoProvider = () => Promise<{ port: number; token: string } | null>;
+
+export interface ClientOptions {
+  /** Resolves the daemon's port + auth token. */
+  getDaemonInfo: DaemonInfoProvider;
+  /** Builds the ws:// URL. Defaults to 127.0.0.1:{port} (loopback-only). */
+  buildUrl?: (port: number) => string;
+  /** Injectable WebSocket constructor (browser WebSocket in production). */
+  socketFactory: SocketFactory;
+  /** Base backoff in ms; clamped by `maxBackoffMs`. Default 500. */
+  baseBackoffMs?: number;
+  /** Upper bound on backoff. Default 15s. */
+  maxBackoffMs?: number;
+  /** Protocol version sent in `hello`. Must match core PROTOCOL_VERSION. */
+  protocolVersion?: number;
+}
+
+/** Sink for all events including connection-state transitions. */
+export interface ClientSink {
+  /** Invoked with each validated daemon event, in received order. */
+  onEvent?: EventHandler;
+  /** Invoked whenever the connection state changes. */
+  onStateChange?: (state: ConnectionState) => void;
+  /** Invoked when an unknown event type is dropped. */
+  onUnknownEvent?: (type: string) => void;
+}
+
+export class ProtocolClient {
+  private readonly opts: ClientOptions;
+  private readonly sink: ClientSink;
+  private socket: SocketLike | null = null;
+  private state: ConnectionState = "disconnected";
+  private stopped = false;
+  private reconnectAttempt = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private handshake: "idle" | "awaiting_ack" = "idle";
+  // session_id -> last event seq we accepted from the daemon.
+  private readonly lastSeqBySession = new Map<string, number>();
+  // session_id of every session this connection is (or should be) attached to.
+  private readonly attachedSessions = new Set<string>();
+  // True after the first handshake; distinguishes first connect from a reconnect.
+  private hasConnectedOnce = false;
+
+  constructor(opts: ClientOptions, sink: ClientSink = {}) {
+    this.opts = opts;
+    this.sink = sink;
+  }
+
+  /** Current connection state. */
+  get connectionState(): ConnectionState {
+    return this.state;
+  }
+
+  /** Highest accepted seq for a session (or 0 if unattached). */
+  lastSeq(sessionId: string): number {
+    return this.lastSeqBySession.get(sessionId) ?? 0;
+  }
+
+  /**
+   * Attach to a session. On the live socket this sends `attach{from_seq}` so
+   * the daemon replays from our last seen seq and then streams live. On a
+   * reconnect the client re-attaches every registered session itself.
+   */
+  attach(sessionId: string): void {
+    const fromSeq = this.lastSeq(sessionId) + 1;
+    this.attachedSessions.add(sessionId);
+    this.sendAttach(sessionId, fromSeq);
+  }
+
+  /** Stop following a session. */
+  detach(sessionId: string): void {
+    this.attachedSessions.delete(sessionId);
+    this.lastSeqBySession.delete(sessionId);
+    if (this.socket && this.handshake === "idle") {
+      this.socket.send(JSON.stringify({ type: "detach", session_id: sessionId }));
+    }
+  }
+
+  /** Start the client: resolve daemon info and open the first connection. */
+  async start(): Promise<void> {
+    this.stopped = false;
+    await this.open();
+  }
+
+  private sendAttach(sessionId: string, fromSeq: number): void {
+    // Only meaningful on an open, handshaken socket.
+    if (!this.socket || this.handshake !== "idle") return;
+    this.socket.send(JSON.stringify({ type: "attach", session_id: sessionId, from_seq: fromSeq }));
+  }
+
+  /** Permanently stop: close the socket, cancel retries, mark stopped. */
+  stop(): void {
+    this.stopped = true;
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    this.handshake = "idle";
+    this.lastSeqBySession.clear();
+    this.socket?.close();
+    this.socket = null;
+    this.setState("stopped");
+  }
+
+  private async open(): Promise<void> {
+    if (this.stopped) return;
+    this.setState(this.reconnectAttempt === 0 ? "connecting" : "reconnecting");
+
+    let info: { port: number; token: string } | null;
+    try {
+      info = await this.opts.getDaemonInfo();
+    } catch {
+      info = null;
+    }
+    if (!info) {
+      this.scheduleRetry();
+      return;
+    }
+
+    const url = this.opts.buildUrl?.(info.port) ?? `ws://127.0.0.1:${info.port}`;
+    const socket = this.opts.socketFactory(url);
+    this.socket = socket;
+
+    socket.onopen = () => {
+      // hello carries the auth token; the daemon replies hello_ack then ready.
+      socket.send(JSON.stringify({ type: "hello", token: info!.token, version: this.opts.protocolVersion ?? 1 }));
+      this.handshake = "awaiting_ack";
+    };
+
+    socket.onmessage = (ev) => this.handleMessage(String(ev.data));
+
+    socket.onclose = () => {
+      this.handshake = "idle";
+      if (this.stopped) return;
+      this.setState("reconnecting");
+      this.scheduleRetry();
+    };
+
+    // `onerror` alone means nothing — close follows. Keep it wired to avoid
+    // an unhandled event and to make the transport's failure observable.
+    socket.onerror = () => {};
+  }
+
+  private handleMessage(raw: string): void {
+    let msg: unknown;
+    try {
+      msg = JSON.parse(raw);
+    } catch {
+      // Not JSON — not our protocol's shape; ignore without crashing.
+      console.warn("[tstd client] dropped non-JSON message");
+      return;
+    }
+    if (typeof msg !== "object" || msg === null || !("type" in msg) || typeof msg.type !== "string") {
+      console.warn("[tstd client] dropped malformed message");
+      return;
+    }
+
+    const type = msg.type as string;
+
+    // Out-of-band handshake reply: no seq. If we previously held a connection
+    // we re-attach every known session at lastSeq+1 so the daemon replays
+    // anything we missed while offline.
+    if (type === "hello_ack") {
+      this.handshake = "idle";
+      if (this.hasConnectedOnce) {
+        for (const sessionId of this.attachedSessions) {
+          this.sendAttach(sessionId, this.lastSeq(sessionId) + 1);
+        }
+      }
+      this.hasConnectedOnce = true;
+      this.reconnectAttempt = 0;
+      this.setState("connected");
+      return;
+    }
+
+    // Sequenced daemon events carry `seq` and (for session-scoped events) a
+    // session_id. Accept returns false for a duplicate or an out-of-order
+    // (gapped) seq; those are dropped and must not reach the sink.
+    const seq = typeof (msg as Record<string, unknown>).seq === "number" ? ((msg as Record<string, unknown>).seq as number) : undefined;
+    if (seq !== undefined) {
+      const sessionId = (msg as Record<string, unknown>).session_id as string | undefined;
+      if (sessionId !== undefined && !this.acceptSequenced(sessionId, seq)) {
+        return;
+      }
+    }
+
+    this.dispatch(msg as DaemonEventUnion);
+  }
+
+  /**
+   * Sequence bookkeeping: accept an event iff it advances the session's log
+   * by exactly one. Anything else is handled per the no-gap/no-dup contract:
+   *   - seq <= lastSeq  -> duplicate already seen, drop.
+   *   - seq > lastSeq+1 -> we missed events; re-attach with from_seq=last+1
+   *     so the daemon replays the gap, then we reconnect for a fresh stream.
+   */
+  private acceptSequenced(sessionId: string, seq: number): boolean {
+    const last = this.lastSeq(sessionId);
+    if (seq <= last) {
+      console.warn(`[tstd client] dropped duplicate/old seq ${seq} for ${sessionId} (last ${last})`);
+      return false; // do not forward — already seen.
+    }
+    if (seq > last + 1) {
+      console.warn(`[tstd client] gap detected for ${sessionId}: expected ${last + 1}, got ${seq}; re-attaching`);
+      this.reconnectAttempt = 0; // force an immediate, fresh attach
+      void this.forceReconnect();
+      return false; // do not forward the out-of-order event.
+    }
+    this.lastSeqBySession.set(sessionId, seq);
+    return true;
+  }
+
+  /**
+   * Dispatch a validated event to the sink. Unknown event types (those not in
+   * the typed union) must never crash the client — warn and move on. Their seq
+   * still advanced above, so gap detection won't falsely fire afterwards.
+   */
+  private dispatch(msg: DaemonEventUnion): void {
+    // The daemon may emit future/unknown types the TS mirror doesn't know.
+    // TypeScript casts here can't know the full future shape; runtime guard is
+    // the real tolerance. Unknown types are dropped with a warning.
+    const type = (msg as { type?: string }).type;
+    if (type === undefined) {
+      console.warn(`[tstd client] dropped message without a type`);
+      return;
+    }
+    const known = KNOWN_EVENT_TYPES.has(type);
+    if (!known) {
+      console.warn(`[tstd client] ignored unknown event type "${type}"`);
+      this.sink.onUnknownEvent?.(type);
+      return;
+    }
+    this.sink.onEvent?.(msg);
+  }
+
+  private forceReconnect(): void {
+    if (this.stopped) return;
+    this.socket?.close();
+    this.socket = null;
+    void this.open();
+  }
+
+  private scheduleRetry(): void {
+    if (this.stopped) return;
+    const attempt = this.reconnectAttempt;
+    const backoff = Math.min(this.opts.baseBackoffMs ?? 500 * 2 ** attempt, this.opts.maxBackoffMs ?? 15_000);
+    this.reconnectAttempt += 1;
+    this.retryTimer = setTimeout(() => void this.open(), backoff);
+  }
+
+  private setState(state: ConnectionState): void {
+    if (this.state === state) return;
+    this.state = state;
+    this.sink.onStateChange?.(state);
+  }
+}

@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import fixtures from "./protocol-fixtures.json";
 import type {
   Hello,
+  HelloAck,
   OpenWorkspace,
   UserMessage,
   Approve,
@@ -15,6 +16,8 @@ import type {
   Detach,
   SetTier,
   GetInstructionStack,
+  Shutdown,
+  ListSessions,
   Ready,
   SessionState,
   AssistantDelta,
@@ -27,6 +30,9 @@ import type {
   CheckpointNotice,
   CostUpdate,
   TurnComplete,
+  SteeringReloaded,
+  InstructionStack,
+  SessionList,
   Error,
 } from "./protocol";
 
@@ -116,6 +122,23 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.get_instruction_stack as GetInstructionStack;
     expect(m.type).toBe("get_instruction_stack");
     expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("shutdown", () => {
+    const m = fixtures.shutdown as Shutdown;
+    expect(m.type).toBe("shutdown");
+  });
+
+  it("list_sessions", () => {
+    const m = fixtures.list_sessions as ListSessions;
+    expect(m.type).toBe("list_sessions");
+  });
+
+  // hello_ack is out-of-band and unsequenced: daemon→client, no seq.
+  it("hello_ack", () => {
+    const m = fixtures.hello_ack as HelloAck;
+    expect(m.type).toBe("hello_ack");
+    expect(isNumber(m.version)).toBe(true);
   });
 });
 

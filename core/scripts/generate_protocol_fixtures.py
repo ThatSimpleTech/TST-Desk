@@ -29,11 +29,16 @@ from tstd.protocol import (
     Error,
     GetInstructionStack,
     Hello,
+    InstructionStack,
+    ListSessions,
     OpenWorkspace,
     Ready,
+    SessionList,
     SessionState,
     SetTier,
     ShellOutput,
+    Shutdown,
+    SteeringReloaded,
     ToolCall,
     ToolResult,
     TurnComplete,
@@ -53,6 +58,8 @@ FIXTURES = {
     "detach": Detach(session_id="sess-1"),
     "set_tier": SetTier(session_id="sess-1", tier="brain"),
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
+    "shutdown": Shutdown(),
+    "list_sessions": ListSessions(),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
@@ -146,6 +153,39 @@ FIXTURES = {
         chunk="hello\n",
         seq=15,
     ),
+    "steering_reloaded": SteeringReloaded(
+        session_id="sess-1",
+        prefix_hash="abc123",
+        prefix_tokens=100,
+        source_count=3,
+        seq=16,
+    ),
+    "instruction_stack": InstructionStack(
+        session_id="sess-1",
+        sources=[
+            {
+                "path": "CLAUDE.md",
+                "precedence": "project",
+                "tokens": 500,
+                "token_method": "cl100k_base",
+            }
+        ],
+        total_tokens=500,
+        token_method="cl100k_base",
+        seq=17,
+    ),
+    "session_list": SessionList(
+        sessions=[
+            {
+                "session_id": "sess-1",
+                "workspace_path": "/home/user/project",
+                "state": "interrupted",
+                "created_at": "2026-08-13T10:00:00Z",
+                "updated_at": "2026-08-13T10:00:00Z",
+                "event_count": 0,
+            }
+        ]
+    ),
 }
 
 
@@ -160,6 +200,8 @@ def main() -> None:
     fixtures = {}
     for name, msg in FIXTURES.items():
         fixtures[name] = json.loads(msg.model_dump_json())
+    # hello_ack is built as a plain dict, not a Pydantic model.
+    fixtures["hello_ack"] = {"type": "hello_ack", "version": PROTOCOL_VERSION}
     output_path.write_text(json.dumps(fixtures, indent=2))
     print(f"Wrote {len(fixtures)} fixtures to {output_path}")
 

@@ -2,11 +2,16 @@
 	// Application shell: two-pane workspace layout using only design tokens.
 	// Left = chat pane, right = activity pane. Both are placeholder chrome in
 	// v0.1; their real content arrives with TD-1003/TD-1004.
+	// The connection banner (TD-1003) sits in the shell header so daemon/socket
+	// state is visible at all times.
 	import SplitPane from './SplitPane.svelte';
+	import ConnectionBanner from '../ConnectionBanner.svelte';
 </script>
 
 <header class="shell-header">
 	<span class="shell-title">TST Desk</span>
+	<span class="shell-spacer"></span>
+	<ConnectionBanner />
 </header>
 
 <div class="shell-body">
@@ -35,6 +40,11 @@
 		font-size: var(--text-sm);
 		font-weight: var(--weight-semibold);
 		color: var(--color-text);
+	}
+
+	/* Push the connection banner to the right edge of the shell header. */
+	.shell-spacer {
+		flex: 1;
 	}
 
 	.shell-body {

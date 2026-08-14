@@ -16,6 +16,9 @@
 		"tauri:dev": "TAURI_APP_PATH=../shell tauri dev",
 		"tauri:build": "TAURI_APP_PATH=../shell tauri build"
 	},
+	"dependencies": {
+		"@tauri-apps/api": "^2.9.0"
+	},
 	"devDependencies": {
 		"@sveltejs/adapter-static": "^3.0.8",
 		"@sveltejs/kit": "^2.63.0",
