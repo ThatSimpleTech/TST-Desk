@@ -267,6 +267,17 @@ class SetPreset(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class RunDiagnostics(ClientMessage):
+    """Ask the daemon to run the doctor checks (TD-1104 diagnostics).
+
+    The daemon answers with a single ``diagnostics_report`` once every
+    check completes — including the one-token provider probe, so the
+    reply can take a second or two.
+    """
+
+    type: Literal["run_diagnostics"] = "run_diagnostics"
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -614,6 +625,32 @@ class ApiKeyValidated(DaemonEvent):
     detail: str
 
 
+class DiagnosticCheck(BaseModel):
+    """One doctor check (TD-1104).
+
+    ``skip`` means the check did not apply (no key to validate, no
+    workspace open) — it is not a failure and should not alarm.  ``fix``
+    is the concrete remedy; present exactly when status is ``fail``.
+    """
+
+    name: str
+    status: Literal["ok", "fail", "skip"]
+    detail: str
+    fix: str | None = None
+
+
+class DiagnosticsReport(DaemonEvent):
+    """Doctor results (TD-1104), answering ``run_diagnostics``.
+
+    Connection-scoped like ``setup_state``: the report describes the
+    machine, not a session.
+    """
+
+    type: Literal["diagnostics_report"] = "diagnostics_report"
+    seq: int = 1
+    checks: list[DiagnosticCheck] = Field(default_factory=list)
+
+
 class Error(DaemonEvent):
     """A typed error, usually in response to a bad message."""
 
@@ -645,7 +682,8 @@ ClientMessageT = Annotated[
     | GetSetupState
     | SetApiKey
     | ValidateApiKey
-    | SetPreset,
+    | SetPreset
+    | RunDiagnostics,
     Field(discriminator="type"),
 ]
 
@@ -671,6 +709,7 @@ DaemonEventT = Annotated[
     | PolicyRules
     | SetupState
     | ApiKeyValidated
+    | DiagnosticsReport
     | Error,
     Field(discriminator="type"),
 ]
@@ -701,6 +740,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_api_key",
         "validate_api_key",
         "set_preset",
+        "run_diagnostics",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -726,6 +766,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "policy_rules",
         "setup_state",
         "api_key_validated",
+        "diagnostics_report",
         "error",
     }
 )

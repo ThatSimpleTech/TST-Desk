@@ -122,6 +122,12 @@ export interface SetPreset extends ClientMessage {
   name: string;
 }
 
+// ── Diagnostics (TD-1104 doctor) ─────────────────────────────────────
+
+export interface RunDiagnostics extends ClientMessage {
+  type: "run_diagnostics";
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -142,7 +148,8 @@ export type ClientMessageUnion =
   | GetSetupState
   | SetApiKey
   | ValidateApiKey
-  | SetPreset;
+  | SetPreset
+  | RunDiagnostics;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -354,6 +361,22 @@ export interface ApiKeyValidated extends DaemonEvent {
   detail: string;
 }
 
+// TD-1104 doctor: one row per check. `skip` means not applicable (no key
+// to validate, no workspace open) — not a failure. `fix` is the concrete
+// remedy, present exactly when status is "fail".
+export interface DiagnosticCheck {
+  name: string;
+  status: "ok" | "fail" | "skip";
+  detail: string;
+  fix?: string | null;
+}
+
+export interface DiagnosticsReport extends DaemonEvent {
+  type: "diagnostics_report";
+  seq: number;
+  checks: DiagnosticCheck[];
+}
+
 export interface Error extends DaemonEvent {
   type: "error";
   session_id?: string | null;
@@ -399,4 +422,5 @@ export type DaemonEventUnion =
   | PolicyRules
   | SetupState
   | ApiKeyValidated
+  | DiagnosticsReport
   | Error;

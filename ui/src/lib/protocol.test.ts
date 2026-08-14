@@ -48,6 +48,8 @@ import type {
   SetPreset,
   SetupState,
   ApiKeyValidated,
+  RunDiagnostics,
+  DiagnosticsReport,
   Error,
 } from "./protocol";
 
@@ -191,6 +193,12 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.set_preset as SetPreset;
     expect(m.type).toBe("set_preset");
     expect(isString(m.name)).toBe(true);
+  });
+
+  // TD-1104 doctor
+  it("run_diagnostics", () => {
+    const m = fixtures.run_diagnostics as RunDiagnostics;
+    expect(m.type).toBe("run_diagnostics");
   });
 
   // hello_ack is out-of-band and unsequenced: daemon→client, no seq.
@@ -436,6 +444,23 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect("session_id" in m).toBe(false);
   });
 
+  it("diagnostics_report", () => {
+    // TD-1104: connection-scoped (no session_id), seq=1 like setup_state.
+    const m = fixtures.diagnostics_report as DiagnosticsReport;
+    expect(m.type).toBe("diagnostics_report");
+    expect(m.seq).toBe(1);
+    expect("session_id" in m).toBe(false);
+    expect(Array.isArray(m.checks)).toBe(true);
+    expect(m.checks.length).toBeGreaterThan(0);
+    for (const c of m.checks) {
+      expect(isString(c.name)).toBe(true);
+      expect(["ok", "fail", "skip"]).toContain(c.status);
+      expect(isString(c.detail)).toBe(true);
+      // `fix` is present-and-string on fails, absent or null otherwise.
+      if (c.status === "fail") expect(typeof c.fix).toBe("string");
+    }
+  });
+
   it("error", () => {
     const m = fixtures.error as Error;
     expect(m.type).toBe("error");
@@ -458,6 +483,7 @@ describe("All fixtures have required shape", () => {
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
+      "run_diagnostics",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -474,6 +500,7 @@ describe("All fixtures have required shape", () => {
       "tier_state", "context_compacted", "steering_reloaded", "tier_switched",
       "instruction_stack", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
+      "diagnostics_report",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
