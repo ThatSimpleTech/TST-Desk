@@ -5,7 +5,6 @@ write refusal at guard level, secret redaction in logs, non-loopback bind
 refusal, and classifier-bypass attacks on the dispatch chokepoint.
 
 Skipped with reasons — gaps, not verdicts:
-- Environment sanitization needs TD-605 (no child-process code exists).
 - Redaction of audit/event and error-message surfaces has no implementation:
   the logging filter is the only chokepoint, and ToolCallEvent.arguments /
   ToolResultEvent.output bypass it. No story covers this yet.
@@ -33,6 +32,7 @@ from tstd.autonomy import (
 )
 from tstd.autonomy.classifier import RULE_TABLE, is_steering_write
 from tstd.logging import SECRET_PATTERNS, JSONFormatter, SecretsRedactionFilter
+from tstd.session import Session
 from tstd.tools import (
     ToolDispatcher,
     UnclassifiedToolCall,
@@ -40,6 +40,7 @@ from tstd.tools import (
     register_builtin_handlers,
 )
 from tstd.tools.boundary import PathGuard, RefusalError
+from tstd.tools.shell import run_shell, sanitized_env
 from tstd.ws import WebSocketServer, validate_interface
 
 
@@ -283,15 +284,30 @@ async def test_legit_write_succeeds_proving_refusals_are_targeted(ws: Path) -> N
 # ── 3. Environment sanitization for child processes ──────────────────────
 
 
-@pytest.mark.skip(
-    reason="TD-605: no shell-exec implementation exists to sanitize. The "
-    "sanitizer must strip secret-bearing env vars (API keys, tokens, "
-    "credentials) from every child process; write this test against its "
-    "interface when it lands."
-)
-def test_child_process_env_sanitized() -> None:
-    """Child processes must inherit a scrubbed environment, never the
-    daemon's secrets."""
+def test_sanitized_env_drops_secret_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Secret-shaped variable names are stripped from the child environment;
+    ordinary variables pass through (TD-605)."""
+    monkeypatch.setenv("TSTD_PLANTED_API_KEY", "sk-planted-secret-value")  # tst-secret-ok
+    monkeypatch.setenv("TSTD_PLANTED_DB_PASSWORD", "hunter2")  # tst-secret-ok
+    monkeypatch.setenv("TSTD_PLANTED_VISIBLE", "still-here")
+    env = sanitized_env()
+    assert "TSTD_PLANTED_API_KEY" not in env
+    assert "TSTD_PLANTED_DB_PASSWORD" not in env
+    assert env["TSTD_PLANTED_VISIBLE"] == "still-here"
+
+
+async def test_shell_child_never_sees_daemon_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End-to-end: a shell command that dumps its environment echoes the
+    planted safe variable but never the planted secret (TD-605 + TD-1402)."""
+    secret_value = "sk-planted-secret-value"  # tst-secret-ok
+    monkeypatch.setenv("TSTD_PLANTED_API_KEY", secret_value)
+    monkeypatch.setenv("TSTD_PLANTED_VISIBLE", "still-here")
+    session = Session(str(tmp_path))
+    out = await run_shell(session, "printenv TSTD_PLANTED_API_KEY; printenv TSTD_PLANTED_VISIBLE")
+    assert secret_value not in out
+    assert "still-here" in out
 
 
 # ── 4. Secret redaction ───────────────────────────────────────────────────
