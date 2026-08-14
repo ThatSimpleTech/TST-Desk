@@ -957,3 +957,53 @@ story's security contract.
 **Rationale:** Events are seq-numbered and append-only; any new open-time
 event shifts subsequent seqs. The UI round-trip fixture gained a
 `boundary_update` sample.
+
+## 2026-08-13 — TD-801: Policy model
+
+Decisions made during the policy model build.
+
+### 1. Argument-summary semantics
+
+**Decision:** Policy patterns match against a normalized per-call summary: the
+first `path_fields` value as a workspace-relative POSIX path (absolute when it
+escapes the workspace), the first `host_fields` value for network tools, the
+`command` argument verbatim for the shell tool, and canonical JSON otherwise.
+
+**Rationale:** Criterion 1 needs "(tool, argument pattern)" to match something
+deterministic. Reusing the tool's declared metadata (`path_fields` /
+`host_fields`, TD-702) keeps the reduction honest — no heuristics over raw
+text. The `command` convention lets rules read naturally (`npm test*`), the
+spec §6 example ("always allow this command in this workspace").
+
+### 2. Specificity order and tie-break
+
+**Decision:** Most-specific rule wins, ordered by: exact tool name over globs,
+then fewer wildcards in the argument pattern, then longer literal pattern.
+Rules identical on all three axes break toward the most restrictive effect
+(never > ask > auto).
+
+**Rationale:** Criterion 4 requires deterministic precedence. Declaration
+order is fragile (users append rules over time); a structural order is
+testable and stable. Restrictive tie-break fails safe — ambiguity resolves
+toward asking, never toward acting.
+
+### 3. Class-C calls never resolve to `auto`
+
+**Decision:** Even when a matching rule says `auto`, a class-C call resolves
+to the configured `class_c_default` (`ask` or `never`).
+
+**Rationale:** Criterion 5 ("policy never grants what the boundary forbids")
+holds at two layers: dispatch refuses boundary-crossing calls before policy
+is consulted (TD-602 ordering), and the resolver refuses to downgrade a C to
+silent execution. Policy can tighten the wall, never widen it.
+
+### 4. Policy owns its config section
+
+**Decision:** `tstd/policy.py` loads and saves only the `policy:` key of
+`.tst/config.yaml`; saves are section-preserving (boundary/caps carried
+through) and atomic (temp file + replace). `boundary_config.py` is untouched.
+
+**Rationale:** TD-706 owns the boundary loader with its own tests; extending
+it would entangle two stories' modules. Both loaders read the same file and
+ignore foreign keys (pydantic default), so the sections compose without
+coupling. Atomic write follows the TD-604 workspace-file pattern.

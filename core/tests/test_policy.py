@@ -1,0 +1,245 @@
+"""Tests for the approval policy model (TD-801).
+
+Covers: (tool, argument pattern) → effect mapping; decision-class defaults
+(A → auto, B → ask, C → ask-or-never per config); persistence in
+``.tst/config.yaml`` with other sections preserved; most-specific-wins
+precedence; and the invariant that policy never grants what the boundary
+forbids (a class-C call never resolves to ``auto``).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from tstd.autonomy.classifier import DecisionClass
+from tstd.boundary_config import load_workspace_boundary
+from tstd.config import ConfigError
+from tstd.policy import (
+    PolicyConfig,
+    PolicyRule,
+    load_policy,
+    resolve,
+    save_policy,
+    summarize_arguments,
+)
+from tstd.tools import Tool
+
+A, B, C = DecisionClass.A, DecisionClass.B, DecisionClass.C
+
+FS_WRITE = Tool(name="fs_write", path_fields=("path",), mutates=True)
+FS_READ = Tool(name="fs_read", path_fields=("path",))
+SHELL = Tool(name="shell")
+FETCH = Tool(name="http_fetch", host_fields=("host",))
+
+
+def _rule(tool: str, args: str = "**", effect: str = "auto") -> PolicyRule:
+    return PolicyRule.model_validate({"tool": tool, "args": args, "effect": effect})
+
+
+# ── (tool, argument pattern) → effect ───────────────────────────────────
+
+
+class TestMapping:
+    def test_matching_rule_applies(self, tmp_path: Path) -> None:
+        cfg = PolicyConfig(rules=[_rule("fs_write", "src/**", "never")])
+        target = str(tmp_path / "src" / "app.py")
+        assert resolve(cfg, FS_WRITE, {"path": target}, A, tmp_path) == "never"
+
+    def test_default_args_pattern_matches_any_call(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("fs_read")])
+        assert resolve(cfg, FS_READ, {"path": "/anywhere.txt"}, A) == "auto"
+
+    def test_unmatched_tool_falls_through_to_class_default(self, tmp_path: Path) -> None:
+        cfg = PolicyConfig(rules=[_rule("fs_write", "**", "never")])
+        target = str(tmp_path / "a.txt")
+        assert resolve(cfg, FS_READ, {"path": target}, A, tmp_path) == "auto"
+        assert resolve(cfg, FS_READ, {"path": target}, B, tmp_path) == "ask"
+
+    def test_glob_tool_pattern(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("fs_*", "etc/**", "never")])
+        assert resolve(cfg, FS_READ, {"path": "etc/hosts"}, A) == "never"
+
+    def test_command_pattern_matches_shell_summary(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("shell", "npm test*", "auto")])
+        assert resolve(cfg, SHELL, {"command": "npm test -- --runInBand"}, B) == "auto"
+        assert resolve(cfg, SHELL, {"command": "rm -rf build/"}, B) == "ask"
+
+
+# ── Defaults derive from decision class ─────────────────────────────────
+
+
+class TestClassDefaults:
+    @pytest.mark.parametrize(
+        ("decision_class", "expected"),
+        [(A, "auto"), (B, "ask"), (C, "ask")],
+    )
+    def test_defaults_without_rules(self, decision_class: DecisionClass, expected: str) -> None:
+        assert resolve(PolicyConfig(), SHELL, {"command": "ls"}, decision_class) == expected
+
+    def test_class_c_configurable_to_never(self) -> None:
+        cfg = PolicyConfig(class_c_default="never")
+        assert resolve(cfg, SHELL, {"command": "ls"}, C) == "never"
+        # A and B defaults are unaffected by the C knob.
+        assert resolve(cfg, SHELL, {"command": "ls"}, A) == "auto"
+        assert resolve(cfg, SHELL, {"command": "ls"}, B) == "ask"
+
+    def test_non_matching_rules_still_yield_class_default(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("shell", "cargo *", "auto")], class_c_default="never")
+        assert resolve(cfg, SHELL, {"command": "ls"}, C) == "never"
+
+
+# ── Most-specific pattern wins ──────────────────────────────────────────
+
+
+class TestPrecedence:
+    def test_exact_tool_beats_glob_tool(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("fs_*", "**", "ask"), _rule("fs_write", "**", "never")])
+        assert resolve(cfg, FS_WRITE, {"path": "x"}, A) == "never"
+
+    @pytest.mark.parametrize(
+        ("winning_args", "losing_args", "probe"),
+        [
+            ("src/app.py", "src/*", "src/app.py"),  # literal beats wildcard
+            ("src/*", "**", "src/app.py"),  # fewer wildcards beats more
+            ("src/deep/*", "src/*", "src/deep/x.py"),  # longer wins among equal wildcards
+        ],
+    )
+    def test_more_specific_args_pattern_wins(
+        self, winning_args: str, losing_args: str, probe: str
+    ) -> None:
+        """The probe path matches both patterns; the more specific one decides."""
+        cfg = PolicyConfig(
+            rules=[_rule("fs_write", losing_args, "ask"), _rule("fs_write", winning_args, "never")]
+        )
+        assert resolve(cfg, FS_WRITE, {"path": probe}, A) == "never"
+
+    def test_rule_order_does_not_decide(self) -> None:
+        """Specificity, not declaration order, determines the winner."""
+        ordered = PolicyConfig(
+            rules=[_rule("fs_write", "**", "ask"), _rule("fs_write", "src/*", "never")]
+        )
+        reversed_ = PolicyConfig(
+            rules=[_rule("fs_write", "src/*", "never"), _rule("fs_write", "**", "ask")]
+        )
+        assert resolve(ordered, FS_WRITE, {"path": "src/x"}, A) == "never"
+        assert resolve(reversed_, FS_WRITE, {"path": "src/x"}, A) == "never"
+
+    @pytest.mark.parametrize(
+        ("effects", "expected"),
+        [
+            (["auto", "ask"], "ask"),
+            (["auto", "never"], "never"),
+            (["ask", "never"], "never"),
+        ],
+    )
+    def test_exact_tie_breaks_to_most_restrictive(self, effects: list[str], expected: str) -> None:
+        rules = [_rule("fs_write", "src/*", effect) for effect in effects]
+        assert resolve(PolicyConfig(rules=rules), FS_WRITE, {"path": "src/x"}, A) == expected
+
+
+# ── Policy never grants what the boundary forbids ───────────────────────
+
+
+class TestBoundaryWins:
+    def test_auto_rule_cannot_downgrade_class_c(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("fs_write", "**", "auto")])
+        assert resolve(cfg, FS_WRITE, {"path": "x"}, C) == "ask"
+
+    def test_auto_rule_cannot_downgrade_class_c_configured_never(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("fs_write", "**", "auto")], class_c_default="never")
+        assert resolve(cfg, FS_WRITE, {"path": "x"}, C) == "never"
+
+    def test_policy_can_tighten_but_not_loosen(self) -> None:
+        """A never rule binds even a class-A call; loosening past C does not."""
+        cfg = PolicyConfig(rules=[_rule("fs_read", "**", "never")])
+        assert resolve(cfg, FS_READ, {"path": "x"}, A) == "never"
+
+
+# ── Argument summaries ──────────────────────────────────────────────────
+
+
+class TestSummarize:
+    def test_path_tool_summarizes_workspace_relative(self, tmp_path: Path) -> None:
+        target = tmp_path / "src" / "app.py"
+        assert summarize_arguments(FS_WRITE, {"path": str(target)}, tmp_path) == "src/app.py"
+
+    def test_path_outside_workspace_matches_absolute(self, tmp_path: Path) -> None:
+        summary = summarize_arguments(FS_WRITE, {"path": "/etc/hosts"}, tmp_path)
+        assert summary == "/etc/hosts"
+
+    def test_host_tool_summarizes_host(self) -> None:
+        assert summarize_arguments(FETCH, {"host": "api.example.com"}) == "api.example.com"
+
+    def test_command_argument_is_the_summary(self) -> None:
+        assert summarize_arguments(SHELL, {"command": "npm test"}) == "npm test"
+
+    def test_fallback_is_canonical_json(self) -> None:
+        summary = summarize_arguments(Tool(name="other"), {"b": 1, "a": 2})
+        assert summary == '{"a":2,"b":1}'
+
+
+# ── Persistence in .tst/config.yaml ─────────────────────────────────────
+
+
+class TestPersistence:
+    def test_absent_file_returns_defaults(self, tmp_path: Path) -> None:
+        cfg = load_policy(tmp_path)
+        assert cfg.rules == []
+        assert cfg.class_c_default == "ask"
+
+    def test_round_trip(self, tmp_path: Path) -> None:
+        cfg = PolicyConfig(
+            rules=[_rule("fs_write", "src/**", "ask"), _rule("shell", "npm *", "auto")],
+            class_c_default="never",
+        )
+        save_policy(tmp_path, cfg)
+        assert load_policy(tmp_path) == cfg
+        # It really lands in .tst/config.yaml, not some other file.
+        assert (tmp_path / ".tst" / "config.yaml").exists()
+
+    def test_save_preserves_other_sections(self, tmp_path: Path) -> None:
+        config_path = tmp_path / ".tst" / "config.yaml"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            "boundary:\n  network: deny\ncaps:\n  spend_usd: 5.0\n", encoding="utf-8"
+        )
+        save_policy(tmp_path, PolicyConfig(rules=[_rule("shell", "git *", "ask")]))
+
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert raw["boundary"] == {"network": "deny"}
+        assert raw["caps"] == {"spend_usd": 5.0}
+        assert raw["policy"]["rules"] == [{"tool": "shell", "args": "git *", "effect": "ask"}]
+        # The TD-706 loader must still accept the file.
+        assert load_workspace_boundary(tmp_path).caps.spend_usd == 5.0
+
+    def test_policy_section_coexists_with_boundary_loader(self, tmp_path: Path) -> None:
+        """A file carrying a policy section does not disturb boundary loading."""
+        save_policy(tmp_path, PolicyConfig(rules=[_rule("fs_read")]))
+        boundary = load_workspace_boundary(tmp_path)
+        assert boundary.boundary.writable_paths == ["**"]
+
+    def test_invalid_effect_names_key(self, tmp_path: Path) -> None:
+        config_path = tmp_path / ".tst" / "config.yaml"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            "policy:\n  rules:\n    - tool: shell\n      effect: yolo\n", encoding="utf-8"
+        )
+        with pytest.raises(ConfigError, match="policy"):
+            load_policy(tmp_path)
+
+    def test_non_mapping_policy_section(self, tmp_path: Path) -> None:
+        config_path = tmp_path / ".tst" / "config.yaml"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text("policy: just-a-string\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match="policy"):
+            load_policy(tmp_path)
+
+    def test_invalid_class_c_default(self, tmp_path: Path) -> None:
+        config_path = tmp_path / ".tst" / "config.yaml"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text("policy:\n  class_c_default: maybe\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match="class_c_default"):
+            load_policy(tmp_path)
