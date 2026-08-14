@@ -1172,6 +1172,24 @@ daemon's `open_workspace` — daemon sessions previously had no dispatcher.
 
 ---
 
+### TD-1405 — Audit and event surface redaction
+**Size:** 3 · **Depends on:** TD-902
+
+Found by TD-1402: `redact_secrets()` guards the log stream, but tool-call
+arguments and tool-result output flow into the audit store and onto the
+WebSocket unredacted — a secret pasted into a file the agent writes would be
+persisted and broadcast. The two skip-marked tests in
+`core/tests/test_security_suite.py` (section 4) pin the expected behavior.
+
+**Acceptance criteria:**
+- [ ] Audit-store writes pass through `redact_secrets` (arguments, output, diffs)
+- [ ] Daemon events carrying tool arguments/results are redacted before broadcast
+- [ ] Error messages surfaced to clients pass through the same chokepoint
+- [ ] Both skip-marked TD-1402 tests run green, unskipped
+- [ ] A positive control proves benign text survives redaction byte-identical
+
+---
+
 ## Epic E15 — Documentation
 
 ---
