@@ -11,7 +11,8 @@ workspace as the working directory.  Three safety rails surround it:
 - **Process-group kill.**  The child starts a new session
   (``start_new_session``), so it leads its own process group.  On timeout
   or cancel the whole group is SIGKILLed — backgrounded children cannot
-  outlive the command.
+  outlive the command.  Windows has no process-group kill; the direct
+  child is terminated instead.
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
@@ -118,6 +119,20 @@ def _binaries(command: str) -> list[str]:
     return binaries
 
 
+def _resolved_name(resolved: str) -> str:
+    """The allowlist-matching name for a resolved binary path.
+
+    POSIX matches the basename.  On Windows, ``shutil.which`` resolves
+    through PATHEXT (``echo`` → ``echo.EXE``) and the filesystem is
+    case-insensitive, so the name is lowercased and the executable
+    extension stripped before matching.
+    """
+    name = Path(resolved).name
+    if sys.platform == "win32":
+        name = Path(name).stem.lower()
+    return name
+
+
 def check_allowed(command: str, policy: ShellPolicy) -> None:
     """Enforce the allowlist on *command*.
 
@@ -131,11 +146,14 @@ def check_allowed(command: str, policy: ShellPolicy) -> None:
     if policy.allowed_commands is None:
         return
     allowed = set(policy.allowed_commands)
+    if sys.platform == "win32":
+        # Same normalization _resolved_name applies to resolved paths.
+        allowed = {Path(name).stem.lower() for name in allowed}
     for binary in _binaries(command):
         resolved = shutil.which(binary)
         if resolved is None:
             raise ValueError(f"cannot resolve binary {binary!r}; refusing to run unverified")
-        name = Path(resolved).name
+        name = _resolved_name(resolved)
         if name not in allowed:
             raise ValueError(
                 f"{binary!r} (resolved to {name!r}) is not in allowed_commands {sorted(allowed)}"
@@ -174,13 +192,20 @@ class _StreamCapture:
         return "".join(self.parts)
 
 
-def _kill_process_group(pid: int) -> None:
-    """SIGKILL the process group led by *pid*, if it still exists."""
+def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Kill the command's process group (POSIX) or process (Windows).
+
+    POSIX: the child leads its own group (``start_new_session``), so
+    SIGKILL to the group takes backgrounded grandchildren with it.
+    Windows has no process-group kill: terminate the direct child.
+    Grandchildren can escape until a Job Object is introduced (TD-1406).
+    """
     if sys.platform == "win32":
-        # No process-group kill on Windows; the caller's proc.kill() covers it.
+        with contextlib.suppress(ProcessLookupError, OSError):
+            proc.kill()
         return
     with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pid, signal.SIGKILL)
+        os.killpg(proc.pid, signal.SIGKILL)
 
 
 def _check_workspace(workspace_path: str) -> None:
@@ -321,7 +346,7 @@ async def run_shell(
                 header = "cancelled — process group killed"
             else:
                 header = f"timed out after {timeout_secs}s — process group killed"
-            _kill_process_group(proc.pid)
+            _kill_process_group(proc)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(work_task, timeout=_KILL_GRACE_SECS)
             # Reap the direct child even if drains are stuck on a pipe
@@ -332,7 +357,7 @@ async def run_shell(
     except asyncio.CancelledError:
         # SessionRunner.cancel() cancels the loop task; the group must
         # die with it.
-        _kill_process_group(proc.pid)
+        _kill_process_group(proc)
         raise
     finally:
         for task in (work_task, cancel_task):

@@ -7,7 +7,10 @@ by default and emits one-time ``checkpoint_notice`` events.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from tests.test_checkpoint import _git, _tree_files, make_repo
 from tests.test_dispatch import attach_auto_approver, make_config, start_loop, wait_for_turn
@@ -89,15 +92,23 @@ def make_write_registry() -> ToolRegistry:
 
 
 class TestDispatcherSeam:
-    async def test_mutating_tool_checkpoints(self, tmp_path: Path) -> None:
+    # Every test dispatches workspace-relative paths from inside the
+    # workspace: the guard refuses drive-letter absolutes as windows_unsafe
+    # before any workspace logic runs (TD-1406), and tmp_path is always a
+    # drive-letter path on Windows.
+
+    async def test_mutating_tool_checkpoints(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         repo = make_repo(tmp_path)
         session = Session(str(repo))
         dispatcher = make_dispatcher(repo, make_write_registry())
         dispatcher.register_handler("fs_write", _write_handler)
         dispatcher.checkpointer = Checkpointer(repo, session.id)
+        monkeypatch.chdir(repo)
 
         result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(repo / "b.txt"), "content": "hello\n"}, session=session
+            "c1", "fs_write", {"path": "b.txt", "content": "hello\n"}, session=session
         )
 
         assert result.status == "success"
@@ -108,7 +119,9 @@ class TestDispatcherSeam:
         assert files["b.txt"] == "hello\n"
         assert files["a.txt"] == "base\n"  # baseline carried forward
 
-    async def test_read_tool_does_not_checkpoint(self, tmp_path: Path) -> None:
+    async def test_read_tool_does_not_checkpoint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         repo = make_repo(tmp_path)
         session = Session(str(repo))
         registry = ToolRegistry()
@@ -122,30 +135,34 @@ class TestDispatcherSeam:
 
         dispatcher.register_handler("fs_read", read_handler)
         dispatcher.checkpointer = Checkpointer(repo, session.id)
+        monkeypatch.chdir(repo)
 
         result = await dispatcher.dispatch(
-            "c1", "fs_read", {"path": str(repo / "a.txt"), "content": ""}, session=session
+            "c1", "fs_read", {"path": "a.txt", "content": ""}, session=session
         )
 
         assert result.status == "success"
         assert result.checkpoint_commit is None
         assert _git(repo, "branch", "--list", "tst/session/*") == ""
 
-    async def test_no_session_skips_checkpoint(self, tmp_path: Path) -> None:
+    async def test_no_session_skips_checkpoint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         repo = make_repo(tmp_path)
         dispatcher = make_dispatcher(repo, make_write_registry())
         dispatcher.register_handler("fs_write", _write_handler)
         dispatcher.checkpointer = Checkpointer(repo, "detached")
+        monkeypatch.chdir(repo)
 
-        result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(repo / "b.txt"), "content": "x\n"}
-        )
+        result = await dispatcher.dispatch("c1", "fs_write", {"path": "b.txt", "content": "x\n"})
 
         assert result.status == "success"  # the write still happened
         assert result.checkpoint_commit is None
         assert _git(repo, "branch", "--list", "tst/session/*") == ""
 
-    async def test_failed_handler_not_checkpoints(self, tmp_path: Path) -> None:
+    async def test_failed_handler_not_checkpoints(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         repo = make_repo(tmp_path)
         session = Session(str(repo))
         dispatcher = make_dispatcher(repo, make_write_registry())
@@ -157,24 +174,28 @@ class TestDispatcherSeam:
 
         dispatcher.register_handler("fs_write", failing_handler)
         dispatcher.checkpointer = Checkpointer(repo, session.id)
+        monkeypatch.chdir(repo)
 
         result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(repo / "b.txt"), "content": "x\n"}, session=session
+            "c1", "fs_write", {"path": "b.txt", "content": "x\n"}, session=session
         )
 
         assert result.status == "error"
         assert result.checkpoint_commit is None
         assert _git(repo, "branch", "--list", "tst/session/*") == ""
 
-    async def test_no_git_notice_flows_through(self, tmp_path: Path) -> None:
+    async def test_no_git_notice_flows_through(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # Not a git repo: the write succeeds, the notice rides the result.
         session = Session(str(tmp_path))
         dispatcher = make_dispatcher(tmp_path, make_write_registry())
         dispatcher.register_handler("fs_write", _write_handler)
         dispatcher.checkpointer = Checkpointer(tmp_path, session.id)
+        monkeypatch.chdir(tmp_path)
 
         result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(tmp_path / "b.txt"), "content": "x\n"}, session=session
+            "c1", "fs_write", {"path": "b.txt", "content": "x\n"}, session=session
         )
 
         assert result.status == "success"
@@ -182,7 +203,9 @@ class TestDispatcherSeam:
         assert result.checkpoint_notice is not None
         assert result.checkpoint_notice.code == NO_GIT
 
-    async def test_checkpoint_failure_does_not_fail_write(self, tmp_path: Path) -> None:
+    async def test_checkpoint_failure_does_not_fail_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         repo = make_repo(tmp_path)
         session = Session(str(repo))
         dispatcher = make_dispatcher(repo, make_write_registry())
@@ -193,9 +216,10 @@ class TestDispatcherSeam:
                 raise RuntimeError("boom")
 
         dispatcher.checkpointer = ExplodingCheckpointer()  # type: ignore[assignment]
+        monkeypatch.chdir(repo)
 
         result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(repo / "b.txt"), "content": "x\n"}, session=session
+            "c1", "fs_write", {"path": "b.txt", "content": "x\n"}, session=session
         )
 
         assert result.status == "success"  # the write survives its checkpoint
@@ -206,7 +230,14 @@ class TestDispatcherSeam:
 
 
 class TestLoopIntegration:
-    async def test_loop_wires_checkpointer_and_commits(self, tmp_path: Path) -> None:
+    # Relative tool arguments from inside the workspace: the loop parses
+    # tool arguments as JSON (backslashes in an absolute Windows path break
+    # that) and the guard refuses drive-letter absolutes before the write
+    # under test (TD-1406).
+
+    async def test_loop_wires_checkpointer_and_commits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """agent_loop wires a checkpointer; a write lands on the session branch."""
         repo = make_repo(tmp_path)
         session = Session(str(repo))
@@ -217,7 +248,8 @@ class TestLoopIntegration:
         dispatcher.register_handler("fs_write", _write_handler)
         assert dispatcher.checkpointer is None  # the loop must wire one
 
-        args = f'{{"path": "{repo / "b.txt"}", "content": "loop write\\n"}}'
+        monkeypatch.chdir(repo)
+        args = json.dumps({"path": "b.txt", "content": "loop write\n"})
         mock = MockProvider(
             sequences={
                 "test-brain": [
@@ -244,7 +276,9 @@ class TestLoopIntegration:
 
         await runner.cancel()
 
-    async def test_loop_emits_checkpoint_notice_once(self, tmp_path: Path) -> None:
+    async def test_loop_emits_checkpoint_notice_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Two writes in a non-git workspace emit exactly one notice event."""
         session = Session(str(tmp_path))
         router = TierRouter(lead_turns=3)
@@ -252,6 +286,7 @@ class TestLoopIntegration:
         registry = make_write_registry()
         dispatcher = make_dispatcher(tmp_path, registry)
         dispatcher.register_handler("fs_write", _write_handler)
+        monkeypatch.chdir(tmp_path)
 
         mock = MockProvider(
             sequences={
@@ -259,12 +294,12 @@ class TestLoopIntegration:
                     Script(
                         kind="tool_call",
                         tool_name="fs_write",
-                        tool_arguments=f'{{"path": "{tmp_path / "one.txt"}", "content": "1"}}',
+                        tool_arguments=json.dumps({"path": "one.txt", "content": "1"}),
                     ),
                     Script(
                         kind="tool_call",
                         tool_name="fs_write",
-                        tool_arguments=f'{{"path": "{tmp_path / "two.txt"}", "content": "2"}}',
+                        tool_arguments=json.dumps({"path": "two.txt", "content": "2"}),
                     ),
                     Script(kind="stream", content="Done"),
                 ]

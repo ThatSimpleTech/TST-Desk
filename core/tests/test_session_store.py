@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from tstd.session_store import SessionStore
 
@@ -38,6 +41,11 @@ class TestSessionStore:
             assert store.get("s1") is None
             assert store.records() == []
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="TD-1406: Windows has no POSIX mode bits — os.chmod only toggles "
+        "the read-only flag, so 0o600 is a no-op (ACL hardening is a separate story)",
+    )
     async def test_restricted_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(Path(tmp))

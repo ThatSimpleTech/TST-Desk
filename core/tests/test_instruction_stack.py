@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -106,7 +107,9 @@ class TestBuilderFields:
         _write(ws / "sub" / "AGENTS.md", "nested rules\n")
         stack = build_instruction_stack("s1", _assemble(home, ws))
 
-        paths = [e.path for e in stack.sources]
+        # Source paths are native strings — normalize separators so the
+        # suffix checks hold on Windows too.
+        paths = [e.path.replace(os.sep, "/") for e in stack.sources]
         home_idx = next(i for i, p in enumerate(paths) if p.endswith(".tstdesk/AGENTS.md"))
         root_idx = next(i for i, p in enumerate(paths) if p.endswith("ws/AGENTS.md"))
         nested_idx = next(i for i, p in enumerate(paths) if p.endswith("sub/AGENTS.md"))
