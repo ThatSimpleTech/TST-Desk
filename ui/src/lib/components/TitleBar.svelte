@@ -167,7 +167,7 @@
 		font-weight: var(--weight-medium);
 		color: var(--color-text);
 		background: transparent;
-		border: 1px solid var(--color-border);
+		border: var(--border-width) solid var(--color-border);
 		border-radius: var(--radius-md);
 		padding: var(--space-1) var(--space-2);
 		cursor: pointer;
@@ -181,8 +181,8 @@
 	}
 
 	.folder {
-		width: 12px;
-		height: 12px;
+		width: var(--icon-xs);
+		height: var(--icon-xs);
 		flex-shrink: 0;
 		color: var(--color-text-secondary);
 	}
@@ -197,7 +197,7 @@
 		font-weight: var(--weight-medium);
 		color: var(--color-text-secondary);
 		background: transparent;
-		border: 1px solid var(--color-border);
+		border: var(--border-width) solid var(--color-border);
 		border-radius: var(--radius-full);
 		padding: var(--space-1) var(--space-2);
 		cursor: pointer;
@@ -220,7 +220,7 @@
 	}
 
 	.pin {
-		font-size: 8px;
+		font-size: var(--text-2xs);
 		vertical-align: middle;
 	}
 
@@ -247,7 +247,7 @@
 		right: 0;
 		z-index: 10;
 		background: var(--color-bg-raised);
-		border: 1px solid var(--color-border);
+		border: var(--border-width) solid var(--color-border);
 		border-radius: var(--radius-md);
 		box-shadow: var(--shadow-lg);
 		padding: var(--space-2) var(--space-3);
@@ -311,7 +311,7 @@
 		font-size: var(--text-xs);
 		font-family: var(--font-mono);
 		color: var(--color-text-secondary);
-		border: 1px solid var(--color-border);
+		border: var(--border-width) solid var(--color-border);
 		border-radius: var(--radius-md);
 		padding: var(--space-1) var(--space-2);
 		white-space: nowrap;

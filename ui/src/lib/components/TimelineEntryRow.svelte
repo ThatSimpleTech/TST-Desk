@@ -74,9 +74,10 @@
 
 <style>
 	.row {
-		/* Collapsed height must equal ActivityTimeline's ROW_HEIGHT (32px).
-		   border-box (global) includes the border, so the total stays exact. */
-		height: 32px;
+		/* Collapsed height must equal ActivityTimeline's ROW_HEIGHT (32) —
+		   --space-8 is 32px. border-box (global) includes the border, so the
+		   total stays exact. */
+		height: var(--space-8);
 		border-bottom: var(--border-width) solid var(--color-border);
 		background: var(--color-bg);
 	}

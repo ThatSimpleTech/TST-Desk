@@ -45,7 +45,7 @@
 		font-weight: var(--weight-medium);
 		color: var(--color-text);
 		background: var(--color-bg-subtle);
-		border: 1px solid var(--color-border);
+		border: var(--border-width) solid var(--color-border);
 		border-radius: var(--radius-full);
 		padding: var(--space-1) var(--space-3);
 	}
