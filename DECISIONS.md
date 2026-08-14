@@ -1397,3 +1397,38 @@ story's security contract.
 **Rationale:** Events are seq-numbered and append-only; any new open-time
 event shifts subsequent seqs. The UI round-trip fixture gained a
 `boundary_update` sample.
+
+---
+
+## 2026-08-13 — M1 cross-track integration
+
+Class B — recorded per AGENTS.md §5.
+
+### 1. Merge everything into a scratch branch, fast-forward main at the end
+
+**Decision:** Ten tracks were merged onto `integrate/m1-tracks` (from main `c8baabb`)
+in dependency order — TD-901, TD-903, TD-405, the TD-602/603/702/703/705/604 chain,
+TD-605, TD-1001, TD-1002, TD-1403, TD-1402, TD-706 — with full gates
+(pytest/mypy/ruff/svelte-check/vitest, plus cargo test where the shell changed)
+after each merge. Main receives only the green tip via fast-forward.
+
+**Rationale:** Story branches were developed in parallel worktrees against a moving
+main; integrating in one scratch branch keeps main continuous and leaves every
+conflict resolution on the record as its own merge commit.
+
+### 2. Resolutions of note
+
+- **Tool-handler contract collision (TD-605 x TD-604):** dispatch now always passes
+  `tool_call_id`; fs_write/fs_edit signature gained the parameter and every test
+  stub handler was updated. The synthetic `ghost_probe` test replaces the old
+  "real tool without handler" trick now that every builtin has a handler.
+- **Redaction kept at one chokepoint:** TD-1402 fixed the per-arg redaction bug in
+  the logging filter; TD-901 had already factored the same loop into
+  `redact_secrets()`. The shared helper won — one implementation covers logs and
+  the audit store, which is also the answer to the TD-1402 finding that redaction
+  of audit/event surfaces had no home.
+- **Cargo lockfile regenerated** after unioning TD-1001 (window-state plugin) and
+  TD-1002 (tokio/tokio-tungstenite et al.) dependency sets; `cargo check`/`test`
+  verified the union compiles.
+- **TD-1402 env-sanitization skip released** the moment TD-605 landed:
+  `sanitized_env()` + an end-to-end `run_shell` environment-dump test.
