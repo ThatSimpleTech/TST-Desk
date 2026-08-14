@@ -1,11 +1,18 @@
 <script lang="ts">
 	// Application shell: two-pane workspace layout using only design tokens.
-	// Left = chat pane, right = activity pane. Both are placeholder chrome in
-	// v0.1; their real content arrives with TD-1003/TD-1004.
-	// The connection banner (TD-1003) sits in the shell header so daemon/socket
-	// state is visible at all times.
+	// Left = chat pane, right = activity pane. The connection banner (TD-1003)
+	// sits in the shell header so daemon/socket state is visible at all times.
+	// The activity pane hosts the activity timeline (TD-1005), fed live from
+	// the daemon event stream.
+	import { onMount } from 'svelte';
 	import SplitPane from './SplitPane.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
+	import ActivityTimeline from './ActivityTimeline.svelte';
+	import { onEvent } from '../connection-status';
+	import { push } from '../timeline-store';
+
+	// Feed every daemon event into the timeline for the lifetime of the shell.
+	onMount(() => onEvent(push));
 </script>
 
 <header class="shell-header">
@@ -20,7 +27,9 @@
 			<section class="pane-chat" aria-label="Chat pane"></section>
 		{/snippet}
 		{#snippet right()}
-			<section class="pane-activity" aria-label="Activity pane"></section>
+			<section class="pane-activity" aria-label="Activity pane">
+				<ActivityTimeline />
+			</section>
 		{/snippet}
 	</SplitPane>
 </div>

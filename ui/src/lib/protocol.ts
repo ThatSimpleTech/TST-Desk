@@ -268,6 +268,13 @@ export interface ContextCompacted extends DaemonEvent {
   tokens_after: number;
 }
 
+export interface TierSwitched extends DaemonEvent {
+  type: "tier_switched";
+  session_id: string;
+  tier: "brain" | "worker" | "validator";
+  previous?: "brain" | "worker" | "validator" | null;
+}
+
 export type DaemonEventUnion =
   | Ready
   | SessionState
@@ -283,6 +290,7 @@ export type DaemonEventUnion =
   | TurnComplete
   | ContextCompacted
   | SteeringReloaded
+  | TierSwitched
   | InstructionStack
   | SessionList
   | Error;

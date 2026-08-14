@@ -14,7 +14,7 @@ import signal
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import websockets.exceptions
 
@@ -35,6 +35,7 @@ from .protocol import (
     OpenWorkspace,
     SessionList,
     SessionSummary,
+    SetTier,
     Shutdown,
     UserMessage,
     build_error,
@@ -45,6 +46,9 @@ from .protocol import (
 )
 from .protocol import (
     SessionState as SessionStateEvent,
+)
+from .protocol import (
+    TierSwitched as TierSwitchedEvent,
 )
 from .provider import ProviderClient
 from .router import TierRouter
@@ -139,6 +143,9 @@ class Daemon:
         self._attached_clients: dict[str, set[Any]] = {}
         # (connection, session_id) -> streaming task
         self._streaming_tasks: dict[tuple[int, str], asyncio.Task[None]] = {}
+        # session_id -> the TierRouter the session's loop runs under, so a
+        # client ``set_tier`` can reach the live router (TD-1005).
+        self._tier_routers: dict[str, TierRouter] = {}
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
@@ -311,6 +318,7 @@ class Daemon:
             # mypy can't confirm the shapes line up, though they are identical.
             sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
             router = TierRouter()
+            self._tier_routers[sess.id] = router
 
             # Workspace boundary (TD-706): resolve `.tst/config.yaml` or
             # defaults; a bad config falls back to defaults with the
@@ -439,6 +447,9 @@ class Daemon:
         if isinstance(msg, Detach):
             return await self._handle_detach(msg, _connection)
 
+        if isinstance(msg, SetTier):
+            return await self._handle_set_tier(msg)
+
         if isinstance(msg, ListSessions):
             return await self._handle_list_sessions()
 
@@ -505,6 +516,52 @@ class Daemon:
         conn_key = (id(connection), session_id)
 
         self._cleanup_attach(connection, session_id, conn_key)
+        return None
+
+    async def _handle_set_tier(self, msg: SetTier) -> str | None:
+        """Apply a manual tier override and emit a ``tier_switched`` event.
+
+        The event lands in the session log so attached clients (the timeline)
+        see the override alongside the router's automatic tier decisions
+        (TD-1005). ``previous`` records the tier before the override so the
+        entry reads as a transition. Returns None — the event streams to
+        attached clients via the normal event log path.
+        """
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+            )
+
+        router = self._tier_routers.get(msg.session_id)
+        previous: Literal["brain", "worker", "validator"] | None
+        if router is not None:
+            previous = router.active_tier
+            router.set_tier(msg.tier)
+        else:
+            # Session opened without a live router (e.g. recovered from store).
+            # Nothing to override, but still record the request.
+            previous = None
+
+        await found.event_log.add(
+            TierSwitchedEvent(
+                session_id=msg.session_id,
+                tier=msg.tier,
+                previous=previous,
+                seq=1,  # overwritten by event log
+            )
+        )
+        log.info(
+            "tier override applied",
+            extra={
+                "extra_fields": {
+                    "session_id": msg.session_id,
+                    "tier": msg.tier,
+                    "previous": previous,
+                }
+            },
+        )
         return None
 
     def _cleanup_attach(self, connection: Any, session_id: str, conn_key: tuple[int, str]) -> None:
