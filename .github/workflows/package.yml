@@ -6,6 +6,7 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call: # TD-1303 release.yml reuses this matrix
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
