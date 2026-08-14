@@ -177,7 +177,7 @@ export interface DecisionLogged extends DaemonEvent {
   decision_class: "A" | "B" | "C";
   what: string;
   why: string;
-  commit: string;
+  commit?: string | null;
 }
 
 export interface CheckpointNotice extends DaemonEvent {
