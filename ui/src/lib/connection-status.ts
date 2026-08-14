@@ -13,7 +13,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { DaemonEventUnion } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 import { ProtocolClient, type ConnectionState, type SocketLike } from "./client";
 
 export interface DaemonStatus {
@@ -88,4 +88,10 @@ export function disconnect(): void {
   unlistenDaemon?.();
   unlistenDaemon = null;
   ws.state = "stopped";
+}
+
+/** Send a client message over the live socket; false when not connected. */
+export function send(msg: ClientMessageUnion): boolean {
+  if (client === null) return false;
+  return client.send(msg);
 }

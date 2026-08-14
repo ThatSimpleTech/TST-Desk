@@ -12,7 +12,7 @@
 // vitest's node environment with a fake transport, and in the webview with
 // the browser's WebSocket. No Tauri APIs are imported here.
 
-import type { DaemonEventUnion } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 
 /**
  * The daemon event types this client version understands. Messages whose
@@ -141,6 +141,19 @@ export class ProtocolClient {
     if (this.socket && this.handshake === "idle") {
       this.socket.send(JSON.stringify({ type: "detach", session_id: sessionId }));
     }
+  }
+
+  /**
+   * Send a client message over the live socket. Returns false (never throws)
+   * when the socket is not open and handshaken — callers keep the pending
+   * state shown rather than assuming the send succeeded (TD-1007). The
+   * connection state is the unambiguous handshake signal: `handshake` alone
+   * is "idle" both before the socket opens and after the ack.
+   */
+  send(msg: ClientMessageUnion): boolean {
+    if (!this.socket || this.state !== "connected") return false;
+    this.socket.send(JSON.stringify(msg));
+    return true;
   }
 
   /** Start the client: resolve daemon info and open the first connection. */

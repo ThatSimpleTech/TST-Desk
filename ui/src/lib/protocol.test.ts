@@ -208,6 +208,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const m3 = fixtures.tool_result_diff as ToolResult;
     expect(isString(m3.diff)).toBe(true);
     expect(m3.diff).toContain("--- a/test.txt");
+    // denial variant carries the machine-readable error_code (TD-1007)
+    const m4 = fixtures.tool_result_denied as ToolResult;
+    expect(m4.status).toBe("error");
+    expect(m4.error_code).toBe("approval_denied");
   });
 
   it("shell_output", () => {
@@ -340,11 +344,11 @@ describe("All fixtures have required shape", () => {
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
-      "tool_result_truncated", "tool_result_diff", "shell_output",
-      "approval_request", "decision_logged", "checkpoint_notice", "cost_update",
-      "boundary_update", "turn_complete", "context_compacted",
-      "steering_reloaded", "tier_switched", "instruction_stack",
-      "session_list", "error", "error_with_session",
+      "tool_result_truncated", "tool_result_diff", "tool_result_denied",
+      "shell_output", "approval_request", "decision_logged",
+      "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
+      "context_compacted", "steering_reloaded", "tier_switched",
+      "instruction_stack", "session_list", "error", "error_with_session",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

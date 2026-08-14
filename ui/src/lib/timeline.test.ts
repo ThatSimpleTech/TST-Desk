@@ -45,6 +45,41 @@ describe("eventToEntry", () => {
     expect(entry!.details.diff).toBe("--- a/a.txt\n+++ b/a.txt\n");
   });
 
+  it("maps an approval_request to an approval entry and a denied result to 'Denied'", () => {
+    const approval = eventToEntry(
+      evt({
+        type: "approval_request",
+        session_id: "s1",
+        tool_call_id: "tc1",
+        tool_name: "fs_write",
+        arguments: { path: "a.txt" },
+        decision_class: "C",
+        summary: "Write a.txt",
+        reason: "decision class C requires approval",
+        seq: 5,
+      }),
+    );
+    expect(approval!.kind).toBe("approval");
+    expect(approval!.title).toBe("Write a.txt");
+    expect(approval!.toolCallId).toBe("tc1");
+    expect(approval!.details.status).toBe("pending");
+
+    const denied = eventToEntry(
+      evt({
+        type: "tool_result",
+        session_id: "s1",
+        tool_call_id: "tc1",
+        status: "error",
+        output: "Denied by user: not safe",
+        truncated: false,
+        error_code: "approval_denied",
+        seq: 6,
+      }),
+    );
+    expect(denied!.title).toBe("Denied");
+    expect(denied!.details.error_code).toBe("approval_denied");
+  });
+
   it("maps a decision_logged to a decision entry with class + rule", () => {
     const entry = eventToEntry(
       evt({
@@ -186,6 +221,96 @@ describe("Timeline", () => {
     const t = new Timeline();
     t.push(evt({ type: "shell_output", session_id: "s1", tool_call_id: "tc9", stream: "stdout", chunk: "orphan", seq: 1 }));
     expect(t.length).toBe(0);
+  });
+
+  it("flips an approval entry to denied when its tool_result resolves", () => {
+    const t = new Timeline();
+    t.push(
+      evt({
+        type: "approval_request",
+        session_id: "s1",
+        tool_call_id: "tc1",
+        tool_name: "shell",
+        arguments: { command: "rm -rf /" },
+        decision_class: "C",
+        summary: "Run `rm -rf /`",
+        reason: "decision class C requires approval",
+        seq: 2,
+      }),
+    );
+    expect(t.entries[0].details.status).toBe("pending");
+
+    t.push(
+      evt({
+        type: "tool_result",
+        session_id: "s1",
+        tool_call_id: "tc1",
+        status: "error",
+        output: "Denied by user",
+        truncated: false,
+        error_code: "approval_denied",
+        seq: 3,
+      }),
+    );
+    expect(t.entries[0].details.status).toBe("denied");
+  });
+
+  it("marks an approval entry approved on a successful result", () => {
+    const t = new Timeline();
+    t.push(
+      evt({
+        type: "approval_request",
+        session_id: "s1",
+        tool_call_id: "tc1",
+        tool_name: "shell",
+        arguments: { command: "ls" },
+        decision_class: "B",
+        summary: "Run `ls`",
+        reason: "decision class B requires approval",
+        seq: 2,
+      }),
+    );
+    t.push(
+      evt({
+        type: "tool_result",
+        session_id: "s1",
+        tool_call_id: "tc1",
+        status: "success",
+        output: "a.txt",
+        truncated: false,
+        seq: 3,
+      }),
+    );
+    expect(t.entries[0].details.status).toBe("approved");
+  });
+
+  it("leaves an approval entry pending when an unrelated tool_result lands", () => {
+    const t = new Timeline();
+    t.push(
+      evt({
+        type: "approval_request",
+        session_id: "s1",
+        tool_call_id: "tc1",
+        tool_name: "shell",
+        arguments: { command: "ls" },
+        decision_class: "B",
+        summary: "Run `ls`",
+        reason: "decision class B requires approval",
+        seq: 2,
+      }),
+    );
+    t.push(
+      evt({
+        type: "tool_result",
+        session_id: "s1",
+        tool_call_id: "tc-other",
+        status: "success",
+        output: "ok",
+        truncated: false,
+        seq: 3,
+      }),
+    );
+    expect(t.entries[0].details.status).toBe("pending");
   });
 
   it("clear resets the list", () => {

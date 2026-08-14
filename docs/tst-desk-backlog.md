@@ -793,13 +793,23 @@ what makes aggressive Class A behavior safe.
 **Size:** 3 · **Depends on:** TD-801, TD-205
 
 **Acceptance criteria:**
-- [ ] `approval_request` carries tool, arguments, decision class, a human-readable summary, and
+- [x] `approval_request` carries tool, arguments, decision class, a human-readable summary, and
       the reason approval is required
-- [ ] Session enters `awaiting_approval` and does not spin or poll
-- [ ] `approve` / `deny` resumes; denial returns a structured message to the model so it can
+- [x] Session enters `awaiting_approval` and does not spin or poll
+- [x] `approve` / `deny` resumes; denial returns a structured message to the model so it can
       choose another path
-- [ ] Timeout behavior configurable, defaulting to waiting indefinitely
-- [ ] Client disconnect during `awaiting_approval` leaves the session parked and resumable
+- [x] Timeout behavior configurable, defaulting to waiting indefinitely
+- [x] Client disconnect during `awaiting_approval` leaves the session parked and resumable
+
+**Completed (2026-08-14):** `session.request_approval` parks the loop in `awaiting_approval`
+on a bare future (`await asyncio.wait_for(asyncio.shield(fut), timeout)`) — no spin, no poll.
+`approval_timeout_seconds` is `None` by default (wait indefinitely); set it and an overdue
+request resolves as a denial. Pending approvals live on the `Session` and are keyed by
+`tool_call_id`, so any attached client can `approve`/`deny` and a disconnect leaves the
+session parked and resumable. Denial returns a `ToolResult(status="error",
+error_code="approval_denied")` the model can read to choose another path. The `Approve`/`Deny`
+client messages round-trip through the daemon handler (`_handle_approve`/`_handle_deny` →
+`resolve_approval`).
 
 ---
 
@@ -986,12 +996,24 @@ Tauri window once TD-1004's chat pane drives real turns.
 **Size:** 3 · **Depends on:** TD-1005, TD-802
 
 **Acceptance criteria:**
-- [ ] Card renders in place with tool, arguments, decision class, and reason
+- [x] Card renders in place with tool, arguments, decision class, and reason
 - [ ] Actions: Approve, Deny, Always allow in this workspace
-- [ ] Keyboard accessible; focus moves to the card on appearance
-- [ ] Dangerous actions visually distinct
-- [ ] Denial offers an optional note passed back to the model
-- [ ] Resolved cards remain in the timeline showing what was chosen
+- [x] Keyboard accessible; focus moves to the card on appearance
+- [x] Dangerous actions visually distinct
+- [x] Denial offers an optional note passed back to the model
+- [x] Resolved cards remain in the timeline showing what was chosen
+
+**Completed (2026-08-14):** `ApprovalCard.svelte` renders in an `ApprovalBar` footer with the
+tool, arguments, decision class, and reason; the card autofocuses on mount (`tabindex="-1"`
++ `onMount` focus). Class C requests are visually distinct (danger-tone left border + class
+badge). Denial captures an optional note sent back on the `Deny` message (`reason`, nulled
+when blank). Resolved cards flip to approved/denied in the timeline (the "approval" entry
+kind resolves in place on its matching `tool_result`) and the approval leaves the footer.
+**Not in scope here:** "Always allow in this workspace" (criterion 2, third action) is
+delivered by TD-803, not TD-1007 — implementing it here would collide with TD-803's
+policy-rule model. The other two actions (Approve / Deny) are wired end-to-end via a new
+`send()` client path plus the `error_code` propagation fix ("Gap B") that lets the UI
+distinguish a denial from a handler error.
 
 ---
 

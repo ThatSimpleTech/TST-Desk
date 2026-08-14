@@ -150,6 +150,7 @@ export interface ToolResult extends DaemonEvent {
   status: "success" | "error";
   output: string;
   truncated: boolean;
+  error_code?: string | null;
   diff?: string | null;
 }
 

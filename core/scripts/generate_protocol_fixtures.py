@@ -105,6 +105,14 @@ FIXTURES = {
         seq=7,
         diff="--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line",
     ),
+    "tool_result_denied": ToolResult(
+        session_id="sess-1",
+        tool_call_id="tc-1",
+        status="error",
+        output="Denied by user: not safe",
+        seq=20,
+        error_code="approval_denied",
+    ),
     "approval_request": ApprovalRequest(
         session_id="sess-1",
         tool_call_id="tc-1",

@@ -13,6 +13,7 @@ export const KIND_LABELS: Record<EntryKind, string> = {
   tool_call: 'Tool',
   tool_result: 'Result',
   decision: 'Decision',
+  approval: 'Approval',
   tier_switch: 'Tier switch',
   compaction: 'Compaction',
   steering_reload: 'Steering',
@@ -25,8 +26,11 @@ export function entryTone(entry: TimelineEntry): EntryTone {
     case 'error':
       return 'danger';
     case 'tool_result':
+      // A denial is a user choice, not a failure — amber, not red (TD-1007).
+      if (entry.details.error_code === 'approval_denied') return 'warning';
       return entry.details.status === 'error' ? 'danger' : 'success';
     case 'compaction':
+    case 'approval':
       return 'warning';
     case 'decision':
     case 'tier_switch':
