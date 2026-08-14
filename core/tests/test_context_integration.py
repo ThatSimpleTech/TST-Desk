@@ -42,7 +42,7 @@ _ROOT = "<ROOT>"
 
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
 
 
 def _to_golden(text: str, base: Path) -> str:
@@ -53,8 +53,8 @@ def _assert_golden(name: str, actual: str) -> None:
     path = _GOLDEN_DIR / name
     if os.environ.get("TSTD_UPDATE_GOLDEN"):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(actual)
-    expected = path.read_text() if path.exists() else ""
+        path.write_text(actual, encoding="utf-8")
+    expected = path.read_text(encoding="utf-8") if path.exists() else ""
     assert actual == expected, (
         f"golden mismatch vs {path} — set TSTD_UPDATE_GOLDEN=1 to regenerate, then review the diff"
     )

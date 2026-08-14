@@ -8,6 +8,7 @@ dispatch hook that appends and emits `decision_logged`.
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -183,6 +184,12 @@ class TestDispatchHook:
         assert logged[0].decision_class == "B"
         assert logged[0].commit is None
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="TD-1406: PathGuard refuses every drive-letter path fail-closed "
+        "(windows_unsafe_reason), so a path-tool dispatch cannot succeed on a "
+        "Windows host until the boundary gains a Windows path-form story",
+    )
     async def test_class_a_without_commit_not_recorded(self, tmp_path: Path) -> None:
         session = Session(str(tmp_path))
         ledger = DecisionLedger(tmp_path)

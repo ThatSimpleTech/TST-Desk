@@ -155,8 +155,17 @@ async def _stub_worker(prompt: str) -> str:
 
 
 class TestLoopWiring:
-    async def test_session_boundary_config_drives_guard(self, tmp_path: Path) -> None:
+    async def test_session_boundary_config_drives_guard(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         ws = tmp_path
+        # Feed a workspace-relative path from inside the workspace: the
+        # loop parses tool arguments as JSON (an absolute tmp_path has
+        # backslashes on Windows — invalid JSON), and the guard refuses
+        # drive-letter absolutes as windows_unsafe before any writable
+        # logic runs (TD-1406).  Relative input pins the C refusal on
+        # every platform.
+        monkeypatch.chdir(ws)
         session = Session(str(ws))
         session.boundary_config = BoundaryConfig(
             boundary=BoundarySection(writable_paths=["src/**"])
@@ -193,7 +202,7 @@ class TestLoopWiring:
                     Script(
                         kind="tool_call",
                         tool_name="fs_edit",
-                        tool_arguments=f'{{"path": "{ws / "README.md"}"}}',
+                        tool_arguments=json.dumps({"path": "README.md"}),
                     ),
                     Script(kind="stream", content="Done"),
                 ]

@@ -131,7 +131,13 @@ def _parent_alive(pid: int) -> bool:
 
 
 def _win_parent_alive(pid: int) -> bool:
-    """Probe a Windows process with a limited-query handle (best-effort)."""
+    """Probe a Windows process with a limited-query handle (best-effort).
+
+    OpenProcess alone is not enough: a dead process's object persists while
+    any handle to it is open, so the open succeeding does not mean the
+    process lives.  GetExitCodeProcess distinguishes — anything other than
+    STILL_ACTIVE (259) means the process has exited.
+    """
     try:
         import ctypes
 
@@ -141,11 +147,17 @@ def _win_parent_alive(pid: int) -> bool:
         if windll is None:
             return True  # unreachable — caller gates on os.name == "nt"
         process_query_limited = 0x1000
+        still_active = 259
         handle = windll.kernel32.OpenProcess(process_query_limited, False, pid)
         if not handle:
             return False
-        windll.kernel32.CloseHandle(handle)
-        return True
+        try:
+            exit_code = ctypes.c_ulong(0)
+            if not windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return True  # query failed — assume alive rather than orphan the session
+            return exit_code.value == still_active
+        finally:
+            windll.kernel32.CloseHandle(handle)
     except Exception:
         # Degrade to "alive" so a watchdog bug never spuriously kills us.
         return True

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests.test_dispatch import attach_auto_approver
 from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClassifier
 from tstd.tools import (
@@ -139,7 +141,11 @@ class TestFsList:
     async def test_recursive_lists_subtree(self, tmp_path: Path) -> None:
         ws = self._workspace(tmp_path)
         out = await fs_list(None, str(ws), pattern="*.py", recursive=True)
-        assert out.splitlines() == ["b.py", "sub/c.py"]
+        # handlers.py renders subtree entries with the OS separator;
+        # TD-1406 tracks making them POSIX-stable.  Compare
+        # separator-insensitively.
+        lines = [line.replace("\\", "/") for line in out.splitlines()]
+        assert lines == ["b.py", "sub/c.py"]
 
     async def test_no_matches(self, tmp_path: Path) -> None:
         ws = self._workspace(tmp_path)
@@ -161,29 +167,42 @@ class TestFsList:
 
 
 class TestDispatchIntegration:
-    async def test_in_workspace_read_dispatched(self, tmp_path: Path) -> None:
+    async def test_in_workspace_read_dispatched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         f = tmp_path / "a.txt"
         f.write_text("hello")
         dispatcher = make_dispatcher(tmp_path)
-        result = await dispatcher.dispatch("c1", "fs_read", {"path": str(f)})
+        # Dispatch a workspace-relative path from inside the workspace: the
+        # guard refuses drive-letter absolutes as windows_unsafe before any
+        # workspace logic runs (TD-1406), and tmp_path is always a
+        # drive-letter path on Windows.
+        monkeypatch.chdir(tmp_path)
+        result = await dispatcher.dispatch("c1", "fs_read", {"path": "a.txt"})
         assert result.status == "success"
         assert result.output == "1: hello"
 
-    async def test_out_of_workspace_read_refused_by_guard(self, tmp_path: Path) -> None:
+    async def test_out_of_workspace_read_refused_by_guard(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         outside = tmp_path.parent / "secret.txt"
         outside.write_text("secret")
         dispatcher = make_dispatcher(tmp_path)
-        result = await dispatcher.dispatch("c1", "fs_read", {"path": str(outside)})
+        # Relative escape from inside the workspace pins the specific
+        # outside-workspace refusal on every platform (TD-1406).
+        monkeypatch.chdir(tmp_path)
+        result = await dispatcher.dispatch("c1", "fs_read", {"path": "../secret.txt"})
         assert result.status == "error"
         assert result.error_code == "boundary_refusal"
         assert "outside the workspace" in result.output
 
-    async def test_fs_list_registered_and_dispatched(self, tmp_path: Path) -> None:
+    async def test_fs_list_registered_and_dispatched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         (tmp_path / "a.py").write_text("a")
         dispatcher = make_dispatcher(tmp_path)
-        result = await dispatcher.dispatch(
-            "c1", "fs_list", {"path": str(tmp_path), "pattern": "*.py"}
-        )
+        monkeypatch.chdir(tmp_path)  # workspace-relative path — TD-1406
+        result = await dispatcher.dispatch("c1", "fs_list", {"path": ".", "pattern": "*.py"})
         assert result.status == "success"
         assert result.output == "a.py"
 
