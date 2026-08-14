@@ -427,3 +427,36 @@ union, carrying `prefix_hash`, `prefix_tokens`, and `source_count`.
 **Rationale:** The timeline needs a typed, distinct announcement of a reload (vs. a generic
 log line). It complements the existing `InstructionStack` event, which carries the full
 resolved stack for the inspector.
+
+---
+
+## TD-1403 — Context assembler cross-cutting suite
+
+### 1. Goldens are regenerated via an env var, not a pytest flag
+
+**Decision:** `_assert_golden` rewrites its golden file when `TSTD_UPDATE_GOLDEN=1` is set;
+otherwise it compares. No `--update-goldens` conftest option was added.
+
+**Rationale:** The repo had no golden-file convention before this suite. An env var keeps the
+machinery inside the suite's own file (no shared conftest state, no new pytest surface) and
+forces golden regeneration to be a deliberate, visible act followed by a diffs review. If a
+second suite needs goldens, promote the helper to a shared conftest then — not before.
+
+### 2. Goldens are machine-independent via path stripping
+
+**Decision:** Absolute fixture paths inside golden output are replaced with `<ROOT>` before
+comparison; the golden drop-in point is the test's `tmp_path`.
+
+**Rationale:** Assembled steering blocks embed absolute source paths (provenance comments).
+Without stripping, goldens would differ per machine and per test-run directory; with it, a
+golden diff means behavior changed, not that the tmp directory moved.
+
+### 3. Sharp edges are pinned, not fixed
+
+**Decision:** Two discovered behaviors are asserted as-is with a comment naming the edge: a
+root file that `@`-imports a nested steering source emits the content twice (distinct
+provenance), and an unclosed code fence in an imported file protects @-directives to EOF.
+
+**Rationale:** A test suite that silently "fixes" behavior by asserting changed expectations
+hides the change. Pinning documents intent for the reviewer; changing either behavior is a
+separate story with its own decision trail.
