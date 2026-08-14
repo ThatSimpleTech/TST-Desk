@@ -162,7 +162,7 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 		return {
 			severity: "toast",
 			title: "Workspace not found",
-			body: `${message} If it moved, open the new location with the 📁 picker and remove the stale entry from the workspace menu.`,
+			body: `${message} If it moved, open the new location with the folder picker and remove the stale entry from the workspace menu.`,
 		};
 	}
 	return { severity: "toast", title: `Daemon error: ${code}`, body: message };

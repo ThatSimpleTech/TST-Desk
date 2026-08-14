@@ -14,6 +14,7 @@
 	import { initStack, refreshStack, stack, teardownStack } from '../stack-store.svelte.js';
 	import { cacheLabel, formatTokens } from '../stack-store';
 	import { openInEditor } from '../open-file';
+	import Icon from './Icon.svelte';
 
 	onMount(() => {
 		initStack();
@@ -37,7 +38,7 @@
 
 	/** Short badge for a warning line; full text stays in the tooltip. */
 	function warningBadge(warning: string): string {
-		return warning.includes('exceeds 200 lines') ? '⚠ over 200 lines' : `⚠ ${warning}`;
+		return warning.includes('exceeds 200 lines') ? 'over 200 lines' : warning;
 	}
 </script>
 
@@ -79,7 +80,9 @@
 							</span>
 						{/if}
 						{#each entry.warnings as warning}
-							<span class="chip chip-warn" title={warning}>{warningBadge(warning)}</span>
+							<span class="chip chip-warn" title={warning}
+								><Icon name="alert" size={11} /> {warningBadge(warning)}</span
+							>
 						{/each}
 					</div>
 					{#if entry.imports && entry.imports.length > 0}
@@ -90,7 +93,9 @@
 										<span class="name">{baseName(imp.path)}</span>
 									</button>
 									{#if imp.issue}
-										<span class="chip chip-warn" title={imp.issue}>⚠ import issue</span>
+										<span class="chip chip-warn" title={imp.issue}
+											><Icon name="alert" size={11} /> import issue</span
+										>
 									{/if}
 								</li>
 							{/each}
@@ -180,6 +185,9 @@
 	}
 
 	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
 		padding: 0 var(--space-2);
 		border: var(--border-width) solid var(--color-border);
 		border-radius: var(--radius-sm);
