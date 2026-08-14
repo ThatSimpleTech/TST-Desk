@@ -515,6 +515,20 @@ class SteeringReloaded(DaemonEvent):
     source_count: int = Field(ge=0)
 
 
+class RuleActivated(DaemonEvent):
+    """A path-scoped rule entered the prompt because the session touched a
+    matching file (TD-503).
+
+    Emitted once per rule per session, at the first assembly where the
+    rule's ``appliesTo`` globs match a touched path.  The timeline shows
+    the injection so context changes are never silent.
+    """
+
+    type: Literal["rule_activated"] = "rule_activated"
+    session_id: str
+    rule_path: str  # workspace-relative path of the rule file
+
+
 class TierSwitched(DaemonEvent):
     """Emitted when a session's active tier is overridden via ``set_tier``.
 
@@ -728,6 +742,7 @@ DaemonEventT = Annotated[
     | TierState
     | ContextCompacted
     | SteeringReloaded
+    | RuleActivated
     | TierSwitched
     | InstructionStack
     | SessionList

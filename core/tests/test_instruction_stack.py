@@ -10,6 +10,7 @@ adherence warning, and provider-observed cache state.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import tempfile
@@ -60,6 +61,25 @@ async def _running_daemon(tmp: Path) -> tuple[Daemon, asyncio.Task[None]]:
         await asyncio.sleep(0.05)
     assert daemon.ws_server.port > 0
     return daemon, task
+
+
+async def _stop_daemon(daemon: Daemon, task: asyncio.Task[None]) -> None:
+    """Graceful shutdown, awaited.
+
+    Cancelling without awaiting leaves the audit.db sqlite handle open when
+    TemporaryDirectory cleanup runs — POSIX unlinks open files, Windows
+    refuses with WinError 32 (TD-1406).  Ask the daemon to stop, give it a
+    moment, and only then fall back to cancel.
+    """
+    daemon._shutdown_event.set()
+    if task.done():
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=5)
+    except (TimeoutError, asyncio.CancelledError):
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 # ── Cache-state property ─────────────────────────────────────────────────
@@ -210,8 +230,7 @@ class TestGetInstructionStackHandler:
                 assert resp["code"] == "session_not_found"
                 await ws.close()
             finally:
-                daemon._shutdown_event.set()
-                daemon_task.cancel()
+                await _stop_daemon(daemon, daemon_task)
 
     @pytest.mark.asyncio
     async def test_happy_path_returns_stack(self, tmp_path: Path) -> None:
@@ -239,8 +258,7 @@ class TestGetInstructionStackHandler:
                 assert resp["last_cached_tokens"] is None
                 await ws.close()
             finally:
-                daemon._shutdown_event.set()
-                daemon_task.cancel()
+                await _stop_daemon(daemon, daemon_task)
 
     @pytest.mark.asyncio
     async def test_approved_external_import_shows_clean(self, tmp_path: Path) -> None:
@@ -273,8 +291,58 @@ class TestGetInstructionStackHandler:
                 assert imp["issue"] is None
                 await ws.close()
             finally:
-                daemon._shutdown_event.set()
-                daemon_task.cancel()
+                await _stop_daemon(daemon, daemon_task)
+
+    @pytest.mark.asyncio
+    async def test_scoped_rule_reports_true_active_verdict(self, tmp_path: Path) -> None:
+        """TD-503: the handler forwards the session's touched paths, so a
+        path-scoped rule reports inactive before a matching touch and
+        active after — not active unconditionally."""
+        workspace = tmp_path / "ws"
+        (workspace / "src").mkdir(parents=True)
+        _write(workspace / "src" / "app.py", "x = 1\n")
+        _write(workspace / "AGENTS.md", "root rules\n")
+        _write(
+            workspace / ".tst" / "rules" / "src-rules.md",
+            "---\nappliesTo:\n  - src/**\n---\nscoped\n",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, daemon_task = await _running_daemon(Path(tmp))
+            try:
+                ws_conn = await _connect(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                await ws_conn.send(json.dumps({"type": "open_workspace", "path": str(workspace)}))
+                opened = json.loads(await ws_conn.recv())
+                session_id = opened["session_id"]
+
+                async def _query() -> dict:
+                    await ws_conn.send(
+                        json.dumps({"type": "get_instruction_stack", "session_id": session_id})
+                    )
+                    return json.loads(await ws_conn.recv())
+
+                before = await _query()
+                scoped = next(e for e in before["sources"] if e["path"].endswith("src-rules.md"))
+                assert scoped["active"] is False
+                assert scoped["applies_to"] == ["src/**"]
+
+                found = daemon.session_registry.get(session_id)
+                assert found is not None
+                found.record_touched(["src/app.py"])
+
+                after = await _query()
+                scoped_after = next(
+                    e for e in after["sources"] if e["path"].endswith("src-rules.md")
+                )
+                assert scoped_after["active"] is True
+                # The always-on root file is untouched by the flip.
+                assert sum(1 for e in after["sources"] if e["active"]) == 1 + sum(
+                    1 for e in before["sources"] if e["active"]
+                )
+                await ws_conn.close()
+            finally:
+                await _stop_daemon(daemon, daemon_task)
 
 
 # ── Hot-reload emission carries cache state ──────────────────────────────

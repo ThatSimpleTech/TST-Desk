@@ -37,6 +37,7 @@ import type {
   TurnComplete,
   ContextCompacted,
   SteeringReloaded,
+  RuleActivated,
   TierSwitched,
   InstructionStack,
   SessionList,
@@ -415,6 +416,14 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("rule_activated", () => {
+    const m = fixtures.rule_activated as RuleActivated;
+    expect(m.type).toBe("rule_activated");
+    expect(isString(m.rule_path)).toBe(true);
+    expect(isString(m.session_id)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
   it("tier_switched", () => {
     const m = fixtures.tier_switched as TierSwitched;
     expect(m.type).toBe("tier_switched");
@@ -497,7 +506,7 @@ describe("All fixtures have required shape", () => {
       "tool_result_truncated", "tool_result_diff", "tool_result_denied",
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
-      "tier_state", "context_compacted", "steering_reloaded", "tier_switched",
+      "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report",

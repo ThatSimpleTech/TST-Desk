@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
@@ -209,6 +209,31 @@ class Session:
         # resumable (prime directive §2.5).  Each record carries the call
         # metadata (TD-803) so "always allow" can generate its rule.
         self._pending_approvals: dict[str, PendingApproval] = {}
+        # Files the session has touched via successful path-bearing tool
+        # calls (TD-503), as workspace-relative posix strings.  The loop
+        # passes this set to the assembler so path-scoped steering rules
+        # activate only once a matching file is in play.
+        self.touched_paths: set[str] = set()
+        self._workspace_root: Path | None = None  # resolved lazily by record_touched
+
+    def record_touched(self, paths: Iterable[str]) -> None:
+        """Mark tool-call paths as touched (TD-503).
+
+        Relative paths are kept as-is (the tools interpret them against
+        the workspace root); absolute paths are relativized against it.
+        Paths outside the workspace are dropped — the boundary guard has
+        already refused them, and they can never match a scoped rule.
+        """
+        for raw in paths:
+            p = Path(raw)
+            if p.is_absolute():
+                if self._workspace_root is None:
+                    self._workspace_root = Path(self.workspace_path).resolve()
+                try:
+                    p = p.resolve().relative_to(self._workspace_root)
+                except ValueError:
+                    continue
+            self.touched_paths.add(p.as_posix())
 
     @classmethod
     def restore(

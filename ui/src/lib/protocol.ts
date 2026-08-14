@@ -301,6 +301,12 @@ export interface SteeringReloaded extends DaemonEvent {
   source_count: number;
 }
 
+export interface RuleActivated extends DaemonEvent {
+  type: "rule_activated";
+  session_id: string;
+  rule_path: string;
+}
+
 export interface ImportedFile {
   path: string;
   depth: number;
@@ -426,6 +432,7 @@ export type DaemonEventUnion =
   | TierState
   | ContextCompacted
   | SteeringReloaded
+  | RuleActivated
   | TierSwitched
   | InstructionStack
   | SessionList

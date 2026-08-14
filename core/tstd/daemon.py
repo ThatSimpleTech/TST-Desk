@@ -1107,11 +1107,10 @@ class Daemon:
         """Assemble and answer with the session's current instruction stack.
 
         Direct response, not logged — turn-time snapshots already land in
-        the event log via the steering-reload push (TD-509).  No production
-        call site passes ``matched_paths`` (TD-503's touch-tracking is not
-        plumbed), so path-scoped rules currently assemble active here and
-        in every push; the panel labels them by prompt membership, not by
-        a match verdict.
+        the event log via the steering-reload push (TD-509).  The session's
+        touched paths (TD-503) are forwarded so path-scoped rules report
+        their true active/inactive verdict instead of assembling active
+        unconditionally.
         """
         found = self.session_registry.get(msg.session_id)
         if found is None:
@@ -1121,7 +1120,9 @@ class Daemon:
             )
         tier = found.router.active_tier if found.router is not None else "brain"
         assembled = await PromptAssembler(found.workspace_path).assemble(
-            tier, approved_imports=_approved_import_allowlist(found.workspace_path)
+            tier,
+            matched_paths=set(found.touched_paths),
+            approved_imports=_approved_import_allowlist(found.workspace_path),
         )
         cached = (
             found.cost_tracker.last_cached_prompt_tokens if found.cost_tracker is not None else None
