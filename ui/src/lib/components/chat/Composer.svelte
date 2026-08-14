@@ -10,19 +10,22 @@
 	let {
 		disabled = false,
 		running = false,
+		value = $bindable(""),
 		onsubmit,
 		oncancel,
 	}: {
 		disabled?: boolean;
 		/** A turn is in flight; the send button becomes stop. */
 		running?: boolean;
+		/** Draft text — bindable so the greeting's suggestion chips can insert
+		    text (TD-1605) without owning the textarea. */
+		value?: string;
 		onsubmit: (text: string) => void;
 		oncancel?: () => void;
 	} = $props();
 
 	const MAX_ROWS = 8;
 
-	let value = $state("");
 	let textarea: HTMLTextAreaElement | null = $state(null);
 
 	// Re-measure on every edit; cap growth at MAX_ROWS lines.
