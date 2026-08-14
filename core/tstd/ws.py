@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -43,17 +44,22 @@ def generate_token() -> str:
     return secrets.token_hex(_TOKEN_BYTES)
 
 
-def write_port_file(data_dir: Path, port: int, token: str) -> Path:
-    """Write the port and token to the port file with restricted permissions.
+def write_port_file(data_dir: Path, port: int, token: str, pid: int | None = None) -> Path:
+    """Write the port, token, and PID to the port file with restricted permissions.
 
     If the file already exists, it is treated as stale (left by a previous
     daemon instance) and replaced — a dead daemon's port file must never
     block startup.
 
+    The write is atomic (temp file + rename) so a supervising host polling
+    the file never sees a partial read. The PID lets the host distinguish a
+    live daemon's file from a stale one left by a prior, dead instance.
+
     Args:
         data_dir: The daemon's user data directory.
         port: The port the WebSocket server is listening on.
         token: The auth token clients must present.
+        pid: The daemon's process ID. Defaults to the current process.
 
     Returns:
         The path to the written port file.
@@ -64,15 +70,26 @@ def write_port_file(data_dir: Path, port: int, token: str) -> Path:
             "stale port file detected, replacing",
             extra={"extra_fields": {"path": str(port_file)}},
         )
-    content = json.dumps({"port": port, "token": token}, indent=2)
-    port_file.write_text(content)
-    # Set mode 0o600 (owner read/write only)
-    port_file.chmod(0o600)
+    content = json.dumps(
+        {"port": port, "token": token, "pid": pid if pid is not None else os.getpid()},
+        indent=2,
+    )
+    tmp_file = data_dir / (f".{_PORT_FILE}.{os.getpid()}.tmp")
+    tmp_file.write_text(content)
+    # Set mode 0o600 (owner read/write only) before it is renamed into place
+    tmp_file.chmod(0o600)
+    os.replace(tmp_file, port_file)
     log.info(
         "port file written",
         extra={"extra_fields": {"path": str(port_file), "port": port}},
     )
     return port_file
+
+
+def remove_port_file(data_dir: Path) -> None:
+    """Delete the port file, if present. Used on clean shutdown."""
+    port_file = data_dir / _PORT_FILE
+    port_file.unlink(missing_ok=True)
 
 
 def validate_interface(host: str) -> None:
@@ -160,6 +177,10 @@ class WebSocketServer:
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
+
+        # Clean shutdown removes the port file so the host can tell a live
+        # daemon from a defunct one.
+        remove_port_file(self.data_dir)
 
         log.info("ws server stopped")
 
