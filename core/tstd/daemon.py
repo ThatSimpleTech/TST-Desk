@@ -23,7 +23,7 @@ from .audit_writer import AuditWriter
 from .boundary_config import boundary_source, load_workspace_boundary
 from .config import ConfigError, cached_config
 from .logging import get_logger, setup_logging, user_data_dir
-from .loop import agent_loop
+from .loop import ProviderLike, agent_loop
 from .protocol import (
     Attach,
     Cancel,
@@ -50,6 +50,7 @@ from .provider import ProviderClient
 from .router import TierRouter
 from .session import Session, SessionEventLog, SessionRegistry, SessionRunner
 from .session_store import SessionStore
+from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
@@ -117,7 +118,7 @@ class Daemon:
     def __init__(
         self,
         data_dir: Path | None = None,
-        provider: ProviderClient | None = None,
+        provider: ProviderLike | None = None,
         parent_pid: int | None = None,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
@@ -144,7 +145,7 @@ class Daemon:
             on_disconnect=self._on_connection_closed,
         )
 
-    async def _ensure_provider(self) -> ProviderClient:
+    async def _ensure_provider(self) -> ProviderLike:
         """Create the shared provider client on first use.
 
         Uses the brain tier's base URL for the OpenAI-compatible endpoint;
@@ -328,14 +329,30 @@ class Daemon:
             # sessions can be opened and attached without requiring a key
             # to be present.  The provider is only needed when the loop
             # processes its first user message.
-            async def get_provider() -> ProviderClient:
+            async def get_provider() -> ProviderLike:
                 return await self._ensure_provider()
+
+            # Tool stack (TD-604/605, TD-1401): the daemon hands every
+            # session the builtin registry + dispatcher; the loop attaches
+            # the classifier, path guard, and checkpointer on first turn.
+            tool_registry = create_registry()
+            tool_dispatcher = ToolDispatcher(tool_registry)
+            register_builtin_handlers(
+                tool_dispatcher,
+                allowed_commands=tuple(sess.boundary_config.boundary.allowed_commands),
+            )
 
             sink = self._audit_writer
             runner = SessionRunner(
                 sess,
                 loop_factory=lambda s: agent_loop(
-                    s, router, get_provider, self.config, audit_sink=sink
+                    s,
+                    router,
+                    get_provider,
+                    self.config,
+                    tool_registry=tool_registry,
+                    tool_dispatcher=tool_dispatcher,
+                    audit_sink=sink,
                 ),
             )
             await runner.start()

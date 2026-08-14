@@ -1432,3 +1432,57 @@ conflict resolution on the record as its own merge commit.
   verified the union compiles.
 - **TD-1402 env-sanitization skip released** the moment TD-605 landed:
   `sanitized_env()` + an end-to-end `run_shell` environment-dump test.
+
+---
+
+## 2026-08-13 — TD-1401: End-to-end headless harness
+
+Class B — recorded per AGENTS.md §5.
+
+### 1. In-process daemon over the real WebSocket protocol
+
+**Decision:** The harness runs `Daemon` in-process (no subprocess) but drives it
+through a real `websockets` client: port file, hello token, open_workspace,
+attach, user_message, approve, shutdown. The mock provider is injected via the
+`Daemon(provider=...)` seam, whose type was widened to the loop's existing
+`ProviderLike` protocol.
+
+**Rationale:** A subprocess daemon adds process-lifecycle flake to a CI gate
+without exercising anything more — the socket, protocol JSON, session loop,
+tools, checkpoint, and audit paths are all the real ones either way. The
+seam for injection already existed; widening its annotation to the protocol
+the loop actually consumes is the honest type.
+
+### 2. This story wires the tool stack into the daemon
+
+**Decision:** `open_workspace` now builds the builtin registry + dispatcher
+(`register_builtin_handlers` with the boundary's `allowed_commands`) and
+hands both to `agent_loop`. Until this story, daemon sessions had no tool
+dispatcher at all — tools were only wired in tests.
+
+**Rationale:** The harness is the first client that needs a daemon session to
+actually execute a tool call; the gap only surfaced because of it. This is
+the M1-exit pattern working as intended. The empty `allowed_commands`
+default stays fail-closed (shell unusable until allowlisted, TD-706/605).
+
+### 3. Approval is asserted at the protocol surface, not gated
+
+**Decision:** The harness sends `approve` when the `tool_call` event arrives
+and asserts the classification on that event (`decision_class`). No
+execution gate is built here — that is TD-802.
+
+**Rationale:** Criterion's chain is classification → approval → execution;
+today the classifier annotates and dispatch proceeds. Faking a gate inside
+the harness would test code that ships nowhere. When TD-802 lands, this
+harness's approve message drives the real gate unchanged.
+
+### 4. Steering proof is the mock's recorded request
+
+**Decision:** "Steering resolved" asserts the workspace `AGENTS.md` content
+appears in the system prompt of the mock's first recorded request.
+`steering_reloaded` (TD-509) is a hot-reload event and never fires on a
+fresh session's first turn (`_last_prefix_hash` is None), so the event
+stream cannot prove initial resolution.
+
+**Rationale:** The criterion is that steering reached the model. The recorded
+request is the ground truth of that, and the mock already records it.
