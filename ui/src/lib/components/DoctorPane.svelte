@@ -3,7 +3,17 @@
 	// list — one line per check with a status mark, detail, and (on failure)
 	// the specific fix. "Copy report" puts the redacted plain-text version on
 	// the clipboard. All daemon contact rides the doctor store.
-	import { doctor, runDoctor, closeDoctor, copyDoctorReport, STATUS_MARK } from '../doctor.svelte.js';
+	import { doctor, runDoctor, closeDoctor, copyDoctorReport } from '../doctor.svelte.js';
+	import Icon from './Icon.svelte';
+	import type { DiagnosticCheck } from '../protocol';
+
+	/** Row status → glyph. The copied text report keeps its own ASCII marks
+	    (STATUS_MARK in the store); these are the pane's visual analog. */
+	const STATUS_ICON: Record<DiagnosticCheck['status'], 'check' | 'x' | 'minus'> = {
+		ok: 'check',
+		fail: 'x',
+		skip: 'minus',
+	};
 
 	let copied = $state(false);
 	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -24,13 +34,17 @@
 		<div class="doctor">
 			<div class="head">
 				<h1 class="title">Doctor</h1>
-				<button class="close" type="button" aria-label="Close" onclick={closeDoctor}>✕</button>
+				<button class="close" type="button" aria-label="Close" onclick={closeDoctor}>
+					<Icon name="x" size={14} />
+				</button>
 			</div>
 
 			<ul class="rows">
 				{#each doctor.checks as row (row.name)}
 					<li class="row">
-						<span class="mark mark--{row.status}" aria-hidden="true">{STATUS_MARK[row.status]}</span>
+						<span class="mark mark--{row.status}" aria-hidden="true"
+							><Icon name={STATUS_ICON[row.status]} size={13} /></span
+						>
 						<div class="row-body">
 							<span class="row-line">
 								<span class="row-name">{row.name}</span><span class="row-detail">{row.detail}</span>
@@ -97,6 +111,7 @@
 	}
 
 	.close {
+		display: inline-flex;
 		border: none;
 		background: none;
 		color: var(--color-text-secondary);
@@ -123,9 +138,10 @@
 	}
 
 	.mark {
+		display: inline-flex;
+		justify-content: center;
 		width: 1.25rem;
 		flex-shrink: 0;
-		text-align: center;
 	}
 
 	.mark--ok {

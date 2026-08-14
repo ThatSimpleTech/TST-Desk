@@ -12,6 +12,7 @@
 		ledgerPath,
 		type DecisionRow,
 	} from '../decisions.svelte.js';
+	import Icon from './Icon.svelte';
 
 	let expandedId = $state<string | null>(null);
 	let copiedId = $state<string | null>(null);
@@ -73,7 +74,9 @@
 						>
 					{/each}
 				</div>
-				<button class="close" type="button" aria-label="Close" onclick={closeDecisions}>✕</button>
+				<button class="close" type="button" aria-label="Close" onclick={closeDecisions}>
+					<Icon name="x" size={14} />
+				</button>
 			</div>
 
 			{#if rows.length === 0}
@@ -185,6 +188,7 @@
 	}
 
 	.close {
+		display: inline-flex;
 		border: none;
 		background: none;
 		color: var(--color-text-secondary);
