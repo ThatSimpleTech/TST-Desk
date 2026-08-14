@@ -2666,3 +2666,58 @@ prompt keyed on the wrong thing, a workspace mutation mid-session.
 Asserting on the content the provider received pins the user-visible
 outcome (the model sees this workspace's rules), which survives any
 internal refactor of how the assembler is built.
+
+## 2026-08-14 — TD-1201: Resolved stack panel
+
+### 1. Stack queries assemble on demand; cache state rides the payload
+
+**Decision:** ``get_instruction_stack`` re-assembles steering in the daemon
+handler instead of serving a cached stack, and ``InstructionStack`` carries
+``last_cached_tokens`` — the provider-observed cached prompt tokens of the
+most recent main-loop call (classifier calls excluded), ``None`` before the
+first turn.
+
+**Rationale:** Assembly is cheap and the on-demand answer can never be
+stale relative to the filesystem. Cache state is a provider-side fact the
+UI cannot infer: zero cached tokens is a miss, but before any turn the
+honest answer is "unknown" — so the field is nullable and the panel says
+so rather than implying a miss.
+
+**Path-scope caveat (corrected at integration):** no production call site
+passes ``matched_paths`` — TD-503's touch-tracking was never plumbed — so
+path-scoped rules assemble active in every response and push, and the
+"unmatched" state is unreachable today. The panel therefore labels scoped
+rules by prompt membership ("in prompt" / "not in prompt"), not by a match
+verdict; "matched/unmatched" and TD-1201's third acceptance criterion land
+with the touch-tracking story.
+
+### 2. Inspector fields are additive-optional; protocol version unchanged
+
+**Decision:** ``InstructionStackEntry`` gained ``shadowed_path``,
+``applies_to``, and ``imports`` (flattened with nesting ``depth``);
+``InstructionStack`` gained ``last_cached_tokens``. All are optional with
+defaults, so older clients parse new payloads and vice versa — no
+``PROTOCOL_VERSION`` bump.
+
+### 3. Open-in-editor via tauri-plugin-opener, paths from the daemon only
+
+**Decision:** New dependency ``tauri-plugin-opener`` (npm
+``@tauri-apps/plugin-opener`` + crate), capability scoped to
+``opener:allow-open-path`` — no ``open_url``. ``open-file.ts`` no-ops
+outside the Tauri shell.
+
+**Rationale:** It is the only open-in-editor mechanism available; the shell
+had dialog/log/window-state plugins only. Every path handed to it comes
+from the daemon's resolved stack, never from free-text input, so opening
+the OS default handler on one cannot be aimed anywhere the steering
+resolver didn't already read from.
+
+### 4. Stack is a right-pane tab, not a third pane
+
+**Decision:** The right pane grew an Activity | Stack tab strip instead of
+splitting into three panes.
+
+**Rationale:** The stack is a reference view — opened to answer "what is
+the model actually running on?", then left. It does not need permanent
+screen share with the timeline, and two panes stays the shell's layout
+invariant.

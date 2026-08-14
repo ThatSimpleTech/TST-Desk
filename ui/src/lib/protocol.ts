@@ -301,6 +301,12 @@ export interface SteeringReloaded extends DaemonEvent {
   source_count: number;
 }
 
+export interface ImportedFile {
+  path: string;
+  depth: number;
+  issue?: string | null;
+}
+
 export interface InstructionStackEntry {
   path: string;
   precedence: string;
@@ -310,6 +316,9 @@ export interface InstructionStackEntry {
   warnings: string[];
   subtree?: string | null;
   is_fallback: boolean;
+  shadowed_path?: string | null;
+  applies_to?: string[] | null;
+  imports?: ImportedFile[];
 }
 
 export interface InstructionStack extends DaemonEvent {
@@ -318,6 +327,7 @@ export interface InstructionStack extends DaemonEvent {
   sources: InstructionStackEntry[];
   total_tokens: number;
   token_method: string;
+  last_cached_tokens?: number | null;
 }
 
 export interface SessionSummary {
