@@ -290,10 +290,9 @@ class TestProvenance:
         assert "(workspace)" in result.block
         # The imported file has an (imported) provenance
         assert "(imported)" in result.block
-        # The imported file's path appears in the provenance.  imports.py
-        # renders the resolved path OS-natively; TD-1406 tracks making all
-        # provenance POSIX-stable, so compare separator-insensitively.
-        assert "docs/arch.md" in result.block.replace("\\", "/")
+        # The imported file's path appears in the provenance, rendered
+        # POSIX-stable on every platform (TD-1406).
+        assert "docs/arch.md" in result.block
 
     def test_nested_import_provenance(self, tmp_path: Path) -> None:
         """Nested imports each have their own provenance comment."""
