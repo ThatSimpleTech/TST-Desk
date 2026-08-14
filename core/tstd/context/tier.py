@@ -151,6 +151,8 @@ def assemble_for_tier_sync(
     test_output: str | None = None,
     memory: str | None = None,
     config: TierContextConfig | None = None,
+    approved_imports: frozenset[Path] = frozenset(),
+    denied_imports: frozenset[Path] = frozenset(),
 ) -> TierContext:
     """Synchronous variant of :func:`assemble_for_tier` (tests, CLI).
 
@@ -188,6 +190,8 @@ def assemble_for_tier_sync(
         workspace_path,
         matched_paths=matched_paths,
         source_filter=source_filter,
+        approved_imports=approved_imports,
+        denied_imports=denied_imports,
     )
 
     # Compose blocks per tier.  An empty steering block (e.g. a
@@ -230,6 +234,8 @@ async def assemble_for_tier(
     test_output: str | None = None,
     memory: str | None = None,
     config: TierContextConfig | None = None,
+    approved_imports: frozenset[Path] = frozenset(),
+    denied_imports: frozenset[Path] = frozenset(),
 ) -> TierContext:
     """Assemble the per-tier context for *tier*.
 
@@ -249,4 +255,6 @@ async def assemble_for_tier(
         test_output=test_output,
         memory=memory,
         config=config,
+        approved_imports=approved_imports,
+        denied_imports=denied_imports,
     )

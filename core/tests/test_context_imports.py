@@ -69,17 +69,21 @@ class TestPathResolution:
         assert "import file not found" in result.import_issues[0]
 
     def test_tilde_import(self, tmp_path: Path) -> None:
-        """~ expands to the resolver's home_dir."""
+        """~ expands to the resolver's home_dir; outside the workspace it's gated."""
         home, ws = _build_workspace(tmp_path, root_file="Root.\n@~/global.md")
         _write(home / "global.md", "Global prefs.")
         result = _make_assembler(home).assemble_sync(ws)
-        assert "Global prefs." in result.block
+        # The home directory is outside the workspace, so TD-505 parks it
+        # for approval instead of inlining it.
+        assert "Global prefs." not in result.block
+        assert (home / "global.md").resolve() in result.pending_imports
 
     def test_tilde_slash_import(self, tmp_path: Path) -> None:
         home, ws = _build_workspace(tmp_path, root_file="Root.\n@~/docs/arch.md")
         _write(home / "docs" / "arch.md", "Archived.")
         result = _make_assembler(home).assemble_sync(ws)
-        assert "Archived." in result.block
+        assert "Archived." not in result.block
+        assert (home / "docs" / "arch.md").resolve() in result.pending_imports
 
 
 # ── Tests: depth limit ────────────────────────────────────────────────────
