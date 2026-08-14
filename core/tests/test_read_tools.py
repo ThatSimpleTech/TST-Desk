@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.test_dispatch import attach_auto_approver
 from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClassifier
 from tstd.tools import (
     ToolDispatcher,
@@ -37,7 +38,7 @@ def make_dispatcher(workspace: Path) -> ToolDispatcher:
         path_guard=PathGuard(boundary),
     )
     register_builtin_handlers(dispatcher)
-    return dispatcher
+    return attach_auto_approver(dispatcher)  # TD-802: mechanics tests auto-approve
 
 
 # ── fs_read: content, line ranges, numbers ──────────────────────────────

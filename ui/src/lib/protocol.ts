@@ -131,6 +131,7 @@ export interface ApprovalRequest extends DaemonEvent {
   arguments: Record<string, unknown>;
   decision_class: "A" | "B" | "C";
   summary: string;
+  reason: string;
 }
 
 export interface DecisionLogged extends DaemonEvent {
