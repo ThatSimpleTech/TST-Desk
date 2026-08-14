@@ -23,7 +23,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
-from .logging import redact_secrets, user_data_dir
+from .logging import redact_structure, user_data_dir
 
 DecisionClass = Literal["A", "B", "C"]
 ToolCallStatus = Literal["success", "error", "refused"]
@@ -124,21 +124,9 @@ MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1,)
 
 
 # ── Scrubbing ──────────────────────────────────────────────────────────
-
-
-def _scrub_arguments(value: Any) -> Any:
-    """Recursively redact secrets in every string of a JSON-able structure.
-
-    Keys are scrubbed as well as values — a credential used as a mapping
-    key is unusual but must not reach disk either.
-    """
-    if isinstance(value, str):
-        return redact_secrets(value)
-    if isinstance(value, Mapping):
-        return {_scrub_arguments(k): _scrub_arguments(v) for k, v in value.items()}
-    if isinstance(value, Sequence):
-        return [_scrub_arguments(item) for item in value]
-    return value
+#
+# The recursive scrub lives in logging.redact_structure (TD-1405) so the
+# audit store and the event pipeline share one implementation.
 
 
 def _result_hash(output: str | None) -> str | None:
@@ -261,7 +249,7 @@ class AuditStore:
         ts: float | None = None,
     ) -> int:
         """Record a tool call and its outcome. Arguments are scrubbed first."""
-        scrubbed = _scrub_arguments(dict(arguments))
+        scrubbed = redact_structure(dict(arguments))
         cur = self._conn.execute(
             "INSERT INTO tool_calls (session_id, tool_call_id, name, arguments,"
             " decision_class, status, result_hash, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

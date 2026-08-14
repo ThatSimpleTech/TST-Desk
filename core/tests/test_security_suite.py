@@ -1,13 +1,9 @@
 """Cross-cutting security suite (TD-1402).
 
 Release blockers: path-escape attempts across the TD-602 vectors, steering-file
-write refusal at guard level, secret redaction in logs, non-loopback bind
-refusal, and classifier-bypass attacks on the dispatch chokepoint.
-
-Skipped with reasons — gaps, not verdicts:
-- Redaction of audit/event and error-message surfaces has no implementation:
-  the logging filter is the only chokepoint, and ToolCallEvent.arguments /
-  ToolResultEvent.output bypass it. No story covers this yet.
+write refusal at guard level, secret redaction in logs and across the
+audit/event pipeline (TD-1405), non-loopback bind refusal, and
+classifier-bypass attacks on the dispatch chokepoint.
 """
 
 from __future__ import annotations
@@ -17,12 +13,16 @@ import json
 import logging
 import os
 import re
+import sqlite3
 from io import StringIO
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.test_dispatch import make_config, start_loop, wait_for_turn
+from tstd.audit import AuditStore
+from tstd.audit_writer import AuditWriter
 from tstd.autonomy import (
     AmbiguousClassifier,
     Boundary,
@@ -32,8 +32,14 @@ from tstd.autonomy import (
 )
 from tstd.autonomy.classifier import RULE_TABLE, is_steering_write
 from tstd.logging import SECRET_PATTERNS, JSONFormatter, SecretsRedactionFilter
-from tstd.session import Session
+from tstd.mock import MockProvider, Script
+from tstd.protocol import DaemonEvent, ShellOutput, build_error
+from tstd.protocol import ToolCall as ToolCallEvent
+from tstd.protocol import ToolResult as ToolResultEvent
+from tstd.router import TierRouter
+from tstd.session import EventSubscriber, Session, SessionEventLog
 from tstd.tools import (
+    Tool,
     ToolDispatcher,
     UnclassifiedToolCall,
     create_registry,
@@ -351,24 +357,176 @@ def test_clean_log_message_not_redacted() -> None:
     assert json.loads(buf.getvalue())["message"] == "reading config.yaml, 42 entries"
 
 
-@pytest.mark.skip(
-    reason="No redaction chokepoint exists for the audit/event pipeline: "
-    "ToolCallEvent.arguments and ToolResultEvent.output are stored verbatim. "
-    "Needs an implementation story; criterion 4 makes this a release blocker."
-)
-def test_secret_in_tool_arguments_redacted_from_audit() -> None:
+PLANTED = FAKE_SECRETS[0]
+
+
+def event_spy() -> tuple[list[DaemonEvent], EventSubscriber]:
+    """A broadcast-stream spy: records the events a client would receive."""
+    seen: list[DaemonEvent] = []
+
+    async def _spy(event: DaemonEvent, _log: SessionEventLog) -> None:
+        seen.append(event)
+
+    return seen, _spy
+
+
+def make_boom_dispatcher(workspace: Path) -> ToolDispatcher:
+    """A production-wired dispatcher plus a tool whose handler fails with a
+    secret embedded in the exception message."""
+    boundary = Boundary(workspace_root=workspace)
+    dispatcher = ToolDispatcher(
+        create_registry(),
+        classifier=AmbiguousClassifier(
+            static=DecisionClassifier(boundary),
+            call_worker=SpyWorker("B"),
+        ),
+        path_guard=PathGuard(boundary),
+    )
+    register_builtin_handlers(dispatcher)
+    dispatcher.registry.register(
+        Tool(
+            name="boom",
+            description="Always fails, echoing the upstream message",
+            parameters={"type": "object", "properties": {}, "required": []},
+            side_effect_class="auto",
+            parallel_safe=True,
+        )
+    )
+
+    async def boom_handler(session: object, tool_call_id: str = "") -> str:
+        raise RuntimeError(f"upstream refused key {PLANTED}")
+
+    dispatcher.register_handler("boom", boom_handler)
+    return dispatcher
+
+
+def scripted_write(path: Path, content: str, reply: str) -> MockProvider:
+    """One-turn brain script: fs_write the file, then stream the reply."""
+    return MockProvider(
+        sequences={
+            "test-brain": [
+                Script(
+                    kind="tool_call",
+                    tool_name="fs_write",
+                    tool_arguments=json.dumps({"path": str(path), "content": content}),
+                ),
+                Script(kind="stream", content=reply),
+            ]
+        },
+        default=Script(kind="stream", content="(unused)"),
+    )
+
+
+def _query_one(db_path: Path, sql: str) -> tuple[Any, ...] | None:
+    """Sync query: keeps sqlite3 calls out of async test functions (ASYNC240)."""
+    return sqlite3.connect(db_path).execute(sql).fetchone()
+
+
+async def test_secret_in_tool_arguments_redacted_from_audit(ws: Path, tmp_path: Path) -> None:
     """A secret-shaped tool argument must never reach the audit store or the
-    event log unredacted."""
+    event log unredacted — and the write itself keeps the exact bytes."""
+    session = Session(str(ws))
+    seen, spy = event_spy()
+    session.event_log.subscribe(spy)
+    store = AuditStore(tmp_path / "audit.db")
+    writer = AuditWriter(store)
+    writer.start()
+    writer.attach_session(session)
+
+    dispatcher = make_dispatcher(ws)
+    content = f"api_key = {PLANTED}\n"
+    mock = scripted_write(ws / "notes.txt", content, "done")
+    await start_loop(session, TierRouter(), mock, make_config(), dispatcher.registry, dispatcher)
+    await session.add_user_message("write the key file")
+    await wait_for_turn(session, 1)
+
+    # Redaction never mutates execution: the file holds the exact bytes.
+    assert _read(ws / "notes.txt") == content
+
+    calls = [e for e in session.event_log.all_events if isinstance(e, ToolCallEvent)]
+    assert calls, "loop did not log a tool_call event"
+    logged_args = json.dumps(calls[0].arguments)
+    assert PLANTED not in logged_args
+    assert "[REDACTED]" in logged_args
+
+    # The broadcast stream carries the same redacted copy replay serves.
+    seen_calls = [e for e in seen if isinstance(e, ToolCallEvent)]
+    assert seen_calls and PLANTED not in json.dumps(seen_calls[0].arguments)
+
+    results = [e for e in session.event_log.all_events if isinstance(e, ToolResultEvent)]
+    assert results and results[0].status == "success"
+    assert results[0].diff is not None
+    assert PLANTED not in results[0].diff
+
+    await writer.close()
+    row = _query_one(
+        tmp_path / "audit.db", "SELECT arguments FROM tool_calls WHERE name = 'fs_write'"
+    )
+    assert row is not None
+    assert PLANTED not in row[0]
+    assert "[REDACTED]" in row[0]
 
 
-@pytest.mark.skip(
-    reason="Error strings bypass redaction: handler exceptions and keychain "
-    "stderr are embedded verbatim. Needs the same chokepoint story as the "
-    "audit-surface test above."
-)
-def test_secret_in_error_output_redacted() -> None:
-    """A secret surfaced inside an exception or stderr must never appear in a
-    user-visible error string."""
+async def test_secret_in_error_output_redacted(ws: Path) -> None:
+    """A secret surfaced inside an exception must never appear in a
+    user-visible error string — stored events, broadcast, or build_error."""
+    session = Session(str(ws))
+    dispatcher = make_boom_dispatcher(ws)
+    mock = MockProvider(
+        sequences={
+            "test-brain": [
+                Script(kind="tool_call", tool_name="boom", tool_arguments="{}"),
+                Script(kind="stream", content="recovered"),
+            ]
+        },
+        default=Script(kind="stream", content="(unused)"),
+    )
+    await start_loop(session, TierRouter(), mock, make_config(), dispatcher.registry, dispatcher)
+    await session.add_user_message("try the thing")
+    await wait_for_turn(session, 1)
+
+    results = [e for e in session.event_log.all_events if isinstance(e, ToolResultEvent)]
+    assert results and results[0].status == "error"
+    assert PLANTED not in results[0].output
+    assert "[REDACTED]" in results[0].output
+
+    # build_error bypasses the event log (straight to the socket), so it
+    # scrubs at construction instead.
+    payload = json.loads(build_error("upstream", f"failed with {PLANTED}"))
+    assert PLANTED not in payload["message"]
+    assert "[REDACTED]" in payload["message"]
+    assert json.loads(build_error("upstream", "plain failure"))["message"] == "plain failure"
+
+
+async def test_benign_event_text_survives_byte_identical(ws: Path) -> None:
+    """Positive control: benign arguments, output, and diffs pass through
+    the redaction chokepoint unchanged."""
+    session = Session(str(ws))
+    dispatcher = make_dispatcher(ws)
+    content = "release notes: all quiet\n"
+    mock = scripted_write(ws / "notes.txt", content, "done")
+    await start_loop(session, TierRouter(), mock, make_config(), dispatcher.registry, dispatcher)
+    await session.add_user_message("write the notes")
+    await wait_for_turn(session, 1)
+
+    calls = [e for e in session.event_log.all_events if isinstance(e, ToolCallEvent)]
+    assert calls and calls[0].arguments == {"path": str(ws / "notes.txt"), "content": content}
+
+    results = [e for e in session.event_log.all_events if isinstance(e, ToolResultEvent)]
+    assert results and "[REDACTED]" not in results[0].output
+    assert results[0].diff is not None
+    assert content.strip() in results[0].diff
+    assert "[REDACTED]" not in results[0].diff
+
+
+async def test_shell_output_chunks_redacted(ws: Path) -> None:
+    """Streamed shell output passes through the same chokepoint (TD-605)."""
+    session = Session(str(ws))
+    await run_shell(session, f"echo {PLANTED}")
+    chunks = [e for e in session.event_log.all_events if isinstance(e, ShellOutput)]
+    assert chunks, "shell handler did not stream output events"
+    assert all(PLANTED not in c.chunk for c in chunks)
+    assert any("[REDACTED]" in c.chunk for c in chunks)
 
 
 # ── 5. Non-loopback bind refusal ──────────────────────────────────────────

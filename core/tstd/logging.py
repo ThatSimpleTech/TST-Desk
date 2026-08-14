@@ -12,6 +12,7 @@ import logging.handlers
 import os
 import re
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -46,12 +47,29 @@ def redact_secrets(text: str) -> str:
     """Replace known credential patterns in *text* with ``[REDACTED]``.
 
     This is the single redaction implementation shared by every output
-    path — logs (SecretsRedactionFilter) and the audit store (TD-901) —
-    so a pattern added here protects all of them at once.
+    path — logs (SecretsRedactionFilter), the audit store (TD-901), and
+    the event pipeline (TD-1405) — so a pattern added here protects all
+    of them at once.
     """
     for pattern in SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     return text
+
+
+def redact_structure(value: Any) -> Any:
+    """Recursively redact secrets in every string of a JSON-able structure.
+
+    Keys are scrubbed as well as values — a credential used as a mapping
+    key is unusual but must not reach disk either.  Shared by the audit
+    store and the event-log chokepoint (TD-1405).
+    """
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if isinstance(value, Mapping):
+        return {redact_structure(k): redact_structure(v) for k, v in value.items()}
+    if isinstance(value, Sequence):
+        return [redact_structure(item) for item in value]
+    return value
 
 
 class SecretsRedactionFilter(logging.Filter):
