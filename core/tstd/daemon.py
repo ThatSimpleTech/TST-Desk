@@ -24,11 +24,14 @@ from .boundary_config import boundary_source, load_workspace_boundary
 from .config import ConfigError, cached_config
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
+from .policy import load_policy
 from .protocol import (
+    Approve,
     Attach,
     Cancel,
     ClientMessageT,
     DaemonEvent,
+    Deny,
     Detach,
     HandshakeError,
     ListSessions,
@@ -326,6 +329,16 @@ class Daemon:
                 )
                 source = f"defaults — invalid config ({e})"
 
+            # Approval policy (TD-801/802): same file, policy: section;
+            # an invalid section falls back to rule-free defaults.
+            try:
+                sess.policy = load_policy(msg.path)
+            except ConfigError as e:
+                log.warning(
+                    "workspace policy config invalid; using defaults",
+                    extra={"extra_fields": {"workspace_path": msg.path, "error": str(e)}},
+                )
+
             # Provider is created lazily via a factory closure so that
             # sessions can be opened and attached without requiring a key
             # to be present.  The provider is only needed when the loop
@@ -460,6 +473,25 @@ class Daemon:
                     seq=1,
                 )
             )
+            return None
+
+        if isinstance(msg, (Approve, Deny)):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            # Resolution reaches the parked dispatcher via the
+            # session-owned future; the session stays parked regardless
+            # of which client (or none) is attached (TD-802).
+            approved = isinstance(msg, Approve)
+            detail = msg.reason if isinstance(msg, Deny) else None
+            if not found.resolve_approval(msg.tool_call_id, approved, detail):
+                return build_error(
+                    "no_pending_approval",
+                    f"No pending approval {msg.tool_call_id!r} in session {msg.session_id!r}",
+                )
             return None
 
         if isinstance(msg, Attach):

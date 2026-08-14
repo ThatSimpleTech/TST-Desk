@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_dispatch import attach_auto_approver
 from tstd.autonomy import (
     AmbiguousClassifier,
     Boundary,
@@ -153,11 +154,13 @@ class TestDispatchHook:
                 parallel_safe=True,
             )
         )
-        dispatcher = ToolDispatcher(
-            registry,
-            classifier=make_classifier(tmp_path),
-            path_guard=PathGuard(Boundary(workspace_root=tmp_path)),
-            ledger=ledger,
+        dispatcher = attach_auto_approver(  # TD-802: mechanics tests auto-approve
+            ToolDispatcher(
+                registry,
+                classifier=make_classifier(tmp_path),
+                path_guard=PathGuard(Boundary(workspace_root=tmp_path)),
+                ledger=ledger,
+            )
         )
 
         async def handler(session: object, message: str, tool_call_id: str = "") -> str:
@@ -201,11 +204,13 @@ class TestDispatchHook:
         )
         # No checkpointer: the in-workspace edit classifies as A but has
         # no commit, so it must NOT be recorded as Class A (AC 3).
-        dispatcher = ToolDispatcher(
-            registry,
-            classifier=make_classifier(tmp_path),
-            path_guard=PathGuard(Boundary(workspace_root=tmp_path)),
-            ledger=ledger,
+        dispatcher = attach_auto_approver(  # TD-802: mechanics tests auto-approve
+            ToolDispatcher(
+                registry,
+                classifier=make_classifier(tmp_path),
+                path_guard=PathGuard(Boundary(workspace_root=tmp_path)),
+                ledger=ledger,
+            )
         )
 
         async def handler(session: object, path: str, tool_call_id: str = "") -> str:

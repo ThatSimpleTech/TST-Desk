@@ -1744,6 +1744,69 @@ coupling. Atomic write follows the TD-604 workspace-file pattern.
 ---
 
 
+## 2026-08-13 — TD-802: Approval flow
+
+Decisions made during the approval flow build.
+
+### 1. Gate placement: after boundary enforcement, before execution
+
+**Decision:** The policy gate runs in `dispatch()` after the TD-602 boundary
+block and before the diff snapshot/handler. `auto` runs; `never` returns a
+structured `policy_denied` result; `ask` awaits the injected approval handler.
+
+**Rationale:** Boundary refusals return before the gate, so policy can never
+resurrect what the boundary refused (criterion 5, ordering layer). The
+resolver adds a second layer — a class-C call never resolves to `auto`
+(TD-801). Two independent layers, both tested.
+
+### 2. Missing approval handler is a chokepoint bypass
+
+**Decision:** A call resolving to `ask` with no `approval_handler` attached
+raises `UnclassifiedToolCall`, the same exception the classifier chokepoint
+uses. A `None` decision class at the gate is treated as B.
+
+**Rationale:** If asking is impossible, executing would fail open and
+returning an error would silently misclassify a policy outcome as a tool
+failure. Raising makes the misconfiguration loud (prime §2.6's no-bypass
+stance extended to the approval gate). None→B mirrors TD-703: fail toward
+asking, never toward acting. Test dispatchers attach an explicit
+auto-approver (`attach_auto_approver`) so mechanics tests state their intent.
+
+### 3. Approval futures live on the Session
+
+**Decision:** Pending approvals are `asyncio.Future`s in a dict on the
+`Session`, resolved by `resolve_approval()` from any attached client. The
+park is a bare `await` — no loop, no poll.
+
+**Rationale:** The daemon owns sessions; the window is only a viewer (prime
+§2.5). Client disconnect leaves the future parked (criterion 2/5); the
+logged `approval_request` + `session_state(awaiting_approval)` events replay
+on attach, which is what makes a parked session resumable from any client.
+
+### 4. Timeout lives in policy config and equals denial
+
+**Decision:** `PolicyConfig.approval_timeout_seconds` (the `policy:` section
+of `.tst/config.yaml`), default `None` = wait indefinitely. Expiry returns a
+structured denial to the model: "Approval timed out after Ns — treated as
+denial". The future is shielded so a late approve/deny resolves nothing.
+
+**Rationale:** Criterion 4 demands configurability with an indefinite
+default. Timeout-as-denial fails safe: an unanswered gate never silently
+executes. The structured message lets the model choose another path rather
+than hanging the turn.
+
+### 5. `PolicyEffect` literal re-declared in policy.py
+
+**Decision:** `policy.py` defines `PolicyEffect = Literal["auto","ask","never"]`
+instead of importing `SideEffectClass` from `tools.registry`.
+
+**Rationale:** The gate made dispatch import policy; policy importing
+tools.registry cycled through tools/__init__ (registry → dispatch → policy).
+The literal keeps imports one-directional; mypy sees identical types.
+
+---
+
+
 ## 2026-08-14 — TD-1301: Python runtime bundling (sidecar)
 
 **Decision:** Ship the daemon as a PyInstaller onefile sidecar

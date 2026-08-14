@@ -23,7 +23,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_dispatch import make_config, start_loop, wait_for_turn
+from tests.test_dispatch import (
+    attach_auto_approver,
+    make_config,
+    start_loop,
+    wait_for_turn,
+)
 from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClassifier
 from tstd.mock import MockProvider, Script
 from tstd.protocol import ShellOutput
@@ -59,13 +64,15 @@ def make_shell_dispatcher(
 ) -> ToolDispatcher:
     """A dispatcher with classifier + path guard + builtin handlers."""
     boundary = Boundary(workspace_root=workspace)
-    dispatcher = ToolDispatcher(
-        create_registry(),
-        classifier=AmbiguousClassifier(
-            static=DecisionClassifier(boundary),
-            call_worker=_stub_worker,
-        ),
-        path_guard=PathGuard(boundary),
+    dispatcher = attach_auto_approver(  # TD-802: mechanics tests auto-approve
+        ToolDispatcher(
+            create_registry(),
+            classifier=AmbiguousClassifier(
+                static=DecisionClassifier(boundary),
+                call_worker=_stub_worker,
+            ),
+            path_guard=PathGuard(boundary),
+        )
     )
     register_builtin_handlers(dispatcher, allowed_commands=allowed_commands)
     return dispatcher

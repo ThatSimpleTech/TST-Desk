@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests.test_checkpoint import _git, _tree_files, make_repo
-from tests.test_dispatch import make_config, start_loop, wait_for_turn
+from tests.test_dispatch import attach_auto_approver, make_config, start_loop, wait_for_turn
 from tstd.autonomy import AmbiguousClassifier, Boundary, Checkpointer, DecisionClassifier
 from tstd.autonomy.checkpoint import NO_GIT
 from tstd.mock import MockProvider, Script
@@ -67,13 +67,15 @@ async def _write_handler(session: object, path: str, content: str, tool_call_id:
 
 def make_dispatcher(workspace: Path, registry: ToolRegistry) -> ToolDispatcher:
     boundary = Boundary(workspace_root=workspace)
-    return ToolDispatcher(
-        registry,
-        classifier=AmbiguousClassifier(
-            static=DecisionClassifier(boundary),
-            call_worker=_stub_worker,
-        ),
-        path_guard=PathGuard(boundary),
+    return attach_auto_approver(  # TD-802: mechanics tests auto-approve
+        ToolDispatcher(
+            registry,
+            classifier=AmbiguousClassifier(
+                static=DecisionClassifier(boundary),
+                call_worker=_stub_worker,
+            ),
+            path_guard=PathGuard(boundary),
+        )
     )
 
 

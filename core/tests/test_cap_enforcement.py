@@ -12,7 +12,12 @@ import json
 import time
 from pathlib import Path
 
-from tests.test_dispatch import make_config, start_loop, wait_for_turn
+from tests.test_dispatch import (
+    attach_auto_approver,
+    make_config,
+    start_loop,
+    wait_for_turn,
+)
 from tstd.boundary_config import BoundaryConfig, CapsSection
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
@@ -52,7 +57,7 @@ def make_echo_session(ws: Path, config: BoundaryConfig) -> tuple[Session, ToolDi
             parallel_safe=True,
         )
     )
-    dispatcher = ToolDispatcher(registry)
+    dispatcher = attach_auto_approver(ToolDispatcher(registry))  # TD-802: mechanics auto-approve
 
     async def echo_handler(session: object, message: str, tool_call_id: str = "") -> str:
         return f"Echo: {message}"

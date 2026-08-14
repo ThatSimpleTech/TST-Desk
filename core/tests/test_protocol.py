@@ -268,6 +268,7 @@ class TestDaemonEvents:
             arguments={"path": "/tmp/test.txt"},
             decision_class="C",
             summary="Write to /tmp/test.txt",
+            reason="decision class C requires approval",
             seq=5,
         )
         back = _roundtrip(evt)
