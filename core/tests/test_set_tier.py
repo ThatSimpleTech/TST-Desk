@@ -70,26 +70,35 @@ class TestSetTier:
             await asyncio.sleep(0.1)
 
             # The override reached the session's live router.
-            router = daemon._tier_routers[session_id]
+            sess = daemon.session_registry.get(session_id)
+            assert sess is not None
+            router = sess.router
+            assert router is not None
             assert router.has_override is True
             assert router.active_tier == "worker"
 
-            # Replay from seq 1: session_state, boundary_update, tier_switched.
+            # Replay from seq 1: session_state, boundary_update, tier_state
+            # (open-time snapshot, TD-1006), tier_switched, tier_state (ack).
             await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 1}))
             replayed = []
-            for _ in range(3):
+            for _ in range(5):
                 evt = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
                 replayed.append(evt)
 
             assert [e["type"] for e in replayed] == [
                 "session_state",
                 "boundary_update",
+                "tier_state",
                 "tier_switched",
+                "tier_state",
             ]
-            switched = replayed[2]
+            switched = replayed[3]
             assert switched["tier"] == "worker"
             assert switched["previous"] == "brain"
-            assert switched["seq"] == 3
+            assert switched["seq"] == 4
+            ack = replayed[4]
+            assert ack["tier"] == "worker"
+            assert ack["override"] == "worker"
 
             await ws.close()
             daemon._shutdown_event.set()
@@ -106,8 +115,9 @@ class TestSetTier:
             session_state = await _open_workspace(ws, "/tmp/test")
             session_id = session_state["session_id"]
 
-            # Attach (from seq 3 to skip session_state + boundary_update).
-            await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 3}))
+            # Attach (from seq 4 to skip the open-time events: session_state,
+            # boundary_update, tier_state).
+            await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 4}))
             await asyncio.sleep(0.1)
 
             await ws.send(
@@ -118,7 +128,7 @@ class TestSetTier:
             assert evt["type"] == "tier_switched"
             assert evt["tier"] == "brain"
             assert evt["previous"] == "brain"
-            assert evt["seq"] == 3
+            assert evt["seq"] == 4
 
             await ws.close()
             daemon._shutdown_event.set()

@@ -11,6 +11,7 @@
 	import { onEvent } from '../connection-status.svelte.js';
 	import { push } from '../timeline-store.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
+	import TitleBar from './TitleBar.svelte';
 
 	// Feed every daemon event into the timeline for the lifetime of the shell.
 	onMount(() => onEvent(push));
@@ -18,6 +19,7 @@
 
 <header class="shell-header">
 	<span class="shell-title">TST Desk</span>
+	<TitleBar />
 	<span class="shell-spacer"></span>
 	<ConnectionBanner />
 </header>
@@ -39,6 +41,7 @@
 	.shell-header {
 		display: flex;
 		align-items: center;
+		gap: var(--space-4);
 		height: var(--space-12);
 		padding: 0 var(--space-6);
 		border-bottom: var(--border-width) solid var(--color-border);
