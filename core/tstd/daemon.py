@@ -36,7 +36,14 @@ from .context.stack import build_instruction_stack
 from .keychain import KeychainError, get_api_key, store_api_key
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
-from .policy import add_rule, load_policy, propose_always_allow, remove_rule, save_policy
+from .policy import (
+    add_rule,
+    load_approved_imports,
+    load_policy,
+    propose_always_allow,
+    remove_rule,
+    save_policy,
+)
 from .protocol import (
     AlwaysAllow,
     ApiKeyValidated,
@@ -202,6 +209,20 @@ def _relativize_paths(text: str, workspace: Path) -> str:
     root = workspace.resolve()
     home = Path.home().resolve()
     return text.replace(f"{root}{os.sep}", "").replace(f"{home}{os.sep}", f"~{os.sep}")
+
+
+def _approved_import_allowlist(workspace: str | Path) -> frozenset[Path]:
+    """Durable external-import allowlist for read-only inspectors (TD-505).
+
+    Denied imports are session-scoped by design, so inspectors forward only
+    the persisted set — a denied path correctly reads as "would prompt on a
+    new session".  A malformed config yields an empty allowlist rather than
+    failing the inspection.
+    """
+    try:
+        return frozenset(load_approved_imports(workspace))
+    except ConfigError:
+        return frozenset()
 
 
 def _tier_state_event(session_id: str, router: TierRouter, config: ModelConfig) -> TierState:
@@ -449,7 +470,9 @@ class Daemon:
     async def _check_steering(self, workspace: Path) -> DiagnosticCheck:
         """Steering stack parses: resolution runs and imports land."""
         try:
-            assembled = await ContextAssembler().assemble(workspace)
+            assembled = await ContextAssembler().assemble(
+                workspace, approved_imports=_approved_import_allowlist(workspace)
+            )
         except Exception as e:  # resolution is designed not to raise; report if it does
             return DiagnosticCheck(
                 name="steering",
@@ -1081,7 +1104,9 @@ class Daemon:
                 f"Session {msg.session_id!r} not found",
             )
         tier = found.router.active_tier if found.router is not None else "brain"
-        assembled = await PromptAssembler(found.workspace_path).assemble(tier)
+        assembled = await PromptAssembler(found.workspace_path).assemble(
+            tier, approved_imports=_approved_import_allowlist(found.workspace_path)
+        )
         cached = (
             found.cost_tracker.last_cached_prompt_tokens if found.cost_tracker is not None else None
         )
