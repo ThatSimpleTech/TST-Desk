@@ -714,13 +714,19 @@ Spec §12.
 **Size:** 3 · **Depends on:** TD-702, TD-705
 
 **Acceptance criteria:**
-- [ ] Class A and B decisions append to `.tst/autonomy/DECISIONS.md` in the spec §12.3 format:
+- [x] Class A and B decisions append to `.tst/autonomy/DECISIONS.md` in the spec §12.3 format:
       timestamp, class, what was chosen, why, commit SHA, undo command
-- [ ] Append is atomic and safe under concurrent sessions
-- [ ] Every entry names a revertable commit — **if an action cannot be attributed to a commit,
+- [x] Append is atomic and safe under concurrent sessions
+- [x] Every entry names a revertable commit — **if an action cannot be attributed to a commit,
       it is not Class A**
-- [ ] `decision_logged` event emitted to the client
-- [ ] Ledger is human-readable markdown, parseable back into structured entries by test
+- [x] `decision_logged` event emitted to the client
+- [x] Ledger is human-readable markdown, parseable back into structured entries by test
+
+**Done (2026-08-14):** `core/tstd/autonomy/ledger.py` — §12.3 format with spec-verbatim
+parse-back test, fcntl-locked append (Windows falls back to append-mode atomicity), Class A
+without a commit refused by construction.  Dispatch-hook tests cover append + `decision_logged`
+emission.  (Boxes ticked at integration: implementation and evidence were on the branch, the
+checkmarks were not.)
 
 ---
 
@@ -817,12 +823,12 @@ what makes aggressive Class A behavior safe.
 **Size:** 3 · **Depends on:** TD-201
 
 **Acceptance criteria:**
-- [ ] SQLite schema: sessions, turns, tool calls, decisions, model calls, costs
-- [ ] **Append-only — no `UPDATE` or `DELETE` statements exist in the codebase**, asserted by a
+- [x] SQLite schema: sessions, turns, tool calls, decisions, model calls, costs
+- [x] **Append-only — no `UPDATE` or `DELETE` statements exist in the codebase**, asserted by a
       source-level test
-- [ ] Migration mechanism in place from the first release
-- [ ] Secrets never stored; tool arguments scrubbed through the same redaction filter as logs
-- [ ] Indexed for the queries the UI actually makes
+- [x] Migration mechanism in place from the first release
+- [x] Secrets never stored; tool arguments scrubbed through the same redaction filter as logs
+- [x] Indexed for the queries the UI actually makes
 
 ---
 
@@ -830,11 +836,11 @@ what makes aggressive Class A behavior safe.
 **Size:** 2 · **Depends on:** TD-901
 
 **Acceptance criteria:**
-- [ ] Every turn, tool call, decision, and model call recorded with timestamp, model, tokens,
+- [x] Every turn, tool call, decision, and model call recorded with timestamp, model, tokens,
       cost, and result hash
-- [ ] Writes are non-blocking and never stall the loop
-- [ ] Write failure degrades loudly — the user is told the audit trail is incomplete
-- [ ] Refused boundary violations recorded as Class C events
+- [x] Writes are non-blocking and never stall the loop
+- [x] Write failure degrades loudly — the user is told the audit trail is incomplete
+- [x] Refused boundary violations recorded as Class C events
 
 ---
 
@@ -842,9 +848,9 @@ what makes aggressive Class A behavior safe.
 **Size:** 2 · **Depends on:** TD-902, TD-304
 
 **Acceptance criteria:**
-- [ ] Queries for cost by turn, session, day, and tier
-- [ ] Export to JSONL and CSV
-- [ ] Aggregates match the sum of individual records — verified by property test
+- [x] Queries for cost by turn, session, day, and tier
+- [x] Export to JSONL and CSV
+- [x] Aggregates match the sum of individual records — verified by property test
 
 ---
 

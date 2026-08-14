@@ -1819,3 +1819,52 @@ convention was already universal, so the generator is a regexp, not a new
 discipline. TD-1303 found ui/package.json at 0.0.1 while the rest
 sat at 0.1.0; the test exists precisely because that drift is invisible
 until release day.
+---
+
+
+---
+
+## 2026-08-13 — TD-704: Decisions ledger
+
+Decisions made while building `.tst/autonomy/DECISIONS.md`.
+
+### 1. The ledger hook lives in dispatch, next to the checkpoint
+
+**Decision:** `ToolDispatcher` gained a `ledger`; after a successful Class A/B
+execution it appends an entry (what = tool + compact arguments, why = the
+classification reason) and emits `decision_logged`. The loop wires a
+`DecisionLedger(workspace)` by default.
+
+**Rationale:** Dispatch is where the decision class (TD-702) and the
+checkpoint commit SHA (TD-705) are both in scope — exactly the two things a
+ledger entry needs. The append is best-effort: it can never fail the tool
+result.
+
+### 2. Class A requires a commit — enforced in the ledger, not the hook
+
+**Decision:** `DecisionLedger.append` raises `ValueError` when a Class A
+entry has no commit; the dispatcher catches that and skips (nothing is
+logged, nothing emitted). Class B may be recorded without a commit (no
+`Undo` line).
+
+**Rationale:** AC 3 — "if an action cannot be attributed to a commit, it is
+not Class A." Enforcing in the ledger module makes the rule true for every
+writer, not just the dispatcher.
+
+### 3. Atomic, locked, append-only
+
+**Decision:** Appends open the file in `O_APPEND` mode under a POSIX
+advisory lock (`fcntl.flock`; Windows relies on append-mode atomicity), and
+the file I/O runs through `asyncio.to_thread`.
+
+**Rationale:** AC 2 — concurrent sessions must not interleave partial
+entries. O_APPEND + flock serializes writers; to_thread keeps the loop
+unblocked (§6). A test appends 20 entries concurrently and reads all 20
+back.
+
+### 4. `decision_logged.commit` is optional
+
+**Decision:** The event's `commit` field became `str | None` (was required).
+
+**Rationale:** AC 3 allows uncommitted Class B entries; the event must be
+able to carry them. Backward compatible (fixtures already pass a commit).
