@@ -7,6 +7,7 @@ import {
   canSend,
   createChatState,
   createChatStore,
+  formatTurnDuration,
   shouldSubmit,
   showCancel,
   type ChatDeps,
@@ -36,8 +37,8 @@ function delta(sessionId: string, text: string): DaemonEventUnion {
   return { type: "assistant_delta", session_id: sessionId, delta: text, seq: 1 };
 }
 
-function turnComplete(sessionId: string): DaemonEventUnion {
-  return { type: "turn_complete", session_id: sessionId, tokens: 1, cost: 0, tier: "worker", duration: 0, failed: false, error_code: null, seq: 2 };
+function turnComplete(sessionId: string, duration = 0): DaemonEventUnion {
+  return { type: "turn_complete", session_id: sessionId, tokens: 1, cost: 0, tier: "worker", duration, failed: false, error_code: null, seq: 2 };
 }
 
 function sessionState(sessionId: string, state: SessionState["state"]): DaemonEventUnion {
@@ -278,6 +279,67 @@ describe("retry (TD-1606)", () => {
       expect(m.at).toBeGreaterThanOrEqual(before);
       expect(m.at).toBeLessThanOrEqual(after);
     }
+  });
+});
+
+describe("turn status (TD-1607)", () => {
+  it("awaits a first token between send and the first delta", () => {
+    const { store, state } = boundStore();
+    expect(state.awaitingFirstToken).toBe(false);
+    store.sendUserMessage("go");
+    expect(state.awaitingFirstToken).toBe(true);
+    store.applyEvent(delta("s1", "on it"));
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("a failed wire send does not raise the working shimmer", () => {
+    const { store, state } = boundStore(false);
+    store.sendUserMessage("go");
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("turn_complete stamps the daemon-measured duration and clears the flag", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("go");
+    store.applyEvent(delta("s1", "done"));
+    store.applyEvent(turnComplete("s1", 42.4));
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(state.lastTurnDuration).toBe(42.4);
+  });
+
+  it("the next send clears the previous duration line", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("first");
+    store.applyEvent(delta("s1", "ok"));
+    store.applyEvent(turnComplete("s1", 10));
+    store.sendUserMessage("second");
+    expect(state.lastTurnDuration).toBeNull();
+    expect(state.awaitingFirstToken).toBe(true);
+  });
+
+  it("a terminal session state clears the shimmer even with no deltas", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("go");
+    store.applyEvent(sessionState("s1", "cancelled"));
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("attaching to a running session shows the shimmer; a replayed running state does not resurrect it mid-stream", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(sessionList([{ id: "s2", updated: "2026-08-14T11:00:00Z", state: "running" }]));
+    expect(state.sessionId).toBe("s2");
+    expect(state.awaitingFirstToken).toBe(true);
+    // Replay continues: a delta lands, then the trailing current-state event.
+    store.applyEvent(delta("s2", "partial answer"));
+    store.applyEvent(sessionState("s2", "running"));
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("formatTurnDuration never reads 0s and rolls over into minutes", () => {
+    expect(formatTurnDuration(0.2)).toBe("1s");
+    expect(formatTurnDuration(42.4)).toBe("42s");
+    expect(formatTurnDuration(59.6)).toBe("1m 0s");
+    expect(formatTurnDuration(90)).toBe("1m 30s");
   });
 });
 

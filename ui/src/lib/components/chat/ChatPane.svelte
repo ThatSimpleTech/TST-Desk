@@ -9,7 +9,7 @@
 	import { onMount } from "svelte";
 	import { cancelTurn, chat, initChat, retryLastUserMessage, sendUserMessage, teardownChat } from "../../chat-store.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
-	import { canSend, showCancel } from "../../chat-store";
+	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
 	import { greetingForHour, SUGGESTIONS } from "../../greeting";
 	import Composer from "./Composer.svelte";
 	import MessageList from "./MessageList.svelte";
@@ -48,6 +48,15 @@
 				onretry={retryLastUserMessage}
 			/>
 		{/if}
+		<!-- TD-1607: fixed-height slot — the shimmer and the duration line
+		     swap without ever nudging the composer. -->
+		<div class="turn-status" aria-live="polite">
+			{#if chat.awaitingFirstToken}
+				<span class="shimmer">Working…</span>
+			{:else if chat.lastTurnDuration !== null}
+				<span class="duration">Worked for {formatTurnDuration(chat.lastTurnDuration)}</span>
+			{/if}
+		</div>
 		<Composer
 			disabled={!canSend(chat.sessionId, ws.state)}
 			running={showCancel(chat.turnState)}
@@ -120,5 +129,52 @@
 	.chip:hover {
 		color: var(--color-ink);
 		border-color: var(--color-ink-muted);
+	}
+
+	/* Reserved height: shimmer and duration swap inside the slot, so neither
+	   ever moves the composer. */
+	.turn-status {
+		display: flex;
+		align-items: center;
+		height: calc(var(--space-6) + var(--space-2));
+		padding: 0 var(--space-4);
+		font-size: var(--text-sm);
+	}
+
+	.duration {
+		color: var(--color-ink-muted);
+	}
+
+	/* Warm shimmer sweeping left to right via a moving gradient clipped to
+	   the glyphs themselves. Reduced motion holds the edge color still. */
+	.shimmer {
+		background: linear-gradient(
+			100deg,
+			var(--color-ink-muted) 40%,
+			var(--color-ink) 50%,
+			var(--color-ink-muted) 60%
+		);
+		background-size: 200% 100%;
+		-webkit-background-clip: text;
+		background-clip: text;
+		color: transparent;
+		animation: shimmer-sweep 1.6s linear infinite;
+	}
+
+	@keyframes shimmer-sweep {
+		from {
+			background-position: 100% 0;
+		}
+		to {
+			background-position: -100% 0;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.shimmer {
+			animation: none;
+			background: none;
+			color: var(--color-ink-muted);
+		}
 	}
 </style>
