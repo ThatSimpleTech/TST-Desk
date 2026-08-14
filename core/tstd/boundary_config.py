@@ -88,6 +88,49 @@ def _config_path(workspace: str | Path) -> Path:
     return Path(workspace) / ".tst" / "config.yaml"
 
 
+# Written into freshly opened workspaces (TD-1103).  Every line is a
+# comment: the template documents the knobs without pinning values, so a
+# scaffolded file round-trips to the defaults and tracks them as they
+# change in later versions.
+DEFAULT_CONFIG_TEMPLATE = """\
+# TST Desk workspace boundary (spec §12.4).
+#
+# Everything below is commented out — the values shown ARE the defaults,
+# so this file changes nothing until you edit it.  Uncomment and tighten
+# to move the wall in.
+
+# boundary:
+#   # Glob patterns (workspace-relative) the agent may write to.
+#   writable_paths:
+#     - "**"
+#   # Command allowlist for the shell tool; empty means any command.
+#   allowed_commands: []
+#   # "deny" blocks all network — or allowlist hosts explicitly:
+#   # network:
+#   #   - api.anthropic.com
+#   network: deny
+
+# caps:
+#   spend_usd: 25.0        # autonomy pauses past this spend
+#   wall_clock_hours: 8.0  # autonomy pauses past this runtime
+#   max_iterations: 200    # autonomy pauses past this many iterations
+"""
+
+
+def scaffold_workspace_config(workspace: str | Path) -> Path | None:
+    """Plant a commented ``.tst/config.yaml`` when the workspace has none.
+
+    Returns the path written, or None when a config already exists —
+    scaffolding never overwrites a user's file.
+    """
+    path = _config_path(workspace)
+    if path.exists():
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(DEFAULT_CONFIG_TEMPLATE, encoding="utf-8")
+    return path
+
+
 def load_workspace_boundary(workspace: str | Path) -> BoundaryConfig:
     """Load the workspace boundary from ``.tst/config.yaml``.
 
@@ -111,6 +154,11 @@ def load_workspace_boundary(workspace: str | Path) -> BoundaryConfig:
         data: Any = yaml.safe_load(text)
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML in {path}: {e}") from e
+
+    # An empty or comment-only file (e.g. the scaffolded template) means
+    # "all defaults", not an error.
+    if data is None:
+        return BoundaryConfig()
 
     if not isinstance(data, dict):
         raise ConfigError(f"{path} must contain a YAML mapping at the top level")

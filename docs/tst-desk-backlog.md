@@ -1038,11 +1038,11 @@ Tauri window once TD-1004's chat pane drives real turns.
 **Size:** 3 · **Depends on:** TD-1101
 
 **Acceptance criteria:**
-- [ ] Native folder picker
-- [ ] Recent workspaces list with quick switching
-- [ ] Opening a workspace scaffolds `.tst/` with a commented default config
-- [ ] Switching workspaces re-resolves steering and rebuilds the manifest
-- [ ] A workspace that has become unavailable is reported clearly and removed from recents on
+- [x] Native folder picker
+- [x] Recent workspaces list with quick switching
+- [x] Opening a workspace scaffolds `.tst/` with a commented default config
+- [x] Switching workspaces re-resolves steering and rebuilds the manifest
+- [x] A workspace that has become unavailable is reported clearly and removed from recents on
       request
 
 ---
