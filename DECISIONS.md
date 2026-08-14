@@ -2294,3 +2294,58 @@ exclusions stand: no message content, tool arguments, or filesystem paths.
 redacts at event-log insertion; this pass at the report boundary means the
 UI never has to trust that every future daemon path remembered — the belt
 to its suspenders.
+
+## 2026-08-14 — TD-1101: First-run wizard
+
+### 1. The first-run signal is a keychain probe, not a disk artifact
+
+**Decision:** ``get_setup_state`` answers ``has_api_key`` by probing the OS
+keychain; there is no "setup complete" flag file anywhere.
+
+**Rationale:** A flag file lies in both directions — it survives a key being
+deleted (says set up when it is not) and a key hand-stored before first
+launch (says first run when it is not). The keychain is the source of truth
+for credentials, so it is the source of truth for "has this machine ever
+been set up".
+
+### 2. Setup events ride the connection-scoped channel
+
+**Decision:** ``setup_state`` and ``api_key_validated`` carry ``seq: 1``
+and no ``session_id``, the same convention as ``session_list`` and
+``policy_rules``. ``set_api_key`` and ``set_preset`` are acked with a fresh
+``setup_state`` so one message type keeps the wizard consistent.
+
+### 3. The wizard probes on the client's `connected` transition — `ready` is never emitted
+
+**Decision:** The onboarding store sends ``get_setup_state`` when the
+protocol client reports ``connected``, via a small state fan-out on
+connection-status. The ``ready`` event declared in the wire schema ("Sent
+after a successful handshake") is not emitted by the daemon and stays that
+way: adding a frame after every handshake would rewrite recv-ordering
+assumptions in six daemon test suites to deliver a signal the client
+already has. ``notifications.svelte.ts``'s ``ready`` arm (daemon version
+for diagnostics) remains inert until someone needs it enough to pay that
+cost.
+
+**Rationale:** Occam. The handshake-complete moment is observable
+client-side; the probe is idempotent and reconnect-safe either way.
+
+### 4. Key validation is one live call, one token
+
+**Decision:** ``validate_api_key`` builds the provider client from the
+keychain against the active brain's base URL and asks for ``max_tokens=1``
+on a throwaway "ok" message. A 401 maps to keychain-fix copy; anything else
+surfaces the provider's own error text. The success reply never names the
+key.
+
+**Rationale:** Cheapest possible proof the key works end-to-end; validating
+a fake endpoint would teach the user nothing about their actual route.
+
+### 5. The daemon writes config surgically and never mutates the cached copy
+
+**Decision:** ``set_preset`` persists by rewriting (or appending) the single
+top-level ``active_preset:`` line — atomically, via a same-directory temp
+file — instead of a YAML round-trip that would strip the shipped file's
+comments. The live daemon applies the change on ``model_copy`` so the
+``lru_cache``-backed shared config instance is never mutated under other
+consumers.

@@ -1014,11 +1014,11 @@ Tauri window once TD-1004's chat pane drives real turns.
 **Size:** 5 · **Depends on:** TD-1001
 
 **Acceptance criteria:**
-- [ ] Detects first run and presents: welcome → API key → preset → workspace → done
-- [ ] Every step skippable-with-consequence and revisitable from settings
-- [ ] The key step links to where to get one and validates it with a single cheap live call
-- [ ] Completing the wizard lands the user in a working session, ready to type
-- [ ] **Total time from launch to first message under two minutes**, measured
+- [x] Detects first run and presents: welcome → API key → preset → workspace → done
+- [x] Every step skippable-with-consequence and revisitable from settings
+- [x] The key step links to where to get one and validates it with a single cheap live call
+- [x] Completing the wizard lands the user in a working session, ready to type
+- [x] **Total time from launch to first message under two minutes**, measured
 
 ---
 
