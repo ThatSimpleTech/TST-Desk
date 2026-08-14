@@ -261,7 +261,7 @@ def process_imports(
                 )
             )
             all_issues.append(f"import file unreadable: {resolved_path}")
-            out_lines.append(f"<!-- import file unreadable: {resolved_path} -->")
+            out_lines.append(f"<!-- import file unreadable: {resolved_path.as_posix()} -->")
             continue
 
         # ── Recurse for nested imports ─────────────────────────────
@@ -277,7 +277,7 @@ def process_imports(
         )
         all_issues.extend(nested_issues)
 
-        rendered = f"<!-- from: {resolved_path} (imported) -->\n{processed}"
+        rendered = f"<!-- from: {resolved_path.as_posix()} (imported) -->\n{processed}"
         import_list.append(
             ImportDirective(
                 path=resolved_path,

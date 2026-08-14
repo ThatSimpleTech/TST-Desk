@@ -170,6 +170,18 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
           source_count: event.source_count,
         },
       };
+    case "rule_activated":
+      return {
+        id: `rule_activated:${event.seq}`,
+        kind: "steering_reload",
+        seq: event.seq,
+        title: "Rule activated",
+        preview: event.rule_path,
+        details: {
+          rule_path: event.rule_path,
+          session_id: event.session_id,
+        },
+      };
     case "error":
       return {
         id: `error:${event.seq}`,

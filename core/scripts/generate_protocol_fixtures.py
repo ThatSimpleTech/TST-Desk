@@ -44,6 +44,7 @@ from tstd.protocol import (
     Ready,
     Resume,
     RevokePolicyRule,
+    RuleActivated,
     RunDiagnostics,
     SessionList,
     SessionState,
@@ -247,6 +248,11 @@ FIXTURES = {
         prefix_hash="abc123",
         prefix_tokens=100,
         source_count=3,
+        seq=16,
+    ),
+    "rule_activated": RuleActivated(
+        session_id="sess-1",
+        rule_path=".tst/rules/api-rules.md",
         seq=16,
     ),
     "instruction_stack": InstructionStack(

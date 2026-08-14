@@ -2911,3 +2911,111 @@ naming the deferred work.
 different semantics that deserve their own implementation pass (they are
 TD-1406's remaining acceptance boxes). A skip with a pointer is honest; a
 test asserting POSIX behavior on Windows is fiction.
+
+## 2026-08-14 — TD-503: Touch-tracking plumbs matched_paths into production
+
+### 1. Touches are recorded only on handler success
+
+**Decision:** `Session.record_touched` is called from dispatch after the
+handler returns.  Boundary refusals, policy refusals, denials, and handler
+errors return earlier and never reach the hook.
+
+**Rationale:** A refused or failed call touched nothing.  Recording failed
+attempts would let a probing caller — or a confused model — activate
+path-scoped rules by name-dropping paths it never accessed, and be
+rewarded with more prompt content for the probe.
+
+### 2. Touches are stored workspace-relative POSIX; outside paths are dropped
+
+**Decision:** Relative tool arguments are stored as-given (the fs tools
+resolve them against the workspace root); absolute arguments are
+relativized against the resolved workspace path, and anything outside it
+is discarded.
+
+**Rationale:** `appliesTo` globs speak workspace-relative paths, so the
+match set must too.  A path outside the workspace can never match a scoped
+rule legitimately — the boundary guard has already refused it — and
+keeping it would leak absolute host paths into prompt assembly.
+
+### 3. The first assembly is the baseline, not an activation
+
+**Decision:** `RuleActivated` fires only when a rule becomes active at a
+subsequent assembly; the first assembly's active set is recorded silently.
+
+**Rationale:** A session that begins with a rule already active (touches
+recorded before the loop) is initial state, not a change.  Announcing the
+baseline would train the user to ignore the event.
+
+### 4. Activations are announced once per rule per session
+
+**Decision:** The loop diffs the active scoped-rule set across assemblies
+and emits one `RuleActivated` per newly active rule with its
+workspace-relative path; the timeline renders it as a steering entry titled
+"Rule activated".
+
+**Rationale:** Re-announcing on every turn would drown the signal.  Once is
+the honest unit: from that assembly onward, the rule is in the prompt.
+
+## 2026-08-14 — TD-1406: Windows CI parity (second pass)
+
+### 1. Drive-absolute paths are legal on Windows hosts; the refuse list is otherwise unchanged
+
+**Decision:** `boundary.py` no longer refuses drive-*absolute* paths
+(`C:\foo`, `C:/foo`) as a form problem on `sys.platform == "win32"`: they
+canonicalize and face the normal workspace / writable-paths / steering
+checks, so an escape still refuses as `outside_workspace`.  Drive-relative
+(`C:foo`), UNC, 8.3 short names, and ADS stay refused on every platform,
+and every drive-letter path stays refused off Windows.
+
+**Rationale:** TD-1402's blanket refusal was fail-closed but unworkable on
+Windows, where every absolute path carries a drive letter: the natural
+idiom (`C:\ws\src\app.py`) made every path tool unusable on the platform,
+which the e2e harness demonstrated on the runner.  Drive-relative paths
+(resolve against a drive's current directory) and UNC/8.3/ADS forms
+(unresolvable or aliasing) remain genuinely unsafe.  This implements
+TD-1406's first acceptance box; the box ticks when the Windows leg proves
+it green.
+
+### 2. Tests must await daemon shutdown — POSIX hides open handles
+
+**Decision:** Daemon-driving tests stop the daemon by setting the shutdown
+event and awaiting the task (cancel as fallback), so the audit sqlite
+connection closes before tempdir cleanup.
+
+**Rationale:** `TemporaryDirectory` teardown unlinks `audit.db`; with an
+open handle that is `WinError 32` on Windows.  Fire-and-forget
+`task.cancel()` raced `_shutdown()`'s drain-and-close on every platform —
+POSIX just unlinks open files silently.  22 failing tests shared this
+signature.
+
+### 3. Spawn `python -m tstd.daemon`, not the console script, when a test needs the daemon's pid
+
+**Decision:** The restart integration test launches the module directly;
+on win32 the clean-shutdown leg drives the protocol `shutdown` message
+(the graceful path a host uses there) instead of `terminate()`.
+
+**Rationale:** On Windows, uv's console-script wrappers are trampoline
+exes that spawn a child python: the harness waited on the trampoline's pid
+while the port file carried the child's, and killing the trampoline
+orphaned the real daemon (its watchdog watches the still-alive pytest
+process).  POSIX keeps SIGTERM.
+
+### 4. Connection-refusal tests pin via a bound-then-closed loopback port
+
+**Decision:** `test_connection_refused` binds and closes a loopback socket
+and targets literal `127.0.0.1:<port>` with a real (2 s) connect deadline.
+
+**Rationale:** On the Windows runner, dual-stack `getaddrinfo("localhost")`
+plus fallback outlasted the 0.1 s deadline and surfaced as a timeout — the
+provider's error mapping was correct; the test's traffic engineering was
+not.
+
+### 5. Import provenance and golden normalization speak POSIX
+
+**Decision:** `context/imports.py` provenance comments render `as_posix()`
+(the assembler's earlier gap), and the golden harness normalizes the
+fixture root in both its native and posix spellings.
+
+**Rationale:** Same rule as the first pass (prompt text is POSIX-separated
+everywhere) — these were the stragglers that only surface when the
+separator differs from the golden's.
