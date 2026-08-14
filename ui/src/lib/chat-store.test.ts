@@ -37,7 +37,7 @@ function delta(sessionId: string, text: string): DaemonEventUnion {
 }
 
 function turnComplete(sessionId: string): DaemonEventUnion {
-  return { type: "turn_complete", session_id: sessionId, tokens: 1, cost: 0, tier: "worker", duration: 0, seq: 2 };
+  return { type: "turn_complete", session_id: sessionId, tokens: 1, cost: 0, tier: "worker", duration: 0, failed: false, error_code: null, seq: 2 };
 }
 
 function sessionState(sessionId: string, state: SessionState["state"]): DaemonEventUnion {

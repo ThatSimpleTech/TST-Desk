@@ -421,7 +421,13 @@ class BoundaryUpdate(DaemonEvent):
 
 
 class TurnComplete(DaemonEvent):
-    """Summary of a completed turn."""
+    """Summary of a completed turn.
+
+    ``failed`` marks a turn that ended on a provider/keychain error rather
+    than a model response; ``error_code`` carries the typed cause (e.g.
+    ``auth_failed``, ``rate_limited``, ``missing_api_key``) so clients can
+    show tailored copy (TD-1008).
+    """
 
     type: Literal["turn_complete"] = "turn_complete"
     session_id: str
@@ -429,6 +435,8 @@ class TurnComplete(DaemonEvent):
     cost: float = Field(ge=0)
     tier: Literal["brain", "worker", "validator"]
     duration: float = Field(ge=0)
+    failed: bool = False
+    error_code: str | None = None
 
 
 class ContextCompacted(DaemonEvent):
