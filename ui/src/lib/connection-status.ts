@@ -30,6 +30,16 @@ export const daemon = $state<DaemonStatus>({ state: "stopped", port: null, resta
 // Latest validated daemon event, for subscribers that want the stream.
 export const lastEvent = $state<{ event: DaemonEventUnion | null }>({ event: null });
 
+type EventListener = (event: DaemonEventUnion) => void;
+// Fan-out listeners (e.g. the activity timeline) for every validated event.
+const eventListeners = new Set<EventListener>();
+
+/** Subscribe to every validated daemon event. Returns an unsubscribe fn. */
+export function onEvent(listener: EventListener): () => void {
+  eventListeners.add(listener);
+  return () => eventListeners.delete(listener);
+}
+
 function makeClient(): void {
   client = new ProtocolClient(
     {
@@ -48,6 +58,7 @@ function makeClient(): void {
     {
       onEvent(event) {
         lastEvent.event = event;
+        for (const listener of eventListeners) listener(event);
       },
       onStateChange(state) {
         ws.state = state;
