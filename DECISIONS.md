@@ -2247,3 +2247,50 @@ tool arguments, or filesystem paths.
 content-bearing would leak the user's code into whatever tracker receives
 it.  Event types + seqs carry the diagnostic signal (what happened, in what
 order) without the payload.
+
+## 2026-08-14 — TD-1008 follow-up: copy and diagnostics grafts
+
+Grafts onto the merged notifications base from the parallel ``wt-td1008``
+draft (lane converged per the note in TD-1008 §3).
+
+### 1. Transport/parse copy rows are live, not future-proofing
+
+**Decision:** ``timeout``, ``connection_error``, ``request_error``,
+``parse_error``, and ``stream_interrupted`` got tailored rows in
+``TURN_ERROR_COPY``.
+
+**Rationale:** These codes come from provider.py's exception paths (httpx
+timeout/connect/HTTP, response JSON parse, chunk-stream drops) and flow
+straight onto ``turn_complete.error_code``, so the rows are reachable today.
+Checking ``_STATUS_CODE_MAP`` alone misses them — it only covers
+HTTP-status-derived codes.
+
+### 2. Interrupted sessions get a tombstone banner
+
+**Decision:** ``sessionStateCopy`` maps ``interrupted`` to a blocking banner
+saying the session is a tombstone and to start a new one, instead of staying
+silent.
+
+**Rationale:** An interrupted session looks identical to a resumable pause
+in the session list; silence is the one state where the user most needs to
+be told work cannot continue.
+
+### 3. Cap-pause copy names the field to change
+
+**Decision:** The three cap banners name the setting — ``spend_usd`` /
+``wall_clock_hours`` / ``max_iterations`` under ``caps:`` in
+``.tst/config.yaml`` — rather than "the cap" generically.
+
+### 4. Diagnostics gain live notifications, UI version, and a client-side redact pass
+
+**Decision:** ``buildDiagnostics`` adds the UI version (imported from
+``package.json`` so it cannot drift) and the live notification list, and
+passes wire-derived text (session reason, notification bodies) through
+``redact.ts`` — a client-side mirror of core's ``SECRET_PATTERNS``, widened
+for Bearer headers and dashed key forms (``sk-ant-…``). The content
+exclusions stand: no message content, tool arguments, or filesystem paths.
+
+**Rationale:** The report is meant to be pasted into a tracker. TD-1405
+redacts at event-log insertion; this pass at the report boundary means the
+UI never has to trust that every future daemon path remembered — the belt
+to its suspenders.
