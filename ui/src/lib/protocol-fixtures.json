@@ -91,6 +91,9 @@
     "type": "set_preset",
     "name": "tst-default"
   },
+  "run_diagnostics": {
+    "type": "run_diagnostics"
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -394,6 +397,48 @@
     "seq": 1,
     "ok": true,
     "detail": "Key accepted by provider."
+  },
+  "diagnostics_report": {
+    "type": "diagnostics_report",
+    "seq": 1,
+    "checks": [
+      {
+        "name": "daemon",
+        "status": "ok",
+        "detail": "responding (v0.1.0, up 3.2s)",
+        "fix": null
+      },
+      {
+        "name": "api_key",
+        "status": "fail",
+        "detail": "no API key stored in the keychain",
+        "fix": "Open the wizard (gear in the title bar) and store one."
+      },
+      {
+        "name": "provider",
+        "status": "skip",
+        "detail": "not checked \u2014 no API key",
+        "fix": null
+      },
+      {
+        "name": "git",
+        "status": "ok",
+        "detail": "git version 2.50.0 (/usr/bin/git)",
+        "fix": null
+      },
+      {
+        "name": "workspace",
+        "status": "ok",
+        "detail": "project is writable",
+        "fix": null
+      },
+      {
+        "name": "steering",
+        "status": "ok",
+        "detail": "3 steering source(s) parsed",
+        "fix": null
+      }
+    ]
   },
   "hello_ack": {
     "type": "hello_ack",
