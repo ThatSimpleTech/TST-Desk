@@ -487,10 +487,14 @@ class Daemon:
         # same sessions it had (marked interrupted where they were live).
         await self._restore_sessions()
 
-        # Register signal handlers
+        # Register signal handlers.  asyncio's add_signal_handler is
+        # POSIX-only — it raises NotImplementedError on Windows, where
+        # shutdown still arrives via the shutdown message, the parent
+        # watchdog, or the console control event the host sends.
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, self._on_signal)
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(sig, self._on_signal)
 
         # If the host told us its PID, watch it: if the host dies (including
         # by force-quit) we must not become an orphan.
