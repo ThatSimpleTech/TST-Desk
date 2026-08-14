@@ -10,67 +10,65 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any
 
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
 
+from ..autonomy import AmbiguousClassifier, Checkpointer, DecisionClass, DecisionRequest
 from ..logging import get_logger
+from .boundary import PathGuard, RefusalError
+from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry
+from .results import ToolResult, ValidationError, truncate_output
+
+__all__ = [
+    "ToolDispatcher",
+    "ToolResult",
+    "UnclassifiedToolCall",
+    "ValidationError",
+    "build_decision_request",
+    "truncate_output",
+]
 
 log = get_logger("tstd.dispatch")
 
-# ── Result types ────────────────────────────────────────────────────────
 
+class UnclassifiedToolCall(Exception):
+    """A tool reached execution without a decision classifier attached.
 
-@dataclass
-class ToolResult:
-    """The result of executing a tool call.
-
-    Attributes:
-        tool_call_id: Matches the tool call's ID from the model.
-        name: The tool name.
-        status: ``success`` or ``error``.
-        output: Text output (or error message).
-        truncated: Whether the output was truncated to the cap.
-        error_code: For ``error`` status, a machine-readable code.
+    Raising here is the chokepoint guarantee (prime directive §2.6): no
+    tool executes unless the decision classifier has been run over the
+    call.  Reaching the handler unclassified is a bypass, not a state the
+    engine falls into by default.
     """
 
-    tool_call_id: str
-    name: str
-    status: Literal["success", "error"]
-    output: str
-    truncated: bool = False
-    error_code: str | None = None
 
+def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionRequest:
+    """Reduce a tool call to the signals the decision classifier needs.
 
-@dataclass
-class ValidationError:
-    """Arguments failed validation against the tool's schema.
-
-    Returned to the model so it can correct itself.
+    Uses the tool's declared ``path_fields`` / ``host_fields`` / ``mutates``
+    metadata (TD-702) — never heuristics over raw argument text.  Read
+    tools expose their ``path_fields`` as reads; mutating tools expose them
+    as write targets.
     """
-
-    tool_call_id: str
-    name: str
-    message: str
-
-
-# ── Truncation ──────────────────────────────────────────────────────────
-
-_TRUNCATION_MARKER = "\n\n┈─[truncated — results exceed output cap]─┈"
-
-
-def truncate_output(output: str, max_chars: int) -> tuple[str, bool]:
-    """Truncate *output* to *max_chars* with a visible truncation marker.
-
-    Returns the (possibly truncated) text and a ``truncated`` flag.
-    """
-    if not max_chars or len(output) <= max_chars:
-        return output, False
-    truncated = output[: max_chars - len(_TRUNCATION_MARKER)]
-    return truncated + _TRUNCATION_MARKER, True
+    paths = tuple(Path(arguments[f]) for f in tool.path_fields if isinstance(arguments.get(f), str))
+    hosts = frozenset(arguments[f] for f in tool.host_fields if isinstance(arguments.get(f), str))
+    if tool.mutates:
+        writes = paths
+        reads: tuple[Path, ...] = ()
+    else:
+        writes = ()
+        reads = paths
+    return DecisionRequest(
+        tool_name=tool.name,
+        arguments=dict(arguments),
+        writes=writes,
+        reads=reads,
+        hosts=hosts,
+        is_mutation=tool.mutates,
+    )
 
 
 # ── Tool dispatcher ─────────────────────────────────────────────────────
@@ -90,9 +88,25 @@ class ToolDispatcher:
         self,
         registry: ToolRegistry,
         max_result_chars: int = 50_000,
+        classifier: AmbiguousClassifier | None = None,
+        path_guard: PathGuard | None = None,
+        checkpointer: Checkpointer | None = None,
     ) -> None:
         self.registry = registry
         self.max_result_chars = max_result_chars
+        # The decision classifier (TD-702).  A tool call reaching the
+        # handler without a classifier attached raises ``UnclassifiedToolCall``
+        # — the chokepoint refuses to execute unclassified actions.
+        self.classifier = classifier
+        # The path boundary guard (TD-602).  Path-bearing tools are
+        # refused before execution when the guard is missing or the
+        # target crosses the boundary.
+        self.path_guard = path_guard
+        # The checkpoint committer (TD-705).  Successful mutating tools
+        # with path fields are checkpointed to the session branch; a
+        # missing checkpointer silently skips checkpointing (tests wire
+        # one explicitly, agent_loop wires one by default).
+        self.checkpointer = checkpointer
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
 
     # ── Handler registration ──────────────────────────────────────────
@@ -168,6 +182,69 @@ class ToolDispatcher:
                 error_code="no_handler",
             )
 
+        # 3.1 Decision classifier chokepoint (TD-702, prime §2.6).
+        # Classification precedes execution.  A call that reaches this
+        # point without a classifier attached is a bypass and raises.
+        if self.classifier is None:
+            raise UnclassifiedToolCall(name)
+        request = build_decision_request(tool, arguments)
+        classification = await self.classifier.classify(request)
+        decision_class = classification.decision_class
+
+        # 3.2 Path boundary enforcement (TD-602, security-critical).
+        # Path-bearing tools are refused before the handler runs: no
+        # guard attached is a bypass; a target crossing the boundary is a
+        # refusal with a clear error.  Handlers receive validated paths.
+        # Canonical write targets are kept for checkpointing (TD-705).
+        canonical_writes: dict[str, Path] = {}
+        if tool.path_fields:
+            if self.path_guard is None:
+                raise UnclassifiedToolCall(
+                    f"path-bearing tool '{name}' reached execution without a path guard"
+                )
+            try:
+                for field in tool.path_fields:
+                    raw = arguments.get(field)
+                    if not isinstance(raw, str):
+                        continue  # absent/optional path field
+                    if tool.mutates:
+                        canonical_writes[field] = self.path_guard.check_write(raw)
+                    else:
+                        self.path_guard.check_read(raw)
+            except RefusalError as e:
+                log.warning(
+                    "boundary refusal",
+                    extra={
+                        "extra_fields": {
+                            "tool_call_id": tool_call_id,
+                            "tool": name,
+                            "code": e.code,
+                            "path": str(e.path),
+                        }
+                    },
+                )
+                # Boundary refusals are definitionally Class C (§12.2:
+                # "anything the charter forbids"), even when the static
+                # table classified the call differently (e.g. hardlinks).
+                decision_class = DecisionClass.C
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    name=name,
+                    status="error",
+                    output=f"Refused: {e.reason}",
+                    error_code="boundary_refusal",
+                    decision_class=decision_class,
+                )
+
+        # 3.25 Diff snapshot (TD-604).  A successful mutation reports the
+        # change it made: snapshot the canonical write targets before the
+        # handler runs, then diff against their state afterwards.
+        before_snapshots: dict[str, str | None] = {}
+        if tool.mutates and canonical_writes:
+            before_snapshots = {
+                field: snapshot_text(canonical) for field, canonical in canonical_writes.items()
+            }
+
         try:
             output = await handler(session=session, **arguments)
         except Exception as e:
@@ -189,6 +266,47 @@ class ToolDispatcher:
                 error_code="handler_error",
             )
 
+        # 3.3 Checkpoint commit (TD-705).  Successful path-bearing
+        # mutations are committed to the session branch so every write is
+        # attributable to a revertable commit.  Checkpointing is
+        # best-effort: it must never fail the write itself.
+        checkpoint_commit: str | None = None
+        checkpoint_notice = None
+        if (
+            tool.mutates
+            and canonical_writes
+            and self.checkpointer is not None
+            and session is not None
+        ):
+            try:
+                outcome = await self.checkpointer.checkpoint(
+                    list(canonical_writes.values()),
+                    tool_name=name,
+                    tool_call_id=tool_call_id,
+                    decision_class=decision_class,
+                    decision_rule=classification.rule.id if classification.rule else None,
+                )
+                checkpoint_commit = outcome.commit
+                checkpoint_notice = outcome.notice
+            except Exception:  # defense in depth; checkpoint traps its own errors
+                log.exception(
+                    "checkpoint raised unexpectedly",
+                    extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
+                )
+
+        # 3.4 Diff of the write (TD-604), for display on the tool_result.
+        diff_text: str | None = None
+        if tool.mutates and canonical_writes:
+            sections: list[str] = []
+            for field, canonical in canonical_writes.items():
+                section = render_diff(
+                    before_snapshots.get(field), snapshot_text(canonical), str(canonical)
+                )
+                if section:
+                    sections.append(section)
+            if sections:
+                diff_text, _ = truncate_output("\n\n".join(sections), self.max_result_chars)
+
         # 4. Truncate
         truncated_output, truncated = truncate_output(output, self.max_result_chars)
         return ToolResult(
@@ -197,6 +315,10 @@ class ToolDispatcher:
             status="success",
             output=truncated_output,
             truncated=truncated,
+            decision_class=decision_class,
+            checkpoint_commit=checkpoint_commit,
+            checkpoint_notice=checkpoint_notice,
+            diff=diff_text,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────
@@ -276,18 +398,3 @@ class ToolDispatcher:
                 f"Expected schema: {json.dumps(tool.parameters, indent=2)}"
             )
         return None
-
-
-# ── Classifier placeholder (TD-702) ─────────────────────────────────────
-
-
-def classify_tool_call(tool: Tool, arguments: dict[str, Any], session: Any = None) -> str:
-    """Classify a tool call for the approval gate.
-
-    Placeholder until TD-702 (decision classifier) is built.
-    Currently returns the tool's static side_effect_class.
-
-    Returns:
-        One of ``"auto"``, ``"ask"``, ``"never"``.
-    """
-    return tool.side_effect_class

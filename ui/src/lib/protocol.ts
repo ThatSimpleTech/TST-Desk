@@ -120,6 +120,7 @@ export interface ToolResult extends DaemonEvent {
   status: "success" | "error";
   output: string;
   truncated: boolean;
+  diff?: string | null;
 }
 
 export interface ApprovalRequest extends DaemonEvent {
@@ -141,12 +142,20 @@ export interface DecisionLogged extends DaemonEvent {
   commit: string;
 }
 
+export interface CheckpointNotice extends DaemonEvent {
+  type: "checkpoint_notice";
+  session_id: string;
+  code: string;
+  message: string;
+}
+
 export interface CostUpdate extends DaemonEvent {
   type: "cost_update";
   session_id: string;
   turn_cost: number;
   session_cost: number;
   total_cost: number;
+  classifier_cost: number;
 }
 
 export interface TurnComplete extends DaemonEvent {
@@ -182,6 +191,7 @@ export type DaemonEventUnion =
   | ToolResult
   | ApprovalRequest
   | DecisionLogged
+  | CheckpointNotice
   | CostUpdate
   | TurnComplete
   | ContextCompacted

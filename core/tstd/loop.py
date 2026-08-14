@@ -22,9 +22,17 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Literal, Protocol
 
 from .audit_writer import ModelCallSink
+from .autonomy import (
+    AmbiguousClassifier,
+    Boundary,
+    Checkpointer,
+    DecisionClass,
+    DecisionClassifier,
+)
 from .compaction import maybe_compact
 from .config import ModelConfig
 from .context import PromptAssembler
@@ -33,10 +41,12 @@ from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
 from .logging import get_logger
 from .protocol import AssistantDelta, ContextCompacted, SteeringReloaded, TurnComplete
+from .protocol import CheckpointNotice as CheckpointNoticeEvent
 from .protocol import ToolCall as ToolCallEvent
 from .protocol import ToolResult as ToolResultEvent
 from .provider import (
     ChatCompletionRequest,
+    ChatCompletionResponse,
     ChatMessage,
     FunctionCall,
     ProviderError,
@@ -51,6 +61,8 @@ from .provider import (
 from .router import TierName, TierRouter
 from .session import Session
 from .tools import ToolDispatcher, ToolRegistry
+from .tools.boundary import PathGuard
+from .tools.dispatch import build_decision_request
 
 
 class ProviderLike(Protocol):
@@ -70,8 +82,23 @@ class ProviderLike(Protocol):
         request: ChatCompletionRequest,
     ) -> AsyncIterator[StreamChunk | ProviderError]: ...
 
+    async def chat_completion(
+        self,
+        request: ChatCompletionRequest,
+    ) -> ChatCompletionResponse | ProviderError:
+        """Send a single non-streaming completion request."""
+
+        ...
+
 
 log = get_logger("tstd.loop")
+
+
+def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
+    """Convert a decision class enum to the wire-format literal string."""
+    if cls is None:
+        return None
+    return cls.value
 
 
 def _stream_turn(
@@ -194,10 +221,14 @@ async def _stream_and_parse(
 async def _build_assistant_tool_call(
     session: Session,
     tool_calls: dict[int, dict[str, str | int]],
+    dispatcher: ToolDispatcher | None = None,
 ) -> list[ProviderToolCall]:
     """Build provider-format tool calls from the accumulated deltas.
 
-    Emits a ``ToolCall`` event for each tool call.
+    Emits a ``ToolCall`` event for each tool call, classifying each via
+    the dispatcher's classifier so the event carries the decision class
+    (TD-702).  The classification is attached to the session's append-only
+    event log — the audit record — *before* the tool executes.
 
     Returns:
         A list of ``ProviderToolCall`` objects ready to append to the
@@ -228,13 +259,23 @@ async def _build_assistant_tool_call(
                 parsed_args = json.loads(tc_args)
             except json.JSONDecodeError:
                 parsed_args = {"_raw": tc_args}
+
+        # Classify now (before execution) so the event carries the class.
+        decision_class: Literal["A", "B", "C"] | None = None
+        if dispatcher is not None:
+            tool = dispatcher.registry.get(tc_name)
+            if tool is not None and dispatcher.classifier is not None:
+                request = build_decision_request(tool, dict(parsed_args))
+                cls = (await dispatcher.classifier.classify(request)).decision_class
+                decision_class = _to_literal(cls)
+
         await session.event_log.add(
             ToolCallEvent(
                 session_id=session.id,
                 tool_call_id=tc_id,
                 name=tc_name,
                 arguments=parsed_args,
-                decision_class=None,
+                decision_class=decision_class,
                 seq=1,
             )
         )
@@ -285,9 +326,21 @@ async def _dispatch_and_append_results(
                 status=r.status,
                 output=r.output,
                 truncated=r.truncated,
+                diff=r.diff,
                 seq=1,
             )
         )
+        # One-time checkpoint degradation notices (TD-705), e.g. a
+        # non-git workspace or pre-existing uncommitted changes.
+        if r.checkpoint_notice is not None:
+            await session.event_log.add(
+                CheckpointNoticeEvent(
+                    session_id=session.id,
+                    code=r.checkpoint_notice.code,
+                    message=r.checkpoint_notice.message,
+                    seq=1,
+                )
+            )
 
         messages.append(
             ChatMessage(
@@ -340,6 +393,7 @@ async def agent_loop(
     """
     # ── Conversation state ──────────────────────────────────────────
     assembler = prompt_assembler or PromptAssembler(session.workspace_path)
+
     # Conversation messages only; the system message is assembled per
     # turn below (TD-305).
     messages: list[ChatMessage] = []
@@ -353,6 +407,50 @@ async def agent_loop(
 
         tracker.add_listener(_forward)
     provider: ProviderLike | None = None  # resolved lazily before first use
+
+    # Decision classifier chokepoint (TD-702/703, prime §2.6).  Every tool
+    # call routes through it: the static rule table first; ambiguous cases
+    # go to a worker-tier call (TD-703) that defaults to B, never A.  The
+    # boundary is the session's workspace.  The worker call is a single-shot
+    # completion on the worker tier's model, tracked as separate
+    # classifier cost (it never touches the main turn accounting).
+    if tool_dispatcher is not None:
+        boundary = Boundary(workspace_root=Path(session.workspace_path))
+        if tool_dispatcher.classifier is None:
+
+            async def _worker_classifier(prompt: str) -> str:
+                if provider is None:
+                    raise RuntimeError("classifier worker call before provider ready")
+                worker_cfg = config.tier("worker")
+                request = ChatCompletionRequest(
+                    model=worker_cfg.slug,
+                    messages=[ChatMessage(role="user", content=prompt)],
+                    max_tokens=8,
+                    temperature=0.0,
+                )
+                resp = await provider.chat_completion(request)
+                if isinstance(resp, ProviderError):
+                    raise RuntimeError(f"classifier worker call failed: {resp.message}")
+                if resp.usage is not None:
+                    tracker.record_classifier("worker", resp.usage, worker_cfg)
+                return resp.message.content or ""
+
+            tool_dispatcher.classifier = AmbiguousClassifier(
+                static=DecisionClassifier(boundary),
+                call_worker=_worker_classifier,
+            )
+
+        # Path boundary enforcement (TD-602): the same workspace boundary
+        # backs the guard that refuses out-of-bounds path access.
+        if tool_dispatcher.path_guard is None:
+            tool_dispatcher.path_guard = PathGuard(boundary)
+
+        # Checkpoint commits (TD-705): successful path-bearing mutations
+        # commit to the session branch ``tst/session/<id>`` — the undo
+        # stack.  Non-git workspaces degrade gracefully inside the
+        # checkpointer.
+        if tool_dispatcher.checkpointer is None:
+            tool_dispatcher.checkpointer = Checkpointer(Path(session.workspace_path), session.id)
 
     # Pre-compute tool definitions if we have a registry
     tool_definitions: list[ProviderToolDefinition] | None = None
@@ -527,7 +625,9 @@ async def agent_loop(
 
             # 2f. Append assistant response to conversation
             if tool_calls:
-                provider_tool_calls = await _build_assistant_tool_call(session, tool_calls)
+                provider_tool_calls = await _build_assistant_tool_call(
+                    session, tool_calls, tool_dispatcher
+                )
                 messages.append(
                     ChatMessage(
                         role="assistant",

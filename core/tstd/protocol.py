@@ -222,6 +222,8 @@ class ToolResult(DaemonEvent):
     status: Literal["success", "error"]
     output: str
     truncated: bool = False
+    # Unified diff of what a write changed (TD-604), for display.
+    diff: str | None = None
 
 
 class ApprovalRequest(DaemonEvent):
@@ -247,6 +249,19 @@ class DecisionLogged(DaemonEvent):
     commit: str
 
 
+class CheckpointNotice(DaemonEvent):
+    """A one-time checkpoint degradation notice (TD-705).
+
+    Emitted at most once per code per session — e.g. the workspace is
+    not a git repository, or has pre-existing uncommitted changes.
+    """
+
+    type: Literal["checkpoint_notice"] = "checkpoint_notice"
+    session_id: str
+    code: str
+    message: str
+
+
 class CostUpdate(DaemonEvent):
     """Accrued cost for the session."""
 
@@ -255,6 +270,9 @@ class CostUpdate(DaemonEvent):
     turn_cost: float = Field(ge=0)
     session_cost: float = Field(ge=0)
     total_cost: float = Field(ge=0)
+    # Decision-classifier worker calls (TD-703), tracked separately from
+    # main-loop cost.
+    classifier_cost: float = Field(default=0.0, ge=0)
 
 
 class TurnComplete(DaemonEvent):
@@ -347,6 +365,7 @@ DaemonEventT = Annotated[
     | ToolResult
     | ApprovalRequest
     | DecisionLogged
+    | CheckpointNotice
     | CostUpdate
     | TurnComplete
     | ContextCompacted
@@ -383,6 +402,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tool_result",
         "approval_request",
         "decision_logged",
+        "checkpoint_notice",
         "cost_update",
         "turn_complete",
         "context_compacted",

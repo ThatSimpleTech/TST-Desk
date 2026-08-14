@@ -637,3 +637,420 @@ summary and folds its lines into the new one (still under the 2,000-char cap), p
 oldest context vanishes in one step instead of degrading. Folding is deterministic and
 cheap; the cap keeps runaway growth impossible, so long sessions compress toward a bounded
 "old context" block.
+## 2026-08-13 — TD-701: Decision classifier
+
+Decisions made during the decision-class model and rule table design.
+
+### 1. Classifier consumes a reduced `DecisionRequest`, not raw tool args
+
+**Decision:** `DecisionClassifier.classify(DecisionRequest)` where
+`DecisionRequest` carries already-resolved signals — `reads`, `writes`,
+`hosts`, `is_mutation` — rather than parsing raw tool arguments internally.
+
+**Rationale:** Path and host extraction from tool arguments is tool-specific
+and belongs with the dispatch chokepoint (TD-702) that knows each tool's
+schema. Keeping the classifier purely over resolved signals makes the rule
+table a pure table and trivially testable case-by-case; TD-702 builds the
+`DecisionRequest` from a validated tool call.
+
+### 2. Reads outside the workspace are Class C, matching the criterion verbatim
+
+**Decision:** The `path-outside-workspace` rule fires on any referenced path
+— reads included — not just writes.
+
+**Rationale:** TD-701's criterion says "any path outside the workspace → C",
+unqualified. Reads outside `writable_paths` are already refused by TD-602's
+boundary enforcement; mirroring that at the classifier keeps the wall
+single-sourced.
+
+### 3. Writable glob semantics reuse TD-503 `appliesTo` semantics
+
+**Decision:** `writable_patterns` match relative paths with `**` (zero-or-more
+segments) and slash-less patterns match the basename at any depth, the same
+semantics as TD-503 path-scoped rules.
+
+**Rationale:** One consistent glob dialect across steering scoping and the
+autonomy boundary avoids two subtly-different path-matching behaviours.
+
+### 4. Rule table is a declarative tuple, first-match-wins, C-before-A
+
+**Decision:** `RULE_TABLE` is a tuple of `Rule(id, description, class, match)`
+evaluated in priority order; irreversible Class C rules are declared before
+the reversible Class A rule so a write that is both an in-workspace edit and
+a steering-file write lands on C.
+
+**Rationale:** "Rule table is data, not scattered conditionals" (TD-701).
+First-match-wins with C-first makes irreversibility outrank reversibility
+deterministically, and every classification records the firing rule's id for
+explainability.
+
+---
+
+## 2026-08-13 — TD-702: Classifier chokepoint
+
+Decisions made while making the decision classifier a mandatory gate on tool
+execution (prime directive §2.6).
+
+### 1. Guard at the execution boundary, not the call site
+
+**Decision:** `ToolDispatcher.dispatch` raises `UnclassifiedToolCall` when a
+tool reaches its handler without a classifier attached. The loop is the only
+production dispatch path; it attaches a `DecisionClassifier` built from the
+session's workspace boundary and classifies every call before dispatch.
+
+**Rationale:** Enforcing the chokepoint inside `dispatch()` — where the tool
+handler is about to run — makes "no bypass path" a runtime guarantee rather
+than a convention. Any future dispatch call site inherits the guard: a tool
+cannot execute without a classifier. Criterion 4 is the same guard: reaching
+execution unclassified (classifier absent) raises immediately.
+
+### 2. `Tool` declares classifier-relevant metadata
+
+**Decision:** `Tool` gained `path_fields`, `host_fields`, and `mutates`
+(backward-compatible defaults), and `build_decision_request()` reduces a tool
+call to a `DecisionRequest` using that metadata — never heuristics over raw
+argument text.
+
+**Rationale:** The rule table (TD-701) classifies over resolved signals
+(reads/writes/hosts/mutation). Per-tool explicit declaration is the only
+reliable way to extract those signals; guessing from argument shapes would
+both miss cases and misfire on opaque ones. Built-ins were annotated
+(`fs_read` read+path, `fs_write` write+path, `shell` mutates).
+
+### 3. Ambiguous is not unclassified
+
+**Decision:** A call the static table cannot decide (`decision_class is None`)
+still executes with the class recorded as `None`; the guard raises only when
+no classifier ran at all.
+
+**Rationale:** Ambiguous cases are TD-703's job (worker-tier model call,
+defaulting to B). Raising on them now would break every shell-style call
+before TD-703 exists. The chokepoint's job in TD-702 is to guarantee
+classification *happened* — the class being `None` is a legitimate
+classification outcome until TD-703 lands.
+
+### 4. Audit attachment is the `tool_call` event
+
+**Decision:** The decision class is attached to the `ToolCall` event (which
+already carried `decision_class`, previously always `None`), emitted into the
+session's append-only event log — the v0.1 audit trail — before execution.
+
+**Rationale:** Criterion 3 requires the class on the audit record and the
+`tool_call` event; in v0.1 these are the same append-only log. E9 (TD-901)
+will persist the log as the dedicated audit store; no new protocol surface
+was needed.
+
+---
+
+## 2026-08-13 — TD-703: Ambiguous-case classifier call
+
+Decisions made while wiring the worker-tier fallback for cases the static
+rule table cannot decide.
+
+### 1. `AmbiguousClassifier` wraps the static table; `classify` is async
+
+**Decision:** A new `AmbiguousClassifier(static, call_worker)` consults the
+static `DecisionClassifier` first and short-circuits when a rule fires; only
+ambiguous results go to the worker tier. Its `classify` is async because the
+fallback makes a model call; the dispatcher and loop await it.
+
+**Rationale:** Keeps the static rule table (TD-701) pure and synchronous for
+its table-driven tests while the chokepoint gains the worker fallback without
+an alternate dispatch path. Static cases never pay for a model call.
+
+### 2. Cache key is (tool, canonical arguments) — the safe reading of "argument-shape"
+
+**Decision:** The session cache is keyed by `(tool_name, canonical JSON of
+the argument dict)`, bounded at 256 entries with oldest-first eviction.
+
+**Rationale:** "Argument-shape" is read as the canonical form of the
+arguments: identical tool calls (the common repeat) hit the cache; calls with
+different arguments never share an entry. Caching by key/types alone could
+misclassify a different shell command from a cached one — unsafe for a
+security classifier. Bound prevents unbounded session growth.
+
+### 3. The worker call bypasses `TierRouter` accounting
+
+**Decision:** The classifier call is a single-shot, non-streaming completion
+on the worker tier's configured model, made directly against the provider —
+it never calls `TierRouter.record_turn_start/success/failure`.
+
+**Rationale:** Router turn accounting drives main-loop tier rotation and
+failure escalation; classifier calls are auxiliary and must not consume lead
+turns or trigger escalation. `ProviderLike` was extended with the
+non-streaming `chat_completion` method both providers already implemented.
+
+### 4. Fail toward B, never A
+
+**Decision:** Any worker exception, empty response, or unparseable response
+classifies as **B**, and the outcome is cached.
+
+**Rationale:** Spec §12.2: fail toward asking, not toward acting. The B
+default is a "surface in the summary" class, so a broken classifier degrades
+to review, never to silent action.
+
+### 5. Classifier cost is separate accounting
+
+**Decision:** `CostTracker` gained `record_classifier()`/`classifier_cost()`/
+`classifier_call_count()`; classifier calls are stored in their own list and
+never folded into turn/session/day totals. `summary()` and the `CostUpdate`
+event (new `classifier_cost` field, default 0) expose it.
+
+**Rationale:** Criterion 4 requires the cost visible in the breakdown but
+separately — folding it into main-loop cost would hide the price of the
+ambiguity fallback and misattribute spend to the agent's own turns.
+
+---
+
+## 2026-08-13 — TD-602: Path boundary enforcement
+
+Decisions made while building the path boundary guard.
+
+### 1. Enforcement lives in the dispatch execution path, not per-handler
+
+**Decision:** A `PathGuard` is attached to the `ToolDispatcher` (like the
+classifier chokepoint); `dispatch()` refuses any path-bearing tool call
+before the handler runs. A path-bearing tool reaching the handler without a
+guard attached raises (no bypass for the boundary, mirroring prime §2.6).
+
+**Rationale:** "Enforced in the tool itself" (criterion 5) means the tool
+layer — and dispatch is the tool layer. Handlers (TD-604) receive
+already-canonicalized, already-checked paths, so enforcement can never be
+skipped by a handler that forgets its own check.
+
+### 2. Shared path primitives live in `autonomy/classifier.py`; `tools/boundary.py` owns enforcement
+
+**Decision:** Canonicalization, workspace membership, writable-glob
+matching, and steering-file detection stay in the classifier (promoted to
+public names); the guard imports them and adds the enforcement semantics
+(RefusalError, refusal order, hardlink and Windows-unsafe checks).
+
+**Rationale:** One source of truth for the primitives the classifier and the
+guard both need; importing them from the classifier into `tools/boundary.py`
+avoids an import cycle (the classifier must not import tools at module
+load).
+
+### 3. Hardlinks: refuse in-place writes to nlink > 1 files
+
+**Decision:** `check_write` refuses any write whose target already exists
+with `st_nlink > 1`.
+
+**Rationale:** A hardlink inside the workspace can alias a file outside it,
+and an in-place write would modify the shared inode — realpath cannot see
+this. The sanctioned path is atomic temp-file + rename (TD-604), which
+replaces the directory entry and never touches the external inode. Fresh
+files (no stat) are unaffected.
+
+### 4. Windows-unsafe forms are refused fail-closed on every platform
+
+**Decision:** Drive-relative/absolute (`C:foo`), UNC (`\\server\share`),
+8.3 short names (`PROGRA~1`), and ADS (`file:stream`) are refused on all
+operating systems, not just Windows.
+
+**Rationale:** A workspace may be shared or moved across OSes; a path that is
+harmless on macOS can alias a different file on Windows. Native Windows
+semantics are exercised by the existing `windows-latest` CI runner
+(skipped locally).
+
+### 5. Refusals are Class C everywhere
+
+**Decision:** The classifier gained two rules — `boundary-unsafe-path` (C)
+for Windows-unsafe forms and `path-outside-writable` (C) for in-workspace
+writes outside `writable_paths` — and `dispatch()` forces any guard refusal
+to record `decision_class=C` on the result.
+
+**Rationale:** Criterion 6: refusals log as Class C on the audit trail
+(`tool_call` event + result). The classifier cannot stat files (hardlinks)
+or see the guard's refusal semantics, so the enforcement layer overrides the
+class to C when it refuses — a boundary refusal is definitionally "anything
+the charter forbids" (§12.2).
+
+---
+
+## 2026-08-13 — TD-603: Filesystem read tools
+
+Decisions made while building the read handlers.
+
+### 1. Handlers are thin async wrappers over sync cores
+
+**Decision:** `fs_read`/`fs_list` are async handlers that delegate the
+blocking filesystem work to sync helpers via `asyncio.to_thread`.
+
+**Rationale:** AGENTS.md §6 forbids blocking calls in the event loop; the
+dispatch chokepoint awaits handlers, so any blocking I/O there would stall
+the session. The sync cores stay unit-testable without an event loop.
+
+### 2. `fs_list` reuses the manifest's ignore set
+
+**Decision:** Directory listing prunes the same `_FALLBACK_IGNORE` dirs the
+workspace manifest prunes (`node_modules`, `__pycache__`, `.venv`, `.git`,
+`.tst`).
+
+**Rationale:** One ignore set for the workspace keeps listings and the
+manifest consistent. Gitignore-native listing (via `git ls-files
+--exclude-standard`) exists in the manifest and can be reused later if
+subdirectory listings need it; the fallback set covers the practical junk
+dirs for v0.1.
+
+### 3. Truncation marker states totals, and only for cap-truncation
+
+**Decision:** The read handler caps formatted output at 2000 lines; when the
+cap cuts a file, a marker states total lines and bytes. An explicit
+`limit`/`offset` window is a window — no marker.
+
+**Rationale:** "Large files truncated with explicit markers and a stated
+total size" (criterion 4) refers to the cap; labelling an explicit window
+"truncated" would mislead the model about the file's length.
+
+### 4. Binary and encoding refusal lives at the handler
+
+**Decision:** NUL-bytes-in-head detection and UTF-8 decode failure both
+refuse with an explanatory message instead of dumping bytes.
+
+**Rationale:** The model should never receive raw binary or mojibake bytes —
+an explanatory refusal lets it pick another path (e.g., hash the file,
+inspect via shell once TD-605 lands).
+
+---
+
+## 2026-08-13 — TD-705: Checkpoint commits
+
+Decisions made while building the session-branch checkpointer.
+
+### 1. Plumbing-only snapshots over a throwaway index
+
+**Decision:** Checkpoints are built with `read-tree` + `add` + `write-tree`
++ `commit-tree` under a temporary `GIT_INDEX_FILE`, then published with a
+single `update-ref` of `refs/heads/tst/session/<id>`. No command the module
+runs ever reads or writes HEAD, the user's index, or the working tree.
+
+**Rationale:** "Pre-existing uncommitted user changes are never clobbered"
+has to be a structural guarantee, not a careful-usage one. Porcelain
+(`add`/`commit` against the real index) can stash, refresh, or conflict with
+user state; plumbing against a private index cannot.
+
+### 2. Parent chain is session tip → HEAD → none
+
+**Decision:** Each checkpoint's parent is the previous checkpoint if the
+session branch exists, else HEAD, else no parent (unborn HEAD repos).
+Dirty working-tree changes outside the written paths are neither captured
+nor disturbed.
+
+**Rationale:** The session branch is the undo stack (spec §12.8), so its
+history must be a clean chain of the agent's writes on top of whatever the
+user had committed. Seeding from HEAD keeps the first checkpoint reviewable
+as a normal diff against the user's last commit.
+
+### 3. Dirty baselines are reported once, then checkpointing continues
+
+**Decision:** At the first checkpoint in a repo with uncommitted changes,
+the user gets one `dirty_baseline` notice; checkpointing proceeds anyway.
+A rebase in progress is different: checkpoints are *skipped* (not disabled)
+until it ends, with one `rebase_in_progress` notice.
+
+**Rationale:** Dirty state is common and harmless to snapshot from (we only
+capture the committed tree plus our own writes), so it warrants a notice,
+not a stop. Mid-rebase, the repo's state is genuinely in flux and the user
+is driving — writing refs then would be noise at best, so we stand down and
+resume.
+
+### 4. Degradation is informed-once, sticky per kind, never fatal
+
+**Decision:** A non-git workspace disables checkpointing for the session
+with one `no_git` notice. Every notice code is delivered at most once per
+session via the `checkpoint_notice` daemon event. A checkpoint failure can
+never fail the write that triggered it.
+
+**Rationale:** The feature is an enhancement, not a precondition — the
+acceptance criteria require everything else to keep working. Repeating the
+same notice on every write would be spam; the event log keeps the first one
+for the audit trail.
+
+### 5. Fixed agent identity, independent of user git config
+
+**Decision:** Checkpoint commits are authored as `TST Desk
+<tstdesk@localhost>` via per-invocation environment variables, never the
+user's configured identity.
+
+**Rationale:** Checkpoints must work in repos with no user config (fresh
+clones, CI checkouts) and must be visibly agent-authored in `git log` so a
+human reviewing the branch can tell the undo stack from their own history.
+
+### 6. The seam lives in the dispatcher, after handler success
+
+**Decision:** `ToolDispatcher.dispatch` checkpoints after a successful
+handler, using the canonical write paths captured by the boundary guard,
+only for mutating tools with path fields and an attached session. The
+result carries `checkpoint_commit` / `checkpoint_notice`; the loop mirrors
+the notice into the event log.
+
+**Rationale:** Same shape as the classifier chokepoint and the boundary
+guard — enforcement in the tool layer, not per-handler, so a future write
+tool cannot forget to checkpoint. Canonical paths (not raw model arguments)
+guarantee the snapshot covers exactly what the guard approved.
+
+---
+
+## 2026-08-13 — TD-604: Filesystem write tools
+
+Decisions made while building the write handlers.
+
+### 1. Atomicity is temp file in the target directory plus `os.replace`
+
+**Decision:** Every write goes to a hidden temp file created in the
+target's own directory (`mkstemp` with a dotted prefix), is flushed and
+fsynced, then `os.replace`d over the target. On any failure the temp file
+is removed and the previous target is untouched.
+
+**Rationale:** A rename is atomic only within a filesystem, so the temp
+file must live beside the target. "No partial file on failure" then holds
+structurally: the target is either the old content or the new content,
+never a prefix of the new.
+
+### 2. Write handlers raise; read handlers return error strings
+
+**Decision:** `fs_write`/`fs_edit` raise on failure (missing file,
+ambiguous target, decode error) and dispatch converts the exception into a
+`handler_error` result; the read handlers keep returning `"Error: …"`
+strings.
+
+**Rationale:** A failed write must be `status="error"` so it is not
+checkpointed — silent success-with-error-message would put a commit on the
+undo stack for work that did not happen. Reads have nothing to checkpoint,
+and an explanatory string lets the model self-correct without burning the
+turn.
+
+### 3. `fs_edit` is exact single-occurrence replacement, no `replace_all`
+
+**Decision:** `fs_edit` fails loudly when the target occurs zero times
+("not found") or more than once ("ambiguous: N occurrences"). There is no
+bulk-replace flag.
+
+**Rationale:** "Failing loudly if the target is absent or ambiguous" is the
+acceptance criterion, and the fix for ambiguity is more context in
+`old_string` — something the model can do reliably. A `replace_all` flag
+would let an under-specified edit touch every match, which is exactly the
+silent-corruption mode the loud failure exists to prevent.
+
+### 4. The diff is computed at the dispatcher seam, not in the handlers
+
+**Decision:** Dispatch snapshots the canonical write targets (best-effort
+UTF-8, capped) before the handler runs and after it succeeds, renders a
+unified diff, and attaches it to the `tool_result` event's new `diff`
+field. A write that changed nothing carries no diff; a non-diffable target
+(binary, oversized) writes fine with `diff: null`.
+
+**Rationale:** "Every write produces a diff" is guaranteed in exactly one
+place — the same seam that checkpoints — so a future mutating tool gets
+diffs without implementing them. Handlers stay free to return whatever
+summary helps the model.
+
+### 5. `fs_write` keeps the pre-registered `append` flag
+
+**Decision:** The registry (TD-601) shipped `fs_write` with an
+`append: bool` option; the handler implements it as read + concatenate +
+atomic write rather than dropping the flag.
+
+**Rationale:** The schema is already promised to the model; removing a
+declared argument would be a protocol regression. Append reuses the same
+atomic path, so it costs nothing extra.

@@ -22,6 +22,7 @@ import type {
   ToolResult,
   ApprovalRequest,
   DecisionLogged,
+  CheckpointNotice,
   CostUpdate,
   TurnComplete,
   Error,
@@ -162,6 +163,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const m2 = fixtures.tool_result_truncated as ToolResult;
     expect(m2.truncated).toBe(true);
     expect(m2.status).toBe("error");
+    // write variant carries the diff for display (TD-604)
+    const m3 = fixtures.tool_result_diff as ToolResult;
+    expect(isString(m3.diff)).toBe(true);
+    expect(m3.diff).toContain("--- a/test.txt");
   });
 
   it("approval_request", () => {
@@ -183,12 +188,22 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("checkpoint_notice", () => {
+    const m = fixtures.checkpoint_notice as CheckpointNotice;
+    expect(m.type).toBe("checkpoint_notice");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.code)).toBe(true);
+    expect(isString(m.message)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
   it("cost_update", () => {
     const m = fixtures.cost_update as CostUpdate;
     expect(m.type).toBe("cost_update");
     expect(isNumber(m.turn_cost)).toBe(true);
     expect(isNumber(m.session_cost)).toBe(true);
     expect(isNumber(m.total_cost)).toBe(true);
+    expect(isNumber(m.classifier_cost)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
   });
 
@@ -232,8 +247,9 @@ describe("All fixtures have required shape", () => {
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
-      "tool_result_truncated", "approval_request", "decision_logged",
-      "cost_update", "turn_complete", "error", "error_with_session",
+      "tool_result_truncated", "tool_result_diff", "approval_request",
+      "decision_logged", "checkpoint_notice", "cost_update", "turn_complete",
+      "error", "error_with_session",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

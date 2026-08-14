@@ -89,7 +89,8 @@
     "tool_call_id": "tc-1",
     "status": "success",
     "output": "file content",
-    "truncated": false
+    "truncated": false,
+    "diff": null
   },
   "tool_result_truncated": {
     "type": "tool_result",
@@ -98,11 +99,22 @@
     "tool_call_id": "tc-1",
     "status": "error",
     "output": "too long",
-    "truncated": true
+    "truncated": true,
+    "diff": null
+  },
+  "tool_result_diff": {
+    "type": "tool_result",
+    "seq": 7,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "status": "success",
+    "output": "wrote 12 bytes; overwrote test.txt",
+    "truncated": false,
+    "diff": "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line"
   },
   "approval_request": {
     "type": "approval_request",
-    "seq": 7,
+    "seq": 8,
     "session_id": "sess-1",
     "tool_call_id": "tc-1",
     "tool_name": "fs_write",
@@ -114,24 +126,32 @@
   },
   "decision_logged": {
     "type": "decision_logged",
-    "seq": 8,
+    "seq": 9,
     "session_id": "sess-1",
     "decision_class": "A",
     "what": "Formatted file",
     "why": "Ruff format",
     "commit": "abc123"
   },
+  "checkpoint_notice": {
+    "type": "checkpoint_notice",
+    "seq": 10,
+    "session_id": "sess-1",
+    "code": "dirty_baseline",
+    "message": "This workspace has uncommitted changes."
+  },
   "cost_update": {
     "type": "cost_update",
-    "seq": 9,
+    "seq": 11,
     "session_id": "sess-1",
     "turn_cost": 0.05,
     "session_cost": 0.5,
-    "total_cost": 1.2
+    "total_cost": 1.2,
+    "classifier_cost": 0.0
   },
   "turn_complete": {
     "type": "turn_complete",
-    "seq": 10,
+    "seq": 12,
     "session_id": "sess-1",
     "tokens": 1500,
     "cost": 0.03,
@@ -140,14 +160,14 @@
   },
   "error": {
     "type": "error",
-    "seq": 11,
+    "seq": 13,
     "session_id": null,
     "code": "test",
     "message": "fail"
   },
   "error_with_session": {
     "type": "error",
-    "seq": 12,
+    "seq": 14,
     "session_id": "sess-1",
     "code": "test",
     "message": "fail"
