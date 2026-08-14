@@ -20,7 +20,8 @@ import websockets.exceptions
 
 from .audit import AuditStore
 from .audit_writer import AuditWriter
-from .config import cached_config
+from .boundary_config import boundary_source, load_workspace_boundary
+from .config import ConfigError, cached_config
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import agent_loop
 from .protocol import (
@@ -38,6 +39,9 @@ from .protocol import (
     UserMessage,
     build_error,
     parse_client_message,
+)
+from .protocol import (
+    BoundaryUpdate as BoundaryUpdateEvent,
 )
 from .protocol import (
     SessionState as SessionStateEvent,
@@ -307,6 +311,19 @@ class Daemon:
             sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
             router = TierRouter()
 
+            # Workspace boundary (TD-706): resolve `.tst/config.yaml` or
+            # defaults; a bad config falls back to defaults with the
+            # actionable error logged and surfaced in the event source.
+            try:
+                sess.boundary_config = load_workspace_boundary(msg.path)
+                source = boundary_source(msg.path)
+            except ConfigError as e:
+                log.warning(
+                    "workspace boundary config invalid; using defaults",
+                    extra={"extra_fields": {"workspace_path": msg.path, "error": str(e)}},
+                )
+                source = f"defaults — invalid config ({e})"
+
             # Provider is created lazily via a factory closure so that
             # sessions can be opened and attached without requiring a key
             # to be present.  The provider is only needed when the loop
@@ -335,6 +352,24 @@ class Daemon:
                     }
                 },
             )
+
+            # Emit the resolved boundary after session_state (seq 1) so
+            # the client sees the wall it opened under (TD-706).
+            cfg = sess.boundary_config
+            await sess.event_log.add(
+                BoundaryUpdateEvent(
+                    session_id=sess.id,
+                    writable_paths=list(cfg.boundary.writable_paths),
+                    allowed_commands=list(cfg.boundary.allowed_commands),
+                    network=cfg.boundary.network,
+                    spend_usd=cfg.caps.spend_usd,
+                    wall_clock_hours=cfg.caps.wall_clock_hours,
+                    max_iterations=cfg.caps.max_iterations,
+                    source=source,
+                    seq=1,
+                )
+            )
+
             # Return the session_state event (seq=1, "running")
             events = sess.event_log.events_from(1)
             if events:

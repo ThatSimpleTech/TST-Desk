@@ -309,6 +309,25 @@ class CostUpdate(DaemonEvent):
     classifier_cost: float = Field(default=0.0, ge=0)
 
 
+class BoundaryUpdate(DaemonEvent):
+    """The workspace boundary, emitted when a session opens (TD-706).
+
+    The UI shows the wall (TD-1006); the daemon resolves it from
+    ``.tst/config.yaml`` or defaults.
+    """
+
+    type: Literal["boundary_update"] = "boundary_update"
+    session_id: str
+    writable_paths: list[str]
+    allowed_commands: list[str]
+    network: str | list[str]
+    spend_usd: float = Field(ge=0)
+    wall_clock_hours: float = Field(ge=0)
+    max_iterations: int = Field(ge=1)
+    # Config file path, "defaults", or "defaults — invalid config (…)".
+    source: str
+
+
 class TurnComplete(DaemonEvent):
     """Summary of a completed turn."""
 
@@ -435,6 +454,7 @@ DaemonEventT = Annotated[
     | DecisionLogged
     | CheckpointNotice
     | CostUpdate
+    | BoundaryUpdate
     | TurnComplete
     | ContextCompacted
     | SteeringReloaded
@@ -476,6 +496,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "decision_logged",
         "checkpoint_notice",
         "cost_update",
+        "boundary_update",
         "turn_complete",
         "context_compacted",
         "steering_reloaded",

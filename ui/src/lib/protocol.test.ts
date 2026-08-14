@@ -18,6 +18,7 @@ import type {
   Ready,
   SessionState,
   AssistantDelta,
+  BoundaryUpdate,
   ToolCall,
   ToolResult,
   ShellOutput,
@@ -215,6 +216,19 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.session_cost)).toBe(true);
     expect(isNumber(m.total_cost)).toBe(true);
     expect(isNumber(m.classifier_cost)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("boundary_update", () => {
+    const m = fixtures.boundary_update as BoundaryUpdate;
+    expect(m.type).toBe("boundary_update");
+    expect(Array.isArray(m.writable_paths)).toBe(true);
+    expect(Array.isArray(m.allowed_commands)).toBe(true);
+    expect(isString(m.network) || Array.isArray(m.network)).toBe(true);
+    expect(isNumber(m.spend_usd)).toBe(true);
+    expect(isNumber(m.wall_clock_hours)).toBe(true);
+    expect(isNumber(m.max_iterations)).toBe(true);
+    expect(isString(m.source)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
   });
 
