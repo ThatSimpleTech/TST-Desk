@@ -336,6 +336,10 @@ class ToolResult(DaemonEvent):
     status: Literal["success", "error"]
     output: str
     truncated: bool = False
+    # Machine-readable code for ``error`` status ("approval_denied",
+    # "policy_denied", "boundary_refusal", …).  Carried so the UI can
+    # distinguish "denied by user" from a generic handler error (TD-1007).
+    error_code: str | None = None
     # Unified diff of what a write changed (TD-604), for display.
     diff: str | None = None
 

@@ -149,10 +149,16 @@ export class ProtocolClient {
   /**
    * Send a client→daemon message. Returns false (and sends nothing) unless
    * the socket is open and handshaken, so callers can decide whether an
-   * optimistic local update is warranted.
+   * optimistic local update is warranted (TD-1007).
+   *
+   * Guarding on `state === "connected"` is the unambiguous handshake signal:
+   * `handshake` is "idle" both before the socket opens and after the ack,
+   * and it stays "idle" across a reconnect while `this.socket` still points
+   * at the closed socket — so a `handshake`-only guard would throw on a dead
+   * socket mid-reconnect.
    */
   send(msg: ClientMessageUnion): boolean {
-    if (!this.socket || this.handshake !== "idle") return false;
+    if (!this.socket || this.state !== "connected") return false;
     this.socket.send(JSON.stringify(msg));
     return true;
   }
@@ -281,14 +287,17 @@ export class ProtocolClient {
     // anything we missed while offline.
     if (type === "hello_ack") {
       this.handshake = "idle";
-      if (this.hasConnectedOnce) {
+      const reconnecting = this.hasConnectedOnce;
+      this.hasConnectedOnce = true;
+      this.reconnectAttempt = 0;
+      // Mark connected before re-attaching: `send` guards on the connected
+      // state, and the re-attach below must pass that guard (see send()).
+      this.setState("connected");
+      if (reconnecting) {
         for (const sessionId of this.attachedSessions) {
           this.sendAttach(sessionId, this.lastSeq(sessionId) + 1);
         }
       }
-      this.hasConnectedOnce = true;
-      this.reconnectAttempt = 0;
-      this.setState("connected");
       return;
     }
 

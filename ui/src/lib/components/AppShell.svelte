@@ -1,14 +1,17 @@
 <script lang="ts">
 	// Application shell: two-pane workspace layout using only design tokens.
-	// Left = chat pane, right = activity pane. The connection banner (TD-1003)
-	// sits in the shell header so daemon/socket state is visible at all times.
-	// The activity pane hosts the activity timeline (TD-1005), fed live from
-	// the daemon event stream. Failure notices (TD-1008) render as banners
-	// under the header (blocking) or toasts bottom-right (transient).
+	// Left = chat pane, right = activity pane. The title bar (TD-1006) and
+	// connection banner (TD-1003) sit in the shell header so daemon/socket
+	// state is visible at all times. The activity pane hosts the activity
+	// timeline (TD-1005), fed live from the daemon event stream. Failure
+	// notices (TD-1008) render as banners under the header (blocking) or
+	// toasts bottom-right (transient); the footer hosts pending approval
+	// cards (TD-1007).
 	import { onMount } from 'svelte';
 	import SplitPane from './SplitPane.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
 	import ActivityTimeline from './ActivityTimeline.svelte';
+	import ApprovalBar from './ApprovalBar.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
 	import { push } from '../timeline-store.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
@@ -87,6 +90,7 @@
 	</SplitPane>
 </div>
 
+<ApprovalBar />
 <ToastStack />
 <WizardPane />
 <DoctorPane />
