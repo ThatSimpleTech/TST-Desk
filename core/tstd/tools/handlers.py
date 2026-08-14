@@ -1,4 +1,4 @@
-"""Built-in tool handlers — filesystem read tools (TD-603).
+"""Built-in tool handlers — filesystem read tools (TD-603) and shell (TD-605).
 
 The read handlers consume paths that the boundary guard (TD-602) has
 already canonicalized and checked: dispatch refuses out-of-workspace or
@@ -7,9 +7,11 @@ in-workspace path and only need to deal with file-level concerns —
 binary/encoding refusal, line windows, truncation with stated totals,
 and ignore-aware listing.
 
-Handlers are thin async wrappers: the blocking filesystem work runs in a
-worker thread via ``asyncio.to_thread`` so the event loop never stalls
-(AGENTS.md §6).
+Read handlers are thin async wrappers: the blocking filesystem work runs
+in a worker thread via ``asyncio.to_thread`` so the event loop never
+stalls (AGENTS.md §6).  The shell handler streams subprocess output
+through the event loop's native subprocess support instead (see
+``shell.py``).
 """
 
 from __future__ import annotations
@@ -17,10 +19,12 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import os
+from functools import partial
 from pathlib import Path
 
 from ..context.manifest import _FALLBACK_IGNORE
 from .dispatch import ToolDispatcher
+from .shell import ShellPolicy, run_shell
 from .write import fs_edit, fs_write
 
 # Handler-level cap on formatted lines.  Dispatch additionally caps the
@@ -108,7 +112,9 @@ def _list_dir(root: Path, pattern: str, recursive: bool) -> str:
     return "\n".join(results)
 
 
-async def fs_read(session: object, path: str, limit: int = 0, offset: int = 0) -> str:
+async def fs_read(
+    session: object, path: str, limit: int = 0, offset: int = 0, tool_call_id: str = ""
+) -> str:
     """Read a file with optional line ranges; numbered lines (TD-603)."""
     return await asyncio.to_thread(_read_file, Path(path), limit, offset)
 
@@ -118,18 +124,25 @@ async def fs_list(
     path: str,
     pattern: str = "*",
     recursive: bool = False,
+    tool_call_id: str = "",
 ) -> str:
     """List entries under *path*, filtered by a glob *pattern* (TD-603)."""
     return await asyncio.to_thread(_list_dir, Path(path), pattern, recursive)
 
 
-def register_builtin_handlers(dispatcher: ToolDispatcher) -> None:
+def register_builtin_handlers(
+    dispatcher: ToolDispatcher,
+    allowed_commands: tuple[str, ...] | None = None,
+) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
-    The shell handler arrives with its story (TD-605); until then that
-    tool returns the dispatcher's "no handler" error.
+    ``allowed_commands`` restricts the shell tool to the given binaries
+    when set (TD-605); ``None`` leaves it unrestricted.
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
     dispatcher.register_handler("fs_write", fs_write)
     dispatcher.register_handler("fs_edit", fs_edit)
+    dispatcher.register_handler(
+        "shell", partial(run_shell, policy=ShellPolicy(allowed_commands=allowed_commands))
+    )

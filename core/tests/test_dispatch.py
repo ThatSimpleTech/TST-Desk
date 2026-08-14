@@ -105,10 +105,10 @@ def make_registry_and_dispatcher() -> tuple[ToolRegistry, ToolDispatcher]:
 
     dispatcher = ToolDispatcher(registry, classifier=make_classifier(), max_result_chars=1000)
 
-    async def echo_handler(session, message, count=1):
+    async def echo_handler(session, message, count=1, tool_call_id=""):
         return f"Echo: {message} (x{count})"
 
-    async def slow_handler(session, delay=0.01):
+    async def slow_handler(session, delay=0.01, tool_call_id=""):
         import asyncio
 
         await asyncio.sleep(delay)
@@ -305,7 +305,7 @@ class TestDispatcherParallel:
         )
         dispatcher = ToolDispatcher(registry, classifier=make_classifier())
 
-        async def fast_handler(session, delay=0.05):
+        async def fast_handler(session, delay=0.05, tool_call_id=""):
             import asyncio
 
             await asyncio.sleep(delay)
@@ -347,7 +347,7 @@ class TestDispatcherParallel:
         )
         dispatcher = ToolDispatcher(registry, classifier=make_classifier())
 
-        async def seq_handler(session, delay=0.05):
+        async def seq_handler(session, delay=0.05, tool_call_id=""):
             await asyncio.sleep(delay)
             return "Sequential result"
 

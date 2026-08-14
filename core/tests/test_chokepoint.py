@@ -92,7 +92,9 @@ def make_dispatcher(
         path_guard=PathGuard(boundary),
     )
 
-    async def write_handler(session: object, path: str, content: str = "") -> str:
+    async def write_handler(
+        session: object, path: str, content: str = "", tool_call_id: str = ""
+    ) -> str:
         _write_file(path, content)
         return f"wrote {path}"
 
@@ -111,7 +113,7 @@ class TestUnclassifiedExecutionRaises:
         # No classifier attached — the chokepoint must refuse to execute.
         dispatcher = ToolDispatcher(registry)
 
-        async def handler(session: object, path: str) -> str:
+        async def handler(session: object, path: str, tool_call_id: str = "") -> str:
             return "should not run"
 
         dispatcher.register_handler("fs_edit", handler)
@@ -165,7 +167,7 @@ class TestClassificationPrecedesExecution:
             path_guard=PathGuard(Boundary(workspace_root=tmp_path)),
         )
 
-        async def handler(session: object, path: str) -> str:
+        async def handler(session: object, path: str, tool_call_id: str = "") -> str:
             # The handler must observe classification already happened.
             spy.handler_ran = True
             assert spy.classified_before

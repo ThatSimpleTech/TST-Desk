@@ -71,11 +71,15 @@ def _fs_edit(path: Path, old_string: str, new_string: str) -> str:
     return f"edited {path}: replaced 1 occurrence"
 
 
-async def fs_write(session: object, path: str, content: str, append: bool = False) -> str:
+async def fs_write(
+    session: object, path: str, content: str, append: bool = False, tool_call_id: str = ""
+) -> str:
     """Create or overwrite a file; parent directories created (TD-604)."""
     return await asyncio.to_thread(_fs_write, Path(path), content, append)
 
 
-async def fs_edit(session: object, path: str, old_string: str, new_string: str) -> str:
+async def fs_edit(
+    session: object, path: str, old_string: str, new_string: str, tool_call_id: str = ""
+) -> str:
     """Exact single-occurrence string replacement in a file (TD-604)."""
     return await asyncio.to_thread(_fs_edit, Path(path), old_string, new_string)

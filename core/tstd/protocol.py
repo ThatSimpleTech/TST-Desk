@@ -226,6 +226,20 @@ class ToolResult(DaemonEvent):
     diff: str | None = None
 
 
+class ShellOutput(DaemonEvent):
+    """A streamed chunk of a shell command's stdout or stderr (TD-605).
+
+    Emitted by the shell handler as output arrives, so the timeline shows
+    command output live rather than one block at the end.
+    """
+
+    type: Literal["shell_output"] = "shell_output"
+    session_id: str
+    tool_call_id: str
+    stream: Literal["stdout", "stderr"]
+    chunk: str
+
+
 class ApprovalRequest(DaemonEvent):
     """A request for user approval of a tool call."""
 
@@ -363,6 +377,7 @@ DaemonEventT = Annotated[
     | AssistantDelta
     | ToolCall
     | ToolResult
+    | ShellOutput
     | ApprovalRequest
     | DecisionLogged
     | CheckpointNotice
@@ -400,6 +415,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "assistant_delta",
         "tool_call",
         "tool_result",
+        "shell_output",
         "approval_request",
         "decision_logged",
         "checkpoint_notice",
