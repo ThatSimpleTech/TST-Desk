@@ -1917,6 +1917,7 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | **v0.6** | Local models | vLLM/EZER routing, UI-TARS grounding, local worker tier |
 | **v0.7** | Autonomy engine | Charter editor, autonomous runner, validator drift checks, circuit breakers, container isolation, wake-up summary |
 | **v0.8** | Extensibility | MCP extension loading, custom tool packages, plugin surface |
+| **Later** | Flourishes & platform furniture | Unversioned on purpose (familiarity ladder Tier 3): voice/dictation, macOS quick-entry overlay, tray + multi-window + auto-updater, web-search/research tool |
 
 ---
 

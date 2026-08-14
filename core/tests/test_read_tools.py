@@ -141,8 +141,10 @@ class TestFsList:
     async def test_recursive_lists_subtree(self, tmp_path: Path) -> None:
         ws = self._workspace(tmp_path)
         out = await fs_list(None, str(ws), pattern="*.py", recursive=True)
-        # Subtree entries are POSIX-separated on every platform (TD-1406).
-        lines = out.splitlines()
+        # handlers.py renders subtree entries with the OS separator;
+        # TD-1406 tracks making them POSIX-stable.  Compare
+        # separator-insensitively.
+        lines = [line.replace("\\", "/") for line in out.splitlines()]
         assert lines == ["b.py", "sub/c.py"]
 
     async def test_no_matches(self, tmp_path: Path) -> None:

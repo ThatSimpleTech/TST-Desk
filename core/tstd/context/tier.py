@@ -119,9 +119,7 @@ def _source_matches_subset(
     """
     if not patterns:
         return False
-    # POSIX separators so glob patterns (always ``/``-separated) match on
-    # Windows too — ``str(path)`` would render backslashes there (TD-1406).
-    src_path = source.path.as_posix()
+    src_path = str(source.path)
     return any(_path_matches_glob(src_path, p) for p in patterns)
 
 
