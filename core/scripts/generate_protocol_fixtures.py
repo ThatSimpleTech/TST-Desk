@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tstd.protocol import (
     PROTOCOL_VERSION,
+    AlwaysAllow,
     ApprovalRequest,
     Approve,
     AssistantDelta,
@@ -30,10 +31,14 @@ from tstd.protocol import (
     GetInstructionStack,
     Hello,
     InstructionStack,
+    ListPolicyRules,
     ListSessions,
     OpenWorkspace,
+    PolicyRules,
+    PolicyRuleSummary,
     Ready,
     Resume,
+    RevokePolicyRule,
     SessionList,
     SessionState,
     SetTier,
@@ -54,6 +59,9 @@ FIXTURES = {
     "approve": Approve(session_id="sess-1", tool_call_id="tc-1"),
     "deny": Deny(session_id="sess-1", tool_call_id="tc-1", reason="not safe"),
     "deny_no_reason": Deny(session_id="sess-1", tool_call_id="tc-1"),
+    "always_allow": AlwaysAllow(session_id="sess-1", tool_call_id="tc-1"),
+    "list_policy_rules": ListPolicyRules(session_id="sess-1"),
+    "revoke_policy_rule": RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *"),
     "resume": Resume(session_id="sess-1"),
     "cancel": Cancel(session_id="sess-1"),
     "attach": Attach(session_id="sess-1", from_seq=5),
@@ -112,6 +120,17 @@ FIXTURES = {
         summary="Write to test.txt",
         reason="decision class C requires approval",
         seq=8,
+    ),
+    "approval_request_always_allow": ApprovalRequest(
+        session_id="sess-1",
+        tool_call_id="tc-2",
+        tool_name="shell",
+        arguments={"command": "npm test"},
+        decision_class="B",
+        summary="Run `npm test`",
+        reason="decision class B requires approval",
+        proposed_always_allow=PolicyRuleSummary(tool="shell", args="npm test", effect="auto"),
+        seq=9,
     ),
     "decision_logged": DecisionLogged(
         session_id="sess-1",
@@ -193,6 +212,12 @@ FIXTURES = {
                 "updated_at": "2026-08-13T10:00:00Z",
                 "event_count": 0,
             }
+        ]
+    ),
+    "policy_rules": PolicyRules(
+        rules=[
+            PolicyRuleSummary(tool="shell", args="npm test", effect="auto"),
+            PolicyRuleSummary(tool="fs_*", args="src/**", effect="ask"),
         ]
     ),
 }

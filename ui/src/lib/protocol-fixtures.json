@@ -30,6 +30,21 @@
     "tool_call_id": "tc-1",
     "reason": null
   },
+  "always_allow": {
+    "type": "always_allow",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1"
+  },
+  "list_policy_rules": {
+    "type": "list_policy_rules",
+    "session_id": "sess-1"
+  },
+  "revoke_policy_rule": {
+    "type": "revoke_policy_rule",
+    "session_id": "sess-1",
+    "tool": "shell",
+    "args": "rm *"
+  },
   "resume": {
     "type": "resume",
     "session_id": "sess-1"
@@ -139,8 +154,27 @@
       "path": "test.txt"
     },
     "decision_class": "C",
-    "summary": "Write test.txt",
-    "reason": "decision class C requires approval"
+    "summary": "Write to test.txt",
+    "reason": "decision class C requires approval",
+    "proposed_always_allow": null
+  },
+  "approval_request_always_allow": {
+    "type": "approval_request",
+    "seq": 9,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-2",
+    "tool_name": "shell",
+    "arguments": {
+      "command": "npm test"
+    },
+    "decision_class": "B",
+    "summary": "Run `npm test`",
+    "reason": "decision class B requires approval",
+    "proposed_always_allow": {
+      "tool": "shell",
+      "args": "npm test",
+      "effect": "auto"
+    }
   },
   "decision_logged": {
     "type": "decision_logged",
@@ -254,6 +288,22 @@
         "created_at": "2026-08-13T10:00:00Z",
         "updated_at": "2026-08-13T10:00:00Z",
         "event_count": 0
+      }
+    ]
+  },
+  "policy_rules": {
+    "type": "policy_rules",
+    "seq": 1,
+    "rules": [
+      {
+        "tool": "shell",
+        "args": "npm test",
+        "effect": "auto"
+      },
+      {
+        "tool": "fs_*",
+        "args": "src/**",
+        "effect": "ask"
       }
     ]
   },
