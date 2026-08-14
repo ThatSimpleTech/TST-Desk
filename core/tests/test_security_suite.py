@@ -120,13 +120,18 @@ TRAVERSAL_VECTORS = [
 
 
 @pytest.mark.parametrize("vector", TRAVERSAL_VECTORS)
-def test_traversal_refused_for_read_and_write(ws: Path, vector: str) -> None:
-    # The guard has no notion of relative-to-workspace: raw paths resolve
-    # against the process CWD, so vectors are anchored at the workspace.
+def test_traversal_refused_for_read_and_write(
+    ws: Path, monkeypatch: pytest.MonkeyPatch, vector: str
+) -> None:
+    # TD-1406: raw guard inputs resolve against the process CWD, so chdir
+    # into the workspace and feed workspace-relative vectors — an absolute
+    # tmp_path-anchored input is a drive-letter path on Windows, refused
+    # fail-closed as windows_unsafe before the traversal logic runs.
+    monkeypatch.chdir(ws)
     g = guard(ws)
     for check in (g.check_read, g.check_write):
         with pytest.raises(RefusalError) as excinfo:
-            check(str(ws / vector))
+            check(vector)
         assert excinfo.value.code == "outside_workspace"
 
 
@@ -136,22 +141,31 @@ def test_absolute_path_outside_refused(ws: Path) -> None:
     assert excinfo.value.code == "outside_workspace"
 
 
-def test_symlinked_file_escape_refused(ws: Path, tmp_path: Path) -> None:
+def test_symlinked_file_escape_refused(
+    ws: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Workspace-relative guard input from inside the workspace — TD-1406
+    # (see test_traversal_refused_for_read_and_write).
     outside = tmp_path / "outside.txt"
     outside.write_text("secret")
     (ws / "link.txt").symlink_to(outside)
+    monkeypatch.chdir(ws)
     with pytest.raises(RefusalError) as excinfo:
-        guard(ws).check_read(str(ws / "link.txt"))
+        guard(ws).check_read("link.txt")
     assert excinfo.value.code == "outside_workspace"
 
 
-def test_symlinked_parent_dir_escape_refused(ws: Path, tmp_path: Path) -> None:
+def test_symlinked_parent_dir_escape_refused(
+    ws: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Workspace-relative guard input from inside the workspace — TD-1406.
     outside_dir = tmp_path / "outside"
     outside_dir.mkdir()
     (outside_dir / "secret.txt").write_text("secret")
     (ws / "dirlink").symlink_to(outside_dir, target_is_directory=True)
+    monkeypatch.chdir(ws)
     with pytest.raises(RefusalError) as excinfo:
-        guard(ws).check_read(str(ws / "dirlink" / "secret.txt"))
+        guard(ws).check_read("dirlink/secret.txt")
     assert excinfo.value.code == "outside_workspace"
 
 
@@ -174,33 +188,39 @@ def test_windows_unsafe_refused_on_every_platform(ws: Path, vector: str) -> None
         assert excinfo.value.code == "windows_unsafe"
 
 
-def test_percent_encoded_traversal_is_inert(ws: Path) -> None:
+def test_percent_encoded_traversal_is_inert(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The guard must not decode: %2f is a literal filename inside the
     workspace, never a smuggled separator."""
+    # Workspace-relative guard input from inside the workspace — TD-1406.
+    monkeypatch.chdir(ws)
     g = guard(ws)
-    resolved = g.check_read(str(ws / "..%2f..%2fetc"))
+    resolved = g.check_read("..%2f..%2fetc")
     assert g.canonicalize(ws) in resolved.parents
 
 
-def test_hardlink_write_refused(ws: Path) -> None:
+def test_hardlink_write_refused(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     original = ws / "original.txt"
     original.write_text("x")
     os.link(original, ws / "alias.txt")
+    # Workspace-relative guard input from inside the workspace — TD-1406.
+    monkeypatch.chdir(ws)
     with pytest.raises(RefusalError) as excinfo:
-        guard(ws).check_write(str(original))
+        guard(ws).check_write("original.txt")
     assert excinfo.value.code == "hardlink"
 
 
-def test_writable_patterns_enforced_for_writes_only(ws: Path) -> None:
+def test_writable_patterns_enforced_for_writes_only(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Workspace-relative guard inputs from inside the workspace — TD-1406.
+    monkeypatch.chdir(ws)
     g = guard(ws, writable=("src/**",))
     with pytest.raises(RefusalError) as excinfo:
-        g.check_write(str(ws / "docs" / "notes.md"))
+        g.check_write("docs/notes.md")
     assert excinfo.value.code == "outside_writable_paths"
     # Reads must not be narrowed by write policy.
-    allowed_read = ws / "docs" / "notes.md"
-    allowed_write = ws / "src" / "ok.py"
-    assert g.check_read(str(allowed_read)) == g.canonicalize(allowed_read)
-    assert g.check_write(str(allowed_write)) == g.canonicalize(allowed_write)
+    assert g.check_read("docs/notes.md") == g.canonicalize(ws / "docs" / "notes.md")
+    assert g.check_write("src/ok.py") == g.canonicalize(ws / "src" / "ok.py")
 
 
 def test_no_workspace_root_refuses_writes() -> None:
@@ -242,9 +262,14 @@ def test_steering_lookalikes_not_detected(ws: Path, relative: str) -> None:
 
 
 @pytest.mark.parametrize("relative", STEERING_POSITIVE)
-def test_steering_write_refused_at_guard(ws: Path, relative: str) -> None:
+def test_steering_write_refused_at_guard(
+    ws: Path, monkeypatch: pytest.MonkeyPatch, relative: str
+) -> None:
+    # Workspace-relative guard input from inside the workspace — TD-1406
+    # (see test_traversal_refused_for_read_and_write).
+    monkeypatch.chdir(ws)
     with pytest.raises(RefusalError) as excinfo:
-        guard(ws).check_write(str(ws / relative))
+        guard(ws).check_write(relative)
     assert excinfo.value.code == "steering_file"
 
 
@@ -282,13 +307,17 @@ async def test_fs_edit_dispatch_refuses_absolute_escape(ws: Path) -> None:
     assert result.decision_class is DecisionClass.C
 
 
-async def test_legit_write_succeeds_proving_refusals_are_targeted(ws: Path) -> None:
+async def test_legit_write_succeeds_proving_refusals_are_targeted(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Positive control: in-workspace writes execute — refusals are surgical,
     not a piece of machinery that rejects everything."""
+    # Workspace-relative tool argument from inside the workspace — TD-1406:
+    # an absolute tmp_path argument is a drive-letter path on Windows,
+    # refused fail-closed before the in-workspace success path under test.
+    monkeypatch.chdir(ws)
     dispatcher = make_dispatcher(ws)
-    result = await dispatcher.dispatch(
-        "c1", "fs_write", {"path": str(ws / "src" / "app.py"), "content": "hi\n"}
-    )
+    result = await dispatcher.dispatch("c1", "fs_write", {"path": "src/app.py", "content": "hi\n"})
     assert result.status == "success"
     assert result.decision_class is DecisionClass.A
     assert _read(ws / "src" / "app.py") == "hi\n"
@@ -431,9 +460,16 @@ def _query_one(db_path: Path, sql: str) -> tuple[Any, ...] | None:
     return sqlite3.connect(db_path).execute(sql).fetchone()
 
 
-async def test_secret_in_tool_arguments_redacted_from_audit(ws: Path, tmp_path: Path) -> None:
+async def test_secret_in_tool_arguments_redacted_from_audit(
+    ws: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A secret-shaped tool argument must never reach the audit store or the
     event log unredacted — and the write itself keeps the exact bytes."""
+    # Workspace-relative tool argument from inside the workspace — TD-1406:
+    # an absolute tmp_path argument is a drive-letter path on Windows,
+    # refused fail-closed so the file never lands (and the redaction
+    # pipeline never sees the write under test).
+    monkeypatch.chdir(ws)
     session = Session(str(ws))
     seen, spy = event_spy()
     session.event_log.subscribe(spy)
@@ -444,7 +480,7 @@ async def test_secret_in_tool_arguments_redacted_from_audit(ws: Path, tmp_path: 
 
     dispatcher = make_dispatcher(ws)
     content = f"api_key = {PLANTED}\n"
-    mock = scripted_write(ws / "notes.txt", content, "done")
+    mock = scripted_write(Path("notes.txt"), content, "done")
     await start_loop(session, TierRouter(), mock, make_config(), dispatcher.registry, dispatcher)
     await session.add_user_message("write the key file")
     await wait_for_turn(session, 1)
@@ -507,19 +543,24 @@ async def test_secret_in_error_output_redacted(ws: Path) -> None:
     assert json.loads(build_error("upstream", "plain failure"))["message"] == "plain failure"
 
 
-async def test_benign_event_text_survives_byte_identical(ws: Path) -> None:
+async def test_benign_event_text_survives_byte_identical(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Positive control: benign arguments, output, and diffs pass through
     the redaction chokepoint unchanged."""
+    # Workspace-relative tool argument from inside the workspace — TD-1406
+    # (see test_secret_in_tool_arguments_redacted_from_audit).
+    monkeypatch.chdir(ws)
     session = Session(str(ws))
     dispatcher = make_dispatcher(ws)
     content = "release notes: all quiet\n"
-    mock = scripted_write(ws / "notes.txt", content, "done")
+    mock = scripted_write(Path("notes.txt"), content, "done")
     await start_loop(session, TierRouter(), mock, make_config(), dispatcher.registry, dispatcher)
     await session.add_user_message("write the notes")
     await wait_for_turn(session, 1)
 
     calls = [e for e in session.event_log.all_events if isinstance(e, ToolCallEvent)]
-    assert calls and calls[0].arguments == {"path": str(ws / "notes.txt"), "content": content}
+    assert calls and calls[0].arguments == {"path": "notes.txt", "content": content}
 
     results = [e for e in session.event_log.all_events if isinstance(e, ToolResultEvent)]
     assert results and "[REDACTED]" not in results[0].output
@@ -605,16 +646,23 @@ async def test_failing_worker_fails_toward_ask(ws: Path) -> None:
     assert classification.decision_class is DecisionClass.B
 
 
-async def test_poisoned_worker_cannot_downgrade_static_class(ws: Path) -> None:
+async def test_poisoned_worker_cannot_downgrade_static_class(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A worker answering A for a request the static table calls C must be
     ignored entirely — the worker is only consulted when no rule fires."""
+    # Workspace-relative write target from inside the workspace — TD-1406:
+    # an absolute tmp_path target is a drive-letter path on Windows, where
+    # the boundary-unsafe-path rule fires before the steering-file rule
+    # under test.
+    monkeypatch.chdir(ws)
     spy = SpyWorker("A")
     classifier = AmbiguousClassifier(
         static=DecisionClassifier(Boundary(workspace_root=ws)),
         call_worker=spy,
     )
     classification = await classifier.classify(
-        DecisionRequest(tool_name="fs_write", writes=(ws / "AGENTS.md",), is_mutation=True)
+        DecisionRequest(tool_name="fs_write", writes=(Path("AGENTS.md"),), is_mutation=True)
     )
     assert classification.decision_class is DecisionClass.C
     assert classification.rule is not None
@@ -654,7 +702,9 @@ def test_dispatch_call_sites_confined() -> None:
     allowed = {"loop.py", "dispatch.py"}
     callers = set()
     for py_file in source_root.rglob("*.py"):
-        text = py_file.read_text()
+        # utf-8 explicitly: the platform default is cp1252 on Windows, which
+        # cannot decode the UTF-8 punctuation in tstd sources (TD-1406).
+        text = py_file.read_text(encoding="utf-8")
         if re.search(r"\.dispatch\(|dispatch_many\(", text):
             callers.add(py_file.name)
     assert callers <= allowed, f"unexpected dispatch call sites: {sorted(callers - allowed)}"
