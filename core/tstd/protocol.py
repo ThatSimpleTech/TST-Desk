@@ -229,6 +229,20 @@ class ListSessions(ClientMessage):
     type: Literal["list_sessions"] = "list_sessions"
 
 
+class NewSession(ClientMessage):
+    """Create a fresh session in an existing session's workspace (TD-1701).
+
+    The sidebar's New action anchors on the attached session rather than a
+    path: the registry is the source of truth for which workspace a session
+    belongs to, so the client never carries a path it may have lost across
+    a restart.  The daemon wires the new session exactly like
+    ``open_workspace`` and replies with its first event (``session_state``).
+    """
+
+    type: Literal["new_session"] = "new_session"
+    session_id: str
+
+
 class GetSetupState(ClientMessage):
     """Request the onboarding setup state (TD-1101 first-run wizard).
 
@@ -600,6 +614,7 @@ class SessionSummary(BaseModel):
         "idle",
         "running",
         "awaiting_approval",
+        "paused",
         "complete",
         "failed",
         "cancelled",
@@ -718,6 +733,7 @@ ClientMessageT = Annotated[
     | GetInstructionStack
     | Shutdown
     | ListSessions
+    | NewSession
     | GetSetupState
     | SetApiKey
     | ValidateApiKey
@@ -776,6 +792,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "get_instruction_stack",
         "shutdown",
         "list_sessions",
+        "new_session",
         "get_setup_state",
         "set_api_key",
         "validate_api_key",

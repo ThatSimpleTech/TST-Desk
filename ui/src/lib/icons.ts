@@ -49,6 +49,13 @@ export const ICONS = {
 	'retry':
 		'<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>' +
 		'<path d="M3 3v5h5"/>',
+	/** Sidebar / session rail toggle (TD-1701). */
+	'panel-left':
+		'<rect x="3" y="3" width="18" height="18" rx="2"/>' + '<path d="M9 3v18"/>',
+	/** New session (session rail, TD-1701). */
+	plus: '<path d="M5 12h14"/>' + '<path d="M12 5v14"/>',
+	/** Filter field affordance (session rail, TD-1701). */
+	search: '<circle cx="11" cy="11" r="8"/>' + '<path d="m21 21-4.3-4.3"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

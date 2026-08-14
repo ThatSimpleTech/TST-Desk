@@ -12,6 +12,7 @@ import {
   sendToDaemon,
 } from "./connection-status.svelte.js";
 import { createChatState, createChatStore, type ChatState } from "./chat-store";
+import type { SessionState } from "./protocol";
 
 export const chat: ChatState = $state(createChatState());
 
@@ -40,3 +41,8 @@ export function teardownChat(): void {
 export const sendUserMessage: (text: string) => boolean = store.sendUserMessage;
 export const retryLastUserMessage: () => boolean = store.retryLastUserMessage;
 export const cancelTurn: () => boolean = store.cancelTurn;
+/** Rail click target (TD-1701): attach the pane to a session from the list. */
+export const selectSession: (
+  sessionId: string,
+  turnState: SessionState["state"] | null,
+) => void = store.selectSession;
