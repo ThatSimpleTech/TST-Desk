@@ -59,7 +59,8 @@ class SecretsRedactionFilter(logging.Filter):
             for i, arg in enumerate(args):
                 if isinstance(arg, str):
                     for pattern in SECRET_PATTERNS:
-                        args[i] = pattern.sub("[REDACTED]", arg)
+                        arg = pattern.sub("[REDACTED]", arg)
+                    args[i] = arg
             record.args = tuple(args)
         return True
 
