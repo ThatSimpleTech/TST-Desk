@@ -74,8 +74,36 @@
   --shadow-md: 0 4px 6px rgba(0,0,0,0.07);
   --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);
 
+  /* ---- Borders ---- */
+  --border-width: 1px;
+
   /* ---- Transitions ---- */
   --transition-fast: 150ms ease;
   --transition-base: 200ms ease;
   --transition-slow: 300ms ease;
+}
+
+/* ---- Dark theme (follows OS preference) ---- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Neutral */
+    --color-bg:            #1a1a1a;
+    --color-bg-subtle:     #242424;
+    --color-bg-raised:     #2a2a2a;
+    --color-border:        #3a3a3a;
+    --color-text:          #ececec;
+    --color-text-secondary:#a6a6a6;
+    --color-text-muted:    #737373;
+
+    /* Accent */
+    --color-accent:        #3b82f6;
+    --color-accent-hover:  #6b9ff9;
+    --color-accent-text:   #ffffff;
+
+    /* Semantic */
+    --color-success:       #22c55e;
+    --color-warning:       #f59e0b;
+    --color-danger:        #ef4444;
+    --color-info:          #3b82f6;
+  }
 }
