@@ -176,7 +176,10 @@ class WorkspaceManifest:
                 continue
 
             for file in sorted(files):
-                rel_path = str(rel / file) if rel.parts else file
+                # POSIX separators always: the manifest is prompt text, and
+                # OS-native separators would make the cache prefix differ
+                # across platforms.  (``git ls-files`` already emits '/'.)
+                rel_path = (rel / file).as_posix() if rel.parts else file
                 entries.append(rel_path)
 
                 # Collect one past the cap so the renderer can detect

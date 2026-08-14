@@ -76,7 +76,10 @@ def write_port_file(data_dir: Path, port: int, token: str, pid: int | None = Non
     )
     tmp_file = data_dir / (f".{_PORT_FILE}.{os.getpid()}.tmp")
     tmp_file.write_text(content)
-    # Set mode 0o600 (owner read/write only) before it is renamed into place
+    # Set mode 0o600 (owner read/write only) before it is renamed into place.
+    # POSIX mode bits only: on Windows os.chmod can merely toggle the
+    # read-only flag, so this is a silent no-op there — ACL-based
+    # restriction is a separate hardening story (TD-1406).
     tmp_file.chmod(0o600)
     os.replace(tmp_file, port_file)
     log.info(

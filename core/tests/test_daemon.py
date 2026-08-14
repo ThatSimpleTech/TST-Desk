@@ -178,14 +178,24 @@ class TestLogging:
         with tempfile.TemporaryDirectory() as tmp:
             log_dir = Path(tmp) / "logs"
             setup_logging(level="DEBUG", log_dir=log_dir, log_to_stdout=False)
-            logger = logging.getLogger("test.file")
-            logger.info("written to file")
-            # Check the log file was created
-            log_files = list(log_dir.glob("*.log"))
-            assert len(log_files) >= 1
-            content = log_files[0].read_text()
-            assert "written to file" in content
-            assert json.loads(content.strip().split("\n")[0])["level"] == "INFO"
+            try:
+                logger = logging.getLogger("test.file")
+                logger.info("written to file")
+                # Check the log file was created
+                log_files = list(log_dir.glob("*.log"))
+                assert len(log_files) >= 1
+                content = log_files[0].read_text()
+                assert "written to file" in content
+                assert json.loads(content.strip().split("\n")[0])["level"] == "INFO"
+            finally:
+                # Windows cannot unlink an open file: release the log file
+                # before TemporaryDirectory cleanup runs. Only file handlers
+                # are touched — pytest's own capture handler stays attached.
+                root = logging.getLogger()
+                for handler in root.handlers[:]:
+                    if isinstance(handler, logging.FileHandler):
+                        handler.close()
+                        root.removeHandler(handler)
 
     def test_user_data_dir_returns_path(self) -> None:
         path = user_data_dir()

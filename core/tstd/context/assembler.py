@@ -293,7 +293,9 @@ class ContextAssembler:
         if source.subtree is not None:
             parts_list.append(f": {source.subtree}")
         parts_list.append(")")
-        return f"<!-- from: {source.path} {''.join(parts_list)} -->\n{content}"
+        # POSIX separators always: provenance is prompt text, and OS-native
+        # separators would make the cache prefix differ across platforms.
+        return f"<!-- from: {source.path.as_posix()} {''.join(parts_list)} -->\n{content}"
 
 
 # ── Glob matching ──────────────────────────────────────────────────────────

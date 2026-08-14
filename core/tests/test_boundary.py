@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from tstd.autonomy import Boundary
+from tstd.autonomy.classifier import canonical_path
 from tstd.tools.boundary import PathGuard, RefusalError, is_8_3_short_name
 
 
@@ -25,25 +26,46 @@ def guard(workspace: Path, writable: tuple[str, ...] | None = None) -> PathGuard
     return PathGuard(Boundary(workspace_root=workspace, writable_patterns=writable or ("**",)))
 
 
+@pytest.fixture
+def ws_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Chdir into the workspace so guard inputs can be workspace-relative.
+
+    TD-1406: the guard refuses drive-letter paths fail-closed on every
+    platform, and pytest's ``tmp_path`` is always a drive-letter path on
+    Windows — so an absolute tmp_path-based guard input is refused there
+    as ``windows_unsafe`` before any workspace logic runs.  Feeding
+    workspace-relative paths from inside the workspace exercises the real
+    boundary semantics (traversal, symlinks, hardlinks, steering,
+    writable globs) on every platform.
+    """
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def canonical(rel: str) -> Path:
+    """The canonical target the guard must return for a relative input."""
+    return canonical_path(Path(rel))
+
+
 # ── AC 1: every path resolved to canonical absolute form before any check ─
 
 
 class TestCanonicalForm:
-    def test_relative_path_canonicalized(self, tmp_path: Path) -> None:
-        g = guard(tmp_path)
-        result = g.check_read(str(tmp_path / "sub" / ".." / "a.txt"))
-        assert result == (tmp_path / "a.txt").resolve()
+    def test_relative_path_canonicalized(self, ws_cwd: Path) -> None:
+        g = guard(ws_cwd)
+        result = g.check_read("sub/../a.txt")
+        assert result == canonical("a.txt")
 
     def test_dot_and_dotdot_resolved(self, tmp_path: Path) -> None:
         g = guard(tmp_path)
         result = g.canonicalize(f"{tmp_path}/./x/../y")
         assert result == (tmp_path / "y").resolve()
 
-    def test_check_uses_canonical_not_lexical(self, tmp_path: Path) -> None:
+    def test_check_uses_canonical_not_lexical(self, ws_cwd: Path) -> None:
         # Lexically inside, canonically outside: must be refused.
-        g = guard(tmp_path)
-        escape = str(tmp_path / ".." / ".." / "etc" / "passwd")
-        assert not (tmp_path / ".." / ".." / "etc").resolve().is_relative_to(tmp_path.resolve())
+        g = guard(ws_cwd)
+        escape = "../../etc/passwd"
+        assert not (ws_cwd / ".." / ".." / "etc").resolve().is_relative_to(ws_cwd.resolve())
         with pytest.raises(RefusalError) as ei:
             g.check_read(escape)
         assert ei.value.code == "outside_workspace"
@@ -53,10 +75,10 @@ class TestCanonicalForm:
 
 
 class TestTraversal:
-    def test_dotdot_sequence_write_refused(self, tmp_path: Path) -> None:
-        g = guard(tmp_path)
+    def test_dotdot_sequence_write_refused(self, ws_cwd: Path) -> None:
+        g = guard(ws_cwd)
         with pytest.raises(RefusalError) as ei:
-            g.check_write(str(tmp_path / ".." / "escape.txt"))
+            g.check_write("../escape.txt")
         assert ei.value.code == "outside_workspace"
 
     def test_absolute_path_refused(self, tmp_path: Path) -> None:
@@ -65,42 +87,42 @@ class TestTraversal:
             g.check_write("/etc/passwd")
         assert ei.value.code == "outside_workspace"
 
-    def test_symlink_to_outside_file_refused(self, tmp_path: Path) -> None:
-        outside = tmp_path.parent / "outside.txt"
+    def test_symlink_to_outside_file_refused(self, ws_cwd: Path) -> None:
+        outside = ws_cwd.parent / "outside.txt"
         outside.write_text("secret")
-        (tmp_path / "link.txt").symlink_to(outside)
-        g = guard(tmp_path)
+        (ws_cwd / "link.txt").symlink_to(outside)
+        g = guard(ws_cwd)
         with pytest.raises(RefusalError) as ei:
-            g.check_write(tmp_path / "link.txt")
+            g.check_write("link.txt")
         assert ei.value.code == "outside_workspace"
 
-    def test_symlinked_parent_directory_refused(self, tmp_path: Path) -> None:
-        outside_dir = tmp_path.parent / "outside_dir"
+    def test_symlinked_parent_directory_refused(self, ws_cwd: Path) -> None:
+        outside_dir = ws_cwd.parent / "outside_dir"
         outside_dir.mkdir(exist_ok=True)
-        (tmp_path / "sub").symlink_to(outside_dir, target_is_directory=True)
-        g = guard(tmp_path)
+        (ws_cwd / "sub").symlink_to(outside_dir, target_is_directory=True)
+        g = guard(ws_cwd)
         # The path is lexically inside; the parent resolves outside.
         with pytest.raises(RefusalError) as ei:
-            g.check_write(tmp_path / "sub" / "evil.txt")
+            g.check_write("sub/evil.txt")
         assert ei.value.code == "outside_workspace"
 
-    def test_path_external_only_after_resolution_refused(self, tmp_path: Path) -> None:
+    def test_path_external_only_after_resolution_refused(self, ws_cwd: Path) -> None:
         # "paths that become external only after resolution": a deep
         # chain that pops out via .. after passing through symlinks.
-        outside_dir = tmp_path.parent / "outside_dir"
+        outside_dir = ws_cwd.parent / "outside_dir"
         outside_dir.mkdir(exist_ok=True)
-        (tmp_path / "hop").symlink_to(outside_dir, target_is_directory=True)
-        g = guard(tmp_path)
+        (ws_cwd / "hop").symlink_to(outside_dir, target_is_directory=True)
+        g = guard(ws_cwd)
         with pytest.raises(RefusalError):
-            g.check_write(tmp_path / "hop" / ".." / ".." / "etc" / "shadow")
+            g.check_write("hop/../../etc/shadow")
 
-    def test_read_through_symlink_outside_refused(self, tmp_path: Path) -> None:
-        outside = tmp_path.parent / "secret.txt"
+    def test_read_through_symlink_outside_refused(self, ws_cwd: Path) -> None:
+        outside = ws_cwd.parent / "secret.txt"
         outside.write_text("secret")
-        (tmp_path / "peek").symlink_to(outside)
-        g = guard(tmp_path)
+        (ws_cwd / "peek").symlink_to(outside)
+        g = guard(ws_cwd)
         with pytest.raises(RefusalError) as ei:
-            g.check_read(tmp_path / "peek")
+            g.check_read("peek")
         assert ei.value.code == "outside_workspace"
 
 
@@ -108,61 +130,61 @@ class TestTraversal:
 
 
 class TestHardlink:
-    def test_hardlink_to_outside_file_write_refused(self, tmp_path: Path) -> None:
-        outside = tmp_path.parent / "outside.txt"
+    def test_hardlink_to_outside_file_write_refused(self, ws_cwd: Path) -> None:
+        outside = ws_cwd.parent / "outside.txt"
         outside.write_text("shared inode")
-        target = tmp_path / "innocent_name.txt"
+        target = ws_cwd / "innocent_name.txt"
         os.link(outside, target)  # target aliases outside.txt's inode
-        g = guard(tmp_path)
+        g = guard(ws_cwd)
         with pytest.raises(RefusalError) as ei:
-            g.check_write(target)
+            g.check_write("innocent_name.txt")
         assert ei.value.code == "hardlink"
 
-    def test_single_link_file_write_allowed(self, tmp_path: Path) -> None:
-        target = tmp_path / "normal.txt"
+    def test_single_link_file_write_allowed(self, ws_cwd: Path) -> None:
+        target = ws_cwd / "normal.txt"
         target.write_text("x")
-        g = guard(tmp_path)
-        assert g.check_write(target) == target.resolve()
+        g = guard(ws_cwd)
+        assert g.check_write("normal.txt") == canonical("normal.txt")
 
-    def test_hardlink_read_allowed(self, tmp_path: Path) -> None:
+    def test_hardlink_read_allowed(self, ws_cwd: Path) -> None:
         # Reads through hardlinks are not a mutation; only writes are
         # refused (the in-place write would modify the shared inode).
-        outside = tmp_path / "outside.txt"
+        outside = ws_cwd / "outside.txt"
         outside.write_text("shared inode")
-        target = tmp_path / "peek.txt"
+        target = ws_cwd / "peek.txt"
         os.link(outside, target)
-        g = guard(tmp_path)
-        assert g.check_read(target) == target.resolve()
+        g = guard(ws_cwd)
+        assert g.check_read("peek.txt") == canonical("peek.txt")
 
 
 # ── AC 2: access outside writable_paths refused ────────────────────────
 
 
 class TestWritablePaths:
-    def test_default_writable_allows_in_workspace(self, tmp_path: Path) -> None:
-        g = guard(tmp_path)
-        assert g.check_write(tmp_path / "src" / "a.py") == (tmp_path / "src" / "a.py").resolve()
+    def test_default_writable_allows_in_workspace(self, ws_cwd: Path) -> None:
+        g = guard(ws_cwd)
+        assert g.check_write("src/a.py") == canonical("src/a.py")
 
-    def test_write_outside_restrictive_patterns_refused(self, tmp_path: Path) -> None:
-        g = guard(tmp_path, writable=("src/**",))
+    def test_write_outside_restrictive_patterns_refused(self, ws_cwd: Path) -> None:
+        g = guard(ws_cwd, writable=("src/**",))
         with pytest.raises(RefusalError) as ei:
-            g.check_write(tmp_path / "lib" / "a.py")
+            g.check_write("lib/a.py")
         assert ei.value.code == "outside_writable_paths"
 
-    def test_write_within_restrictive_patterns_allowed(self, tmp_path: Path) -> None:
-        g = guard(tmp_path, writable=("src/**",))
-        assert g.check_write(tmp_path / "src" / "deep" / "a.py")
+    def test_write_within_restrictive_patterns_allowed(self, ws_cwd: Path) -> None:
+        g = guard(ws_cwd, writable=("src/**",))
+        assert g.check_write("src/deep/a.py")
 
-    def test_basename_pattern_matches_at_depth(self, tmp_path: Path) -> None:
-        g = guard(tmp_path, writable=("*.py",))
-        assert g.check_write(tmp_path / "deep" / "a.py")  # slash-less pattern
+    def test_basename_pattern_matches_at_depth(self, ws_cwd: Path) -> None:
+        g = guard(ws_cwd, writable=("*.py",))
+        assert g.check_write("deep/a.py")  # slash-less pattern
 
-    def test_refusal_error_is_clear(self, tmp_path: Path) -> None:
-        g = guard(tmp_path, writable=("src/**",))
+    def test_refusal_error_is_clear(self, ws_cwd: Path) -> None:
+        g = guard(ws_cwd, writable=("src/**",))
         with pytest.raises(RefusalError) as ei:
-            g.check_write(tmp_path / "lib" / "a.py")
+            g.check_write("lib/a.py")
         assert "writable" in ei.value.reason.lower()
-        assert ei.value.path == (tmp_path / "lib" / "a.py").resolve()
+        assert ei.value.path == canonical("lib/a.py")
 
 
 # ── AC 5: steering-file writes refused unconditionally ──────────────────
@@ -180,22 +202,22 @@ class TestSteeringFiles:
             ".tst/rules/nested/deep.md",
         ],
     )
-    def test_steering_write_refused(self, tmp_path: Path, target: str) -> None:
-        g = guard(tmp_path)
+    def test_steering_write_refused(self, ws_cwd: Path, target: str) -> None:
+        g = guard(ws_cwd)
         with pytest.raises(RefusalError) as ei:
-            g.check_write(tmp_path / target)
+            g.check_write(target)
         assert ei.value.code == "steering_file"
 
-    def test_steering_write_refused_even_when_writable(self, tmp_path: Path) -> None:
+    def test_steering_write_refused_even_when_writable(self, ws_cwd: Path) -> None:
         # writable_patterns never grants steering files (PD §2.4).
-        g = guard(tmp_path, writable=("AGENTS.md", ".tst/**", "**"))
+        g = guard(ws_cwd, writable=("AGENTS.md", ".tst/**", "**"))
         with pytest.raises(RefusalError) as ei:
-            g.check_write(tmp_path / "AGENTS.md")
+            g.check_write("AGENTS.md")
         assert ei.value.code == "steering_file"
 
-    def test_steering_read_allowed(self, tmp_path: Path) -> None:
-        g = guard(tmp_path)
-        assert g.check_read(tmp_path / "AGENTS.md") == (tmp_path / "AGENTS.md").resolve()
+    def test_steering_read_allowed(self, ws_cwd: Path) -> None:
+        g = guard(ws_cwd)
+        assert g.check_read("AGENTS.md") == canonical("AGENTS.md")
 
 
 # ── AC 4: Windows-specific forms ────────────────────────────────────────
@@ -269,14 +291,14 @@ class TestReads:
             g.check_read("/etc/hosts")
         assert ei.value.code == "outside_workspace"
 
-    def test_read_inside_workspace_allowed(self, tmp_path: Path) -> None:
-        target = tmp_path / "a.txt"
+    def test_read_inside_workspace_allowed(self, ws_cwd: Path) -> None:
+        target = ws_cwd / "a.txt"
         target.write_text("x")
-        g = guard(tmp_path)
-        assert g.check_read(target) == target.resolve()
+        g = guard(ws_cwd)
+        assert g.check_read("a.txt") == canonical("a.txt")
 
-    def test_read_does_not_apply_writable_patterns(self, tmp_path: Path) -> None:
+    def test_read_does_not_apply_writable_patterns(self, ws_cwd: Path) -> None:
         # writable_paths governs writes; reads anywhere in the workspace
         # are allowed.
-        g = guard(tmp_path, writable=("src/**",))
-        assert g.check_read(tmp_path / "lib" / "a.py")
+        g = guard(ws_cwd, writable=("src/**",))
+        assert g.check_read("lib/a.py")

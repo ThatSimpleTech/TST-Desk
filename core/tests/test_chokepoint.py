@@ -16,6 +16,7 @@ the session's append-only event log (the audit trail).
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -142,7 +143,15 @@ class TestUnclassifiedExecutionRaises:
 
 
 class TestClassificationPrecedesExecution:
-    async def test_classifier_runs_before_handler(self, tmp_path: Path) -> None:
+    async def test_classifier_runs_before_handler(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Dispatch a workspace-relative path from inside the workspace: an
+        # absolute tmp_path is a drive-letter path on Windows, refused as
+        # windows_unsafe (C) before the in-workspace A classification under
+        # test (TD-1406).
+        monkeypatch.chdir(tmp_path)
+
         class RecordingClassifier(DecisionClassifier):
             handler_ran: bool
             classified_before: bool
@@ -175,7 +184,7 @@ class TestClassificationPrecedesExecution:
 
         dispatcher.register_handler("fs_edit", handler)
 
-        result = await dispatcher.dispatch("c1", "fs_edit", {"path": str(tmp_path / "a.txt")})
+        result = await dispatcher.dispatch("c1", "fs_edit", {"path": "a.txt"})
         assert result.status == "success"
         assert spy.handler_ran
 
@@ -184,12 +193,17 @@ class TestClassificationPrecedesExecution:
 
 
 class TestClassAttached:
-    async def test_in_workspace_edit_result_carries_class(self, tmp_path: Path) -> None:
+    async def test_in_workspace_edit_result_carries_class(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         registry = ToolRegistry()
         registry.register(make_tool("fs_edit", path_fields=("path",), mutates=True))
         dispatcher = make_dispatcher(registry, tmp_path)
+        # Workspace-relative path from inside the workspace — see
+        # test_classifier_runs_before_handler (TD-1406).
+        monkeypatch.chdir(tmp_path)
 
-        result = await dispatcher.dispatch("c1", "fs_edit", {"path": str(tmp_path / "a.txt")})
+        result = await dispatcher.dispatch("c1", "fs_edit", {"path": "a.txt"})
         assert result.status == "success"
         assert result.decision_class is DecisionClass.A
 
@@ -224,9 +238,16 @@ class TestClassAttached:
         assert result.error_code == "boundary_refusal"
         assert result.decision_class is DecisionClass.C
 
-    async def test_tool_call_event_carries_class(self, tmp_path: Path) -> None:
+    async def test_tool_call_event_carries_class(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The class lands on the tool_call event in the audit log."""
         ws = tmp_path
+        # Relative tool arguments from inside the workspace: the loop parses
+        # tool arguments as JSON (backslashes in an absolute Windows path
+        # break that) and the guard refuses drive-letter absolutes before
+        # any classification under test (TD-1406).
+        monkeypatch.chdir(ws)
         session = Session(str(ws))
         router = TierRouter(lead_turns=3)
         config = make_config()
@@ -240,7 +261,7 @@ class TestClassAttached:
                     Script(
                         kind="tool_call",
                         tool_name="fs_edit",
-                        tool_arguments=f'{{"path": "{ws / "a.txt"}"}}',
+                        tool_arguments=json.dumps({"path": "a.txt"}),
                     ),
                     Script(kind="stream", content="Done"),
                 ]
@@ -264,9 +285,14 @@ class TestClassAttached:
 
 
 class TestBoundaryRefusalAudit:
-    async def test_refused_write_logs_class_c_and_refuses(self, tmp_path: Path) -> None:
+    async def test_refused_write_logs_class_c_and_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A boundary-refused write carries Class C on the audit event."""
         ws = tmp_path
+        # Relative tool arguments from inside the workspace — TD-1406 (see
+        # test_tool_call_event_carries_class).
+        monkeypatch.chdir(ws)
         session = Session(str(ws))
         router = TierRouter(lead_turns=3)
         config = make_config()
@@ -289,7 +315,7 @@ class TestBoundaryRefusalAudit:
                     Script(
                         kind="tool_call",
                         tool_name="fs_edit",
-                        tool_arguments=f'{{"path": "{ws / "README.md"}"}}',
+                        tool_arguments=json.dumps({"path": "README.md"}),
                     ),
                     Script(kind="stream", content="Done"),
                 ]
@@ -339,15 +365,17 @@ def test_no_bypass_enumerates_dispatch_call_sites() -> None:
         rel = path.relative_to(pkg)
         if rel.name in allowed:
             continue
-        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if re.search(r"\.dispatch\(|dispatch_many\(", line):
                 offenders.append((str(rel), lineno, line.strip()))
 
     assert not offenders, f"dispatch call sites outside loop.py/dispatch.py: {offenders}"
 
     # The loop's dispatch path and the engine guard must exist.
-    loop_src = (pkg / "loop.py").read_text()
-    dispatch_src = (pkg / "tools" / "dispatch.py").read_text()
+    # (UTF-8 explicitly: the package sources are UTF-8, and the platform
+    # default would be cp1252 on Windows.)
+    loop_src = (pkg / "loop.py").read_text(encoding="utf-8")
+    dispatch_src = (pkg / "tools" / "dispatch.py").read_text(encoding="utf-8")
     assert "dispatch_many(" in loop_src
     assert "_dispatch_and_append_results" in loop_src
     assert "UnclassifiedToolCall" in dispatch_src

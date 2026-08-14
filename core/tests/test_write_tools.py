@@ -10,6 +10,7 @@ every write is checkpointed per TD-705.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from tests.test_checkpoint import _git, _tree_files, make_repo
 from tests.test_dispatch import make_config, start_loop, wait_for_turn
 from tests.test_read_tools import make_dispatcher
 from tstd.autonomy import Checkpointer
+from tstd.autonomy.classifier import canonical_path
 from tstd.mock import MockProvider, Script
 from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
@@ -94,54 +96,65 @@ class TestFsEdit:
 
 
 class TestWriteDiffs:
-    async def test_overwrite_diff(self, tmp_path: Path) -> None:
+    # Every test dispatches workspace-relative paths from inside the
+    # workspace: the guard refuses drive-letter absolutes as windows_unsafe
+    # before any workspace logic runs (TD-1406), and tmp_path is always a
+    # drive-letter path on Windows.
+
+    async def test_overwrite_diff(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         target = tmp_path / "a.txt"
         target.write_text("old line\n")
         dispatcher = make_dispatcher(tmp_path)
+        monkeypatch.chdir(tmp_path)
         result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(target), "content": "new line\n"}
+            "c1", "fs_write", {"path": "a.txt", "content": "new line\n"}
         )
         assert result.status == "success"
         assert result.diff is not None
         assert "-old line" in result.diff
         assert "+new line" in result.diff
-        assert str(target) in result.diff  # labelled with the path
+        # Labelled with the canonical path (the form the guard returns).
+        assert str(canonical_path(Path("a.txt"))) in result.diff
 
-    async def test_new_file_diff(self, tmp_path: Path) -> None:
+    async def test_new_file_diff(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         dispatcher = make_dispatcher(tmp_path)
+        monkeypatch.chdir(tmp_path)
         result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(tmp_path / "new.txt"), "content": "first\n"}
+            "c1", "fs_write", {"path": "new.txt", "content": "first\n"}
         )
         assert result.diff is not None
         assert "+first" in result.diff
 
-    async def test_edit_diff(self, tmp_path: Path) -> None:
+    async def test_edit_diff(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         target = tmp_path / "a.txt"
         target.write_text("alpha\nbeta\n")
         dispatcher = make_dispatcher(tmp_path)
+        monkeypatch.chdir(tmp_path)
         result = await dispatcher.dispatch(
-            "c1", "fs_edit", {"path": str(target), "old_string": "beta", "new_string": "gamma"}
+            "c1", "fs_edit", {"path": "a.txt", "old_string": "beta", "new_string": "gamma"}
         )
         assert result.status == "success"
         assert result.diff is not None
         assert "-beta" in result.diff
         assert "+gamma" in result.diff
 
-    async def test_no_change_write_has_no_diff(self, tmp_path: Path) -> None:
+    async def test_no_change_write_has_no_diff(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
         target = tmp_path / "a.txt"
         target.write_text("same\n")
         dispatcher = make_dispatcher(tmp_path)
-        result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(target), "content": "same\n"}
-        )
+        monkeypatch.chdir(tmp_path)
+        result = await dispatcher.dispatch("c1", "fs_write", {"path": "a.txt", "content": "same\n"})
         assert result.status == "success"
         assert result.diff is None  # nothing changed, nothing to display
 
-    async def test_reads_carry_no_diff(self, tmp_path: Path) -> None:
+    async def test_reads_carry_no_diff(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         target = tmp_path / "a.txt"
         target.write_text("x\n")
         dispatcher = make_dispatcher(tmp_path)
-        result = await dispatcher.dispatch("c1", "fs_read", {"path": str(target)})
+        monkeypatch.chdir(tmp_path)
+        result = await dispatcher.dispatch("c1", "fs_read", {"path": "a.txt"})
         assert result.status == "success"
         assert result.diff is None
 
@@ -157,9 +170,10 @@ class TestAtomicity:
         target.write_text("original\n")
         monkeypatch.setattr("tstd.tools.write.os.replace", _raise_oserror)
         dispatcher = make_dispatcher(tmp_path)
+        monkeypatch.chdir(tmp_path)  # workspace-relative path — TD-1406
 
         result = await dispatcher.dispatch(
-            "c1", "fs_write", {"path": str(target), "content": "replacement\n"}
+            "c1", "fs_write", {"path": "a.txt", "content": "replacement\n"}
         )
 
         assert result.status == "error"
@@ -174,9 +188,10 @@ class TestAtomicity:
         target.write_text("original\n")
         monkeypatch.setattr("tstd.tools.write.os.replace", _raise_oserror)
         dispatcher = make_dispatcher(tmp_path)
+        monkeypatch.chdir(tmp_path)  # workspace-relative path — TD-1406
 
         result = await dispatcher.dispatch(
-            "c1", "fs_edit", {"path": str(target), "old_string": "original", "new_string": "new"}
+            "c1", "fs_edit", {"path": "a.txt", "old_string": "original", "new_string": "new"}
         )
 
         assert result.status == "error"
@@ -196,16 +211,21 @@ def _stray_files(directory: Path) -> list[Path]:
 
 
 class TestWriteCheckpoints:
-    async def test_fs_write_checkpoints(self, tmp_path: Path) -> None:
+    # Workspace-relative paths dispatched from inside the repo — TD-1406
+    # (drive-letter absolutes are guard-refused as windows_unsafe before
+    # the write semantics under test run).
+
+    async def test_fs_write_checkpoints(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         repo = make_repo(tmp_path)
         session = Session(str(repo))
         dispatcher = make_dispatcher(repo)
         dispatcher.checkpointer = Checkpointer(repo, session.id)
+        monkeypatch.chdir(repo)
 
         result = await dispatcher.dispatch(
             "c1",
             "fs_write",
-            {"path": str(repo / "b.txt"), "content": "written\n"},
+            {"path": "b.txt", "content": "written\n"},
             session=session,
         )
 
@@ -215,16 +235,17 @@ class TestWriteCheckpoints:
         assert tip == result.checkpoint_commit
         assert _tree_files(repo, tip)["b.txt"] == "written\n"
 
-    async def test_fs_edit_checkpoints(self, tmp_path: Path) -> None:
+    async def test_fs_edit_checkpoints(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         repo = make_repo(tmp_path)
         session = Session(str(repo))
         dispatcher = make_dispatcher(repo)
         dispatcher.checkpointer = Checkpointer(repo, session.id)
+        monkeypatch.chdir(repo)
 
         result = await dispatcher.dispatch(
             "c1",
             "fs_edit",
-            {"path": str(repo / "a.txt"), "old_string": "base", "new_string": "edited"},
+            {"path": "a.txt", "old_string": "base", "new_string": "edited"},
             session=session,
         )
 
@@ -233,16 +254,19 @@ class TestWriteCheckpoints:
         tip = _git(repo, "rev-parse", f"refs/heads/tst/session/{session.id}")
         assert _tree_files(repo, tip)["a.txt"] == "edited\n"
 
-    async def test_failed_edit_not_checkpoints(self, tmp_path: Path) -> None:
+    async def test_failed_edit_not_checkpoints(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
         repo = make_repo(tmp_path)
         session = Session(str(repo))
         dispatcher = make_dispatcher(repo)
         dispatcher.checkpointer = Checkpointer(repo, session.id)
+        monkeypatch.chdir(repo)
 
         result = await dispatcher.dispatch(
             "c1",
             "fs_edit",
-            {"path": str(repo / "a.txt"), "old_string": "absent", "new_string": "x"},
+            {"path": "a.txt", "old_string": "absent", "new_string": "x"},
             session=session,
         )
 
@@ -255,7 +279,9 @@ class TestWriteCheckpoints:
 
 
 class TestLoopIntegration:
-    async def test_tool_result_event_carries_diff(self, tmp_path: Path) -> None:
+    async def test_tool_result_event_carries_diff(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
         session = Session(str(tmp_path))
         router = TierRouter(lead_turns=3)
         config = make_config()
@@ -264,7 +290,12 @@ class TestLoopIntegration:
 
         target = tmp_path / "a.txt"
         target.write_text("old line\n")
-        args = f'{{"path": "{target}", "content": "new line\\n"}}'
+        # Relative tool arguments from inside the workspace: the loop parses
+        # tool arguments as JSON (backslashes in an absolute Windows path
+        # break that) and the guard refuses drive-letter absolutes before
+        # the write under test (TD-1406).
+        monkeypatch.chdir(tmp_path)
+        args = json.dumps({"path": "a.txt", "content": "new line\n"})
         mock = MockProvider(
             sequences={
                 "test-brain": [
