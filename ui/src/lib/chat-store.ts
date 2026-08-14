@@ -28,6 +28,13 @@ export interface ChatState {
   sessionId: string | null;
   turnState: SessionState["state"] | null;
   messages: ChatMessage[];
+  /** Set between a user send and the first assistant_delta — the "Working…"
+   *  shimmer's window (TD-1607). Also true while attached to a session the
+   *  daemon reports as running but no delta has arrived yet. */
+  awaitingFirstToken: boolean;
+  /** Seconds the last turn took, as measured by the daemon on turn_complete.
+   *  The UI never times turns itself (AGENTS §6). Cleared on the next send. */
+  lastTurnDuration: number | null;
 }
 
 export interface ChatDeps {
@@ -47,7 +54,13 @@ export interface ChatStore {
 }
 
 export function createChatState(): ChatState {
-  return { sessionId: null, turnState: null, messages: [] };
+  return {
+    sessionId: null,
+    turnState: null,
+    messages: [],
+    awaitingFirstToken: false,
+    lastTurnDuration: null,
+  };
 }
 
 /** Enter submits, Shift+Enter newlines — the composer's only key rule. */
@@ -64,6 +77,16 @@ export function showCancel(turnState: SessionState["state"] | null): boolean {
 /** The composer sends only when a session is bound and the socket is live. */
 export function canSend(sessionId: string | null, wsState: string): boolean {
   return sessionId !== null && wsState === "connected";
+}
+
+/** Turn-duration line (TD-1607): a sub-second turn still reads "1s" — "0s"
+ *  would claim work didn't happen. */
+export function formatTurnDuration(seconds: number): string {
+  const total = Math.max(1, Math.round(seconds));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return `${minutes}m ${rest}s`;
 }
 
 /** Terminal turn states seal any in-flight assistant message so it does not
@@ -89,6 +112,8 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     if (!sent) return false;
     nextId += 1;
     state.messages.push({ id: `m${nextId}`, role: "user", text: content, complete: true, at: Date.now() });
+    state.awaitingFirstToken = true;
+    state.lastTurnDuration = null;
     return true;
   }
 
@@ -105,6 +130,10 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     state.sessionId = sessionId;
     state.turnState = turnState;
     state.messages = [];
+    // Attaching to a session mid-turn shows the shimmer until the replayed
+    // (or live) deltas arrive; anything else is at rest.
+    state.awaitingFirstToken = turnState === "running";
+    state.lastTurnDuration = null;
     if (sessionId !== null) deps.attach(sessionId);
   }
 
@@ -115,6 +144,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       switch (event.type) {
         case "assistant_delta": {
           if (event.session_id !== state.sessionId) return;
+          state.awaitingFirstToken = false;
           const last = state.messages[state.messages.length - 1];
           if (last !== undefined && last.role === "assistant" && !last.complete) {
             // Append in place: the message object keeps its identity so the
@@ -135,11 +165,24 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
         case "turn_complete": {
           if (event.session_id !== state.sessionId) return;
           sealInFlightAssistant();
+          state.awaitingFirstToken = false;
+          // Daemon-measured seconds — the duration line reports what the wire
+          // said; the client never clocks turns itself (AGENTS §6).
+          state.lastTurnDuration = event.duration;
           return;
         }
         case "session_state": {
           if (event.session_id !== state.sessionId) return;
           state.turnState = event.state;
+          if (event.state === "running") {
+            // A replayed "running" can land after replayed deltas — don't
+            // resurrect the shimmer over an actively streaming message.
+            const last = state.messages[state.messages.length - 1];
+            state.awaitingFirstToken =
+              last === undefined || last.role !== "assistant" || last.complete;
+          } else {
+            state.awaitingFirstToken = false;
+          }
           if (isTerminal(event.state)) sealInFlightAssistant();
           return;
         }
@@ -196,6 +239,8 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       state.sessionId = null;
       state.turnState = null;
       state.messages = [];
+      state.awaitingFirstToken = false;
+      state.lastTurnDuration = null;
     },
   };
 }
