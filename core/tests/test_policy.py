@@ -20,7 +20,10 @@ from tstd.config import ConfigError
 from tstd.policy import (
     PolicyConfig,
     PolicyRule,
+    add_rule,
     load_policy,
+    propose_always_allow,
+    remove_rule,
     resolve,
     save_policy,
     summarize_arguments,
@@ -243,3 +246,52 @@ class TestPersistence:
         config_path.write_text("policy:\n  class_c_default: maybe\n", encoding="utf-8")
         with pytest.raises(ConfigError, match="class_c_default"):
             load_policy(tmp_path)
+
+
+# ── Always-allow rule generation and revocation (TD-803) ───────────────
+
+
+class TestAlwaysAllow:
+    def test_proposes_exact_command_not_blanket(self) -> None:
+        rule = propose_always_allow(SHELL, {"command": "rm -rf build/"}, B)
+        assert rule is not None
+        assert rule.tool == "shell"
+        assert rule.args == "rm -rf build/"  # exact command, never a `**` grant
+        assert rule.effect == "auto"
+
+    def test_proposes_workspace_relative_path(self, tmp_path: Path) -> None:
+        target = tmp_path / "src" / "app.py"
+        rule = propose_always_allow(FS_WRITE, {"path": str(target)}, B, tmp_path)
+        assert rule is not None
+        assert rule.tool == "fs_write"
+        assert rule.args == "src/app.py"
+
+    def test_class_c_is_never_always_allowable(self) -> None:
+        assert propose_always_allow(SHELL, {"command": "rm -rf build/"}, C) is None
+
+    def test_saved_rule_resolves_same_call_to_auto(self) -> None:
+        config = PolicyConfig()
+        rule = propose_always_allow(SHELL, {"command": "npm test"}, B)
+        assert rule is not None
+        add_rule(config, rule)
+        assert resolve(config, SHELL, {"command": "npm test"}, B) == "auto"
+        # Narrow scope: a different command still requires approval.
+        assert resolve(config, SHELL, {"command": "npm run build"}, B) == "ask"
+
+    def test_add_rule_is_idempotent(self) -> None:
+        config = PolicyConfig()
+        add_rule(config, _rule("shell", "npm test", "auto"))
+        add_rule(config, _rule("shell", "npm test", "auto"))
+        assert config.rules == [_rule("shell", "npm test", "auto")]
+
+    def test_add_rule_replaces_same_tool_args(self) -> None:
+        config = PolicyConfig(rules=[_rule("shell", "npm test", "ask")])
+        add_rule(config, _rule("shell", "npm test", "auto"))
+        assert len(config.rules) == 1
+        assert config.rules[0].effect == "auto"
+
+    def test_remove_rule_by_tool_args(self) -> None:
+        config = PolicyConfig(rules=[_rule("shell", "npm test"), _rule("fs_*", "src/**")])
+        assert remove_rule(config, "shell", "npm test") is True
+        assert config.rules == [_rule("fs_*", "src/**")]
+        assert remove_rule(config, "shell", "npm test") is False  # already gone

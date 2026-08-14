@@ -22,7 +22,7 @@ from tests.test_dispatch import make_classifier, make_config, start_loop, wait_f
 from tstd.autonomy.classifier import DecisionClass
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
-from tstd.policy import PolicyConfig, PolicyRule
+from tstd.policy import PolicyConfig, PolicyRule, load_policy
 from tstd.protocol import PROTOCOL_VERSION, AssistantDelta
 from tstd.protocol import ApprovalRequest as ApprovalRequestEvent
 from tstd.protocol import ToolResult as ToolResultEvent
@@ -109,6 +109,11 @@ class TestPayload:
         assert req.decision_class in ("A", "B", "C")
         assert req.summary  # human-readable
         assert req.reason == "policy rule `echo: **` → ask"
+        # TD-803: the card carries the rule "always allow" would write,
+        # so it can be shown before the user commits to saving it.
+        assert req.proposed_always_allow is not None
+        assert req.proposed_always_allow.tool == "echo"
+        assert req.proposed_always_allow.effect == "auto"
         assert session.state == "awaiting_approval"
 
         # Resolve so the runner unwinds cleanly.
@@ -357,3 +362,151 @@ class TestNever:
         # No approval_handler attached: the ask must raise, not execute.
         with pytest.raises(UnclassifiedToolCall, match="no approval handler"):
             await dispatcher.dispatch("tc-1", "echo", {"message": "hi"})
+
+
+# ── Always-allow (TD-803) ──────────────────────────────────────────────
+
+
+async def _recv_until(ws: Any, target_type: str, _timeout: float = 2.0) -> dict[str, Any]:
+    """Read socket messages until one carries ``target_type``.
+
+    Broadcast events (session_state, etc.) may interleave with the direct
+    response, so the caller reads by type rather than position.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _timeout
+    while loop.time() < deadline:
+        msg: dict[str, Any] = json.loads(
+            await asyncio.wait_for(ws.recv(), timeout=deadline - loop.time())
+        )
+        if msg.get("type") == target_type:
+            return msg
+    raise TimeoutError(f"no {target_type!r} message received")
+
+
+async def _open_workspace(daemon: Daemon, tmp_path: Path) -> tuple[Any, Session]:
+    """Open a workspace over the daemon socket; return (ws, session)."""
+    uri = f"ws://127.0.0.1:{daemon.ws_server.port}"
+    ws = await _connect_and_handshake(uri, daemon.ws_server.token)
+    await ws.send(json.dumps({"type": "open_workspace", "path": str(tmp_path)}))
+    opened = json.loads(await ws.recv())
+    session = daemon.session_registry.get(opened["session_id"])
+    assert session is not None
+    return ws, session
+
+
+async def _park(
+    session: Session,
+    tool_call_id: str,
+    tool: Tool,
+    arguments: dict[str, Any],
+    cls: DecisionClass,
+) -> asyncio.Task[Any]:
+    """Park a direct approval and wait until the session enters the state."""
+    parked = asyncio.create_task(
+        session.request_approval(
+            tool_call_id,
+            tool,
+            arguments,
+            cls,
+            f"Call {tool.name}",
+            f"decision class {cls.value} requires approval",
+        )
+    )
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 3.0
+    while loop.time() < deadline:
+        if session.state == "awaiting_approval":
+            break
+        await asyncio.sleep(0.02)
+    assert session.state == "awaiting_approval"
+    return parked
+
+
+class TestAlwaysAllow:
+    @pytest.mark.asyncio
+    async def test_always_allow_writes_narrow_rule_and_approves(self, tmp_path: Path) -> None:
+        daemon = Daemon(data_dir=tmp_path / "data")
+        daemon_task = asyncio.create_task(daemon.run())
+        for _ in range(50):
+            if daemon.ws_server.port:
+                break
+            await asyncio.sleep(0.05)
+
+        try:
+            ws, session = await _open_workspace(daemon, tmp_path)
+            parked = await _park(
+                session, "tc-1", Tool(name="shell"), {"command": "npm test"}, DecisionClass.B
+            )
+
+            await ws.send(
+                json.dumps(
+                    {"type": "always_allow", "session_id": session.id, "tool_call_id": "tc-1"}
+                )
+            )
+            outcome = await asyncio.wait_for(parked, timeout=2)
+            assert outcome.approved
+            assert session.state == "running"
+
+            # The rule was persisted, scoped to the exact command — not `**`.
+            policy = load_policy(tmp_path)
+            assert policy.rules == [PolicyRule(tool="shell", args="npm test", effect="auto")]
+
+            # It is listed and individually revocable.
+            await ws.send(json.dumps({"type": "list_policy_rules", "session_id": session.id}))
+            listed = await _recv_until(ws, "policy_rules")
+            assert listed["rules"] == [{"tool": "shell", "args": "npm test", "effect": "auto"}]
+
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "revoke_policy_rule",
+                        "session_id": session.id,
+                        "tool": "shell",
+                        "args": "npm test",
+                    }
+                )
+            )
+            revoked = await _recv_until(ws, "policy_rules")
+            assert revoked["rules"] == []
+            assert load_policy(tmp_path).rules == []
+            await ws.close()
+        finally:
+            daemon._shutdown_event.set()
+            await asyncio.wait_for(daemon_task, timeout=3)
+
+    @pytest.mark.asyncio
+    async def test_always_allow_rejects_class_c(self, tmp_path: Path) -> None:
+        daemon = Daemon(data_dir=tmp_path / "data")
+        daemon_task = asyncio.create_task(daemon.run())
+        for _ in range(50):
+            if daemon.ws_server.port:
+                break
+            await asyncio.sleep(0.05)
+
+        try:
+            ws, session = await _open_workspace(daemon, tmp_path)
+            parked = await _park(
+                session, "tc-1", Tool(name="shell"), {"command": "rm -rf /"}, DecisionClass.C
+            )
+
+            await ws.send(
+                json.dumps(
+                    {"type": "always_allow", "session_id": session.id, "tool_call_id": "tc-1"}
+                )
+            )
+            err = await _recv_until(ws, "error")
+            assert err["code"] == "class_c_not_always_allowable"
+
+            # Nothing was written and the approval is still pending.
+            assert load_policy(tmp_path).rules == []
+            assert session.state == "awaiting_approval"
+            assert not parked.done()
+
+            # Clean up: deny the still-parked call so the task unwinds.
+            assert session.resolve_approval("tc-1", False, "denied")
+            await asyncio.wait_for(parked, timeout=2)
+            await ws.close()
+        finally:
+            daemon._shutdown_event.set()
+            await asyncio.wait_for(daemon_task, timeout=3)
