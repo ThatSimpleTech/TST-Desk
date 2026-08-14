@@ -1,5 +1,10 @@
 @import './lib/tokens.css';
 
+:root {
+  /* Native widgets (scrollbars, form controls) follow the OS theme. */
+  color-scheme: light dark;
+}
+
 *,
 *::before,
 *::after {
