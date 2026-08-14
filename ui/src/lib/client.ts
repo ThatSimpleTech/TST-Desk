@@ -12,7 +12,7 @@
 // vitest's node environment with a fake transport, and in the webview with
 // the browser's WebSocket. No Tauri APIs are imported here.
 
-import type { DaemonEventUnion } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 
 /**
  * The daemon event types this client version understands. Messages whose
@@ -26,11 +26,17 @@ const KNOWN_EVENT_TYPES = new Set([
   "assistant_delta",
   "tool_call",
   "tool_result",
+  "shell_output",
   "approval_request",
   "decision_logged",
+  "checkpoint_notice",
   "cost_update",
+  "boundary_update",
   "turn_complete",
+  "tier_state",
+  "context_compacted",
   "steering_reloaded",
+  "tier_switched",
   "instruction_stack",
   "session_list",
   "error",
@@ -133,9 +139,28 @@ export class ProtocolClient {
   detach(sessionId: string): void {
     this.attachedSessions.delete(sessionId);
     this.lastSeqBySession.delete(sessionId);
-    if (this.socket && this.handshake === "idle") {
-      this.socket.send(JSON.stringify({ type: "detach", session_id: sessionId }));
-    }
+    this.send({ type: "detach", session_id: sessionId });
+  }
+
+  /**
+   * Send a client→daemon message. Returns false (and sends nothing) unless
+   * the socket is open and handshaken, so callers can decide whether an
+   * optimistic local update is warranted.
+   */
+  send(msg: ClientMessageUnion): boolean {
+    if (!this.socket || this.handshake !== "idle") return false;
+    this.socket.send(JSON.stringify(msg));
+    return true;
+  }
+
+  /** Open a workspace directory; the daemon answers with session_state. */
+  openWorkspace(path: string): void {
+    this.send({ type: "open_workspace", path });
+  }
+
+  /** Pin a session's model tier (TD-1006). The daemon acks with tier_state. */
+  setTier(sessionId: string, tier: "brain" | "worker" | "validator"): void {
+    this.send({ type: "set_tier", session_id: sessionId, tier });
   }
 
   /** Start the client: resolve daemon info and open the first connection. */
@@ -146,8 +171,7 @@ export class ProtocolClient {
 
   private sendAttach(sessionId: string, fromSeq: number): void {
     // Only meaningful on an open, handshaken socket.
-    if (!this.socket || this.handshake !== "idle") return;
-    this.socket.send(JSON.stringify({ type: "attach", session_id: sessionId, from_seq: fromSeq }));
+    this.send({ type: "attach", session_id: sessionId, from_seq: fromSeq });
   }
 
   /** Permanently stop: close the socket, cancel retries, mark stopped. */

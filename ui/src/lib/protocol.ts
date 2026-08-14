@@ -223,6 +223,17 @@ export interface CostUpdate extends DaemonEvent {
   session_cost: number;
   total_cost: number;
   classifier_cost: number;
+  /** Session spend per tier (tiers with spend only) — TD-1006. */
+  cost_by_tier: Record<string, number>;
+}
+
+/** Active tier + configured slugs (TD-1006). */
+export interface TierState extends DaemonEvent {
+  type: "tier_state";
+  session_id: string;
+  tier: "brain" | "worker" | "validator";
+  override: "brain" | "worker" | "validator" | null;
+  model_slugs: Record<string, string>;
 }
 
 export interface BoundaryUpdate extends DaemonEvent {
@@ -310,6 +321,13 @@ export interface ContextCompacted extends DaemonEvent {
   tokens_after: number;
 }
 
+export interface TierSwitched extends DaemonEvent {
+  type: "tier_switched";
+  session_id: string;
+  tier: "brain" | "worker" | "validator";
+  previous?: "brain" | "worker" | "validator" | null;
+}
+
 export type DaemonEventUnion =
   | Ready
   | SessionState
@@ -323,8 +341,10 @@ export type DaemonEventUnion =
   | CostUpdate
   | BoundaryUpdate
   | TurnComplete
+  | TierState
   | ContextCompacted
   | SteeringReloaded
+  | TierSwitched
   | InstructionStack
   | SessionList
   | PolicyRules

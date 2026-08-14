@@ -1,15 +1,25 @@
 <script lang="ts">
 	// Application shell: two-pane workspace layout using only design tokens.
-	// Left = chat pane, right = activity pane. Both are placeholder chrome in
-	// v0.1; their real content arrives with TD-1003/TD-1004.
-	// The connection banner (TD-1003) sits in the shell header so daemon/socket
-	// state is visible at all times.
+	// Left = chat pane, right = activity pane. The connection banner (TD-1003)
+	// sits in the shell header so daemon/socket state is visible at all times.
+	// The activity pane hosts the activity timeline (TD-1005), fed live from
+	// the daemon event stream.
+	import { onMount } from 'svelte';
 	import SplitPane from './SplitPane.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
+	import ActivityTimeline from './ActivityTimeline.svelte';
+	import { onEvent } from '../connection-status.svelte.js';
+	import { push } from '../timeline-store.svelte.js';
+	import ChatPane from './chat/ChatPane.svelte';
+	import TitleBar from './TitleBar.svelte';
+
+	// Feed every daemon event into the timeline for the lifetime of the shell.
+	onMount(() => onEvent(push));
 </script>
 
 <header class="shell-header">
 	<span class="shell-title">TST Desk</span>
+	<TitleBar />
 	<span class="shell-spacer"></span>
 	<ConnectionBanner />
 </header>
@@ -17,10 +27,12 @@
 <div class="shell-body">
 	<SplitPane>
 		{#snippet left()}
-			<section class="pane-chat" aria-label="Chat pane"></section>
+			<section class="pane-chat" aria-label="Chat pane"><ChatPane /></section>
 		{/snippet}
 		{#snippet right()}
-			<section class="pane-activity" aria-label="Activity pane"></section>
+			<section class="pane-activity" aria-label="Activity pane">
+				<ActivityTimeline />
+			</section>
 		{/snippet}
 	</SplitPane>
 </div>
@@ -29,6 +41,7 @@
 	.shell-header {
 		display: flex;
 		align-items: center;
+		gap: var(--space-4);
 		height: var(--space-12);
 		padding: 0 var(--space-6);
 		border-bottom: var(--border-width) solid var(--color-border);
