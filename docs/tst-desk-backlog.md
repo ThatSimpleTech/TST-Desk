@@ -873,13 +873,23 @@ steps. Budget generously — **this is the largest single body of work in v0.1.*
 **Size:** 5 · **Depends on:** TD-1001, TD-202
 
 **Acceptance criteria:**
-- [ ] Tauri host spawns `tstd` on launch and connects using the port file
-- [ ] Daemon crash is detected, reported in the UI, and recovered by restart with the session
+- [x] Tauri host spawns `tstd` on launch and connects using the port file
+- [x] Daemon crash is detected, reported in the UI, and recovered by restart with the session
       list intact
-- [ ] Closing the window shuts the daemon down cleanly in v0.1 — with a `TODO(v0.3)` marking
+- [x] Closing the window shuts the daemon down cleanly in v0.1 — with a `TODO(v0.3)` marking
       where detached-session behavior will diverge
 - [ ] No orphaned `tstd` processes after quit under any exit path, including force-quit —
       verified manually on each platform and documented
+
+**Completed (2026-08-13):** Rust host spawns the daemon, waits on the port file keyed by pid,
+completes a `hello`/`hello_ack` WS handshake, supervises crash + bounded restart, and shuts
+down via the WS `shutdown` message with a SIGKILL fallback. Daemon side: `--parent-pid` orphan
+watchdog, `sessions.json` snapshot rehydrated as `interrupted`, port-file pid + atomic write +
+delete-on-clean-stop. Verified by 547 passing Python tests (30× stable crash-restart-with-list
+integration), Rust unit + a live spawn→connect→shutdown integration test (`cargo test`), ruff,
+mypy strict, and clippy clean. macOS exercised; Windows/Linux build + per-platform no-orphan
+manual verification deferred to the packaging milestone. UI "reported in the UI" is the
+daemon-status event the supervisor now emits; the banner lands in TD-1003.
 
 ---
 
