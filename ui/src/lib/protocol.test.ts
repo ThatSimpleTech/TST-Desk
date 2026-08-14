@@ -11,6 +11,7 @@ import type {
   UserMessage,
   Approve,
   Deny,
+  Resume,
   Cancel,
   Attach,
   Detach,
@@ -158,6 +159,19 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.type).toBe("session_state");
     expect(m.state).toBe("running");
     expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("session_state_paused", () => {
+    const m = fixtures.session_state_paused as SessionState;
+    expect(m.type).toBe("session_state");
+    expect(m.state).toBe("paused");
+    expect(isString(m.reason)).toBe(true);
+  });
+
+  it("resume", () => {
+    const m = fixtures.resume as Resume;
+    expect(m.type).toBe("resume");
+    expect(isString(m.session_id)).toBe(true);
   });
 
   it("assistant_delta", () => {

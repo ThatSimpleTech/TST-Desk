@@ -44,6 +44,11 @@ export interface Deny extends ClientMessage {
   reason?: string | null;
 }
 
+export interface Resume extends ClientMessage {
+  type: "resume";
+  session_id: string;
+}
+
 export interface Cancel extends ClientMessage {
   type: "cancel";
   session_id: string;
@@ -85,6 +90,7 @@ export type ClientMessageUnion =
   | UserMessage
   | Approve
   | Deny
+  | Resume
   | Cancel
   | Attach
   | Detach
@@ -114,6 +120,7 @@ export interface SessionState extends DaemonEvent {
     | "idle"
     | "running"
     | "awaiting_approval"
+    | "paused"
     | "complete"
     | "failed"
     | "cancelled"

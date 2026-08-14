@@ -33,6 +33,7 @@ from .protocol import (
     HandshakeError,
     ListSessions,
     OpenWorkspace,
+    Resume,
     SessionList,
     SessionSummary,
     Shutdown,
@@ -425,6 +426,40 @@ class Daemon:
             events = found.event_log.events_from(found.event_log.last_seq)
             if events:
                 return events[0].model_dump_json()
+            return None
+
+        if isinstance(msg, Resume):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            # Reload the workspace boundary so raised caps take effect;
+            # the loop re-checks caps before its next model call and
+            # re-pauses if the new caps are still exceeded.
+            try:
+                found.boundary_config = load_workspace_boundary(found.workspace_path)
+            except ConfigError as e:
+                log.warning(
+                    "boundary config invalid on resume; keeping current caps",
+                    extra={"extra_fields": {"session_id": msg.session_id, "error": str(e)}},
+                )
+            await found.resume()
+            cfg = found.boundary_config
+            await found.event_log.add(
+                BoundaryUpdateEvent(
+                    session_id=found.id,
+                    writable_paths=list(cfg.boundary.writable_paths),
+                    allowed_commands=list(cfg.boundary.allowed_commands),
+                    network=cfg.boundary.network,
+                    spend_usd=cfg.caps.spend_usd,
+                    wall_clock_hours=cfg.caps.wall_clock_hours,
+                    max_iterations=cfg.caps.max_iterations,
+                    source="resume",
+                    seq=1,
+                )
+            )
             return None
 
         if isinstance(msg, Attach):
