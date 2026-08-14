@@ -61,6 +61,7 @@ from .protocol import (
     HandshakeError,
     ListPolicyRules,
     ListSessions,
+    NewSession,
     OpenWorkspace,
     PolicyRules,
     PolicyRuleSummary,
@@ -672,111 +673,19 @@ class Daemon:
             # Plant the commented config template on first open (TD-1103) —
             # never overwrites an existing config.
             await asyncio.to_thread(scaffold_workspace_config, workspace_path)
-            sess = await self.session_registry.create(msg.path)
-            # Persist the new session and keep its state durable going forward.
-            await self._session_store.upsert(sess.id, msg.path, sess.state)
-            # Bound method vs the ``__call__``-shaped EventSubscriber protocol:
-            # mypy can't confirm the shapes line up, though they are identical.
-            sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
-            router = TierRouter()
-            # So a later set_tier reaches the loop's router (TD-1006).
-            sess.router = router
+            return await self._start_session(msg.path)
 
-            # Workspace boundary (TD-706): resolve `.tst/config.yaml` or
-            # defaults; a bad config falls back to defaults with the
-            # actionable error logged and surfaced in the event source.
-            try:
-                sess.boundary_config = load_workspace_boundary(msg.path)
-                source = boundary_source(msg.path)
-            except ConfigError as e:
-                log.warning(
-                    "workspace boundary config invalid; using defaults",
-                    extra={"extra_fields": {"workspace_path": msg.path, "error": str(e)}},
+        if isinstance(msg, NewSession):
+            # Anchor on an existing session: its workspace becomes the new
+            # session's workspace (TD-1701). The path comes from the
+            # registry, not the client — no re-validation, no scaffolding.
+            anchor = self.session_registry.get(msg.session_id)
+            if anchor is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
                 )
-                source = f"defaults — invalid config ({e})"
-
-            # Approval policy (TD-801/802): same file, policy: section;
-            # an invalid section falls back to rule-free defaults.
-            try:
-                sess.policy = load_policy(msg.path)
-            except ConfigError as e:
-                log.warning(
-                    "workspace policy config invalid; using defaults",
-                    extra={"extra_fields": {"workspace_path": msg.path, "error": str(e)}},
-                )
-
-            # Provider is created lazily via a factory closure so that
-            # sessions can be opened and attached without requiring a key
-            # to be present.  The provider is only needed when the loop
-            # processes its first user message.
-            async def get_provider() -> ProviderLike:
-                return await self._ensure_provider()
-
-            # Tool stack (TD-604/605, TD-1401): the daemon hands every
-            # session the builtin registry + dispatcher; the loop attaches
-            # the classifier, path guard, and checkpointer on first turn.
-            tool_registry = create_registry()
-            tool_dispatcher = ToolDispatcher(tool_registry)
-            register_builtin_handlers(
-                tool_dispatcher,
-                allowed_commands=tuple(sess.boundary_config.boundary.allowed_commands),
-            )
-
-            sink = self._audit_writer
-            runner = SessionRunner(
-                sess,
-                loop_factory=lambda s: agent_loop(
-                    s,
-                    router,
-                    get_provider,
-                    self.config,
-                    tool_registry=tool_registry,
-                    tool_dispatcher=tool_dispatcher,
-                    audit_sink=sink,
-                ),
-            )
-            await runner.start()
-            if self._audit_writer is not None:
-                self._audit_writer.attach_session(sess)
-            await self.session_registry.register_runner(sess.id, runner)
-            self.state.active_sessions += 1
-            log.info(
-                "session opened",
-                extra={
-                    "extra_fields": {
-                        "session_id": sess.id,
-                        "workspace_path": msg.path,
-                    }
-                },
-            )
-
-            # Emit the resolved boundary after session_state (seq 1) so
-            # the client sees the wall it opened under (TD-706).
-            cfg = sess.boundary_config
-            await sess.event_log.add(
-                BoundaryUpdateEvent(
-                    session_id=sess.id,
-                    writable_paths=list(cfg.boundary.writable_paths),
-                    allowed_commands=list(cfg.boundary.allowed_commands),
-                    network=cfg.boundary.network,
-                    spend_usd=cfg.caps.spend_usd,
-                    wall_clock_hours=cfg.caps.wall_clock_hours,
-                    max_iterations=cfg.caps.max_iterations,
-                    source=source,
-                    seq=1,
-                )
-            )
-
-            # Emit the initial tier state (TD-1006) so the title bar can
-            # render its chips with the configured slugs before the first
-            # turn runs.
-            await sess.event_log.add(_tier_state_event(sess.id, router, self.config))
-
-            # Return the session_state event (seq=1, "running")
-            events = sess.event_log.events_from(1)
-            if events:
-                return events[0].model_dump_json()
-            return None
+            return await self._start_session(anchor.workspace_path)
 
         if isinstance(msg, UserMessage):
             found = self.session_registry.get(msg.session_id)
@@ -1051,6 +960,122 @@ class Daemon:
             self._shutdown_event.set()
             return None
 
+        return None
+
+    async def _start_session(self, workspace_path: str) -> str | None:
+        """Create, wire, and start a session in ``workspace_path``.
+
+        Shared by ``open_workspace`` and ``new_session`` (TD-1701): both grow
+        a session with the same router/boundary/policy/tool wiring; only the
+        path's provenance differs (client-supplied and validated vs anchored
+        on an existing live session).  Returns the session's first event
+        (``session_state``, running) as the wire reply, mirroring
+        ``open_workspace``'s response.
+        """
+        sess = await self.session_registry.create(workspace_path)
+        # Persist the new session and keep its state durable going forward.
+        await self._session_store.upsert(sess.id, workspace_path, sess.state)
+        # Bound method vs the ``__call__``-shaped EventSubscriber protocol:
+        # mypy can't confirm the shapes line up, though they are identical.
+        sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
+        router = TierRouter()
+        # So a later set_tier reaches the loop's router (TD-1006).
+        sess.router = router
+
+        # Workspace boundary (TD-706): resolve `.tst/config.yaml` or
+        # defaults; a bad config falls back to defaults with the
+        # actionable error logged and surfaced in the event source.
+        try:
+            sess.boundary_config = load_workspace_boundary(workspace_path)
+            source = boundary_source(workspace_path)
+        except ConfigError as e:
+            log.warning(
+                "workspace boundary config invalid; using defaults",
+                extra={"extra_fields": {"workspace_path": workspace_path, "error": str(e)}},
+            )
+            source = f"defaults — invalid config ({e})"
+
+        # Approval policy (TD-801/802): same file, policy: section;
+        # an invalid section falls back to rule-free defaults.
+        try:
+            sess.policy = load_policy(workspace_path)
+        except ConfigError as e:
+            log.warning(
+                "workspace policy config invalid; using defaults",
+                extra={"extra_fields": {"workspace_path": workspace_path, "error": str(e)}},
+            )
+
+        # Provider is created lazily via a factory closure so that
+        # sessions can be opened and attached without requiring a key
+        # to be present.  The provider is only needed when the loop
+        # processes its first user message.
+        async def get_provider() -> ProviderLike:
+            return await self._ensure_provider()
+
+        # Tool stack (TD-604/605, TD-1401): the daemon hands every
+        # session the builtin registry + dispatcher; the loop attaches
+        # the classifier, path guard, and checkpointer on first turn.
+        tool_registry = create_registry()
+        tool_dispatcher = ToolDispatcher(tool_registry)
+        register_builtin_handlers(
+            tool_dispatcher,
+            allowed_commands=tuple(sess.boundary_config.boundary.allowed_commands),
+        )
+
+        sink = self._audit_writer
+        runner = SessionRunner(
+            sess,
+            loop_factory=lambda s: agent_loop(
+                s,
+                router,
+                get_provider,
+                self.config,
+                tool_registry=tool_registry,
+                tool_dispatcher=tool_dispatcher,
+                audit_sink=sink,
+            ),
+        )
+        await runner.start()
+        if self._audit_writer is not None:
+            self._audit_writer.attach_session(sess)
+        await self.session_registry.register_runner(sess.id, runner)
+        self.state.active_sessions += 1
+        log.info(
+            "session opened",
+            extra={
+                "extra_fields": {
+                    "session_id": sess.id,
+                    "workspace_path": workspace_path,
+                }
+            },
+        )
+
+        # Emit the resolved boundary after session_state (seq 1) so
+        # the client sees the wall it opened under (TD-706).
+        cfg = sess.boundary_config
+        await sess.event_log.add(
+            BoundaryUpdateEvent(
+                session_id=sess.id,
+                writable_paths=list(cfg.boundary.writable_paths),
+                allowed_commands=list(cfg.boundary.allowed_commands),
+                network=cfg.boundary.network,
+                spend_usd=cfg.caps.spend_usd,
+                wall_clock_hours=cfg.caps.wall_clock_hours,
+                max_iterations=cfg.caps.max_iterations,
+                source=source,
+                seq=1,
+            )
+        )
+
+        # Emit the initial tier state (TD-1006) so the title bar can
+        # render its chips with the configured slugs before the first
+        # turn runs.
+        await sess.event_log.add(_tier_state_event(sess.id, router, self.config))
+
+        # Return the session_state event (seq=1, "running")
+        events = sess.event_log.events_from(1)
+        if events:
+            return events[0].model_dump_json()
         return None
 
     async def _handle_attach(self, msg: Attach, session: Session, connection: Any) -> str | None:

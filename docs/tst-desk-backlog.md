@@ -1701,14 +1701,14 @@ notifications first, because they change how the app is used every day.
 **Size:** 3 · **Depends on:** TD-1005, TD-1601, TD-1608
 
 **Acceptance criteria:**
-- [ ] A ≈260px left rail lists the workspace's sessions — live and interrupted —
+- [x] A ≈260px left rail lists the workspace's sessions — live and interrupted —
       newest first, with a state indicator per row
-- [ ] Clicking a session attaches the window to it; the attached session is marked
-- [ ] A New-session action creates and attaches a fresh session in the current
+- [x] Clicking a session attaches the window to it; the attached session is marked
+- [x] A New-session action creates and attaches a fresh session in the current
       workspace
-- [ ] The rail collapses to an icon strip and the collapsed state persists
-- [ ] A filter field narrows the list client-side
-- [ ] E16 tokens, type roles, and icon map throughout; no emoji
+- [x] The rail collapses to an icon strip and the collapsed state persists
+- [x] A filter field narrows the list client-side
+- [x] E16 tokens, type roles, and icon map throughout; no emoji
 
 **Notes:** protocol discovery first — `list_sessions` and attach/detach/replay
 (TD-206) exist. If only `open_workspace` creates sessions, add a `new_session`
@@ -1716,6 +1716,30 @@ verb in `session_store`/protocol (core change is in scope for this story;
 keep it minimal — the heavy session lifecycle stays where it is). Rename/star/
 delete wait for durable history (v0.3); rows are keyed by session id. User
 request 2026-08-14: "the collapsible chat history on the left, like Claude."
+
+**Completed (2026-08-14):** `SessionRail.svelte` mounts in the AppShell body
+left of the SplitPane — 260px expanded (filter field + New button + scrollable
+rows: short-id title, workspace·recency·state subtitle, tone dot matching the
+title bar's indicator mapping), 48px collapsed (panel-left expand, plus-new,
+one dot per session row). Collapse persists to localStorage under
+`tstdesk.sessionRailCollapsed`. New store `ui/src/lib/sessions.svelte.ts`
+reduces `session_list`/`session_state` over the connection fan-out —
+rows newest-first by the daemon's `updated_at`, refreshes on connect and on
+state touches (coalesced to one in-flight `list_sessions`), filter matches
+id and workspace path client-side. Row clicks drive two new seams:
+`chatStore.selectSession` (detach old, clear, attach with replay — the
+existing from_seq path) and `focusSession` in session-status (re-targets the
+title bar's session-scoped fields; replay repopulates boundary/tier/cost).
+Protocol gained `new_session` (`{type, session_id}` — the anchor); the
+daemon factors open_workspace's creation into `_start_session` and replies
+with the fresh session's first `session_state`, which the rail focuses on
+sight. `SessionSummary.state` gained `paused` (was a latent validation crash
+once a paused session hit the list). New icons: panel-left, plus, search.
+Tests: 23 vitest cases for the rail store + 3 chat-store selection cases
+(312 total green); 3 daemon integration tests + 1 protocol round-trip for
+`new_session` (1060 passed, 2 skipped in core). Deferred: rename/star/delete
+(v0.3 durable history), live refresh of *other* windows' session rows (needs
+a daemon-pushed `session_list`; today's refreshes are window-initiated).
 
 ---
 
