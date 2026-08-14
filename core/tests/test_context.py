@@ -131,9 +131,8 @@ class TestPrecedence:
         sources = _make_resolver(home).resolve(ws)
         nested = [s for s in sources if s.precedence == Precedence.NESTED]
         assert len(nested) == 3
-        # discovery renders subtrees with the OS separator; TD-1406 tracks
-        # making them POSIX-stable.  Compare separator-insensitively.
-        subtrees = [(s.subtree or "").replace("\\", "/") for s in nested]
+        # Subtree labels are POSIX-stable on every platform (TD-1406).
+        subtrees = [s.subtree or "" for s in nested]
         assert subtrees == ["src", "src/api", "src/api/deep"]
 
 
@@ -159,12 +158,8 @@ class TestSubtree:
             },
         )
         sources = _make_resolver(home).resolve(ws)
-        # Separator-insensitive keys — see TestPrecedence above (TD-1406).
-        nested = {
-            (s.subtree or "").replace("\\", "/"): s
-            for s in sources
-            if s.precedence == Precedence.NESTED
-        }
+        # Subtree labels are POSIX-stable on every platform (TD-1406).
+        nested = {(s.subtree or ""): s for s in sources if s.precedence == Precedence.NESTED}
         assert nested["src"] is not None
         assert nested["src/api"] is not None
 

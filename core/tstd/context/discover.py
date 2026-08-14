@@ -213,7 +213,7 @@ class SteeringFileResolver:
                 continue
             chosen_path, is_fallback, shadowed = result
             rel = root_path.relative_to(workspace)
-            subtree = str(rel) if rel.parts else "."
+            subtree = rel.as_posix() if rel.parts else "."
             found.append((len(rel.parts), subtree, chosen_path, is_fallback, shadowed))
 
         found.sort(key=lambda item: (item[0], item[1]))
