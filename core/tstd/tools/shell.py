@@ -41,6 +41,7 @@ import re
 import shlex
 import shutil
 import signal
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -175,6 +176,9 @@ class _StreamCapture:
 
 def _kill_process_group(pid: int) -> None:
     """SIGKILL the process group led by *pid*, if it still exists."""
+    if sys.platform == "win32":
+        # No process-group kill on Windows; the caller's proc.kill() covers it.
+        return
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(pid, signal.SIGKILL)
 
@@ -337,5 +341,7 @@ async def run_shell(
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
-    exit_code = proc.returncode if proc.returncode is not None else -signal.SIGKILL
+    # A cancelled process may have no returncode; -9 is the conventional
+    # "killed by SIGKILL" sentinel (SIGKILL itself is absent on Windows).
+    exit_code = proc.returncode if proc.returncode is not None else -9
     return _format_result(header, exit_code, out, err)
