@@ -1184,13 +1184,13 @@ daemon's `open_workspace` — daemon sessions previously had no dispatcher.
 **Size:** 5 · **Depends on:** TD-602, TD-702
 
 **Acceptance criteria:**
-- [ ] Path escape attempts across all vectors in TD-602
-- [ ] Steering-file write refusal
-- [ ] Environment sanitization for child processes
-- [ ] Secret redaction across logs, audit, diagnostics, and error messages
-- [ ] Non-loopback bind refusal
-- [ ] Classifier bypass attempts
-- [ ] **Every test in this suite is a release blocker**
+- [x] Path escape attempts across all vectors in TD-602
+- [x] Steering-file write refusal
+- [x] Environment sanitization for child processes
+- [x] Secret redaction across logs, audit, diagnostics, and error messages
+- [x] Non-loopback bind refusal
+- [x] Classifier bypass attempts
+- [x] **Every test in this suite is a release blocker**
 
 ---
 
@@ -1198,10 +1198,10 @@ daemon's `open_workspace` — daemon sessions previously had no dispatcher.
 **Size:** 3 · **Depends on:** TD-501, TD-503, TD-504
 
 **Acceptance criteria:**
-- [ ] Fixture workspace tree exercising every precedence, fallback, glob, and import case
-- [ ] Golden-file assertions on assembled prompts
-- [ ] Property test: assembly is deterministic for identical inputs
-- [ ] Cache-prefix stability asserted across turns
+- [x] Fixture workspace tree exercising every precedence, fallback, glob, and import case
+- [x] Golden-file assertions on assembled prompts
+- [x] Property test: assembly is deterministic for identical inputs
+- [x] Cache-prefix stability asserted across turns
 
 ---
 
