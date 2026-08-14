@@ -1,0 +1,16 @@
+{
+  "recorded_at": "2026-08-13",
+  "unit": "seconds (median of repetitions)",
+  "threshold": "fail when a fresh median exceeds 3x baseline or baseline + 0.25s",
+  "note": "first_token_latency uses an instant mock provider: it measures the internal pipeline, not network or model time.",
+  "metrics": {
+    "daemon_cold_start": 0.011120499926619232,
+    "session_start_large_repo": 0.01211370900273323,
+    "steering_resolution": 0.0025086249224841595,
+    "first_token_latency": 0.04137274995446205,
+    "timeline_render_1000": null
+  },
+  "pending": {
+    "timeline_render_1000": "TD-1005"
+  }
+}

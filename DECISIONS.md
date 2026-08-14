@@ -1606,3 +1606,43 @@ the model saw. Deltas are the model's own stream; the exfiltration
 vector the story closes is tool payloads and errors, and the known-shape
 patterns (API keys, PEM headers) do not appear in ordinary prose.
 Recorded here so the exclusion is a decision, not an omission.
+
+---
+
+## 2026-08-13 — TD-1404: Performance baselines
+
+### 1. First-token latency is a pipeline measurement
+
+**Decision:** The first-token metric uses the mock provider (instant
+responses), so it measures the internal pipeline — context assembly,
+routing, event fan-out — and never network or model time.  The baseline
+file's `note` field says this explicitly.
+
+**Rationale:** A live-model measurement would conflate provider variance
+with our own regressions and could never run in CI.  The mock isolates
+the part we control.
+
+### 2. The threshold is 3x baseline or +250 ms
+
+**Decision:** `test_benchmarks.py` fails when a fresh median exceeds
+`max(3 * baseline, baseline + 0.25s)`.
+
+**Rationale:** Timing tests on shared CI runners flap; a tight threshold
+trains everyone to ignore it.  The slack term keeps sub-100 ms metrics
+quiet on loaded machines while the factor still catches the regressions
+that matter — an O(n) scan added to `open_workspace`, a steering
+assembly that grows superlinear.  Baselines re-record only via
+`scripts/benchmarks.py --record`, a deliberate act; the test never
+writes the file it checks against.
+
+### 3. Timeline render is recorded as a named gap, not a proxy
+
+**Decision:** `timeline_render_1000` sits in the baseline file as
+`null` with `pending: TD-1005`, and a structural test keeps the pending
+set honest.
+
+**Rationale:** The timeline component does not exist yet (TD-1005 is in
+planning).  A render proxy — protocol ingestion, store update — would
+measure the wrong thing and give false comfort under the criterion's
+name.  When TD-1005 lands, the metric gets a measurer and a baseline in
+one follow-up.
