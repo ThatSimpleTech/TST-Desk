@@ -342,7 +342,17 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.cost)).toBe(true);
     expect(m.tier).toBe("worker");
     expect(isNumber(m.duration)).toBe(true);
+    expect(isBoolean(m.failed)).toBe(true);
+    expect(m.failed).toBe(false);
+    expect(m.error_code).toBeNull();
     expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("turn_complete_failed", () => {
+    const m = fixtures.turn_complete_failed as TurnComplete;
+    expect(m.type).toBe("turn_complete");
+    expect(m.failed).toBe(true);
+    expect(m.error_code).toBe("auth_failed");
   });
 
   it("context_compacted", () => {
