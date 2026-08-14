@@ -2184,6 +2184,48 @@ narrowest stable identity that distinguishes two rules.  Idempotent add
 keeps re-affirming "always allow" for the same call from piling up
 duplicate rules in the settings list.
 
+## 2026-08-14 — TD-1007: Approval cards
+
+Decisions made during the approval-card build, completed on top of TD-803's
+always-allow daemon support.
+
+### 1. The "Always allow" button is TD-1007's; the rule lifecycle is TD-803's
+
+**Decision:** The card's third action — "Always allow in this workspace" —
+lives in TD-1007. It renders only when the daemon's `approval_request`
+carries a `proposed_always_allow` rule, and clicking it sends the
+`always_allow` client message that TD-803's daemon already handles (narrow
+rule generation, `(tool, args)` identity, class-C refusal).
+
+**Rationale:** TD-803 built the whole rule lifecycle but no UI; TD-1007 owns
+the card. Splitting the button out would have meant TD-1007 reimplementing
+rule generation (a collision), while leaving it out left AC #2 unmet. The
+card is a thin client of TD-803's message, so the two lanes never overlap.
+
+### 2. The button is gated on a non-null proposal, not on the class alone
+
+**Decision:** `isAlwaysAllowable` returns true only when
+`proposedAlwaysAllow !== null` and `decisionClass !== 'C'`. The class check
+is defensive: the daemon never proposes a rule for class C, so a proposal
+already implies allowability, but the explicit guard keeps the wall absolute
+even if a future proposal leaked a class-C effect.
+
+**Rationale:** The button must never offer to auto-approve a class-C call
+(the wall). Deriving the button's presence from the daemon's own proposal
+means the UI never invents a rule the policy model didn't already accept.
+
+### 3. The store mutates an exported `$state` array instead of reassigning it
+
+**Decision:** `approval-store.svelte.ts` exports `const pending = $state(...)`
+and mutates it with `push`/`splice`. Reassigning (`pending = [...pending]`)
+is rejected by the Svelte 5 / rolldown compiler (`state_invalid_export`):
+an exported `$state` binding may only be mutated in place.
+
+**Rationale:** The list has to be reactive and exportable to the card/bar.
+In-place mutation goes through the deep proxy (same as timeline-store and
+chat-store), so reassignment — the old Svelte 4 store idiom — is neither
+needed nor allowed.
+
 ## 2026-08-14 — TD-1008: Errors and notifications
 
 Decisions made during the errors-and-notifications build.
