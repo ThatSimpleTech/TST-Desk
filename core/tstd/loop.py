@@ -24,12 +24,14 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
 
+from .compaction import maybe_compact
 from .config import ModelConfig
 from .context import PromptAssembler
 from .context.stack import build_instruction_stack
+from .context.tokens import TokenCounter, make_token_counter
 from .cost import CostTracker
 from .logging import get_logger
-from .protocol import AssistantDelta, SteeringReloaded, TurnComplete
+from .protocol import AssistantDelta, ContextCompacted, SteeringReloaded, TurnComplete
 from .protocol import ToolCall as ToolCallEvent
 from .protocol import ToolResult as ToolResultEvent
 from .provider import (
@@ -347,6 +349,9 @@ async def agent_loop(
     # Tracks the last steering prefix hash for change detection (TD-509).
     _last_prefix_hash: str | None = None
 
+    # One token counter per model slug (TD-405); encoders load once.
+    _token_counters: dict[str, TokenCounter] = {}
+
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:
         # 1. Wait for user input
@@ -407,6 +412,44 @@ async def agent_loop(
                     },
                 )
             _last_prefix_hash = assembled.prefix_hash
+
+            # 2b.2 Context window guard (TD-405): when the estimated
+            #     prompt approaches the tier's context window, compact
+            #     older turns into a summary.  Cuts land at user-message
+            #     boundaries, so in-flight tool-call pairs are never
+            #     split.  Announced on the timeline, never silent.  The
+            #     steering block and manifest were just re-read from
+            #     disk at 2b, so instructions survive compaction.
+            counter = _token_counters.get(tier_cfg.slug)
+            if counter is None:
+                counter = make_token_counter(tier_cfg.slug)
+                _token_counters[tier_cfg.slug] = counter
+            compacted, compaction = maybe_compact(messages, tier_cfg, counter)
+            if compaction is not None:
+                messages = compacted
+                await session.event_log.add(
+                    ContextCompacted(
+                        session_id=session.id,
+                        dropped_messages=compaction.dropped_messages,
+                        kept_messages=compaction.kept_messages,
+                        tokens_before=compaction.tokens_before,
+                        tokens_after=compaction.tokens_after,
+                        seq=1,  # overwritten by the event log
+                    )
+                )
+                log.info(
+                    "context compacted",
+                    extra={
+                        "extra_fields": {
+                            "session_id": session.id,
+                            "tier": tier,
+                            "dropped_messages": compaction.dropped_messages,
+                            "tokens_before": compaction.tokens_before,
+                            "tokens_after": compaction.tokens_after,
+                            "counter_method": compaction.counter_method,
+                        }
+                    },
+                )
 
             log.info(
                 "turn start",

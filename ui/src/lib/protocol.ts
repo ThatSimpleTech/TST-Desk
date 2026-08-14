@@ -165,6 +165,15 @@ export interface Error extends DaemonEvent {
   message: string;
 }
 
+export interface ContextCompacted extends DaemonEvent {
+  type: "context_compacted";
+  session_id: string;
+  dropped_messages: number;
+  kept_messages: number;
+  tokens_before: number;
+  tokens_after: number;
+}
+
 export type DaemonEventUnion =
   | Ready
   | SessionState
@@ -175,4 +184,5 @@ export type DaemonEventUnion =
   | DecisionLogged
   | CostUpdate
   | TurnComplete
+  | ContextCompacted
   | Error;
