@@ -35,7 +35,7 @@ from .autonomy import (
     DecisionLedger,
 )
 from .compaction import maybe_compact
-from .config import ModelConfig
+from .config import ConfigError, ModelConfig
 from .context import PromptAssembler
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
@@ -434,8 +434,23 @@ async def agent_loop(
     assembler = prompt_assembler or PromptAssembler(session.workspace_path)
 
     # External-import approvals (TD-505): approved paths are durable per
-    # workspace; denied paths are session-scoped and not re-prompted.
-    approved_imports: set[Path] = set(load_approved_imports(session.workspace_path))
+    # workspace; denied paths are session-scoped and not re-prompted.  A
+    # malformed config falls back to an empty allowlist (same
+    # tolerate-with-warning pattern as the daemon's config loaders) rather
+    # than crashing the session at loop start.
+    try:
+        approved_imports: set[Path] = set(load_approved_imports(session.workspace_path))
+    except ConfigError as e:
+        log.warning(
+            "approved-imports config invalid; using empty allowlist",
+            extra={
+                "extra_fields": {
+                    "workspace_path": str(session.workspace_path),
+                    "error": str(e),
+                }
+            },
+        )
+        approved_imports = set()
     denied_imports: set[Path] = set()
 
     # Conversation messages only; the system message is assembled per
@@ -609,7 +624,21 @@ async def agent_loop(
                             },
                         )
                 if approved_any:
-                    save_approved_imports(session.workspace_path, approved_imports)
+                    try:
+                        save_approved_imports(session.workspace_path, approved_imports)
+                    except ConfigError as e:
+                        # The in-memory set still gates this session; only
+                        # the durable write fails (e.g. the config file is
+                        # malformed and cannot be round-tripped).
+                        log.warning(
+                            "approved imports not persisted; approval is session-only",
+                            extra={
+                                "extra_fields": {
+                                    "workspace_path": str(session.workspace_path),
+                                    "error": str(e),
+                                }
+                            },
+                        )
 
             if messages and messages[0].role == "system":
                 messages[0] = ChatMessage(role="system", content=assembled.text)

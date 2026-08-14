@@ -23,6 +23,7 @@ from tstd.context.stack import build_instruction_stack
 from tstd.cost import CostTracker
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
+from tstd.policy import save_approved_imports
 from tstd.protocol import PROTOCOL_VERSION, InstructionStack
 from tstd.provider import Usage
 from tstd.router import TierRouter
@@ -233,6 +234,40 @@ class TestGetInstructionStackHandler:
                 assert any(e["path"] == str(workspace / "AGENTS.md") for e in resp["sources"])
                 # No turn yet — cache state is honestly unknown.
                 assert resp["last_cached_tokens"] is None
+                await ws.close()
+            finally:
+                daemon._shutdown_event.set()
+                daemon_task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_approved_external_import_shows_clean(self, tmp_path: Path) -> None:
+        """The durable allowlist reaches the panel: an approved import no
+        longer carries the "awaiting approval" issue (TD-505)."""
+        workspace = tmp_path / "ws"
+        external = (tmp_path / "shared.md").resolve()
+        _write(workspace / "AGENTS.md", f"workspace rules\n@{external}\n")
+        _write(external, "shared rules\n")
+        save_approved_imports(workspace, [external])
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, daemon_task = await _running_daemon(Path(tmp))
+            try:
+                ws = await _connect(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                await ws.send(json.dumps({"type": "open_workspace", "path": str(workspace)}))
+                opened = json.loads(await ws.recv())
+                assert opened["type"] == "session_state"
+
+                await ws.send(
+                    json.dumps(
+                        {"type": "get_instruction_stack", "session_id": opened["session_id"]}
+                    )
+                )
+                resp = json.loads(await ws.recv())
+                assert resp["type"] == "instruction_stack"
+                root = next(e for e in resp["sources"] if e["path"].endswith("ws/AGENTS.md"))
+                imp = next(i for i in root["imports"] if i["path"] == str(external))
+                assert imp["issue"] is None
                 await ws.close()
             finally:
                 daemon._shutdown_event.set()
