@@ -1902,6 +1902,26 @@ the composer gated off it ("Waiting for a session…" forever); a later
 (first-adoption stickiness, now re-targetable via TD-1701's rail). The rail is
 the manual escape; this story removes the trap.
 
+### TD-1712 — Rail information architecture: sections + account anchor
+**Size:** 2 · **Depends on:** TD-1701, TD-1703
+
+**Acceptance criteria:**
+- [ ] The rail organizes surfaces into sections: function entries (Home,
+      Projects/courses-of-work, Scheduled) grouped above, session history
+      sectioned below with a count badge when items queue
+- [ ] The account / settings row anchors the rail's bottom-left (not buried in
+      the title bar): avatar-or-initial, account label, settings entry
+- [ ] Sections whose epics haven't landed yet (Scheduled → v0.5) either hide or
+      render disabled-with-note — never a dead click
+
+**Notes:** observed 2026-08-14 against the reference app's rail (Code/Home
+tabs, New CTA, Projects, Artifacts, Scheduled, Dispatch, Customise;
+account+settings pinned bottom-left). Each function surface already maps to an
+epic — Artifacts v0.3, Scheduled+Dispatch v0.5, Customize TD-1703, Projects
+TD-1103 — but the *layout grammar* (sectioned rail, bottom account anchor) was
+captured nowhere. This story is the presentation rule; the surfaces arrive with
+their epics.
+
 ---
 
 # Post-v0.1 backlog
@@ -1943,8 +1963,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
 | M2 The window | E10–E12 | 16 | 53 |
-| M3 Shippable | E13–E17 | 31 | 94 |
-| **Total v0.1** | **17** | **97** | **305** |
+| M3 Shippable | E13–E17 | 32 | 96 |
+| **Total v0.1** | **17** | **98** | **307** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
