@@ -21,7 +21,7 @@ import websockets.exceptions
 from .audit import AuditStore
 from .audit_writer import AuditWriter
 from .boundary_config import boundary_source, load_workspace_boundary
-from .config import ConfigError, cached_config
+from .config import ConfigError, ModelConfig, cached_config
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .policy import load_policy
@@ -39,7 +39,9 @@ from .protocol import (
     Resume,
     SessionList,
     SessionSummary,
+    SetTier,
     Shutdown,
+    TierState,
     UserMessage,
     build_error,
     parse_client_message,
@@ -51,7 +53,7 @@ from .protocol import (
     SessionState as SessionStateEvent,
 )
 from .provider import ProviderClient
-from .router import TierRouter
+from .router import TIER_NAMES, TierRouter
 from .session import Session, SessionEventLog, SessionRegistry, SessionRunner
 from .session_store import SessionStore
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
@@ -109,6 +111,17 @@ def _win_parent_alive(pid: int) -> bool:
     except Exception:
         # Degrade to "alive" so a watchdog bug never spuriously kills us.
         return True
+
+
+def _tier_state_event(session_id: str, router: TierRouter, config: ModelConfig) -> TierState:
+    """Build the ``tier_state`` event for the title bar (TD-1006)."""
+    return TierState(
+        session_id=session_id,
+        tier=router.active_tier,
+        override=router.override,
+        model_slugs={name: config.tier(name).slug for name in TIER_NAMES},
+        seq=1,  # overwritten by the event log
+    )
 
 
 class Daemon:
@@ -315,6 +328,8 @@ class Daemon:
             # mypy can't confirm the shapes line up, though they are identical.
             sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
             router = TierRouter()
+            # So a later set_tier reaches the loop's router (TD-1006).
+            sess.router = router
 
             # Workspace boundary (TD-706): resolve `.tst/config.yaml` or
             # defaults; a bad config falls back to defaults with the
@@ -401,6 +416,11 @@ class Daemon:
                 )
             )
 
+            # Emit the initial tier state (TD-1006) so the title bar can
+            # render its chips with the configured slugs before the first
+            # turn runs.
+            await sess.event_log.add(_tier_state_event(sess.id, router, self.config))
+
             # Return the session_state event (seq=1, "running")
             events = sess.event_log.events_from(1)
             if events:
@@ -472,6 +492,37 @@ class Daemon:
                     source="resume",
                     seq=1,
                 )
+            )
+            return None
+
+        if isinstance(msg, SetTier):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            if found.router is None:
+                return build_error(
+                    "session_not_live",
+                    f"Session {msg.session_id!r} has no live agent loop "
+                    "(restored after restart); its tier cannot be changed",
+                )
+            try:
+                found.router.set_tier(msg.tier)
+            except ValueError as e:
+                return build_error("bad_request", str(e))
+            # Acknowledge with the new state so the title bar snaps over
+            # even before the next turn starts (TD-1006).
+            await found.event_log.add(_tier_state_event(found.id, found.router, self.config))
+            log.info(
+                "tier override set",
+                extra={
+                    "extra_fields": {
+                        "session_id": found.id,
+                        "tier": msg.tier,
+                    }
+                },
             )
             return None
 

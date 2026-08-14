@@ -958,11 +958,11 @@ extended and regenerated (29 fixtures). Verified: 33 vitest tests pass, `svelte-
 **Size:** 3 · **Depends on:** TD-1003
 
 **Acceptance criteria:**
-- [ ] Workspace name with a picker
-- [ ] Active brain/worker/validator slugs, clickable to switch
-- [ ] **Live cost meter** updating as costs accrue, with a hover breakdown by tier
-- [ ] Session state indicator (idle / running / awaiting approval / paused at cap)
-- [ ] Boundary indicator showing the current wall
+- [x] Workspace name with a picker
+- [x] Active brain/worker/validator slugs, clickable to switch
+- [x] **Live cost meter** updating as costs accrue, with a hover breakdown by tier
+- [x] Session state indicator (idle / running / awaiting approval / paused at cap)
+- [x] Boundary indicator showing the current wall
 
 ---
 

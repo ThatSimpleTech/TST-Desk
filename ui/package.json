@@ -17,10 +17,8 @@
 		"tauri:build": "TAURI_APP_PATH=../shell tauri build --config '{\"bundle\":{\"externalBin\":[\"binaries/tstd\"]}}'"
 	},
 	"dependencies": {
-		"@tauri-apps/api": "^2.9.0"
-	},
-	"dependencies": {
-		"@tauri-apps/api": "^2.9.0"
+		"@tauri-apps/api": "^2.9.0",
+		"@tauri-apps/plugin-dialog": "^2.7.2"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-static": "^3.0.8",

@@ -288,16 +288,17 @@ class TestDisconnectResume:
             # outstanding request.
             ws2 = await _connect_and_handshake(uri, daemon.ws_server.token)
             await ws2.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 1}))
-            replayed = [json.loads(await asyncio.wait_for(ws2.recv(), timeout=2)) for _ in range(4)]
+            replayed = [json.loads(await asyncio.wait_for(ws2.recv(), timeout=2)) for _ in range(5)]
             types = [e["type"] for e in replayed]
             assert types == [
                 "session_state",
                 "boundary_update",
+                "tier_state",  # TD-1006: emitted at open with the boundary
                 "approval_request",
                 "session_state",
             ]
-            assert replayed[2]["tool_call_id"] == "tc-9"
-            assert replayed[3]["state"] == "awaiting_approval"
+            assert replayed[3]["tool_call_id"] == "tc-9"
+            assert replayed[4]["state"] == "awaiting_approval"
 
             # The reattached client approves; the parked call resumes.
             await ws2.send(

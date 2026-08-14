@@ -1949,3 +1949,41 @@ rather than in one sweep over five lanes' files.
 **Also fixed (first-run defects):** rust leg now installs the Linux system
 deps package.yml already used (glib-sys build scripts need webkit/appindicator
 headers); typescript leg now installs uv before the protocol-fixtures step.
+
+## 2026-08-14 — `tier_state` event and live `cost_update` on the wire (TD-1006)
+
+**Decision:** A new `tier_state` event carries `{tier, override, model_slugs}`
+and is emitted at exactly three points: after `boundary_update` at
+`open_workspace`, as the ack of a `set_tier` message, and at turn start only
+when the tier actually changed (midtier handoffs/escalations).
+
+**Rationale:** AC 2 (tier chips showing active tier and slugs, clickable to
+switch) needs the tier before any turn runs and needs an ack when the user
+pins one. Emitting only on change in the loop keeps repetitions off the wire;
+clients that attach mid-session already get the open-time snapshot replayed.
+`override` rides the same event so the pin marker needs no second channel.
+
+**Decision:** `cost_update` is emitted per model call (and per classifier
+call) from inside the loop, and gains `cost_by_tier`; classifier spend is
+excluded from the per-tier map because it already rides `classifier_cost`.
+
+**Rationale:** AC 3 — "live cost meter updating as costs accrue" — means per
+call, not per turn; the tracker already aggregates, so emission is an
+`event_log.add` at the point of `record`, keeping one source of truth.
+
+**Decision:** The shell grants only `dialog:allow-open` for the workspace
+picker; read/write filesystem permissions are refused outright.
+
+**Rationale:** Least privilege — the picked path goes to the daemon over the
+protocol, where TD-706's boundary validation applies; the UI process never
+needs filesystem access itself.
+
+**Decision:** Session state is a Svelte 5 rune module
+(`session-status.svelte.ts`), and `vitest.config.ts` now loads the
+`@sveltejs/vite-plugin-svelte` plugin so `.svelte.ts` modules resolve in the
+test pipeline; imports use the documented `./x.svelte.js` specifier.
+
+**Rationale:** Runes in module scope only compile in `.svelte.ts` files, and
+vitest (plain node env) resolves/compiles them only with the plugin loaded;
+the sibling `connection-status.ts` store relies on the same pattern with no
+test import, which this makes one consistent idiom.
