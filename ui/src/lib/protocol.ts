@@ -102,6 +102,14 @@ export interface ListSessions extends ClientMessage {
   type: "list_sessions";
 }
 
+/** Create a fresh session in an existing session's workspace (TD-1701).
+ *  `session_id` is the anchor — the daemon replies with the new session's
+ *  first event (session_state), exactly like open_workspace. */
+export interface NewSession extends ClientMessage {
+  type: "new_session";
+  session_id: string;
+}
+
 // ── Onboarding (TD-1101 first-run wizard) ────────────────────────────
 
 export interface GetSetupState extends ClientMessage {
@@ -145,6 +153,7 @@ export type ClientMessageUnion =
   | GetInstructionStack
   | Shutdown
   | ListSessions
+  | NewSession
   | GetSetupState
   | SetApiKey
   | ValidateApiKey
@@ -333,7 +342,15 @@ export interface InstructionStack extends DaemonEvent {
 export interface SessionSummary {
   session_id: string;
   workspace_path: string;
-  state: "idle" | "running" | "awaiting_approval" | "complete" | "failed" | "cancelled" | "interrupted";
+  state:
+    | "idle"
+    | "running"
+    | "awaiting_approval"
+    | "paused"
+    | "complete"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
   created_at: string;
   updated_at: string;
   event_count: number;

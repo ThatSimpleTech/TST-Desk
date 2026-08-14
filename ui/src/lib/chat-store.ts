@@ -49,6 +49,10 @@ export interface ChatStore {
   sendUserMessage(text: string): boolean;
   retryLastUserMessage(): boolean;
   cancelTurn(): boolean;
+  /** Attach the pane to a session chosen in the rail (TD-1701): detach the
+   *  current one, clear the pane, attach — the replay rebuilds history
+   *  through the same reducer as live events. No-op for the attached id. */
+  selectSession(sessionId: string, turnState: SessionState["state"] | null): void;
   refreshSessions(): boolean;
   dispose(): void;
 }
@@ -228,6 +232,10 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     cancelTurn(): boolean {
       if (state.sessionId === null) return false;
       return deps.send({ type: "cancel", session_id: state.sessionId });
+    },
+
+    selectSession(sessionId: string, turnState: SessionState["state"] | null): void {
+      switchSession(sessionId, turnState);
     },
 
     refreshSessions(): boolean {
