@@ -1,6 +1,8 @@
 <script lang="ts">
-	// Chat pane (TD-1004): conversation list + cancel + composer.
-	// Presentational composition only — protocol state lives in the stores.
+	// Chat pane (TD-1004, restyled TD-1604): conversation + composer held in
+	// one centered column (max ≈760px) on wide windows. Cancel lives in the
+	// composer's send→stop morph; Esc cancels too (TD-1609). Presentational
+	// composition only — protocol state lives in the stores.
 	import { onMount } from "svelte";
 	import { cancelTurn, chat, initChat, sendUserMessage, teardownChat } from "../../chat-store.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
@@ -15,27 +17,17 @@
 </script>
 
 <div class="chat-pane">
-	<MessageList messages={chat.messages} />
-	{#if showCancel(chat.turnState)}
-		<div class="controls">
-			<button
-				class="cancel"
-				type="button"
-				title="Cancel turn (Esc)"
-				onclick={() => {
-					cancelTurn();
-				}}
-			>
-				Cancel turn
-			</button>
-		</div>
-	{/if}
-	<Composer
-		disabled={!canSend(chat.sessionId, ws.state)}
-		onsubmit={(text) => {
-			sendUserMessage(text);
-		}}
-	/>
+	<div class="column">
+		<MessageList messages={chat.messages} />
+		<Composer
+			disabled={!canSend(chat.sessionId, ws.state)}
+			running={showCancel(chat.turnState)}
+			onsubmit={(text) => {
+				sendUserMessage(text);
+			}}
+			oncancel={cancelTurn}
+		/>
+	</div>
 </div>
 
 <style>
@@ -44,28 +36,15 @@
 		flex-direction: column;
 		height: 100%;
 		min-height: 0;
-		background: var(--color-bg);
+		background: var(--color-ground);
 	}
 
-	.controls {
+	.column {
+		flex: 1;
+		min-height: 0;
 		display: flex;
-		justify-content: center;
-		padding: var(--space-2) var(--space-4) 0;
-	}
-
-	.cancel {
-		padding: var(--space-1) var(--space-4);
-		font-size: var(--text-sm);
-		font-weight: var(--weight-medium);
-		color: var(--color-danger);
-		background: var(--color-bg-raised);
-		border: var(--border-width) solid var(--color-danger);
-		border-radius: var(--radius-md);
-		cursor: pointer;
-		transition: background var(--transition-fast);
-	}
-
-	.cancel:hover {
-		background: var(--color-bg-subtle);
+		flex-direction: column;
+		width: min(760px, 100%);
+		margin-inline: auto;
 	}
 </style>
