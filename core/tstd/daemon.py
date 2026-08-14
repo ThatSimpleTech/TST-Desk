@@ -10,7 +10,11 @@ import argparse
 import asyncio
 import contextlib
 import os
+import shutil
 import signal
+import subprocess
+import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,13 +24,20 @@ import websockets.exceptions
 
 from .audit import AuditStore
 from .audit_writer import AuditWriter
-from .boundary_config import boundary_source, load_workspace_boundary
-from .config import ConfigError, ModelConfig, cached_config
+from .boundary_config import (
+    boundary_source,
+    load_workspace_boundary,
+    scaffold_workspace_config,
+)
+from .config import ConfigError, ModelConfig, cached_config, save_active_preset
+from .context.assembler import ContextAssembler
+from .keychain import KeychainError, get_api_key, store_api_key
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .policy import add_rule, load_policy, propose_always_allow, remove_rule, save_policy
 from .protocol import (
     AlwaysAllow,
+    ApiKeyValidated,
     Approve,
     Attach,
     Cancel,
@@ -34,6 +45,9 @@ from .protocol import (
     DaemonEvent,
     Deny,
     Detach,
+    DiagnosticCheck,
+    DiagnosticsReport,
+    GetSetupState,
     HandshakeError,
     ListPolicyRules,
     ListSessions,
@@ -42,12 +56,17 @@ from .protocol import (
     PolicyRuleSummary,
     Resume,
     RevokePolicyRule,
+    RunDiagnostics,
     SessionList,
     SessionSummary,
+    SetApiKey,
+    SetPreset,
     SetTier,
+    SetupState,
     Shutdown,
     TierState,
     UserMessage,
+    ValidateApiKey,
     build_error,
     parse_client_message,
 )
@@ -60,7 +79,13 @@ from .protocol import (
 from .protocol import (
     TierSwitched as TierSwitchedEvent,
 )
-from .provider import ProviderClient
+from .provider import (
+    ChatCompletionRequest,
+    ChatMessage,
+    ProviderClient,
+    ProviderError,
+    auth_failure_message,
+)
 from .router import TIER_NAMES, TierRouter
 from .session import Session, SessionEventLog, SessionRegistry, SessionRunner
 from .session_store import SessionStore
@@ -107,18 +132,73 @@ def _win_parent_alive(pid: int) -> bool:
     try:
         import ctypes
 
+        # ``ctypes.windll`` exists only on Windows and is absent from mypy's
+        # POSIX stubs; getattr keeps one spelling clean on every platform.
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            return True  # unreachable — caller gates on os.name == "nt"
         process_query_limited = 0x1000
-        # ``ctypes.windll`` exists only on Windows; mypy's macOS stubs omit it.
-        handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[attr-defined]
-            process_query_limited, False, pid
-        )
+        handle = windll.kernel32.OpenProcess(process_query_limited, False, pid)
         if not handle:
             return False
-        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        windll.kernel32.CloseHandle(handle)
         return True
     except Exception:
         # Degrade to "alive" so a watchdog bug never spuriously kills us.
         return True
+
+
+def _check_git() -> DiagnosticCheck:
+    """git reachable on PATH (TD-1104). Runs in a worker thread."""
+    path = shutil.which("git")
+    if path is None:
+        fix = (
+            "Install Xcode Command Line Tools (`xcode-select --install`)."
+            if sys.platform == "darwin"
+            else "Install git and make sure it is on PATH."
+        )
+        return DiagnosticCheck(name="git", status="fail", detail="git not found on PATH", fix=fix)
+    try:
+        proc = subprocess.run(
+            [path, "--version"], capture_output=True, text=True, timeout=5, check=False
+        )
+        version = proc.stdout.strip() or "version unknown"
+    except (OSError, subprocess.TimeoutExpired):
+        version = "version probe failed"
+    return DiagnosticCheck(name="git", status="ok", detail=f"{version} ({path})")
+
+
+def _check_writable(workspace: Path) -> DiagnosticCheck:
+    """The workspace accepts a file (TD-1104). Runs in a worker thread.
+
+    Rows travel the wire and the UI's copy-to-clipboard report, so the
+    detail names the workspace by its basename — never an absolute path.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(dir=workspace, prefix=".tstd-probe-", delete=True):
+            pass
+    except OSError as e:
+        return DiagnosticCheck(
+            name="workspace",
+            status="fail",
+            detail=f"{workspace.name} is not writable: {e.strerror or e}",
+            fix="Fix the folder's permissions or open a different workspace.",
+        )
+    return DiagnosticCheck(name="workspace", status="ok", detail=f"{workspace.name} is writable")
+
+
+def _relativize_paths(text: str, workspace: Path) -> str:
+    """Keep absolute local paths out of diagnostics rows (TD-1104).
+
+    Import issues embed resolved (symlink-normalized) absolute paths; rows
+    travel the wire and end up in the copy-to-clipboard report, so
+    workspace paths become relative and home paths become ``~/…`` — still
+    enough to locate the file. The workspace prefix is replaced first (it
+    usually sits under home, and the longer prefix must win).
+    """
+    root = workspace.resolve()
+    home = Path.home().resolve()
+    return text.replace(f"{root}{os.sep}", "").replace(f"{home}{os.sep}", f"~{os.sep}")
 
 
 def _tier_state_event(session_id: str, router: TierRouter, config: ModelConfig) -> TierState:
@@ -180,6 +260,214 @@ class Daemon:
             tier_cfg = self.config.tier("brain")
             self._provider = await ProviderClient.from_keychain(tier_cfg.base_url)
         return self._provider
+
+    async def _setup_state_event(self) -> SetupState:
+        """Current onboarding state (TD-1101): key presence + preset choice.
+
+        ``has_api_key`` is the wizard's first-run signal; presence is probed
+        from the keychain, so it survives daemon restarts and never touches
+        the key value itself.
+        """
+        try:
+            await get_api_key()
+            has_api_key = True
+        except KeychainError:
+            has_api_key = False
+        return SetupState(
+            seq=1,
+            has_api_key=has_api_key,
+            presets=sorted(self.config.presets),
+            active_preset=self.config.active_preset,
+        )
+
+    async def _provider_probe(self) -> ProviderError | None:
+        """One-token live call against the active brain (TD-1101).
+
+        Returns None on success, the ProviderError on failure.  Raises
+        KeychainError when no key is stored.
+        """
+        tier_cfg = self.config.tier("brain")
+        client = await ProviderClient.from_keychain(tier_cfg.base_url)
+        response = await client.chat_completion(
+            ChatCompletionRequest(
+                model=tier_cfg.slug,
+                messages=[ChatMessage(role="user", content="ok")],
+                max_tokens=1,
+                stream=False,
+            )
+        )
+        return response if isinstance(response, ProviderError) else None
+
+    async def _validate_api_key(self) -> ApiKeyValidated:
+        """Probe the stored key with one cheap live call (TD-1101).
+
+        A one-token completion against the active preset's brain tier: the
+        cheapest request that still proves the key authenticates.  The key
+        value never appears in the response — success names the keychain
+        account, failure carries actionable text.
+        """
+        try:
+            err = await self._provider_probe()
+        except KeychainError as e:
+            return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+        if err is not None:
+            detail = auth_failure_message() if err.code == "auth_failed" else err.message
+            return ApiKeyValidated(seq=1, ok=False, detail=detail)
+        return ApiKeyValidated(
+            seq=1, ok=True, detail="Key accepted by the active preset's provider."
+        )
+
+    # ── Diagnostics (TD-1104 doctor) ──────────────────────────────────
+
+    def _current_workspace(self) -> Path | None:
+        """Workspace of the most recently used session, if any."""
+        records = self._session_store.records()
+        if not records:
+            return None
+        return Path(max(records, key=lambda r: r.updated_at).workspace_path)
+
+    async def _doctor_key_provider_rows(self) -> list[DiagnosticCheck]:
+        """The ``api_key`` and ``provider`` rows from one live probe.
+
+        Both AC rows share a single one-token call: an auth failure means
+        the provider IS reachable (it answered) but the key is bad; a
+        transport failure means we never got far enough to judge the key.
+        """
+        fix_key = "Re-enter a valid key: title-bar gear → Provider API key."
+        try:
+            err = await self._provider_probe()
+        except KeychainError as e:
+            return [
+                DiagnosticCheck(name="api_key", status="fail", detail=str(e), fix=fix_key),
+                DiagnosticCheck(
+                    name="provider",
+                    status="skip",
+                    detail="not checked — no API key to send",
+                ),
+            ]
+
+        base_url = self.config.tier("brain").base_url
+        if err is None:
+            return [
+                DiagnosticCheck(name="api_key", status="ok", detail="accepted by the provider"),
+                DiagnosticCheck(name="provider", status="ok", detail=f"reachable at {base_url}"),
+            ]
+        if err.code in ("connection_error", "timeout"):
+            return [
+                DiagnosticCheck(
+                    name="api_key",
+                    status="skip",
+                    detail="cannot validate — the provider is unreachable",
+                ),
+                DiagnosticCheck(
+                    name="provider",
+                    status="fail",
+                    detail=f"unreachable at {base_url} ({err.code})",
+                    fix="Check the network or VPN, and the provider base_url in config.yaml.",
+                ),
+            ]
+        if err.code == "auth_failed":
+            return [
+                DiagnosticCheck(
+                    name="api_key",
+                    status="fail",
+                    detail="provider rejected the stored key (401)",
+                    fix=fix_key,
+                ),
+                DiagnosticCheck(name="provider", status="ok", detail=f"reachable at {base_url}"),
+            ]
+        # Any other error still means the provider answered.
+        return [
+            DiagnosticCheck(name="api_key", status="ok", detail="accepted by the provider"),
+            DiagnosticCheck(
+                name="provider", status="ok", detail=f"answered at {base_url} ({err.code})"
+            ),
+        ]
+
+    async def _diagnostics_report(self) -> DiagnosticsReport:
+        """Run the doctor checks (TD-1104) and return the report.
+
+        Rows in display order: daemon → key → provider → git → workspace →
+        steering.  Blocking filesystem calls ride worker threads; the live
+        provider probe is the only slow row (one token, worst case the
+        provider timeout).
+        """
+        checks: list[DiagnosticCheck] = [
+            # The reply itself proves reachability; the row carries versions
+            # so a pasted report is self-describing.
+            DiagnosticCheck(
+                name="daemon",
+                status="ok",
+                detail=f"responding (v{self._version()}, up {self.state.uptime:.1f}s)",
+            )
+        ]
+
+        # API key presence first — presence is free, validity needs the probe.
+        try:
+            await get_api_key()
+            key_present = True
+        except KeychainError:
+            key_present = False
+        if key_present:
+            checks.extend(await self._doctor_key_provider_rows())
+        else:
+            checks.append(
+                DiagnosticCheck(
+                    name="api_key",
+                    status="fail",
+                    detail="no API key stored",
+                    fix="Open the setup wizard (title-bar gear) and paste an API key.",
+                )
+            )
+            checks.append(
+                DiagnosticCheck(
+                    name="provider",
+                    status="skip",
+                    detail="not checked — no API key to send",
+                )
+            )
+
+        checks.append(await asyncio.to_thread(_check_git))
+
+        workspace = self._current_workspace()
+        if workspace is None:
+            checks.append(
+                DiagnosticCheck(name="workspace", status="skip", detail="no workspace open yet")
+            )
+            checks.append(
+                DiagnosticCheck(name="steering", status="skip", detail="no workspace open yet")
+            )
+        else:
+            checks.append(await asyncio.to_thread(_check_writable, workspace))
+            checks.append(await self._check_steering(workspace))
+
+        return DiagnosticsReport(seq=1, checks=checks)
+
+    async def _check_steering(self, workspace: Path) -> DiagnosticCheck:
+        """Steering stack parses: resolution runs and imports land."""
+        try:
+            assembled = await ContextAssembler().assemble(workspace)
+        except Exception as e:  # resolution is designed not to raise; report if it does
+            return DiagnosticCheck(
+                name="steering",
+                status="fail",
+                detail=_relativize_paths(f"steering resolution failed: {e}", workspace),
+                fix="Fix the malformed steering file and re-run Doctor.",
+            )
+        issues = assembled.import_issues
+        if issues:
+            more = f" (+{len(issues) - 1} more)" if len(issues) > 1 else ""
+            return DiagnosticCheck(
+                name="steering",
+                status="fail",
+                detail=_relativize_paths(f"{issues[0]}{more}", workspace),
+                fix="Fix or remove the broken @import in the named file.",
+            )
+        return DiagnosticCheck(
+            name="steering",
+            status="ok",
+            detail=f"{len(assembled.sources)} steering source(s) parsed",
+        )
 
     async def run(self) -> None:
         """Start the daemon and run until shutdown is requested."""
@@ -329,6 +617,19 @@ class Daemon:
             return build_error(e.code, e.message)
 
         if isinstance(msg, OpenWorkspace):
+            # Validate before creating anything (TD-1103): a nonexistent or
+            # non-directory path must not silently "succeed".
+            workspace_path = Path(msg.path)
+            # Blocking stat off the event loop (ASYNC240 precedent: TD-1104
+            # diagnostics use to_thread for the same reason).
+            if not await asyncio.to_thread(workspace_path.is_dir):
+                return build_error(
+                    "workspace_not_found",
+                    f"Workspace path is not a directory: {msg.path}",
+                )
+            # Plant the commented config template on first open (TD-1103) —
+            # never overwrites an existing config.
+            await asyncio.to_thread(scaffold_workspace_config, workspace_path)
             sess = await self.session_registry.create(msg.path)
             # Persist the new session and keep its state durable going forward.
             await self._session_store.upsert(sess.id, msg.path, sess.state)
@@ -658,6 +959,47 @@ class Daemon:
 
         if isinstance(msg, ListSessions):
             return await self._handle_list_sessions()
+
+        # ── Onboarding (TD-1101 first-run wizard) ────────────────────
+        if isinstance(msg, GetSetupState):
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetApiKey):
+            try:
+                await store_api_key(msg.api_key)
+            except (KeychainError, NotImplementedError) as e:
+                return build_error("key_store_failed", f"Could not store the API key: {e}")
+            # Never log the key; the ack is a refreshed setup_state.
+            log.info("api key stored in keychain")
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, ValidateApiKey):
+            return (await self._validate_api_key()).model_dump_json()
+
+        if isinstance(msg, SetPreset):
+            if msg.name not in self.config.presets:
+                return build_error(
+                    "unknown_preset",
+                    f"Unknown preset {msg.name!r}; declared: "
+                    f"{', '.join(sorted(self.config.presets))}",
+                )
+            try:
+                save_active_preset(msg.name)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            # New sessions route on the new preset immediately; existing
+            # sessions keep the tier slugs they opened with.  model_copy
+            # keeps the process-wide cached instance untouched.
+            self.config = self.config.model_copy(update={"active_preset": msg.name})
+            log.info(
+                "active preset changed",
+                extra={"extra_fields": {"preset": msg.name}},
+            )
+            return (await self._setup_state_event()).model_dump_json()
+
+        # ── Diagnostics (TD-1104 doctor) ─────────────────────────────
+        if isinstance(msg, RunDiagnostics):
+            return (await self._diagnostics_report()).model_dump_json()
 
         if isinstance(msg, Shutdown):
             log.info("shutdown requested via websocket")

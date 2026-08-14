@@ -39,6 +39,10 @@ const KNOWN_EVENT_TYPES = new Set([
   "tier_switched",
   "instruction_stack",
   "session_list",
+  "policy_rules", // TD-803: was missing; settings events arrived as unknown
+  "setup_state", // TD-1101 first-run wizard
+  "api_key_validated", // TD-1101
+  "diagnostics_report", // TD-1104 doctor
   "error",
 ]);
 
@@ -145,10 +149,16 @@ export class ProtocolClient {
   /**
    * Send a client→daemon message. Returns false (and sends nothing) unless
    * the socket is open and handshaken, so callers can decide whether an
-   * optimistic local update is warranted.
+   * optimistic local update is warranted (TD-1007).
+   *
+   * Guarding on `state === "connected"` is the unambiguous handshake signal:
+   * `handshake` is "idle" both before the socket opens and after the ack,
+   * and it stays "idle" across a reconnect while `this.socket` still points
+   * at the closed socket — so a `handshake`-only guard would throw on a dead
+   * socket mid-reconnect.
    */
   send(msg: ClientMessageUnion): boolean {
-    if (!this.socket || this.handshake !== "idle") return false;
+    if (!this.socket || this.state !== "connected") return false;
     this.socket.send(JSON.stringify(msg));
     return true;
   }
@@ -161,6 +171,35 @@ export class ProtocolClient {
   /** Pin a session's model tier (TD-1006). The daemon acks with tier_state. */
   setTier(sessionId: string, tier: "brain" | "worker" | "validator"): void {
     this.send({ type: "set_tier", session_id: sessionId, tier });
+  }
+
+  // ── Onboarding (TD-1101 first-run wizard) ───────────────────────────
+
+  /** Ask for the setup state (key presence, presets). Replies with setup_state. */
+  getSetupState(): void {
+    this.send({ type: "get_setup_state" });
+  }
+
+  /** Store an API key in the OS keychain. Acked with setup_state. */
+  setApiKey(apiKey: string): void {
+    this.send({ type: "set_api_key", api_key: apiKey });
+  }
+
+  /** Probe the stored key with one cheap live call. Replies api_key_validated. */
+  validateApiKey(): void {
+    this.send({ type: "validate_api_key" });
+  }
+
+  /** Choose the active model preset. Acked with setup_state. */
+  setPreset(name: string): void {
+    this.send({ type: "set_preset", name });
+  }
+
+  // ── Diagnostics (TD-1104 doctor) ────────────────────────────────────
+
+  /** Run the doctor checks; the daemon replies with diagnostics_report. */
+  runDiagnostics(): void {
+    this.send({ type: "run_diagnostics" });
   }
 
   /** Start the client: resolve daemon info and open the first connection. */
@@ -248,14 +287,17 @@ export class ProtocolClient {
     // anything we missed while offline.
     if (type === "hello_ack") {
       this.handshake = "idle";
-      if (this.hasConnectedOnce) {
+      const reconnecting = this.hasConnectedOnce;
+      this.hasConnectedOnce = true;
+      this.reconnectAttempt = 0;
+      // Mark connected before re-attaching: `send` guards on the connected
+      // state, and the re-attach below must pass that guard (see send()).
+      this.setState("connected");
+      if (reconnecting) {
         for (const sessionId of this.attachedSessions) {
           this.sendAttach(sessionId, this.lastSeq(sessionId) + 1);
         }
       }
-      this.hasConnectedOnce = true;
-      this.reconnectAttempt = 0;
-      this.setState("connected");
       return;
     }
 

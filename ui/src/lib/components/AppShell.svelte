@@ -1,29 +1,77 @@
 <script lang="ts">
 	// Application shell: two-pane workspace layout using only design tokens.
-	// Left = chat pane, right = activity pane. The connection banner (TD-1003)
-	// sits in the shell header so daemon/socket state is visible at all times.
-	// The activity pane hosts the activity timeline (TD-1005), fed live from
-	// the daemon event stream. Failure notices (TD-1008) render as banners
-	// under the header (blocking) or toasts bottom-right (transient).
+	// Left = chat pane, right = activity pane. The title bar (TD-1006) and
+	// connection banner (TD-1003) sit in the shell header so daemon/socket
+	// state is visible at all times. The activity pane hosts the activity
+	// timeline (TD-1005), fed live from the daemon event stream. Failure
+	// notices (TD-1008) render as banners under the header (blocking) or
+	// toasts bottom-right (transient); the footer hosts pending approval
+	// cards (TD-1007).
 	import { onMount } from 'svelte';
 	import SplitPane from './SplitPane.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
 	import ActivityTimeline from './ActivityTimeline.svelte';
+	import ApprovalBar from './ApprovalBar.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
 	import { push } from '../timeline-store.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
 	import TitleBar from './TitleBar.svelte';
 	import NotificationBanner from '../NotificationBanner.svelte';
 	import ToastStack from '../ToastStack.svelte';
+	import WizardPane from './WizardPane.svelte';
+	import DoctorPane from './DoctorPane.svelte';
+	import DecisionsPane from './DecisionsPane.svelte';
+	import { start as startOnboarding, reopen as reopenWizard } from '../onboarding.svelte.js';
+	import { startDoctor, runDoctor } from '../doctor.svelte.js';
+	import { startDecisions, openDecisions } from '../decisions.svelte.js';
 
-	// Feed every daemon event into the timeline for the lifetime of the shell.
-	onMount(() => onEvent(push));
+	// Feed every daemon event into the timeline for the lifetime of the shell,
+	// and start first-run detection (TD-1101) — the wizard probes setup state
+	// after each handshake and opens when no API key is stored. The doctor
+	// subscription (TD-1104) listens for diagnostics reports; the decisions
+	// store (TD-1202) collects decision_logged events for its panel.
+	onMount(() => {
+		const offTimeline = onEvent(push);
+		const offWizard = startOnboarding();
+		const offDoctor = startDoctor();
+		const offDecisions = startDecisions();
+		return () => {
+			offTimeline();
+			offWizard();
+			offDoctor();
+			offDecisions();
+		};
+	});
 </script>
 
 <header class="shell-header">
 	<span class="shell-title">TST Desk</span>
 	<TitleBar />
 	<span class="shell-spacer"></span>
+	<!-- Review the session's decisions (TD-1202) at any time. -->
+	<button
+		class="shell-gear"
+		type="button"
+		title="Decisions"
+		aria-label="Open decisions ledger"
+		onclick={openDecisions}>📜</button
+	>
+	<!-- Run the doctor (TD-1104) at any time. -->
+	<button
+		class="shell-gear"
+		type="button"
+		title="Doctor"
+		aria-label="Run doctor diagnostics"
+		onclick={runDoctor}>🩺</button
+	>
+	<!-- Revisit first-run setup (TD-1101) at any time. -->
+	<button
+		class="shell-gear"
+		type="button"
+		title="Setup wizard"
+		aria-label="Open setup wizard"
+		onclick={reopenWizard}>⚙</button
+	>
 	<ConnectionBanner />
 </header>
 
@@ -42,7 +90,11 @@
 	</SplitPane>
 </div>
 
+<ApprovalBar />
 <ToastStack />
+<WizardPane />
+<DoctorPane />
+<DecisionsPane />
 
 <style>
 	.shell-header {
@@ -65,6 +117,23 @@
 	/* Push the connection banner to the right edge of the shell header. */
 	.shell-spacer {
 		flex: 1;
+	}
+
+	/* Revisit affordance for the setup wizard (TD-1101). */
+	.shell-gear {
+		border: none;
+		background: transparent;
+		font-size: var(--text-base);
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		padding: var(--space-1) var(--space-2);
+		border-radius: var(--radius-md);
+		line-height: 1;
+	}
+
+	.shell-gear:hover {
+		background: var(--color-bg-subtle);
+		color: var(--color-text);
 	}
 
 	.shell-body {

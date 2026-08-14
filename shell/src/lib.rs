@@ -16,6 +16,26 @@ fn get_daemon_info(state: tauri::State<DaemonHandle>) -> Option<serde_json::Valu
     })
 }
 
+/// Open a local path with the OS default handler (TD-1202: the decisions
+/// pane links out to the workspace ledger file). Zero-dependency — three
+/// platform spellings of "default handler, please". Fire-and-forget: we
+/// spawn and report spawn failure only; the handler's own outcome is the
+/// OS's business.
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    let spawn = || -> std::io::Result<std::process::Child> {
+        #[cfg(target_os = "macos")]
+        return std::process::Command::new("open").arg(&path).spawn();
+        #[cfg(target_os = "windows")]
+        return std::process::Command::new("cmd")
+            .args(["/C", "start", "", &path])
+            .spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        return std::process::Command::new("xdg-open").arg(&path).spawn();
+    };
+    spawn().map(|_| ()).map_err(|e| format!("no opener available: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -34,7 +54,7 @@ pub fn run() {
             app.manage(handle);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_daemon_info])
+        .invoke_handler(tauri::generate_handler![get_daemon_info, open_path])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();

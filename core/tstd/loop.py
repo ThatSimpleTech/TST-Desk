@@ -364,6 +364,7 @@ async def _dispatch_and_append_results(
                 status=r.status,
                 output=r.output,
                 truncated=r.truncated,
+                error_code=r.error_code,
                 diff=r.diff,
                 seq=1,
             )
