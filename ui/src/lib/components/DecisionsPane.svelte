@@ -155,8 +155,10 @@
 
 	.title {
 		margin: 0;
+		font-family: var(--font-display);
 		font-size: var(--text-xl);
-		font-weight: var(--weight-semibold);
+		font-weight: var(--weight-medium);
+		letter-spacing: var(--tracking-display);
 		color: var(--color-text);
 	}
 
@@ -254,7 +256,7 @@
 	}
 
 	.sha {
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		color: var(--color-text-secondary);
 		flex-shrink: 0;
@@ -281,7 +283,7 @@
 		background: transparent;
 		color: var(--color-text);
 		font-size: var(--text-xs);
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono);
 		padding: var(--space-1) var(--space-2);
 		cursor: pointer;
 	}
@@ -310,7 +312,7 @@
 	}
 
 	.path {
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		color: var(--color-text-muted);
 		white-space: nowrap;

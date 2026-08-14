@@ -182,8 +182,10 @@
 
 	.step-title {
 		margin: 0;
+		font-family: var(--font-display);
 		font-size: var(--text-xl);
-		font-weight: var(--weight-semibold);
+		font-weight: var(--weight-medium);
+		letter-spacing: var(--tracking-display);
 		color: var(--color-text);
 	}
 
@@ -195,7 +197,7 @@
 	}
 
 	.mono {
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		user-select: all;
 	}
@@ -214,7 +216,7 @@
 
 	.field-input {
 		font-size: var(--text-sm);
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono);
 		padding: var(--space-2) var(--space-3);
 		border: var(--border-width) solid var(--color-border);
 		border-radius: var(--radius-md);
