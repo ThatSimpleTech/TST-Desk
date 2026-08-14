@@ -997,7 +997,7 @@ Tauri window once TD-1004's chat pane drives real turns.
 
 **Acceptance criteria:**
 - [x] Card renders in place with tool, arguments, decision class, and reason
-- [ ] Actions: Approve, Deny, Always allow in this workspace
+- [x] Actions: Approve, Deny, Always allow in this workspace
 - [x] Keyboard accessible; focus moves to the card on appearance
 - [x] Dangerous actions visually distinct
 - [x] Denial offers an optional note passed back to the model
@@ -1009,11 +1009,12 @@ tool, arguments, decision class, and reason; the card autofocuses on mount (`tab
 badge). Denial captures an optional note sent back on the `Deny` message (`reason`, nulled
 when blank). Resolved cards flip to approved/denied in the timeline (the "approval" entry
 kind resolves in place on its matching `tool_result`) and the approval leaves the footer.
-**Not in scope here:** "Always allow in this workspace" (criterion 2, third action) is
-delivered by TD-803, not TD-1007 — implementing it here would collide with TD-803's
-policy-rule model. The other two actions (Approve / Deny) are wired end-to-end via a new
-`send()` client path plus the `error_code` propagation fix ("Gap B") that lets the UI
-distinguish a denial from a handler error.
+"Always allow in this workspace" renders as the card's third action only when the daemon
+proposes a rule (`proposed_always_allow`, from TD-803); it sends the `always_allow` message
+TD-803 already handles, so the rule lifecycle stays daemon-side and the card stays a thin
+client. Approve / Deny are wired end-to-end via the `sendToDaemon` client path plus the
+`error_code` propagation fix ("Gap B") that lets the UI distinguish a denial from a handler
+error.
 
 ---
 
