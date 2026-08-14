@@ -229,6 +229,44 @@ class ListSessions(ClientMessage):
     type: Literal["list_sessions"] = "list_sessions"
 
 
+class GetSetupState(ClientMessage):
+    """Request the onboarding setup state (TD-1101 first-run wizard).
+
+    The daemon answers with a ``setup_state`` event: whether an API key is
+    stored, the declared presets, and the active one.
+    """
+
+    type: Literal["get_setup_state"] = "get_setup_state"
+
+
+class SetApiKey(ClientMessage):
+    """Store an API key in the OS keychain (TD-1101).
+
+    The key never appears in any event, log, or audit record — the ack is a
+    refreshed ``setup_state`` event whose ``has_api_key`` flips true.
+    """
+
+    type: Literal["set_api_key"] = "set_api_key"
+    api_key: str = Field(min_length=1)
+
+
+class ValidateApiKey(ClientMessage):
+    """Probe the stored key with one cheap live call (TD-1101).
+
+    The daemon answers with ``api_key_validated``; the key itself never
+    leaves the keychain except inside the provider client's auth header.
+    """
+
+    type: Literal["validate_api_key"] = "validate_api_key"
+
+
+class SetPreset(ClientMessage):
+    """Pick the active model preset (TD-1101); applied to new sessions."""
+
+    type: Literal["set_preset"] = "set_preset"
+    name: str = Field(min_length=1)
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -546,6 +584,36 @@ class PolicyRules(DaemonEvent):
     rules: list[PolicyRuleSummary] = Field(default_factory=list)
 
 
+class SetupState(DaemonEvent):
+    """Response to ``get_setup_state``; also the ack for ``set_api_key`` and
+    ``set_preset`` (TD-1101).
+
+    Connection-scoped (like ``session_list``), so its seq is fixed at 1.
+    ``has_api_key`` is the first-run signal: no key stored means the wizard
+    shows.
+    """
+
+    type: Literal["setup_state"] = "setup_state"
+    seq: int = 1
+    has_api_key: bool
+    presets: list[str] = Field(default_factory=list)
+    active_preset: str
+
+
+class ApiKeyValidated(DaemonEvent):
+    """Response to ``validate_api_key`` (TD-1101).
+
+    ``detail`` carries the actionable failure text on failure (already
+    redacted at the provider boundary); on success it says which keychain
+    account was checked, never the key.
+    """
+
+    type: Literal["api_key_validated"] = "api_key_validated"
+    seq: int = 1
+    ok: bool
+    detail: str
+
+
 class Error(DaemonEvent):
     """A typed error, usually in response to a bad message."""
 
@@ -573,7 +641,11 @@ ClientMessageT = Annotated[
     | SetTier
     | GetInstructionStack
     | Shutdown
-    | ListSessions,
+    | ListSessions
+    | GetSetupState
+    | SetApiKey
+    | ValidateApiKey
+    | SetPreset,
     Field(discriminator="type"),
 ]
 
@@ -597,6 +669,8 @@ DaemonEventT = Annotated[
     | InstructionStack
     | SessionList
     | PolicyRules
+    | SetupState
+    | ApiKeyValidated
     | Error,
     Field(discriminator="type"),
 ]
@@ -623,6 +697,10 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "get_instruction_stack",
         "shutdown",
         "list_sessions",
+        "get_setup_state",
+        "set_api_key",
+        "validate_api_key",
+        "set_preset",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -646,6 +724,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "instruction_stack",
         "session_list",
         "policy_rules",
+        "setup_state",
+        "api_key_validated",
         "error",
     }
 )

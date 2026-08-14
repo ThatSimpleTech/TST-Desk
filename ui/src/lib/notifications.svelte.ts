@@ -12,11 +12,16 @@
 // dismissal only clears the UI; the next occurrence re-raises it.
 //
 // `copyDiagnostics` builds the redacted, pasteable report (AC): connection
-// and session state, cost totals, and a short recent-event summary — never
-// message content, tool arguments, or filesystem paths.
+// and session state, cost totals, the live notification list, and a short
+// recent-event summary — never message content, tool arguments, or
+// filesystem paths. Free-text fields that originate daemon-side (session
+// reason, notification bodies) go through redact() here as the belt to
+// TD-1405's suspenders: the UI never trusts that wire text arrived clean.
 
+import pkg from "../../package.json";
 import { daemonErrorCopy, sessionStateCopy, turnFailureCopy, type NoticeSpec } from "./error-copy";
 import type { DaemonEventUnion } from "./protocol";
+import { redact } from "./redact";
 import { session } from "./session-status.svelte.js";
 
 /** Milliseconds a toast lives before auto-dismissal. Exported for tests. */
@@ -125,6 +130,8 @@ export function notifyEvent(event: DaemonEventUnion): void {
 				notify(`paused:${spec.title}`, spec);
 			} else if (event.state === "failed") {
 				notify("failed", spec ?? { severity: "banner", title: "Session failed", body: "The session ended unexpectedly." });
+			} else if (event.state === "interrupted" && spec !== null) {
+				notify("interrupted", spec);
 			} else if (event.state === "running") {
 				// Resume clears the blockers — reaching running again is the fix.
 				for (const n of [...banners]) {
@@ -154,18 +161,23 @@ export interface ConnectionSnapshot {
 }
 
 /**
- * Redacted diagnostics snapshot: states, versions, cost totals, recent event
- * types+seqs. Deliberately excludes workspace paths, message content, and
- * tool arguments so the report is safe to paste anywhere (TD-1008).
+ * Redacted diagnostics snapshot: states, versions, cost totals, live
+ * notifications, recent event types+seqs. Deliberately excludes workspace
+ * paths, message content, and tool arguments; the wire-derived text it does
+ * include (session reason, notification bodies) passes through redact() so
+ * the report stays safe to paste anywhere (TD-1008).
  */
 export function buildDiagnostics(conn: ConnectionSnapshot): string {
 	const lines = [
 		"## tst-desk diagnostics",
-		`app: daemon ${daemonVersion ?? "unknown"}, protocol ${protocolVersion ?? "unknown"}`,
+		`app: ui ${pkg.version}, daemon ${daemonVersion ?? "unknown"}, protocol ${protocolVersion ?? "unknown"}`,
 		`connection: ws ${conn.ws}, daemon ${conn.daemonState}${conn.daemonRestart > 0 ? ` (restarted ${conn.daemonRestart}x)` : ""}`,
-		`session: ${session.state}${session.reason ? ` (${session.reason})` : ""}, tier ${session.tier}${session.tierOverride ? ` [pinned: ${session.tierOverride}]` : ""}`,
+		`session: ${session.state}${session.reason ? ` (${redact(session.reason)})` : ""}, tier ${session.tier}${session.tierOverride ? ` [pinned: ${session.tierOverride}]` : ""}`,
 		`cost: turn $${session.cost.turn.toFixed(4)}, session $${session.cost.session.toFixed(4)}, total $${session.cost.total.toFixed(4)}`,
 	];
+	for (const n of [...banners, ...toasts]) {
+		lines.push(`notification [${n.severity}] ${n.title}: ${redact(n.body)}`);
+	}
 	if (recentEvents.length > 0) {
 		lines.push(`recent events (${recentEvents.length}): ${recentEvents.map((e) => (e.seq !== null ? `${e.type}#${e.seq}` : e.type)).join(", ")}`);
 	}

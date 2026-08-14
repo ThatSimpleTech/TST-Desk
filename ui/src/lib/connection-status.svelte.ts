@@ -37,11 +37,24 @@ export const lastEvent = $state<{ event: DaemonEventUnion | null }>({ event: nul
 // would drop the first. Handlers run in the client's sink, in receive order.
 const eventSubs = new Set<(event: DaemonEventUnion) => void>();
 
+// Connection-state fan-out (TD-1101): the onboarding wizard needs the
+// handshake-complete transition itself (no daemon event marks it) so it can
+// probe setup state immediately, not on the next keystroke.
+const stateSubs = new Set<(state: ConnectionState) => void>();
+
 /** Subscribe to every validated daemon event. Returns an unsubscribe fn. */
 export function onDaemonEvent(handler: (event: DaemonEventUnion) => void): () => void {
   eventSubs.add(handler);
   return () => {
     eventSubs.delete(handler);
+  };
+}
+
+/** Subscribe to connection-state transitions. Returns an unsubscribe fn. */
+export function onConnectionState(handler: (state: ConnectionState) => void): () => void {
+  stateSubs.add(handler);
+  return () => {
+    stateSubs.delete(handler);
   };
 }
 
@@ -86,6 +99,7 @@ function makeClient(): void {
       },
       onStateChange(state) {
         ws.state = state;
+        for (const sub of stateSubs) sub(state);
       },
     },
   );

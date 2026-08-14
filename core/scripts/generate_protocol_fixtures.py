@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tstd.protocol import (
     PROTOCOL_VERSION,
     AlwaysAllow,
+    ApiKeyValidated,
     ApprovalRequest,
     Approve,
     AssistantDelta,
@@ -30,6 +31,7 @@ from tstd.protocol import (
     Detach,
     Error,
     GetInstructionStack,
+    GetSetupState,
     Hello,
     InstructionStack,
     ListPolicyRules,
@@ -42,7 +44,10 @@ from tstd.protocol import (
     RevokePolicyRule,
     SessionList,
     SessionState,
+    SetApiKey,
+    SetPreset,
     SetTier,
+    SetupState,
     ShellOutput,
     Shutdown,
     SteeringReloaded,
@@ -52,6 +57,7 @@ from tstd.protocol import (
     ToolResult,
     TurnComplete,
     UserMessage,
+    ValidateApiKey,
 )
 
 FIXTURES = {
@@ -73,6 +79,11 @@ FIXTURES = {
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
     "shutdown": Shutdown(),
     "list_sessions": ListSessions(),
+    # Onboarding (TD-1101 first-run wizard)
+    "get_setup_state": GetSetupState(),
+    "set_api_key": SetApiKey(api_key="sk-or-test-key"),
+    "validate_api_key": ValidateApiKey(),
+    "set_preset": SetPreset(name="tst-default"),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
@@ -279,6 +290,13 @@ FIXTURES = {
             PolicyRuleSummary(tool="fs_*", args="src/**", effect="ask"),
         ]
     ),
+    # Onboarding (TD-1101): connection-scoped, seq=1 like session_list/policy_rules.
+    "setup_state": SetupState(
+        has_api_key=False,
+        presets=["budget", "local", "tst-default"],
+        active_preset="tst-default",
+    ),
+    "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
 }
 
 
