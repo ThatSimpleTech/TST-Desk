@@ -102,6 +102,26 @@ export interface ListSessions extends ClientMessage {
   type: "list_sessions";
 }
 
+// ── Onboarding (TD-1101 first-run wizard) ────────────────────────────
+
+export interface GetSetupState extends ClientMessage {
+  type: "get_setup_state";
+}
+
+export interface SetApiKey extends ClientMessage {
+  type: "set_api_key";
+  api_key: string;
+}
+
+export interface ValidateApiKey extends ClientMessage {
+  type: "validate_api_key";
+}
+
+export interface SetPreset extends ClientMessage {
+  type: "set_preset";
+  name: string;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -118,7 +138,11 @@ export type ClientMessageUnion =
   | SetTier
   | GetInstructionStack
   | Shutdown
-  | ListSessions;
+  | ListSessions
+  | GetSetupState
+  | SetApiKey
+  | ValidateApiKey
+  | SetPreset;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -309,6 +333,26 @@ export interface PolicyRules extends DaemonEvent {
   rules: PolicyRuleSummary[];
 }
 
+// TD-1101 first-run wizard: the daemon's reply to get_setup_state
+// (and the ack for set_api_key / set_preset). has_api_key is the
+// first-run signal — probed from the keychain, never from disk.
+export interface SetupState extends DaemonEvent {
+  type: "setup_state";
+  seq: number;
+  has_api_key: boolean;
+  presets: string[];
+  active_preset: string;
+}
+
+// TD-1101: reply to validate_api_key — a one-token live probe of the
+// stored key. `detail` is actionable text; the key never appears.
+export interface ApiKeyValidated extends DaemonEvent {
+  type: "api_key_validated";
+  seq: number;
+  ok: boolean;
+  detail: string;
+}
+
 export interface Error extends DaemonEvent {
   type: "error";
   session_id?: string | null;
@@ -352,4 +396,6 @@ export type DaemonEventUnion =
   | InstructionStack
   | SessionList
   | PolicyRules
+  | SetupState
+  | ApiKeyValidated
   | Error;

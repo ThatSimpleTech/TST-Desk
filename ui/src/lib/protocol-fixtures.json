@@ -77,6 +77,20 @@
   "list_sessions": {
     "type": "list_sessions"
   },
+  "get_setup_state": {
+    "type": "get_setup_state"
+  },
+  "set_api_key": {
+    "type": "set_api_key",
+    "api_key": "sk-or-test-key"
+  },
+  "validate_api_key": {
+    "type": "validate_api_key"
+  },
+  "set_preset": {
+    "type": "set_preset",
+    "name": "tst-default"
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -363,6 +377,23 @@
         "effect": "ask"
       }
     ]
+  },
+  "setup_state": {
+    "type": "setup_state",
+    "seq": 1,
+    "has_api_key": false,
+    "presets": [
+      "budget",
+      "local",
+      "tst-default"
+    ],
+    "active_preset": "tst-default"
+  },
+  "api_key_validated": {
+    "type": "api_key_validated",
+    "seq": 1,
+    "ok": true,
+    "detail": "Key accepted by provider."
   },
   "hello_ack": {
     "type": "hello_ack",
