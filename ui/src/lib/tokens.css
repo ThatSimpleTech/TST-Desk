@@ -43,6 +43,14 @@
 	--color-warn:           #9a6a1b;
 	--color-err:            #a0432e;
 
+	/* ---- Syntax highlighting (TD-1609) ----
+	   Warm code palette consumed by hljs-theme.css; dark lifts each hue. */
+	--syn-comment:          #8a8579;
+	--syn-keyword:          #b4532a;
+	--syn-string:           #3e7a4e;
+	--syn-number:           #9a6a1b;
+	--syn-title:            #7e3a5e;
+
 	/* ---- Legacy aliases (light) ---- */
 	--color-bg:             var(--color-ground);
 	--color-bg-subtle:      var(--color-sunken);
@@ -139,6 +147,12 @@
 		--color-ok:             #7fb08c;
 		--color-warn:           #d2a45c;
 		--color-err:            #d98a75;
+
+		--syn-comment:          #6e6a61;
+		--syn-keyword:          #d0794f;
+		--syn-string:           #7fb08c;
+		--syn-number:           #d2a45c;
+		--syn-title:            #b87a9e;
 
 		/* Shadows go near-silent on dark; the hairline carries separation. */
 		--shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);

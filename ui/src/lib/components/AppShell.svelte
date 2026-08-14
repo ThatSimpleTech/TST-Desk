@@ -24,9 +24,28 @@
 	import DoctorPane from './DoctorPane.svelte';
 	import DecisionsPane from './DecisionsPane.svelte';
 	import Icon from './Icon.svelte';
-	import { start as startOnboarding, reopen as reopenWizard } from '../onboarding.svelte.js';
-	import { startDoctor, runDoctor } from '../doctor.svelte.js';
-	import { startDecisions, openDecisions } from '../decisions.svelte.js';
+	import { start as startOnboarding, reopen as reopenWizard, onboarding } from '../onboarding.svelte.js';
+	import { startDoctor, runDoctor, doctor } from '../doctor.svelte.js';
+	import { startDecisions, openDecisions, decisions } from '../decisions.svelte.js';
+	import { resolveShortcut } from '../shortcuts';
+	import { chat, cancelTurn } from '../chat-store.svelte.js';
+	import { showCancel } from '../chat-store';
+	import { workspaces, closeWorkspaceMenu } from '../workspaces.svelte.js';
+
+	// Global shortcuts (TD-1609): Esc peels layers (menu → modal → turn),
+	// ⌘, reopens the wizard. The mapping itself is pure — see shortcuts.ts.
+	function onGlobalKeydown(event: KeyboardEvent): void {
+		const action = resolveShortcut(event, {
+			workspaceMenuOpen: workspaces.menuOpen,
+			modalOpen: onboarding.open || doctor.open || decisions.open,
+			turnLive: showCancel(chat.turnState),
+		});
+		if (action === null) return;
+		event.preventDefault();
+		if (action === 'close-menu') closeWorkspaceMenu();
+		else if (action === 'cancel-turn') cancelTurn();
+		else reopenWizard();
+	}
 
 	// Feed every daemon event into the timeline for the lifetime of the shell,
 	// and start first-run detection (TD-1101) — the wizard probes setup state
@@ -49,6 +68,8 @@
 	let rightTab = $state<'activity' | 'stack'>('activity');
 </script>
 
+<svelte:window onkeydown={onGlobalKeydown} />
+
 <header class="shell-header">
 	<span class="shell-title">TST Desk</span>
 	<TitleBar />
@@ -69,11 +90,11 @@
 		aria-label="Run doctor diagnostics"
 		onclick={runDoctor}><Icon name="stethoscope" size={16} /></button
 	>
-	<!-- Revisit first-run setup (TD-1101) at any time. -->
+	<!-- Revisit first-run setup (TD-1101) at any time — also ⌘, (TD-1609). -->
 	<button
 		class="shell-gear"
 		type="button"
-		title="Setup wizard"
+		title="Setup wizard (⌘,)"
 		aria-label="Open setup wizard"
 		onclick={reopenWizard}><Icon name="settings" size={16} /></button
 	>
