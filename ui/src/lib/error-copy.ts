@@ -61,6 +61,33 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 	gateway_timeout: { severity: "toast", title: "Provider timed out", body: "The provider gateway timed out (504). Resend in a moment." },
 	bad_request: { severity: "toast", title: "Request rejected", body: "The provider rejected the request (400). If this repeats, report it with copy diagnostics." },
 	not_found: { severity: "toast", title: "Model not found", body: "The provider does not serve this model (404). Check the tier model slugs in config.yaml." },
+	// Transport/parse failures — live codes emitted by provider.py exception
+	// paths (verify against _STATUS_CODE_MAP alone and you'd miss these).
+	timeout: {
+		severity: "toast",
+		title: "Provider timed out",
+		body: "The provider didn't answer in time. Resend to retry.",
+	},
+	connection_error: {
+		severity: "toast",
+		title: "Can't reach the provider",
+		body: "The provider couldn't be reached — check the network, VPN, or firewall, then resend.",
+	},
+	request_error: {
+		severity: "toast",
+		title: "Request failed",
+		body: "The provider request failed in transit. Resend; if it repeats, copy diagnostics and report it.",
+	},
+	parse_error: {
+		severity: "toast",
+		title: "Unreadable provider response",
+		body: "The provider's response couldn't be parsed. If this repeats, copy diagnostics and report it — it usually means a provider-side change.",
+	},
+	stream_interrupted: {
+		severity: "toast",
+		title: "Response interrupted",
+		body: "The provider's stream dropped mid-turn. Resend to retry the turn.",
+	},
 };
 
 /** Copy for a failed turn's typed error code, or null to stay silent (cancelled). */
@@ -86,24 +113,33 @@ export function sessionStateCopy(state: string, reason: string | null): NoticeSp
 			return {
 				severity: "banner",
 				title: "Spend cap reached",
-				body: `${why}. Review spend, then resume — or raise the cap in .tst/config.yaml.`,
+				body: `${why}. Review spend, then resume — or raise spend_usd under caps: in .tst/config.yaml.`,
 			};
 		}
 		if (why.startsWith("wall-clock cap exceeded")) {
 			return {
 				severity: "banner",
 				title: "Wall-clock cap reached",
-				body: `${why}. Resume to continue, or raise the cap in .tst/config.yaml.`,
+				body: `${why}. Resume to continue, or raise wall_clock_hours under caps: in .tst/config.yaml.`,
 			};
 		}
 		if (why.startsWith("iteration cap exceeded")) {
 			return {
 				severity: "banner",
 				title: "Iteration cap reached",
-				body: `${why}. Resume to continue, or raise the cap in .tst/config.yaml.`,
+				body: `${why}. Resume to continue, or raise max_iterations under caps: in .tst/config.yaml.`,
 			};
 		}
 		return { severity: "banner", title: "Session paused", body: why };
+	}
+	if (state === "interrupted") {
+		// Daemon stopped mid-session; the loop is not resumable — the tombstone
+		// banner must say so rather than go quiet.
+		return {
+			severity: "banner",
+			title: "Session can’t be resumed",
+			body: "The daemon stopped while this session was running. The session is a tombstone — start a new session to keep working.",
+		};
 	}
 	if (state === "failed") {
 		return {
