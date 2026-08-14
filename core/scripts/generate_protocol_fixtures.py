@@ -177,6 +177,16 @@ FIXTURES = {
         duration=2.5,
         seq=12,
     ),
+    "turn_complete_failed": TurnComplete(
+        session_id="sess-1",
+        tokens=0,
+        cost=0.0,
+        tier="brain",
+        duration=0.4,
+        failed=True,
+        error_code="auth_failed",
+        seq=13,
+    ),
     "tier_state": TierState(
         session_id="sess-1",
         tier="brain",

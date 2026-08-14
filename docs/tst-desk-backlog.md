@@ -999,10 +999,10 @@ Tauri window once TD-1004's chat pane drives real turns.
 **Size:** 2 · **Depends on:** TD-1003
 
 **Acceptance criteria:**
-- [ ] Errors surface as actionable messages naming the fix, never raw tracebacks
-- [ ] Auth failures, missing keys, and cap pauses each have tailored, specific copy
-- [ ] Non-blocking toasts for transient issues; persistent banners for blocking ones
-- [ ] A "copy diagnostics" action produces a redacted, pasteable report
+- [x] Errors surface as actionable messages naming the fix, never raw tracebacks
+- [x] Auth failures, missing keys, and cap pauses each have tailored, specific copy
+- [x] Non-blocking toasts for transient issues; persistent banners for blocking ones
+- [x] A "copy diagnostics" action produces a redacted, pasteable report
 
 ---
 
