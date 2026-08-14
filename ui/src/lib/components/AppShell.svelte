@@ -17,21 +17,26 @@
 	import ToastStack from '../ToastStack.svelte';
 	import WizardPane from './WizardPane.svelte';
 	import DoctorPane from './DoctorPane.svelte';
+	import DecisionsPane from './DecisionsPane.svelte';
 	import { start as startOnboarding, reopen as reopenWizard } from '../onboarding.svelte.js';
 	import { startDoctor, runDoctor } from '../doctor.svelte.js';
+	import { startDecisions, openDecisions } from '../decisions.svelte.js';
 
 	// Feed every daemon event into the timeline for the lifetime of the shell,
 	// and start first-run detection (TD-1101) — the wizard probes setup state
 	// after each handshake and opens when no API key is stored. The doctor
-	// subscription (TD-1104) listens for diagnostics reports.
+	// subscription (TD-1104) listens for diagnostics reports; the decisions
+	// store (TD-1202) collects decision_logged events for its panel.
 	onMount(() => {
 		const offTimeline = onEvent(push);
 		const offWizard = startOnboarding();
 		const offDoctor = startDoctor();
+		const offDecisions = startDecisions();
 		return () => {
 			offTimeline();
 			offWizard();
 			offDoctor();
+			offDecisions();
 		};
 	});
 </script>
@@ -40,6 +45,14 @@
 	<span class="shell-title">TST Desk</span>
 	<TitleBar />
 	<span class="shell-spacer"></span>
+	<!-- Review the session's decisions (TD-1202) at any time. -->
+	<button
+		class="shell-gear"
+		type="button"
+		title="Decisions"
+		aria-label="Open decisions ledger"
+		onclick={openDecisions}>📜</button
+	>
 	<!-- Run the doctor (TD-1104) at any time. -->
 	<button
 		class="shell-gear"
@@ -77,6 +90,7 @@
 <ToastStack />
 <WizardPane />
 <DoctorPane />
+<DecisionsPane />
 
 <style>
 	.shell-header {
