@@ -1884,6 +1884,24 @@ chosen models and needs capability detection first.
 friction, per-app quirks, boundary model for screen actions). Driver bring-up
 on real hardware is where the estimate lives; timebox and record deviations.
 
+### TD-1711 — Session liveness honesty
+**Size:** 2 · **Depends on:** TD-1701
+
+**Acceptance criteria:**
+- [ ] Startup auto-bind never adopts a terminal session (interrupted, complete,
+      failed, cancelled); with no live session the app stays unbound and the
+      empty state points at New Session
+- [ ] Sending `user_message` to a terminal session returns a typed daemon error
+      (e.g. `session_not_running`) instead of silently enqueueing with no
+      consumer; the UI renders it as actionable copy
+
+**Notes:** observed 2026-08-14 on the first real-machine run after E16 — after
+an app restart, `session_list` auto-bind married an `interrupted` tombstone and
+the composer gated off it ("Waiting for a session…" forever); a later
+`open_workspace` created a running session the UI refused to switch to
+(first-adoption stickiness, now re-targetable via TD-1701's rail). The rail is
+the manual escape; this story removes the trap.
+
 ---
 
 # Post-v0.1 backlog
@@ -1924,8 +1942,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
 | M2 The window | E10–E12 | 16 | 53 |
-| M3 Shippable | E13–E17 | 30 | 92 |
-| **Total v0.1** | **17** | **96** | **303** |
+| M3 Shippable | E13–E17 | 31 | 94 |
+| **Total v0.1** | **17** | **97** | **305** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
