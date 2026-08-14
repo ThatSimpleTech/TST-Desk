@@ -507,19 +507,22 @@ day one with nothing to port. Do not treat it as an edge case.
 **Acceptance criteria:**
 - [x] `.tst/rules/*.md` support frontmatter with an `appliesTo` array of glob patterns
 - [x] Rules without `appliesTo` always load
-- [ ] Rules with `appliesTo` load only when the session touches a matching file
-- [ ] Activation is dynamic — a rule that becomes relevant mid-session is injected, and the
+- [x] Rules with `appliesTo` load only when the session touches a matching file
+- [x] Activation is dynamic — a rule that becomes relevant mid-session is injected, and the
       injection is announced in the timeline
 - [x] Glob matching tested against: exact paths, `*`, `**`, extension patterns, negation if
       supported, and paths with spaces or unicode
-- [ ] Unmatched rules are visible in the inspector as inactive, with their cost shown as zero
+- [x] Unmatched rules are visible in the inspector as inactive, with their cost shown as zero
 
-**Reopened (2026-08-14, found by TD-1201 verification):** the glob mechanism is built and
-tested (`ContextAssembler.assemble(matched_paths=…)`), but no production call site ever
-passes `matched_paths` — the loop and the daemon both assemble with `None`, so scoped
-rules always load and boxes 3, 4, 6 are not true in the shipped product. Needs a
-touch-tracking story: record the paths a session touches (fs tool calls), thread them
-into turn-time assembly, announce mid-session activations in the timeline.
+**Completed (2026-08-14):** touch-tracking plumbed end to end. Dispatch records a
+successful call's `path_fields` onto `Session.touched_paths` (refusals and handler
+errors record nothing); the loop forwards the set as `matched_paths` at every assembly
+and emits one `RuleActivated` per newly active rule (the first assembly is the silent
+baseline); the daemon's `get_instruction_stack` handler forwards the same set so the
+stack panel reports the true active/inactive verdict. UI renders activations as steering
+timeline entries; the shared wire fixture covers `rule_activated`. Tests: tracker
+normalization (4), dispatch success/refusal/handler-error (3), loop activation /
+no-touch / baseline (3), daemon inactive→active flip (1).
 
 **Notes:** This is the mechanism that keeps a large ruleset affordable. Spec §4.3.
 
@@ -1136,7 +1139,7 @@ coordination note as TD-1105.
 **Acceptance criteria:**
 - [x] Lists every steering source in precedence order with per-file token counts
 - [x] Shows total token cost and whether the block is currently cached
-- [ ] Path-scoped rules show matched or unmatched, and what they matched
+- [x] Path-scoped rules show matched or unmatched, and what they matched
 - [x] `CLAUDE.md` fallbacks and shadowed files clearly labeled
 - [x] Imports shown nested under their importer
 - [x] Files over 200 lines flagged with the adherence warning
@@ -1154,11 +1157,11 @@ adherence warning. Clicking a file goes through `open-file.ts` → `tauri-plugin
 (capability scoped to `opener:allow-open-path` only), no-op outside the shell. Verified by
 three independent probes (synthetic workspace payload, UI rendering, shell/push paths):
 vitest 253/253, svelte-check 0/0 (286 files), pytest 1035/2 skipped, e2e OVERALL PASS.
-**AC 3 stays open:** no production call site passes `matched_paths` (TD-503's
-touch-tracking was never plumbed), so scoped rules always assemble active and
-"unmatched" is unreachable; the panel labels scoped rules "in prompt" / "not in prompt"
-rather than a match verdict, and the concrete matched paths are not in the schema.
-Ticks when the touch-tracking story lands.
+**AC 3 ticked (2026-08-14):** TD-503's plumbing landed — the daemon stack handler and
+the loop both forward the session's touched paths, so scoped rules now assemble with a
+real match verdict and the panel's active/inactive labels are honest.
+`test_scoped_rule_reports_true_active_verdict` pins the wire: inactive before a
+matching touch, active after.
 
 ---
 
@@ -1342,8 +1345,10 @@ product-semantics work the skips point at.
 - [ ] Shell-tool process-group kill semantics verified on Windows
       (CREATE_NEW_PROCESS_GROUP + taskkill/TerminateJobObject), skipped
       cancel/timeout tests unskipped
-- [ ] Parent-watchdog liveness probe works on Windows (OpenProcess) or the
-      watchdog is documented POSIX-only
+- [x] Parent-watchdog liveness probe works on Windows (OpenProcess) — first pass:
+      OpenProcess plus `GetExitCodeProcess != STILL_ACTIVE` (a dead process with an
+      open handle otherwise reports alive); `test_parent_watchdog` green on the
+      windows leg
 
 ---
 

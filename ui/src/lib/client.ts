@@ -36,6 +36,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "tier_state",
   "context_compacted",
   "steering_reloaded",
+  "rule_activated",
   "tier_switched",
   "instruction_stack",
   "session_list",

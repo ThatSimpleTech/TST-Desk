@@ -330,6 +330,12 @@
     "prefix_tokens": 100,
     "source_count": 3
   },
+  "rule_activated": {
+    "type": "rule_activated",
+    "seq": 16,
+    "session_id": "sess-1",
+    "rule_path": ".tst/rules/api-rules.md"
+  },
   "instruction_stack": {
     "type": "instruction_stack",
     "seq": 17,

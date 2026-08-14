@@ -129,7 +129,14 @@ describe("eventToEntry", () => {
     );
     expect(reload!.kind).toBe("steering_reload");
 
-    const err = eventToEntry(evt({ type: "error", code: "test", message: "boom", seq: 13 }));
+    const activated = eventToEntry(
+      evt({ type: "rule_activated", session_id: "s1", rule_path: ".tst/rules/api.md", seq: 13 }),
+    );
+    expect(activated!.kind).toBe("steering_reload");
+    expect(activated!.title).toBe("Rule activated");
+    expect(activated!.preview).toBe(".tst/rules/api.md");
+
+    const err = eventToEntry(evt({ type: "error", code: "test", message: "boom", seq: 14 }));
     expect(err!.kind).toBe("error");
     expect(err!.title).toBe("test");
   });
