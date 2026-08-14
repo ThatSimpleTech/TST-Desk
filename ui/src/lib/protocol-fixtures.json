@@ -30,6 +30,10 @@
     "tool_call_id": "tc-1",
     "reason": null
   },
+  "resume": {
+    "type": "resume",
+    "session_id": "sess-1"
+  },
   "cancel": {
     "type": "cancel",
     "session_id": "sess-1"
@@ -70,6 +74,13 @@
     "session_id": "sess-1",
     "state": "running",
     "reason": null
+  },
+  "session_state_paused": {
+    "type": "session_state",
+    "seq": 2,
+    "session_id": "sess-1",
+    "state": "paused",
+    "reason": "spend cap exceeded: $0.0205 >= $0.01"
   },
   "assistant_delta": {
     "type": "assistant_delta",

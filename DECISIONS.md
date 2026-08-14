@@ -1646,3 +1646,47 @@ planning).  A render proxy — protocol ingestion, store update — would
 measure the wrong thing and give false comfort under the criterion's
 name.  When TD-1005 lands, the metric gets a measurer and a baseline in
 one follow-up.
+---
+
+## 2026-08-13 — TD-707: Cap enforcement
+
+Decisions made while adding spend/wall-clock/iteration caps.
+
+### 1. Pause is a distinct fault state, not an approval
+
+**Decision:** A new `paused` session state (running → paused → running); the
+loop parks in `wait_for_resume()` (an asyncio event — no spinning or
+polling) and the `session_state` event carries the fault summary naming the
+cap and the numbers. No `approval_request` is emitted.
+
+**Rationale:** Criterion 3. A cap is a hard stop the user must act on (raise
+the cap), not a per-action question the model can answer.
+
+### 2. Checked before every model call, measured per session
+
+**Decision:** `_cap_violation()` runs before each model call: spend from
+`CostTracker.session_cost()`, wall-clock from the loop's session start, and
+an iteration counter incremented per model call. Violation parks the loop;
+on resume the caps are re-checked before the next call.
+
+**Rationale:** Criterion 1 + 2. One pre-call chokepoint covers the first
+call of a turn and every round-trip call; a single expensive call trips the
+cap before the *next* call (the `$0.01` test's "halts on the first call").
+
+### 3. Resume reloads the boundary, then re-checks
+
+**Decision:** A new `resume` client message makes the daemon reload
+`.tst/config.yaml` (so raised caps take effect), emit a fresh
+`boundary_update`, and signal the parked loop. If the new caps are still
+exceeded, the loop re-pauses immediately.
+
+**Rationale:** Criterion 4. Session state (messages, events, tool results)
+is never touched — the loop continues the same turn where it parked.
+
+### 4. Caps come from the TD-706 config, enforced in the loop
+
+**Decision:** The loop reads `session.boundary_config.caps` (TD-706); the
+classifier's `cap-exceeded` rule (TD-701) stays for decision classification.
+
+**Rationale:** One config, one enforcement point. TD-707 enforces; TD-706
+defines; TD-701 classifies.

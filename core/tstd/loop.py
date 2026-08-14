@@ -101,6 +101,28 @@ def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
     return cls.value
 
 
+def _cap_violation(
+    session: Session,
+    tracker: CostTracker,
+    session_start: float,
+    iterations: int,
+) -> str | None:
+    """The first declared cap that is exceeded, or ``None``.
+
+    Returns a human-readable fault summary (TD-707) — checked before
+    every model call so an over-cap session pauses instead of spending.
+    """
+    caps = session.boundary_config.caps
+    if tracker.session_cost() >= caps.spend_usd:
+        return f"spend cap exceeded: ${tracker.session_cost():.4f} >= ${caps.spend_usd:.2f}"
+    elapsed_hours = (time.time() - session_start) / 3600.0
+    if elapsed_hours >= caps.wall_clock_hours:
+        return f"wall-clock cap exceeded: {elapsed_hours:.2f}h >= {caps.wall_clock_hours}h"
+    if iterations >= caps.max_iterations:
+        return f"iteration cap exceeded: {iterations} >= {caps.max_iterations}"
+    return None
+
+
 def _stream_turn(
     provider: ProviderLike,
     model: str,
@@ -467,6 +489,11 @@ async def agent_loop(
     # One token counter per model slug (TD-405); encoders load once.
     _token_counters: dict[str, TokenCounter] = {}
 
+    # Cap enforcement (TD-707): the session start clock and per-call
+    # iteration counter the caps are measured against.
+    _session_start = time.time()
+    _iterations = 0
+
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:
         # 1. Wait for user input
@@ -583,6 +610,28 @@ async def agent_loop(
             # 2c. Resolve provider lazily on first use
             if provider is None:
                 provider = await provider_factory()
+
+            # 2c.5 Cap enforcement (TD-707).  Before every model call,
+            #     a declared cap that is exceeded parks the session in a
+            #     distinct fault state — a summary, not an approval
+            #     request.  On resume the caps are re-checked; if the
+            #     user raised them, the call proceeds.
+            while True:
+                violation = _cap_violation(session, tracker, _session_start, _iterations)
+                if violation is None:
+                    break
+                log.warning(
+                    "cap pause",
+                    extra={
+                        "extra_fields": {
+                            "session_id": session.id,
+                            "summary": violation,
+                        }
+                    },
+                )
+                await session.pause_at_cap(violation)
+                await session.wait_for_resume()
+            _iterations += 1
 
             # 2d. Call provider (streaming)
             collected_content, tool_calls, failed, error_msg = await _stream_and_parse(

@@ -26,6 +26,7 @@ from tstd.protocol import (
     Hello,
     OpenWorkspace,
     Ready,
+    Resume,
     SessionState,
     SetTier,
     ShellOutput,
@@ -85,6 +86,12 @@ class TestClientMessages:
         back = _roundtrip(msg)
         assert isinstance(back, Deny)
         assert back.reason == "not safe"
+
+    def test_resume(self) -> None:
+        msg = Resume(session_id="sess-1")
+        back = _roundtrip(msg)
+        assert isinstance(back, Resume)
+        assert back.session_id == "sess-1"
 
     def test_deny_no_reason(self) -> None:
         msg = Deny(session_id="sess-1", tool_call_id="tc-1")
