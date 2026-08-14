@@ -16,9 +16,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-# POSIX advisory locks; Windows falls back to append-mode atomicity.
-# (Platform-guarded import so mypy's win32 target never sees the name.)
-if sys.platform != "win32":
+# Advisory locks: flock on POSIX, an MSVCRT byte-range lock on Windows.
+# (Platform-guarded imports so mypy never sees the other OS's module.)
+if sys.platform == "win32":
+    import msvcrt
+else:
     import fcntl
 
 DecisionClassT = Literal["A", "B", "C"]
@@ -130,8 +132,8 @@ class DecisionLedger:
         entries = ledger.read()
 
     ``append`` is atomic and serialized across sessions (advisory file
-    lock on POSIX; append-mode atomicity on Windows), so concurrent
-    sessions never interleave partial entries.
+    lock: ``flock`` on POSIX, an MSVCRT byte-range lock on Windows), so
+    concurrent sessions never interleave or overwrite partial entries.
     """
 
     def __init__(self, workspace: str | Path) -> None:
@@ -157,14 +159,30 @@ class DecisionLedger:
         return parse_ledger(self.path.read_text(encoding="utf-8"))
 
     def _locked_append(self, rendered: str) -> None:
-        """Append *rendered* under an advisory lock (POSIX)."""
+        """Append *rendered* under an advisory lock (flock / MSVCRT)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as f:
             fd = f.fileno()
-            if sys.platform != "win32":
+            if sys.platform == "win32":
+                # Windows append mode seeks to EOF before every write but
+                # does not make seek+write atomic, so concurrent writers
+                # can overwrite each other.  Locking byte 0 — a fixed
+                # region every writer agrees on, never touched by payload
+                # since appends land at EOF — gives flock's mutual
+                # exclusion; the lock conflicts across handles within a
+                # process as well as across processes, and LK_LOCK retries
+                # for ~10s before raising.
+                f.seek(0)
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                try:
+                    f.write(rendered)
+                    f.flush()  # payload must hit the OS before the lock drops
+                finally:
+                    f.seek(0)  # unlock the same region that was locked
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
                 fcntl.flock(fd, fcntl.LOCK_EX)
-            try:
-                f.write(rendered)
-            finally:
-                if sys.platform != "win32":
+                try:
+                    f.write(rendered)
+                finally:
                     fcntl.flock(fd, fcntl.LOCK_UN)

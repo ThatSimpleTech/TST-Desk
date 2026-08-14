@@ -108,13 +108,19 @@ class TestParseDecision:
 
 
 class TestStaticShortCircuit:
-    async def test_static_a_skips_worker(self, tmp_path: Path) -> None:
+    async def test_static_a_skips_worker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         worker = SpyWorker()
         classifier = AmbiguousClassifier(make_static(tmp_path), worker)
+        # Workspace-relative paths classified from inside the workspace: an
+        # absolute tmp_path is a drive-letter path on Windows, refused as
+        # boundary-unsafe (C) before the in-workspace-edit rule (TD-1406).
+        monkeypatch.chdir(tmp_path)
         request = DecisionRequest(
             tool_name="fs_edit",
-            arguments={"path": str(tmp_path / "a.py")},
-            writes=(tmp_path / "a.py",),
+            arguments={"path": "a.py"},
+            writes=(Path("a.py"),),
             is_mutation=True,
         )
         decision = await classifier.classify(request)

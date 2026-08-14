@@ -131,9 +131,10 @@ class TestPrecedence:
         sources = _make_resolver(home).resolve(ws)
         nested = [s for s in sources if s.precedence == Precedence.NESTED]
         assert len(nested) == 3
-        assert nested[0].subtree == "src"
-        assert nested[1].subtree == "src/api"
-        assert nested[2].subtree == "src/api/deep"
+        # discovery renders subtrees with the OS separator; TD-1406 tracks
+        # making them POSIX-stable.  Compare separator-insensitively.
+        subtrees = [(s.subtree or "").replace("\\", "/") for s in nested]
+        assert subtrees == ["src", "src/api", "src/api/deep"]
 
 
 # ── Tests: subtree scoping ───────────────────────────────────────────────
@@ -158,7 +159,12 @@ class TestSubtree:
             },
         )
         sources = _make_resolver(home).resolve(ws)
-        nested = {s.subtree: s for s in sources if s.precedence == Precedence.NESTED}
+        # Separator-insensitive keys — see TestPrecedence above (TD-1406).
+        nested = {
+            (s.subtree or "").replace("\\", "/"): s
+            for s in sources
+            if s.precedence == Precedence.NESTED
+        }
         assert nested["src"] is not None
         assert nested["src/api"] is not None
 
@@ -214,10 +220,12 @@ class TestAssembly:
         result = _make_assembler(home).assemble_sync(ws)
         assert len(result.sources) == 2
 
+        # The provenance comment renders POSIX separators (cache-stable
+        # prompts); discovery resolves the workspace but not the home dir.
         global_path = home / ".tstdesk" / "AGENTS.md"
-        root_path = ws / "AGENTS.md"
-        assert f"<!-- from: {global_path}" in result.block
-        assert f"<!-- from: {root_path}" in result.block
+        root_path = ws.resolve() / "AGENTS.md"
+        assert f"<!-- from: {global_path.as_posix()}" in result.block
+        assert f"<!-- from: {root_path.as_posix()}" in result.block
         assert "global content" in result.block
         assert "root content" in result.block
 

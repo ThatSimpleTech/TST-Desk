@@ -2811,3 +2811,64 @@ per pane; the mapping's `modalOpen` branch keeps today's behavior instead
 of letting Esc reach through a dialog to the turn behind it. A pure
 mapping function keeps all of this testable in node vitest (9 cases)
 without a DOM.
+
+## 2026-08-14 — TD-1406: Windows CI parity (first pass)
+
+The Windows CI leg was red at mypy for a stretch, which hid the pytest leg
+entirely — when mypy went green, ~110 tests failed at once. This pass makes
+the suite platform-honest without touching the guard's security posture.
+
+### 1. The boundary guard stays strict; the tests go relative
+
+**Decision:** No change to `windows_unsafe` semantics — drive-letter, UNC,
+8.3 short-name, and ADS forms stay refused fail-closed on every platform.
+Guard tests that fed absolute `tmp_path` paths now `monkeypatch.chdir` into
+the workspace and pass workspace-relative paths, so refusal codes
+(`outside_workspace`, `steering_file`, `hardlink`, `outside_writable_paths`)
+pin on BOTH platforms with no `skipif`.
+
+**Rationale:** Loosening a security guard to make a CI leg pass is the wrong
+direction of fit. Whether absolute in-workspace paths should be LEGAL on
+Windows (today they are refused everywhere, so the model must speak
+workspace-relative — defensible, but a product decision) is deferred to
+TD-1406's remaining boxes. Relative-path tests pin the security semantics
+on both platforms meanwhile, which is strictly more coverage than skipping.
+
+### 2. Prompt text is POSIX-separated everywhere
+
+**Decision:** Manifest walk entries and assembler provenance comments render
+paths with `as_posix()` on every platform.
+
+**Rationale:** These strings land in the system prompt. OS-native separators
+would make the same workspace produce different prompts on different
+machines, breaking cache-prefix stability and golden tests for no product
+benefit. The model reads `src/main.py` fine on any host.
+
+### 3. Real Windows product bugs fixed, not papered over
+
+**Decision:** `daemon.run` registers signal handlers inside
+`contextlib.suppress(NotImplementedError)` (asyncio signal handlers are
+POSIX-only; shutdown still arrives via the shutdown message and parent
+watchdog). `_win_parent_alive` now checks `GetExitCodeProcess` for
+STILL_ACTIVE — plain OpenProcess reports a dead process alive while any
+handle to it is open. The decision ledger takes an `msvcrt.locking`
+byte-range lock on win32 (the previous code had no lock at all there, and
+MSVCRT append-mode writes are not atomic). The shell tool's allowlist
+normalizes PATHEXT extensions and case on win32 (`echo.EXE` ≡ `echo`), and
+`_kill_process_group` actually kills the child on win32 (it was a no-op
+with a comment claiming a caller's `proc.kill()` that did not exist).
+
+**Rationale:** Each of these was a latent production defect on Windows that
+the red CI leg had been hiding; the CI excavation paid for itself.
+
+### 4. Platform-divergent semantics are skipped and pointed, not faked
+
+**Decision:** chmod-based `restricted_mode` tests (session store, port
+file), POSIX env-assignment shell syntax, and POSIX process-group kill
+semantics carry `skipif(win32, reason="TD-1406: ...")` with the reason
+naming the deferred work.
+
+**Rationale:** Windows ACLs, Job Objects, and cmd.exe syntax are genuinely
+different semantics that deserve their own implementation pass (they are
+TD-1406's remaining acceptance boxes). A skip with a pointer is honest; a
+test asserting POSIX behavior on Windows is fiction.

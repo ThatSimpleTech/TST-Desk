@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -49,6 +51,25 @@ from tstd.tools.shell import sanitized_env
 # A command whose side effect survives only if the process group escapes
 # the kill: the backgrounded child sleeps, then touches a marker file.
 _GROUP_ESCAPE_CMD = "{ sleep 2; touch kicked.txt; } & wait"
+
+# Process-group kill semantics are POSIX-only: Windows has no killpg, so
+# the product terminates only the direct child there and grandchildren
+# can escape (TD-1406).
+requires_posix_process_group = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "TD-1406: process-group kill relies on POSIX killpg; Windows kills only the direct child"
+    ),
+)
+
+
+def _python(code: str) -> str:
+    """A shell command running *code* under this interpreter, cross-platform.
+
+    *code* must use single quotes only: the command line is wrapped in
+    double quotes, which both cmd.exe and POSIX sh accept.
+    """
+    return f'"{sys.executable}" -c "{code}"'
 
 
 async def _stub_worker(prompt: str) -> str:
@@ -85,9 +106,18 @@ class TestWorkspaceCwd:
     async def test_pwd_is_the_workspace(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
-        result = await dispatcher.dispatch("c1", "shell", {"command": "pwd"}, session)
+        result = await dispatcher.dispatch(
+            "c1",
+            "shell",
+            {"command": _python("import os; print(os.path.realpath(os.getcwd()))")},
+            session,
+        )
         assert result.status == "success"
-        assert str(tmp_path) in result.output
+        # Normalize both sides: on Windows the child's getcwd may differ
+        # from pytest's tmp_path string in case or 8.3 form.  (tmp_path
+        # is already symlink-resolved; normcase is a pure string op.)
+        expected = os.path.normcase(str(tmp_path))
+        assert expected in os.path.normcase(result.output)
 
     async def test_relative_paths_resolve_in_workspace(self, tmp_path: Path) -> None:
         (tmp_path / "marker.txt").write_text("found it\n")
@@ -102,6 +132,7 @@ class TestWorkspaceCwd:
 
 
 class TestTimeoutAndGroupKill:
+    @requires_posix_process_group
     async def test_timeout_kills_process_group(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
@@ -137,6 +168,7 @@ class TestTimeoutAndGroupKill:
 
 
 class TestCancel:
+    @requires_posix_process_group
     async def test_cancel_kills_process_group(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
@@ -159,6 +191,7 @@ class TestCancel:
         assert result.status == "success"
         assert result.output == "cancelled — command not started"
 
+    @requires_posix_process_group
     async def test_cancelled_error_path_kills_group(self, tmp_path: Path) -> None:
         # SessionRunner.cancel() cancels the loop task outright; the
         # handler's CancelledError path must kill the group before the
@@ -183,13 +216,11 @@ class TestStreaming:
     async def test_output_arrives_while_command_runs(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
+        command = _python(
+            "import time; print('first', flush=True); time.sleep(0.6); print('second')"
+        )
         task = asyncio.create_task(
-            dispatcher.dispatch(
-                "call_stream",
-                "shell",
-                {"command": "echo first; sleep 0.6; echo second"},
-                session,
-            )
+            dispatcher.dispatch("call_stream", "shell", {"command": command}, session)
         )
         # The first chunk lands in the event log while the task is still
         # pending — streamed, not buffered to the end.
@@ -206,21 +237,28 @@ class TestStreaming:
         result = await task
         assert result.status == "success"
         chunks = [e for e in session.event_log.all_events if isinstance(e, ShellOutput)]
-        assert "".join(e.chunk for e in chunks if e.stream == "stdout") == "first\nsecond\n"
+        stdout = "".join(e.chunk for e in chunks if e.stream == "stdout")
+        # Line endings are the child's platform's (\r\n on Windows).
+        assert stdout.replace("\r\n", "\n") == "first\nsecond\n"
         assert all(e.tool_call_id == "call_stream" for e in chunks)
         assert all(e.session_id == session.id for e in chunks)
 
     async def test_stderr_streams_in_its_own_lane(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
-        result = await dispatcher.dispatch("c1", "shell", {"command": "echo oops 1>&2"}, session)
+        result = await dispatcher.dispatch(
+            "c1",
+            "shell",
+            {"command": _python("import sys; print('oops', file=sys.stderr)")},
+            session,
+        )
         assert result.status == "success"
         err_chunks = [
             e
             for e in session.event_log.all_events
             if isinstance(e, ShellOutput) and e.stream == "stderr"
         ]
-        assert "".join(e.chunk for e in err_chunks) == "oops\n"
+        assert "".join(e.chunk for e in err_chunks).replace("\r\n", "\n") == "oops\n"
         assert "── stdout ──\n(empty)" in result.output
 
 
@@ -269,7 +307,10 @@ class TestExitCode:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         result = await dispatcher.dispatch(
-            "c1", "shell", {"command": "echo oops 1>&2; exit 2"}, session
+            "c1",
+            "shell",
+            {"command": _python("import sys; print('oops', file=sys.stderr); sys.exit(2)")},
+            session,
         )
         assert result.status == "success"
         assert "exit code: 2" in result.output
@@ -377,11 +418,27 @@ class TestAllowlist:
 
     async def test_absolute_path_resolves_to_basename(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
-        dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("echo",))
-        result = await dispatcher.dispatch("c1", "shell", {"command": "/bin/echo hi"}, session)
+        # This interpreter is an absolute path that exists on every
+        # platform; the allowlist entry is the basename it must resolve
+        # to (extension-stripped and lowercased on Windows, matching
+        # check_allowed).  "-c pass" keeps the command free of the shell
+        # metacharacters the allowlist parser splits segments on.
+        binary = sys.executable
+        name = Path(binary).stem.lower() if sys.platform == "win32" else Path(binary).name
+        dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=(name,))
+        result = await dispatcher.dispatch(
+            "c1", "shell", {"command": f'"{binary}" -c pass'}, session
+        )
         assert result.status == "success"
-        assert "hi" in result.output
+        assert "exit code: 0" in result.output
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason=(
+            "TD-1406: VAR=value assignment prefixes are POSIX shell syntax; "
+            "the daemon's shell on Windows is cmd.exe"
+        ),
+    )
     async def test_env_assignment_prefix_skipped(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("echo",))
