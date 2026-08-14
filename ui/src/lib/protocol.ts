@@ -120,6 +120,7 @@ export interface ToolResult extends DaemonEvent {
   status: "success" | "error";
   output: string;
   truncated: boolean;
+  diff?: string | null;
 }
 
 export interface ApprovalRequest extends DaemonEvent {

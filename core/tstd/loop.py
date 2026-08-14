@@ -323,6 +323,7 @@ async def _dispatch_and_append_results(
                 status=r.status,
                 output=r.output,
                 truncated=r.truncated,
+                diff=r.diff,
                 seq=1,
             )
         )

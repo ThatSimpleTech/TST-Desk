@@ -293,6 +293,39 @@ def _register_builtins(registry: ToolRegistry) -> None:
 
     registry.register(
         Tool(
+            name="fs_edit",
+            description="Replace an exact string in a file with a new string. "
+            "Fails if the target string is absent or appears more than once — "
+            "include enough surrounding context to match exactly one place. "
+            "For creating or rewriting whole files, use fs_write.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path to the file to edit",
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": "Exact text to find (must occur exactly once)",
+                        "minLength": 1,
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "Replacement text (may be empty to delete)",
+                    },
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+            side_effect_class="ask",
+            parallel_safe=False,
+            path_fields=("path",),
+            mutates=True,
+        )
+    )
+
+    registry.register(
+        Tool(
             name="shell",
             description="Execute a shell command and return its output. "
             "The command runs in the session's workspace directory. "

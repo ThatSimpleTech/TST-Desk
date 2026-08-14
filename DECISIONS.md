@@ -781,3 +781,69 @@ the notice into the event log.
 guard — enforcement in the tool layer, not per-handler, so a future write
 tool cannot forget to checkpoint. Canonical paths (not raw model arguments)
 guarantee the snapshot covers exactly what the guard approved.
+
+---
+
+## 2026-08-13 — TD-604: Filesystem write tools
+
+Decisions made while building the write handlers.
+
+### 1. Atomicity is temp file in the target directory plus `os.replace`
+
+**Decision:** Every write goes to a hidden temp file created in the
+target's own directory (`mkstemp` with a dotted prefix), is flushed and
+fsynced, then `os.replace`d over the target. On any failure the temp file
+is removed and the previous target is untouched.
+
+**Rationale:** A rename is atomic only within a filesystem, so the temp
+file must live beside the target. "No partial file on failure" then holds
+structurally: the target is either the old content or the new content,
+never a prefix of the new.
+
+### 2. Write handlers raise; read handlers return error strings
+
+**Decision:** `fs_write`/`fs_edit` raise on failure (missing file,
+ambiguous target, decode error) and dispatch converts the exception into a
+`handler_error` result; the read handlers keep returning `"Error: …"`
+strings.
+
+**Rationale:** A failed write must be `status="error"` so it is not
+checkpointed — silent success-with-error-message would put a commit on the
+undo stack for work that did not happen. Reads have nothing to checkpoint,
+and an explanatory string lets the model self-correct without burning the
+turn.
+
+### 3. `fs_edit` is exact single-occurrence replacement, no `replace_all`
+
+**Decision:** `fs_edit` fails loudly when the target occurs zero times
+("not found") or more than once ("ambiguous: N occurrences"). There is no
+bulk-replace flag.
+
+**Rationale:** "Failing loudly if the target is absent or ambiguous" is the
+acceptance criterion, and the fix for ambiguity is more context in
+`old_string` — something the model can do reliably. A `replace_all` flag
+would let an under-specified edit touch every match, which is exactly the
+silent-corruption mode the loud failure exists to prevent.
+
+### 4. The diff is computed at the dispatcher seam, not in the handlers
+
+**Decision:** Dispatch snapshots the canonical write targets (best-effort
+UTF-8, capped) before the handler runs and after it succeeds, renders a
+unified diff, and attaches it to the `tool_result` event's new `diff`
+field. A write that changed nothing carries no diff; a non-diffable target
+(binary, oversized) writes fine with `diff: null`.
+
+**Rationale:** "Every write produces a diff" is guaranteed in exactly one
+place — the same seam that checkpoints — so a future mutating tool gets
+diffs without implementing them. Handlers stay free to return whatever
+summary helps the model.
+
+### 5. `fs_write` keeps the pre-registered `append` flag
+
+**Decision:** The registry (TD-601) shipped `fs_write` with an
+`append: bool` option; the handler implements it as read + concatenate +
+atomic write rather than dropping the flag.
+
+**Rationale:** The schema is already promised to the model; removing a
+declared argument would be a protocol regression. Append reuses the same
+atomic path, so it costs nothing extra.

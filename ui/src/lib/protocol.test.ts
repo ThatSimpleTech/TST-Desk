@@ -163,6 +163,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const m2 = fixtures.tool_result_truncated as ToolResult;
     expect(m2.truncated).toBe(true);
     expect(m2.status).toBe("error");
+    // write variant carries the diff for display (TD-604)
+    const m3 = fixtures.tool_result_diff as ToolResult;
+    expect(isString(m3.diff)).toBe(true);
+    expect(m3.diff).toContain("--- a/test.txt");
   });
 
   it("approval_request", () => {
@@ -243,9 +247,9 @@ describe("All fixtures have required shape", () => {
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
-      "tool_result_truncated", "approval_request", "decision_logged",
-      "checkpoint_notice", "cost_update", "turn_complete", "error",
-      "error_with_session",
+      "tool_result_truncated", "tool_result_diff", "approval_request",
+      "decision_logged", "checkpoint_notice", "cost_update", "turn_complete",
+      "error", "error_with_session",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

@@ -31,6 +31,8 @@ class ToolResult:
             (TD-705); ``None`` for reads and non-checkpointed writes.
         checkpoint_notice: One-time degradation notice from the
             checkpointer, surfaced to the user as an event (TD-705).
+        diff: Unified diff of what the write changed (TD-604), for
+            display; ``None`` for reads and non-diffable writes.
     """
 
     tool_call_id: str
@@ -43,6 +45,7 @@ class ToolResult:
     decision_class: DecisionClass | None = None
     checkpoint_commit: str | None = None
     checkpoint_notice: Notice | None = None
+    diff: str | None = None
 
 
 @dataclass
