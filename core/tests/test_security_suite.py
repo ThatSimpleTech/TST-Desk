@@ -20,7 +20,12 @@ from typing import Any
 
 import pytest
 
-from tests.test_dispatch import make_config, start_loop, wait_for_turn
+from tests.test_dispatch import (
+    attach_auto_approver,
+    make_config,
+    start_loop,
+    wait_for_turn,
+)
 from tstd.audit import AuditStore
 from tstd.audit_writer import AuditWriter
 from tstd.autonomy import (
@@ -76,10 +81,12 @@ def make_dispatcher(
         if with_classifier
         else None
     )
-    dispatcher = ToolDispatcher(
-        create_registry(),
-        classifier=classifier,
-        path_guard=PathGuard(boundary) if with_guard else None,
+    dispatcher = attach_auto_approver(  # TD-802: mechanics tests auto-approve
+        ToolDispatcher(
+            create_registry(),
+            classifier=classifier,
+            path_guard=PathGuard(boundary) if with_guard else None,
+        )
     )
     register_builtin_handlers(dispatcher)
     return dispatcher
@@ -374,13 +381,15 @@ def make_boom_dispatcher(workspace: Path) -> ToolDispatcher:
     """A production-wired dispatcher plus a tool whose handler fails with a
     secret embedded in the exception message."""
     boundary = Boundary(workspace_root=workspace)
-    dispatcher = ToolDispatcher(
-        create_registry(),
-        classifier=AmbiguousClassifier(
-            static=DecisionClassifier(boundary),
-            call_worker=SpyWorker("B"),
-        ),
-        path_guard=PathGuard(boundary),
+    dispatcher = attach_auto_approver(  # TD-802: mechanics tests auto-approve
+        ToolDispatcher(
+            create_registry(),
+            classifier=AmbiguousClassifier(
+                static=DecisionClassifier(boundary),
+                call_worker=SpyWorker("B"),
+            ),
+            path_guard=PathGuard(boundary),
+        )
     )
     register_builtin_handlers(dispatcher)
     dispatcher.registry.register(

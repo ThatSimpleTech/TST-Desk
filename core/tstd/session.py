@@ -10,12 +10,17 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any, ClassVar, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
+from .autonomy.classifier import DecisionClass
 from .boundary_config import BoundaryConfig
 from .logging import get_logger, redact_secrets, redact_structure
+from .policy import ApprovalOutcome, PolicyConfig
 from .protocol import DaemonEvent, Error, ShellOutput, ToolCall, ToolResult
 from .protocol import SessionState as SessionStateEvent
+
+if TYPE_CHECKING:
+    from .tools.registry import Tool
 
 log = get_logger("tstd.session")
 
@@ -170,6 +175,12 @@ class Session:
         self._resume_event = asyncio.Event()
         # Workspace boundary (TD-706), resolved by the daemon on open.
         self.boundary_config = BoundaryConfig()
+        # Approval policy (TD-801), resolved by the daemon on open.
+        self.policy = PolicyConfig()
+        # Pending approval futures (TD-802), owned by the session — NOT
+        # by any websocket — so a client disconnect leaves them parked
+        # and resumable (prime directive §2.5).
+        self._pending_approvals: dict[str, asyncio.Future[tuple[bool, str | None]]] = {}
 
     @classmethod
     def restore(
@@ -219,10 +230,93 @@ class Session:
     async def cancel(self) -> None:
         """Request cancellation of this session."""
         self._cancel_event.set()
+        # Wake any parked approvals so their dispatchers unwind.
+        for fut in self._pending_approvals.values():
+            fut.cancel()
         if self._state in ("running", "awaiting_approval", "paused"):
             await self.set_state("cancelled", reason="cancelled by user")
         # Wake a loop parked in wait_for_resume so it observes cancellation.
         self._resume_event.set()
+
+    # ── Approvals (TD-802) ──────────────────────────────────────────
+
+    async def request_approval(
+        self,
+        tool_call_id: str,
+        tool: Tool,
+        arguments: dict[str, Any],
+        decision_class: DecisionClass,
+        summary: str,
+        reason: str,
+    ) -> ApprovalOutcome:
+        """Park a tool call awaiting user approval.
+
+        Logs the ``approval_request`` event (so reattaching clients replay
+        it), parks the session in ``awaiting_approval``, and awaits a bare
+        future — no spin, no poll.  With ``approval_timeout_seconds`` set,
+        expiry is treated as a denial.  The session state is re-entrant:
+        concurrent pending approvals share one ``awaiting_approval``
+        transition, and ``running`` resumes when the last one resolves.
+        """
+        from .protocol import ApprovalRequest as ApprovalRequestEvent
+
+        fut: asyncio.Future[tuple[bool, str | None]] = asyncio.get_running_loop().create_future()
+        self._pending_approvals[tool_call_id] = fut
+        await self.event_log.add(
+            ApprovalRequestEvent(
+                session_id=self.id,
+                tool_call_id=tool_call_id,
+                tool_name=tool.name,
+                arguments=arguments,
+                decision_class=cast(Any, decision_class.value),
+                summary=summary,
+                reason=reason,
+                seq=1,
+            )
+        )
+        if self._state != "awaiting_approval":
+            await self.set_state("awaiting_approval", reason=reason)
+
+        timeout = self.policy.approval_timeout_seconds
+        timed_out = False
+        try:
+            if timeout is None:
+                approved, detail = await fut
+            else:
+                try:
+                    # Shield the future so expiry does not cancel it; a
+                    # late approve/deny then resolves nothing (done check
+                    # in resolve_approval) instead of raising.
+                    approved, detail = await asyncio.wait_for(asyncio.shield(fut), timeout)
+                except TimeoutError:
+                    timed_out, approved, detail = True, False, None
+        finally:
+            self._pending_approvals.pop(tool_call_id, None)
+            if not self._pending_approvals and self._state == "awaiting_approval":
+                await self.set_state("running", reason="approval resolved")
+
+        if approved:
+            return ApprovalOutcome(True, "")
+        if timed_out:
+            return ApprovalOutcome(
+                False, f"Approval timed out after {timeout}s — treated as denial"
+            )
+        return ApprovalOutcome(False, f"Denied by user: {detail}" if detail else "Denied by user")
+
+    def resolve_approval(
+        self, tool_call_id: str, approved: bool, detail: str | None = None
+    ) -> bool:
+        """Resolve a parked approval (approve/deny from any attached client).
+
+        Returns ``False`` when no such approval is pending (unknown id,
+        already resolved, or timed out) so the daemon can answer with a
+        typed error.
+        """
+        fut = self._pending_approvals.get(tool_call_id)
+        if fut is None or fut.done():
+            return False
+        fut.set_result((approved, detail))
+        return True
 
     @property
     def cancel_requested(self) -> bool:

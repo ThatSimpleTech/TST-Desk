@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
+from tests.test_dispatch import attach_auto_approver
 from tstd.config import ModelConfig, Preset, TierConfig
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
@@ -237,7 +238,9 @@ class TestTurnEventOrdering:
                 parallel_safe=True,
             )
         )
-        dispatcher = ToolDispatcher(registry)
+        # TD-802: mechanics tests auto-approve so the policy gate's ask
+        # (the loop-wired stub classifier answers B) does not park.
+        dispatcher = attach_auto_approver(ToolDispatcher(registry))
 
         async def echo_handler(session, message, tool_call_id=""):
             return f"Echo: {message}"
@@ -540,7 +543,7 @@ class TestCancellation:
                 parallel_safe=False,
             )
         )
-        dispatcher = ToolDispatcher(registry)
+        dispatcher = attach_auto_approver(ToolDispatcher(registry))  # TD-802
 
         call_count = 0
 
