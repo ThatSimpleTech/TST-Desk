@@ -27,15 +27,20 @@ from tstd.protocol import PROTOCOL_VERSION
 from tstd.ws import create_port_file_path
 
 
-def _tstd_bin() -> str:
-    return str(Path(sys.executable).parent / "tstd")
-
-
 def _spawn(data_dir: Path) -> subprocess.Popen:
-    """Start a real tstd daemon on the given data dir, watched by this process."""
+    """Start a real tstd daemon on the given data dir, watched by this process.
+
+    Spawned as ``python -m tstd.daemon`` rather than the console script:
+    uv's Windows script wrappers are trampoline exes that launch a child
+    python, so the Popen pid would be the launcher's — the port file's pid
+    would never match it, and ``kill()`` would orphan the real daemon with
+    its data-dir files still open (TD-1406).
+    """
     return subprocess.Popen(
         [
-            _tstd_bin(),
+            sys.executable,
+            "-m",
+            "tstd.daemon",
             "--data-dir",
             str(data_dir),
             "--log-level",
@@ -124,10 +129,22 @@ class TestDaemonRestartIntegration:
                 info2 = await _wait_for_port_file(create_port_file_path(data_dir), daemon2.pid)
                 ws2 = await _connect(info2)
                 sessions = await _list_sessions(ws2)
-                await ws2.close()
+                if sys.platform == "win32":
+                    # Popen.terminate is TerminateProcess on Windows — a hard
+                    # kill that runs no cleanup — so the clean-shutdown leg
+                    # (port file removal) goes through the protocol's
+                    # shutdown message, the graceful path a host drives there.
+                    await ws2.send(json.dumps({"type": "shutdown"}))
+                    await ws2.close()
+                    daemon2.wait(timeout=10)
+                else:
+                    await ws2.close()
+                    daemon2.terminate()
+                    daemon2.wait(timeout=5)
             finally:
-                daemon2.terminate()
-                daemon2.wait(timeout=5)
+                if daemon2.poll() is None:
+                    daemon2.kill()
+                    daemon2.wait(timeout=5)
 
             # 3. The session survived the crash as an interrupted tombstone.
             assert len(sessions) == 1
@@ -135,5 +152,6 @@ class TestDaemonRestartIntegration:
             assert sessions[0]["state"] == "interrupted"
             assert sessions[0]["workspace_path"] == str(data_dir / "workspace")
 
-            # Clean shutdown (second daemon via SIGTERM) removes the port file.
+            # Clean shutdown (second daemon: SIGTERM on POSIX, the protocol
+            # shutdown message on Windows) removes the port file.
             assert not create_port_file_path(data_dir).exists()

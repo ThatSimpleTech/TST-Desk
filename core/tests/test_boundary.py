@@ -234,7 +234,12 @@ class TestWindowsForms:
         g = guard(tmp_path)
         with pytest.raises(RefusalError) as ei:
             g.check_write(r"C:\Windows\system32\evil.dll")
-        assert ei.value.code == "windows_unsafe"
+        if sys.platform == "win32":
+            # TD-1406: drive-absolute is the native absolute form on Windows
+            # — canonicalized and refused for crossing the workspace wall.
+            assert ei.value.code == "outside_workspace"
+        else:
+            assert ei.value.code == "windows_unsafe"
 
     def test_unc_path_refused(self, tmp_path: Path) -> None:
         g = guard(tmp_path)

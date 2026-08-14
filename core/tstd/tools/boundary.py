@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 
 from ..autonomy.classifier import (
@@ -27,6 +28,7 @@ from ..autonomy.classifier import (
 )
 
 _DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
+_DRIVE_ABS_RE = re.compile(r"^[A-Za-z]:[/\\]")
 # Windows 8.3 short names: 1-8 base chars, ~digits, optional 1-3 char ext.
 _SHORT_NAME_RE = re.compile(r"^[^~.]{1,8}~\d+(\.[^~.]{0,3})?$", re.IGNORECASE)
 
@@ -56,10 +58,21 @@ def is_drive_relative_or_absolute(p: str) -> bool:
     """Whether *p* starts with a drive letter (``C:foo`` or ``C:\\foo``).
 
     Drive-relative paths resolve against a drive's current directory on
-    Windows and can land anywhere; drive-absolute paths are outside any
-    workspace.  Refused fail-closed on every platform.
+    Windows and can land anywhere; drive-letter paths cannot be resolved
+    at all off Windows.  Refused fail-closed on every platform except the
+    drive-absolute form on a Windows host (see ``windows_unsafe_reason``).
     """
     return bool(_DRIVE_PREFIX_RE.match(p))
+
+
+def is_drive_absolute(p: str) -> bool:
+    """Whether *p* is a drive-absolute path (``C:\\foo`` or ``C:/foo``).
+
+    The native absolute path form on Windows: on a Windows host it
+    canonicalizes like any absolute path and faces the normal workspace
+    checks.  Off Windows it cannot be resolved and stays refused.
+    """
+    return bool(_DRIVE_ABS_RE.match(p))
 
 
 def is_unc_path(p: str) -> bool:
@@ -84,11 +97,19 @@ def is_alternate_data_stream(p: str) -> bool:
 def windows_unsafe_reason(p: str) -> str | None:
     """Reason *p* is Windows-unsafe, or ``None`` if it is safe.
 
-    Every Windows-specific form is refused fail-closed on all platforms —
-    a workspace may be shared or moved across operating systems.
+    Ambiguous and unresolvable forms are refused fail-closed on all
+    platforms — a workspace may be shared or moved across operating
+    systems.  The one platform-conditional form (TD-1406): a drive-absolute
+    path is the native absolute form on Windows, so on a Windows host it is
+    not a form problem — it canonicalizes and faces the normal workspace /
+    writable-paths checks below.  Refusing it there would make every path
+    tool unusable, since absolute Windows paths always carry a drive letter.
     """
     if is_drive_relative_or_absolute(p):
-        return "drive-letter path (drive-relative or drive-absolute)"
+        if sys.platform != "win32":
+            return "drive-letter path (cannot be resolved on this platform)"
+        if not is_drive_absolute(p):
+            return "drive-relative path (resolves against a drive's current directory)"
     if is_unc_path(p):
         return "UNC path (\\\\server\\share) — outside any workspace"
     if any(is_8_3_short_name(part) for part in Path(p).parts):
