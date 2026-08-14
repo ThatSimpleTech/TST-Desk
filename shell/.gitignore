@@ -2,3 +2,6 @@
 # will have compiled files and executables
 /target/
 /gen/schemas
+
+# TD-1301 sidecar build output (rebuilt by core/scripts/build_sidecar.py)
+binaries/
