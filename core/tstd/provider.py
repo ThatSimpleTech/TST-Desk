@@ -437,8 +437,8 @@ def auth_failure_message() -> str:
     """Actionable guidance for authentication failures (HTTP 401)."""
     return (
         "Authentication failed. Fix one of these and retry: "
-        "1) store a valid API key for this provider in the OS keychain "
-        "(tstd keychain set <provider>), "
+        "1) re-enter a valid API key for this provider — open the setup "
+        "wizard from the gear in the title bar, "
         "2) check that the provider base_url in config.yaml "
         "matches the key's provider, "
         "3) verify the key has not expired or been revoked."
