@@ -5,8 +5,6 @@ write refusal at guard level, secret redaction in logs, non-loopback bind
 refusal, and classifier-bypass attacks on the dispatch chokepoint.
 
 Skipped with reasons — gaps, not verdicts:
-- Tool-level steering refusal needs TD-604 (fs_write has no handler yet; a
-  dispatched write returns no_handler before the guard runs).
 - Environment sanitization needs TD-605 (no child-process code exists).
 - Redaction of audit/event and error-message surfaces has no implementation:
   the logging filter is the only chokepoint, and ToolCallEvent.arguments /
@@ -90,6 +88,11 @@ class SpyWorker:
     async def __call__(self, prompt: str) -> str:
         self.calls.append(prompt)
         return self.response
+
+
+def _read(path: Path) -> str:
+    """Sync read: ASYNC240 keeps Path calls out of async test functions."""
+    return path.read_text()
 
 
 # ── 1. Path escape attempts (TD-602 vectors) ─────────────────────────────
@@ -231,17 +234,50 @@ def test_steering_write_refused_at_guard(ws: Path, relative: str) -> None:
     assert excinfo.value.code == "steering_file"
 
 
-@pytest.mark.skip(
-    reason="TD-604: fs_write has no handler, so a dispatched write is rejected "
-    "with no_handler before the guard runs. Unskip when fs_write lands; expect "
-    "boundary_refusal and decision_class C here."
-)
-async def test_steering_write_refused_at_tool_level(ws: Path) -> None:
+@pytest.mark.parametrize("relative", STEERING_POSITIVE)
+async def test_steering_write_refused_at_tool_level(ws: Path, relative: str) -> None:
+    """Every steering shape refuses at tool level too — before any approval
+    machinery could say yes."""
     dispatcher = make_dispatcher(ws)
-    result = await dispatcher.dispatch("c1", "fs_write", {"path": str(ws / "AGENTS.md")})
+    result = await dispatcher.dispatch(
+        "c1", "fs_write", {"path": str(ws / relative), "content": "override"}
+    )
     assert result.status == "error"
     assert result.error_code == "boundary_refusal"
     assert result.decision_class is DecisionClass.C
+    assert not (ws / relative).exists() or _read(ws / relative) != "override"
+
+
+async def test_fs_write_dispatch_refuses_traversal(ws: Path) -> None:
+    dispatcher = make_dispatcher(ws)
+    result = await dispatcher.dispatch(
+        "c1", "fs_write", {"path": str(ws / ".." / "escape.txt"), "content": "x"}
+    )
+    assert result.status == "error"
+    assert result.error_code == "boundary_refusal"
+    assert result.decision_class is DecisionClass.C
+
+
+async def test_fs_edit_dispatch_refuses_absolute_escape(ws: Path) -> None:
+    dispatcher = make_dispatcher(ws)
+    result = await dispatcher.dispatch(
+        "c1", "fs_edit", {"path": "/etc/passwd", "old_string": "root", "new_string": "x"}
+    )
+    assert result.status == "error"
+    assert result.error_code == "boundary_refusal"
+    assert result.decision_class is DecisionClass.C
+
+
+async def test_legit_write_succeeds_proving_refusals_are_targeted(ws: Path) -> None:
+    """Positive control: in-workspace writes execute — refusals are surgical,
+    not a piece of machinery that rejects everything."""
+    dispatcher = make_dispatcher(ws)
+    result = await dispatcher.dispatch(
+        "c1", "fs_write", {"path": str(ws / "src" / "app.py"), "content": "hi\n"}
+    )
+    assert result.status == "success"
+    assert result.decision_class is DecisionClass.A
+    assert _read(ws / "src" / "app.py") == "hi\n"
 
 
 # ── 3. Environment sanitization for child processes ──────────────────────
