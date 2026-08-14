@@ -268,6 +268,19 @@ class TurnComplete(DaemonEvent):
     duration: float = Field(ge=0)
 
 
+class ContextCompacted(DaemonEvent):
+    """Emitted when older conversation turns are compacted to stay inside
+    the tier's context window (TD-405). Never silent: the timeline shows
+    exactly what compaction did."""
+
+    type: Literal["context_compacted"] = "context_compacted"
+    session_id: str
+    dropped_messages: int = Field(ge=0)
+    kept_messages: int = Field(ge=0)
+    tokens_before: int = Field(ge=0)
+    tokens_after: int = Field(ge=0)
+
+
 class SteeringReloaded(DaemonEvent):
     """Emitted when steering files are re-resolved after a detected change."""
 
@@ -336,6 +349,7 @@ DaemonEventT = Annotated[
     | DecisionLogged
     | CostUpdate
     | TurnComplete
+    | ContextCompacted
     | SteeringReloaded
     | InstructionStack
     | Error,
@@ -371,6 +385,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "decision_logged",
         "cost_update",
         "turn_complete",
+        "context_compacted",
         "steering_reloaded",
         "instruction_stack",
         "error",

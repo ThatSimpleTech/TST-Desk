@@ -427,3 +427,65 @@ union, carrying `prefix_hash`, `prefix_tokens`, and `source_count`.
 **Rationale:** The timeline needs a typed, distinct announcement of a reload (vs. a generic
 log line). It complements the existing `InstructionStack` event, which carries the full
 resolved stack for the inspector.
+
+## 2026-08-13 — TD-405: Context window management
+
+### 1. Compaction announced via new `ContextCompacted` protocol event
+
+**Decision:** Compact is never silent (criterion 4), and the closed daemon-event set had
+nothing that fits. Added one event, `ContextCompacted` (`context_compacted`), carrying
+`dropped_messages`, `kept_messages`, `tokens_before`, and `tokens_after` — enough for the
+timeline to show exactly what compaction did.
+
+**Rationale:** Reusing a generic log or an `InstructionStack` restyle would bury the most
+important fact for the user ("your older turns were replaced by a summary") in noise. One
+typed event keeps the timeline honest and the TS mirror addition trivial.
+
+### 2. Deterministic extractive summary, no model call
+
+**Decision:** Dropped turns collapse into a truncated line-per-message summary
+(`User:`, `Assistant:`, `Assistant called tools:`, `Tool result:`), capped at 200 chars per
+message and 2,000 chars overall. No model synthesizes the summary.
+
+**Rationale:** Spending tokens to save tokens inverts the story's economics (the class B /
+cost-tracking rules make spend visible by design). A deterministic summary is also what the
+test suite can pin exactly, and it keeps compaction O(messages) instead of
+O(request). The trade-off — no semantic compression — is accepted: the two most recent
+user turns survive verbatim, which is the context the model actually needs to stay coherent.
+
+### 3. Threshold model and token counting
+
+**Decision:** Compaction triggers when the estimated prompt tokens exceed
+`0.8 × (context_window − max_output_tokens)`. Estimation reuses the tokens module via
+`make_token_counter(slug)`; counters are created once per slug in the loop (encoders load
+lazily and are not cheap), so a module-style per-loop dict caches them.
+
+**Rationale:** The model must still be able to answer, so the output reservation comes off
+the window first. The 0.8 headroom absorbs estimation error (heuristic counting on
+unknown slugs) before the provider's hard cut. Per-slug counting only second-guesses an
+estimator, not the provider, which is the accuracy that stopping at the window edge needs.
+
+### 4. Inner-loop placement, cuts at user boundaries
+
+**Decision:** The guard runs at step 2b.2 of the agent loop — after the fresh system
+assembly, before the provider call. `find_compaction_point` returns the oldest user message
+to keep: the cut never splits an assistant `tool_calls` message from its `tool` results,
+and the in-flight turn (plus one prior turn) always survives. The compacted list replaces
+`messages` in place, so the fresh-assembled system prompt stays at index 0.
+
+**Rationale:** Compacting only between turns lets a mid-turn tool storm (long `fs_read`
+outputs, TD-603's numbered lines) blow past the window before the user ever sends again;
+the guard pays off exactly where it lives. User-boundary cuts are the only structural
+invariant the delta-based providers don't enforce themselves — splitting a call/result pair
+produces provider 400s, splitting the in-flight turn produces nonsense.
+
+### 5. Prior summaries fold into the next summary
+
+**Decision:** `_render_summary` treats a dropped system message as a prior compaction
+summary and folds its lines into the new one (still under the 2,000-char cap), pinned by
+`test_second_compaction_folds_prior_summary_in`.
+
+**Rationale:** Otherwise the second compaction silently deletes the first summary and the
+oldest context vanishes in one step instead of degrading. Folding is deterministic and
+cheap; the cap keeps runaway growth impossible, so long sessions compress toward a bounded
+"old context" block.
