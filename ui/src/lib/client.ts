@@ -26,10 +26,15 @@ const KNOWN_EVENT_TYPES = new Set([
   "assistant_delta",
   "tool_call",
   "tool_result",
+  "shell_output",
   "approval_request",
   "decision_logged",
+  "checkpoint_notice",
   "cost_update",
+  "boundary_update",
   "turn_complete",
+  "tier_state",
+  "context_compacted",
   "steering_reloaded",
   "instruction_stack",
   "session_list",
@@ -136,6 +141,22 @@ export class ProtocolClient {
     if (this.socket && this.handshake === "idle") {
       this.socket.send(JSON.stringify({ type: "detach", session_id: sessionId }));
     }
+  }
+
+  /** Open a workspace directory; the daemon answers with session_state. */
+  openWorkspace(path: string): void {
+    this.send({ type: "open_workspace", path });
+  }
+
+  /** Pin a session's model tier (TD-1006). The daemon acks with tier_state. */
+  setTier(sessionId: string, tier: "brain" | "worker" | "validator"): void {
+    this.send({ type: "set_tier", session_id: sessionId, tier });
+  }
+
+  /** Write a protocol message on the live socket; no-op pre-handshake. */
+  private send(msg: { type: string } & Record<string, unknown>): void {
+    if (!this.socket || this.handshake !== "idle") return;
+    this.socket.send(JSON.stringify(msg));
   }
 
   /** Start the client: resolve daemon info and open the first connection. */

@@ -30,6 +30,7 @@ import type {
   DecisionLogged,
   CheckpointNotice,
   CostUpdate,
+  TierState,
   TurnComplete,
   SteeringReloaded,
   InstructionStack,
@@ -255,7 +256,20 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.session_cost)).toBe(true);
     expect(isNumber(m.total_cost)).toBe(true);
     expect(isNumber(m.classifier_cost)).toBe(true);
+    expect(typeof m.cost_by_tier).toBe("object");
+    expect(Object.values(m.cost_by_tier).every(isNumber)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("tier_state", () => {
+    const m = fixtures.tier_state as TierState;
+    expect(m.type).toBe("tier_state");
+    expect(["brain", "worker", "validator"]).toContain(m.tier);
+    expect(m.override).toBeNull();
+    expect(isString(m.model_slugs.brain)).toBe(true);
+    const ov = fixtures.tier_state_override as TierState;
+    expect(ov.tier).toBe("validator");
+    expect(ov.override).toBe("validator");
   });
 
   it("boundary_update", () => {
@@ -313,7 +327,7 @@ describe("All fixtures have required shape", () => {
       "ready", "session_state", "assistant_delta", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "shell_output",
       "approval_request", "decision_logged", "checkpoint_notice", "cost_update",
-      "turn_complete", "error", "error_with_session",
+      "turn_complete", "tier_state", "error", "error_with_session",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

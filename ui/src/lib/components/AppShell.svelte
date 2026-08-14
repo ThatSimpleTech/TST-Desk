@@ -6,10 +6,12 @@
 	// state is visible at all times.
 	import SplitPane from './SplitPane.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
+	import TitleBar from './TitleBar.svelte';
 </script>
 
 <header class="shell-header">
 	<span class="shell-title">TST Desk</span>
+	<TitleBar />
 	<span class="shell-spacer"></span>
 	<ConnectionBanner />
 </header>
@@ -29,6 +31,7 @@
 	.shell-header {
 		display: flex;
 		align-items: center;
+		gap: var(--space-4);
 		height: var(--space-12);
 		padding: 0 var(--space-6);
 		border-bottom: var(--border-width) solid var(--color-border);

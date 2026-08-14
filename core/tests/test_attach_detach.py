@@ -69,11 +69,12 @@ class TestAttachDetachIntegration:
             )
             await session.event_log.add(AssistantDelta(session_id=session_id, delta="world", seq=1))
 
-            # Attach from seq 1 — should replay everything (session_state
-            # + boundary_update at open, then the two deltas).
+            # Attach from seq 1 — should replay everything (session_state,
+            # boundary_update, tier_state (TD-1006) at open, then the two
+            # deltas).
             await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 1}))
             replayed = []
-            for _ in range(4):
+            for _ in range(5):
                 evt = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
                 replayed.append(evt)
 
@@ -81,10 +82,11 @@ class TestAttachDetachIntegration:
             assert types == [
                 "session_state",
                 "boundary_update",
+                "tier_state",
                 "assistant_delta",
                 "assistant_delta",
             ]
-            assert [e["seq"] for e in replayed] == [1, 2, 3, 4]
+            assert [e["seq"] for e in replayed] == [1, 2, 3, 4, 5]
 
             await ws.close()
             daemon._shutdown_event.set()
@@ -110,8 +112,9 @@ class TestAttachDetachIntegration:
             session = daemon.session_registry.get(session_id)
             assert session is not None
 
-            # Attach from seq 3 (skip session_state + boundary_update)
-            await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 3}))
+            # Attach from seq 4 (skip session_state + boundary_update +
+            # tier_state, all emitted at open (TD-706/1006)).
+            await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 4}))
 
             # Emit a new event after attach
             await session.event_log.add(AssistantDelta(session_id=session_id, delta="live!", seq=1))
@@ -120,7 +123,7 @@ class TestAttachDetachIntegration:
             evt = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
             assert evt["type"] == "assistant_delta"
             assert evt["delta"] == "live!"
-            assert evt["seq"] == 3
+            assert evt["seq"] == 4
 
             await ws.close()
             daemon._shutdown_event.set()
@@ -159,8 +162,9 @@ class TestAttachDetachIntegration:
             # Attach from seq 1 (replay everything) while writes are ongoing
             await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 1}))
 
-            # Collect all events: session_state + boundary_update + 20 deltas
-            expected_total = 22  # 1 session_state + 1 boundary_update + 20 deltas
+            # Collect all events: open triple (session_state + boundary_update
+            # + tier_state) + 20 deltas
+            expected_total = 23
             received: list[int] = []
             while len(received) < expected_total:
                 evt = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
@@ -197,8 +201,9 @@ class TestAttachDetachIntegration:
             session = daemon.session_registry.get(session_id)
             assert session is not None
 
-            # Attach (from seq 3 — skip session_state + boundary_update)
-            await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 3}))
+            # Attach (from seq 4 — skip session_state + boundary_update +
+            # tier_state from open)
+            await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 4}))
             await asyncio.sleep(0.1)
 
             # Detach
@@ -216,7 +221,7 @@ class TestAttachDetachIntegration:
 
             # But the session is unaffected
             assert session.state == "running"
-            assert session.event_log.last_seq == 3
+            assert session.event_log.last_seq == 4
 
             await ws.close()
             daemon._shutdown_event.set()
@@ -270,9 +275,9 @@ class TestAttachDetachIntegration:
             session = daemon.session_registry.get(session_id)
             assert session is not None
 
-            # Both attach (from seq 3 to skip session_state + boundary_update)
-            await ws1.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 3}))
-            await ws2.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 3}))
+            # Both attach (from seq 4 to skip the three open events)
+            await ws1.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 4}))
+            await ws2.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 4}))
             await asyncio.sleep(0.1)
 
             # Emit two events
@@ -285,7 +290,7 @@ class TestAttachDetachIntegration:
                 evt2 = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
                 assert evt1["type"] == "assistant_delta"
                 assert evt2["type"] == "assistant_delta"
-                assert [evt1["seq"], evt2["seq"]] == [3, 4]
+                assert [evt1["seq"], evt2["seq"]] == [4, 5]
 
             await ws1.close()
             await ws2.close()

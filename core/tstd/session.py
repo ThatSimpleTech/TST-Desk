@@ -20,6 +20,7 @@ from .protocol import DaemonEvent, Error, ShellOutput, ToolCall, ToolResult
 from .protocol import SessionState as SessionStateEvent
 
 if TYPE_CHECKING:
+    from .router import TierRouter
     from .tools.registry import Tool
 
 log = get_logger("tstd.session")
@@ -175,6 +176,10 @@ class Session:
         self._resume_event = asyncio.Event()
         # Workspace boundary (TD-706), resolved by the daemon on open.
         self.boundary_config = BoundaryConfig()
+        # Tier router (TD-1006), attached by the daemon on open so a
+        # ``set_tier`` message reaches the loop's router. ``None`` on a
+        # restored tombstone — its loop is gone for good.
+        self.router: TierRouter | None = None
         # Approval policy (TD-801), resolved by the daemon on open.
         self.policy = PolicyConfig()
         # Pending approval futures (TD-802), owned by the session — NOT
