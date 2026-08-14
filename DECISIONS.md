@@ -2721,3 +2721,93 @@ splitting into three panes.
 the model actually running on?", then left. It does not need permanent
 screen share with the timeline, and two panes stays the shell's layout
 invariant.
+
+---
+
+## 2026-08-14 — TD-1601/1602/1608/1609: Familiarity, visual foundation
+
+Class B — recorded per AGENTS.md §5.
+
+### 1. Palette is family, not copy — our own hex throughout
+
+**Decision:** The warm-paper palette ships with the backlog's pinned values:
+light ground `#F8F6F1`, lifted `#FFFFFF`, ink `#191817`, hairline `#E4E0D8`,
+rust accent `#B4532A` (hover `#9A4523`); dark charcoal `#232320` with the
+accent lifted to `#D0794F`. Values the backlog didn't pin were derived and are
+documented inline in `tokens.css`: sunken washes (`#F1EEE6` / `#2A2A26`),
+muted ink (`#8A8579` / `#6E6A61`), dark accent-hover (`#DC8A64`), and lifted
+dark status hues.
+
+**Rationale:** The reference product's identity is `#FAF9F5` + `#D97757`;
+ours is deliberately darker and earthier — a deeper ground, a rust (not
+coral) accent — so the window reads as the same warm, quiet family without
+lifting the palette. Accent stays scarce: send, active states, links, key
+actions only; `--color-info` aliases the accent so "running" never
+introduces a cool hue into the warm field.
+
+### 2. Canonical token names with legacy aliases, not a flag-day rename
+
+**Decision:** `tokens.css` defines a canonical semantic set
+(`--color-ground`/`--color-lifted`/`--color-sunken`, `--color-ink` ramp,
+`--color-hairline`, `--color-user-bubble`, `--color-accent`,
+`--color-ok`/`--color-warn`/`--color-err`, `--font-display`/`--font-sans`/
+`--font-mono`, `--tracking-display`, `--syn-*` code hues) and keeps every
+pre-TD-1601 name (`--color-bg`, `--color-text`, `--color-success`,
+`--font-family`, …) as a var()-to-var() alias.
+
+**Rationale:** TD-1601's criterion confines the change to tokens + global
+CSS; aliases made that true while still giving the E16 second pass clean
+names to build on. Aliases cost one indirection per lookup and no runtime
+work; the header comment marks them legacy so new code converges on the
+canonical set.
+
+### 3. Source Serif 4 vendored, latin 400/500 only — 41,616 bytes
+
+**Decision:** Two woff2 files (latin, weights 400 and 500, Fontsource
+packages fetched via jsDelivr) vendored into `ui/static/fonts/` with the
+SIL OFL 1.1 text as `OFL.txt`; two `@font-face` blocks with
+`font-display: swap`. Verified as real fonts (`wOF2` magic bytes, `file(1)`
+identification) before committing. Bundle impact: **+41,616 bytes**
+(20,088 + 21,528) of static font payload, fetched only when a
+`--font-display` element renders, never blocking text (swap).
+
+**Rationale:** Vendoring keeps the no-runtime-fetch property (prime
+directive §2.3 — zero network calls the user did not initiate) and makes
+the build hermetic. Latin-only, two weights is the smallest set that
+carries the greeting/heading voice; full family + italics would be ~4x
+the bytes for surfaces we don't have. Georgia is the documented fallback
+so the swap window still reads serif.
+
+### 4. Icons: one map, one component, stroke-only
+
+**Decision:** All chrome glyphs live in `ui/src/lib/icons.ts` (10 entries)
+and render through `Icon.svelte`: 24px viewBox, 1.5px `currentColor`
+stroke, round caps/joins, `fill` reserved for active states, default size
+1em. The doctor pane's *copied text report* deliberately keeps its ASCII
+✓/✗/– marks (`STATUS_MARK`) — plain text is the right medium for a
+clipboard artifact, and its tests pin those strings. The favicon is an
+original mark (rust rounded square, minimal desk outline), not a borrowed
+glyph.
+
+**Rationale:** A single map kills per-call-site SVG drift and makes the
+stroke/size discipline enforceable in one place. Emoji in chrome were the
+loudest "hack project" tell (backlog's words); emoji in generated
+plain-text artifacts are fine and cheaper than icon font machinery.
+
+### 5. First shortcuts: Esc peels layers, ⌘, reopens the wizard
+
+**Decision:** `resolveShortcut()` (pure, in `shortcuts.ts`) maps keydowns
+through a context of what's open: Esc closes the workspace menu if open,
+is eaten by an open modal (wizard/doctor/decisions), else cancels the
+live turn via the chat store's existing `cancel` message; ⌘, (Ctrl+,
+off-mac) reopens the wizard from anywhere. Discoverability is via `title`
+attributes ("Cancel turn (Esc)", "Setup wizard (⌘,)").
+
+**Rationale:** One key with two simultaneous visible effects (close a menu
+*and* kill a turn) is how shortcuts earn a reputation for eating work;
+the layer order makes Esc deterministic. Esc does not close modals yet —
+that behavior doesn't exist today and adding it is a separate question
+per pane; the mapping's `modalOpen` branch keeps today's behavior instead
+of letting Esc reach through a dialog to the turn behind it. A pure
+mapping function keeps all of this testable in node vitest (9 cases)
+without a DOM.
