@@ -105,7 +105,7 @@ def _list_dir(root: Path, pattern: str, recursive: bool) -> str:
         for name in sorted(filenames):
             if not fnmatch.fnmatchcase(name, pattern):
                 continue
-            results.append(str((Path(dirpath) / name).relative_to(root)))
+            results.append((Path(dirpath) / name).relative_to(root).as_posix())
 
     if not results:
         return "(no matches)"
