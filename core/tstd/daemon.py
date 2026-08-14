@@ -24,7 +24,11 @@ import websockets.exceptions
 
 from .audit import AuditStore
 from .audit_writer import AuditWriter
-from .boundary_config import boundary_source, load_workspace_boundary
+from .boundary_config import (
+    boundary_source,
+    load_workspace_boundary,
+    scaffold_workspace_config,
+)
 from .config import ConfigError, ModelConfig, cached_config, save_active_preset
 from .context.assembler import ContextAssembler
 from .keychain import KeychainError, get_api_key, store_api_key
@@ -613,6 +617,19 @@ class Daemon:
             return build_error(e.code, e.message)
 
         if isinstance(msg, OpenWorkspace):
+            # Validate before creating anything (TD-1103): a nonexistent or
+            # non-directory path must not silently "succeed".
+            workspace_path = Path(msg.path)
+            # Blocking stat off the event loop (ASYNC240 precedent: TD-1104
+            # diagnostics use to_thread for the same reason).
+            if not await asyncio.to_thread(workspace_path.is_dir):
+                return build_error(
+                    "workspace_not_found",
+                    f"Workspace path is not a directory: {msg.path}",
+                )
+            # Plant the commented config template on first open (TD-1103) —
+            # never overwrites an existing config.
+            await asyncio.to_thread(scaffold_workspace_config, workspace_path)
             sess = await self.session_registry.create(msg.path)
             # Persist the new session and keep its state durable going forward.
             await self._session_store.upsert(sess.id, msg.path, sess.state)
