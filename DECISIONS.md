@@ -2010,3 +2010,54 @@ completion note; no separate verification `.md`.
 
 **Rationale:** User instruction (recorded in TD-1002 §8): the backlog is where completed-story
 notes go.
+
+## 2026-08-14 — TD-1007: Approval cards
+
+Class B — recorded per AGENTS.md §5.
+
+### 1. "Always allow in this workspace" is TD-803, not TD-1007
+
+**Decision:** Criterion 2's third action ("Always allow in this workspace") is left unticked in
+TD-1007 and delivered by TD-803, which owns the policy-rule write/list/revoke model. TD-1007
+ships only Approve and Deny.
+
+**Rationale:** The user scoped the ask to "we need the approve/deny added". Always-allow
+requires writing a scoped policy rule back into `.tst/config.yaml` — the exact surface TD-803
+is building in a parallel lane. Implementing it here would collide with TD-803's shared files
+(`protocol.py`, `session.py`, `daemon.py`, `policy.py`) and duplicate its rule model. Keeping
+the two lanes non-overlapping avoids a messy merge.
+
+### 2. `error_code` on `tool_result` ("Gap B")
+
+**Decision:** `ToolResult` (and its TS mirror) gained an `error_code: str | None` field carried
+from the dispatcher through `loop.py` to the wire. The UI reads `error_code === "approval_denied"`
+to title the result "Denied" and tone it warning (a user choice, not a failure); other codes
+(`policy_denied`, `boundary_refusal`, handler errors) stay danger.
+
+**Rationale:** Without it, a denial and a crashed handler were both just `status="error"` and
+the timeline could not show *what happened* (approval vs. failure) — AGENTS §6 forbids the UI
+from inventing that distinction. The field already existed on the internal `ToolResult`
+dataclass; the gap was purely wire propagation.
+
+### 3. Client `send()` + a runes approval store
+
+**Decision:** `ProtocolClient.send()` guards on `state === "connected"` and writes the
+serialized message; `connection-status.ts` re-exports a `send` passthrough. A new runes
+`approval-store.ts` self-subscribes via the existing `onEvent` fan-out: `approval_request`
+appends a `PendingApproval`, a matching `tool_result` removes it. `approve`/`deny` build and
+send the wire message.
+
+**Rationale:** The client already owned the socket and the event fan-out, so approve/deny is a
+symmetric `send`, not a new connection. The store mirrors `timeline-store.ts`'s singleton
+pattern and stays presentation-free so `approval.ts` (pure mapping/messages) unit-tests in
+node.
+
+### 4. Approval is a first-class timeline entry, resolved in place
+
+**Decision:** A new `approval` `EntryKind` renders pending approval requests in the timeline; a
+matching `tool_result` flips that entry's `details.status` to `approved`/`denied` in place
+rather than appending a second row.
+
+**Rationale:** Criterion 6 ("resolved cards remain in the timeline showing what was chosen")
+is read as *the same row*, not a new one — the approval and its outcome are one event. This
+also matches how `shell_output` already merges into its parent call rather than spawning rows.
