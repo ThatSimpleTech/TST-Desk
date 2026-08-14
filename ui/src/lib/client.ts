@@ -39,6 +39,9 @@ const KNOWN_EVENT_TYPES = new Set([
   "tier_switched",
   "instruction_stack",
   "session_list",
+  "policy_rules", // TD-803: was missing; settings events arrived as unknown
+  "setup_state", // TD-1101 first-run wizard
+  "api_key_validated", // TD-1101
   "error",
 ]);
 
@@ -161,6 +164,28 @@ export class ProtocolClient {
   /** Pin a session's model tier (TD-1006). The daemon acks with tier_state. */
   setTier(sessionId: string, tier: "brain" | "worker" | "validator"): void {
     this.send({ type: "set_tier", session_id: sessionId, tier });
+  }
+
+  // ── Onboarding (TD-1101 first-run wizard) ───────────────────────────
+
+  /** Ask for the setup state (key presence, presets). Replies with setup_state. */
+  getSetupState(): void {
+    this.send({ type: "get_setup_state" });
+  }
+
+  /** Store an API key in the OS keychain. Acked with setup_state. */
+  setApiKey(apiKey: string): void {
+    this.send({ type: "set_api_key", api_key: apiKey });
+  }
+
+  /** Probe the stored key with one cheap live call. Replies api_key_validated. */
+  validateApiKey(): void {
+    this.send({ type: "validate_api_key" });
+  }
+
+  /** Choose the active model preset. Acked with setup_state. */
+  setPreset(name: string): void {
+    this.send({ type: "set_preset", name });
   }
 
   /** Start the client: resolve daemon info and open the first connection. */

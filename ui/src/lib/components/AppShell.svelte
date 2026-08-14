@@ -15,15 +15,34 @@
 	import TitleBar from './TitleBar.svelte';
 	import NotificationBanner from '../NotificationBanner.svelte';
 	import ToastStack from '../ToastStack.svelte';
+	import WizardPane from './WizardPane.svelte';
+	import { start as startOnboarding, reopen as reopenWizard } from '../onboarding.svelte.js';
 
-	// Feed every daemon event into the timeline for the lifetime of the shell.
-	onMount(() => onEvent(push));
+	// Feed every daemon event into the timeline for the lifetime of the shell,
+	// and start first-run detection (TD-1101) — the wizard probes setup state
+	// after each handshake and opens when no API key is stored.
+	onMount(() => {
+		const offTimeline = onEvent(push);
+		const offWizard = startOnboarding();
+		return () => {
+			offTimeline();
+			offWizard();
+		};
+	});
 </script>
 
 <header class="shell-header">
 	<span class="shell-title">TST Desk</span>
 	<TitleBar />
 	<span class="shell-spacer"></span>
+	<!-- Revisit first-run setup (TD-1101) at any time. -->
+	<button
+		class="shell-gear"
+		type="button"
+		title="Setup wizard"
+		aria-label="Open setup wizard"
+		onclick={reopenWizard}>⚙</button
+	>
 	<ConnectionBanner />
 </header>
 
@@ -43,6 +62,7 @@
 </div>
 
 <ToastStack />
+<WizardPane />
 
 <style>
 	.shell-header {
@@ -65,6 +85,23 @@
 	/* Push the connection banner to the right edge of the shell header. */
 	.shell-spacer {
 		flex: 1;
+	}
+
+	/* Revisit affordance for the setup wizard (TD-1101). */
+	.shell-gear {
+		border: none;
+		background: transparent;
+		font-size: var(--text-base);
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		padding: var(--space-1) var(--space-2);
+		border-radius: var(--radius-md);
+		line-height: 1;
+	}
+
+	.shell-gear:hover {
+		background: var(--color-bg-subtle);
+		color: var(--color-text);
 	}
 
 	.shell-body {
