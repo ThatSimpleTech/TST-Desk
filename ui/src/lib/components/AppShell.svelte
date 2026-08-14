@@ -6,6 +6,7 @@
 	// state is visible at all times.
 	import SplitPane from './SplitPane.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
+	import ChatPane from './chat/ChatPane.svelte';
 </script>
 
 <header class="shell-header">
@@ -17,7 +18,7 @@
 <div class="shell-body">
 	<SplitPane>
 		{#snippet left()}
-			<section class="pane-chat" aria-label="Chat pane"></section>
+			<section class="pane-chat" aria-label="Chat pane"><ChatPane /></section>
 		{/snippet}
 		{#snippet right()}
 			<section class="pane-activity" aria-label="Activity pane"></section>

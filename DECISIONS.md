@@ -1931,3 +1931,94 @@ back.
 
 **Rationale:** AC 3 allows uncommitted Class B entries; the event must be
 able to carry them. Backward compatible (fixtures already pass a commit).
+
+## 2026-08-14 — TD-1004: Chat pane
+
+### 1. Rune-using modules are `*.svelte.ts`, imported as `.svelte.js`
+
+**Decision:** `connection-status.ts` was renamed to
+`connection-status.svelte.ts` (a `git mv`, not a rewrite), and every module
+that uses runes must carry the `.svelte.ts` suffix. Import sites spell the
+specifier as `*.svelte.js` explicitly — extensionless imports do not
+resolve `.svelte.ts` under Vite 8/rolldown.
+
+**Rationale:** vite-plugin-svelte only compiles runes in `.svelte` and
+`.svelte.ts`/`.svelte.js` files. A `$state` in a plain `.ts` file ships to
+the bundle untransformed and throws `ReferenceError` at load — this was
+latent on main for `connection-status.ts` and would have bricked the app on
+first real render. The naming convention makes rune usage visible in the
+file listing and lets the compiler guard it.
+
+### 2. UI modules never touch `ProtocolClient` directly
+
+**Decision:** `client.ts` gained a general `send(msg)` (returns `false`
+instead of writing when the socket isn't handshaken-idle), and
+`connection-status.svelte.ts` re-exports the chat-facing surface:
+`onDaemonEvent` (subscribe fan-out), `sendToDaemon`, `attachToSession`,
+`detachFromSession`. Chat store and components import only from there.
+
+**Rationale:** One WebSocket, one handshake, one owner. Fan-out keeps every
+pane off its own connection and keeps client lifecycle (reconnect, seq
+tracking) in exactly one place, matching the TD-1003 boundary.
+
+### 3. Markdown pipeline: marked + highlight.js + DOMPurify
+
+**Decision:** Assistant text renders through marked (parse) → highlight.js
+(fenced code) → DOMPurify (sanitize) before `{@html}`. Code blocks carry a
+copy button wired by one delegated click handler. Tests run under jsdom,
+not happy-dom.
+
+**Rationale:** Model output is untrusted HTML-adjacent content, so
+sanitization is mandatory (prime directives). DOMPurify ≥ 3.4.8 is broken
+under happy-dom — happy-dom's `Node.prototype.nodeName` getter defeats the
+anti-clobbering fix (cure53/DOMPurify#1496), silently dropping allowed tags
+and potentially retaining disallowed ones; upstream explicitly does not
+support it. jsdom is DOMPurify's tested environment. The app itself is
+unaffected (real WebKit webview).
+
+### 4. Virtualization via @tanstack/svelte-virtual
+
+**Decision:** Long conversations are windowed with `createVirtualizer`
+(estimate 96px, overscan 6, `getItemKey` on message id), rows absolutely
+positioned inside a full-height sizer, measured dynamically via
+`measureElement`. The reactive `count` is driven by `setOptions` inside an
+`$effect`, never captured at construction.
+
+**Rationale:** AC — "Conversation history scrollable and virtualized for
+long sessions." svelte-virtual is the maintained Svelte binding over
+tanstack virtual-core; dynamic measurement handles variable-height markdown
+without per-message size bookkeeping.
+
+### 5. Session binding follows `list_sessions`, newest `updated_at` wins
+
+**Decision:** The chat store binds the most recently updated session from
+`session_list` events (requested at init), keeps the current session while
+the daemon still lists it, and switches (detach old, clear, attach new)
+when it disappears. Attach replays full history through the same reducer as
+live events — there is no separate history path.
+
+**Rationale:** The daemon owns sessions (prime directives); the UI asks
+(`list_sessions` is answered by `daemon._handle_list_sessions`) rather than
+inferring liveness. One reducer for replay and live streams guarantees
+identical rendering for both.
+
+### 6. Cancel shows for `running` and `awaiting_approval`
+
+**Decision:** `showCancel` returns true for both `running` and
+`awaiting_approval` turn states.
+
+**Rationale:** The criterion says "whenever a turn is running"; an approval
+wait is still a live turn the user must be able to abort. Deliberate
+superset, recorded so a future tightening is a conscious change.
+
+### 7. Streaming appends in place — stable row identity
+
+**Decision:** `assistant_delta` mutates the last assistant message's `text`
+in place (same object) when the turn is incomplete; only a new turn pushes
+a new message object. Rows render in a keyed each-block; the scrollbar
+gutter is reserved with `scrollbar-gutter: stable`.
+
+**Rationale:** AC — "Streaming assistant output rendered smoothly, without
+layout jump." Stable identity means the keyed list never re-mounts a row
+mid-stream; the reserved gutter keeps the scrollbar's arrival from
+reflowing the conversation.
