@@ -42,6 +42,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "policy_rules", // TD-803: was missing; settings events arrived as unknown
   "setup_state", // TD-1101 first-run wizard
   "api_key_validated", // TD-1101
+  "diagnostics_report", // TD-1104 doctor
   "error",
 ]);
 
@@ -186,6 +187,13 @@ export class ProtocolClient {
   /** Choose the active model preset. Acked with setup_state. */
   setPreset(name: string): void {
     this.send({ type: "set_preset", name });
+  }
+
+  // ── Diagnostics (TD-1104 doctor) ────────────────────────────────────
+
+  /** Run the doctor checks; the daemon replies with diagnostics_report. */
+  runDiagnostics(): void {
+    this.send({ type: "run_diagnostics" });
   }
 
   /** Start the client: resolve daemon info and open the first connection. */
