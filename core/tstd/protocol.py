@@ -227,7 +227,12 @@ class ToolResult(DaemonEvent):
 
 
 class ApprovalRequest(DaemonEvent):
-    """A request for user approval of a tool call."""
+    """A request for user approval of a tool call (TD-802).
+
+    ``summary`` is the human-readable action ("Run `npm test`");
+    ``reason`` is why approval is required ("decision class B requires
+    approval", "policy rule `shell: rm *` → ask").
+    """
 
     type: Literal["approval_request"] = "approval_request"
     session_id: str
@@ -236,6 +241,7 @@ class ApprovalRequest(DaemonEvent):
     arguments: dict[str, Any]
     decision_class: Literal["A", "B", "C"]
     summary: str
+    reason: str
 
 
 class DecisionLogged(DaemonEvent):

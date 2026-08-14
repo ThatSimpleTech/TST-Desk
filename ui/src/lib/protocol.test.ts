@@ -176,6 +176,8 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isString(m.tool_name)).toBe(true);
     expect(m.decision_class).toBe("C");
     expect(isString(m.summary)).toBe(true);
+    expect(isString(m.reason)).toBe(true);
+    expect(m.reason.length).toBeGreaterThan(0);
     expect(isNumber(m.seq)).toBe(true);
   });
 

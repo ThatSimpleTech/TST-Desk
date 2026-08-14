@@ -94,6 +94,7 @@ FIXTURES = {
         arguments={"path": "test.txt"},
         decision_class="C",
         summary="Write to test.txt",
+        reason="decision class C requires approval",
         seq=8,
     ),
     "decision_logged": DecisionLogged(

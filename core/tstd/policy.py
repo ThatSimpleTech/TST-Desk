@@ -19,18 +19,26 @@ import fnmatch
 import json
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from .autonomy.classifier import DecisionClass
 from .config import ConfigError
-from .tools import Tool
-from .tools.registry import SideEffectClass
+
+if TYPE_CHECKING:
+    # Type hints only.  A runtime import would cycle: tools/__init__ →
+    # dispatch → policy (TD-802 wires the policy gate into dispatch).
+    from .tools.registry import Tool
 
 # ── Models ──────────────────────────────────────────────────────────────
+
+# Same vocabulary as tools.registry.SideEffectClass, defined here so policy
+# stays importable from dispatch without a cycle (TD-802).
+PolicyEffect = Literal["auto", "ask", "never"]
 
 # Restrictiveness ranking for tie-breaking: never > ask > auto.
 _RESTRICTIVENESS: dict[str, int] = {"never": 2, "ask": 1, "auto": 0}
@@ -48,7 +56,7 @@ class PolicyRule(BaseModel):
 
     tool: str
     args: str = "**"
-    effect: SideEffectClass
+    effect: PolicyEffect
 
 
 class PolicyConfig(BaseModel):
@@ -59,6 +67,38 @@ class PolicyConfig(BaseModel):
         default="ask",
         description="Effect for class-C calls with no matching rule: ask (default) or never",
     )
+    approval_timeout_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        description="How long an approval request waits before being treated "
+        "as a denial.  None (the default) waits indefinitely (TD-802).",
+    )
+
+
+@dataclass(frozen=True)
+class PolicyDecision:
+    """The outcome of resolving a call against policy, with provenance.
+
+    ``rule`` is the rule that decided the effect, or ``None`` when the
+    decision-class default applied.  ``reason`` is the human-readable
+    explanation carried by ``approval_request`` (TD-802).
+    """
+
+    effect: PolicyEffect
+    reason: str
+    rule: PolicyRule | None
+
+
+@dataclass(frozen=True)
+class ApprovalOutcome:
+    """The result of an approval round-trip (TD-802).
+
+    ``message`` is the structured denial text returned to the model on a
+    non-approval (user denial or timeout); empty when approved.
+    """
+
+    approved: bool
+    message: str = ""
 
 
 # ── Argument summaries ──────────────────────────────────────────────────
@@ -109,7 +149,7 @@ def _specificity(rule: PolicyRule) -> tuple[int, int, int]:
     return (tool_exact, -arg_wildcards, len(rule.args))
 
 
-def _class_default(decision_class: DecisionClass, config: PolicyConfig) -> SideEffectClass:
+def _class_default(decision_class: DecisionClass, config: PolicyConfig) -> PolicyEffect:
     if decision_class is DecisionClass.A:
         return "auto"
     if decision_class is DecisionClass.B:
@@ -123,14 +163,26 @@ def resolve(
     arguments: dict[str, Any],
     decision_class: DecisionClass,
     workspace: Path | None = None,
-) -> SideEffectClass:
+) -> PolicyEffect:
     """Resolve the policy effect for a classified tool call.
 
     Most-specific matching rule wins; exact ties break toward the most
     restrictive effect.  No match → the decision-class default.  A class-C
     call never resolves to ``auto`` — policy cannot grant what the boundary
-    forbids.
+    forbids.  Thin wrapper over :func:`resolve_explained` (TD-802).
     """
+    return resolve_explained(config, tool, arguments, decision_class, workspace).effect
+
+
+def resolve_explained(
+    config: PolicyConfig,
+    tool: Tool,
+    arguments: dict[str, Any],
+    decision_class: DecisionClass,
+    workspace: Path | None = None,
+) -> PolicyDecision:
+    """Like :func:`resolve`, but carries the deciding rule and a
+    human-readable reason for the approval gate (TD-802)."""
     summary = summarize_arguments(tool, arguments, workspace)
     matches = [
         rule
@@ -140,16 +192,52 @@ def resolve(
     if matches:
         best = max(_specificity(rule) for rule in matches)
         tied = [rule for rule in matches if _specificity(rule) == best]
-        effect: SideEffectClass = "auto"
-        for rule in tied:
-            if _RESTRICTIVENESS[rule.effect] > _RESTRICTIVENESS[effect]:
-                effect = rule.effect
+        # Most restrictive effect wins among exact ties; the first tied rule
+        # carrying it stands as provenance.
+        winner = max(tied, key=lambda r: _RESTRICTIVENESS[r.effect])
+        decision = PolicyDecision(
+            winner.effect,
+            f"policy rule `{winner.tool}: {winner.args}` → {winner.effect}",
+            winner,
+        )
     else:
         effect = _class_default(decision_class, config)
+        reason = {
+            DecisionClass.A: "decision class A runs automatically",
+            DecisionClass.B: "decision class B requires approval",
+            DecisionClass.C: (
+                "decision class C requires approval"
+                if config.class_c_default == "ask"
+                else "decision class C is forbidden by policy"
+            ),
+        }[decision_class]
+        decision = PolicyDecision(effect, reason, None)
 
-    if decision_class is DecisionClass.C and effect == "auto":
-        return config.class_c_default
-    return effect
+    if decision_class is DecisionClass.C and decision.effect == "auto":
+        # The wall: no rule may downgrade a class-C call to silent execution.
+        return PolicyDecision(
+            config.class_c_default,
+            f"{decision.reason}, but decision class C may not run automatically",
+            decision.rule,
+        )
+    return decision
+
+
+def format_summary(tool: Tool, arguments: dict[str, Any], workspace: Path | None = None) -> str:
+    """Human-readable one-liner for an approval card (TD-802).
+
+    "Write src/app.py" / "Read src/app.py" / "Run `npm test`" /
+    "Reach api.example.com" / "Call tool({json})".
+    """
+    summary = summarize_arguments(tool, arguments, workspace)
+    if tool.path_fields:
+        verb = "Write" if tool.mutates else "Read"
+        return f"{verb} {summary}"
+    if isinstance(arguments.get("command"), str):
+        return f"Run `{summary}`"
+    if tool.host_fields:
+        return f"Reach {summary}"
+    return f"Call {tool.name}({summary})"
 
 
 # ── Persistence (.tst/config.yaml) ──────────────────────────────────────

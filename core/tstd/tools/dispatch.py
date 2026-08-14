@@ -18,6 +18,7 @@ from jsonschema import validate as validate_schema
 
 from ..autonomy import AmbiguousClassifier, Checkpointer, DecisionClass, DecisionRequest
 from ..logging import get_logger
+from ..policy import ApprovalOutcome, PolicyConfig, format_summary, resolve_explained
 from .boundary import PathGuard, RefusalError
 from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry
@@ -41,8 +42,20 @@ class UnclassifiedToolCall(Exception):
     Raising here is the chokepoint guarantee (prime directive §2.6): no
     tool executes unless the decision classifier has been run over the
     call.  Reaching the handler unclassified is a bypass, not a state the
-    engine falls into by default.
+    engine falls into by default.  Also raised when a call resolves to
+    ``ask`` with no approval handler attached (TD-802) — the approval
+    gate is part of the chokepoint, not an optional add-on.
     """
+
+
+# Injected approval callback (TD-802).  Receives the tool call, its
+# classification, and the human-readable summary/reason for the card;
+# returns the outcome.  ``Session.request_approval`` is the production
+# implementation; tests may inject an auto-approver.
+ApprovalHandler = Callable[
+    [str, Tool, dict[str, Any], DecisionClass, str, str],
+    Awaitable[ApprovalOutcome],
+]
 
 
 def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionRequest:
@@ -91,6 +104,9 @@ class ToolDispatcher:
         classifier: AmbiguousClassifier | None = None,
         path_guard: PathGuard | None = None,
         checkpointer: Checkpointer | None = None,
+        policy: PolicyConfig | None = None,
+        approval_handler: ApprovalHandler | None = None,
+        workspace: Path | None = None,
     ) -> None:
         self.registry = registry
         self.max_result_chars = max_result_chars
@@ -107,6 +123,14 @@ class ToolDispatcher:
         # missing checkpointer silently skips checkpointing (tests wire
         # one explicitly, agent_loop wires one by default).
         self.checkpointer = checkpointer
+        # The approval policy gate (TD-801/802).  ``policy`` defaults to
+        # rule-free class defaults; ``workspace`` grounds path summaries
+        # for rule matching.  A call resolving to ``ask`` without an
+        # ``approval_handler`` raises ``UnclassifiedToolCall`` — the gate
+        # is part of the chokepoint, not optional.
+        self.policy = policy
+        self.approval_handler = approval_handler
+        self.workspace = workspace
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
 
     # ── Handler registration ──────────────────────────────────────────
@@ -233,6 +257,73 @@ class ToolDispatcher:
                     status="error",
                     output=f"Refused: {e.reason}",
                     error_code="boundary_refusal",
+                    decision_class=decision_class,
+                )
+
+        # ── Policy gate (TD-801/802).  Boundary refusals returned above;
+        # policy resolves auto/ask/never from the decision class and the
+        # workspace rules.  auto runs; never refuses with a structured
+        # result; ask parks on the injected approval handler.  Reaching
+        # ask without a handler is a chokepoint bypass and raises.
+        # The classifier contract (TD-703) already defaults failure to B;
+        # a missing class here fails toward asking, never acting.
+        gate_class = decision_class if decision_class is not None else DecisionClass.B
+        decision = resolve_explained(
+            self.policy if self.policy is not None else PolicyConfig(),
+            tool,
+            arguments,
+            gate_class,
+            self.workspace,
+        )
+        if decision.effect == "never":
+            log.warning(
+                "policy refusal",
+                extra={
+                    "extra_fields": {
+                        "tool_call_id": tool_call_id,
+                        "tool": name,
+                        "reason": decision.reason,
+                    }
+                },
+            )
+            return ToolResult(
+                tool_call_id=tool_call_id,
+                name=name,
+                status="error",
+                output=f"Refused by policy: {decision.reason}",
+                error_code="policy_denied",
+                decision_class=decision_class,
+            )
+        if decision.effect == "ask":
+            if self.approval_handler is None:
+                raise UnclassifiedToolCall(
+                    f"tool '{name}' requires approval but no approval handler is attached"
+                )
+            approval = await self.approval_handler(
+                tool_call_id,
+                tool,
+                arguments,
+                gate_class,
+                format_summary(tool, arguments, self.workspace),
+                decision.reason,
+            )
+            if not approval.approved:
+                log.info(
+                    "approval denied",
+                    extra={
+                        "extra_fields": {
+                            "tool_call_id": tool_call_id,
+                            "tool": name,
+                            "message": approval.message,
+                        }
+                    },
+                )
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    name=name,
+                    status="error",
+                    output=approval.message,
+                    error_code="approval_denied",
                     decision_class=decision_class,
                 )
 

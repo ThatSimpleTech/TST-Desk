@@ -441,6 +441,17 @@ async def agent_loop(
         if tool_dispatcher.checkpointer is None:
             tool_dispatcher.checkpointer = Checkpointer(Path(session.workspace_path), session.id)
 
+        # Approval policy gate (TD-801/802): the workspace policy feeds
+        # the dispatch gate; calls resolving to ``ask`` park on the
+        # session, which owns the pending-approval futures — a client
+        # disconnect leaves them parked and resumable (§2.5).
+        if tool_dispatcher.policy is None:
+            tool_dispatcher.policy = session.policy
+        if tool_dispatcher.workspace is None:
+            tool_dispatcher.workspace = Path(session.workspace_path)
+        if tool_dispatcher.approval_handler is None:
+            tool_dispatcher.approval_handler = session.request_approval
+
     # Pre-compute tool definitions if we have a registry
     tool_definitions: list[ProviderToolDefinition] | None = None
     if tool_registry is not None:
