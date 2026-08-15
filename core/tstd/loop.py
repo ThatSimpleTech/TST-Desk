@@ -586,6 +586,21 @@ async def agent_loop(
         if user_content is None:
             break  # session was cancelled
 
+        # Turn observability (TD-1713): mark the dequeue itself. The
+        # existing "turn start" log lands after prompt assembly, so a
+        # stall between dequeue and assembly was invisible in the logs
+        # (2026-08-14). Queue depth is post-dequeue — messages the loop
+        # still owes the user. Content stays out of the logs; its length
+        # is enough to correlate with a report.
+        log.info(
+            "turn started",
+            extra={
+                "session_id": session.id,
+                "queued_messages": session.pending_user_messages,
+                "content_length": len(user_content),
+            },
+        )
+
         messages.append(ChatMessage(role="user", content=user_content))
 
         # 2. Tool-call round-trip loop

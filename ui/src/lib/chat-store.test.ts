@@ -2,7 +2,7 @@
 // is pure logic with injected transport deps, so these tests drive it exactly
 // the way the connection fan-out and the components do.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   canSend,
   createChatState,
@@ -10,6 +10,7 @@ import {
   formatTurnDuration,
   shouldSubmit,
   showCancel,
+  STALL_TIMEOUT_MS,
   type ChatDeps,
 } from "./chat-store";
 import type { ClientMessageUnion, DaemonEventUnion, SessionState } from "./protocol";
@@ -457,5 +458,126 @@ describe("composer and control predicates", () => {
     expect(canSend(null, "connected")).toBe(false);
     expect(canSend("s1", "reconnecting")).toBe(false);
     expect(canSend("s1", "disconnected")).toBe(false);
+  });
+});
+
+describe("first-token watchdog (TD-1713)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stalls the Working state after 25s with no first token, still offering cancel", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    expect(state.awaitingFirstToken).toBe(true);
+    expect(state.turnStalled).toBe(false);
+
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS - 1);
+    expect(state.turnStalled).toBe(false);
+
+    vi.advanceTimersByTime(1);
+    expect(state.turnStalled).toBe(true);
+    // The wait isn't over — honesty changes the copy, not the affordances.
+    expect(state.awaitingFirstToken).toBe(true);
+    store.dispose();
+  });
+
+  it("recovers on the first delta: stalled copy drops and streaming proceeds", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS);
+    expect(state.turnStalled).toBe(true);
+
+    store.applyEvent(delta("s1", "sorry, cold start"));
+    expect(state.turnStalled).toBe(false);
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(state.messages.at(-1)?.text).toBe("sorry, cold start");
+    store.dispose();
+  });
+
+  it("never fires once the turn resolves first (complete, cancel, or refusal)", () => {
+    // turn_complete clears
+    const a = boundStore();
+    a.store.sendUserMessage("hello");
+    a.store.applyEvent(turnComplete("s1"));
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS * 2);
+    expect(a.state.turnStalled).toBe(false);
+
+    // terminal session_state clears
+    const b = boundStore();
+    b.store.sendUserMessage("hello");
+    b.store.applyEvent(sessionState("s1", "failed"));
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS * 2);
+    expect(b.state.turnStalled).toBe(false);
+
+    // session_not_running refusal clears
+    const c = boundStore();
+    c.store.sendUserMessage("hello");
+    c.store.applyEvent({
+      type: "error",
+      code: "session_not_running",
+      message: "dead",
+      session_id: "s1",
+      seq: 9,
+    } as unknown as DaemonEventUnion);
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS * 2);
+    expect(c.state.turnStalled).toBe(false);
+
+    a.store.dispose();
+    b.store.dispose();
+    c.store.dispose();
+  });
+
+  it("switching sessions or disposing disarms the old session's watchdog", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    store.selectSession("s2", "idle");
+    expect(state.turnStalled).toBe(false);
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS * 2);
+    expect(state.turnStalled).toBe(false);
+    store.dispose();
+  });
+
+  it("a stalled wait cancels locally the moment the user hits cancel", () => {
+    const { store, state, sent } = boundStore();
+    store.sendUserMessage("hello");
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS);
+    expect(state.turnStalled).toBe(true);
+
+    expect(store.cancelTurn()).toBe(true);
+    expect(sent).toContainEqual({ type: "cancel", session_id: "s1" });
+    expect(state.turnStalled).toBe(false);
+    expect(state.awaitingFirstToken).toBe(false);
+    store.dispose();
+  });
+
+  it("arms when attaching to a session the daemon reports as running", () => {
+    const { store, state } = boundStore();
+    store.selectSession("s2", "running");
+    expect(state.awaitingFirstToken).toBe(true);
+
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS);
+    expect(state.turnStalled).toBe(true);
+    store.dispose();
+  });
+
+  it("a replayed running state mid-wait does not restart the clock", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    const started = state.awaitingSince;
+    expect(started).not.toBeNull();
+
+    vi.advanceTimersByTime(5_000);
+    store.applyEvent(sessionState("s1", "running"));
+    expect(state.awaitingSince).toBe(started);
+
+    // 25s from the SEND, not from the replayed state.
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS - 5_000);
+    expect(state.turnStalled).toBe(true);
+    store.dispose();
   });
 });
