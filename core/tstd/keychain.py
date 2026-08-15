@@ -24,6 +24,47 @@ class KeychainError(Exception):
     """Raised when a keychain operation fails."""
 
 
+class KeychainLockedError(KeychainError):
+    """The login keychain is locked or its password drifted (TD-1105).
+
+    A macOS password change (notably on AD-bound Macs) leaves the login
+    keychain on the old password: every ``security`` call fails with
+    "user name or passphrase not correct" until it is re-keyed.  A locked
+    Secret Service collection is the Linux equivalent.  The daemon maps
+    this to the ``keychain_locked`` error code so the UI can show unlock
+    guidance instead of raw CLI stderr.
+    """
+
+
+# stderr substrings that mean "keychain is locked / password drifted",
+# matched case-insensitively.
+_LOCKED_MARKERS = (
+    "user name or passphrase",
+    "interaction is not allowed",  # errSecInteractionNotAllowed — unlock UI barred
+    "interaction not allowed",
+    "is locked",
+    "locked collection",
+)
+
+_LOCKED_GUIDANCE = (
+    "The login keychain is locked — most often a macOS password change left "
+    "the keychain on the old password. Open Keychain Access, unlock the login "
+    "keychain (or update its password to the current login password), then retry."
+)
+
+
+def _classify_cli_failure(stderr_text: str, fallback: str) -> KeychainError:
+    """Map keychain-CLI stderr to the right error type.
+
+    Locked/drifted keychains get KeychainLockedError with unlock guidance;
+    anything else keeps the raw stderr in a plain KeychainError.
+    """
+    low = stderr_text.lower()
+    if any(marker in low for marker in _LOCKED_MARKERS):
+        return KeychainLockedError(_LOCKED_GUIDANCE)
+    return KeychainError(f"{fallback}: {stderr_text}")
+
+
 class KeychainBackend(ABC):
     """Platform-specific keychain backend."""
 
@@ -82,7 +123,7 @@ class MacOSKeychain(KeychainBackend):
                     f"API key not found in keychain. "
                     f"Run: security add-generic-password -a '{account}' -s '{service}' -w"
                 )
-            raise KeychainError(f"Failed to read keychain: {stderr_text}")
+            raise _classify_cli_failure(stderr_text, "Failed to read keychain")
         return stdout.decode().strip()
 
     async def set_secret(
@@ -106,7 +147,7 @@ class MacOSKeychain(KeychainBackend):
         )
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise KeychainError(f"Failed to store keychain secret: {stderr.decode().strip()}")
+            raise _classify_cli_failure(stderr.decode().strip(), "Failed to store keychain secret")
 
     async def delete_secret(
         self, account: str, service: str = "com.thatsimpletech.tstdesk"
@@ -123,7 +164,7 @@ class MacOSKeychain(KeychainBackend):
         )
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise KeychainError(f"Failed to delete keychain secret: {stderr.decode().strip()}")
+            raise _classify_cli_failure(stderr.decode().strip(), "Failed to delete keychain secret")
 
 
 class LinuxSecretService(KeychainBackend):
@@ -150,7 +191,7 @@ class LinuxSecretService(KeychainBackend):
                     f"--label='TST Desk {account}' "
                     f"service '{service}' account '{account}'"
                 )
-            raise KeychainError(f"Failed to read keychain: {stderr_text}")
+            raise _classify_cli_failure(stderr_text, "Failed to read keychain")
         value = stdout.decode().strip()
         if not value:
             raise KeychainError("API key not found in keychain (empty value).")
@@ -174,7 +215,7 @@ class LinuxSecretService(KeychainBackend):
         )
         _, stderr = await proc.communicate(input=secret.encode())
         if proc.returncode != 0:
-            raise KeychainError(f"Failed to store keychain secret: {stderr.decode().strip()}")
+            raise _classify_cli_failure(stderr.decode().strip(), "Failed to store keychain secret")
 
     async def delete_secret(
         self, account: str, service: str = "com.thatsimpletech.tstdesk"
@@ -191,7 +232,7 @@ class LinuxSecretService(KeychainBackend):
         )
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise KeychainError(f"Failed to delete keychain secret: {stderr.decode().strip()}")
+            raise _classify_cli_failure(stderr.decode().strip(), "Failed to delete keychain secret")
 
 
 def _detect_backend() -> KeychainBackend:
