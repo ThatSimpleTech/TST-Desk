@@ -193,6 +193,19 @@ describe("notification routing", () => {
     expect(toasts[0].body).toBe(message);
   });
 
+  it("a locked keychain is a banner that names the retry path (TD-1105)", () => {
+    notifyEvent({
+      type: "error",
+      code: "keychain_locked",
+      message: "The login keychain is locked — open Keychain Access, unlock it, then retry.",
+      seq: 4,
+    } as DaemonEventUnion);
+    expect(banners).toHaveLength(1);
+    expect(banners[0].title).toBe("Keychain is locked");
+    expect(banners[0].body).toContain("Keychain Access");
+    expect(banners[0].body).toContain("Store key again");
+  });
+
   it("an interrupted session raises the tombstone banner", () => {
     notifyEvent(sessionState("interrupted"));
     expect(banners).toHaveLength(1);
