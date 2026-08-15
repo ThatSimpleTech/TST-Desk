@@ -84,6 +84,10 @@
     "type": "set_api_key",
     "api_key": "sk-or-test-key"
   },
+  "delete_api_key": {
+    "type": "delete_api_key",
+    "provider": "openrouter"
+  },
   "validate_api_key": {
     "type": "validate_api_key"
   },

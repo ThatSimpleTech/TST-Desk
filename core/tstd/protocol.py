@@ -274,6 +274,17 @@ class ValidateApiKey(ClientMessage):
     type: Literal["validate_api_key"] = "validate_api_key"
 
 
+class DeleteApiKey(ClientMessage):
+    """Remove an API key from the OS keychain (TD-1102).
+
+    The daemon answers with a refreshed ``setup_state`` (``has_api_key``
+    flips false), same ack pattern as ``set_api_key``.
+    """
+
+    type: Literal["delete_api_key"] = "delete_api_key"
+    provider: str = "openrouter"
+
+
 class SetPreset(ClientMessage):
     """Pick the active model preset (TD-1101); applied to new sessions."""
 
@@ -738,7 +749,8 @@ ClientMessageT = Annotated[
     | SetApiKey
     | ValidateApiKey
     | SetPreset
-    | RunDiagnostics,
+    | RunDiagnostics
+    | DeleteApiKey,
     Field(discriminator="type"),
 ]
 
@@ -796,6 +808,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "get_setup_state",
         "set_api_key",
         "validate_api_key",
+        "delete_api_key",
         "set_preset",
         "run_diagnostics",
     }

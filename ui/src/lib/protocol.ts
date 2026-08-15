@@ -121,6 +121,13 @@ export interface SetApiKey extends ClientMessage {
   api_key: string;
 }
 
+// TD-1102: key removable from settings. Acked with a fresh setup_state
+// (has_api_key flips false), same pattern as set_api_key.
+export interface DeleteApiKey extends ClientMessage {
+  type: "delete_api_key";
+  provider?: string;
+}
+
 export interface ValidateApiKey extends ClientMessage {
   type: "validate_api_key";
 }
@@ -156,6 +163,7 @@ export type ClientMessageUnion =
   | NewSession
   | GetSetupState
   | SetApiKey
+  | DeleteApiKey
   | ValidateApiKey
   | SetPreset
   | RunDiagnostics;

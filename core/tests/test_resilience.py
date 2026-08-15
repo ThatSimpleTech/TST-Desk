@@ -113,7 +113,7 @@ class TestActionableMessages:
     def test_auth_message(self) -> None:
         msg = auth_failure_message()
         assert "API key" in msg
-        assert "keychain" in msg
+        assert "title bar" in msg  # TD-1102: points at the wizard, not a phantom CLI
         assert "base_url" in msg
 
     def test_context_length_message(self) -> None:

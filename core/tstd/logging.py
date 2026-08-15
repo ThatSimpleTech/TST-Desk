@@ -133,6 +133,12 @@ def setup_logging(
     if isinstance(level, str):
         level = getattr(logging, level.upper(), logging.INFO)
 
+    # TD-1102: websockets logs raw frame contents at DEBUG, and frames can
+    # carry credentials (set_api_key payloads) and chat content. Redaction
+    # is pattern-based, so an unusually-shaped key would survive it — cap
+    # the frame logger at INFO no matter what --log-level was requested.
+    logging.getLogger("websockets").setLevel(max(level, logging.INFO))
+
     log_dir = log_dir or (user_data_dir() / "logs")
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "tstd.log"

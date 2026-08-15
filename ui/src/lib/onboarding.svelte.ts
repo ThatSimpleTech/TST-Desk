@@ -133,6 +133,13 @@ export function validateKey(): void {
 	if (!sent) onboarding.validating = false;
 }
 
+/** Remove the stored key (TD-1102); the ack (setup_state) flips hasApiKey. */
+export function removeKey(): void {
+	// Any prior validation verdict is about a key that no longer exists.
+	onboarding.validation = null;
+	sendToDaemon({ type: "delete_api_key" });
+}
+
 /** Pick a preset; the ack (setup_state) refreshes activePreset. */
 export function choosePreset(name: string): void {
 	sendToDaemon({ type: "set_preset", name });

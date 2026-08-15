@@ -501,9 +501,9 @@ class TestErrorHandling:
         assert isinstance(result, ProviderError)
         assert result.code == "auth_failed"
         assert not result.retryable
-        # Message is actionable
+        # Message is actionable — points at the wizard, not a phantom CLI (TD-1102)
         assert "API key" in result.message
-        assert "keychain" in result.message
+        assert "title bar" in result.message
 
     async def test_not_found(self, client: ProviderClient) -> None:
         """Test that 404 is handled."""
