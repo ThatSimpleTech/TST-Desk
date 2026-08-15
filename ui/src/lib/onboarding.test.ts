@@ -136,6 +136,7 @@ describe("key step", () => {
 
   it("validate sends once, settles on api_key_validated", () => {
     start();
+    emit(setupState(true)); // TD-1106: bare validate probes the stored key
     validateKey();
     expect(mocks.sent.some((m) => m.type === "validate_api_key")).toBe(true);
     expect(onboarding.validating).toBe(true);
@@ -148,7 +149,7 @@ describe("key step", () => {
 
   it("a failed validation is shown, not hidden", () => {
     start();
-    validateKey();
+    validateKey("sk-bad"); // TD-1106: typed key — no stored state involved
     emit({
       type: "api_key_validated",
       seq: 1,
@@ -162,8 +163,35 @@ describe("key step", () => {
 
   it("validating resets when the send never left (socket down)", () => {
     start();
+    emit(setupState(true));
     mocks.sendOk = false;
     validateKey();
+    expect(onboarding.validating).toBe(false);
+  });
+
+  it("validate with a typed key sends it, regardless of stored state (TD-1106)", () => {
+    start(); // hasApiKey false — nothing stored
+    validateKey("  sk-typed-1  ");
+    const msgs = mocks.sent.filter((m) => m.type === "validate_api_key");
+    expect(msgs).toHaveLength(1);
+    expect((msgs[0] as { api_key?: string }).api_key).toBe("sk-typed-1");
+    expect(onboarding.validating).toBe(true);
+  });
+
+  it("an ok verdict for a typed key does not flip hasApiKey (TD-1106)", () => {
+    start();
+    validateKey("sk-typed-1");
+    emit({ type: "api_key_validated", seq: 1, ok: true, detail: "ok" } as DaemonEventUnion);
+    expect(onboarding.validation?.ok).toBe(true);
+    // The key was proven but never stored — setup_state stays the source
+    // of truth for "has a key".
+    expect(onboarding.hasApiKey).toBe(false);
+  });
+
+  it("bare validate with nothing stored is a no-op (TD-1106)", () => {
+    start();
+    validateKey();
+    expect(mocks.sent.filter((m) => m.type === "validate_api_key")).toHaveLength(0);
     expect(onboarding.validating).toBe(false);
   });
 

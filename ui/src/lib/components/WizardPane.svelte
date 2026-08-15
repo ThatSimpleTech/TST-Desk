@@ -84,8 +84,9 @@
 					<button
 						class="btn"
 						type="button"
-						disabled={!onboarding.hasApiKey || onboarding.validating}
-						onclick={validateKey}>Validate</button
+						disabled={onboarding.validating ||
+							(!onboarding.hasApiKey && keyInput.trim().length === 0)}
+						onclick={() => validateKey(keyInput)}>Validate</button
 					>
 					{#if onboarding.hasApiKey}
 						<button class="btn btn--ghost" type="button" onclick={removeKey}>
