@@ -8,18 +8,30 @@ multi-turn conversation.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
-from tests.test_dispatch import attach_auto_approver
+import pytest
+
+from tests.test_dispatch import attach_auto_approver, make_classifier
+from tstd.autonomy import Boundary
 from tstd.config import ModelConfig, Preset, TierConfig
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
-from tstd.protocol import AssistantDelta, TurnComplete
+from tstd.protocol import AssistantDelta, RuleActivated, TurnComplete
 from tstd.protocol import ToolCall as ToolCallEvent
 from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
-from tstd.tools import Tool, ToolDispatcher, ToolRegistry
+from tstd.tools import (
+    Tool,
+    ToolDispatcher,
+    ToolRegistry,
+    create_registry,
+    register_builtin_handlers,
+)
+from tstd.tools.boundary import PathGuard
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -648,4 +660,160 @@ class TestProviderAgnostic:
         await session.add_user_message("ping")
         tc = await wait_for_turn(session, 1)
         assert tc.tokens > 0
+        await runner.cancel()
+
+
+# ── Path-scoped rule activation (TD-503) ───────────────────────────────
+#
+# A rule with ``appliesTo`` globs stays out of the prompt until the session
+# touches a matching file; the loop then announces the activation in the
+# timeline so context changes are never silent.  Raw relative tool paths
+# resolve against the process CWD, so these chdir into the workspace — the
+# verdict pins identically on every platform.
+
+
+def _fs_dispatcher(ws: Path) -> tuple[ToolRegistry, ToolDispatcher]:
+    """Real registry + builtin handlers over a tmp workspace, auto-approved."""
+    registry = create_registry()
+    dispatcher = attach_auto_approver(
+        ToolDispatcher(
+            registry,
+            classifier=make_classifier(str(ws)),
+            path_guard=PathGuard(Boundary(workspace_root=ws)),
+            workspace=ws,
+        )
+    )
+    register_builtin_handlers(dispatcher)
+    return registry, dispatcher
+
+
+def _scoped_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    ws = tmp_path / "ws"
+    (ws / "src").mkdir(parents=True)
+    (ws / "AGENTS.md").write_text("root rules\n", encoding="utf-8")
+    (ws / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (ws / ".tst" / "rules").mkdir(parents=True)
+    (ws / ".tst" / "rules" / "src-rules.md").write_text(
+        "---\nappliesTo:\n  - src/**\n---\nSRC RULES APPLY\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(ws)
+    return ws
+
+
+class TestPathScopedRuleActivation:
+    async def _start(self, session: Session, mock: MockProvider, ws: Path) -> SessionRunner:
+        registry, dispatcher = _fs_dispatcher(ws)
+        runner = SessionRunner(
+            session,
+            loop_factory=lambda s: agent_loop(
+                s,
+                TierRouter(lead_turns=3),
+                mock_factory(mock),
+                make_config(),
+                tool_registry=registry,
+                tool_dispatcher=dispatcher,
+            ),
+        )
+        await runner.start()
+        return runner
+
+    async def test_touch_activates_scoped_rule_and_announces(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ws = _scoped_workspace(tmp_path, monkeypatch)
+        session = Session(str(ws))
+        mock = MockProvider(
+            sequences={
+                "test-brain": [
+                    Script(
+                        kind="tool_call",
+                        tool_name="fs_read",
+                        tool_arguments='{"path": "src/app.py"}',
+                    ),
+                    Script(kind="stream", content="done"),
+                ]
+            }
+        )
+        runner = await self._start(session, mock, ws)
+        await session.add_user_message("read the app file")
+        await wait_for_turn(session, 1)
+
+        activations = [e for e in session.event_log.all_events if isinstance(e, RuleActivated)]
+        assert [a.rule_path for a in activations] == [".tst/rules/src-rules.md"]
+        # The re-assembly after the touch carries the rule in the prompt.
+        assert "SRC RULES APPLY" in (mock.calls[-1].messages[0].content or "")
+        await runner.cancel()
+
+    async def test_no_touch_means_no_activation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ws = _scoped_workspace(tmp_path, monkeypatch)
+        session = Session(str(ws))
+        mock = MockProvider(
+            scripts={"test-brain": Script(kind="stream", content="ok")},
+        )
+        runner = await self._start(session, mock, ws)
+        for turn, msg in enumerate(["one", "two"], start=1):
+            await session.add_user_message(msg)
+            await wait_for_turn(session, turn)
+
+        activations = [e for e in session.event_log.all_events if isinstance(e, RuleActivated)]
+        assert activations == []
+        # …and the scoped rule never entered the prompt.
+        assert "SRC RULES APPLY" not in (mock.calls[-1].messages[0].content or "")
+        await runner.cancel()
+
+    async def test_touch_before_first_turn_sets_the_baseline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rule already active at the first assembly is the baseline, not
+        an activation — nothing is announced, but the rule is in the prompt."""
+        ws = _scoped_workspace(tmp_path, monkeypatch)
+        session = Session(str(ws))
+        session.record_touched(["src/app.py"])
+        mock = MockProvider(
+            scripts={"test-brain": Script(kind="stream", content="ok")},
+        )
+        runner = await self._start(session, mock, ws)
+        await session.add_user_message("hi")
+        await wait_for_turn(session, 1)
+
+        activations = [e for e in session.event_log.all_events if isinstance(e, RuleActivated)]
+        assert activations == []
+        assert "SRC RULES APPLY" in (mock.calls[0].messages[0].content or "")
+        await runner.cancel()
+
+
+# ── Turn observability (TD-1713) ────────────────────────────────────────
+
+
+class TestTurnStartedLogging:
+    async def test_dequeue_logs_turn_started_with_queue_depth(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The loop logs the dequeue itself, not just the post-assembly
+        "turn start" — a stall between the two was invisible (2026-08-14).
+        Depth is post-dequeue: messages the loop still owes the user."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Hi")})
+
+        # Enqueue before the loop starts so the first dequeue has a backlog.
+        await session.add_user_message("one")
+        await session.add_user_message("22")
+
+        with caplog.at_level(logging.INFO, logger="tstd.loop"):
+            runner = await start_loop(session, router, mock, config)
+            await wait_for_turn(session, 2)
+
+        started = [
+            r for r in caplog.records if r.name == "tstd.loop" and r.getMessage() == "turn started"
+        ]
+        assert len(started) == 2
+        assert started[0].session_id == session.id
+        assert started[0].queued_messages == 1  # the second send still waited
+        assert started[0].content_length == 3
+        assert started[1].queued_messages == 0
+
         await runner.cancel()

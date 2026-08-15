@@ -142,6 +142,10 @@ class SessionStore:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_name(f".{_STORE_FILE}.{os.getpid()}.tmp")
             tmp.write_text(json.dumps(payload, indent=2))
+            # Owner-only before the rename. POSIX mode bits only: on Windows
+            # os.chmod can merely toggle the read-only flag, so this is a
+            # silent no-op there — ACL-based restriction is a separate
+            # hardening story (TD-1406).
             tmp.chmod(0o600)
             os.replace(tmp, self._path)
         except OSError as e:

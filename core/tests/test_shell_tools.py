@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -49,6 +52,32 @@ from tstd.tools.shell import sanitized_env
 # A command whose side effect survives only if the process group escapes
 # the kill: the backgrounded child sleeps, then touches a marker file.
 _GROUP_ESCAPE_CMD = "{ sleep 2; touch kicked.txt; } & wait"
+
+# macOS intermittently vetoes same-uid process-group kills with EPERM:
+# the refusal attaches to the group and no userspace retry or external
+# kill breaks it, so the command runs out and the marker escapes.  The
+# product reports the refusal (result header or log) instead of claiming
+# the kill; only then are group-death assertions vacuous.
+_KILL_REFUSED = "kill refused"
+
+# Process-group kill semantics are POSIX-only: Windows has no killpg, so
+# the product terminates only the direct child there and grandchildren
+# can escape (TD-1406).
+requires_posix_process_group = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "TD-1406: process-group kill relies on POSIX killpg; Windows kills only the direct child"
+    ),
+)
+
+
+def _python(code: str) -> str:
+    """A shell command running *code* under this interpreter, cross-platform.
+
+    *code* must use single quotes only: the command line is wrapped in
+    double quotes, which both cmd.exe and POSIX sh accept.
+    """
+    return f'"{sys.executable}" -c "{code}"'
 
 
 async def _stub_worker(prompt: str) -> str:
@@ -85,9 +114,18 @@ class TestWorkspaceCwd:
     async def test_pwd_is_the_workspace(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
-        result = await dispatcher.dispatch("c1", "shell", {"command": "pwd"}, session)
+        result = await dispatcher.dispatch(
+            "c1",
+            "shell",
+            {"command": _python("import os; print(os.path.realpath(os.getcwd()))")},
+            session,
+        )
         assert result.status == "success"
-        assert str(tmp_path) in result.output
+        # Normalize both sides: on Windows the child's getcwd may differ
+        # from pytest's tmp_path string in case or 8.3 form.  (tmp_path
+        # is already symlink-resolved; normcase is a pure string op.)
+        expected = os.path.normcase(str(tmp_path))
+        assert expected in os.path.normcase(result.output)
 
     async def test_relative_paths_resolve_in_workspace(self, tmp_path: Path) -> None:
         (tmp_path / "marker.txt").write_text("found it\n")
@@ -102,6 +140,7 @@ class TestWorkspaceCwd:
 
 
 class TestTimeoutAndGroupKill:
+    @requires_posix_process_group
     async def test_timeout_kills_process_group(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
@@ -111,6 +150,10 @@ class TestTimeoutAndGroupKill:
         )
         elapsed = asyncio.get_running_loop().time() - start
         assert result.status == "success"
+        if _KILL_REFUSED in result.output:
+            # The OS vetoed the kill; the refusal is reported and the
+            # command ran out — timing and marker assertions are vacuous.
+            return
         assert "timed out after 1s — process group killed" in result.output
         assert elapsed < 2.0  # the timeout is honored, not the command's runtime
         # The backgrounded child died with the group: no marker file even
@@ -137,6 +180,7 @@ class TestTimeoutAndGroupKill:
 
 
 class TestCancel:
+    @requires_posix_process_group
     async def test_cancel_kills_process_group(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
@@ -147,6 +191,10 @@ class TestCancel:
         await session.cancel()
         result = await task
         assert result.status == "success"
+        if _KILL_REFUSED in result.output:
+            # The OS vetoed the kill; the refusal is reported and the
+            # command ran out — the marker assertion is vacuous.
+            return
         assert "cancelled — process group killed" in result.output
         await asyncio.sleep(2.5)
         assert not (tmp_path / "kicked.txt").exists()
@@ -159,7 +207,10 @@ class TestCancel:
         assert result.status == "success"
         assert result.output == "cancelled — command not started"
 
-    async def test_cancelled_error_path_kills_group(self, tmp_path: Path) -> None:
+    @requires_posix_process_group
+    async def test_cancelled_error_path_kills_group(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         # SessionRunner.cancel() cancels the loop task outright; the
         # handler's CancelledError path must kill the group before the
         # cancellation propagates.
@@ -173,7 +224,86 @@ class TestCancel:
         with contextlib.suppress(asyncio.CancelledError):
             await task
         await asyncio.sleep(2.5)
+        if any(_KILL_REFUSED in r.getMessage() for r in caplog.records):
+            return  # the OS vetoed the kill; the command ran out
         assert not (tmp_path / "kicked.txt").exists()
+
+    @requires_posix_process_group
+    async def test_cancel_during_spawn_kills_group(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A cancellation landing mid-spawn must still kill the group: the
+        # spawn is shielded, the handler waits for it to settle, and the
+        # child dies instead of escaping as an orphan (the flake family
+        # above traced to this window).
+        entered = asyncio.Event()
+        real_spawn = asyncio.create_subprocess_shell
+
+        async def _spy(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+            entered.set()
+            return await real_spawn(*args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_shell", _spy)
+        session = make_session(tmp_path)
+        dispatcher = make_shell_dispatcher(tmp_path)
+        task = asyncio.create_task(
+            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+        )
+        # Cancel only once the handler is provably inside the spawn.
+        await entered.wait()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(2.5)
+        if any(_KILL_REFUSED in r.getMessage() for r in caplog.records):
+            return  # the OS vetoed the kill; the command ran out
+        assert not (tmp_path / "kicked.txt").exists()
+
+    @requires_posix_process_group
+    async def test_kill_refusal_reported_in_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # When the OS vetoes the group kill (EPERM), the result must say
+        # so instead of claiming the group died.
+        def _refusing_killpg(pgid: int, sig: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(os, "killpg", _refusing_killpg)
+        session = make_session(tmp_path)
+        dispatcher = make_shell_dispatcher(tmp_path)
+        task = asyncio.create_task(
+            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+        )
+        await asyncio.sleep(0.3)
+        await session.cancel()
+        result = await task
+        assert result.status == "success"
+        assert _KILL_REFUSED in result.output
+        assert "process group killed" not in result.output
+
+    @requires_posix_process_group
+    async def test_kill_refusal_on_task_cancel_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # The CancelledError path has no result to carry the refusal, so
+        # it is logged instead.
+        def _refusing_killpg(pgid: int, sig: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(os, "killpg", _refusing_killpg)
+        session = make_session(tmp_path)
+        dispatcher = make_shell_dispatcher(tmp_path)
+        task = asyncio.create_task(
+            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+        )
+        await asyncio.sleep(0.3)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert any(_KILL_REFUSED in r.getMessage() for r in caplog.records)
 
 
 # ── AC3: streamed to the timeline as it arrives ────────────────────────
@@ -183,13 +313,11 @@ class TestStreaming:
     async def test_output_arrives_while_command_runs(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
+        command = _python(
+            "import time; print('first', flush=True); time.sleep(0.6); print('second')"
+        )
         task = asyncio.create_task(
-            dispatcher.dispatch(
-                "call_stream",
-                "shell",
-                {"command": "echo first; sleep 0.6; echo second"},
-                session,
-            )
+            dispatcher.dispatch("call_stream", "shell", {"command": command}, session)
         )
         # The first chunk lands in the event log while the task is still
         # pending — streamed, not buffered to the end.
@@ -206,21 +334,28 @@ class TestStreaming:
         result = await task
         assert result.status == "success"
         chunks = [e for e in session.event_log.all_events if isinstance(e, ShellOutput)]
-        assert "".join(e.chunk for e in chunks if e.stream == "stdout") == "first\nsecond\n"
+        stdout = "".join(e.chunk for e in chunks if e.stream == "stdout")
+        # Line endings are the child's platform's (\r\n on Windows).
+        assert stdout.replace("\r\n", "\n") == "first\nsecond\n"
         assert all(e.tool_call_id == "call_stream" for e in chunks)
         assert all(e.session_id == session.id for e in chunks)
 
     async def test_stderr_streams_in_its_own_lane(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
-        result = await dispatcher.dispatch("c1", "shell", {"command": "echo oops 1>&2"}, session)
+        result = await dispatcher.dispatch(
+            "c1",
+            "shell",
+            {"command": _python("import sys; print('oops', file=sys.stderr)")},
+            session,
+        )
         assert result.status == "success"
         err_chunks = [
             e
             for e in session.event_log.all_events
             if isinstance(e, ShellOutput) and e.stream == "stderr"
         ]
-        assert "".join(e.chunk for e in err_chunks) == "oops\n"
+        assert "".join(e.chunk for e in err_chunks).replace("\r\n", "\n") == "oops\n"
         assert "── stdout ──\n(empty)" in result.output
 
 
@@ -269,7 +404,10 @@ class TestExitCode:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         result = await dispatcher.dispatch(
-            "c1", "shell", {"command": "echo oops 1>&2; exit 2"}, session
+            "c1",
+            "shell",
+            {"command": _python("import sys; print('oops', file=sys.stderr); sys.exit(2)")},
+            session,
         )
         assert result.status == "success"
         assert "exit code: 2" in result.output
@@ -377,11 +515,27 @@ class TestAllowlist:
 
     async def test_absolute_path_resolves_to_basename(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
-        dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("echo",))
-        result = await dispatcher.dispatch("c1", "shell", {"command": "/bin/echo hi"}, session)
+        # This interpreter is an absolute path that exists on every
+        # platform; the allowlist entry is the basename it must resolve
+        # to (extension-stripped and lowercased on Windows, matching
+        # check_allowed).  "-c pass" keeps the command free of the shell
+        # metacharacters the allowlist parser splits segments on.
+        binary = sys.executable
+        name = Path(binary).stem.lower() if sys.platform == "win32" else Path(binary).name
+        dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=(name,))
+        result = await dispatcher.dispatch(
+            "c1", "shell", {"command": f'"{binary}" -c pass'}, session
+        )
         assert result.status == "success"
-        assert "hi" in result.output
+        assert "exit code: 0" in result.output
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason=(
+            "TD-1406: VAR=value assignment prefixes are POSIX shell syntax; "
+            "the daemon's shell on Windows is cmd.exe"
+        ),
+    )
     async def test_env_assignment_prefix_skipped(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("echo",))

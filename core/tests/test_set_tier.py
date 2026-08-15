@@ -52,14 +52,14 @@ async def _start_daemon(tmp: str) -> tuple[Daemon, asyncio.Task[Any]]:
 
 class TestSetTier:
     @pytest.mark.asyncio
-    async def test_set_tier_emits_tier_switched_event(self) -> None:
+    async def test_set_tier_emits_tier_switched_event(self, tmp_path: Path) -> None:
         """set_tier applies the override and logs a tier_switched event."""
         with tempfile.TemporaryDirectory() as tmp:
             daemon, daemon_task = await _start_daemon(tmp)
             uri = f"ws://127.0.0.1:{daemon.ws_server.port}"
             ws = await _connect_and_handshake(uri, daemon.ws_server.token)
 
-            session_state = await _open_workspace(ws, "/tmp/test")
+            session_state = await _open_workspace(ws, str(tmp_path))
             session_id = session_state["session_id"]
 
             # A fresh session routes its lead turns through brain, so the
@@ -105,14 +105,14 @@ class TestSetTier:
             await asyncio.gather(daemon_task, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_set_tier_streams_to_attached_client(self) -> None:
+    async def test_set_tier_streams_to_attached_client(self, tmp_path: Path) -> None:
         """A tier_switched event reaches an already-attached client live."""
         with tempfile.TemporaryDirectory() as tmp:
             daemon, daemon_task = await _start_daemon(tmp)
             uri = f"ws://127.0.0.1:{daemon.ws_server.port}"
             ws = await _connect_and_handshake(uri, daemon.ws_server.token)
 
-            session_state = await _open_workspace(ws, "/tmp/test")
+            session_state = await _open_workspace(ws, str(tmp_path))
             session_id = session_state["session_id"]
 
             # Attach (from seq 4 to skip the open-time events: session_state,

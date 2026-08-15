@@ -102,6 +102,14 @@ export interface ListSessions extends ClientMessage {
   type: "list_sessions";
 }
 
+/** Create a fresh session in an existing session's workspace (TD-1701).
+ *  `session_id` is the anchor — the daemon replies with the new session's
+ *  first event (session_state), exactly like open_workspace. */
+export interface NewSession extends ClientMessage {
+  type: "new_session";
+  session_id: string;
+}
+
 // ── Onboarding (TD-1101 first-run wizard) ────────────────────────────
 
 export interface GetSetupState extends ClientMessage {
@@ -152,6 +160,7 @@ export type ClientMessageUnion =
   | GetInstructionStack
   | Shutdown
   | ListSessions
+  | NewSession
   | GetSetupState
   | SetApiKey
   | DeleteApiKey
@@ -210,6 +219,7 @@ export interface ToolResult extends DaemonEvent {
   status: "success" | "error";
   output: string;
   truncated: boolean;
+  error_code?: string | null;
   diff?: string | null;
 }
 
@@ -308,6 +318,18 @@ export interface SteeringReloaded extends DaemonEvent {
   source_count: number;
 }
 
+export interface RuleActivated extends DaemonEvent {
+  type: "rule_activated";
+  session_id: string;
+  rule_path: string;
+}
+
+export interface ImportedFile {
+  path: string;
+  depth: number;
+  issue?: string | null;
+}
+
 export interface InstructionStackEntry {
   path: string;
   precedence: string;
@@ -317,6 +339,9 @@ export interface InstructionStackEntry {
   warnings: string[];
   subtree?: string | null;
   is_fallback: boolean;
+  shadowed_path?: string | null;
+  applies_to?: string[] | null;
+  imports?: ImportedFile[];
 }
 
 export interface InstructionStack extends DaemonEvent {
@@ -325,12 +350,21 @@ export interface InstructionStack extends DaemonEvent {
   sources: InstructionStackEntry[];
   total_tokens: number;
   token_method: string;
+  last_cached_tokens?: number | null;
 }
 
 export interface SessionSummary {
   session_id: string;
   workspace_path: string;
-  state: "idle" | "running" | "awaiting_approval" | "complete" | "failed" | "cancelled" | "interrupted";
+  state:
+    | "idle"
+    | "running"
+    | "awaiting_approval"
+    | "paused"
+    | "complete"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
   created_at: string;
   updated_at: string;
   event_count: number;
@@ -423,6 +457,7 @@ export type DaemonEventUnion =
   | TierState
   | ContextCompacted
   | SteeringReloaded
+  | RuleActivated
   | TierSwitched
   | InstructionStack
   | SessionList

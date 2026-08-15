@@ -12,6 +12,7 @@ the user config and applies to new sessions immediately.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import tempfile
 from pathlib import Path
@@ -54,6 +55,18 @@ async def _start_daemon(tmp: Path) -> tuple[Daemon, asyncio.Task[Any]]:
         await asyncio.sleep(0.05)
     assert daemon.ws_server.port > 0
     return daemon, task
+
+
+async def _stop_daemon(task: asyncio.Task[Any]) -> None:
+    """Cancel the daemon task and wait for its shutdown to finish.
+
+    The daemon holds audit.db open until _shutdown() closes the audit
+    store; on Windows the surrounding TemporaryDirectory cleanup cannot
+    unlink an open file, so teardown must complete here, not race it.
+    """
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 async def _ask(ws: Any, msg: dict[str, Any]) -> dict[str, Any]:
@@ -165,7 +178,7 @@ class TestSetupState:
                 assert {"tst-default", "budget", "local"} <= set(resp["presets"])
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     @pytest.mark.asyncio
     async def test_key_present_flips_has_api_key(self, fake_keychain: FakeKeychain) -> None:
@@ -180,7 +193,7 @@ class TestSetupState:
                 assert resp["has_api_key"] is True
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
 
 class TestSetApiKey:
@@ -200,7 +213,7 @@ class TestSetApiKey:
                 assert "sk-live-check-12345" not in json.dumps(resp)
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     @pytest.mark.asyncio
     async def test_store_failure_is_a_typed_error(self, fake_keychain: FakeKeychain) -> None:
@@ -216,7 +229,7 @@ class TestSetApiKey:
                 assert resp["code"] == "key_store_failed"
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
 
 class TestValidateApiKey:
@@ -234,7 +247,7 @@ class TestValidateApiKey:
                 assert resp["ok"] is True
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     @pytest.mark.asyncio
     async def test_missing_key_fails_actionably(self, fake_keychain: FakeKeychain) -> None:
@@ -251,7 +264,7 @@ class TestValidateApiKey:
                 assert "keychain" in resp["detail"]
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     @pytest.mark.asyncio
     async def test_rejected_key_gets_the_auth_failure_copy(
@@ -271,7 +284,7 @@ class TestValidateApiKey:
                 assert "title bar" in resp["detail"]
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
 
 class TestDeleteApiKey:
@@ -384,7 +397,7 @@ class TestSetPreset:
                 assert cached_config().active_preset == "tst-default"
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     @pytest.mark.asyncio
     async def test_unknown_preset_is_a_typed_error(
@@ -404,4 +417,4 @@ class TestSetPreset:
                 assert saver.saved == []
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)

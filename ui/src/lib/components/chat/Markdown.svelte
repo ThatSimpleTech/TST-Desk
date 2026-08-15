@@ -4,7 +4,9 @@
 	// blocks are wired by one delegated click handler; feedback is written to
 	// the clicked button directly since the markup is generated.
 	import { renderMarkdown } from "../../markdown";
-	import "highlight.js/styles/github.css";
+	// Token-driven hljs theme (TD-1609): follows the warm palette in both
+	// color schemes — replaces highlight.js's light-only github.css.
+	import "../../hljs-theme.css";
 
 	let { text }: { text: string } = $props();
 
@@ -62,6 +64,9 @@
 	.markdown :global(h3),
 	.markdown :global(h4) {
 		margin: var(--space-4) 0 var(--space-2);
+		font-family: var(--font-display);
+		font-weight: var(--weight-medium);
+		letter-spacing: var(--tracking-display);
 		line-height: var(--leading-tight);
 	}
 

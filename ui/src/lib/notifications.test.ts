@@ -184,6 +184,15 @@ describe("notification routing", () => {
     expect(toasts[0].body).toBe("unknown message type");
   });
 
+  it("a refused send to a dead session becomes an actionable toast (TD-1711)", () => {
+    const message =
+      "This session is cancelled and can no longer run turns; the message was not delivered. Start a new session and resend it.";
+    notifyEvent({ type: "error", code: "session_not_running", message, session_id: "s1", seq: 3 } as DaemonEventUnion);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe("That session has ended");
+    expect(toasts[0].body).toBe(message);
+  });
+
   it("an interrupted session raises the tombstone banner", () => {
     notifyEvent(sessionState("interrupted"));
     expect(banners).toHaveLength(1);

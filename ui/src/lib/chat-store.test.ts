@@ -2,13 +2,15 @@
 // is pure logic with injected transport deps, so these tests drive it exactly
 // the way the connection fan-out and the components do.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   canSend,
   createChatState,
   createChatStore,
+  formatTurnDuration,
   shouldSubmit,
   showCancel,
+  STALL_TIMEOUT_MS,
   type ChatDeps,
 } from "./chat-store";
 import type { ClientMessageUnion, DaemonEventUnion, SessionState } from "./protocol";
@@ -36,8 +38,8 @@ function delta(sessionId: string, text: string): DaemonEventUnion {
   return { type: "assistant_delta", session_id: sessionId, delta: text, seq: 1 };
 }
 
-function turnComplete(sessionId: string): DaemonEventUnion {
-  return { type: "turn_complete", session_id: sessionId, tokens: 1, cost: 0, tier: "worker", duration: 0, failed: false, error_code: null, seq: 2 };
+function turnComplete(sessionId: string, duration = 0): DaemonEventUnion {
+  return { type: "turn_complete", session_id: sessionId, tokens: 1, cost: 0, tier: "worker", duration, failed: false, error_code: null, seq: 2 };
 }
 
 function sessionState(sessionId: string, state: SessionState["state"]): DaemonEventUnion {
@@ -109,6 +111,33 @@ describe("session binding", () => {
     expect(state.sessionId).toBeNull();
     expect(state.turnState).toBeNull();
     expect(detached).toEqual(["s1"]);
+  });
+
+  it("rail selection detaches the old session and attaches the chosen one (TD-1701)", () => {
+    const { store, state, attached, detached } = boundStore();
+    store.applyEvent(delta("s1", "in flight"));
+    store.selectSession("s2", "interrupted");
+    expect(state.sessionId).toBe("s2");
+    expect(state.turnState).toBe("interrupted");
+    expect(state.messages).toEqual([]);
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(detached).toEqual(["s1"]);
+    expect(attached).toEqual(["s1", "s2"]); // s1 bound at start, s2 on select
+  });
+
+  it("rail selection of the attached session is a no-op", () => {
+    const { store, state, attached, detached } = boundStore();
+    store.applyEvent(delta("s1", "keep me"));
+    store.selectSession("s1", "idle");
+    expect(state.messages).toHaveLength(1);
+    expect(attached).toEqual(["s1"]);
+    expect(detached).toEqual([]);
+  });
+
+  it("rail selection of a running session shows the working shimmer", () => {
+    const { store, state } = boundStore();
+    store.selectSession("s2", "running");
+    expect(state.awaitingFirstToken).toBe(true);
   });
 });
 
@@ -224,6 +253,191 @@ describe("sending and cancelling", () => {
   });
 });
 
+describe("retry (TD-1606)", () => {
+  it("resends the last user message verbatim as a new user_message", () => {
+    const { store, state, sent } = boundStore();
+    store.sendUserMessage("first prompt");
+    store.applyEvent(delta("s1", "answer one"));
+    store.applyEvent(turnComplete("s1"));
+    store.sendUserMessage("second prompt");
+    store.applyEvent(delta("s1", "answer two"));
+    store.applyEvent(turnComplete("s1"));
+    expect(store.retryLastUserMessage()).toBe(true);
+    expect(sent.filter((m) => m.type === "user_message")).toEqual([
+      { type: "user_message", session_id: "s1", content: "first prompt" },
+      { type: "user_message", session_id: "s1", content: "second prompt" },
+      { type: "user_message", session_id: "s1", content: "second prompt" },
+    ]);
+    // The resend appends a new row: the protocol has no edit/fork, so the
+    // duplication is the honest record of the retry.
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual([
+      "first prompt",
+      "second prompt",
+      "second prompt",
+    ]);
+  });
+
+  it("refuses while a turn is running or awaiting approval", () => {
+    const { store, state, sent } = boundStore();
+    store.sendUserMessage("do the thing");
+    state.turnState = "running";
+    expect(store.retryLastUserMessage()).toBe(false);
+    state.turnState = "awaiting_approval";
+    expect(store.retryLastUserMessage()).toBe(false);
+    expect(sent.filter((m) => m.type === "user_message")).toHaveLength(1);
+  });
+
+  it("refuses when no user message exists or no session is bound", () => {
+    const { store, sent } = boundStore();
+    expect(store.retryLastUserMessage()).toBe(false);
+    const { deps, sent: sent2 } = fakeDeps();
+    const loose = createChatStore(deps, createChatState());
+    expect(loose.retryLastUserMessage()).toBe(false);
+    expect(sent).toEqual([]);
+    expect(sent2).toEqual([]);
+  });
+
+  it("stamps every message with a client-side seen-at time", () => {
+    const { store, state } = boundStore();
+    const before = Date.now();
+    store.sendUserMessage("hello");
+    store.applyEvent(delta("s1", "hi"));
+    const after = Date.now();
+    for (const m of state.messages) {
+      expect(m.at).toBeGreaterThanOrEqual(before);
+      expect(m.at).toBeLessThanOrEqual(after);
+    }
+  });
+});
+
+describe("turn status (TD-1607)", () => {
+  it("awaits a first token between send and the first delta", () => {
+    const { store, state } = boundStore();
+    expect(state.awaitingFirstToken).toBe(false);
+    store.sendUserMessage("go");
+    expect(state.awaitingFirstToken).toBe(true);
+    store.applyEvent(delta("s1", "on it"));
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("a failed wire send does not raise the working shimmer", () => {
+    const { store, state } = boundStore(false);
+    store.sendUserMessage("go");
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("turn_complete stamps the daemon-measured duration and clears the flag", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("go");
+    store.applyEvent(delta("s1", "done"));
+    store.applyEvent(turnComplete("s1", 42.4));
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(state.lastTurnDuration).toBe(42.4);
+  });
+
+  it("the next send clears the previous duration line", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("first");
+    store.applyEvent(delta("s1", "ok"));
+    store.applyEvent(turnComplete("s1", 10));
+    store.sendUserMessage("second");
+    expect(state.lastTurnDuration).toBeNull();
+    expect(state.awaitingFirstToken).toBe(true);
+  });
+
+  it("a terminal session state clears the shimmer even with no deltas", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("go");
+    store.applyEvent(sessionState("s1", "cancelled"));
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("attaching to a running session shows the shimmer; a replayed running state does not resurrect it mid-stream", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(sessionList([{ id: "s2", updated: "2026-08-14T11:00:00Z", state: "running" }]));
+    expect(state.sessionId).toBe("s2");
+    expect(state.awaitingFirstToken).toBe(true);
+    // Replay continues: a delta lands, then the trailing current-state event.
+    store.applyEvent(delta("s2", "partial answer"));
+    store.applyEvent(sessionState("s2", "running"));
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("formatTurnDuration never reads 0s and rolls over into minutes", () => {
+    expect(formatTurnDuration(0.2)).toBe("1s");
+    expect(formatTurnDuration(42.4)).toBe("42s");
+    expect(formatTurnDuration(59.6)).toBe("1m 0s");
+    expect(formatTurnDuration(90)).toBe("1m 30s");
+  });
+});
+
+describe("session liveness honesty (TD-1711)", () => {
+  const TERMINAL: SessionSummaryState[] = ["complete", "failed", "cancelled", "interrupted"];
+
+  function notRunningError(sessionId: string | null): DaemonEventUnion {
+    return {
+      type: "error",
+      code: "session_not_running",
+      message: "This session is cancelled and can no longer run turns; the message was not delivered. Start a new session and resend it.",
+      session_id: sessionId,
+      seq: 9,
+    } as DaemonEventUnion;
+  }
+
+  it.each(TERMINAL)("auto-bind skips a %s session even when it is the newest", (state) => {
+    const { deps, attached } = fakeDeps();
+    const store = createChatStore(deps, createChatState());
+    store.applyEvent(
+      sessionList([
+        { id: "older-live", updated: "2026-08-14T09:00:00Z", state: "idle" },
+        { id: "newest-dead", updated: "2026-08-14T11:00:00Z", state },
+      ]),
+    );
+    expect(store.state.sessionId).toBe("older-live");
+    expect(attached).toEqual(["older-live"]);
+  });
+
+  it("stays unbound when every listed session is terminal", () => {
+    const { deps, attached } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(
+      sessionList([
+        { id: "tomb-a", updated: "2026-08-14T09:00:00Z", state: "interrupted" },
+        { id: "tomb-b", updated: "2026-08-14T11:00:00Z", state: "cancelled" },
+      ]),
+    );
+    expect(state.sessionId).toBeNull();
+    expect(state.turnState).toBeNull();
+    expect(attached).toEqual([]);
+  });
+
+  it("keeps the current session even when it has gone terminal", () => {
+    const { store, state } = boundStore();
+    state.turnState = "complete";
+    store.applyEvent(sessionList([{ id: "s1", updated: "2026-08-14T11:00:00Z", state: "complete" }]));
+    // The user is looking at it — don't yank the pane; the daemon rejects
+    // any further sends instead.
+    expect(state.sessionId).toBe("s1");
+    expect(state.turnState).toBe("complete");
+  });
+
+  it("a session_not_running error drops the waiting shimmer for the bound session", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    expect(state.awaitingFirstToken).toBe(true);
+    store.applyEvent(notRunningError("s1"));
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("ignores the refusal addressed at another session", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    store.applyEvent(notRunningError("elsewhere"));
+    expect(state.awaitingFirstToken).toBe(true);
+  });
+});
+
 describe("composer and control predicates", () => {
   it("Enter submits, Shift+Enter newlines, other keys do nothing", () => {
     expect(shouldSubmit("Enter", false)).toBe(true);
@@ -244,5 +458,126 @@ describe("composer and control predicates", () => {
     expect(canSend(null, "connected")).toBe(false);
     expect(canSend("s1", "reconnecting")).toBe(false);
     expect(canSend("s1", "disconnected")).toBe(false);
+  });
+});
+
+describe("first-token watchdog (TD-1713)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stalls the Working state after 25s with no first token, still offering cancel", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    expect(state.awaitingFirstToken).toBe(true);
+    expect(state.turnStalled).toBe(false);
+
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS - 1);
+    expect(state.turnStalled).toBe(false);
+
+    vi.advanceTimersByTime(1);
+    expect(state.turnStalled).toBe(true);
+    // The wait isn't over — honesty changes the copy, not the affordances.
+    expect(state.awaitingFirstToken).toBe(true);
+    store.dispose();
+  });
+
+  it("recovers on the first delta: stalled copy drops and streaming proceeds", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS);
+    expect(state.turnStalled).toBe(true);
+
+    store.applyEvent(delta("s1", "sorry, cold start"));
+    expect(state.turnStalled).toBe(false);
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(state.messages.at(-1)?.text).toBe("sorry, cold start");
+    store.dispose();
+  });
+
+  it("never fires once the turn resolves first (complete, cancel, or refusal)", () => {
+    // turn_complete clears
+    const a = boundStore();
+    a.store.sendUserMessage("hello");
+    a.store.applyEvent(turnComplete("s1"));
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS * 2);
+    expect(a.state.turnStalled).toBe(false);
+
+    // terminal session_state clears
+    const b = boundStore();
+    b.store.sendUserMessage("hello");
+    b.store.applyEvent(sessionState("s1", "failed"));
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS * 2);
+    expect(b.state.turnStalled).toBe(false);
+
+    // session_not_running refusal clears
+    const c = boundStore();
+    c.store.sendUserMessage("hello");
+    c.store.applyEvent({
+      type: "error",
+      code: "session_not_running",
+      message: "dead",
+      session_id: "s1",
+      seq: 9,
+    } as unknown as DaemonEventUnion);
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS * 2);
+    expect(c.state.turnStalled).toBe(false);
+
+    a.store.dispose();
+    b.store.dispose();
+    c.store.dispose();
+  });
+
+  it("switching sessions or disposing disarms the old session's watchdog", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    store.selectSession("s2", "idle");
+    expect(state.turnStalled).toBe(false);
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS * 2);
+    expect(state.turnStalled).toBe(false);
+    store.dispose();
+  });
+
+  it("a stalled wait cancels locally the moment the user hits cancel", () => {
+    const { store, state, sent } = boundStore();
+    store.sendUserMessage("hello");
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS);
+    expect(state.turnStalled).toBe(true);
+
+    expect(store.cancelTurn()).toBe(true);
+    expect(sent).toContainEqual({ type: "cancel", session_id: "s1" });
+    expect(state.turnStalled).toBe(false);
+    expect(state.awaitingFirstToken).toBe(false);
+    store.dispose();
+  });
+
+  it("arms when attaching to a session the daemon reports as running", () => {
+    const { store, state } = boundStore();
+    store.selectSession("s2", "running");
+    expect(state.awaitingFirstToken).toBe(true);
+
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS);
+    expect(state.turnStalled).toBe(true);
+    store.dispose();
+  });
+
+  it("a replayed running state mid-wait does not restart the clock", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    const started = state.awaitingSince;
+    expect(started).not.toBeNull();
+
+    vi.advanceTimersByTime(5_000);
+    store.applyEvent(sessionState("s1", "running"));
+    expect(state.awaitingSince).toBe(started);
+
+    // 25s from the SEND, not from the replayed state.
+    vi.advanceTimersByTime(STALL_TIMEOUT_MS - 5_000);
+    expect(state.turnStalled).toBe(true);
+    store.dispose();
   });
 });

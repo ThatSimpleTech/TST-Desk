@@ -10,6 +10,7 @@ reachability, a transport failure proves nothing about the key.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import tempfile
 from pathlib import Path
@@ -21,6 +22,7 @@ from websockets.asyncio.client import connect
 from tstd.config import cached_config
 from tstd.daemon import Daemon
 from tstd.keychain import KeychainError
+from tstd.policy import save_approved_imports
 from tstd.protocol import PROTOCOL_VERSION
 from tstd.provider import ProviderError
 
@@ -46,6 +48,18 @@ async def _start_daemon(tmp: Path) -> tuple[Daemon, asyncio.Task[Any]]:
     return daemon, task
 
 
+async def _stop_daemon(task: asyncio.Task[Any]) -> None:
+    """Cancel the daemon task and wait for its shutdown to finish.
+
+    The daemon holds audit.db open until _shutdown() closes the audit
+    store; on Windows the surrounding TemporaryDirectory cleanup cannot
+    unlink an open file, so teardown must complete here, not race it.
+    """
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
 async def _report(tmp: Path) -> list[dict[str, Any]]:
     """Handshake, run diagnostics with no workspace, return the check rows."""
     daemon, task = await _start_daemon(tmp)
@@ -59,7 +73,7 @@ async def _report(tmp: Path) -> list[dict[str, Any]]:
         await ws.close()
         return list(resp["checks"])
     finally:
-        task.cancel()
+        await _stop_daemon(task)
 
 
 def _row(checks: list[dict[str, Any]], name: str) -> dict[str, Any]:
@@ -215,7 +229,7 @@ class TestWithWorkspace:
                 assert steering["status"] == "ok"
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     @pytest.mark.asyncio
     async def test_broken_import_fails_steering_with_fix(self, fakes: FakeKeychain) -> None:
@@ -241,4 +255,93 @@ class TestWithWorkspace:
                 assert _row(checks, "workspace")["status"] == "ok"
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_unapproved_external_import_flags_steering(self, fakes: FakeKeychain) -> None:
+        fakes.stored["openrouter"] = "sk-ok"
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            tempfile.TemporaryDirectory() as work,
+            tempfile.TemporaryDirectory() as outside,
+        ):
+            external = (Path(outside) / "shared.md").resolve()
+            external.write_text("shared rules\n")
+            (Path(work) / "AGENTS.md").write_text(f"# Rules\n\n@{external}\n")
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                await self._open_workspace(ws, work)
+                await ws.send(json.dumps({"type": "run_diagnostics"}))
+                resp = dict(json.loads(await ws.recv()))
+                steering = _row(list(resp["checks"]), "steering")
+                # Fail-closed: an unapproved import outside the workspace
+                # reads as an issue, not as inlined content (TD-505).
+                assert steering["status"] == "fail"
+                assert "awaiting approval" in steering["detail"]
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_approved_external_import_passes_steering(self, fakes: FakeKeychain) -> None:
+        fakes.stored["openrouter"] = "sk-ok"
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            tempfile.TemporaryDirectory() as work,
+            tempfile.TemporaryDirectory() as outside,
+        ):
+            external = (Path(outside) / "shared.md").resolve()
+            external.write_text("shared rules\n")
+            (Path(work) / "AGENTS.md").write_text(f"# Rules\n\n@{external}\n")
+            save_approved_imports(work, [external])
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                await self._open_workspace(ws, work)
+                await ws.send(json.dumps({"type": "run_diagnostics"}))
+                resp = dict(json.loads(await ws.recv()))
+                steering = _row(list(resp["checks"]), "steering")
+                # The durable allowlist reaches the inspector: an approved
+                # import no longer reads as "awaiting approval".
+                assert steering["status"] == "ok", steering
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_malformed_config_still_reports_steering(self, fakes: FakeKeychain) -> None:
+        fakes.stored["openrouter"] = "sk-ok"
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            tempfile.TemporaryDirectory() as work,
+            tempfile.TemporaryDirectory() as outside,
+        ):
+            external = (Path(outside) / "shared.md").resolve()
+            external.write_text("shared rules\n")
+            (Path(work) / "AGENTS.md").write_text(f"# Rules\n\n@{external}\n")
+            tst = Path(work) / ".tst"
+            tst.mkdir()
+            (tst / "config.yaml").write_text("policy:\n  rules: [\n")
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                await self._open_workspace(ws, work)
+                await ws.send(json.dumps({"type": "run_diagnostics"}))
+                resp = dict(json.loads(await ws.recv()))
+                # A config the allowlist loader cannot parse must not break
+                # the doctor report — it falls back to an empty allowlist
+                # and the import reads as pending.
+                assert resp["type"] == "diagnostics_report"
+                steering = _row(list(resp["checks"]), "steering")
+                assert steering["status"] == "fail"
+                assert "awaiting approval" in steering["detail"]
+                await ws.close()
+            finally:
+                await _stop_daemon(task)

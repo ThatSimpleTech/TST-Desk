@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -50,6 +51,11 @@ class TestPortFile:
             assert pf.exists()
             assert pf == data_dir / "port.json"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="TD-1406: Windows has no POSIX mode bits — os.chmod only toggles "
+        "the read-only flag, so 0o600 is a no-op (ACL hardening is a separate story)",
+    )
     def test_write_port_file_restricted_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp)

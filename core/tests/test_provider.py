@@ -7,6 +7,7 @@ Uses an in-process ASGI mock server so no network is needed.
 from __future__ import annotations
 
 import json
+import socket
 from typing import Any
 
 import httpx
@@ -530,10 +531,18 @@ class TestErrorHandling:
 
     async def test_connection_refused(self) -> None:
         """Test connection error handling."""
+        # A bound-then-closed loopback socket yields a port nothing listens
+        # on.  127.0.0.1 rather than "localhost" skips name resolution: on
+        # Windows the dual-stack getaddrinfo("localhost") can outlast a
+        # tight connect deadline, and the refusal then surfaces as a
+        # ConnectTimeout ("timeout") instead of a ConnectError (TD-1406).
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
         client = ProviderClient(
-            base_url="http://localhost:1",
+            base_url=f"http://127.0.0.1:{port}",
             api_key="sk-test-key",
-            timeout=TimeoutConfig(connect=0.1, read=0.1, total=0.5),
+            timeout=TimeoutConfig(connect=2.0, read=2.0, total=5.0),
             retry_config=RetryConfig(max_retries=0),
         )
         request = ChatCompletionRequest(

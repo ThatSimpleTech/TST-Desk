@@ -155,5 +155,25 @@ export function sessionStateCopy(state: string, reason: string | null): NoticeSp
 
 /** Copy for a daemon `error` event: code + daemon-authored message (already human). */
 export function daemonErrorCopy(code: string, message: string): NoticeSpec {
+	if (code === "session_not_running") {
+		// TD-1711: the send targeted a dead session (tombstone or terminal).
+		// The daemon's message already names the fix (start a new session,
+		// resend) — surface it verbatim rather than paraphrasing over it.
+		return {
+			severity: "toast",
+			title: "That session has ended",
+			body: message,
+		};
+	}
+	if (code === "workspace_not_found") {
+		// TD-1103: the user tried to open a path that doesn't exist (usually
+		// from the recents menu — the folder was moved or deleted). The fix
+		// is picking the folder again, so the copy points at the picker.
+		return {
+			severity: "toast",
+			title: "Workspace not found",
+			body: `${message} If it moved, open the new location with the folder picker and remove the stale entry from the workspace menu.`,
+		};
+	}
 	return { severity: "toast", title: `Daemon error: ${code}`, body: message };
 }

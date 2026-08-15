@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
@@ -22,6 +22,7 @@ from .protocol import DaemonEvent, Error, PolicyRuleSummary, ShellOutput, ToolCa
 from .protocol import SessionState as SessionStateEvent
 
 if TYPE_CHECKING:
+    from .cost import CostTracker
     from .router import TierRouter
     from .tools.registry import Tool
 
@@ -38,10 +39,12 @@ class PendingApproval:
 
     Carries the call's tool, arguments, and decision class so the daemon can
     generate the "always allow" rule without re-deriving them (TD-803).
+    ``tool`` is ``None`` for external-import approvals (TD-505), which are
+    class-C and can never be always-allowed.
     """
 
     future: asyncio.Future[tuple[bool, str | None]]
-    tool: Tool
+    tool: Tool | None
     arguments: dict[str, Any]
     decision_class: DecisionClass
 
@@ -196,6 +199,9 @@ class Session:
         # ``set_tier`` message reaches the loop's router. ``None`` on a
         # restored tombstone — its loop is gone for good.
         self.router: TierRouter | None = None
+        # Cost tracker (TD-1201), attached by the loop at startup so the
+        # daemon can answer cache-state queries. Same tombstone rule.
+        self.cost_tracker: CostTracker | None = None
         # Approval policy (TD-801), resolved by the daemon on open.
         self.policy = PolicyConfig()
         # Pending approvals (TD-802), owned by the session — NOT by any
@@ -203,6 +209,31 @@ class Session:
         # resumable (prime directive §2.5).  Each record carries the call
         # metadata (TD-803) so "always allow" can generate its rule.
         self._pending_approvals: dict[str, PendingApproval] = {}
+        # Files the session has touched via successful path-bearing tool
+        # calls (TD-503), as workspace-relative posix strings.  The loop
+        # passes this set to the assembler so path-scoped steering rules
+        # activate only once a matching file is in play.
+        self.touched_paths: set[str] = set()
+        self._workspace_root: Path | None = None  # resolved lazily by record_touched
+
+    def record_touched(self, paths: Iterable[str]) -> None:
+        """Mark tool-call paths as touched (TD-503).
+
+        Relative paths are kept as-is (the tools interpret them against
+        the workspace root); absolute paths are relativized against it.
+        Paths outside the workspace are dropped — the boundary guard has
+        already refused them, and they can never match a scoped rule.
+        """
+        for raw in paths:
+            p = Path(raw)
+            if p.is_absolute():
+                if self._workspace_root is None:
+                    self._workspace_root = Path(self.workspace_path).resolve()
+                try:
+                    p = p.resolve().relative_to(self._workspace_root)
+                except ValueError:
+                    continue
+            self.touched_paths.add(p.as_posix())
 
     @classmethod
     def restore(
@@ -312,6 +343,20 @@ class Session:
         if self._state != "awaiting_approval":
             await self.set_state("awaiting_approval", reason=reason)
 
+        return await self._await_approval_resolution(tool_call_id, fut)
+
+    async def _await_approval_resolution(
+        self,
+        tool_call_id: str,
+        fut: asyncio.Future[tuple[bool, str | None]],
+    ) -> ApprovalOutcome:
+        """Await a parked approval with the configured timeout.
+
+        Cleans up the pending record and restores ``running`` when the
+        last approval resolves.  Timeout is treated as a denial (TD-802).
+        Shared by tool-call (TD-802) and external-import (TD-505)
+        approvals.
+        """
         timeout = self.policy.approval_timeout_seconds
         timed_out = False
         try:
@@ -337,6 +382,63 @@ class Session:
                 False, f"Approval timed out after {timeout}s — treated as denial"
             )
         return ApprovalOutcome(False, f"Denied by user: {detail}" if detail else "Denied by user")
+
+    async def request_import_approval(self, path: Path) -> ApprovalOutcome:
+        """Park the session awaiting approval to read an external import (TD-505).
+
+        Reuses the same pending-future machinery as tool-call approvals, so
+        ``approve``/``deny`` from any attached client resolves it and a
+        disconnect leaves it parked.  The ``approval_request`` event carries
+        a synthetic ``tool_call_id`` and ``tool_name="external_import"``; the
+        class is always C (an untrusted-file-read), so ``always_allow`` is
+        never offered.
+        """
+        from .protocol import ApprovalRequest as ApprovalRequestEvent
+
+        tool_call_id = f"external-import:{path}"
+        fut: asyncio.Future[tuple[bool, str | None]] = asyncio.get_running_loop().create_future()
+        self._pending_approvals[tool_call_id] = PendingApproval(
+            future=fut,
+            tool=None,
+            arguments={"path": str(path)},
+            decision_class=DecisionClass.C,
+        )
+        reason = "import from outside the workspace"
+        await self.event_log.add(
+            ApprovalRequestEvent(
+                session_id=self.id,
+                tool_call_id=tool_call_id,
+                tool_name="external_import",
+                arguments={"path": str(path)},
+                decision_class="C",
+                summary=f"Read {path}",
+                reason=reason,
+                proposed_always_allow=None,
+                seq=1,
+            )
+        )
+        if self._state != "awaiting_approval":
+            await self.set_state("awaiting_approval", reason=reason)
+
+        outcome = await self._await_approval_resolution(tool_call_id, fut)
+        # Emit a tool_result for the synthetic id so clients clear the
+        # approval card and resolve the timeline entry — the approval store
+        # only splices a card on a tool_result matching its tool_call_id,
+        # and this id never reaches the dispatcher, so without this the
+        # card would stick for the rest of the session.
+        await self.event_log.add(
+            ToolResult(
+                session_id=self.id,
+                tool_call_id=tool_call_id,
+                status="success" if outcome.approved else "error",
+                output=(
+                    f"Approved external import: {path}" if outcome.approved else outcome.message
+                ),
+                error_code=None if outcome.approved else "approval_denied",
+                seq=1,
+            )
+        )
+        return outcome
 
     def get_pending_approval(self, tool_call_id: str) -> PendingApproval | None:
         """Return the metadata for a parked approval, or ``None`` if none.
@@ -395,6 +497,16 @@ class Session:
 
     # ── User message queue ──────────────────────────────────────────
 
+    @property
+    def pending_user_messages(self) -> int:
+        """Messages enqueued but not yet dequeued by the agent loop.
+
+        Read at dequeue time for the ``turn started`` log (TD-1713) — a
+        user who sent three messages while the loop was busy should see
+        that backlog named in the logs, not just the head one.
+        """
+        return self._user_message_queue.qsize()
+
     async def add_user_message(self, content: str) -> None:
         """Enqueue a user message for the agent loop to process."""
         self._user_message_queue.put_nowait(content)
@@ -422,6 +534,15 @@ class Session:
             "state": self._state,
             "event_count": self.event_log.last_seq,
         }
+
+
+# Terminal states (TD-1711): no outgoing transitions, so nothing will ever
+# consume a user message again — the daemon refuses sends to these rather
+# than enqueueing into the void. Derived from the transition table so the
+# two can never drift.
+TERMINAL_STATES: frozenset[str] = frozenset(
+    state for state, allowed in Session.VALID_TRANSITIONS.items() if not allowed
+)
 
 
 # ── Placeholder loop ───────────────────────────────────────────────────

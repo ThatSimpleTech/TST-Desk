@@ -1950,6 +1950,104 @@ rather than in one sweep over five lanes' files.
 deps package.yml already used (glib-sys build scripts need webkit/appindicator
 headers); typescript leg now installs uv before the protocol-fixtures step.
 
+## 2026-08-14 — TD-505: external import approval
+
+Spec §4.2 says imports from outside the workspace prompt for approval, but is
+silent on the mechanism. Four structural choices, recorded here.
+
+### 1. Reuse the tool-call approval machinery
+
+**Decision:** `Session.request_import_approval(path)` reuses the TD-802/803
+pending-future machinery, emitting an `approval_request` event with
+`tool_call_id="external-import:<path>"`, `tool_name="external_import"`,
+`decision_class="C"`, and `proposed_always_allow=None`.
+
+**Rationale:** An external import is an untrusted-file-read, i.e. class C, so
+it can never be always-allowed. Reusing the existing event + park/approve/deny/
+timeout/replay/redaction paths avoids any new protocol message, and TD-1007's
+approval card renders it unchanged.
+
+### 2. Allowlist lives in `.tst/config.yaml`
+
+**Decision:** A top-level `approved_external_imports: [...]` key, loaded and
+saved section-preservingly (`load_approved_imports`/`save_approved_imports`),
+atomic write.
+
+**Rationale:** "Remembered per workspace per file path" implies durable state.
+`.tst/config.yaml` is already the per-workspace trust store (boundary TD-706,
+policy TD-801), so a separate file/loader adds nothing.
+
+### 3. Approval persists; denial is session-scoped
+
+**Decision:** Approved paths are written to the allowlist; denied paths are
+held in memory for the session and omitted with a warning, but not persisted.
+
+**Rationale:** The criteria only require *approval* to be remembered. A denied
+import still re-prompts on the next session, which keeps the door open for the
+user to change their mind.
+
+### 4. Two-phase assembly with a fixpoint gate
+
+**Decision:** The sync import resolver detects external imports, omits
+unapproved ones, and collects them as `pending_imports` on `AssembledSteering`;
+the async loop then raises one approval per pending path and re-assembles until
+none remain.
+
+**Rationale:** Import resolution runs in a worker thread (`asyncio.to_thread`),
+but approval is inherently async (parks the session). The fixpoint loop handles
+nested external imports revealed only after an approval, bounded by TD-504's
+max depth 4.
+
+### 5. Denial warning surfaces via `import_issues` + structured log
+
+**Decision:** No new timeline event type; a denied import records
+`external import denied: <path>` in the assembly's `import_issues` and a
+structured warning log line.
+
+**Rationale:** There is no generic "warning" daemon event today; adding one
+touches the protocol schema, the TS mirror, and the fixture generator. The
+timeline (TD-1005) can render `import_issues` when it consumes assembly
+warnings — a follow-up if a dedicated event is wanted.
+
+### 6. Follow-ups from post-integration verification (same day)
+
+Post-integration verification found four gaps; all but one closed in
+`td/505-import-approval-followups`:
+
+1. **Sticky approval card.** The import approval carries a synthetic
+   `tool_call_id` that never reaches the dispatcher, so no `tool_result`
+   ever paired with it — the approval card stuck and the timeline entry
+   never resolved. `request_import_approval` now emits a `ToolResult`
+   event on resolution: `success` on approve, `error` with
+   `error_code="approval_denied"` on deny/timeout. No UI change needed —
+   the approval store and timeline already key off that pairing.
+2. **Malformed config crashed the loop.** `load_approved_imports` at loop
+   start was unguarded, so one bad `.tst/config.yaml` killed every session
+   at first message. Load now falls back to an empty allowlist with a
+   warning (the daemon's existing tolerate-and-warn pattern), and the
+   same guard wraps the save — a failed write keeps the approval
+   in-memory for the session instead of crashing mid-turn.
+3. **Inspectors ignored the allowlist.** Doctor's steering check and
+   `get_instruction_stack` assembled without the durable allowlist, so
+   approved imports still showed "awaiting approval" in both views. Both
+   now forward it via a shared helper. Denied imports are *not*
+   forwarded: denials are session-scoped by design and the inspectors are
+   workspace-scoped views — "would prompt on a new session" is the honest
+   durable answer.
+4. **Comment-destroying config save** (not fixed): `save_approved_imports`
+   round-trips through `yaml.safe_load`/`safe_dump`, discarding comments
+   and formatting — systemic to `save_policy` too. Deferred as its own
+   story.
+
+**Swap-attack tradeoff (documenting, not changing).** The allowlist is
+path-only: a file approved once can later be *replaced* (different content,
+same path) without re-prompting. A content-hashed allowlist would
+re-prompt on any change — safer, but it re-prompts on every legitimate
+edit too, which trains users to rubber-stamp. Path-only matches how the
+rest of the file-based trust model works (steering files themselves are
+read fresh every turn without hashing). Recorded here so the tradeoff is
+visible; revisit if threat models change.
+
 ## 2026-08-14 — TD-1005: Activity timeline
 
 Class B — recorded per AGENTS.md §5.
@@ -2184,6 +2282,48 @@ narrowest stable identity that distinguishes two rules.  Idempotent add
 keeps re-affirming "always allow" for the same call from piling up
 duplicate rules in the settings list.
 
+## 2026-08-14 — TD-1007: Approval cards
+
+Decisions made during the approval-card build, completed on top of TD-803's
+always-allow daemon support.
+
+### 1. The "Always allow" button is TD-1007's; the rule lifecycle is TD-803's
+
+**Decision:** The card's third action — "Always allow in this workspace" —
+lives in TD-1007. It renders only when the daemon's `approval_request`
+carries a `proposed_always_allow` rule, and clicking it sends the
+`always_allow` client message that TD-803's daemon already handles (narrow
+rule generation, `(tool, args)` identity, class-C refusal).
+
+**Rationale:** TD-803 built the whole rule lifecycle but no UI; TD-1007 owns
+the card. Splitting the button out would have meant TD-1007 reimplementing
+rule generation (a collision), while leaving it out left AC #2 unmet. The
+card is a thin client of TD-803's message, so the two lanes never overlap.
+
+### 2. The button is gated on a non-null proposal, not on the class alone
+
+**Decision:** `isAlwaysAllowable` returns true only when
+`proposedAlwaysAllow !== null` and `decisionClass !== 'C'`. The class check
+is defensive: the daemon never proposes a rule for class C, so a proposal
+already implies allowability, but the explicit guard keeps the wall absolute
+even if a future proposal leaked a class-C effect.
+
+**Rationale:** The button must never offer to auto-approve a class-C call
+(the wall). Deriving the button's presence from the daemon's own proposal
+means the UI never invents a rule the policy model didn't already accept.
+
+### 3. The store mutates an exported `$state` array instead of reassigning it
+
+**Decision:** `approval-store.svelte.ts` exports `const pending = $state(...)`
+and mutates it with `push`/`splice`. Reassigning (`pending = [...pending]`)
+is rejected by the Svelte 5 / rolldown compiler (`state_invalid_export`):
+an exported `$state` binding may only be mutated in place.
+
+**Rationale:** The list has to be reactive and exportable to the card/bar.
+In-place mutation goes through the deep proxy (same as timeline-store and
+chat-store), so reassignment — the old Svelte 4 store idiom — is neither
+needed nor allowed.
+
 ## 2026-08-14 — TD-1008: Errors and notifications
 
 Decisions made during the errors-and-notifications build.
@@ -2407,6 +2547,534 @@ output by exclusion; here the rows *want* to name folders, so they get
 just-enough-to-locate forms instead. Redaction at the copy boundary is
 the belt to that: a future check that embeds a key-shaped string can't
 leak in the pasteable artifact even if its row forgot to scrub.
+
+## 2026-08-14 — TD-1404: Timeline render baseline
+
+### 1. The timeline gate lives in vitest, not pytest
+
+**Decision:** ``timeline_render_1000`` is measured and gated by
+``ui/src/lib/timeline-bench.test.ts`` under jsdom — pytest cannot mount a
+Svelte component. Both sides read the same committed
+``core/tests/perf_baselines.json`` with the same threshold (3x baseline or
+baseline + 250 ms). Core keeps the row honest from its side: the metric
+moved from ``PENDING`` to a new ``UI_MEASURED`` map, and
+``test_ui_measured_metrics_have_baselines`` fails if the row is missing
+or null.
+
+**Rationale:** One baselines file, one threshold, whichever runner can
+actually exercise the surface owns the measurement. A deleted row now
+fails in both suites.
+
+### 2. What the number measures
+
+**Decision:** the bench pushes 1000 synthesized daemon events (a
+session-realistic mix: deltas, tool calls with their shell_output chunks,
+results, decisions, errors) through the real ``push()`` store path, then
+mounts ``ActivityTimeline`` and flushes one frame. The push loop is the
+term that scales with entry count — each shell chunk linear-scans for its
+parent row — while the render is windowed by TD-1005's virtualization
+(~30 rows for the stubbed 640px viewport in jsdom), i.e. constant vs
+entry count by design. The JSON metadata states that jsdom measures
+Svelte DOM work, not browser layout or paint.
+
+**Rationale:** A regression someone introduces in the per-event path is
+what a 1000-entry live session would feel as sag; windowed paint staying
+flat is the property the virtualizer was bought for.
+
+### 3. Recording is an env-flagged vitest run
+
+**Decision:** ``BENCH_RECORD=1 npx vitest run src/lib/timeline-bench.test.ts``
+writes the fresh median into the shared JSON (clearing the pending marker
+and declaring the row ui-measured) instead of asserting. Core's
+``scripts/benchmarks.py --record`` conversely preserves the UI-measured
+row when re-baselining the four core metrics — each runner owns its own
+rows and must never clobber the other's.
+
+**Rationale:** Only the vitest pipeline can compile and mount the
+component, and CI never sets the flag, so gate mode is the default. The
+app tree stays browser-typed; the recorder's node fs access sits behind a
+four-line ambient shim (``node-test-shims.d.ts``) rather than pulling
+@types/node into the project for one script-like test.
+
+## 2026-08-14 — TD-1202: Decisions ledger panel
+
+### 1. No new wire — the stream already carries everything
+
+**Decision:** the panel filters ``decision_logged`` (TD-704) out of the
+existing session stream on the client; per-session scoping, class
+filtering, and the revert command are all computed client-side. The undo
+command is derived — ``git revert <sha>`` — exactly as the ledger writer
+computes it in ``core/tstd/autonomy/ledger.py``, so the copy matches the
+markdown.
+
+**Rationale:** TD-704 put class/what/why/commit on the event precisely so
+reviewers would not need a second channel. A ``list_decisions`` verb would
+re-implement replay the client already gets from attach.
+
+### 2. Density is the interface
+
+**Decision:** one line per decision — class chip, ``what``, short SHA —
+with click-to-expand for the ``why`` and the revert button. Class filter
+chips (A/B/C/All) sit in the header. The AC's "under a minute for a full
+session of Class A" is met structurally: the A filter is one click and
+each row costs a glance.
+
+**Rationale:** Any design that shows rationale by default turns the
+scannable list back into prose. The A/B/C classes exist to be a filter,
+not a label.
+
+### 3. Link-out via a zero-dep shell command, with a path fallback
+
+**Decision:** the panel opens ``<workspace>/.tst/autonomy/DECISIONS.md``
+through a new ``open_path`` Tauri command (``open`` / ``cmd /c start`` /
+``xdg-open`` — no plugin added, no capability change). In a bare browser
+(dev), the click falls back to copying the path. The relative ledger
+location is a house constant mirrored from ``autonomy/ledger.py`` and
+pinned by a test on the value.
+
+**Rationale:** ``@tauri-apps/plugin-opener`` would drag a Rust + JS
+dependency and a capabilities row through packaging for one click; the
+std-command spelling is fifteen lines and covers the three CI platforms.
+The path-always-visible footer means the fallback never leaves the user
+without the destination.
+
+## 2026-08-14 — TD-1103: Workspace management
+
+### 1. Refuse, don't silently succeed
+
+**Decision:** ``open_workspace`` now validates ``is_dir()`` before creating
+anything and returns a typed ``workspace_not_found`` error through the
+existing ``build_error`` dispatch idiom. Previously a nonexistent path
+silently produced a session, one the UI could never render correctly.
+
+**Rationale:** the failure was invisible — an absent workspace yielded a
+live session id and a store row pointing at nothing. A hard refusal at
+dispatch is where the UI can recover: the recents-menu toast explains the
+folder moved or was deleted and points at both remedies (re-pick the new
+location, remove the stale entry). Seven daemon tests used ``/tmp/test``
+as a magic path and now open real tmp dirs — that was the tell that the
+absence of validation had leaked into the test suite's assumptions.
+
+### 2. Scaffolding is documentation, not configuration
+
+**Decision:** first open of a workspace plants
+``.tst/config.yaml`` as a fully commented template — every line a
+comment, so ``yaml.safe_load`` yields ``None`` and the loaders map
+``None`` to defaults (one-line change in each of ``load_workspace_boundary``
+and ``load_policy``; ``save_policy`` treats ``None`` as an empty section
+map). The scaffold never overwrites an existing file.
+
+**Rationale:** a template with real values pins them at scaffold time —
+every knob later changes its default and stale workspaces would silently
+diverge. Comments-as-documentation means "absent" and "scaffolded"
+behave identically, and ``boundary_source`` keeps reporting the real
+file path (which now exists and is worth showing the user). The cost was
+three ``None`` branches in loaders; the alternative — parse comments to
+distinguish template from user content — is machinery for no behavior
+difference.
+
+### 3. No new wire — the daemon already knows the recents
+
+**Decision:** the recents menu derives from the ``session_list`` event the
+UI already receives (dedupe by ``workspace_path``, newest first, cap 12),
+and per-entry removal is a UI-side hide-list persisted to localStorage
+under ``tstdesk.hiddenRecentWorkspaces``. The daemon's session history is
+untouched by removal.
+
+**Rationale:** added a ``remove_recent`` command to the protocol would
+put UI preference state (what the user wants to see) into the daemon's
+session record (what happened), and would need its own ack + tests +
+fixtures for zero behavior the user can tell apart. localStorage is
+where UI-only preferences live; the hide-list survives restarts, and a
+moved workspace stays discoverable by re-picking it — a fresh session
+on the new path appends a new recents entry, which is the desired
+understanding, not a bug to prevent.
+
+### 4. AC4 is a property of the loop, so pin it at the loop
+
+**Decision:** "switching workspaces re-resolves steering" is guaranteed
+by construction (each session's loop builds its own ``PromptAssembler``
+from ``session.workspace_path`` at loop.py), so the pin is a loop-level
+test: two workspaces with distinct marker AGENTS.md files, one turn
+each, and the system messages the mock provider received must carry the
+right marker — never the other's.
+
+**Rationale:** the cheapest place to break this property in the future
+is exactly the seam the test guards: a shared assembler, a cached
+prompt keyed on the wrong thing, a workspace mutation mid-session.
+Asserting on the content the provider received pins the user-visible
+outcome (the model sees this workspace's rules), which survives any
+internal refactor of how the assembler is built.
+
+## 2026-08-14 — TD-1201: Resolved stack panel
+
+### 1. Stack queries assemble on demand; cache state rides the payload
+
+**Decision:** ``get_instruction_stack`` re-assembles steering in the daemon
+handler instead of serving a cached stack, and ``InstructionStack`` carries
+``last_cached_tokens`` — the provider-observed cached prompt tokens of the
+most recent main-loop call (classifier calls excluded), ``None`` before the
+first turn.
+
+**Rationale:** Assembly is cheap and the on-demand answer can never be
+stale relative to the filesystem. Cache state is a provider-side fact the
+UI cannot infer: zero cached tokens is a miss, but before any turn the
+honest answer is "unknown" — so the field is nullable and the panel says
+so rather than implying a miss.
+
+**Path-scope caveat (corrected at integration):** no production call site
+passes ``matched_paths`` — TD-503's touch-tracking was never plumbed — so
+path-scoped rules assemble active in every response and push, and the
+"unmatched" state is unreachable today. The panel therefore labels scoped
+rules by prompt membership ("in prompt" / "not in prompt"), not by a match
+verdict; "matched/unmatched" and TD-1201's third acceptance criterion land
+with the touch-tracking story.
+
+### 2. Inspector fields are additive-optional; protocol version unchanged
+
+**Decision:** ``InstructionStackEntry`` gained ``shadowed_path``,
+``applies_to``, and ``imports`` (flattened with nesting ``depth``);
+``InstructionStack`` gained ``last_cached_tokens``. All are optional with
+defaults, so older clients parse new payloads and vice versa — no
+``PROTOCOL_VERSION`` bump.
+
+### 3. Open-in-editor via tauri-plugin-opener, paths from the daemon only
+
+**Decision:** New dependency ``tauri-plugin-opener`` (npm
+``@tauri-apps/plugin-opener`` + crate), capability scoped to
+``opener:allow-open-path`` — no ``open_url``. ``open-file.ts`` no-ops
+outside the Tauri shell.
+
+**Rationale:** It is the only open-in-editor mechanism available; the shell
+had dialog/log/window-state plugins only. Every path handed to it comes
+from the daemon's resolved stack, never from free-text input, so opening
+the OS default handler on one cannot be aimed anywhere the steering
+resolver didn't already read from.
+
+### 4. Stack is a right-pane tab, not a third pane
+
+**Decision:** The right pane grew an Activity | Stack tab strip instead of
+splitting into three panes.
+
+**Rationale:** The stack is a reference view — opened to answer "what is
+the model actually running on?", then left. It does not need permanent
+screen share with the timeline, and two panes stays the shell's layout
+invariant.
+
+---
+
+## 2026-08-14 — TD-1601/1602/1608/1609: Familiarity, visual foundation
+
+Class B — recorded per AGENTS.md §5.
+
+### 1. Palette is family, not copy — our own hex throughout
+
+**Decision:** The warm-paper palette ships with the backlog's pinned values:
+light ground `#F8F6F1`, lifted `#FFFFFF`, ink `#191817`, hairline `#E4E0D8`,
+rust accent `#B4532A` (hover `#9A4523`); dark charcoal `#232320` with the
+accent lifted to `#D0794F`. Values the backlog didn't pin were derived and are
+documented inline in `tokens.css`: sunken washes (`#F1EEE6` / `#2A2A26`),
+muted ink (`#8A8579` / `#6E6A61`), dark accent-hover (`#DC8A64`), and lifted
+dark status hues.
+
+**Rationale:** The reference product's identity is `#FAF9F5` + `#D97757`;
+ours is deliberately darker and earthier — a deeper ground, a rust (not
+coral) accent — so the window reads as the same warm, quiet family without
+lifting the palette. Accent stays scarce: send, active states, links, key
+actions only; `--color-info` aliases the accent so "running" never
+introduces a cool hue into the warm field.
+
+### 2. Canonical token names with legacy aliases, not a flag-day rename
+
+**Decision:** `tokens.css` defines a canonical semantic set
+(`--color-ground`/`--color-lifted`/`--color-sunken`, `--color-ink` ramp,
+`--color-hairline`, `--color-user-bubble`, `--color-accent`,
+`--color-ok`/`--color-warn`/`--color-err`, `--font-display`/`--font-sans`/
+`--font-mono`, `--tracking-display`, `--syn-*` code hues) and keeps every
+pre-TD-1601 name (`--color-bg`, `--color-text`, `--color-success`,
+`--font-family`, …) as a var()-to-var() alias.
+
+**Rationale:** TD-1601's criterion confines the change to tokens + global
+CSS; aliases made that true while still giving the E16 second pass clean
+names to build on. Aliases cost one indirection per lookup and no runtime
+work; the header comment marks them legacy so new code converges on the
+canonical set.
+
+### 3. Source Serif 4 vendored, latin 400/500 only — 41,616 bytes
+
+**Decision:** Two woff2 files (latin, weights 400 and 500, Fontsource
+packages fetched via jsDelivr) vendored into `ui/static/fonts/` with the
+SIL OFL 1.1 text as `OFL.txt`; two `@font-face` blocks with
+`font-display: swap`. Verified as real fonts (`wOF2` magic bytes, `file(1)`
+identification) before committing. Bundle impact: **+41,616 bytes**
+(20,088 + 21,528) of static font payload, fetched only when a
+`--font-display` element renders, never blocking text (swap).
+
+**Rationale:** Vendoring keeps the no-runtime-fetch property (prime
+directive §2.3 — zero network calls the user did not initiate) and makes
+the build hermetic. Latin-only, two weights is the smallest set that
+carries the greeting/heading voice; full family + italics would be ~4x
+the bytes for surfaces we don't have. Georgia is the documented fallback
+so the swap window still reads serif.
+
+### 4. Icons: one map, one component, stroke-only
+
+**Decision:** All chrome glyphs live in `ui/src/lib/icons.ts` (10 entries)
+and render through `Icon.svelte`: 24px viewBox, 1.5px `currentColor`
+stroke, round caps/joins, `fill` reserved for active states, default size
+1em. The doctor pane's *copied text report* deliberately keeps its ASCII
+✓/✗/– marks (`STATUS_MARK`) — plain text is the right medium for a
+clipboard artifact, and its tests pin those strings. The favicon is an
+original mark (rust rounded square, minimal desk outline), not a borrowed
+glyph.
+
+**Rationale:** A single map kills per-call-site SVG drift and makes the
+stroke/size discipline enforceable in one place. Emoji in chrome were the
+loudest "hack project" tell (backlog's words); emoji in generated
+plain-text artifacts are fine and cheaper than icon font machinery.
+
+### 5. First shortcuts: Esc peels layers, ⌘, reopens the wizard
+
+**Decision:** `resolveShortcut()` (pure, in `shortcuts.ts`) maps keydowns
+through a context of what's open: Esc closes the workspace menu if open,
+is eaten by an open modal (wizard/doctor/decisions), else cancels the
+live turn via the chat store's existing `cancel` message; ⌘, (Ctrl+,
+off-mac) reopens the wizard from anywhere. Discoverability is via `title`
+attributes ("Cancel turn (Esc)", "Setup wizard (⌘,)").
+
+**Rationale:** One key with two simultaneous visible effects (close a menu
+*and* kill a turn) is how shortcuts earn a reputation for eating work;
+the layer order makes Esc deterministic. Esc does not close modals yet —
+that behavior doesn't exist today and adding it is a separate question
+per pane; the mapping's `modalOpen` branch keeps today's behavior instead
+of letting Esc reach through a dialog to the turn behind it. A pure
+mapping function keeps all of this testable in node vitest (9 cases)
+without a DOM.
+
+## 2026-08-14 — TD-1406: Windows CI parity (first pass)
+
+The Windows CI leg was red at mypy for a stretch, which hid the pytest leg
+entirely — when mypy went green, ~110 tests failed at once. This pass makes
+the suite platform-honest without touching the guard's security posture.
+
+### 1. The boundary guard stays strict; the tests go relative
+
+**Decision:** No change to `windows_unsafe` semantics — drive-letter, UNC,
+8.3 short-name, and ADS forms stay refused fail-closed on every platform.
+Guard tests that fed absolute `tmp_path` paths now `monkeypatch.chdir` into
+the workspace and pass workspace-relative paths, so refusal codes
+(`outside_workspace`, `steering_file`, `hardlink`, `outside_writable_paths`)
+pin on BOTH platforms with no `skipif`.
+
+**Rationale:** Loosening a security guard to make a CI leg pass is the wrong
+direction of fit. Whether absolute in-workspace paths should be LEGAL on
+Windows (today they are refused everywhere, so the model must speak
+workspace-relative — defensible, but a product decision) is deferred to
+TD-1406's remaining boxes. Relative-path tests pin the security semantics
+on both platforms meanwhile, which is strictly more coverage than skipping.
+
+### 2. Prompt text is POSIX-separated everywhere
+
+**Decision:** Manifest walk entries and assembler provenance comments render
+paths with `as_posix()` on every platform.
+
+**Rationale:** These strings land in the system prompt. OS-native separators
+would make the same workspace produce different prompts on different
+machines, breaking cache-prefix stability and golden tests for no product
+benefit. The model reads `src/main.py` fine on any host.
+
+### 3. Real Windows product bugs fixed, not papered over
+
+**Decision:** `daemon.run` registers signal handlers inside
+`contextlib.suppress(NotImplementedError)` (asyncio signal handlers are
+POSIX-only; shutdown still arrives via the shutdown message and parent
+watchdog). `_win_parent_alive` now checks `GetExitCodeProcess` for
+STILL_ACTIVE — plain OpenProcess reports a dead process alive while any
+handle to it is open. The decision ledger takes an `msvcrt.locking`
+byte-range lock on win32 (the previous code had no lock at all there, and
+MSVCRT append-mode writes are not atomic). The shell tool's allowlist
+normalizes PATHEXT extensions and case on win32 (`echo.EXE` ≡ `echo`), and
+`_kill_process_group` actually kills the child on win32 (it was a no-op
+with a comment claiming a caller's `proc.kill()` that did not exist).
+
+**Rationale:** Each of these was a latent production defect on Windows that
+the red CI leg had been hiding; the CI excavation paid for itself.
+
+### 4. Platform-divergent semantics are skipped and pointed, not faked
+
+**Decision:** chmod-based `restricted_mode` tests (session store, port
+file), POSIX env-assignment shell syntax, and POSIX process-group kill
+semantics carry `skipif(win32, reason="TD-1406: ...")` with the reason
+naming the deferred work.
+
+**Rationale:** Windows ACLs, Job Objects, and cmd.exe syntax are genuinely
+different semantics that deserve their own implementation pass (they are
+TD-1406's remaining acceptance boxes). A skip with a pointer is honest; a
+test asserting POSIX behavior on Windows is fiction.
+
+## 2026-08-14 — TD-503: Touch-tracking plumbs matched_paths into production
+
+### 1. Touches are recorded only on handler success
+
+**Decision:** `Session.record_touched` is called from dispatch after the
+handler returns.  Boundary refusals, policy refusals, denials, and handler
+errors return earlier and never reach the hook.
+
+**Rationale:** A refused or failed call touched nothing.  Recording failed
+attempts would let a probing caller — or a confused model — activate
+path-scoped rules by name-dropping paths it never accessed, and be
+rewarded with more prompt content for the probe.
+
+### 2. Touches are stored workspace-relative POSIX; outside paths are dropped
+
+**Decision:** Relative tool arguments are stored as-given (the fs tools
+resolve them against the workspace root); absolute arguments are
+relativized against the resolved workspace path, and anything outside it
+is discarded.
+
+**Rationale:** `appliesTo` globs speak workspace-relative paths, so the
+match set must too.  A path outside the workspace can never match a scoped
+rule legitimately — the boundary guard has already refused it — and
+keeping it would leak absolute host paths into prompt assembly.
+
+### 3. The first assembly is the baseline, not an activation
+
+**Decision:** `RuleActivated` fires only when a rule becomes active at a
+subsequent assembly; the first assembly's active set is recorded silently.
+
+**Rationale:** A session that begins with a rule already active (touches
+recorded before the loop) is initial state, not a change.  Announcing the
+baseline would train the user to ignore the event.
+
+### 4. Activations are announced once per rule per session
+
+**Decision:** The loop diffs the active scoped-rule set across assemblies
+and emits one `RuleActivated` per newly active rule with its
+workspace-relative path; the timeline renders it as a steering entry titled
+"Rule activated".
+
+**Rationale:** Re-announcing on every turn would drown the signal.  Once is
+the honest unit: from that assembly onward, the rule is in the prompt.
+
+## 2026-08-14 — TD-1406: Windows CI parity (second pass)
+
+### 1. Drive-absolute paths are legal on Windows hosts; the refuse list is otherwise unchanged
+
+**Decision:** `boundary.py` no longer refuses drive-*absolute* paths
+(`C:\foo`, `C:/foo`) as a form problem on `sys.platform == "win32"`: they
+canonicalize and face the normal workspace / writable-paths / steering
+checks, so an escape still refuses as `outside_workspace`.  Drive-relative
+(`C:foo`), UNC, 8.3 short names, and ADS stay refused on every platform,
+and every drive-letter path stays refused off Windows.
+
+**Rationale:** TD-1402's blanket refusal was fail-closed but unworkable on
+Windows, where every absolute path carries a drive letter: the natural
+idiom (`C:\ws\src\app.py`) made every path tool unusable on the platform,
+which the e2e harness demonstrated on the runner.  Drive-relative paths
+(resolve against a drive's current directory) and UNC/8.3/ADS forms
+(unresolvable or aliasing) remain genuinely unsafe.  This implements
+TD-1406's first acceptance box; the box ticks when the Windows leg proves
+it green.
+
+### 2. Tests must await daemon shutdown — POSIX hides open handles
+
+**Decision:** Daemon-driving tests stop the daemon by setting the shutdown
+event and awaiting the task (cancel as fallback), so the audit sqlite
+connection closes before tempdir cleanup.
+
+**Rationale:** `TemporaryDirectory` teardown unlinks `audit.db`; with an
+open handle that is `WinError 32` on Windows.  Fire-and-forget
+`task.cancel()` raced `_shutdown()`'s drain-and-close on every platform —
+POSIX just unlinks open files silently.  22 failing tests shared this
+signature.
+
+### 3. Spawn `python -m tstd.daemon`, not the console script, when a test needs the daemon's pid
+
+**Decision:** The restart integration test launches the module directly;
+on win32 the clean-shutdown leg drives the protocol `shutdown` message
+(the graceful path a host uses there) instead of `terminate()`.
+
+**Rationale:** On Windows, uv's console-script wrappers are trampoline
+exes that spawn a child python: the harness waited on the trampoline's pid
+while the port file carried the child's, and killing the trampoline
+orphaned the real daemon (its watchdog watches the still-alive pytest
+process).  POSIX keeps SIGTERM.
+
+### 4. Connection-refusal tests pin via a bound-then-closed loopback port
+
+**Decision:** `test_connection_refused` binds and closes a loopback socket
+and targets literal `127.0.0.1:<port>` with a real (2 s) connect deadline.
+
+**Rationale:** On the Windows runner, dual-stack `getaddrinfo("localhost")`
+plus fallback outlasted the 0.1 s deadline and surfaced as a timeout — the
+provider's error mapping was correct; the test's traffic engineering was
+not.
+
+### 5. Import provenance and golden normalization speak POSIX
+
+**Decision:** `context/imports.py` provenance comments render `as_posix()`
+(the assembler's earlier gap), and the golden harness normalizes the
+fixture root in both its native and posix spellings.
+
+**Rationale:** Same rule as the first pass (prompt text is POSIX-separated
+everywhere) — these were the stragglers that only surface when the
+separator differs from the golden's.
+
+## 2026-08-14 — TD-1406: Windows CI parity (path surfaces)
+
+### 1. Every model-facing path surface speaks POSIX
+
+**Decision:** Discovery subtree labels (`discover.py`), `fs_list` output
+(`handlers.py`), and validator-subset glob matching (`tier.py`) all render
+`as_posix()` instead of the OS-native string. The test workarounds that
+compared separator-insensitively are removed — the suite now pins forward
+slashes directly.
+
+**Rationale:** The second pass established the rule for prompt text and
+goldens; these were the remaining producers. The `tier.py` case was a real
+break, not cosmetic: subset patterns compile to `/`-separated regexes, so
+on Windows even a basename pattern (`AGENTS.md` → `**/AGENTS.md`) never
+matched a backslash path and the validator tier silently assembled with no
+steering at all. `fs_list` output feeds the model paths it quotes back
+into later tool calls, and subtree labels land in the steering block —
+both must be stable across platforms.
+
+## 2026-08-14 — TD-605: Kill honesty under OS veto (TestCancel flake family)
+
+### 1. Report kill refusals instead of claiming the group died
+
+**Decision:** `_kill_process_group` returns a note when the OS refuses
+the kill; cancel/timeout result headers carry it ("cancelled — group kill
+refused by the OS (EPERM); …"), and the two `CancelledError` paths — which
+have no result to carry it — log a warning instead. The shielded-spawn fix
+stays: cancellation landing mid-spawn still settles the spawn and kills
+the group before propagating.
+
+**Rationale:** The flake family traced past the spawn window to a macOS
+veto: the kernel intermittently refuses same-uid kills of a spawned
+process group with EPERM. Probes established the refusal attaches to the
+group itself (fresh groups stay killable during another group's window),
+no userspace vector breaks it (`killpg`, per-pid `kill`, and
+`/bin/kill -9` all fail for the group's remaining life), and the command
+always runs to completion. Claiming "process group killed" while the
+group runs out is a lie the model would reason from; the refusal is now
+surfaced the same way as every other outcome.
+
+### 2. Tests key OS-veto tolerance on the product's report
+
+**Decision:** Group-death assertions in the cancel/timeout tests are
+skipped only when the refusal appears in the result header or the log;
+every other round keeps the hard assertion. Deterministic refusal tests
+monkeypatch `killpg` to raise `PermissionError` and pin the honest
+header/log behavior.
+
+**Rationale:** On a veto round the marker file is written no matter what
+userspace does — asserting its absence would test the kernel, not the
+product. An environmental probe (spawn a fresh group, try to kill it)
+was measured and rejected: fresh groups are killable during another
+group's refusal window, so a probe cannot excuse a real product failure.
+Keying on the product's own refusal report keeps the pin exact on every
+round where the kill was delivered.
 
 ## 2026-08-14 — TD-1102: Credential storage
 
