@@ -370,6 +370,73 @@ describe("turn status (TD-1607)", () => {
   });
 });
 
+describe("session liveness honesty (TD-1711)", () => {
+  const TERMINAL: SessionSummaryState[] = ["complete", "failed", "cancelled", "interrupted"];
+
+  function notRunningError(sessionId: string | null): DaemonEventUnion {
+    return {
+      type: "error",
+      code: "session_not_running",
+      message: "This session is cancelled and can no longer run turns; the message was not delivered. Start a new session and resend it.",
+      session_id: sessionId,
+      seq: 9,
+    } as DaemonEventUnion;
+  }
+
+  it.each(TERMINAL)("auto-bind skips a %s session even when it is the newest", (state) => {
+    const { deps, attached } = fakeDeps();
+    const store = createChatStore(deps, createChatState());
+    store.applyEvent(
+      sessionList([
+        { id: "older-live", updated: "2026-08-14T09:00:00Z", state: "idle" },
+        { id: "newest-dead", updated: "2026-08-14T11:00:00Z", state },
+      ]),
+    );
+    expect(store.state.sessionId).toBe("older-live");
+    expect(attached).toEqual(["older-live"]);
+  });
+
+  it("stays unbound when every listed session is terminal", () => {
+    const { deps, attached } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(
+      sessionList([
+        { id: "tomb-a", updated: "2026-08-14T09:00:00Z", state: "interrupted" },
+        { id: "tomb-b", updated: "2026-08-14T11:00:00Z", state: "cancelled" },
+      ]),
+    );
+    expect(state.sessionId).toBeNull();
+    expect(state.turnState).toBeNull();
+    expect(attached).toEqual([]);
+  });
+
+  it("keeps the current session even when it has gone terminal", () => {
+    const { store, state } = boundStore();
+    state.turnState = "complete";
+    store.applyEvent(sessionList([{ id: "s1", updated: "2026-08-14T11:00:00Z", state: "complete" }]));
+    // The user is looking at it — don't yank the pane; the daemon rejects
+    // any further sends instead.
+    expect(state.sessionId).toBe("s1");
+    expect(state.turnState).toBe("complete");
+  });
+
+  it("a session_not_running error drops the waiting shimmer for the bound session", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    expect(state.awaitingFirstToken).toBe(true);
+    store.applyEvent(notRunningError("s1"));
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("ignores the refusal addressed at another session", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hello");
+    store.applyEvent(notRunningError("elsewhere"));
+    expect(state.awaitingFirstToken).toBe(true);
+  });
+});
+
 describe("composer and control predicates", () => {
   it("Enter submits, Shift+Enter newlines, other keys do nothing", () => {
     expect(shouldSubmit("Enter", false)).toBe(true);

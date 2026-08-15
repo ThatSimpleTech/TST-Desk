@@ -98,7 +98,13 @@ from .provider import (
     auth_failure_message,
 )
 from .router import TIER_NAMES, TierRouter
-from .session import Session, SessionEventLog, SessionRegistry, SessionRunner
+from .session import (
+    TERMINAL_STATES,
+    Session,
+    SessionEventLog,
+    SessionRegistry,
+    SessionRunner,
+)
 from .session_store import SessionStore
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .ws import WebSocketServer
@@ -693,6 +699,19 @@ class Daemon:
                 return build_error(
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
+                )
+            # Liveness honesty (TD-1711): a terminal session — or any
+            # session whose loop is gone (restored tombstone, cancelled
+            # while idle) — can never consume the message. Enqueueing
+            # anyway would void it silently (observed 2026-08-14); refuse
+            # with an actionable error the UI can render.
+            runner = self.session_registry.get_runner(msg.session_id)
+            if found.state in TERMINAL_STATES or runner is None or not runner.is_running:
+                return build_error(
+                    "session_not_running",
+                    f"This session is {found.state} and can no longer run turns; "
+                    "the message was not delivered. Start a new session and resend it.",
+                    session_id=msg.session_id,
                 )
             await found.add_user_message(msg.content)
             log.info(

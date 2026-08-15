@@ -902,14 +902,19 @@ def build_hello_ack() -> str:
     return json.dumps({"type": "hello_ack", "version": PROTOCOL_VERSION})
 
 
-def build_error(code: str, message: str) -> str:
+def build_error(code: str, message: str, session_id: str | None = None) -> str:
     """Build a typed error message.
 
     The message passes through the shared redaction chokepoint (TD-1405):
     this envelope bypasses the event log — it is written straight to the
     socket — so it must scrub here rather than rely on ``event_log.add``.
+    ``session_id`` (optional, TD-1711) lets the UI attribute the error to
+    the session whose message was refused.
     """
-    return json.dumps({"type": "error", "code": code, "message": redact_secrets(message)})
+    payload: dict[str, str] = {"type": "error", "code": code, "message": redact_secrets(message)}
+    if session_id is not None:
+        payload["session_id"] = session_id
+    return json.dumps(payload)
 
 
 def validate_hello(hello: Hello) -> None:
