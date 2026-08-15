@@ -99,7 +99,8 @@ describe("session binding", () => {
     store.applyEvent(delta("s1", "hello"));
     store.applyEvent(sessionList([{ id: "s2", updated: "2026-08-14T12:00:00Z", state: "running" }]));
     expect(state.sessionId).toBe("s2");
-    expect(state.turnState).toBe("running");
+    // TD-1714: the summary's "running" is session-liveness — no turn yet.
+    expect(state.turnState).toBeNull();
     expect(state.messages).toEqual([]);
     expect(detached).toEqual(["s1"]);
     expect(attached).toEqual(["s1", "s2"]);
@@ -134,10 +135,32 @@ describe("session binding", () => {
     expect(detached).toEqual([]);
   });
 
-  it("rail selection of a running session shows the working shimmer", () => {
+  it("rail selection of a live session does not fabricate a turn (TD-1714)", () => {
     const { store, state } = boundStore();
     store.selectSession("s2", "running");
+    // "running" is the daemon's session-alive state; with no turn evidence
+    // the composer must offer send, not stop.
+    expect(state.turnState).toBeNull();
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(showCancel(state.turnState)).toBe(false);
+  });
+
+  it("the composer can send immediately after auto-binding a live session (TD-1714)", () => {
+    const { deps, sent } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    // The 2026-08-14 lockout: auto-bind to a live session, then the attach
+    // replay's open-time session_state — both said "running", and the
+    // composer morphed send → stop forever.
+    store.applyEvent(sessionList([{ id: "s2", updated: "2026-08-14T12:00:00Z", state: "running" }]));
+    expect(state.sessionId).toBe("s2");
+    store.applyEvent(sessionState("s2", "running"));
+    expect(showCancel(state.turnState)).toBe(false);
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(store.sendUserMessage("hello")).toBe(true);
+    expect(sent).toContainEqual({ type: "user_message", session_id: "s2", content: "hello" });
     expect(state.awaitingFirstToken).toBe(true);
+    store.dispose();
   });
 });
 
@@ -352,15 +375,52 @@ describe("turn status (TD-1607)", () => {
     expect(state.awaitingFirstToken).toBe(false);
   });
 
-  it("attaching to a running session shows the shimmer; a replayed running state does not resurrect it mid-stream", () => {
+  it("an attach replay derives the turn from evidence, not the open-time running state (TD-1714)", () => {
     const { store, state } = boundStore();
     store.applyEvent(sessionList([{ id: "s2", updated: "2026-08-14T11:00:00Z", state: "running" }]));
     expect(state.sessionId).toBe("s2");
-    expect(state.awaitingFirstToken).toBe(true);
-    // Replay continues: a delta lands, then the trailing current-state event.
-    store.applyEvent(delta("s2", "partial answer"));
-    store.applyEvent(sessionState("s2", "running"));
+    expect(state.turnState).toBeNull();
     expect(state.awaitingFirstToken).toBe(false);
+    // The replay's first event is the open-time session_state: the session
+    // was alive then — still no turn evidence.
+    store.applyEvent(sessionState("s2", "running"));
+    expect(state.turnState).toBeNull();
+    expect(state.awaitingFirstToken).toBe(false);
+    // Replayed deltas are turn evidence: the turn reads live mid-stream…
+    store.applyEvent(delta("s2", "partial answer"));
+    expect(state.turnState).toBe("running");
+    // …a replayed running state mid-stream keeps it (deltas corroborate)…
+    store.applyEvent(sessionState("s2", "running"));
+    expect(state.turnState).toBe("running");
+    expect(state.awaitingFirstToken).toBe(false);
+    // …and the replayed completion stands the turn down.
+    store.applyEvent(turnComplete("s2"));
+    expect(state.turnState).toBeNull();
+    expect(showCancel(state.turnState)).toBe(false);
+  });
+
+  it("a session_list refresh never stamps the alive-state lie over the turn (TD-1714)", () => {
+    const { store, state } = boundStore();
+    // At rest: a summary saying "running" must not raise a phantom turn.
+    store.applyEvent(sessionList([{ id: "s1", updated: "2026-08-14T11:00:00Z", state: "running" }]));
+    expect(state.sessionId).toBe("s1");
+    expect(state.turnState).toBe("idle");
+    // Mid-turn: the same refresh must not stand it down either — local
+    // evidence owns "running".
+    store.sendUserMessage("go");
+    store.applyEvent(delta("s1", "working"));
+    expect(state.turnState).toBe("running");
+    store.applyEvent(sessionList([{ id: "s1", updated: "2026-08-14T11:05:00Z", state: "running" }]));
+    expect(state.turnState).toBe("running");
+  });
+
+  it("an approval resolution keeps the turn live through the running state", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("run the risky thing");
+    store.applyEvent(sessionState("s1", "awaiting_approval"));
+    expect(state.turnState).toBe("awaiting_approval");
+    store.applyEvent(sessionState("s1", "running"));
+    expect(state.turnState).toBe("running");
   });
 
   it("formatTurnDuration never reads 0s and rolls over into minutes", () => {
@@ -555,13 +615,13 @@ describe("first-token watchdog (TD-1713)", () => {
     store.dispose();
   });
 
-  it("arms when attaching to a session the daemon reports as running", () => {
+  it("does not arm when attaching to a live session with no turn evidence (TD-1714)", () => {
     const { store, state } = boundStore();
     store.selectSession("s2", "running");
-    expect(state.awaitingFirstToken).toBe(true);
+    expect(state.awaitingFirstToken).toBe(false);
 
     vi.advanceTimersByTime(STALL_TIMEOUT_MS);
-    expect(state.turnStalled).toBe(true);
+    expect(state.turnStalled).toBe(false);
     store.dispose();
   });
 
