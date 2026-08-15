@@ -16,7 +16,7 @@ import contextlib
 import json
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from websockets.asyncio.client import connect
@@ -24,7 +24,7 @@ from websockets.asyncio.client import connect
 from tstd.config import cached_config
 from tstd.daemon import Daemon
 from tstd.keychain import KeychainError
-from tstd.protocol import PROTOCOL_VERSION, DeleteApiKey, parse_client_message
+from tstd.protocol import PROTOCOL_VERSION, DeleteApiKey, ValidateApiKey, parse_client_message
 from tstd.provider import ProviderError
 
 
@@ -108,11 +108,16 @@ class FakeKeychain:
 
 
 class FakeProviderClient:
-    """Class-level stand-in: from_keychain yields instances whose
-    chat_completion returns a scripted result."""
+    """Class-level stand-in: instances' chat_completion returns a scripted
+    result.  The direct constructor records the key it was built with, so
+    tests can prove the typed-key path bypasses the keychain (TD-1106)."""
 
     scripted: Any = object()  # non-ProviderError ⇒ success
     raise_on_build: Exception | None = None
+    built_with: ClassVar[list[str | None]] = []
+
+    def __init__(self, base_url: str = "", api_key: str | None = None, **kwargs: Any) -> None:
+        type(self).built_with.append(api_key)
 
     @classmethod
     async def from_keychain(cls, base_url: str) -> FakeProviderClient:
@@ -127,6 +132,7 @@ class FakeProviderClient:
     def reset(cls) -> None:
         cls.scripted = object()
         cls.raise_on_build = None
+        cls.built_with = []
 
 
 @pytest.fixture(autouse=True)
@@ -285,6 +291,56 @@ class TestValidateApiKey:
                 await ws.close()
             finally:
                 await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_typed_key_validated_without_keychain(self, fake_keychain: FakeKeychain) -> None:
+        # TD-1106: Validate checks the key typed in the field, regardless
+        # of keychain state — the keychain path is rigged to explode, so a
+        # pass here proves the typed key never touches it (a failed or
+        # skipped store can never dead-end the step).
+        FakeProviderClient.raise_on_build = KeychainError("keychain exploded")
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                resp = await _ask(ws, {"type": "validate_api_key", "api_key": "sk-typed-directly"})
+                assert resp["type"] == "api_key_validated"
+                assert resp["ok"] is True
+                assert FakeProviderClient.built_with == ["sk-typed-directly"]
+                assert fake_keychain.stored == {}
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_typed_key_rejection_gets_the_auth_failure_copy(
+        self, fake_keychain: FakeKeychain
+    ) -> None:
+        FakeProviderClient.scripted = ProviderError(
+            code="auth_failed", message="unauthorized", status_code=401
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                resp = await _ask(ws, {"type": "validate_api_key", "api_key": "sk-bad"})
+                assert resp["ok"] is False
+                assert "re-enter a valid API key" in resp["detail"]
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    def test_message_parses_with_and_without_key(self) -> None:
+        with_key = parse_client_message('{"type": "validate_api_key", "api_key": "sk-x"}')
+        assert isinstance(with_key, ValidateApiKey)
+        assert with_key.api_key == "sk-x"
+        bare = parse_client_message('{"type": "validate_api_key"}')
+        assert isinstance(bare, ValidateApiKey)
+        assert bare.api_key is None
 
 
 class TestDeleteApiKey:

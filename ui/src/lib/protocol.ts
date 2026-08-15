@@ -130,6 +130,9 @@ export interface DeleteApiKey extends ClientMessage {
 
 export interface ValidateApiKey extends ClientMessage {
   type: "validate_api_key";
+  // TD-1106: when present, the typed key is checked directly instead of
+  // the stored one — validation never depends on keychain state.
+  api_key?: string | null;
 }
 
 export interface SetPreset extends ClientMessage {

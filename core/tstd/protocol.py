@@ -265,13 +265,17 @@ class SetApiKey(ClientMessage):
 
 
 class ValidateApiKey(ClientMessage):
-    """Probe the stored key with one cheap live call (TD-1101).
+    """Probe a key with one cheap live call (TD-1101, TD-1106).
 
-    The daemon answers with ``api_key_validated``; the key itself never
-    leaves the keychain except inside the provider client's auth header.
+    With ``api_key`` set, the key currently typed in the wizard is checked
+    directly — validation never depends on keychain state.  Without it,
+    the stored key is probed.  The daemon answers with
+    ``api_key_validated``; the key itself never appears in any event, log,
+    or audit record.
     """
 
     type: Literal["validate_api_key"] = "validate_api_key"
+    api_key: str | None = None
 
 
 class DeleteApiKey(ClientMessage):

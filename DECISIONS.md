@@ -3129,3 +3129,30 @@ an unusually-shaped key would pass straight through it into ``tstd.log``.
 The hygiene canary test caught exactly this leak — the AC's "never logged"
 needed a production chokepoint, not just a wider test. Capping the frame
 logger removes the class of leak instead of one instance.
+
+## 2026-08-14 — TD-1106: Validate works on the entered key
+
+### 1. Validation takes the typed key directly
+
+**Decision:** `validate_api_key` gains an optional `api_key` field. When
+present, the daemon probes with that key (`ProviderClient` constructed
+inline) instead of consulting the keychain; the wizard's Validate button
+is enabled whenever there is something to check — a typed key or a stored
+one — and passes the field's content.
+
+**Rationale:** Validation was gated on `hasApiKey`, so any keychain
+failure dead-ended the step — Store unreachable while typing, Validate
+unreachable without a store. Validation is a property of the string in
+the field, not of storage state; the probe path now matches that.
+
+### 2. A successful typed-key verdict never flips `has_api_key`
+
+**Decision:** The client tracks whether the in-flight validate carried a
+typed key; `api_key_validated` with `ok` only sets `hasApiKey` for
+stored-key probes. `setup_state` remains the sole source of truth for
+"a key is stored".
+
+**Rationale:** A typed key that validates but was never stored would
+otherwise mark onboarding complete while every real chat call still fails
+on the missing keychain entry. Honesty about storage state outranks
+convenience.
