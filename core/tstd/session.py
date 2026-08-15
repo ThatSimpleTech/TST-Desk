@@ -526,6 +526,15 @@ class Session:
         }
 
 
+# Terminal states (TD-1711): no outgoing transitions, so nothing will ever
+# consume a user message again — the daemon refuses sends to these rather
+# than enqueueing into the void. Derived from the transition table so the
+# two can never drift.
+TERMINAL_STATES: frozenset[str] = frozenset(
+    state for state, allowed in Session.VALID_TRANSITIONS.items() if not allowed
+)
+
+
 # ── Placeholder loop ───────────────────────────────────────────────────
 
 

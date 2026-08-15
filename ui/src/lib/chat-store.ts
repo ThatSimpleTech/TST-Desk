@@ -203,8 +203,29 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
             if (current !== undefined) state.turnState = current.state;
             return;
           }
-          const newest = summaries.reduce((a, b) => (a.updated_at >= b.updated_at ? a : b));
+          // Auto-bind liveness (TD-1711): a terminal session can never run
+          // another turn (the daemon refuses its user_message with
+          // session_not_running). Binding one would strand the composer on
+          // a corpse — e.g. the post-restart auto-adopt of an interrupted
+          // tombstone observed 2026-08-14. With nothing live, stay unbound:
+          // the empty state points at the rail's New Session.
+          const live = summaries.filter((s) => !isTerminal(s.state));
+          if (live.length === 0) {
+            switchSession(null, null);
+            return;
+          }
+          const newest = live.reduce((a, b) => (a.updated_at >= b.updated_at ? a : b));
           switchSession(newest.session_id, newest.state);
+          return;
+        }
+        case "error": {
+          // The daemon refused a send to a dead session (TD-1711): the turn
+          // will never start, so drop the waiting shimmer immediately — the
+          // toast (notifications, TD-1008) carries the actionable copy.
+          if (event.code !== "session_not_running") return;
+          if (event.session_id != null && event.session_id !== state.sessionId) return;
+          sealInFlightAssistant();
+          state.awaitingFirstToken = false;
           return;
         }
         default:

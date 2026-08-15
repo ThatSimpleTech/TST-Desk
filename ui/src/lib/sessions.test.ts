@@ -296,14 +296,29 @@ describe("new session", () => {
     expect(mocks.chatSelects).toEqual([]);
   });
 
-  it("refuses without an attached session or while one is in flight", () => {
-    mocks.chatState.sessionId = null;
-    expect(newSession()).toBe(false);
-    expect(sentTypes()).toEqual([]);
-    mocks.chatState.sessionId = "s1";
+  it("refuses while one is in flight", () => {
     expect(newSession()).toBe(true);
     expect(newSession()).toBe(false); // still awaiting the reply
     expect(sentTypes()).toEqual(["new_session"]);
+  });
+
+  it("anchors on the newest listed row when nothing is bound (TD-1711)", () => {
+    // After a restart with only dead sessions, auto-bind stays unbound —
+    // New Session is the escape, anchored on a listed (possibly terminal)
+    // session purely for its workspace.
+    mocks.chatState.sessionId = null;
+    expect(newSession()).toBe(true);
+    expect(mocks.sent).toEqual([{ type: "new_session", session_id: "s1" }]);
+    // …and focus still moves to the fresh session's first session_state.
+    emit(sessionState("fresh-id", "running"));
+    expect(mocks.chatSelects).toEqual([["fresh-id", "running"]]);
+  });
+
+  it("refuses when nothing is bound and the list is empty", () => {
+    mocks.chatState.sessionId = null;
+    emit(sessionList([]));
+    expect(newSession()).toBe(false);
+    expect(sentTypes()).toEqual([]);
   });
 
   it("stays unfocused when the send fails", () => {

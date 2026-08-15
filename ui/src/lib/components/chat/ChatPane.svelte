@@ -33,13 +33,19 @@
 		{#if chat.messages.length === 0}
 			<div class="empty" aria-label="Getting started">
 				<p class="greeting">{greeting}.</p>
-				<div class="chips" role="group" aria-label="Suggestions">
-					{#each SUGGESTIONS as suggestion (suggestion)}
-						<button class="chip" type="button" onclick={() => (draft = suggestion)}>
-							{suggestion}
-						</button>
-					{/each}
-				</div>
+				{#if chat.sessionId === null}
+					<!-- TD-1711: auto-bind refuses dead sessions, so a restart can
+					     leave nothing live to bind. Point at the escape. -->
+					<p class="pointer">Start a new session from the rail to begin.</p>
+				{:else}
+					<div class="chips" role="group" aria-label="Suggestions">
+						{#each SUGGESTIONS as suggestion (suggestion)}
+							<button class="chip" type="button" onclick={() => (draft = suggestion)}>
+								{suggestion}
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 		{:else}
 			<MessageList
@@ -105,6 +111,12 @@
 		letter-spacing: var(--tracking-display);
 		line-height: var(--leading-tight);
 		color: var(--color-ink);
+	}
+
+	.pointer {
+		margin: 0;
+		font-size: var(--text-base);
+		color: var(--color-ink-secondary);
 	}
 
 	.chips {

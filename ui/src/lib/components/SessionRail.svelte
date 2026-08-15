@@ -46,7 +46,7 @@
 			type="button"
 			title="New session"
 			aria-label="New session"
-			disabled={chat.sessionId === null}
+			disabled={chat.sessionId === null && sessions.rows.length === 0}
 			onclick={() => newSession()}><Icon name="plus" size={16} /></button
 		>
 		<div class="mini-list">
@@ -81,7 +81,7 @@
 				type="button"
 				title="New session"
 				aria-label="New session"
-				disabled={chat.sessionId === null}
+				disabled={chat.sessionId === null && sessions.rows.length === 0}
 				onclick={() => newSession()}><Icon name="plus" size={16} /></button
 			>
 			<button

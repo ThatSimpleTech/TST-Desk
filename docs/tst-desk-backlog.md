@@ -1888,10 +1888,10 @@ on real hardware is where the estimate lives; timebox and record deviations.
 **Size:** 2 · **Depends on:** TD-1701
 
 **Acceptance criteria:**
-- [ ] Startup auto-bind never adopts a terminal session (interrupted, complete,
+- [x] Startup auto-bind never adopts a terminal session (interrupted, complete,
       failed, cancelled); with no live session the app stays unbound and the
       empty state points at New Session
-- [ ] Sending `user_message` to a terminal session returns a typed daemon error
+- [x] Sending `user_message` to a terminal session returns a typed daemon error
       (e.g. `session_not_running`) instead of silently enqueueing with no
       consumer; the UI renders it as actionable copy
 
@@ -1901,6 +1901,18 @@ the composer gated off it ("Waiting for a session…" forever); a later
 `open_workspace` created a running session the UI refused to switch to
 (first-adoption stickiness, now re-targetable via TD-1701's rail). The rail is
 the manual escape; this story removes the trap.
+
+**Completed (2026-08-14):** the daemon's `user_message` handler now refuses a
+send to a session that can never consume it — terminal state, no runner
+(restored tombstone), or a dead loop task — with a typed `session_not_running`
+error carrying the session id and actionable copy, instead of enqueueing into
+the void (`TERMINAL_STATES` derives from the transition table so the two can't
+drift). The chat store's `session_list` auto-bind skips terminal summaries and
+stays unbound when nothing is live; the empty state then points at New Session,
+and the rail's New action (now anchorable on the newest listed session when
+nothing is bound) is the escape. The refusal clears the waiting shimmer in the
+pane and raises a toast with the daemon's "start a new session and resend"
+instruction.
 
 ### TD-1712 — Rail information architecture: sections + account anchor
 **Size:** 2 · **Depends on:** TD-1701, TD-1703
