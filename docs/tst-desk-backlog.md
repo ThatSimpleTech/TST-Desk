@@ -1116,9 +1116,9 @@ on top).
 **Size:** 1 · **Depends on:** TD-1102
 
 **Acceptance criteria:**
-- [ ] The wizard's Validate action checks the key currently typed in the field
+- [x] The wizard's Validate action checks the key currently typed in the field
       with the provider, regardless of stored state
-- [ ] Store and Validate are independent; a failed or skipped store never
+- [x] Store and Validate are independent; a failed or skipped store never
       dead-ends the step
 
 **Notes:** observed 2026-08-14: Validate was gated on `hasApiKey`, so any
