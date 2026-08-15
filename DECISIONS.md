@@ -3038,3 +3038,40 @@ matched a backslash path and the validator tier silently assembled with no
 steering at all. `fs_list` output feeds the model paths it quotes back
 into later tool calls, and subtree labels land in the steering block —
 both must be stable across platforms.
+
+## 2026-08-14 — TD-605: Kill honesty under OS veto (TestCancel flake family)
+
+### 1. Report kill refusals instead of claiming the group died
+
+**Decision:** `_kill_process_group` returns a note when the OS refuses
+the kill; cancel/timeout result headers carry it ("cancelled — group kill
+refused by the OS (EPERM); …"), and the two `CancelledError` paths — which
+have no result to carry it — log a warning instead. The shielded-spawn fix
+stays: cancellation landing mid-spawn still settles the spawn and kills
+the group before propagating.
+
+**Rationale:** The flake family traced past the spawn window to a macOS
+veto: the kernel intermittently refuses same-uid kills of a spawned
+process group with EPERM. Probes established the refusal attaches to the
+group itself (fresh groups stay killable during another group's window),
+no userspace vector breaks it (`killpg`, per-pid `kill`, and
+`/bin/kill -9` all fail for the group's remaining life), and the command
+always runs to completion. Claiming "process group killed" while the
+group runs out is a lie the model would reason from; the refusal is now
+surfaced the same way as every other outcome.
+
+### 2. Tests key OS-veto tolerance on the product's report
+
+**Decision:** Group-death assertions in the cancel/timeout tests are
+skipped only when the refusal appears in the result header or the log;
+every other round keeps the hard assertion. Deterministic refusal tests
+monkeypatch `killpg` to raise `PermissionError` and pin the honest
+header/log behavior.
+
+**Rationale:** On a veto round the marker file is written no matter what
+userspace does — asserting its absence would test the kernel, not the
+product. An environmental probe (spawn a fresh group, try to kill it)
+was measured and rejected: fresh groups are killable during another
+group's refusal window, so a probe cannot excuse a real product failure.
+Keying on the product's own refusal report keeps the pin exact on every
+round where the kill was delivered.
