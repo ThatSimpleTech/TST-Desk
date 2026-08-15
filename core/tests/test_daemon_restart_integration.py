@@ -21,6 +21,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
 from websockets.asyncio.client import connect
 
 from tstd.protocol import PROTOCOL_VERSION
@@ -111,6 +112,7 @@ class TestDaemonRestartIntegration:
 
             # 1. Start a daemon, open a session, note its id.
             daemon = _spawn(data_dir)
+            scenario_ran = False
             try:
                 info = await _wait_for_port_file(create_port_file_path(data_dir), daemon.pid)
                 ws = await _connect(info)
@@ -118,9 +120,21 @@ class TestDaemonRestartIntegration:
                 session_id = await _open_workspace(ws, str(data_dir / "workspace"))
                 await ws.close()
                 assert sessions_file.exists(), "session should be persisted before crash"
+                scenario_ran = True
             finally:
-                daemon.kill()
-                daemon.wait(timeout=5)
+                try:
+                    daemon.kill()
+                except PermissionError:
+                    # macOS intermittently vetoes same-uid kills with EPERM
+                    # (TD-605; retries are futile for the vetoed group). With
+                    # the "crash" vetoed the restart leg never exercises the
+                    # product — skip rather than fail, but never mask a real
+                    # failure from the body above. The leaked daemon exits via
+                    # its --parent-pid watchdog when the test process dies.
+                    if scenario_ran:
+                        pytest.skip("the OS vetoed the test's own kill (TD-605)")
+                else:
+                    daemon.wait(timeout=5)
 
             # 2. Restart on the same data dir. The stale port file (with the
             #    dead daemon's pid) must be replaced.
@@ -139,12 +153,25 @@ class TestDaemonRestartIntegration:
                     daemon2.wait(timeout=10)
                 else:
                     await ws2.close()
-                    daemon2.terminate()
+                    try:
+                        daemon2.terminate()
+                    except PermissionError:
+                        # The OS vetoed the scenario's own SIGTERM (TD-605): the
+                        # clean-shutdown leg was never driven, so the assertions
+                        # below are meaningless this round — skip rather than
+                        # fail (or hang in wait until TimeoutExpired masks it).
+                        pytest.skip("the OS vetoed the test's own kill (TD-605)")
                     daemon2.wait(timeout=5)
             finally:
                 if daemon2.poll() is None:
-                    daemon2.kill()
-                    daemon2.wait(timeout=5)
+                    try:
+                        daemon2.kill()
+                    except PermissionError:
+                        # Vetoed cleanup kill (TD-605): leave the daemon to its
+                        # --parent-pid watchdog rather than fail the round.
+                        pass
+                    else:
+                        daemon2.wait(timeout=5)
 
             # 3. The session survived the crash as an interrupted tombstone.
             assert len(sessions) == 1
