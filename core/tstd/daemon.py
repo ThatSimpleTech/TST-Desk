@@ -33,7 +33,13 @@ from .config import ConfigError, ModelConfig, cached_config, save_active_preset
 from .context.assembler import ContextAssembler
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
-from .keychain import KeychainError, delete_api_key, get_api_key, store_api_key
+from .keychain import (
+    KeychainError,
+    KeychainLockedError,
+    delete_api_key,
+    get_api_key,
+    store_api_key,
+)
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .policy import (
@@ -947,6 +953,9 @@ class Daemon:
         if isinstance(msg, SetApiKey):
             try:
                 await store_api_key(msg.api_key)
+            except KeychainLockedError as e:
+                # TD-1105: unlock guidance, not raw `security` stderr.
+                return build_error("keychain_locked", str(e))
             except (KeychainError, NotImplementedError) as e:
                 return build_error("key_store_failed", f"Could not store the API key: {e}")
             # Never log the key; the ack is a refreshed setup_state.
@@ -961,6 +970,8 @@ class Daemon:
             # set_api_key — the fresh setup_state flips has_api_key.
             try:
                 await delete_api_key(msg.provider)
+            except KeychainLockedError as e:
+                return build_error("keychain_locked", str(e))
             except (KeychainError, NotImplementedError) as e:
                 return build_error("key_delete_failed", f"Could not remove the API key: {e}")
             log.info("api key removed from keychain")

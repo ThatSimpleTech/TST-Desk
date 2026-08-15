@@ -23,7 +23,7 @@ from websockets.asyncio.client import connect
 
 from tstd.config import cached_config
 from tstd.daemon import Daemon
-from tstd.keychain import KeychainError
+from tstd.keychain import KeychainError, KeychainLockedError
 from tstd.protocol import PROTOCOL_VERSION, DeleteApiKey, ValidateApiKey, parse_client_message
 from tstd.provider import ProviderError
 
@@ -233,6 +233,25 @@ class TestSetApiKey:
                 resp = await _ask(ws, {"type": "set_api_key", "api_key": "sk-x"})
                 assert resp["type"] == "error"
                 assert resp["code"] == "key_store_failed"
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_locked_keychain_gets_the_locked_code(self, fake_keychain: FakeKeychain) -> None:
+        # TD-1105: a locked/drifted keychain surfaces its own code so the
+        # UI shows unlock guidance with a retry path, not a dead end.
+        fake_keychain.fail_store(KeychainLockedError("The login keychain is locked — …"))
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                resp = await _ask(ws, {"type": "set_api_key", "api_key": "sk-x"})
+                assert resp["type"] == "error"
+                assert resp["code"] == "keychain_locked"
+                assert "locked" in resp["message"]
                 await ws.close()
             finally:
                 await _stop_daemon(task)
