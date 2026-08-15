@@ -1922,6 +1922,34 @@ TD-1103 — but the *layout grammar* (sectioned rail, bottom account anchor) was
 captured nowhere. This story is the presentation rule; the surfaces arrive with
 their epics.
 
+### TD-1713 — Working-state honesty and flavor
+**Size:** 3 · **Depends on:** TD-1711
+
+**Acceptance criteria:**
+- [ ] Attach-before-send invariant: the client never sends `user_message` to a
+      session it is not attached to (auto-attach first, or refuse with copy);
+      covered by a regression test reproducing the 2026-08-14 silent stall
+      (second session created via rail New Session received the message but no
+      events ever reached the UI)
+- [ ] First-token watchdog: if no `assistant_delta` (or turn terminal event)
+      arrives within ~25s of send, the Working state flips to honest copy
+      ("No response yet — the model may be slow or unreachable") with a working
+      Cancel; it recovers automatically when the first delta lands
+- [ ] The Working indicator rotates whimsical one-word verbs (per the
+      familiarity pattern — a tstd-voiced list, token-styled, no emoji) over
+      the existing shimmer, and shows elapsed time beside it
+- [ ] Daemon logs a `turn started` INFO per turn so future stalls are
+      diagnosable from the log alone
+
+**Notes:** root cause of "typed hello, Working… forever" (2026-08-14): pipeline
+verified healthy end-to-end via direct daemon repro (answer in 3.5s over the
+real provider); the app client sent to a session it had never attached to after
+the rail's New Session, and event fan-out only delivers to attached sessions.
+Two sticky-session stores (chat-store follow vs session-status first-adoption)
+drifted; unify the attach seam when fixing. Flavor brief: the shimmer exists
+(TD-1607) — this story adds the verb rotation + honesty states, it does not
+rebuild the indicator.
+
 ---
 
 # Post-v0.1 backlog
@@ -1963,8 +1991,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
 | M2 The window | E10–E12 | 16 | 53 |
-| M3 Shippable | E13–E17 | 32 | 96 |
-| **Total v0.1** | **17** | **98** | **307** |
+| M3 Shippable | E13–E17 | 33 | 99 |
+| **Total v0.1** | **17** | **99** | **310** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
