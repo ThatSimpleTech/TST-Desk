@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from tstd.daemon import Daemon, _parent_alive
 
@@ -36,7 +39,14 @@ class TestWatchdog:
                 daemon._parent_poll_interval = 0.05
                 runner = asyncio.create_task(daemon.run())
                 await asyncio.sleep(0.2)  # let the watchdog start
-                sleeper.kill()
+                try:
+                    sleeper.kill()
+                except PermissionError:
+                    # macOS intermittently vetoes same-uid kills with EPERM
+                    # (TD-605): the scenario cannot run this round — the
+                    # product code under test was never exercised, so skip
+                    # rather than fail.
+                    pytest.skip("the OS vetoed the test's own kill (TD-605)")
                 # Reap the child; an unreaped child lingers as a zombie that
                 # os.kill(pid, 0) still reports as alive.
                 await asyncio.wait_for(sleeper.wait(), timeout=5)
@@ -44,7 +54,8 @@ class TestWatchdog:
                 assert daemon._shutdown_event.is_set()
         finally:
             if sleeper.returncode is None:
-                sleeper.kill()
+                with contextlib.suppress(PermissionError):
+                    sleeper.kill()
 
     async def test_watchdog_inactive_without_parent_pid(self) -> None:
         # No --parent-pid: the daemon must not die on its own.
