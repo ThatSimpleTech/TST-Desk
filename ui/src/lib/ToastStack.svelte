@@ -75,7 +75,7 @@
 		font-size: var(--text-xs);
 		color: var(--color-text-secondary);
 		line-height: 1.4;
-		/* Backticks in copy (e.g. `tstd keychain set`) wrap, never overflow. */
+		/* Long tokens in copy (config paths, error codes) wrap, never overflow. */
 		overflow-wrap: break-word;
 	}
 

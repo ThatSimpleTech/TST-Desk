@@ -27,6 +27,7 @@ from tstd.protocol import (
     ContextCompacted,
     CostUpdate,
     DecisionLogged,
+    DeleteApiKey,
     Deny,
     Detach,
     DiagnosticCheck,
@@ -86,6 +87,7 @@ FIXTURES = {
     # Onboarding (TD-1101 first-run wizard)
     "get_setup_state": GetSetupState(),
     "set_api_key": SetApiKey(api_key="sk-or-test-key"),
+    "delete_api_key": DeleteApiKey(),
     "validate_api_key": ValidateApiKey(),
     "set_preset": SetPreset(name="tst-default"),
     # Diagnostics (TD-1104 doctor)

@@ -3075,3 +3075,57 @@ was measured and rejected: fresh groups are killable during another
 group's refusal window, so a probe cannot excuse a real product failure.
 Keying on the product's own refusal report keeps the pin exact on every
 round where the kill was delivered.
+
+## 2026-08-14 — TD-1102: Credential storage
+
+### 1. Delete rides the setup_state ack — no new event
+
+**Decision:** ``delete_api_key {provider}`` is answered with a fresh
+``setup_state`` (``has_api_key`` flips false), exactly the ack pattern
+``set_api_key`` already uses (TD-1101). Failures are a typed ``error``
+event with code ``key_delete_failed``. No ``api_key_status`` event, no
+new panel: the wizard's key step is the settings surface, and ``has_api_key``
+is already the client's single source of truth.
+
+**Rationale:** Two verbs with one ack keeps the wire minimal and the UI
+free of a second state channel to reconcile. The one-off alternative
+(``api_key_status`` push after mutations) duplicates what the connection
+already re-probes on every reconnect.
+
+### 2. Windows keychain via ctypes, not the keyring package
+
+**Decision:** the Windows backend is ~170 lines of stdlib ``ctypes`` over
+advapi32 ``CredReadW``/``CredWriteW``/``CredDeleteW`` (generic credentials,
+target ``{service}:{account}``, UTF-16-LE blob). No ``keyring`` dependency.
+All Win32 API access sits behind ``_cred_*`` seams and a platform guard, so
+the module imports and is unit-tested off Windows.
+
+**Rationale:** The macOS (``security``) and Linux (``secret-tool``) backends
+are already zero-dependency subprocess wrappers; adding one third-party
+package for the third platform would make it the only keychain backend that
+ships code we don't read. ``keyring`` also drags ``jaraco.*`` and
+``pywin32-ctypes`` into the frozen binary for three API calls.
+
+### 3. All key-fix copy points at the title-bar gear
+
+**Decision:** every "re-enter your key" path — the daemon's
+``auth_failure_message``, the doctor's ``fix_key`` hint, and the UI's
+``missing_api_key``/``auth_failed`` banners — names one destination:
+title-bar gear → Provider API key. The previously shipped
+``tstd keychain set <provider>`` copy was removed: no such CLI exists.
+
+**Rationale:** Copy that names a command that doesn't exist is worse than
+no copy — it sends the user hunting. One destination means the fix
+instructions can never disagree with each other.
+
+### 4. The websockets frame logger is capped at INFO in production
+
+**Decision:** ``setup_logging`` forces ``logging.getLogger("websockets")``
+to at most INFO even under ``--log-level debug``. The library logs raw
+frame contents at DEBUG, and ``set_api_key`` frames carry the key itself.
+
+**Rationale:** The secrets filter is pattern-based (``sk-…``, ``ghp_…``);
+an unusually-shaped key would pass straight through it into ``tstd.log``.
+The hygiene canary test caught exactly this leak — the AC's "never logged"
+needed a production chokepoint, not just a wider test. Capping the frame
+logger removes the class of leak instead of one instance.

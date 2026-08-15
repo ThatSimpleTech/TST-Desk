@@ -24,7 +24,7 @@ from websockets.asyncio.client import connect
 from tstd.config import cached_config
 from tstd.daemon import Daemon
 from tstd.keychain import KeychainError
-from tstd.protocol import PROTOCOL_VERSION
+from tstd.protocol import PROTOCOL_VERSION, DeleteApiKey, parse_client_message
 from tstd.provider import ProviderError
 
 
@@ -95,6 +95,17 @@ class FakeKeychain:
 
         self.store = _fail  # type: ignore[method-assign]
 
+    async def delete(self, provider_name: str = "openrouter") -> None:
+        if provider_name not in self.stored:
+            raise KeychainError(f"API key not found in keychain for {provider_name!r}.")
+        del self.stored[provider_name]
+
+    def fail_delete(self, e: Exception) -> None:
+        async def _fail(provider_name: str = "openrouter") -> None:
+            raise e
+
+        self.delete = _fail  # type: ignore[method-assign]
+
 
 class FakeProviderClient:
     """Class-level stand-in: from_keychain yields instances whose
@@ -139,8 +150,12 @@ def fake_keychain(monkeypatch: pytest.MonkeyPatch) -> FakeKeychain:
     async def _store(api_key: str, provider_name: str = "openrouter") -> None:
         await fk.store(api_key, provider_name)
 
+    async def _delete(provider_name: str = "openrouter") -> None:
+        await fk.delete(provider_name)
+
     monkeypatch.setattr("tstd.daemon.get_api_key", _get)
     monkeypatch.setattr("tstd.daemon.store_api_key", _store)
+    monkeypatch.setattr("tstd.daemon.delete_api_key", _delete)
     monkeypatch.setattr("tstd.daemon.ProviderClient", FakeProviderClient)
     FakeProviderClient.reset()
     cached_config.cache_clear()
@@ -266,10 +281,88 @@ class TestValidateApiKey:
                 )
                 resp = await _ask(ws, {"type": "validate_api_key"})
                 assert resp["ok"] is False
-                assert "keychain set" in resp["detail"]
+                assert "title bar" in resp["detail"]
                 await ws.close()
             finally:
                 await _stop_daemon(task)
+
+
+class TestDeleteApiKey:
+    """TD-1102: the key is removable, acked by a fresh setup_state."""
+
+    @pytest.mark.asyncio
+    async def test_delete_then_ack(self, fake_keychain: FakeKeychain) -> None:
+        fake_keychain.stored["openrouter"] = "sk-to-remove"
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                resp = await _ask(ws, {"type": "delete_api_key"})
+                assert fake_keychain.stored == {}
+                assert resp["type"] == "setup_state"
+                assert resp["has_api_key"] is False
+                await ws.close()
+            finally:
+                task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent_is_a_typed_error(self, fake_keychain: FakeKeychain) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                resp = await _ask(ws, {"type": "delete_api_key"})
+                assert resp["type"] == "error"
+                assert resp["code"] == "key_delete_failed"
+                await ws.close()
+            finally:
+                task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_delete_failure_is_a_typed_error(self, fake_keychain: FakeKeychain) -> None:
+        fake_keychain.stored["openrouter"] = "sk-stuck"
+        fake_keychain.fail_delete(KeychainError("keychain locked"))
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                resp = await _ask(ws, {"type": "delete_api_key"})
+                assert resp["type"] == "error"
+                assert resp["code"] == "key_delete_failed"
+                # A failed delete leaves the key in place.
+                assert fake_keychain.stored["openrouter"] == "sk-stuck"
+                await ws.close()
+            finally:
+                task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_delete_custom_provider_leaves_default(self, fake_keychain: FakeKeychain) -> None:
+        fake_keychain.stored["openrouter"] = "sk-default"
+        fake_keychain.stored["openai"] = "sk-other"
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                resp = await _ask(ws, {"type": "delete_api_key", "provider": "openai"})
+                assert fake_keychain.stored == {"openrouter": "sk-default"}
+                # has_api_key tracks the default provider, which is untouched.
+                assert resp["has_api_key"] is True
+                await ws.close()
+            finally:
+                task.cancel()
+
+    def test_delete_parses_with_default_provider(self) -> None:
+        msg = parse_client_message('{"type": "delete_api_key"}')
+        assert isinstance(msg, DeleteApiKey)
+        assert msg.provider == "openrouter"
 
 
 class FakePresetSaver:

@@ -7,7 +7,7 @@ reading and writing secrets.
 Supported platforms:
 - macOS: `security` CLI to the system keychain
 - Linux: `secret-tool` CLI (libsecret)
-- Windows: Not yet implemented (stub raises NotImplementedError)
+- Windows: Credential Manager via ctypes (keychain_windows, TD-1102)
 
 The service name is always ``com.thatsimpletech.tstdesk``.
 """
@@ -206,9 +206,15 @@ def _detect_backend() -> KeychainBackend:
         # The actual availability check happens at call time
         return LinuxSecretService()
 
-    raise KeychainError(
-        f"Unsupported platform: {system}. TST Desk supports macOS and Linux keychain access."
-    )
+    if system == "win32":
+        # Lazy import: keychain_windows touches ctypes.windll at call time,
+        # but keeping the import here too means non-Windows platforms never
+        # load the module.
+        from .keychain_windows import WindowsCredentialManager
+
+        return WindowsCredentialManager()
+
+    raise KeychainError(f"Unsupported platform: {system}.")
 
 
 # Module-level singleton backend

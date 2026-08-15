@@ -68,7 +68,7 @@ describe("error copy", () => {
     for (const code of ["missing_api_key", "auth_failed"] as const) {
       const spec = turnFailureCopy(code);
       expect(spec?.severity).toBe("banner");
-      expect(spec?.body).toContain("tstd keychain set");
+      expect(spec?.body).toContain("title-bar gear");
     }
   });
 

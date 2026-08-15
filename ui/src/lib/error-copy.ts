@@ -29,12 +29,12 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 	missing_api_key: {
 		severity: "banner",
 		title: "No API key stored",
-		body: "Store a key for this provider with `tstd keychain set <provider>`, then resend. The conversation is preserved.",
+		body: "Store a key from the title-bar gear → Provider API key, then resend. The conversation is preserved.",
 	},
 	auth_failed: {
 		severity: "banner",
 		title: "API key rejected",
-		body: "The provider rejected the stored key (401). Re-store a valid key with `tstd keychain set <provider>`, check the base_url in config.yaml matches the key's provider, and resend.",
+		body: "The provider rejected the stored key (401). Re-enter a valid key: title-bar gear → Provider API key. Check the base_url in config.yaml matches the key's provider, and resend.",
 	},
 	forbidden: {
 		severity: "banner",

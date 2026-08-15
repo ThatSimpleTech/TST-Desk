@@ -53,6 +53,7 @@ import {
   closeWizard,
   storeKey,
   validateKey,
+  removeKey,
   choosePreset,
   chooseWorkspace,
   finish,
@@ -164,6 +165,23 @@ describe("key step", () => {
     mocks.sendOk = false;
     validateKey();
     expect(onboarding.validating).toBe(false);
+  });
+
+  it("removeKey sends delete_api_key; the ack flips hasApiKey off (TD-1102)", () => {
+    start();
+    emit(setupState(true));
+    expect(onboarding.hasApiKey).toBe(true);
+    // A stale verdict about the old key must not survive its removal.
+    emit({ type: "api_key_validated", seq: 2, ok: true, detail: "ok" } as DaemonEventUnion);
+    expect(onboarding.validation).not.toBeNull();
+
+    removeKey();
+    expect(mocks.sent.some((m) => m.type === "delete_api_key")).toBe(true);
+    expect(onboarding.validation).toBeNull();
+    // hasApiKey flips only on the daemon's fresh setup_state, like storeKey.
+    expect(onboarding.hasApiKey).toBe(true);
+    emit(setupState(false));
+    expect(onboarding.hasApiKey).toBe(false);
   });
 });
 
