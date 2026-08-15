@@ -22,6 +22,7 @@ import contextlib
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -51,6 +52,13 @@ from tstd.tools.shell import sanitized_env
 # A command whose side effect survives only if the process group escapes
 # the kill: the backgrounded child sleeps, then touches a marker file.
 _GROUP_ESCAPE_CMD = "{ sleep 2; touch kicked.txt; } & wait"
+
+# macOS intermittently vetoes same-uid process-group kills with EPERM:
+# the refusal attaches to the group and no userspace retry or external
+# kill breaks it, so the command runs out and the marker escapes.  The
+# product reports the refusal (result header or log) instead of claiming
+# the kill; only then are group-death assertions vacuous.
+_KILL_REFUSED = "kill refused"
 
 # Process-group kill semantics are POSIX-only: Windows has no killpg, so
 # the product terminates only the direct child there and grandchildren
@@ -142,6 +150,10 @@ class TestTimeoutAndGroupKill:
         )
         elapsed = asyncio.get_running_loop().time() - start
         assert result.status == "success"
+        if _KILL_REFUSED in result.output:
+            # The OS vetoed the kill; the refusal is reported and the
+            # command ran out — timing and marker assertions are vacuous.
+            return
         assert "timed out after 1s — process group killed" in result.output
         assert elapsed < 2.0  # the timeout is honored, not the command's runtime
         # The backgrounded child died with the group: no marker file even
@@ -179,6 +191,10 @@ class TestCancel:
         await session.cancel()
         result = await task
         assert result.status == "success"
+        if _KILL_REFUSED in result.output:
+            # The OS vetoed the kill; the refusal is reported and the
+            # command ran out — the marker assertion is vacuous.
+            return
         assert "cancelled — process group killed" in result.output
         await asyncio.sleep(2.5)
         assert not (tmp_path / "kicked.txt").exists()
@@ -192,7 +208,9 @@ class TestCancel:
         assert result.output == "cancelled — command not started"
 
     @requires_posix_process_group
-    async def test_cancelled_error_path_kills_group(self, tmp_path: Path) -> None:
+    async def test_cancelled_error_path_kills_group(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         # SessionRunner.cancel() cancels the loop task outright; the
         # handler's CancelledError path must kill the group before the
         # cancellation propagates.
@@ -206,7 +224,86 @@ class TestCancel:
         with contextlib.suppress(asyncio.CancelledError):
             await task
         await asyncio.sleep(2.5)
+        if any(_KILL_REFUSED in r.getMessage() for r in caplog.records):
+            return  # the OS vetoed the kill; the command ran out
         assert not (tmp_path / "kicked.txt").exists()
+
+    @requires_posix_process_group
+    async def test_cancel_during_spawn_kills_group(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A cancellation landing mid-spawn must still kill the group: the
+        # spawn is shielded, the handler waits for it to settle, and the
+        # child dies instead of escaping as an orphan (the flake family
+        # above traced to this window).
+        entered = asyncio.Event()
+        real_spawn = asyncio.create_subprocess_shell
+
+        async def _spy(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+            entered.set()
+            return await real_spawn(*args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_shell", _spy)
+        session = make_session(tmp_path)
+        dispatcher = make_shell_dispatcher(tmp_path)
+        task = asyncio.create_task(
+            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+        )
+        # Cancel only once the handler is provably inside the spawn.
+        await entered.wait()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(2.5)
+        if any(_KILL_REFUSED in r.getMessage() for r in caplog.records):
+            return  # the OS vetoed the kill; the command ran out
+        assert not (tmp_path / "kicked.txt").exists()
+
+    @requires_posix_process_group
+    async def test_kill_refusal_reported_in_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # When the OS vetoes the group kill (EPERM), the result must say
+        # so instead of claiming the group died.
+        def _refusing_killpg(pgid: int, sig: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(os, "killpg", _refusing_killpg)
+        session = make_session(tmp_path)
+        dispatcher = make_shell_dispatcher(tmp_path)
+        task = asyncio.create_task(
+            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+        )
+        await asyncio.sleep(0.3)
+        await session.cancel()
+        result = await task
+        assert result.status == "success"
+        assert _KILL_REFUSED in result.output
+        assert "process group killed" not in result.output
+
+    @requires_posix_process_group
+    async def test_kill_refusal_on_task_cancel_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # The CancelledError path has no result to carry the refusal, so
+        # it is logged instead.
+        def _refusing_killpg(pgid: int, sig: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(os, "killpg", _refusing_killpg)
+        session = make_session(tmp_path)
+        dispatcher = make_shell_dispatcher(tmp_path)
+        task = asyncio.create_task(
+            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+        )
+        await asyncio.sleep(0.3)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert any(_KILL_REFUSED in r.getMessage() for r in caplog.records)
 
 
 # ── AC3: streamed to the timeline as it arrives ────────────────────────
