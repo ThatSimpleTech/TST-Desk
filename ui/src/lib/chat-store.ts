@@ -29,8 +29,9 @@ export interface ChatState {
   turnState: SessionState["state"] | null;
   messages: ChatMessage[];
   /** Set between a user send and the first assistant_delta — the "Working…"
-   *  shimmer's window (TD-1607). Also true while attached to a session the
-   *  daemon reports as running but no delta has arrived yet. */
+   *  shimmer's window (TD-1607). Only a local send arms it (TD-1714): the
+   *  daemon's "running" means the session loop is alive, not that a turn is
+   *  in flight, so binding must never fabricate a wait from it. */
   awaitingFirstToken: boolean;
   /** First-token watchdog tripped (TD-1713): 25s without a delta or a
    *  terminal turn event. The Working shimmer swaps to honest "no response
@@ -186,13 +187,15 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     if (state.sessionId === sessionId) return;
     if (state.sessionId !== null) deps.detach(state.sessionId);
     state.sessionId = sessionId;
-    state.turnState = turnState;
+    // TD-1714: a summary's "running" means the session's loop is alive — the
+    // daemon sets it once at open and it spans the session's whole life — not
+    // that a turn is in flight. Mapping it straight into turnState locked the
+    // composer behind the stop morph on every live bind. Only turn evidence
+    // (a delta, an approval round-trip) may raise "running"; the attach
+    // replay re-derives it through the reducer below.
+    state.turnState = turnState === "running" ? null : turnState;
     state.messages = [];
-    // Attaching to a session mid-turn shows the shimmer until the replayed
-    // (or live) deltas arrive; anything else is at rest. The watchdog arms
-    // here too — an attach that replays nothing for 25s is the same lie.
     endFirstTokenWait();
-    if (turnState === "running") startFirstTokenWait();
     state.lastTurnDuration = null;
     if (sessionId !== null) deps.attach(sessionId);
   }
@@ -204,6 +207,10 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       switch (event.type) {
         case "assistant_delta": {
           if (event.session_id !== state.sessionId) return;
+          // A delta is proof a turn is in flight (TD-1714) — the only honest
+          // source of "running" the wire gives us. Replayed deltas converge
+          // back through the replayed turn_complete that follows them.
+          state.turnState = "running";
           // First token recovers a stalled wait: the model was slow, not gone.
           endFirstTokenWait();
           const last = state.messages[state.messages.length - 1];
@@ -227,6 +234,8 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           if (event.session_id !== state.sessionId) return;
           sealInFlightAssistant();
           endFirstTokenWait();
+          // The turn is provably over; the session itself stays alive.
+          state.turnState = null;
           // Daemon-measured seconds — the duration line reports what the wire
           // said; the client never clocks turns itself (AGENTS §6).
           state.lastTurnDuration = event.duration;
@@ -234,15 +243,21 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
         }
         case "session_state": {
           if (event.session_id !== state.sessionId) return;
-          state.turnState = event.state;
           if (event.state === "running") {
-            // A replayed "running" can land after replayed deltas — don't
-            // resurrect the shimmer over an actively streaming message.
+            // TD-1714: "running" reports the session loop is alive — emitted
+            // once at open and replayed on every attach — not that a turn is
+            // in flight. It may corroborate existing turn evidence (an
+            // approval just resolved, deltas are streaming, our send awaits
+            // its first token) but must never fabricate a turn or a wait by
+            // itself, and it must never cut a wait our send started.
             const last = state.messages[state.messages.length - 1];
-            const stillWaiting = last === undefined || last.role !== "assistant" || last.complete;
-            if (stillWaiting) startFirstTokenWait();
-            else endFirstTokenWait();
+            const turnLive =
+              state.awaitingFirstToken ||
+              state.turnState === "awaiting_approval" ||
+              (last !== undefined && last.role === "assistant" && !last.complete);
+            state.turnState = turnLive ? "running" : null;
           } else {
+            state.turnState = event.state;
             endFirstTokenWait();
           }
           if (isTerminal(event.state)) sealInFlightAssistant();
@@ -258,7 +273,10 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           // bind the most recently updated one.
           if (summaries.some((s) => s.session_id === state.sessionId)) {
             const current = summaries.find((s) => s.session_id === state.sessionId);
-            if (current !== undefined) state.turnState = current.state;
+            // TD-1714: a summary's "running" is session-liveness, not turn
+            // evidence — a refresh must never stamp it over the local state
+            // (neither raising a phantom turn nor standing down a real one).
+            if (current !== undefined && current.state !== "running") state.turnState = current.state;
             return;
           }
           // Auto-bind liveness (TD-1711): a terminal session can never run

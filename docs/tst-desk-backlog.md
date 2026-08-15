@@ -1982,6 +1982,56 @@ flight. The daemon gained the dequeue-time `turn started` INFO (session id,
 post-dequeue queue depth, message length — never content) that closes the
 observability gap between enqueue and the post-assembly "turn start" log.
 
+### TD-1714 — Turn-state semantics: "running" is liveness, not a turn
+**Size:** 1 · **Depends on:** TD-1713
+
+**Acceptance criteria:**
+- [x] Binding to a live session (auto-bind, rail select, or attach replay)
+      never fabricates an in-flight turn: the composer offers send, no Working
+      shimmer, no first-token watchdog armed
+- [x] `turnState "running"` is raised only by turn evidence — an
+      `assistant_delta`, an approval round-trip, or an open assistant tail
+      corroborating a `session_state` — and `turn_complete` stands it down
+- [x] A `session_list` refresh never stamps a summary's "running" over local
+      turn state (neither raising a phantom turn nor standing down a real one)
+- [x] Regression test reproduces the 2026-08-14 lockout: auto-bind to a live
+      session plus the replayed open-time `session_state` → send fires
+      immediately
+
+**Completed (2026-08-14):** Root cause of "new session, typed hello, could not
+send at all": the daemon's `session_state "running"` means the session's loop
+runner is alive — set once at open, spanning the session's whole life, and
+replayed at the head of every attach — but the chat store mapped it 1:1 into
+`turnState`, where `showCancel("running")` morphs the composer's send button
+into stop. Every bind to a live session (which is every healthy session)
+locked the composer and spun the Working shimmer with the watchdog armed; the
+only sends that ever fired went to terminal sessions, which the daemon then
+refused. The fix makes turn state evidentiary: deltas prove a turn live,
+`turn_complete` proves it over, an approval resolution keeps it live, and
+`session_state "running"` may only corroborate existing evidence, never
+create it — bind-time summaries and refreshes map it to no-turn. The Working
+shimmer and the 25s watchdog now arm exclusively on a local send, which is
+the only wait the user can actually be watching.
+
+### TD-1715 — Archive and delete sessions from the rail
+**Size:** 2 · **Depends on:** TD-1701
+
+**Acceptance criteria:**
+- [ ] Rail session rows offer Archive (hidden from the default list;
+      restorable through an Archived filter or section) and Delete behind a
+      confirm; deleting removes the session's event log and drops it from
+      `session_list`
+- [ ] Archive state persists in the daemon's session metadata and survives
+      restart; archived sessions never win auto-bind
+- [ ] Archiving or deleting the bound session moves the pane to the next live
+      session or the empty state — never a stranded composer
+- [ ] A session with an in-flight turn refuses Delete with copy (Archive is
+      allowed and does not cancel the turn)
+
+**Notes:** user ask 2026-08-14 ("we should have the option to delete or
+archive the older sessions"). Rename/star stay deferred to the v0.3 cowork
+parity epic; this is the lifecycle-hygiene slice only.
+
 ---
 
 # Post-v0.1 backlog
@@ -2023,8 +2073,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
 | M2 The window | E10–E12 | 16 | 53 |
-| M3 Shippable | E13–E17 | 33 | 99 |
-| **Total v0.1** | **17** | **99** | **310** |
+| M3 Shippable | E13–E17 | 35 | 102 |
+| **Total v0.1** | **17** | **101** | **313** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
