@@ -1062,11 +1062,11 @@ error.
 **Size:** 3 · **Depends on:** TD-1101
 
 **Acceptance criteria:**
-- [ ] Key stored via OS keychain (Keychain / Secret Service / Credential Manager)
-- [ ] **Key never written to disk in plaintext, never logged, never in the audit database** —
+- [x] Key stored via OS keychain (Keychain / Secret Service / Credential Manager)
+- [x] **Key never written to disk in plaintext, never logged, never in the audit database** —
       asserted by test
-- [ ] Missing or revoked key produces a clear prompt to re-enter, not a cryptic failure
-- [ ] Key removable from settings
+- [x] Missing or revoked key produces a clear prompt to re-enter, not a cryptic failure
+- [x] Key removable from settings
 
 ---
 
