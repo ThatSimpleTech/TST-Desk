@@ -60,6 +60,10 @@ export function start(): () => void {
 	};
 }
 
+// Whether the in-flight validate covers a typed key (TD-1106): an ok
+// verdict for a typed key must not flip hasApiKey — nothing was stored.
+let validateWasTyped = false;
+
 /** Reset for tests / hard reconnect flows. Does not touch the daemon. */
 export function resetOnboarding(): void {
 	onboarding.open = false;
@@ -70,6 +74,7 @@ export function resetOnboarding(): void {
 	onboarding.validating = false;
 	onboarding.validation = null;
 	autoOpened = false;
+	validateWasTyped = false;
 }
 
 function reduce(event: DaemonEventUnion): void {
@@ -89,7 +94,7 @@ function reduce(event: DaemonEventUnion): void {
 		case "api_key_validated":
 			onboarding.validating = false;
 			onboarding.validation = { ok: event.ok, detail: event.detail };
-			if (event.ok) onboarding.hasApiKey = true;
+			if (event.ok && !validateWasTyped) onboarding.hasApiKey = true;
 			break;
 	}
 }
@@ -125,11 +130,21 @@ export function storeKey(apiKey: string): void {
 	sendToDaemon({ type: "set_api_key", api_key: apiKey.trim() });
 }
 
-/** Probe the stored key with one cheap live call. */
-export function validateKey(): void {
+/** Probe a key with one cheap live call (TD-1106).
+
+With *apiKey*, the key currently typed in the field is checked directly —
+independent of any stored key, so a failed or skipped store never blocks
+validation.  Without it, the stored key is probed.
+*/
+export function validateKey(apiKey?: string): void {
 	if (onboarding.validating) return;
+	const typed = apiKey?.trim();
+	if (!typed && !onboarding.hasApiKey) return; // nothing to validate
 	onboarding.validating = true;
-	const sent = sendToDaemon({ type: "validate_api_key" });
+	validateWasTyped = !!typed;
+	const sent = sendToDaemon(
+		typed ? { type: "validate_api_key", api_key: typed } : { type: "validate_api_key" }
+	);
 	if (!sent) onboarding.validating = false;
 }
 
