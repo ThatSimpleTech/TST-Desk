@@ -324,14 +324,19 @@ class Daemon:
             active_preset=self.config.active_preset,
         )
 
-    async def _provider_probe(self) -> ProviderError | None:
+    async def _provider_probe(self, api_key: str | None = None) -> ProviderError | None:
         """One-token live call against the active brain (TD-1101).
 
+        With *api_key* the probe authenticates with that key directly
+        (TD-1106); otherwise the stored key is read from the keychain.
         Returns None on success, the ProviderError on failure.  Raises
-        KeychainError when no key is stored.
+        KeychainError only when the keychain is consulted and fails.
         """
         tier_cfg = self.config.tier("brain")
-        client = await ProviderClient.from_keychain(tier_cfg.base_url)
+        if api_key is not None:
+            client = ProviderClient(base_url=tier_cfg.base_url, api_key=api_key)
+        else:
+            client = await ProviderClient.from_keychain(tier_cfg.base_url)
         response = await client.chat_completion(
             ChatCompletionRequest(
                 model=tier_cfg.slug,
@@ -342,16 +347,17 @@ class Daemon:
         )
         return response if isinstance(response, ProviderError) else None
 
-    async def _validate_api_key(self) -> ApiKeyValidated:
-        """Probe the stored key with one cheap live call (TD-1101).
+    async def _validate_api_key(self, api_key: str | None = None) -> ApiKeyValidated:
+        """Probe a key with one cheap live call (TD-1101, TD-1106).
 
+        With *api_key*, the key typed in the wizard is checked directly,
+        independent of keychain state; otherwise the stored key is probed.
         A one-token completion against the active preset's brain tier: the
         cheapest request that still proves the key authenticates.  The key
-        value never appears in the response — success names the keychain
-        account, failure carries actionable text.
+        value never appears in the response.
         """
         try:
-            err = await self._provider_probe()
+            err = await self._provider_probe(api_key)
         except KeychainError as e:
             return ApiKeyValidated(seq=1, ok=False, detail=str(e))
         if err is not None:
@@ -948,7 +954,7 @@ class Daemon:
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, ValidateApiKey):
-            return (await self._validate_api_key()).model_dump_json()
+            return (await self._validate_api_key(msg.api_key)).model_dump_json()
 
         if isinstance(msg, DeleteApiKey):
             # TD-1102: key removable from settings. Same ack pattern as
