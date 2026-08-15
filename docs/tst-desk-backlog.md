@@ -1098,11 +1098,11 @@ error.
 **Size:** 1 · **Depends on:** TD-1102
 
 **Acceptance criteria:**
-- [ ] A locked or password-drifted login keychain (macOS "user name or passphrase
+- [x] A locked or password-drifted login keychain (macOS "user name or passphrase
       not correct" / `SecKeychainItemCreateFromContent` failures) maps to actionable
       copy: what happened, and how to fix it (Keychain Access → unlock or update
       password), not raw `security` stderr
-- [ ] Store failure offers a retry path after the user unlocks the keychain
+- [x] Store failure offers a retry path after the user unlocks the keychain
 
 **Notes:** first observed 2026-08-14 on an AD-bound Mac after a domain password
 change — `security add-generic-password` fails machine-wide until the keychain
