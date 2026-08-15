@@ -497,6 +497,16 @@ class Session:
 
     # ── User message queue ──────────────────────────────────────────
 
+    @property
+    def pending_user_messages(self) -> int:
+        """Messages enqueued but not yet dequeued by the agent loop.
+
+        Read at dequeue time for the ``turn started`` log (TD-1713) — a
+        user who sent three messages while the loop was busy should see
+        that backlog named in the logs, not just the head one.
+        """
+        return self._user_message_queue.qsize()
+
     async def add_user_message(self, content: str) -> None:
         """Enqueue a user message for the agent loop to process."""
         self._user_message_queue.put_nowait(content)

@@ -160,6 +160,14 @@ export class ProtocolClient {
    */
   send(msg: ClientMessageUnion): boolean {
     if (!this.socket || this.state !== "connected") return false;
+    // Attach-before-send invariant (TD-1713): the daemon fans events out only
+    // to attached connections, so a user_message sent unattached is consumed
+    // with nothing ever streaming back — the silent stall of 2026-08-14.
+    // Attach on the same socket first; the daemon processes frames in order,
+    // so the attach (and its replay) lands before the message is enqueued.
+    if (msg.type === "user_message" && !this.attachedSessions.has(msg.session_id)) {
+      this.attach(msg.session_id);
+    }
     this.socket.send(JSON.stringify(msg));
     return true;
   }
