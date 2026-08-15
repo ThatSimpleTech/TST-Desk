@@ -3076,6 +3076,23 @@ group's refusal window, so a probe cannot excuse a real product failure.
 Keying on the product's own refusal report keeps the pin exact on every
 round where the kill was delivered.
 
+### 3. A test that performs its own kill skips on PermissionError
+
+**Decision:** Where the test itself delivers the signal (parent-death
+watchdog's `sleeper.kill()`; daemon-restart's crash-simulating
+`daemon.kill()` and clean-shutdown `daemon2.terminate()`), a vetoed
+delivery raises `PermissionError` in the test process and no product
+code was driven, so the test skips — guarded, so a skip never masks a
+real failure from the scenario body. Cleanup-only kills suppress instead
+and leave the child to its `--parent-pid` watchdog; the leak is bounded
+by the pytest process.
+
+**Rationale:** Same veto, other side of the seam: the product's refusal
+report never reaches these tests because no product code ran. Keying on
+the delivery error itself is exact — `PermissionError` fires only when
+the signal demonstrably never left the test process, so every round
+where delivery succeeded keeps the hard assertions.
+
 ## 2026-08-14 — TD-1102: Credential storage
 
 ### 1. Delete rides the setup_state ack — no new event
