@@ -3156,3 +3156,25 @@ stored-key probes. `setup_state` remains the sole source of truth for
 otherwise mark onboarding complete while every real chat call still fails
 on the missing keychain entry. Honesty about storage state outranks
 convenience.
+
+## 2026-08-14 — TD-1105: Keychain locked/drift error surface
+
+### 1. Lock classification happens at the keychain layer
+
+**Decision:** All six raw-stderr raise sites (macOS `security` and Linux
+`secret-tool` get/store/delete) route through `_classify_cli_failure`.
+Locked-family markers (passphrase-drift, interaction-barred, locked
+collection) raise `KeychainLockedError` carrying unlock guidance; anything
+else keeps the raw stderr in a plain `KeychainError`. The daemon maps the
+locked type to a distinct `keychain_locked` error code; the UI renders it
+as a banner whose copy names the retry (`Store key again` — the wizard
+keeps the typed key).
+
+**Rationale:** A locked login keychain after a macOS password change is a
+real first-run killer (observed on an AD-bound Mac), and the raw
+`security` stderr ("user name or passphrase not correct") reads like the
+user mistyped something. Classification belongs at the CLI boundary —
+that's where the stderr is — and in one function, so a new marker is one
+line. The retry path is the wizard's own field retention plus named copy,
+not new plumbing: the banner body tells the user their key is still typed
+and which button retries.

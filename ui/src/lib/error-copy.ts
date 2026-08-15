@@ -155,6 +155,16 @@ export function sessionStateCopy(state: string, reason: string | null): NoticeSp
 
 /** Copy for a daemon `error` event: code + daemon-authored message (already human). */
 export function daemonErrorCopy(code: string, message: string): NoticeSpec {
+	if (code === "keychain_locked") {
+		// TD-1105: locked or password-drifted login keychain. The daemon's
+		// message already carries the unlock steps; the wizard keeps the
+		// typed key, so Store again is the retry once it's unlocked.
+		return {
+			severity: "banner",
+			title: "Keychain is locked",
+			body: `${message} The key you typed is still in the wizard — click Store key again once it's unlocked.`,
+		};
+	}
 	if (code === "session_not_running") {
 		// TD-1711: the send targeted a dead session (tombstone or terminal).
 		// The daemon's message already names the fix (start a new session,

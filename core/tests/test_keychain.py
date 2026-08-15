@@ -5,7 +5,9 @@ Uses a mock backend so tests are deterministic and offline.
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from typing import Any
 
 import pytest
 
@@ -14,6 +16,9 @@ import tstd.keychain_windows as keychain_windows  # must import off-Windows
 from tstd.keychain import (
     KeychainBackend,
     KeychainError,
+    KeychainLockedError,
+    MacOSKeychain,
+    _classify_cli_failure,
     delete_api_key,
     get_api_key,
     has_keychain_backend,
@@ -226,3 +231,46 @@ class TestBackendDispatch:
         monkeypatch.setattr(sys, "platform", "plan9")
         with pytest.raises(KeychainError, match="Unsupported platform"):
             kc_mod._detect_backend()
+
+
+class TestLockedClassification:
+    """TD-1105: locked/drifted keychain stderr maps to KeychainLockedError
+    with unlock guidance instead of raw CLI output."""
+
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            # The observed AD-drift failure (2026-08-14).
+            "security: SecKeychainItemCreateFromContent: "
+            "The user name or passphrase you entered is not correct.",
+            "security: SecItemAdd: User interaction is not allowed.",
+            "secret-tool: Cannot create an item in a locked collection",
+        ],
+    )
+    def test_locked_markers_classify(self, stderr: str) -> None:
+        err = _classify_cli_failure(stderr, "Failed to store keychain secret")
+        assert isinstance(err, KeychainLockedError)
+        assert "Keychain Access" in str(err)
+        assert stderr not in str(err)  # guidance replaces raw stderr
+
+    def test_other_failures_keep_the_raw_stderr(self) -> None:
+        err = _classify_cli_failure("weird backend exploded", "Failed to store keychain secret")
+        assert type(err) is KeychainError
+        assert "weird backend exploded" in str(err)
+
+    async def test_macos_store_raises_locked_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class _Proc:
+            returncode = 1
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"", (
+                    b"security: SecKeychainItemCreateFromContent: "
+                    b"The user name or passphrase you entered is not correct."
+                )
+
+        async def _fake_exec(*args: Any, **kwargs: Any) -> _Proc:
+            return _Proc()
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+        with pytest.raises(KeychainLockedError):
+            await MacOSKeychain().set_secret("tst-openrouter", "sk-x")
