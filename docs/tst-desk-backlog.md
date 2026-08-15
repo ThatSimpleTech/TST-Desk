@@ -2013,8 +2013,8 @@ create it — bind-time summaries and refreshes map it to no-turn. The Working
 shimmer and the 25s watchdog now arm exclusively on a local send, which is
 the only wait the user can actually be watching.
 
-### TD-1715 — Archive and delete sessions from the rail
-**Size:** 2 · **Depends on:** TD-1701
+### TD-1715 — Archive, delete, and re-project sessions from the rail
+**Size:** 3 · **Depends on:** TD-1701
 
 **Acceptance criteria:**
 - [ ] Rail session rows offer Archive (hidden from the default list;
@@ -2023,14 +2023,50 @@ the only wait the user can actually be watching.
       `session_list`
 - [ ] Archive state persists in the daemon's session metadata and survives
       restart; archived sessions never win auto-bind
-- [ ] Archiving or deleting the bound session moves the pane to the next live
-      session or the empty state — never a stranded composer
-- [ ] A session with an in-flight turn refuses Delete with copy (Archive is
-      allowed and does not cancel the turn)
+- [ ] Move to project: a rail affordance reassigns the session's
+      `workspace_path` to another known workspace (daemon validates the
+      target and updates durable metadata; the event log moves with the
+      session)
+- [ ] Archiving, deleting, or moving the bound session moves the pane to the
+      next live session or the empty state — never a stranded composer
+- [ ] A session with an in-flight turn refuses Delete and Move with copy
+      (Archive is allowed and does not cancel the turn)
 
-**Notes:** user ask 2026-08-14 ("we should have the option to delete or
-archive the older sessions"). Rename/star stay deferred to the v0.3 cowork
-parity epic; this is the lifecycle-hygiene slice only.
+**Notes:** user ask 2026-08-14/15 ("option to delete or archive the older
+sessions … or to regroup into another project"). Rename/star stay deferred
+to the v0.3 cowork parity epic. Move-to-project reassigns the session's
+working context — the agent's cwd and boundary root change on the next
+turn — so the copy must say that plainly; if the reassignment proves deep,
+split it into its own story.
+
+### TD-1716 — Resume healing: survive webview suspension
+**Size:** 2 · **Depends on:** TD-1713
+
+**Acceptance criteria:**
+- [ ] On `visibilitychange` → visible (and window focus), the client
+      unconditionally re-attaches every followed session at `lastSeq+1` — the
+      daemon replay closes whatever gap the suspension caused; no user
+      action required
+- [ ] Daemon emits an application-level `ping` event (no session, no seq)
+      every ~15s; on resume, a client that believes it is connected but has
+      seen no frame (ping or event) for >30s treats the socket as a zombie:
+      force close → existing reconnect path → re-attach replays the miss
+- [ ] The first-token watchdog re-evaluates from wall-clock on resume: an
+      `awaitingSince` older than the stall threshold flips to the honest
+      copy immediately instead of waiting for a coalesced timer
+- [ ] Regression test (client-level, fake timers): suspend = drop all
+      frames + freeze timers; resume → re-attach issued, replay applied,
+      watchdog state honest
+
+**Notes:** root-caused 2026-08-15 (the 20-minute "Whittling…"): the daemon
+answered two turns into a healthy, never-closed socket while the WKWebView's
+JS was suspended — timers dead (the 25s watchdog never fired), socket events
+queued at the OS, UI frozen mid-frame. macOS App Nap/occluded-window
+suspension is legitimate power management; do NOT fight it
+(NSAppSleepDisabled et al. rejected) — heal on resume instead. Transport
+ping/pong cannot detect this: the network stack answers those while JS is
+suspended; only an application-level frame that JS must process proves the
+client is live. The event-log replay makes healing lossless by design.
 
 ---
 
@@ -2073,8 +2109,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
 | M2 The window | E10–E12 | 16 | 53 |
-| M3 Shippable | E13–E17 | 35 | 102 |
-| **Total v0.1** | **17** | **101** | **313** |
+| M3 Shippable | E13–E17 | 36 | 105 |
+| **Total v0.1** | **17** | **102** | **316** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
