@@ -11,6 +11,7 @@
 	import { ws } from "../../connection-status.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
 	import { greetingForHour, SUGGESTIONS } from "../../greeting";
+	import { workingVerb } from "../../working-flavor";
 	import Composer from "./Composer.svelte";
 	import MessageList from "./MessageList.svelte";
 
@@ -26,6 +27,19 @@
 	// The draft lives here so chips insert text without touching the
 	// composer's internals — insert, never auto-send.
 	let draft = $state("");
+
+	// Working-line clock (TD-1713): ticks only while a first-token wait is in
+	// flight, so the verb rotation and elapsed readout cost nothing at rest.
+	let now = $state(Date.now());
+	$effect(() => {
+		if (!chat.awaitingFirstToken || chat.awaitingSince === null) return;
+		now = Date.now();
+		const tick = setInterval(() => {
+			now = Date.now();
+		}, 500);
+		return () => clearInterval(tick);
+	});
+	const waitElapsedMs = $derived(chat.awaitingSince === null ? 0 : Math.max(0, now - chat.awaitingSince));
 </script>
 
 <div class="chat-pane">
@@ -33,13 +47,19 @@
 		{#if chat.messages.length === 0}
 			<div class="empty" aria-label="Getting started">
 				<p class="greeting">{greeting}.</p>
-				<div class="chips" role="group" aria-label="Suggestions">
-					{#each SUGGESTIONS as suggestion (suggestion)}
-						<button class="chip" type="button" onclick={() => (draft = suggestion)}>
-							{suggestion}
-						</button>
-					{/each}
-				</div>
+				{#if chat.sessionId === null}
+					<!-- TD-1711: auto-bind refuses dead sessions, so a restart can
+					     leave nothing live to bind. Point at the escape. -->
+					<p class="pointer">Start a new session from the rail to begin.</p>
+				{:else}
+					<div class="chips" role="group" aria-label="Suggestions">
+						{#each SUGGESTIONS as suggestion (suggestion)}
+							<button class="chip" type="button" onclick={() => (draft = suggestion)}>
+								{suggestion}
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 		{:else}
 			<MessageList
@@ -51,15 +71,22 @@
 		<!-- TD-1607: fixed-height slot — the shimmer and the duration line
 		     swap without ever nudging the composer. -->
 		<div class="turn-status" aria-live="polite">
-			{#if chat.awaitingFirstToken}
-				<span class="shimmer">Working…</span>
+			{#if chat.turnStalled}
+				<!-- TD-1713: 25s with no first token — stop shimmering, say what
+				     we know. Cancel stays live below; the first delta recovers this. -->
+				<span class="stalled">No response yet — the model may be slow or unreachable.</span>
+			{:else if chat.awaitingFirstToken}
+				<span class="shimmer">{workingVerb(waitElapsedMs)}…</span>
+				{#if waitElapsedMs >= 2000}
+					<span class="elapsed">for {formatTurnDuration(waitElapsedMs / 1000)}</span>
+				{/if}
 			{:else if chat.lastTurnDuration !== null}
 				<span class="duration">Worked for {formatTurnDuration(chat.lastTurnDuration)}</span>
 			{/if}
 		</div>
 		<Composer
 			disabled={!canSend(chat.sessionId, ws.state)}
-			running={showCancel(chat.turnState)}
+			running={showCancel(chat.turnState) || chat.awaitingFirstToken}
 			bind:value={draft}
 			onsubmit={(text) => {
 				sendUserMessage(text);
@@ -107,6 +134,12 @@
 		color: var(--color-ink);
 	}
 
+	.pointer {
+		margin: 0;
+		font-size: var(--text-base);
+		color: var(--color-ink-secondary);
+	}
+
 	.chips {
 		display: flex;
 		flex-wrap: wrap;
@@ -143,6 +176,17 @@
 
 	.duration {
 		color: var(--color-ink-muted);
+	}
+
+	/* The elapsed tail of the Working line — quieter than the verb itself. */
+	.elapsed {
+		margin-left: var(--space-2);
+		color: var(--color-ink-muted);
+	}
+
+	/* Stall honesty (TD-1713): static and secondary — a report, not an alarm. */
+	.stalled {
+		color: var(--color-ink-secondary);
 	}
 
 	/* Warm shimmer sweeping left to right via a moving gradient clipped to

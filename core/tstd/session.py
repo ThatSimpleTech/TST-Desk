@@ -497,6 +497,16 @@ class Session:
 
     # ── User message queue ──────────────────────────────────────────
 
+    @property
+    def pending_user_messages(self) -> int:
+        """Messages enqueued but not yet dequeued by the agent loop.
+
+        Read at dequeue time for the ``turn started`` log (TD-1713) — a
+        user who sent three messages while the loop was busy should see
+        that backlog named in the logs, not just the head one.
+        """
+        return self._user_message_queue.qsize()
+
     async def add_user_message(self, content: str) -> None:
         """Enqueue a user message for the agent loop to process."""
         self._user_message_queue.put_nowait(content)
@@ -524,6 +534,15 @@ class Session:
             "state": self._state,
             "event_count": self.event_log.last_seq,
         }
+
+
+# Terminal states (TD-1711): no outgoing transitions, so nothing will ever
+# consume a user message again — the daemon refuses sends to these rather
+# than enqueueing into the void. Derived from the transition table so the
+# two can never drift.
+TERMINAL_STATES: frozenset[str] = frozenset(
+    state for state, allowed in Session.VALID_TRANSITIONS.items() if not allowed
+)
 
 
 # ── Placeholder loop ───────────────────────────────────────────────────

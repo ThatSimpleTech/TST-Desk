@@ -8,6 +8,7 @@ multi-turn conversation.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -780,4 +781,39 @@ class TestPathScopedRuleActivation:
         activations = [e for e in session.event_log.all_events if isinstance(e, RuleActivated)]
         assert activations == []
         assert "SRC RULES APPLY" in (mock.calls[0].messages[0].content or "")
+        await runner.cancel()
+
+
+# ── Turn observability (TD-1713) ────────────────────────────────────────
+
+
+class TestTurnStartedLogging:
+    async def test_dequeue_logs_turn_started_with_queue_depth(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The loop logs the dequeue itself, not just the post-assembly
+        "turn start" — a stall between the two was invisible (2026-08-14).
+        Depth is post-dequeue: messages the loop still owes the user."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Hi")})
+
+        # Enqueue before the loop starts so the first dequeue has a backlog.
+        await session.add_user_message("one")
+        await session.add_user_message("22")
+
+        with caplog.at_level(logging.INFO, logger="tstd.loop"):
+            runner = await start_loop(session, router, mock, config)
+            await wait_for_turn(session, 2)
+
+        started = [
+            r for r in caplog.records if r.name == "tstd.loop" and r.getMessage() == "turn started"
+        ]
+        assert len(started) == 2
+        assert started[0].session_id == session.id
+        assert started[0].queued_messages == 1  # the second send still waited
+        assert started[0].content_length == 3
+        assert started[1].queued_messages == 0
+
         await runner.cancel()
