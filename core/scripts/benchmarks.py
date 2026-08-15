@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tstd.benchmarks import PENDING, run_all
+from tstd.benchmarks import PENDING, UI_MEASURED, run_all
 
 BASELINES = Path(__file__).resolve().parent.parent / "tests" / "perf_baselines.json"
 
@@ -35,15 +35,28 @@ def main(argv: list[str] | None = None) -> int:
     print(report.render())
 
     if args.record:
+        # UI-measured metrics (TD-1404) are owned by the UI bench — a core
+        # re-baseline preserves their committed values rather than dropping
+        # them.
+        ui_metrics: dict[str, float | None] = {}
+        if BASELINES.exists():
+            prior = json.loads(BASELINES.read_text(encoding="utf-8"))
+            ui_metrics = {name: prior.get("metrics", {}).get(name) for name in UI_MEASURED}
         payload = {
             "recorded_at": time.strftime("%Y-%m-%d"),
             "unit": "seconds (median of repetitions)",
             "threshold": "fail when a fresh median exceeds 3x baseline or baseline + 0.25s",
             "note": "first_token_latency uses an instant mock provider: it measures the "
-            "internal pipeline, not network or model time.",
-            "metrics": {name: value for name, value in report.metrics.items()},
+            "internal pipeline, not network or model time. timeline_render_1000 is measured "
+            "by the UI bench under jsdom: Svelte DOM work, not browser layout or paint.",
+            "metrics": {
+                **{name: value for name, value in report.metrics.items()},
+                **ui_metrics,
+            },
             "pending": PENDING,
         }
+        if UI_MEASURED:
+            payload["ui_measured"] = list(UI_MEASURED)
         BASELINES.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f"\nrecorded → {BASELINES}")
     return 0

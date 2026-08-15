@@ -98,9 +98,18 @@ class TestPathOutsideWorkspace:
         assert decision.decision_class is DecisionClass.C
         assert fired_as(decision, "path-outside-workspace")
 
-    def test_symlink_inside_pointing_outside_is_c(self, tmp_path: Path) -> None:
+    def test_symlink_inside_pointing_outside_is_c(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # A symlink living inside the workspace that points outside resolves
         # outside and must be caught (mirrors TD-602 symlink traversal).
+        #
+        # The request path is workspace-relative and classified from inside
+        # tmp_path: an absolute tmp_path is a drive-letter path on Windows,
+        # where boundary-unsafe-path fires first (TD-1406) and masks the
+        # rule under test.  Relative input pins path-outside-workspace on
+        # every platform.
+        monkeypatch.chdir(tmp_path)
         real_ws = tmp_path / "ws"
         real_ws.mkdir(exist_ok=True)
         outside = tmp_path / "outside.txt"
@@ -109,7 +118,7 @@ class TestPathOutsideWorkspace:
 
         decision = classify(
             boundary(workspace_root=real_ws),
-            req(tool_name="fs_write", writes=(real_ws / "innocent_link.txt",), is_mutation=True),
+            req(tool_name="fs_write", writes=(Path("ws/innocent_link.txt"),), is_mutation=True),
         )
         # The request path lives inside the workspace lexically, but resolves
         # outside; the classifier must resolve symlinks and catch it.

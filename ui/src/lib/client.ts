@@ -36,6 +36,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "tier_state",
   "context_compacted",
   "steering_reloaded",
+  "rule_activated",
   "tier_switched",
   "instruction_stack",
   "session_list",
@@ -149,10 +150,24 @@ export class ProtocolClient {
   /**
    * Send a client→daemon message. Returns false (and sends nothing) unless
    * the socket is open and handshaken, so callers can decide whether an
-   * optimistic local update is warranted.
+   * optimistic local update is warranted (TD-1007).
+   *
+   * Guarding on `state === "connected"` is the unambiguous handshake signal:
+   * `handshake` is "idle" both before the socket opens and after the ack,
+   * and it stays "idle" across a reconnect while `this.socket` still points
+   * at the closed socket — so a `handshake`-only guard would throw on a dead
+   * socket mid-reconnect.
    */
   send(msg: ClientMessageUnion): boolean {
-    if (!this.socket || this.handshake !== "idle") return false;
+    if (!this.socket || this.state !== "connected") return false;
+    // Attach-before-send invariant (TD-1713): the daemon fans events out only
+    // to attached connections, so a user_message sent unattached is consumed
+    // with nothing ever streaming back — the silent stall of 2026-08-14.
+    // Attach on the same socket first; the daemon processes frames in order,
+    // so the attach (and its replay) lands before the message is enqueued.
+    if (msg.type === "user_message" && !this.attachedSessions.has(msg.session_id)) {
+      this.attach(msg.session_id);
+    }
     this.socket.send(JSON.stringify(msg));
     return true;
   }
@@ -160,6 +175,12 @@ export class ProtocolClient {
   /** Open a workspace directory; the daemon answers with session_state. */
   openWorkspace(path: string): void {
     this.send({ type: "open_workspace", path });
+  }
+
+  /** Create a fresh session in an existing session's workspace (TD-1701).
+   *  The daemon answers with the new session's first event (session_state). */
+  newSession(anchorSessionId: string): boolean {
+    return this.send({ type: "new_session", session_id: anchorSessionId });
   }
 
   /** Pin a session's model tier (TD-1006). The daemon acks with tier_state. */
@@ -281,14 +302,17 @@ export class ProtocolClient {
     // anything we missed while offline.
     if (type === "hello_ack") {
       this.handshake = "idle";
-      if (this.hasConnectedOnce) {
+      const reconnecting = this.hasConnectedOnce;
+      this.hasConnectedOnce = true;
+      this.reconnectAttempt = 0;
+      // Mark connected before re-attaching: `send` guards on the connected
+      // state, and the re-attach below must pass that guard (see send()).
+      this.setState("connected");
+      if (reconnecting) {
         for (const sessionId of this.attachedSessions) {
           this.sendAttach(sessionId, this.lastSeq(sessionId) + 1);
         }
       }
-      this.hasConnectedOnce = true;
-      this.reconnectAttempt = 0;
-      this.setState("connected");
       return;
     }
 

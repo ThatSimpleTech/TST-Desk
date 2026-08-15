@@ -19,6 +19,7 @@ import fnmatch
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -273,6 +274,11 @@ def load_policy(workspace: str | Path) -> PolicyConfig:
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML in {path}: {e}") from e
 
+    # An empty or comment-only file (e.g. the scaffolded template, TD-1103)
+    # means "no rules", not an error.
+    if data is None:
+        return PolicyConfig()
+
     if not isinstance(data, dict):
         raise ConfigError(f"{path} must contain a YAML mapping at the top level")
 
@@ -299,11 +305,86 @@ def save_policy(workspace: str | Path, config: PolicyConfig) -> None:
             loaded: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as e:
             raise ConfigError(f"Invalid YAML in {path}: {e}") from e
+        if loaded is None:
+            loaded = {}  # empty or comment-only file — start sections fresh
         if not isinstance(loaded, dict):
             raise ConfigError(f"{path} must contain a YAML mapping at the top level")
         existing = loaded
 
     existing["policy"] = config.model_dump(mode="json")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".config.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump(existing, f, sort_keys=False)
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
+# ── External-import approvals (TD-505) ─────────────────────────────────
+
+
+def load_approved_imports(workspace: str | Path) -> frozenset[Path]:
+    """Load the ``approved_external_imports`` allowlist from ``.tst/config.yaml``.
+
+    Returns the absolute paths of external imports the user has approved
+    for *workspace*.  Empty when the file or key is absent.  Entries are
+    strings; each is expanded (``~``) and resolved so it compares cleanly
+    against the assembler's resolved import paths.
+
+    Raises:
+        ConfigError: If the file is invalid YAML, not a mapping, or the
+            key is not a list of non-empty strings.
+    """
+    path = _config_path(workspace)
+    if not path.exists():
+        return frozenset()
+    try:
+        data: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ConfigError(f"Invalid YAML in {path}: {e}") from e
+    # An empty or comment-only file (the TD-1103 scaffold) means no approvals.
+    if data is None:
+        return frozenset()
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
+
+    raw: Any = data.get("approved_external_imports", [])
+    if not isinstance(raw, list):
+        raise ConfigError(f"Invalid approved_external_imports in {path}: expected a list")
+
+    result: set[Path] = set()
+    for entry in raw:
+        if not isinstance(entry, str) or not entry.strip():
+            raise ConfigError(f"Invalid approved_external_imports entry in {path}: {entry!r}")
+        result.add(Path(entry).expanduser().resolve())
+    return frozenset(result)
+
+
+def save_approved_imports(workspace: str | Path, paths: Iterable[Path]) -> None:
+    """Write the ``approved_external_imports`` allowlist (TD-505).
+
+    Section-preserving like :func:`save_policy`: only this one key is
+    touched; ``policy``, ``boundary``, and ``caps`` pass through.  Atomic
+    write (temp file + replace).
+    """
+    path = _config_path(workspace)
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            loaded: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as e:
+            raise ConfigError(f"Invalid YAML in {path}: {e}") from e
+        if loaded is None:
+            loaded = {}  # empty or comment-only file — start sections fresh
+        if not isinstance(loaded, dict):
+            raise ConfigError(f"{path} must contain a YAML mapping at the top level")
+        existing = loaded
+
+    existing["approved_external_imports"] = sorted(str(p) for p in paths)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".config.", suffix=".tmp")

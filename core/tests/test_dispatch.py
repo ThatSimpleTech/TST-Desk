@@ -22,6 +22,7 @@ from tstd.protocol import TurnComplete
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
 from tstd.tools import Tool, ToolDispatcher, ToolRegistry
+from tstd.tools.boundary import PathGuard
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -648,3 +649,102 @@ class TestWithoutDispatcher:
         assert len(tool_results) == 0
 
         await runner.cancel()
+
+
+# ── Touch-tracking (TD-503) ────────────────────────────────────────────
+
+
+def _make_touch_dispatcher(ws: Path) -> ToolDispatcher:
+    """A dispatcher with a fake path-bearing read tool over a real workspace."""
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            name="fake_read",
+            description="Reads a path",
+            parameters={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            side_effect_class="auto",
+            parallel_safe=True,
+            path_fields=("path",),
+        )
+    )
+    return attach_auto_approver(
+        ToolDispatcher(
+            registry,
+            classifier=make_classifier(str(ws)),
+            path_guard=PathGuard(Boundary(workspace_root=ws)),
+            workspace=ws,
+        )
+    )
+
+
+class TestTouchTracking:
+    """Dispatch records a successful call's path targets on the session so
+    path-scoped rules can activate at the next assembly.  Raw relative
+    paths resolve against the process CWD (the guard has no notion of
+    relative-to-workspace), so these chdir into the workspace — the verdict
+    then pins identically on every platform."""
+
+    async def test_success_records_workspace_relative_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ws = tmp_path / "ws"
+        (ws / "src").mkdir(parents=True)
+        (ws / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.chdir(ws)
+        session = Session(str(ws))
+        dispatcher = _make_touch_dispatcher(ws)
+
+        async def _read(**_kwargs: object) -> str:
+            return "file contents"
+
+        dispatcher.register_handler("fake_read", _read)
+        result = await dispatcher.dispatch(
+            "c1", "fake_read", {"path": "src/app.py"}, session=session
+        )
+        assert result.status == "success"
+        assert session.touched_paths == {"src/app.py"}
+
+    async def test_boundary_refusal_records_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ws = tmp_path / "ws"
+        ws.mkdir(parents=True)
+        (tmp_path / "secret.txt").write_text("shh\n", encoding="utf-8")
+        monkeypatch.chdir(ws)
+        session = Session(str(ws))
+        dispatcher = _make_touch_dispatcher(ws)
+
+        async def _must_not_run(**_kwargs: object) -> str:
+            raise AssertionError("handler ran despite the refusal")
+
+        dispatcher.register_handler("fake_read", _must_not_run)
+        result = await dispatcher.dispatch(
+            "c2", "fake_read", {"path": "../secret.txt"}, session=session
+        )
+        assert result.status == "error"
+        assert result.error_code == "boundary_refusal"
+        assert session.touched_paths == set()
+
+    async def test_handler_error_records_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ws = tmp_path / "ws"
+        ws.mkdir(parents=True)
+        monkeypatch.chdir(ws)
+        session = Session(str(ws))
+        dispatcher = _make_touch_dispatcher(ws)
+
+        async def _fails(**_kwargs: object) -> str:
+            raise RuntimeError("disk on fire")
+
+        dispatcher.register_handler("fake_read", _fails)
+        result = await dispatcher.dispatch(
+            "c3", "fake_read", {"path": "notes.txt"}, session=session
+        )
+        assert result.status == "error"
+        assert result.error_code == "handler_error"
+        assert session.touched_paths == set()

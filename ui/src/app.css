@@ -1,5 +1,24 @@
 @import './lib/tokens.css';
 
+/* Vendored Source Serif 4 (TD-1602) — latin, 400/500 only, SIL OFL 1.1
+   (license: /fonts/OFL.txt). font-display: swap so UI text never blocks
+   on the serif; Georgia covers the fallback window. */
+@font-face {
+  font-family: 'Source Serif 4';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/source-serif-4-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Source Serif 4';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/source-serif-4-latin-500-normal.woff2') format('woff2');
+}
+
 :root {
   /* Native widgets (scrollbars, form controls) follow the OS theme. */
   color-scheme: light dark;
@@ -17,8 +36,8 @@ html {
   font-family: var(--font-family);
   font-size: var(--text-base);
   line-height: var(--leading-normal);
-  color: var(--color-text);
-  background: var(--color-bg);
+  color: var(--color-ink);
+  background: var(--color-ground);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

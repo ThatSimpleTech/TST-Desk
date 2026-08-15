@@ -9,5 +9,11 @@ export default defineConfig({
 	test: {
 		include: ['src/**/*.test.ts'],
 		environment: 'node'
+	},
+	// Test-mode component mounting (TD-1404 bench) needs svelte's client
+	// build: the default node resolution picks the server build, whose
+	// mount() throws. Vitest-only file — the app build reads vite.config.
+	resolve: {
+		conditions: ['browser']
 	}
 });

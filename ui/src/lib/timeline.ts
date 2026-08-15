@@ -25,6 +25,7 @@ export type EntryKind =
   | "tool_call"
   | "tool_result"
   | "decision"
+  | "approval"
   | "tier_switch"
   | "compaction"
   | "steering_reload"
@@ -85,14 +86,37 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
         kind: "tool_result",
         seq: event.seq,
         toolCallId: event.tool_call_id,
-        title: event.status === "success" ? "Result" : "Error",
+        title:
+          event.error_code === "approval_denied"
+            ? "Denied"
+            : event.status === "success"
+              ? "Result"
+              : "Error",
         preview: truncate(event.output),
         details: {
           status: event.status,
+          error_code: event.error_code ?? null,
           output: event.output,
           truncated: event.truncated,
           // fs_write/fs_edit results carry a diff for syntax highlighting (AC #3)
           diff: event.diff ?? null,
+        },
+      };
+    case "approval_request":
+      return {
+        id: `approval:${event.seq}`,
+        kind: "approval",
+        seq: event.seq,
+        toolCallId: event.tool_call_id,
+        title: event.summary,
+        preview: `${event.tool_name} · Class ${event.decision_class}`,
+        details: {
+          tool_name: event.tool_name,
+          arguments: event.arguments,
+          decision_class: event.decision_class,
+          reason: event.reason,
+          // Flipped to "approved"/"denied" when the resolving tool_result lands.
+          status: "pending",
         },
       };
     case "decision_logged":
@@ -146,6 +170,18 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
           source_count: event.source_count,
         },
       };
+    case "rule_activated":
+      return {
+        id: `rule_activated:${event.seq}`,
+        kind: "steering_reload",
+        seq: event.seq,
+        title: "Rule activated",
+        preview: event.rule_path,
+        details: {
+          rule_path: event.rule_path,
+          session_id: event.session_id,
+        },
+      };
     case "error":
       return {
         id: `error:${event.seq}`,
@@ -157,8 +193,8 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
       };
     default:
       // assistant_delta, session_state, turn_complete, cost_update,
-      // boundary_update, approval_request, checkpoint_notice, ready,
-      // instruction_stack, session_list — not activity entries.
+      // boundary_update, checkpoint_notice, ready, instruction_stack,
+      // session_list — not activity entries.
       // shell_output is merged into its parent tool_call, not shown alone.
       return null;
   }
@@ -192,6 +228,15 @@ export class Timeline {
     if (entry !== null) {
       this._entries.push(entry);
     }
+    // A tool_result resolves the pending approval for its tool call: reflect
+    // the choice on the approval entry so resolved cards show what was chosen
+    // (TD-1007 AC #6).
+    if (event.type === "tool_result") {
+      const approval = this._findApproval(event.tool_call_id);
+      if (approval !== null) {
+        approval.details.status = event.error_code === "approval_denied" ? "denied" : "approved";
+      }
+    }
   }
 
   /** Push a batch in one pass (e.g. a replayed attach window). */
@@ -221,6 +266,15 @@ export class Timeline {
   private _findToolCall(toolCallId: string): TimelineEntry | null {
     for (let i = this._entries.length - 1; i >= 0; i--) {
       if (this._entries[i].toolCallId === toolCallId) return this._entries[i];
+    }
+    return null;
+  }
+
+  /** Most recent approval entry for the given tool_call_id, if any. */
+  private _findApproval(toolCallId: string): TimelineEntry | null {
+    for (let i = this._entries.length - 1; i >= 0; i--) {
+      const e = this._entries[i];
+      if (e.kind === "approval" && e.toolCallId === toolCallId) return e;
     }
     return null;
   }

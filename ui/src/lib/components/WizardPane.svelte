@@ -16,6 +16,7 @@
 		chooseWorkspace,
 		finish,
 	} from '../onboarding.svelte.js';
+	import Icon from './Icon.svelte';
 
 	let keyInput = $state('');
 
@@ -113,7 +114,9 @@
 							onclick={() => choosePreset(name)}
 						>
 							<span class="preset-name">{name}</span>
-							{#if name === onboarding.activePreset}<span class="preset-check">✓</span>{/if}
+							{#if name === onboarding.activePreset}
+								<span class="preset-check"><Icon name="check" size={14} /></span>
+							{/if}
 						</button>
 					{/each}
 				</div>
@@ -188,8 +191,10 @@
 
 	.step-title {
 		margin: 0;
+		font-family: var(--font-display);
 		font-size: var(--text-xl);
-		font-weight: var(--weight-semibold);
+		font-weight: var(--weight-medium);
+		letter-spacing: var(--tracking-display);
 		color: var(--color-text);
 	}
 
@@ -201,7 +206,7 @@
 	}
 
 	.mono {
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		user-select: all;
 	}
@@ -220,7 +225,7 @@
 
 	.field-input {
 		font-size: var(--text-sm);
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono);
 		padding: var(--space-2) var(--space-3);
 		border: var(--border-width) solid var(--color-border);
 		border-radius: var(--radius-md);
@@ -311,7 +316,7 @@
 	}
 
 	.preset-check {
+		display: inline-flex;
 		color: var(--color-accent);
-		font-weight: var(--weight-bold);
 	}
 </style>

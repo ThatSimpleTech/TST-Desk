@@ -203,6 +203,20 @@ class CostTracker:
         """Total cached prompt tokens in the current turn."""
         return sum(c.cached_prompt_tokens for c in self._turn_calls)
 
+    @property
+    def last_cached_prompt_tokens(self) -> int | None:
+        """Cached prompt tokens on the most recent main-loop call.
+
+        ``None`` before the first call — cache state is a provider-side
+        fact, unknown until one response comes back.  Read across turns
+        (not reset by ``begin_turn``): the inspector's "currently cached"
+        signal is about the last observed call (TD-1201).  Classifier
+        calls are excluded — they don't carry the steering block.
+        """
+        if not self._calls:
+            return None
+        return self._calls[-1].cached_prompt_tokens
+
     def turn_uncached_tokens(self) -> int:
         """Total uncached prompt tokens in the current turn."""
         return sum(c.uncached_prompt_tokens for c in self._turn_calls)

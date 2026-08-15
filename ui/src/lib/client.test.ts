@@ -128,6 +128,36 @@ describe("handshake", () => {
   });
 });
 
+describe("send", () => {
+  it("sends a client message on a handshaken socket and reports success", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    expect(h.client.connectionState).toBe("connected");
+
+    const ok = h.client.send({ type: "approve", session_id: "sess-1", tool_call_id: "tc-1" });
+    expect(ok).toBe(true);
+    const sent = JSON.parse(h.sockets[0].sent.at(-1)!);
+    expect(sent).toEqual({ type: "approve", session_id: "sess-1", tool_call_id: "tc-1" });
+  });
+
+  it("returns false and sends nothing when not connected", async () => {
+    const h = buildClient();
+    await h.client.start();
+    // The socket exists but hello_ack never arrived — not handshaken.
+    h.sockets[0].onopen?.();
+    const ok = h.client.send({
+      type: "deny",
+      session_id: "sess-1",
+      tool_call_id: "tc-1",
+      reason: "not safe",
+    });
+    expect(ok).toBe(false);
+    // Only the hello handshake frame is on the wire.
+    expect(h.sockets[0].sent.length).toBe(1);
+  });
+});
+
 describe("reconnect and backoff", () => {
   it("reconnects after an unexpected close and backs off exponentially", async () => {
     const h = buildClient({ baseBackoffMs: 5, maxBackoffMs: 20 });
@@ -282,6 +312,76 @@ describe("send (TD-1004)", () => {
     const wireCount = h.sockets[0].sent.length;
     expect(h.client.send({ type: "cancel", session_id: "s1" })).toBe(false);
     expect(h.sockets[0].sent.length).toBe(wireCount);
+    h.client.stop();
+  });
+});
+
+describe("attach-before-send (TD-1713)", () => {
+  // 2026-08-14: a user_message reached the daemon for a session this client
+  // was not attached to; events fan out only to attached connections, so the
+  // UI waited forever. The client now attaches first, on the same socket.
+  it("attaches before sending user_message to a session it is not following", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+
+    const ok = h.client.send({ type: "user_message", session_id: "s2", content: "hello" });
+    expect(ok).toBe(true);
+
+    const frames = h.sockets[0].sent.map((raw) => JSON.parse(raw));
+    const attachIdx = frames.findIndex((m) => m.type === "attach");
+    const msgIdx = frames.findIndex((m) => m.type === "user_message");
+    expect(attachIdx).toBeGreaterThanOrEqual(0);
+    expect(attachIdx).toBeLessThan(msgIdx);
+    expect(frames[attachIdx]).toEqual({ type: "attach", session_id: "s2", from_seq: 1 });
+    expect(frames[msgIdx]).toEqual({ type: "user_message", session_id: "s2", content: "hello" });
+    h.client.stop();
+  });
+
+  it("does not double-attach when the session is already followed", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.attach("s1");
+    h.sockets[0].sent.length = 0;
+
+    h.client.send({ type: "user_message", session_id: "s1", content: "hi" });
+    const frames = h.sockets[0].sent.map((raw) => JSON.parse(raw));
+    expect(frames).toEqual([{ type: "user_message", session_id: "s1", content: "hi" }]);
+    h.client.stop();
+  });
+
+  it("a refused send (not connected) does not silently register an attach", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.sockets[0].onopen?.(); // hello out, no ack yet
+
+    expect(h.client.send({ type: "user_message", session_id: "s2", content: "hi" })).toBe(false);
+    expect(h.sockets[0].sent.length).toBe(1); // hello only — no attach, no message
+
+    // After the handshake the retry must still attach first: had the failed
+    // send registered s2, this send would skip the attach and re-open the gap.
+    h.servers[0].ack();
+    h.client.send({ type: "user_message", session_id: "s2", content: "hi" });
+    const frames = h.sockets[0].sent.map((raw) => JSON.parse(raw));
+    expect(frames[1]).toEqual({ type: "attach", session_id: "s2", from_seq: 1 });
+    expect(frames[2]).toEqual({ type: "user_message", session_id: "s2", content: "hi" });
+    h.client.stop();
+  });
+
+  it("an auto-attached session re-attaches after a reconnect", async () => {
+    const h = buildClient({ baseBackoffMs: 5, maxBackoffMs: 8 });
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.send({ type: "user_message", session_id: "s2", content: "hello" });
+
+    h.servers[0].drop();
+    await vi.advanceTimersByTimeAsync(5);
+    const fresh = h.sockets[1];
+    fresh.onopen?.();
+    h.servers[1].ack();
+    const frames = fresh.sent.map((raw) => JSON.parse(raw));
+    expect(frames.some((m) => m.type === "attach" && m.session_id === "s2")).toBe(true);
     h.client.stop();
   });
 });

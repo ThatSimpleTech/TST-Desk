@@ -404,3 +404,30 @@ class TestSessionSurvival:
 
         # Clean up
         await runner.cancel()
+
+
+# ── TD-503: touch-tracking ────────────────────────────────────────────
+
+
+class TestRecordTouched:
+    def test_relative_paths_kept_as_posix(self) -> None:
+        session = Session("/tmp/ws")
+        session.record_touched(["src/app.py", "docs/notes.md"])
+        assert session.touched_paths == {"src/app.py", "docs/notes.md"}
+
+    def test_absolute_inside_workspace_relativized(self, tmp_path) -> None:
+        session = Session(str(tmp_path))
+        session.record_touched([str(tmp_path / "src" / "app.py")])
+        assert session.touched_paths == {"src/app.py"}
+
+    def test_absolute_outside_workspace_dropped(self, tmp_path) -> None:
+        session = Session(str(tmp_path))
+        session.record_touched(["/etc/passwd"])
+        assert session.touched_paths == set()
+
+    def test_empty_and_repeat_records_idempotent(self, tmp_path) -> None:
+        session = Session(str(tmp_path))
+        session.record_touched([])
+        session.record_touched(["a.txt"])
+        session.record_touched(["a.txt"])
+        assert session.touched_paths == {"a.txt"}

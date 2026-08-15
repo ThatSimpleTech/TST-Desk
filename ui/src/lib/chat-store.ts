@@ -19,12 +19,29 @@ export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   complete: boolean;
+  /** Epoch ms when the client first saw the message (send echo or first
+   *  delta). Replayed history stamps attach time — display-only (TD-1606). */
+  at: number;
 }
 
 export interface ChatState {
   sessionId: string | null;
   turnState: SessionState["state"] | null;
   messages: ChatMessage[];
+  /** Set between a user send and the first assistant_delta — the "Working…"
+   *  shimmer's window (TD-1607). Also true while attached to a session the
+   *  daemon reports as running but no delta has arrived yet. */
+  awaitingFirstToken: boolean;
+  /** First-token watchdog tripped (TD-1713): 25s without a delta or a
+   *  terminal turn event. The Working shimmer swaps to honest "no response
+   *  yet" copy until the first delta recovers it. */
+  turnStalled: boolean;
+  /** Epoch ms when the current first-token wait began — the basis of the
+   *  Working line's elapsed counter (TD-1713). Null when not waiting. */
+  awaitingSince: number | null;
+  /** Seconds the last turn took, as measured by the daemon on turn_complete.
+   *  The UI never times turns itself (AGENTS §6). Cleared on the next send. */
+  lastTurnDuration: number | null;
 }
 
 export interface ChatDeps {
@@ -37,13 +54,26 @@ export interface ChatStore {
   state: ChatState;
   applyEvent(event: DaemonEventUnion): void;
   sendUserMessage(text: string): boolean;
+  retryLastUserMessage(): boolean;
   cancelTurn(): boolean;
+  /** Attach the pane to a session chosen in the rail (TD-1701): detach the
+   *  current one, clear the pane, attach — the replay rebuilds history
+   *  through the same reducer as live events. No-op for the attached id. */
+  selectSession(sessionId: string, turnState: SessionState["state"] | null): void;
   refreshSessions(): boolean;
   dispose(): void;
 }
 
 export function createChatState(): ChatState {
-  return { sessionId: null, turnState: null, messages: [] };
+  return {
+    sessionId: null,
+    turnState: null,
+    messages: [],
+    awaitingFirstToken: false,
+    turnStalled: false,
+    awaitingSince: null,
+    lastTurnDuration: null,
+  };
 }
 
 /** Enter submits, Shift+Enter newlines — the composer's only key rule. */
@@ -62,6 +92,22 @@ export function canSend(sessionId: string | null, wsState: string): boolean {
   return sessionId !== null && wsState === "connected";
 }
 
+/** Turn-duration line (TD-1607): a sub-second turn still reads "1s" — "0s"
+ *  would claim work didn't happen. */
+export function formatTurnDuration(seconds: number): string {
+  const total = Math.max(1, Math.round(seconds));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return `${minutes}m ${rest}s`;
+}
+
+/** First-token watchdog (TD-1713): a wait this long with no assistant_delta
+ *  and no terminal turn event stops claiming "Working" and says so. Long
+ *  enough that a cold model on a big prompt stays unflagged; short enough
+ *  that the 2026-08-14 silent stall could not sit an hour unremarked. */
+export const STALL_TIMEOUT_MS = 25_000;
+
 /** Terminal turn states seal any in-flight assistant message so it does not
  *  show a streaming cursor forever. */
 function isTerminal(state: SessionState["state"]): boolean {
@@ -76,6 +122,59 @@ function isTerminal(state: SessionState["state"]): boolean {
 export function createChatStore(deps: ChatDeps, state: ChatState = createChatState()): ChatStore {
   let nextId = 0;
 
+  // First-token watchdog (TD-1713). One outstanding timer per store; every
+  // transition out of the first-token wait clears it.
+  let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function armStallWatchdog(): void {
+    if (stallTimer !== null) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      stallTimer = null;
+      if (state.awaitingFirstToken) state.turnStalled = true;
+    }, STALL_TIMEOUT_MS);
+    // Under node/vitest the timer is a Timeout object; unref so a pending
+    // watchdog never holds a test process open. Browsers return a number.
+    (stallTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  /** Begin waiting if not already: stamps the elapsed basis and arms the
+   *  watchdog. A wait already in progress keeps its original stamp — a
+   *  replayed "running" must not restart the user's clock. */
+  function startFirstTokenWait(): void {
+    if (state.awaitingFirstToken) return;
+    state.awaitingFirstToken = true;
+    state.turnStalled = false;
+    state.awaitingSince = Date.now();
+    armStallWatchdog();
+  }
+
+  function endFirstTokenWait(): void {
+    state.awaitingFirstToken = false;
+    state.turnStalled = false;
+    state.awaitingSince = null;
+    if (stallTimer !== null) {
+      clearTimeout(stallTimer);
+      stallTimer = null;
+    }
+  }
+
+  // Closure-level so retryLastUserMessage can call it without `this` —
+  // the reactive shell re-exports these methods detached.
+  function sendUserMessageToWire(text: string): boolean {
+    const content = text.trim();
+    if (state.sessionId === null || content === "") return false;
+    const sent = deps.send({ type: "user_message", session_id: state.sessionId, content });
+    if (!sent) return false;
+    nextId += 1;
+    state.messages.push({ id: `m${nextId}`, role: "user", text: content, complete: true, at: Date.now() });
+    // A fresh send restarts the wait and its watchdog even atop one already
+    // in flight — the honest clock is from the latest send.
+    endFirstTokenWait();
+    startFirstTokenWait();
+    state.lastTurnDuration = null;
+    return true;
+  }
+
   function sealInFlightAssistant(): void {
     const last = state.messages[state.messages.length - 1];
     if (last !== undefined && last.role === "assistant" && !last.complete) {
@@ -89,6 +188,12 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     state.sessionId = sessionId;
     state.turnState = turnState;
     state.messages = [];
+    // Attaching to a session mid-turn shows the shimmer until the replayed
+    // (or live) deltas arrive; anything else is at rest. The watchdog arms
+    // here too — an attach that replays nothing for 25s is the same lie.
+    endFirstTokenWait();
+    if (turnState === "running") startFirstTokenWait();
+    state.lastTurnDuration = null;
     if (sessionId !== null) deps.attach(sessionId);
   }
 
@@ -99,6 +204,8 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       switch (event.type) {
         case "assistant_delta": {
           if (event.session_id !== state.sessionId) return;
+          // First token recovers a stalled wait: the model was slow, not gone.
+          endFirstTokenWait();
           const last = state.messages[state.messages.length - 1];
           if (last !== undefined && last.role === "assistant" && !last.complete) {
             // Append in place: the message object keeps its identity so the
@@ -111,6 +218,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
               role: "assistant",
               text: event.delta,
               complete: false,
+              at: Date.now(),
             });
           }
           return;
@@ -118,11 +226,25 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
         case "turn_complete": {
           if (event.session_id !== state.sessionId) return;
           sealInFlightAssistant();
+          endFirstTokenWait();
+          // Daemon-measured seconds — the duration line reports what the wire
+          // said; the client never clocks turns itself (AGENTS §6).
+          state.lastTurnDuration = event.duration;
           return;
         }
         case "session_state": {
           if (event.session_id !== state.sessionId) return;
           state.turnState = event.state;
+          if (event.state === "running") {
+            // A replayed "running" can land after replayed deltas — don't
+            // resurrect the shimmer over an actively streaming message.
+            const last = state.messages[state.messages.length - 1];
+            const stillWaiting = last === undefined || last.role !== "assistant" || last.complete;
+            if (stillWaiting) startFirstTokenWait();
+            else endFirstTokenWait();
+          } else {
+            endFirstTokenWait();
+          }
           if (isTerminal(event.state)) sealInFlightAssistant();
           return;
         }
@@ -139,8 +261,29 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
             if (current !== undefined) state.turnState = current.state;
             return;
           }
-          const newest = summaries.reduce((a, b) => (a.updated_at >= b.updated_at ? a : b));
+          // Auto-bind liveness (TD-1711): a terminal session can never run
+          // another turn (the daemon refuses its user_message with
+          // session_not_running). Binding one would strand the composer on
+          // a corpse — e.g. the post-restart auto-adopt of an interrupted
+          // tombstone observed 2026-08-14. With nothing live, stay unbound:
+          // the empty state points at the rail's New Session.
+          const live = summaries.filter((s) => !isTerminal(s.state));
+          if (live.length === 0) {
+            switchSession(null, null);
+            return;
+          }
+          const newest = live.reduce((a, b) => (a.updated_at >= b.updated_at ? a : b));
           switchSession(newest.session_id, newest.state);
+          return;
+        }
+        case "error": {
+          // The daemon refused a send to a dead session (TD-1711): the turn
+          // will never start, so drop the waiting shimmer immediately — the
+          // toast (notifications, TD-1008) carries the actionable copy.
+          if (event.code !== "session_not_running") return;
+          if (event.session_id != null && event.session_id !== state.sessionId) return;
+          sealInFlightAssistant();
+          endFirstTokenWait();
           return;
         }
         default:
@@ -150,19 +293,33 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       }
     },
 
-    sendUserMessage(text: string): boolean {
-      const content = text.trim();
-      if (state.sessionId === null || content === "") return false;
-      const sent = deps.send({ type: "user_message", session_id: state.sessionId, content });
-      if (!sent) return false;
-      nextId += 1;
-      state.messages.push({ id: `m${nextId}`, role: "user", text: content, complete: true });
-      return true;
+    sendUserMessage: sendUserMessageToWire,
+
+    /** Retry (TD-1606): resend the last user message verbatim over the same
+     *  user_message wire message, refused while a turn is live. Today's
+     *  protocol has no edit/fork, so the resend appends a new row — that
+     *  duplication is the honest record. */
+    retryLastUserMessage(): boolean {
+      if (showCancel(state.turnState)) return false;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const message = state.messages[i];
+        if (message.role === "user") return sendUserMessageToWire(message.text);
+      }
+      return false;
     },
 
     cancelTurn(): boolean {
       if (state.sessionId === null) return false;
-      return deps.send({ type: "cancel", session_id: state.sessionId });
+      const sent = deps.send({ type: "cancel", session_id: state.sessionId });
+      // The user said stop waiting: drop the local wait (and its watchdog)
+      // immediately — the daemon's session_state remains the truth for the
+      // turn itself and lands separately.
+      if (sent) endFirstTokenWait();
+      return sent;
+    },
+
+    selectSession(sessionId: string, turnState: SessionState["state"] | null): void {
+      switchSession(sessionId, turnState);
     },
 
     refreshSessions(): boolean {
@@ -174,6 +331,8 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       state.sessionId = null;
       state.turnState = null;
       state.messages = [];
+      endFirstTokenWait();
+      state.lastTurnDuration = null;
     },
   };
 }

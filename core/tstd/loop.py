@@ -35,14 +35,22 @@ from .autonomy import (
     DecisionLedger,
 )
 from .compaction import maybe_compact
-from .config import ModelConfig
+from .config import ConfigError, ModelConfig
 from .context import PromptAssembler
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
 from .keychain import KeychainError
 from .logging import get_logger
-from .protocol import AssistantDelta, ContextCompacted, SteeringReloaded, TierState, TurnComplete
+from .policy import load_approved_imports, save_approved_imports
+from .protocol import (
+    AssistantDelta,
+    ContextCompacted,
+    RuleActivated,
+    SteeringReloaded,
+    TierState,
+    TurnComplete,
+)
 from .protocol import CheckpointNotice as CheckpointNoticeEvent
 from .protocol import ToolCall as ToolCallEvent
 from .protocol import ToolResult as ToolResultEvent
@@ -175,6 +183,17 @@ async def _emit_turn_complete(
             seq=1,  # overwritten by event log
         )
     )
+
+
+def _rule_rel_path(session: Session, path: Path) -> str:
+    """Render a rule's source path workspace-relative for the timeline."""
+    try:
+        return path.relative_to(Path(session.workspace_path)).as_posix()
+    except ValueError:
+        try:
+            return path.resolve().relative_to(Path(session.workspace_path).resolve()).as_posix()
+        except ValueError:
+            return path.name
 
 
 def _parse_tool_call_stream(
@@ -363,6 +382,7 @@ async def _dispatch_and_append_results(
                 status=r.status,
                 output=r.output,
                 truncated=r.truncated,
+                error_code=r.error_code,
                 diff=r.diff,
                 seq=1,
             )
@@ -431,10 +451,33 @@ async def agent_loop(
     # ── Conversation state ──────────────────────────────────────────
     assembler = prompt_assembler or PromptAssembler(session.workspace_path)
 
+    # External-import approvals (TD-505): approved paths are durable per
+    # workspace; denied paths are session-scoped and not re-prompted.  A
+    # malformed config falls back to an empty allowlist (same
+    # tolerate-with-warning pattern as the daemon's config loaders) rather
+    # than crashing the session at loop start.
+    try:
+        approved_imports: set[Path] = set(load_approved_imports(session.workspace_path))
+    except ConfigError as e:
+        log.warning(
+            "approved-imports config invalid; using empty allowlist",
+            extra={
+                "extra_fields": {
+                    "workspace_path": str(session.workspace_path),
+                    "error": str(e),
+                }
+            },
+        )
+        approved_imports = set()
+    denied_imports: set[Path] = set()
+
     # Conversation messages only; the system message is assembled per
     # turn below (TD-305).
     messages: list[ChatMessage] = []
     tracker = CostTracker(config)
+    # TD-1201: reachable from the daemon so get_instruction_stack can
+    # report provider-observed cache state.
+    session.cost_tracker = tracker
     # TD-902: feed every recorded model call to the audit writer. The
     # sink only enqueues — it can never block or fail the loop.
     if audit_sink is not None:
@@ -519,6 +562,10 @@ async def agent_loop(
     # Tracks the last steering prefix hash for change detection (TD-509).
     _last_prefix_hash: str | None = None
 
+    # TD-503: path-scoped rules active at the last assembly, so a rule
+    # newly matched by a touched file is announced in the timeline.
+    _last_active_rules: set[str] | None = None
+
     # One token counter per model slug (TD-405); encoders load once.
     _token_counters: dict[str, TokenCounter] = {}
 
@@ -538,6 +585,21 @@ async def agent_loop(
         user_content = await session.wait_for_user_message()
         if user_content is None:
             break  # session was cancelled
+
+        # Turn observability (TD-1713): mark the dequeue itself. The
+        # existing "turn start" log lands after prompt assembly, so a
+        # stall between dequeue and assembly was invisible in the logs
+        # (2026-08-14). Queue depth is post-dequeue — messages the loop
+        # still owes the user. Content stays out of the logs; its length
+        # is enough to correlate with a report.
+        log.info(
+            "turn started",
+            extra={
+                "session_id": session.id,
+                "queued_messages": session.pending_user_messages,
+                "content_length": len(user_content),
+            },
+        )
 
         messages.append(ChatMessage(role="user", content=user_content))
 
@@ -566,11 +628,78 @@ async def agent_loop(
             turn_start = time.time()
 
             # 2b. Assemble the per-tier system prompt in stable-prefix
-            #     order (TD-305) and place it before the conversation.
-            assembled = await assembler.assemble(
-                tier,
-                task=user_content if tier == "worker" else None,
-            )
+            #     order (TD-305), gating external imports (TD-505): an
+            #     import resolving outside the workspace parks the session
+            #     for approval before the turn proceeds.  The gate loops
+            #     because approving one file can reveal nested external
+            #     imports (bounded by TD-504's max depth 4).
+            while True:
+                assembled = await assembler.assemble(
+                    tier,
+                    task=user_content if tier == "worker" else None,
+                    matched_paths=set(session.touched_paths),
+                    approved_imports=frozenset(approved_imports),
+                    denied_imports=frozenset(denied_imports),
+                )
+                pending = [p for p in assembled.steering.pending_imports if p not in denied_imports]
+                if not pending:
+                    break
+                approved_any = False
+                for path in pending:
+                    outcome = await session.request_import_approval(path)
+                    if outcome.approved:
+                        approved_imports.add(path)
+                        approved_any = True
+                    else:
+                        denied_imports.add(path)
+                        log.warning(
+                            "external import denied",
+                            extra={
+                                "extra_fields": {
+                                    "session_id": session.id,
+                                    "path": str(path),
+                                }
+                            },
+                        )
+                if approved_any:
+                    try:
+                        save_approved_imports(session.workspace_path, approved_imports)
+                    except ConfigError as e:
+                        # The in-memory set still gates this session; only
+                        # the durable write fails (e.g. the config file is
+                        # malformed and cannot be round-tripped).
+                        log.warning(
+                            "approved imports not persisted; approval is session-only",
+                            extra={
+                                "extra_fields": {
+                                    "workspace_path": str(session.workspace_path),
+                                    "error": str(e),
+                                }
+                            },
+                        )
+
+            # 2b.2 Path-scoped rule activation (TD-503).  The assembler
+            #     marks a scoped rule active once its globs match a file
+            #     the session has touched; a rule that newly activates
+            #     mid-session is announced in the timeline so context
+            #     changes are never silent.  The first assembly of the
+            #     session is the baseline, not an activation.
+            active_rules = {
+                _rule_rel_path(session, s.path)
+                for s in assembled.steering.sources
+                if s.applies_to is not None and s.active
+            }
+            if _last_active_rules is not None:
+                for rule_path in sorted(active_rules - _last_active_rules):
+                    await session.event_log.add(
+                        RuleActivated(
+                            session_id=session.id,
+                            rule_path=rule_path,
+                            seq=1,  # overwritten by the event log
+                        )
+                    )
+            _last_active_rules = active_rules
+
             if messages and messages[0].role == "system":
                 messages[0] = ChatMessage(role="system", content=assembled.text)
             else:
@@ -593,7 +722,12 @@ async def agent_loop(
                     )
                 )
                 await session.event_log.add(
-                    build_instruction_stack(session.id, assembled.steering, seq=1)
+                    build_instruction_stack(
+                        session.id,
+                        assembled.steering,
+                        seq=1,
+                        last_cached_tokens=tracker.last_cached_prompt_tokens,
+                    )
                 )
                 log.info(
                     "steering reloaded",

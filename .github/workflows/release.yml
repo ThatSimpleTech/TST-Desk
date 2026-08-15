@@ -18,6 +18,8 @@ jobs:
       contents: write # gh release create
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # changelog.py walks full history on a first release
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

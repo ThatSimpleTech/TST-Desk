@@ -42,19 +42,22 @@ _ROOT = "<ROOT>"
 
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
 
 
 def _to_golden(text: str, base: Path) -> str:
-    return text.replace(str(base), _ROOT)
+    # Provenance comments render POSIX-separated on every platform (prompt
+    # text is posix everywhere), so the root can appear in either spelling
+    # depending on which renderer produced it (TD-1406).
+    return text.replace(base.as_posix(), _ROOT).replace(str(base), _ROOT)
 
 
 def _assert_golden(name: str, actual: str) -> None:
     path = _GOLDEN_DIR / name
     if os.environ.get("TSTD_UPDATE_GOLDEN"):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(actual)
-    expected = path.read_text() if path.exists() else ""
+        path.write_text(actual, encoding="utf-8")
+    expected = path.read_text(encoding="utf-8") if path.exists() else ""
     assert actual == expected, (
         f"golden mismatch vs {path} — set TSTD_UPDATE_GOLDEN=1 to regenerate, then review the diff"
     )
@@ -304,12 +307,16 @@ async def test_cache_prefix_stable_across_turns(fixture: tuple[Path, Path], tmp_
     await runner.cancel()
 
     assert len(set(hashes)) == 1
-    # The library path computes the same hash over the same fixture.
-    direct = assembler.assemble_sync("brain")
+    # The library path computes the same hash over the same fixture, given
+    # the same matched paths — the loop forwards the session's touched set
+    # (empty here: no tool calls), which is what gates scoped rules (TD-503).
+    direct = assembler.assemble_sync("brain", matched_paths=set(session.touched_paths))
     assert hashes[0] == direct.prefix_hash
     # And the hash really is sha256(BASE_SYSTEM_PROMPT + steering block).
     expect = hashlib.sha256(
-        (BASE_SYSTEM_PROMPT + "\n\n" + _assemble(home, ws).block).encode("utf-8")
+        (BASE_SYSTEM_PROMPT + "\n\n" + _assemble(home, ws, matched_paths=set()).block).encode(
+            "utf-8"
+        )
     ).hexdigest()
     assert hashes[0] == expect
     # Every turn's system message carried the stable prefix first.

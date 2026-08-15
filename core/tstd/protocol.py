@@ -229,6 +229,20 @@ class ListSessions(ClientMessage):
     type: Literal["list_sessions"] = "list_sessions"
 
 
+class NewSession(ClientMessage):
+    """Create a fresh session in an existing session's workspace (TD-1701).
+
+    The sidebar's New action anchors on the attached session rather than a
+    path: the registry is the source of truth for which workspace a session
+    belongs to, so the client never carries a path it may have lost across
+    a restart.  The daemon wires the new session exactly like
+    ``open_workspace`` and replies with its first event (``session_state``).
+    """
+
+    type: Literal["new_session"] = "new_session"
+    session_id: str
+
+
 class GetSetupState(ClientMessage):
     """Request the onboarding setup state (TD-1101 first-run wizard).
 
@@ -347,6 +361,10 @@ class ToolResult(DaemonEvent):
     status: Literal["success", "error"]
     output: str
     truncated: bool = False
+    # Machine-readable code for ``error`` status ("approval_denied",
+    # "policy_denied", "boundary_refusal", …).  Carried so the UI can
+    # distinguish "denied by user" from a generic handler error (TD-1007).
+    error_code: str | None = None
     # Unified diff of what a write changed (TD-604), for display.
     diff: str | None = None
 
@@ -522,6 +540,20 @@ class SteeringReloaded(DaemonEvent):
     source_count: int = Field(ge=0)
 
 
+class RuleActivated(DaemonEvent):
+    """A path-scoped rule entered the prompt because the session touched a
+    matching file (TD-503).
+
+    Emitted once per rule per session, at the first assembly where the
+    rule's ``appliesTo`` globs match a touched path.  The timeline shows
+    the injection so context changes are never silent.
+    """
+
+    type: Literal["rule_activated"] = "rule_activated"
+    session_id: str
+    rule_path: str  # workspace-relative path of the rule file
+
+
 class TierSwitched(DaemonEvent):
     """Emitted when a session's active tier is overridden via ``set_tier``.
 
@@ -536,6 +568,20 @@ class TierSwitched(DaemonEvent):
     previous: Literal["brain", "worker", "validator"] | None = None
 
 
+class ImportedFile(BaseModel):
+    """One resolved ``@path`` import, flattened with its nesting depth.
+
+    ``depth`` 1 is a direct import of the source carrying it; deeper
+    values nest under the preceding entry one level up (TD-1201 renders
+    the tree from this). ``issue`` is set when resolution failed (missing
+    file, cycle, depth exceeded) so the panel can flag it in place.
+    """
+
+    path: str
+    depth: int = Field(ge=1)
+    issue: str | None = None
+
+
 class InstructionStackEntry(BaseModel):
     """One resolved steering source in the instruction stack."""
 
@@ -547,6 +593,13 @@ class InstructionStackEntry(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     subtree: str | None = None
     is_fallback: bool = False
+    # Path of the ``CLAUDE.md`` this source shadows (it is an AGENTS.md at
+    # the same location), when applicable (TD-1201).
+    shadowed_path: str | None = None
+    # ``appliesTo`` globs from rule-file frontmatter — what a path-scoped
+    # rule matched against (TD-1201).
+    applies_to: list[str] | None = None
+    imports: list[ImportedFile] = Field(default_factory=list)
 
 
 class InstructionStack(DaemonEvent):
@@ -557,6 +610,10 @@ class InstructionStack(DaemonEvent):
     sources: list[InstructionStackEntry] = Field(default_factory=list)
     total_tokens: int = Field(ge=0)
     token_method: str
+    # Cached prompt tokens observed on the most recent provider call
+    # (TD-1201's "is the block currently cached"). ``None`` before the
+    # first turn — cache state is a provider-side fact, unknown until one.
+    last_cached_tokens: int | None = None
 
 
 class SessionSummary(BaseModel):
@@ -568,6 +625,7 @@ class SessionSummary(BaseModel):
         "idle",
         "running",
         "awaiting_approval",
+        "paused",
         "complete",
         "failed",
         "cancelled",
@@ -686,6 +744,7 @@ ClientMessageT = Annotated[
     | GetInstructionStack
     | Shutdown
     | ListSessions
+    | NewSession
     | GetSetupState
     | SetApiKey
     | ValidateApiKey
@@ -711,6 +770,7 @@ DaemonEventT = Annotated[
     | TierState
     | ContextCompacted
     | SteeringReloaded
+    | RuleActivated
     | TierSwitched
     | InstructionStack
     | SessionList
@@ -744,6 +804,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "get_instruction_stack",
         "shutdown",
         "list_sessions",
+        "new_session",
         "get_setup_state",
         "set_api_key",
         "validate_api_key",
@@ -854,14 +915,19 @@ def build_hello_ack() -> str:
     return json.dumps({"type": "hello_ack", "version": PROTOCOL_VERSION})
 
 
-def build_error(code: str, message: str) -> str:
+def build_error(code: str, message: str, session_id: str | None = None) -> str:
     """Build a typed error message.
 
     The message passes through the shared redaction chokepoint (TD-1405):
     this envelope bypasses the event log — it is written straight to the
     socket — so it must scrub here rather than rely on ``event_log.add``.
+    ``session_id`` (optional, TD-1711) lets the UI attribute the error to
+    the session whose message was refused.
     """
-    return json.dumps({"type": "error", "code": code, "message": redact_secrets(message)})
+    payload: dict[str, str] = {"type": "error", "code": code, "message": redact_secrets(message)}
+    if session_id is not None:
+        payload["session_id"] = session_id
+    return json.dumps(payload)
 
 
 def validate_hello(hello: Hello) -> None:

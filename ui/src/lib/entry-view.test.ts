@@ -14,6 +14,7 @@ describe("KIND_LABELS", () => {
       "tool_call",
       "tool_result",
       "decision",
+      "approval",
       "tier_switch",
       "compaction",
       "steering_reload",
@@ -31,6 +32,15 @@ describe("entryTone", () => {
 
   it("marks successful results as success", () => {
     expect(entryTone(entry("tool_result", { status: "success" }))).toBe("success");
+  });
+
+  it("marks a denied result as warning, not danger", () => {
+    expect(entryTone(entry("tool_result", { status: "error", error_code: "approval_denied" }))).toBe("warning");
+    expect(entryTone(entry("tool_result", { status: "error" }))).toBe("danger");
+  });
+
+  it("marks an approval entry as warning", () => {
+    expect(entryTone(entry("approval"))).toBe("warning");
   });
 
   it("marks compaction as warning and decisions/tier/steering as info", () => {

@@ -11,7 +11,8 @@ workspace as the working directory.  Three safety rails surround it:
 - **Process-group kill.**  The child starts a new session
   (``start_new_session``), so it leads its own process group.  On timeout
   or cancel the whole group is SIGKILLed — backgrounded children cannot
-  outlive the command.
+  outlive the command.  Windows has no process-group kill; the direct
+  child is terminated instead.
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
@@ -36,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import contextlib
+import logging
 import os
 import re
 import shlex
@@ -53,6 +55,8 @@ from ..session import Session
 _READ_CHUNK = 4096
 # How long to wait for drains to settle after killing the process group.
 _KILL_GRACE_SECS = 5.0
+
+_log = logging.getLogger(__name__)
 
 # Env var names that look like secrets.  Matched case-insensitively as a
 # substring of the variable name, so OPENAI_API_KEY, GITHUB_TOKEN,
@@ -118,6 +122,20 @@ def _binaries(command: str) -> list[str]:
     return binaries
 
 
+def _resolved_name(resolved: str) -> str:
+    """The allowlist-matching name for a resolved binary path.
+
+    POSIX matches the basename.  On Windows, ``shutil.which`` resolves
+    through PATHEXT (``echo`` → ``echo.EXE``) and the filesystem is
+    case-insensitive, so the name is lowercased and the executable
+    extension stripped before matching.
+    """
+    name = Path(resolved).name
+    if sys.platform == "win32":
+        name = Path(name).stem.lower()
+    return name
+
+
 def check_allowed(command: str, policy: ShellPolicy) -> None:
     """Enforce the allowlist on *command*.
 
@@ -131,11 +149,14 @@ def check_allowed(command: str, policy: ShellPolicy) -> None:
     if policy.allowed_commands is None:
         return
     allowed = set(policy.allowed_commands)
+    if sys.platform == "win32":
+        # Same normalization _resolved_name applies to resolved paths.
+        allowed = {Path(name).stem.lower() for name in allowed}
     for binary in _binaries(command):
         resolved = shutil.which(binary)
         if resolved is None:
             raise ValueError(f"cannot resolve binary {binary!r}; refusing to run unverified")
-        name = Path(resolved).name
+        name = _resolved_name(resolved)
         if name not in allowed:
             raise ValueError(
                 f"{binary!r} (resolved to {name!r}) is not in allowed_commands {sorted(allowed)}"
@@ -174,13 +195,35 @@ class _StreamCapture:
         return "".join(self.parts)
 
 
-def _kill_process_group(pid: int) -> None:
-    """SIGKILL the process group led by *pid*, if it still exists."""
+def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
+    """Kill the command's process group (POSIX) or process (Windows).
+
+    POSIX: the child leads its own group (``start_new_session``), so
+    SIGKILL to the group takes backgrounded grandchildren with it.
+    Windows has no process-group kill: terminate the direct child.
+    Grandchildren can escape until a Job Object is introduced (TD-1406).
+
+    Returns None when the signal was delivered (or the processes were
+    already gone).  macOS occasionally vetoes same-uid kills with EPERM —
+    the refusal attaches to the process group, no userspace retry or
+    external ``kill`` breaks it, and the command then runs to completion —
+    so a short note comes back for honest reporting instead.
+    """
     if sys.platform == "win32":
-        # No process-group kill on Windows; the caller's proc.kill() covers it.
-        return
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pid, signal.SIGKILL)
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            return None
+        except OSError:
+            return "process kill refused by the OS; it may still be running"
+        return None
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return None  # already gone
+    except PermissionError:
+        return "group kill refused by the OS (EPERM); processes may still be running"
+    return None
 
 
 def _check_workspace(workspace_path: str) -> None:
@@ -275,8 +318,13 @@ async def run_shell(
     if session.cancel_requested:
         return "cancelled — command not started"
 
-    try:
-        proc = await asyncio.create_subprocess_shell(
+    # Spawn under a shield so a cancellation landing mid-spawn does not
+    # cancel the spawn coroutine itself — the OS child may already exist,
+    # and losing the handle would orphan the whole process group (TD-605
+    # AC2; the TestCancel flake family).  On cancellation, wait for the
+    # spawn to settle, kill the group, and let cancellation propagate.
+    spawn = asyncio.ensure_future(
+        asyncio.create_subprocess_shell(
             command,
             cwd=session.workspace_path,
             env=sanitized_env(),
@@ -284,6 +332,18 @@ async def run_shell(
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
+    )
+    try:
+        proc = await asyncio.shield(spawn)
+    except asyncio.CancelledError:
+        with contextlib.suppress(OSError, asyncio.CancelledError):
+            proc = await spawn
+            kill_note = _kill_process_group(proc)
+            if kill_note:
+                _log.warning("cancelled mid-spawn: %s (pid %s)", kill_note, proc.pid)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=_KILL_GRACE_SECS)
+        raise
     except OSError as e:
         raise ValueError(f"could not start shell: {e}") from e
 
@@ -317,11 +377,12 @@ async def run_shell(
         )
 
         if not work_task.done():
+            kill_note = _kill_process_group(proc)
+            detail = kill_note or "process group killed"
             if session.cancel_requested:
-                header = "cancelled — process group killed"
+                header = f"cancelled — {detail}"
             else:
-                header = f"timed out after {timeout_secs}s — process group killed"
-            _kill_process_group(proc.pid)
+                header = f"timed out after {timeout_secs}s — {detail}"
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(work_task, timeout=_KILL_GRACE_SECS)
             # Reap the direct child even if drains are stuck on a pipe
@@ -332,7 +393,9 @@ async def run_shell(
     except asyncio.CancelledError:
         # SessionRunner.cancel() cancels the loop task; the group must
         # die with it.
-        _kill_process_group(proc.pid)
+        kill_note = _kill_process_group(proc)
+        if kill_note:
+            _log.warning("cancelled: %s (pid %s)", kill_note, proc.pid)
         raise
     finally:
         for task in (work_task, cancel_task):
