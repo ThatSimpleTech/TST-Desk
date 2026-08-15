@@ -1888,10 +1888,10 @@ on real hardware is where the estimate lives; timebox and record deviations.
 **Size:** 2 · **Depends on:** TD-1701
 
 **Acceptance criteria:**
-- [ ] Startup auto-bind never adopts a terminal session (interrupted, complete,
+- [x] Startup auto-bind never adopts a terminal session (interrupted, complete,
       failed, cancelled); with no live session the app stays unbound and the
       empty state points at New Session
-- [ ] Sending `user_message` to a terminal session returns a typed daemon error
+- [x] Sending `user_message` to a terminal session returns a typed daemon error
       (e.g. `session_not_running`) instead of silently enqueueing with no
       consumer; the UI renders it as actionable copy
 
@@ -1901,6 +1901,18 @@ the composer gated off it ("Waiting for a session…" forever); a later
 `open_workspace` created a running session the UI refused to switch to
 (first-adoption stickiness, now re-targetable via TD-1701's rail). The rail is
 the manual escape; this story removes the trap.
+
+**Completed (2026-08-14):** the daemon's `user_message` handler now refuses a
+send to a session that can never consume it — terminal state, no runner
+(restored tombstone), or a dead loop task — with a typed `session_not_running`
+error carrying the session id and actionable copy, instead of enqueueing into
+the void (`TERMINAL_STATES` derives from the transition table so the two can't
+drift). The chat store's `session_list` auto-bind skips terminal summaries and
+stays unbound when nothing is live; the empty state then points at New Session,
+and the rail's New action (now anchorable on the newest listed session when
+nothing is bound) is the escape. The refusal clears the waiting shimmer in the
+pane and raises a toast with the daemon's "start a new session and resend"
+instruction.
 
 ### TD-1712 — Rail information architecture: sections + account anchor
 **Size:** 2 · **Depends on:** TD-1701, TD-1703
@@ -1926,19 +1938,19 @@ their epics.
 **Size:** 3 · **Depends on:** TD-1711
 
 **Acceptance criteria:**
-- [ ] Attach-before-send invariant: the client never sends `user_message` to a
+- [x] Attach-before-send invariant: the client never sends `user_message` to a
       session it is not attached to (auto-attach first, or refuse with copy);
       covered by a regression test reproducing the 2026-08-14 silent stall
       (second session created via rail New Session received the message but no
       events ever reached the UI)
-- [ ] First-token watchdog: if no `assistant_delta` (or turn terminal event)
+- [x] First-token watchdog: if no `assistant_delta` (or turn terminal event)
       arrives within ~25s of send, the Working state flips to honest copy
       ("No response yet — the model may be slow or unreachable") with a working
       Cancel; it recovers automatically when the first delta lands
-- [ ] The Working indicator rotates whimsical one-word verbs (per the
+- [x] The Working indicator rotates whimsical one-word verbs (per the
       familiarity pattern — a tstd-voiced list, token-styled, no emoji) over
       the existing shimmer, and shows elapsed time beside it
-- [ ] Daemon logs a `turn started` INFO per turn so future stalls are
+- [x] Daemon logs a `turn started` INFO per turn so future stalls are
       diagnosable from the log alone
 
 **Notes:** root cause of "typed hello, Working… forever" (2026-08-14): pipeline
@@ -1949,6 +1961,26 @@ Two sticky-session stores (chat-store follow vs session-status first-adoption)
 drifted; unify the attach seam when fixing. Flavor brief: the shimmer exists
 (TD-1607) — this story adds the verb rotation + honesty states, it does not
 rebuild the indicator.
+
+**Completed (2026-08-14):** The invariant went in at the seam that can't be
+dodged — `ProtocolClient.send` auto-attaches on the same socket before any
+`user_message` whose session it isn't following, so store wiring can no longer
+order the frames wrong; a refused (disconnected) send registers nothing, and
+the reconnect path re-attaches whatever the invariant attached. Wire-order
+regression tests pin attach-before-message, no-double-attach, no-registration-
+on-refusal, and re-attach-after-reconnect. The chat store arms a 25s
+first-token watchdog on every send (and on attaching to a running session,
+whose replay could equally never come); tripping it swaps the shimmer for
+static "No response yet — the model may be slow or unreachable." while Cancel
+stays live, and the first delta, any terminal turn event, or a
+`session_not_running` refusal recovers/clears it — including a user cancel,
+which drops the wait locally the moment it's sent. Flavor stayed on the
+existing TD-1607 shimmer: a twelve-verb rotation (2.5s cadence, tstd-voiced,
+one word each, no emoji, distinct from the Claude spinner's list) plus an
+elapsed "for Ns" tail shown from 2s, clock ticking only while a wait is in
+flight. The daemon gained the dequeue-time `turn started` INFO (session id,
+post-dequeue queue depth, message length — never content) that closes the
+observability gap between enqueue and the post-assembly "turn start" log.
 
 ---
 

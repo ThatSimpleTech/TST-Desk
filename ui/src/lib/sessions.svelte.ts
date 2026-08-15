@@ -161,11 +161,18 @@ export function selectRow(sessionId: string): void {
 }
 
 /** New-session action: a fresh session in the attached session's workspace.
- *  Focus moves when the daemon's reply (its first session_state) lands. */
+ *  Focus moves when the daemon's reply (its first session_state) lands.
+ *
+ *  With nothing bound (TD-1711: auto-bind refuses terminal sessions, so a
+ *  restart can leave the app unbound) the newest listed session is the
+ *  anchor instead — the daemon only needs its workspace, and a tombstone
+ *  anchor works. With no rows at all there is no workspace to anchor on. */
 export function newSession(): boolean {
-	if (chat.sessionId === null || pendingNewAnchor !== null) return false;
-	if (!sendToDaemon({ type: "new_session", session_id: chat.sessionId })) return false;
-	pendingNewAnchor = chat.sessionId;
+	if (pendingNewAnchor !== null) return false;
+	const anchor = chat.sessionId ?? sessions.rows[0]?.sessionId ?? null;
+	if (anchor === null) return false;
+	if (!sendToDaemon({ type: "new_session", session_id: anchor })) return false;
+	pendingNewAnchor = anchor;
 	return true;
 }
 
