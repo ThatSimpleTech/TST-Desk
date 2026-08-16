@@ -953,6 +953,36 @@ spike failed against the older ordering before being corrected.
 
 ---
 
+### TD-1804 — Record usage independently of `finish_reason`
+**Size:** 2 · **Depends on:** TD-1803
+
+**Acceptance criteria:**
+- [ ] Usage is recorded whenever a stream chunk carries it, whether or not that same chunk
+      also carries `finish_reason`
+- [ ] A provider that splits `finish_reason` and `usage` across separate chunks produces
+      exactly one ledger row and one `cost_update` for the call
+- [ ] A provider that co-emits them on one chunk still produces exactly one ledger row and one
+      `cost_update` — no double counting; `MockProvider`'s behaviour and TD-1401 are unchanged
+- [ ] The live harness's `ledger` and `cost accounting` checks pass against a local endpoint
+- [ ] A regression test pins the split-chunk ordering using a scripted provider, so this is
+      caught without a reachable model
+
+`loop.py` gates recording on `if chunk.finish_reason and chunk.usage:`, which demands both
+fields on one chunk. Ollama 0.32.13 sends `finish_reason` on one chunk and `usage` on a later
+one, so the branch never fires and a local turn produces zero ledger rows and zero
+`cost_update` events — the meter never moves on the free path. Verified against a running
+server: `finish_reason='length' usage=None`, then `finish_reason=None usage=present`.
+
+This lives in E18 rather than E4 because the scope unit is "make local models work"; the code
+it touches happens to be the agent loop. It affects every provider that defers usage, not just
+Ollama, so the fix must be idempotent rather than merely relocated — recording on any chunk
+carrying usage would double count a provider that sends it twice.
+
+DECISIONS.md's TD-1802 entry defers this on the premise that "Ollama co-emits usage with
+`finish_reason`". That premise is false; correct the entry as part of this story.
+
+---
+
 # MILESTONE M2 — The Window
 
 ## Epic E10 — Shell and panes
@@ -2184,10 +2214,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
-| M1.5 Local models | E18 | 3 | 10 |
+| M1.5 Local models | E18 | 4 | 12 |
 | M2 The window | E10–E12 | 16 | 53 |
 | M3 Shippable | E13–E17 | 36 | 105 |
-| **Total v0.1** | **18** | **105** | **326** |
+| **Total v0.1** | **18** | **106** | **328** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
