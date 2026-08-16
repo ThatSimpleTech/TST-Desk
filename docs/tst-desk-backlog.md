@@ -983,6 +983,52 @@ DECISIONS.md's TD-1802 entry defers this on the premise that "Ollama co-emits us
 
 ---
 
+### TD-1805 — Resolve the local model from the endpoint
+**Size:** 3 · **Depends on:** TD-1802
+
+**Acceptance criteria:**
+- [ ] The shipped `local` preset names no specific model tag; a fresh install works against any
+      local OpenAI-compatible server without hand-editing config
+- [ ] When a tier's slug is unset, it resolves from the endpoint's `/v1/models` on first use;
+      a slug set in config always wins over discovery
+- [ ] Discovery failure (endpoint unreachable, or serving no models) surfaces a typed error
+      naming the endpoint and the fix — not a generic provider error
+- [ ] Remote tiers never trigger discovery; a remote tier with no slug stays a config error
+- [ ] Discovery reads and requires no API key, and writes none anywhere (§2.2)
+
+TD-1802 retargeted the `local` preset at one developer's Ollama tag (`qwen3.8:27b` at
+`127.0.0.1:11434/v1`), which then ships as every user's default. For a bring-your-own-model
+product that is the wrong default: the endpoint is a reasonable convention, the model tag is
+not. §2.7 already puts slugs in config rather than code, so the shape is right — this fixes the
+shipped value by making the slug optional and discoverable.
+
+`/v1/models` is served by Ollama, vLLM, LM Studio and llama.cpp alike; verified returning
+`qwen3.8:27b` from the local Ollama on 2026-08-16. Prefer discovery over making every user edit
+YAML, and keep config authoritative when it does specify.
+
+---
+
+### TD-1806 — Count a whole turn's tokens and duration in `turn_complete`
+**Size:** 2 · **Depends on:** TD-1804
+
+**Acceptance criteria:**
+- [ ] `turn_complete.tokens` is the sum across every provider call in the turn, including calls
+      made before a tool round-trip
+- [ ] `turn_complete` duration covers the whole turn, not only its final leg
+- [ ] Per-call ledger rows and `cost_update` events stay at exactly one per provider call —
+      TD-1804's guarantee is preserved, not traded away
+- [ ] A regression test pins a two-call turn (one tool round-trip) offline, with no model running
+
+`agent_loop` opens its tool-call round-trip loop at `core/tstd/loop.py:630` and calls
+`tracker.begin_turn()` at :649 — inside it. Every round-trip resets the turn accumulator, so a
+turn containing one tool call reports only the last provider call's tokens. `turn_start =
+time.time()` is reset on the same line-pair, so the reported duration is the final leg only.
+
+Surfaced by TD-1804's live run: the harness reported `tokens=1783` for a turn whose ledger rows
+summed to 3520. The ledger was right; the turn total was not.
+
+---
+
 # MILESTONE M2 — The Window
 
 ## Epic E10 — Shell and panes
@@ -2214,10 +2260,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
-| M1.5 Local models | E18 | 4 | 12 |
+| M1.5 Local models | E18 | 6 | 17 |
 | M2 The window | E10–E12 | 16 | 53 |
 | M3 Shippable | E13–E17 | 36 | 105 |
-| **Total v0.1** | **18** | **106** | **328** |
+| **Total v0.1** | **18** | **108** | **333** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
