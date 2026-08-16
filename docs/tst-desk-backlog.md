@@ -923,7 +923,7 @@ location — §2.2 still holds, keys never leave the keychain.
       OpenAI-compatible loopback endpoint
 - [ ] Prices of `0.00` flow through cost accounting without divide-by-zero or NaN; the meter
       reads `$0.00`
-- [ ] The ledger still records real token counts for a zero-price tier — free is not untracked
+- [x] The ledger still records real token counts for a zero-price tier — free is not untracked
 - [ ] `context_window` and `max_output_tokens` come from config, never inferred from the slug
 
 A `local` preset already exists but points at `http://localhost:8000/v1` with Qwen 2.5 slugs
@@ -939,7 +939,7 @@ retargets the preset and puts both behaviours under test rather than leaving the
 **Acceptance criteria:**
 - [ ] The headless harness runs against a real OpenAI-compatible endpoint, selected by flag,
       still defaulting to the mock
-- [ ] One scripted task completes end to end against a local model: message → tool call →
+- [x] One scripted task completes end to end against a local model: message → tool call →
       classification → execution → ledger → cost
 - [ ] Live runs are excluded from the default CI leg and marked as requiring a reachable model
 - [ ] Failures distinguish provider-contract breakage from agent-loop breakage
@@ -957,14 +957,14 @@ spike failed against the older ordering before being corrected.
 **Size:** 2 · **Depends on:** TD-1803
 
 **Acceptance criteria:**
-- [ ] Usage is recorded whenever a stream chunk carries it, whether or not that same chunk
+- [x] Usage is recorded whenever a stream chunk carries it, whether or not that same chunk
       also carries `finish_reason`
-- [ ] A provider that splits `finish_reason` and `usage` across separate chunks produces
+- [x] A provider that splits `finish_reason` and `usage` across separate chunks produces
       exactly one ledger row and one `cost_update` for the call
-- [ ] A provider that co-emits them on one chunk still produces exactly one ledger row and one
+- [x] A provider that co-emits them on one chunk still produces exactly one ledger row and one
       `cost_update` — no double counting; `MockProvider`'s behaviour and TD-1401 are unchanged
-- [ ] The live harness's `ledger` and `cost accounting` checks pass against a local endpoint
-- [ ] A regression test pins the split-chunk ordering using a scripted provider, so this is
+- [x] The live harness's `ledger` and `cost accounting` checks pass against a local endpoint
+- [x] A regression test pins the split-chunk ordering using a scripted provider, so this is
       caught without a reachable model
 
 `loop.py` gates recording on `if chunk.finish_reason and chunk.usage:`, which demands both

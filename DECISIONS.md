@@ -3317,6 +3317,26 @@ components.
 
 ### 3. Known defect, not fixed: usage-only trailing chunks are never recorded
 
+> **Corrected 2026-08-16 by TD-1804 — read this before the entry below.**
+> The rationale as written claims "Ollama co-emits usage with
+> `finish_reason`, so the shipped `local` preset — and this story's ledger
+> test — exercise the working path." That claim is false, and the deferral
+> rested on it. Measured against Ollama 0.32.13 on
+> `http://127.0.0.1:11434/v1` with `stream_options: {"include_usage":
+> true}`, the two fields arrive on two chunks:
+>
+>     {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+>     {"choices":[],"usage":{"prompt_tokens":16,"completion_tokens":39,...}}
+>
+> giving `finish_reason='length' usage=None` and then `finish_reason=None
+> usage=present`. So the shipped `local` preset exercised the *broken*
+> path, and this story's third criterion — "the ledger still records real
+> token counts for a zero-price tier" — was proven only against
+> `MockProvider`, which does co-emit. The defect was real and the deferral
+> was defensible; the premise given for it was not. The original text is
+> left intact below rather than edited, because the reasoning error is the
+> part worth keeping. Fixed in TD-1804.
+
 **Decision:** Left alone and raised (§5 Class C). `loop.py` records usage
 only when a chunk carries **both** `finish_reason` and `usage`, but
 `provider.py` returns the usage-only trailing chunk with
@@ -3414,3 +3434,81 @@ what `stream_options: {"include_usage": true}` specifies, so the endpoint
 kept its contract and the loop dropped the usage. The harness attributed
 the failure to the right side without being told, which is criterion four
 demonstrated on a real fault rather than a simulated one.
+
+---
+
+## 2026-08-16 — TD-1804: Record usage independently of `finish_reason`
+
+### 1. Usage is reconciled once at stream end, last-wins
+
+**Decision:** `_stream_and_parse` keeps the usage from every chunk that
+carries one, overwriting as it goes, and records exactly once after the
+stream closes:
+
+    if chunk.usage is not None:
+        usage = chunk.usage
+    ...
+    if usage is not None:
+        tracker.record(tier, usage, tier_cfg)
+        await session.event_log.add(tracker.emit_cost_update(session.id))
+
+replacing `if chunk.finish_reason and chunk.usage:` inside the loop. One
+`CallRecord` and one `cost_update` per provider call, whatever shape the
+stream arrives in.
+
+**Rationale:** Three provider shapes have to land on the same invariant.
+Ollama sends `usage` on the chunk *after* `finish_reason`; OpenAI and vLLM
+send a trailing usage-only chunk with `finish_reason=None`; `MockProvider`
+co-emits both on one chunk. The old `and` fired only for the third, which
+is exactly why the whole suite was blind to the defect.
+
+Two alternatives were considered and rejected:
+
+- **Record on any chunk carrying usage.** Fixes Ollama and triple-bills a
+  provider asked for continuous usage stats, which repeats a *cumulative*
+  figure on every chunk. Verified as a mutation: the repeated-usage test
+  writes three ledger rows — `(1200, 1)`, `(1200, 240)`, `(1200, 480)` —
+  instead of one.
+- **Record-once latch, first-wins.** Idempotent, but on that same provider
+  it records `completion_tokens=1` and calls the call finished. Cheapest to
+  write and the most expensive to trust.
+
+Last-wins is the only one of the three that is both idempotent and
+complete, because OpenAI-compatible usage is cumulative for the call: the
+last figure seen is the whole figure. Deferring to stream end costs
+nothing in event ordering — the co-emitting mock's usage already rides the
+final chunk, so `cost_update` lands in the same place it always did,
+after the last `assistant_delta` and before any `tool_call`. TD-1401's
+event sequence is unchanged, and TD-1006's "one `cost_update` per recorded
+call, not one per turn" still holds: a tool round-trip is two calls and
+still emits two.
+
+### 2. A failed or cancelled call still records the usage it saw
+
+**Decision:** The provider-error and cancellation exits `break` out of the
+chunk loop instead of returning from inside it, so the single recording
+point runs on every path.
+
+**Rationale:** Those tokens were spent whether or not the call finished,
+and an audit ledger that understates real consumption is worse than one
+that reports an aborted call. It is also the smaller change: with one exit
+path there is one place recording can happen, so the idempotence property
+is structural rather than something three `return` statements have to
+agree about. The returned tuple is byte-identical to before on both paths —
+cancellation still yields `(…, True, "cancelled", None)` and a provider
+error still yields `(…, True, message, code)`.
+
+In practice nothing new fires today: usage rides at or after the end of a
+stream on every provider we have seen, so a stream that is cut short has no
+usage to record and the ledger stays empty exactly as it did.
+
+### 3. Raised, not fixed: `turn_complete.tokens` reports the last call only
+
+`agent_loop` calls `tracker.begin_turn()` inside the tool-call round-trip
+loop, not once per user turn, so the turn accumulator resets on every
+provider call. A two-call turn reports the second call's tokens in
+`turn_complete` while the ledger and `cost_update.session_cost` correctly
+carry both. Surfaced by TD-1804's per-call test and left alone: it is
+pre-existing, outside this story, and a change to what `turn_complete`
+means on the wire (§3). The test asserts session spend rather than turn
+tokens so it neither depends on the quirk nor pretends it is absent.

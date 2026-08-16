@@ -61,6 +61,7 @@ from .provider import (
     FunctionCall,
     ProviderError,
     StreamChunk,
+    Usage,
 )
 from .provider import (
     ToolCall as ProviderToolCall,
@@ -244,12 +245,26 @@ async def _stream_and_parse(
     error_msg = ""
     error_code: str | None = None
 
+    # TD-1804: usage is collected from any chunk that carries it and
+    # recorded once, after the stream closes.  Providers disagree about
+    # where it rides: Ollama sends it on a chunk *after* the one carrying
+    # ``finish_reason``, OpenAI and vLLM on a trailing usage-only chunk, and
+    # a co-emitting provider (``MockProvider``) puts both on one chunk.
+    # Gating on both fields therefore dropped the row entirely for the first
+    # two, and recording per usage-bearing chunk would bill a provider that
+    # repeats cumulative usage more than once.  Reconciling at stream end is
+    # one row and one cost_update per call for all of them; last-wins keeps
+    # the complete cumulative figure rather than a partial first one.
+    usage: Usage | None = None
+
     async for chunk in _stream_turn(provider, model_slug, messages, tool_definitions):
         if session.cancel_requested:
-            return collected_content, tool_calls, True, "cancelled", None
+            failed, error_msg = True, "cancelled"
+            break
 
         if isinstance(chunk, ProviderError):
-            return collected_content, tool_calls, True, chunk.message, chunk.code
+            failed, error_msg, error_code = True, chunk.message, chunk.code
+            break
 
         # Stream content delta
         if chunk.delta.content:
@@ -265,11 +280,18 @@ async def _stream_and_parse(
         # Accumulate tool call deltas
         _parse_tool_call_stream(tool_calls, chunk)
 
-        if chunk.finish_reason and chunk.usage:
-            tracker.record(tier, chunk.usage, tier_cfg)
-            # TD-1006: the cost meter updates as costs accrue — one
-            # cost_update per recorded call, not one per turn.
-            await session.event_log.add(tracker.emit_cost_update(session.id))
+        if chunk.usage is not None:
+            usage = chunk.usage
+
+    # Tokens the provider reported are recorded even when the call ended
+    # badly — they were spent either way, and a cancelled or failed call
+    # that bills nothing is the one way an audit ledger can understate real
+    # consumption.
+    if usage is not None:
+        tracker.record(tier, usage, tier_cfg)
+        # TD-1006: the cost meter updates as costs accrue — one
+        # cost_update per recorded call, not one per turn.
+        await session.event_log.add(tracker.emit_cost_update(session.id))
 
     return collected_content, tool_calls, failed, error_msg, error_code
 
