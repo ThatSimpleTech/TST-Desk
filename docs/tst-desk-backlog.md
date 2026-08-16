@@ -42,6 +42,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 |---|---|---|
 | **M0 — Decisions** | E1 | Open decisions answered, repo scaffolded, CI green on an empty build |
 | **M1 — Headless core** | E2, E3, E4, E5, E6, E7, E8, E9 | A scripted request runs end-to-end from a CLI harness, with steering loaded, tools dispatched, decisions classified, cost accounted, all under test |
+| **M1.5 — Local models** | E18 | A scripted request runs end-to-end against a local OpenAI-compatible endpoint with no API key and no spend |
 | **M2 — The window** | E10, E11, E12 | A human does the same thing through the app, never touching a terminal |
 | **M3 — Shippable** | E13, E14, E15, E16, E17 | A stranger can install and use it from a fresh machine |
 
@@ -63,6 +64,9 @@ E13 Packaging ─> E14 Testing (continuous) ─> E15 Docs
 
 E16 Familiarity hangs off E10 (shell) and E8 (approvals): it restyles the window
 and ships the TD-1007 approval cards, the last unchecked M2 interaction.
+
+E18 Local models hangs off E3 (router) and TD-1401 (the headless harness): it makes the
+model plane run without a key or a bill.
 
 E14 is not a phase at the end. Tests are written with each story. The E14 stories cover
 cross-cutting suites and CI gates that don't belong to a single feature.
@@ -874,6 +878,78 @@ client messages round-trip through the daemon handler (`_handle_approve`/`_handl
 - [x] Queries for cost by turn, session, day, and tier
 - [x] Export to JSONL and CSV
 - [x] Aggregates match the sum of individual records — verified by property test
+
+---
+
+# MILESTONE M1.5 — Local Models
+
+## Epic E18 — Local model support
+
+**Goal:** a workspace can run entirely on a local OpenAI-compatible endpoint — no API key, no
+spend, no network beyond loopback. The headless core already works against keyed remote
+providers; this makes the free path a first-class one.
+
+A spike on 2026-08-15 drove the daemon against `qwen3.8:27b` on Ollama and completed a turn
+end to end — `fs_write` → approval gate → `tool_result` → `cost_update` → `turn_complete`,
+with boundary refusal and the shell allowlist both firing correctly against a live model. The
+provider contract holds. These stories make that repeatable rather than a one-off.
+
+---
+
+### TD-1801 — Keyless local provider
+**Size:** 3 · **Depends on:** TD-301
+
+**Acceptance criteria:**
+- [ ] A tier whose `base_url` is a loopback address resolves with no keychain entry and no
+      key prompt
+- [ ] `_ensure_provider` does not raise when no key is stored for a keyless endpoint
+- [ ] The wizard's `has_api_key` signal does not block a workspace whose active preset is
+      local-only
+- [ ] Remote tiers still require a key — asserted by test
+
+Ollama's OpenAI-compatible endpoint ignores the `Authorization` header entirely; it accepts
+any value or none. `_ensure_provider` currently calls `ProviderClient.from_keychain(...)`
+unconditionally, which makes a stored key mandatory for every tier and blocks a fresh
+local-only setup at the first turn. This removes a requirement rather than adding a storage
+location — §2.2 still holds, keys never leave the keychain.
+
+---
+
+### TD-1802 — Local preset and zero-cost accounting
+**Size:** 2 · **Depends on:** TD-302, TD-304, TD-1801
+
+**Acceptance criteria:**
+- [ ] A `local` preset ships in `config.yaml` with all three tiers pointing at an
+      OpenAI-compatible loopback endpoint
+- [ ] Prices of `0.00` flow through cost accounting without divide-by-zero or NaN; the meter
+      reads `$0.00`
+- [ ] The ledger still records real token counts for a zero-price tier — free is not untracked
+- [ ] `context_window` and `max_output_tokens` come from config, never inferred from the slug
+
+A `local` preset already exists but points at `http://localhost:8000/v1` with Qwen 2.5 slugs
+that no longer match anything running. The spike confirmed zero prices already flow through
+cost accounting without crashing and that `context_window` is read from config; this story
+retargets the preset and puts both behaviours under test rather than leaving them incidental.
+
+---
+
+### TD-1803 — Live-provider end-to-end harness
+**Size:** 5 · **Depends on:** TD-1401, TD-1801, TD-1802
+
+**Acceptance criteria:**
+- [ ] The headless harness runs against a real OpenAI-compatible endpoint, selected by flag,
+      still defaulting to the mock
+- [ ] One scripted task completes end to end against a local model: message → tool call →
+      classification → execution → ledger → cost
+- [ ] Live runs are excluded from the default CI leg and marked as requiring a reachable model
+- [ ] Failures distinguish provider-contract breakage from agent-loop breakage
+- [ ] **This harness is the M1.5 exit criterion**
+
+TD-1401 proves the loop against `MockProvider` only, by design — deterministic and offline.
+This adds a live leg without disturbing that: the mock stays the default and TD-1401's
+behaviour must remain unchanged. Note the live path must approve on `approval_request`, not on
+`tool_call` — TD-802's gate registers the pending approval when it emits the request, and the
+spike failed against the older ordering before being corrected.
 
 ---
 
@@ -2108,9 +2184,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
+| M1.5 Local models | E18 | 3 | 10 |
 | M2 The window | E10–E12 | 16 | 53 |
 | M3 Shippable | E13–E17 | 36 | 105 |
-| **Total v0.1** | **17** | **102** | **316** |
+| **Total v0.1** | **18** | **105** | **326** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
