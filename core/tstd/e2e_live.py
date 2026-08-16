@@ -193,9 +193,11 @@ async def live_preflight(endpoint: str, model: str) -> str | None:
         )
 
     wire_model = cached_config().tier("brain").slug
-    if wire_model != model:
+    if wire_model is not None and wire_model != model:
         # The daemon takes the slug from config, not from the harness, so a
         # mismatch means we would probe for one model and request another.
+        # An unset slug is not a mismatch: the daemon will discover the same
+        # model from the same endpoint the caller just resolved (TD-1805).
         return (
             f"the active preset's brain tier requests {wire_model!r}, not {model!r} — "
             "switch the active preset or pass the matching --live-model"

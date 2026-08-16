@@ -177,7 +177,7 @@ class CostTracker:
 
         record = CallRecord(
             tier=tier,
-            model=tier_cfg.slug,
+            model=tier_cfg.require_slug(),
             prompt_tokens=usage.prompt_tokens,
             cached_prompt_tokens=usage.cached_prompt_tokens,
             completion_tokens=usage.completion_tokens,

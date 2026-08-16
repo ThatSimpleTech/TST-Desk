@@ -165,7 +165,7 @@ def measure_steering_resolution(workspace: Path) -> float:
 async def measure_first_token_latency(workspace: Path) -> float:
     """user_message → first assistant_delta, mock provider (pipeline only)."""
     await asyncio.to_thread(_prepare_token_workspace, workspace)
-    brain = cached_config().tier("brain").slug
+    brain = cached_config().tier("brain").require_slug()
     mock = MockProvider(
         sequences={brain: [Script(kind="stream", content="hello from the mock")]},
         default=Script(kind="stream", content="(unused)"),

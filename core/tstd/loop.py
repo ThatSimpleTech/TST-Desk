@@ -35,11 +35,12 @@ from .autonomy import (
     DecisionLedger,
 )
 from .compaction import maybe_compact
-from .config import ConfigError, ModelConfig
+from .config import ConfigError, ModelConfig, ModelDiscoveryError
 from .context import PromptAssembler
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
+from .discovery import resolve_tier_slugs
 from .keychain import KeychainError
 from .logging import get_logger
 from .policy import load_approved_imports, save_approved_imports
@@ -529,7 +530,7 @@ async def agent_loop(
                     raise RuntimeError("classifier worker call before provider ready")
                 worker_cfg = config.tier("worker")
                 request = ChatCompletionRequest(
-                    model=worker_cfg.slug,
+                    model=worker_cfg.require_slug(),
                     messages=[ChatMessage(role="user", content=prompt)],
                     max_tokens=8,
                     temperature=0.0,
@@ -597,8 +598,10 @@ async def agent_loop(
     _iterations = 0
 
     # Tier visibility (TD-1006): slugs for the wire, and the last tier the
-    # UI was told about so tier_state only fires on change.
-    _model_slugs: dict[str, str] = {name: config.tier(name).slug for name in TIER_NAMES}
+    # UI was told about so tier_state only fires on change.  Filled once
+    # slug resolution has run (TD-1805), so the title bar is never told a
+    # model the daemon has not settled on.
+    _model_slugs: dict[str, str] = {}
     _last_reported_tier: TierName | None = None
 
     # ── Turn loop ───────────────────────────────────────────────────
@@ -624,6 +627,38 @@ async def agent_loop(
         )
 
         messages.append(ChatMessage(role="user", content=user_content))
+
+        # 1b. Resolve any tier that leaves its slug unset (TD-1805).  This
+        #     is the "first use" the story means: not import time, and not
+        #     session open — an absent local model server must fail the
+        #     *turn*, the way a missing key does (TD-1008), so the
+        #     conversation survives, the user starts their server, and the
+        #     next message goes through.  Once every slug is set the call
+        #     is a dict scan, so no turn pays a second round-trip.
+        try:
+            await resolve_tier_slugs(config)
+        except ModelDiscoveryError as e:
+            messages.append(ChatMessage(role="assistant", content=f"I encountered an error: {e}"))
+            tracker.begin_turn()
+            await _emit_turn_complete(
+                session,
+                router.active_tier,
+                time.time(),
+                tracker,
+                failed=True,
+                error_code="model_unresolved",
+            )
+            log.warning(
+                "turn failed: no model resolved for the endpoint",
+                extra={
+                    "extra_fields": {
+                        "session_id": session.id,
+                        "endpoint": e.endpoint,
+                    }
+                },
+            )
+            continue
+        _model_slugs = {name: config.tier(name).require_slug() for name in TIER_NAMES}
 
         # 2. Tool-call round-trip loop
         #    Each iteration: call provider → execute tool calls → loop
@@ -770,10 +805,11 @@ async def agent_loop(
             #     split.  Announced on the timeline, never silent.  The
             #     steering block and manifest were just re-read from
             #     disk at 2b, so instructions survive compaction.
-            counter = _token_counters.get(tier_cfg.slug)
+            model_slug = tier_cfg.require_slug()
+            counter = _token_counters.get(model_slug)
             if counter is None:
-                counter = make_token_counter(tier_cfg.slug)
-                _token_counters[tier_cfg.slug] = counter
+                counter = make_token_counter(model_slug)
+                _token_counters[model_slug] = counter
             compacted, compaction = maybe_compact(messages, tier_cfg, counter)
             if compaction is not None:
                 messages = compacted
@@ -807,7 +843,7 @@ async def agent_loop(
                     "extra_fields": {
                         "session_id": session.id,
                         "tier": tier,
-                        "model": tier_cfg.slug,
+                        "model": model_slug,
                         "turn": router.turn_count,
                         "cache_prefix_hash": assembled.prefix_hash,
                         "cache_prefix_tokens": assembled.prefix_tokens,
@@ -868,7 +904,7 @@ async def agent_loop(
             # 2d. Call provider (streaming)
             collected_content, tool_calls, failed, error_msg, error_code = await _stream_and_parse(
                 provider,
-                tier_cfg.slug,
+                model_slug,
                 messages,
                 session,
                 tool_definitions,

@@ -50,12 +50,17 @@ class TestLoading:
         assert sorted(cfg.presets) == sorted(PRESETS)
 
     def test_each_preset_has_all_tiers(self) -> None:
-        """Every preset has brain, worker, and validator."""
+        """Every preset has brain, worker, and validator.
+
+        Tier presence, not slug presence: a loopback tier may leave its slug
+        to discovery (TD-1805), so asserting a slug here would assert the
+        opposite of what the local preset ships.
+        """
         cfg = load_config()
         for name, preset in cfg.presets.items():
-            assert preset.brain.slug, f"{name} missing brain"
-            assert preset.worker.slug, f"{name} missing worker"
-            assert preset.validator.slug, f"{name} missing validator"
+            assert preset.brain.base_url, f"{name} missing brain"
+            assert preset.worker.base_url, f"{name} missing worker"
+            assert preset.validator.base_url, f"{name} missing validator"
 
     def test_default_config_yaml_returns_string(self) -> None:
         content = default_config_yaml()
