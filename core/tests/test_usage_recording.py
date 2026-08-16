@@ -307,10 +307,9 @@ class TestOncePerCall:
         assert len(outcome.ledger_rows) == 2
         assert len(outcome.cost_updates) == 2
         # Session spend is the running total; it doubles between the two
-        # updates.  ``turn_complete.tokens`` is not checked here because the
-        # loop calls ``begin_turn`` once per provider call, so the turn
-        # accumulator already reports the last call only — pre-existing
-        # behaviour this story neither relies on nor changes.
+        # updates.  What the turn *total* reports is TD-1806's subject and
+        # is asserted in tests/test_turn_totals.py; this story only claims
+        # the per-call count either side of it.
         first, second = outcome.cost_updates
         assert second.session_cost == pytest.approx(2 * first.session_cost)
 
