@@ -1043,14 +1043,36 @@ DECISIONS.md's TD-1802 entry defers this on the premise that "Ollama co-emits us
 **Size:** 3 · **Depends on:** TD-1802
 
 **Acceptance criteria:**
-- [ ] The shipped `local` preset names no specific model tag; a fresh install works against any
+- [x] The shipped `local` preset names no specific model tag; a fresh install works against any
       local OpenAI-compatible server without hand-editing config
-- [ ] When a tier's slug is unset, it resolves from the endpoint's `/v1/models` on first use;
+- [x] When a tier's slug is unset, it resolves from the endpoint's `/v1/models` on first use;
       a slug set in config always wins over discovery
-- [ ] Discovery failure (endpoint unreachable, or serving no models) surfaces a typed error
+- [x] Discovery failure (endpoint unreachable, or serving no models) surfaces a typed error
       naming the endpoint and the fix — not a generic provider error
-- [ ] Remote tiers never trigger discovery; a remote tier with no slug stays a config error
-- [ ] Discovery reads and requires no API key, and writes none anywhere (§2.2)
+      (the turn path carries it as `model_unresolved` with tailored UI copy; the endpoint
+      itself is named in the doctor's `provider` row, not on the wire — see DECISIONS)
+- [x] Remote tiers never trigger discovery; a remote tier with no slug stays a config error
+- [x] Discovery reads and requires no API key, and writes none anywhere (§2.2)
+
+**Done (2026-08-16):** the preset, the discovery path and the loud typed failure landed first;
+the story was reopened because it shipped a regression and left AC-3 unmet on the turn path.
+`TierConfig.require_slug()` was called on the brain tier by `e2e_harness.mock_plan` and
+`benchmarks.measure_first_token_latency` before anything resolved it, so under
+`active_preset: local` — the one preset that leaves the slug unset — neither the headless
+harness nor the perf baselines would run at all; the suite hid it by running everything under
+the pinned remote default. Both now resolve before requiring, which is what the daemon does on
+its first turn against the same shared `ModelConfig`, so the pass costs one `/v1/models`
+round-trip and an unresolvable endpoint still fails loudly rather than substituting a model.
+The mock plan's `expect_spend` is derived from the tier's prices instead of hardcoded, so a
+zero-price preset is not failed for honestly billing nothing. `model_unresolved` gained a
+banner in `ui/src/lib/error-copy.ts` (it was reaching the wire and rendering as a raw code),
+and discovery's fix text now matches the failure — a `base_url` missing `/v1` no longer tells
+the user to start the server that is answering it. Also fixed: discovery ran ahead of the
+harness's loopback check, so a remote `--live-endpoint` was contacted (10.3s, a full discovery
+timeout) and only then refused; the refusal now fires first, in 0.23s, with nothing sent.
+`docs/tst-desk-spec.md` §7 documents the config contract (the Class C raised under the first
+pass). Verified on Ollama 0.32.13: mock harness and benchmarks green under `active_preset:
+local`, live leg 5/5.
 
 TD-1802 retargeted the `local` preset at one developer's Ollama tag (`qwen3.8:27b` at
 `127.0.0.1:11434/v1`), which then ships as every user's default. For a bring-your-own-model

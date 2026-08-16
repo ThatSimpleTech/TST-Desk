@@ -31,6 +31,15 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		title: "No API key stored",
 		body: "Store a key from the title-bar gear → Provider API key, then resend. The conversation is preserved.",
 	},
+	// TD-1805: a local tier may leave its model tag to the endpoint, so a
+	// failure here is "no model server ready", never a bad key. A banner
+	// because nothing works until the user acts. The endpoint itself isn't
+	// on this event, so the copy points at diagnostics, which prints it.
+	model_unresolved: {
+		severity: "banner",
+		title: "No local model available",
+		body: "The local model server named in config.yaml didn't answer with a model to use. Start it (Ollama, vLLM, LM Studio, llama.cpp) and resend — or set slug: on the tier to name one. Run diagnostics from the title-bar gear to see the endpoint and the exact reason. The conversation is preserved.",
+	},
 	auth_failed: {
 		severity: "banner",
 		title: "API key rejected",

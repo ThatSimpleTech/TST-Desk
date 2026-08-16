@@ -13,8 +13,10 @@ Three rules keep that from becoming a surprise:
   overridden and never triggers a request; discovery only fills a blank.
 * **Loopback only.**  :class:`~tstd.config.TierConfig` refuses an unset slug
   on an off-box endpoint at validation time, so discovery is structurally
-  unreachable for a remote tier — no request ever leaves this machine and
-  no credential is ever needed (§2.2, §2.3).
+  unreachable for a remote *tier*; :func:`discover_model` refuses one
+  directly too, so a caller passing a URL of its own cannot reach past that
+  — no request ever leaves this machine and no credential is ever needed
+  (§2.2, §2.3).
 * **Never guess.**  Exactly one served model resolves.  Zero or several
   raise :class:`~tstd.config.ModelDiscoveryError` naming the endpoint, what
   it served, and the one-line fix.  ``/v1/models`` lists embedding models
@@ -31,7 +33,7 @@ from typing import Any
 
 import httpx
 
-from .config import TIER_NAMES, ModelConfig, ModelDiscoveryError
+from .config import TIER_NAMES, ModelConfig, ModelDiscoveryError, is_loopback_url
 from .logging import get_logger
 
 log = get_logger("tstd.discovery")
@@ -45,14 +47,33 @@ _START_SERVER_FIX = (
     "(Ollama, vLLM, LM Studio, llama.cpp), or point the tier's base_url at one."
 )
 
+# Something answered, so telling the user to start a server sends them to
+# check a process that is already running.  These two say what the answer
+# actually implies instead.
+_WRONG_PATH_FIX = (
+    "Something is listening there but it is not serving the OpenAI model list. "
+    "Point the tier's base_url at the API root — for most servers the URL "
+    "ending in /v1 — rather than a home page, a proxy, or another service."
+)
 
-def _model_ids(payload: Any) -> list[str]:
-    """Model ids from an OpenAI ``/v1/models`` body, ignoring junk entries."""
+_SERVER_UNHEALTHY_FIX = (
+    "The server is running but failing. Check its logs, then send the message "
+    "again once it answers."
+)
+
+
+def _model_ids(payload: Any) -> list[str] | None:
+    """Model ids from an OpenAI ``/v1/models`` body, ignoring junk entries.
+
+    ``None`` when the body is not a model list at all.  Empty and absent are
+    different problems with different fixes — one server needs a model
+    loaded, the other is not the server we think it is.
+    """
     if not isinstance(payload, dict):
-        return []
+        return None
     entries = payload.get("data")
     if not isinstance(entries, list):
-        return []
+        return None
     return [
         str(entry["id"])
         for entry in entries
@@ -85,13 +106,27 @@ async def discover_model(
     Raises
     ------
     ModelDiscoveryError
-        The endpoint is unreachable, answers something that is not an
-        OpenAI model list, serves nothing, or serves several models — in
-        which case picking one would be a silent guess.
+        *base_url* is off-box, or the endpoint is unreachable, answers
+        something that is not an OpenAI model list, serves nothing, or
+        serves several models — in which case picking one would be a
+        silent guess.
     """
     where = f"the {tier} tier's " if tier else ""
     slug_fix = f"Name it in {where}`slug:` in config.yaml."
     endpoint = base_url.rstrip("/")
+
+    # Loopback-only is enforced here, not just at the callers.  It was a
+    # property of every caller remembering to check first, and the harness's
+    # CLI stopped remembering — it discovered against ``--live-endpoint``
+    # and only then refused an off-box one, by which time the request had
+    # gone.  A keyless GET is the wrong thing to send a stranger regardless
+    # of who asked for it (§2.2, §2.3).
+    if not is_loopback_url(endpoint):
+        raise ModelDiscoveryError(
+            f"{endpoint} is not on this machine, so its model is not ours to discover",
+            endpoint=endpoint,
+            fix=f"Point base_url at a loopback endpoint, or {slug_fix[0].lower()}{slug_fix[1:]}",
+        )
 
     owned = client is None
     http = client or httpx.AsyncClient(timeout=DISCOVERY_TIMEOUT)
@@ -115,10 +150,13 @@ async def discover_model(
             await http.aclose()
 
     if response.status_code != 200:
+        # A reply is proof the address is live, so "start a server" would be
+        # wrong advice.  5xx means the server is up and unwell; anything else
+        # means whatever answered is not the model list we asked for.
         raise ModelDiscoveryError(
             f"{endpoint}/models returned HTTP {response.status_code}",
             endpoint=endpoint,
-            fix=_START_SERVER_FIX,
+            fix=_SERVER_UNHEALTHY_FIX if response.status_code >= 500 else _WRONG_PATH_FIX,
         )
 
     try:
@@ -127,9 +165,15 @@ async def discover_model(
         raise ModelDiscoveryError(
             f"{endpoint}/models did not return JSON: {e}",
             endpoint=endpoint,
-            fix=_START_SERVER_FIX,
+            fix=_WRONG_PATH_FIX,
         ) from e
 
+    if ids is None:
+        raise ModelDiscoveryError(
+            f"{endpoint}/models did not answer with an OpenAI model list",
+            endpoint=endpoint,
+            fix=_WRONG_PATH_FIX,
+        )
     if not ids:
         raise ModelDiscoveryError(
             f"{endpoint} is running but serves no models",

@@ -39,6 +39,7 @@ from websockets.asyncio.client import connect
 from .config import cached_config
 from .context.assembler import ContextAssembler
 from .daemon import Daemon
+from .discovery import resolve_tier_slugs
 from .loop import agent_loop
 from .mock import MockProvider, Script
 from .router import TierRouter
@@ -165,7 +166,13 @@ def measure_steering_resolution(workspace: Path) -> float:
 async def measure_first_token_latency(workspace: Path) -> float:
     """user_message → first assistant_delta, mock provider (pipeline only)."""
     await asyncio.to_thread(_prepare_token_workspace, workspace)
-    brain = cached_config().tier("brain").require_slug()
+    # The script is keyed by the model the loop will ask for, and a local
+    # preset leaves that to the endpoint (TD-1805).  Resolve before
+    # requiring, outside the timed section — the loop's own resolution is
+    # then a dict scan and adds nothing to the measurement.
+    config = cached_config()
+    await resolve_tier_slugs(config)
+    brain = config.tier("brain").require_slug()
     mock = MockProvider(
         sequences={brain: [Script(kind="stream", content="hello from the mock")]},
         default=Script(kind="stream", content="(unused)"),
@@ -177,7 +184,7 @@ async def measure_first_token_latency(workspace: Path) -> float:
 
     runner = SessionRunner(
         session,
-        loop_factory=lambda s: agent_loop(s, TierRouter(), factory, cached_config()),
+        loop_factory=lambda s: agent_loop(s, TierRouter(), factory, config),
     )
     await runner.start()
     try:
