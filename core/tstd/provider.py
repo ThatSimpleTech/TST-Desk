@@ -539,11 +539,18 @@ class ProviderClient:
     def __init__(
         self,
         base_url: str,
-        api_key: str,
+        api_key: str | None,
         timeout: TimeoutConfig | None = None,
         client: httpx.AsyncClient | None = None,
         retry_config: RetryConfig | None = None,
     ) -> None:
+        """Build a client for *base_url*.
+
+        *api_key* is required positionally but may be ``None`` for an endpoint
+        that takes no credential — a loopback model server (TD-1801). ``None``
+        omits the ``Authorization`` header entirely rather than sending an
+        empty bearer, so "keyless" is provable on the wire.
+        """
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout or TimeoutConfig()
@@ -787,12 +794,19 @@ class ProviderClient:
             yield chunk
 
     def _headers(self) -> dict[str, str]:
-        """Build the request headers."""
-        return {
-            "Authorization": f"Bearer {self.api_key}",
+        """Build the request headers.
+
+        Without a key the ``Authorization`` header is absent rather than an
+        empty bearer: a strict OpenAI-compatible server would reject the
+        malformed value, and an absent header is the honest statement.
+        """
+        headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        if self.api_key is not None:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     def _parse_error(
         self,

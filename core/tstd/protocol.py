@@ -670,12 +670,16 @@ class SetupState(DaemonEvent):
 
     Connection-scoped (like ``session_list``), so its seq is fixed at 1.
     ``has_api_key`` is the first-run signal: no key stored means the wizard
-    shows.
+    shows — unless ``key_required`` is False, which says the active preset
+    runs entirely on loopback endpoints and will never send a key (TD-1801).
+    Defaulting to True keeps a client that ignores the field behaving as it
+    did before, so this is an additive field and not a version bump.
     """
 
     type: Literal["setup_state"] = "setup_state"
     seq: int = 1
     has_api_key: bool
+    key_required: bool = True
     presets: list[str] = Field(default_factory=list)
     active_preset: str
 

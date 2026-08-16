@@ -17,8 +17,10 @@ import shutil
 import tempfile
 from functools import lru_cache
 from importlib import resources
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -34,6 +36,32 @@ PRESETS: tuple[str, ...] = ("tst-default", "budget", "local")
 DEFAULT_PRESET = "tst-default"
 
 _DEFAULT_CONFIG_RESOURCE = "config.yaml"
+
+
+def is_loopback_url(url: str) -> bool:
+    """True when *url* points at this machine (127.0.0.0/8, ``::1``, ``localhost``).
+
+    A loopback endpoint is on-box by construction, so there is no third party
+    to authenticate against and no credential to send (TD-1801). Anything we
+    cannot confidently classify — no scheme, an unparseable host, a name that
+    merely looks local — is treated as remote, so an ambiguous URL keeps the
+    key requirement rather than silently dropping it.
+
+    Deliberately separate from ``ws.validate_interface``: that guards which
+    interface we *bind* (§2.1), this classifies an endpoint we *call*.
+    """
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 class TierConfig(BaseModel):
@@ -70,6 +98,15 @@ class ModelConfig(BaseModel):
         """Get all tier configs for the active preset."""
         preset = self.presets[self.active_preset]
         return {name: preset.__getattribute__(name) for name in TIER_NAMES}
+
+    def requires_api_key(self) -> bool:
+        """Whether the active preset needs a stored key (TD-1801).
+
+        False only when every tier is a loopback endpoint. Conservative on
+        purpose: one off-box tier means the workspace still needs a key, so a
+        mixed preset never degrades into an unauthenticated remote call.
+        """
+        return not all(is_loopback_url(t.base_url) for t in self.tiers().values())
 
 
 class ConfigError(Exception):

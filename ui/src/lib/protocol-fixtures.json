@@ -414,6 +414,7 @@
     "type": "setup_state",
     "seq": 1,
     "has_api_key": false,
+    "key_required": true,
     "presets": [
       "budget",
       "local",
