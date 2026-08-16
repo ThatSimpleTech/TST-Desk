@@ -3744,3 +3744,73 @@ That is the same shape of defect this story fixed, on a different counter,
 and no acceptance criterion here covers it — moving it would change tier
 selection, which is TD-303's contract and its tests. Raised for a story of
 its own rather than folded in.
+
+---
+
+## 2026-08-16 — TD-1807: The live harness must not assume tool-call ordering
+
+### 1. The checked call is selected by name, then followed by its id (Class B)
+
+**Decision:** The harness picks the tool call under test as the **first
+`fs_write` in the transcript**, and matches its approval and its result on
+that call's `tool_call_id`. Position is never used again. The three checks
+that used `calls[0]`, `gate[0]` and `results[0]` now talk about one call by
+construction rather than by coincidence.
+
+**Rationale:** The OpenAI tool-call contract makes no ordering promise, and
+a local model reading a file before writing one is doing nothing wrong — it
+cost one failure in five consecutive live runs of the M1.5 exit criterion.
+Measured again while validating this story: `qwen3.8:27b` made *two*
+`fs_write` calls in one live pass, which the old code would also have judged
+by whichever landed first.
+
+**First, not "whichever one passes."** If the model's first write is refused
+and a later one succeeds, this run fails — and the note lists the later call
+and its status, so the report says exactly that. Selecting the call that
+satisfies the checks would turn the exit criterion into a search for its own
+green, which §7 forbids more strongly than it dislikes a false negative.
+Revisit only if a real transcript produces one.
+
+### 2. Extra tool calls are reported, never judged (Class B)
+
+**Decision:** `HarnessResult` grows `notes: list[str]`, printed under the
+checks as `NOTE` lines and excluded from `ok`. Calls other than the selected
+one land there as `name#id → status`; the checked call's own line states its
+position (`call 1 of 2`) when there was more than one.
+
+**Rationale:** The story requires that extras neither fail the run nor pass
+it silently. A check that always passes would have satisfied "reports them"
+on paper while adding a line to the verdict that can never fail — the exact
+tautology §7 warns about. A note carries the information without pretending
+to be a judgement. Nothing else observed a check's pass/fail count, so the
+addition is additive: the mock plan makes one tool call, emits no note, and
+its report is unchanged.
+
+### 3. `e2e_checks.py` split out of `e2e_harness.py` (Class B)
+
+**Decision:** The verdict half — `HarnessResult` and every check — moves to
+`tstd/e2e_checks.py`; `e2e_harness.py` keeps workspace preparation, the mock
+plan, the protocol client, and the CLI. `run()` and `main()` keep their
+signatures, so `scripts/e2e_headless.py` and both tests are untouched.
+
+**Rationale:** §6's ~400-line limit was breached (422), and the split had to
+be by responsibility rather than by line count. Driving a session and
+judging its transcript are separate jobs with separate reasons to change:
+this story changed only the second, and TD-1401's drive path did not move a
+line. 292 + 307 lines.
+
+### 4. The offline regression uses a scripted provider, not `MockProvider`
+
+`MockProvider` emits one tool call per script and reuses the id
+`call_mock_1` for every one of them, so it cannot express a transcript with
+two distinguishable calls — and it must stay byte-identical for TD-1401.
+`tests/test_e2e_ordering.py` therefore replays chunk sequences through the
+`ScriptedProvider` already written for TD-1804. The daemon, classifier,
+policy gate and dispatcher are all real; only the model is scripted. Two of
+its five runs must fail, which is what keeps the new selection rule from
+being a rule that passes everything.
+
+An in-workspace `fs_read` matches no static rule, so it classifies B and
+parks on the approval gate — the runs about ordering give it an explicit
+`fs_read → auto` policy so the only approval in the transcript is the one
+the run is about. Found by writing the tests, not assumed.
