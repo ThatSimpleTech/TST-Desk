@@ -900,12 +900,25 @@ provider contract holds. These stories make that repeatable rather than a one-of
 **Size:** 3 · **Depends on:** TD-301
 
 **Acceptance criteria:**
-- [ ] A tier whose `base_url` is a loopback address resolves with no keychain entry and no
+- [x] A tier whose `base_url` is a loopback address resolves with no keychain entry and no
       key prompt
-- [ ] `_ensure_provider` does not raise when no key is stored for a keyless endpoint
-- [ ] The wizard's `has_api_key` signal does not block a workspace whose active preset is
+- [x] `_ensure_provider` does not raise when no key is stored for a keyless endpoint
+- [x] The wizard's `has_api_key` signal does not block a workspace whose active preset is
       local-only
-- [ ] Remote tiers still require a key — asserted by test
+- [x] Remote tiers still require a key — asserted by test
+
+**Done (2026-08-16):** `config.is_loopback_url` classifies an endpoint (127.0.0.0/8, `::1`,
+`localhost`) and `daemon._brain_client` skips the keychain for one — the shipped `local` preset
+resolves to a `ProviderClient` with `api_key=None` and zero keychain reads, and
+`ProviderClient._headers` omits `Authorization` rather than sending an empty bearer, so keyless
+is provable on the wire.  `setup_state` gains an additive `key_required` (default `True`, no
+`PROTOCOL_VERSION` bump); the wizard's auto-open gate becomes `!has_api_key && key_required` so
+`has_api_key` stays an honest probe instead of lying to skip a modal, and the doctor's `api_key`
+row skips rather than fails.  Remote tiers key off the URL rather than a caught `KeychainError`,
+so `tst-default` with nothing stored still raises and `KeychainLockedError` still surfaces —
+negatives in `core/tests/test_local_provider.py`.  Deferred: resolution is brain-tier-wide, so a
+mixed loopback/remote preset resolves keyless while the conservative `requires_api_key()` still
+reports `key_required: true` — fails safe, raised not built (DECISIONS.md TD-1801 §5).
 
 Ollama's OpenAI-compatible endpoint ignores the `Authorization` header entirely; it accepts
 any value or none. `_ensure_provider` currently calls `ProviderClient.from_keychain(...)`
@@ -919,12 +932,28 @@ location — §2.2 still holds, keys never leave the keychain.
 **Size:** 2 · **Depends on:** TD-302, TD-304, TD-1801
 
 **Acceptance criteria:**
-- [ ] A `local` preset ships in `config.yaml` with all three tiers pointing at an
+- [x] A `local` preset ships in `config.yaml` with all three tiers pointing at an
       OpenAI-compatible loopback endpoint
-- [ ] Prices of `0.00` flow through cost accounting without divide-by-zero or NaN; the meter
+- [x] Prices of `0.00` flow through cost accounting without divide-by-zero or NaN; the meter
       reads `$0.00`
 - [x] The ledger still records real token counts for a zero-price tier — free is not untracked
-- [ ] `context_window` and `max_output_tokens` come from config, never inferred from the slug
+- [x] `context_window` and `max_output_tokens` come from config, never inferred from the slug
+
+**Done (2026-08-16):** the `local` preset points all three tiers at `http://127.0.0.1:11434/v1`
+at price 0.0 with `context_window: 32768` — a compaction budget sized to what a server actually
+serves rather than the model's 262144 ceiling, with the reasoning next to the value and
+`budget_threshold` its only consumer.  `core/tests/test_zero_cost.py` sweeps the whole
+`CostTracker` reporting surface at price 0.0 and asserts finite, lands a full free turn in the
+audit ledger with real token counts, and tracks `budget_threshold` against config with the slug
+held fixed — omitting `context_window` or `max_output_tokens` is a validation error, so there is
+no inferred default to fall back on.  `formatUsd` moved to `ui/src/lib/cost-format.ts` and
+renders exact zero as `$0.00`, guarded on exact equality so spend that merely rounds to zero
+keeps four decimals.  Ledger tracking on the *shipped* local path was broken when this landed —
+usage arrives on a chunk carrying no `finish_reason`, so only `MockProvider` exercised the
+working path; TD-1804 fixed `loop.py` and corrected this story's DECISIONS.md entry, and a live
+pass now writes real `model_calls` rows at cost 0.0.  Deferred: the shipped slug is one
+developer's Ollama tag — TD-1805.  (Boxes ticked at validation: the behaviour and its evidence
+were on the branch, the checkmarks were not.)
 
 A `local` preset already exists but points at `http://localhost:8000/v1` with Qwen 2.5 slugs
 that no longer match anything running. The spike confirmed zero prices already flow through
@@ -937,13 +966,27 @@ retargets the preset and puts both behaviours under test rather than leaving the
 **Size:** 5 · **Depends on:** TD-1401, TD-1801, TD-1802
 
 **Acceptance criteria:**
-- [ ] The headless harness runs against a real OpenAI-compatible endpoint, selected by flag,
+- [x] The headless harness runs against a real OpenAI-compatible endpoint, selected by flag,
       still defaulting to the mock
 - [x] One scripted task completes end to end against a local model: message → tool call →
       classification → execution → ledger → cost
-- [ ] Live runs are excluded from the default CI leg and marked as requiring a reachable model
-- [ ] Failures distinguish provider-contract breakage from agent-loop breakage
-- [ ] **This harness is the M1.5 exit criterion**
+- [x] Live runs are excluded from the default CI leg and marked as requiring a reachable model
+- [x] Failures distinguish provider-contract breakage from agent-loop breakage
+      (exit 3 vs 1; exercised by hand against broken fake endpoints — no offline test
+      pins the attribution path)
+- [x] **This harness is the M1.5 exit criterion**
+
+**Done (2026-08-16):** `tstd.e2e_live` plus a `HarnessPlan` (`tstd.e2e_plan`) that
+`e2e_harness.run` takes as data, so the live leg added no branch the mock pass skips —
+`--live-endpoint` on `scripts/e2e_headless.py` selects it and the mock stays the default.  Pinned
+as `tests/test_e2e_live.py` and deselected by `addopts = -m 'not live'`, so `ci.yml`'s bare
+pytest excludes it with no workflow change; an unreachable or wrong-slug endpoint skips with the
+reason and a non-loopback one is refused before any request leaves the box.  Failures are
+attributed by exit code: 3 with a `PROVIDER CONTRACT` line when `LiveProvider` recorded a
+`ProviderError`, 1 when the endpoint held its contract and the loop failed a check anyway.  The
+live `ledger` and `cost accounting` checks failed on first run and were raised Class C rather
+than patched here; TD-1804's `loop.py` fix landed and the full pass now goes green against
+`qwen3.8:27b` on Ollama in ~28s.
 
 TD-1401 proves the loop against `MockProvider` only, by design — deterministic and offline.
 This adds a live leg without disturbing that: the mock stays the default and TD-1401's
@@ -966,6 +1009,19 @@ spike failed against the older ordering before being corrected.
 - [x] The live harness's `ledger` and `cost accounting` checks pass against a local endpoint
 - [x] A regression test pins the split-chunk ordering using a scripted provider, so this is
       caught without a reachable model
+
+**Done (2026-08-16):** `_stream_and_parse` in `core/tstd/loop.py` keeps the usage from any chunk
+that carries one and records once after the stream closes — last-wins, so a provider that repeats
+cumulative usage bills once with the complete figure rather than three times or a partial first
+count.  The provider-error and cancellation exits now `break` instead of returning, so reported
+tokens are recorded even when a call ends badly.  `core/tests/test_usage_recording.py` pins it
+offline with a `ScriptedProvider` that replays chunk sequences verbatim: five usage placements,
+repeated cumulative usage, a stream with none, two calls in one turn, two turns, plus a direct
+assertion that `MockProvider` still co-emits — `mock.py` is untouched and TD-1401 is unchanged.
+Live against Ollama 0.32.13 `qwen3.8:27b`: `ledger sessions=1`, `cost accounting cost=0.0
+tokens=1391`, OVERALL PASS; the same run on the pre-fix loop fails exactly those two checks.
+DECISIONS.md's TD-1802 entry is corrected in place.  Deferred: `turn_complete.tokens` still
+reports the final provider call only — filed as TD-1806.
 
 `loop.py` gates recording on `if chunk.finish_reason and chunk.usage:`, which demands both
 fields on one chunk. Ollama 0.32.13 sends `finish_reason` on one chunk and `usage` on a later
