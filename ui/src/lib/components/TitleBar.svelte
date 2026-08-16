@@ -18,6 +18,7 @@
 		closeWorkspaceMenu,
 		startWorkspaces,
 	} from '../workspaces.svelte.js';
+	import { formatUsd } from '../cost-format.js';
 	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
 
@@ -64,10 +65,6 @@
 		if (state === 'failed') return 'danger';
 		if (state === 'complete') return 'success';
 		return 'muted';
-	}
-
-	function formatUsd(n: number): string {
-		return n >= 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`;
 	}
 
 	let displayName = $derived(
