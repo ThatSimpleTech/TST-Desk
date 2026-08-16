@@ -8,7 +8,10 @@
 # your own presets below.
 #
 # A tier has:
-#   slug             — OpenRouter slug or any model identifier
+#   slug             — OpenRouter slug or any model identifier. Optional for
+#                      a loopback base_url, where leaving it out resolves the
+#                      model from the endpoint's /v1/models on first use.
+#                      Required for any off-box endpoint.
 #   base_url         — OpenAI-compatible API endpoint
 #   input_price      — $ per million input tokens (prompt)
 #   output_price     — $ per million output tokens (completion)
@@ -81,8 +84,14 @@ presets:
   # ── local ────────────────────────────────────────────────────────
   # Zero-cost local models on this machine. Targets Ollama's
   # OpenAI-compatible endpoint (the default port); any OpenAI-compatible
-  # server on loopback works — point base_url at it and set the slug.
+  # server on loopback works — point base_url at it.
   # A loopback base_url needs no API key at all (TD-1801).
+  #
+  # No slug is named on purpose: the endpoint is a convention, the model
+  # tag is your machine. With slug left out, the model is read from the
+  # endpoint's /v1/models the first time a turn needs it. That requires
+  # the server to be serving exactly one model — pick one explicitly by
+  # uncommenting slug below, which always wins over discovery.
   #
   # One model serves all three tiers: a single local server usually has
   # room for one loaded model, and swapping per tier would pay an unload
@@ -91,14 +100,14 @@ presets:
   # context_window is a compaction budget, not a request parameter. It
   # must be no larger than what the *server* actually serves: Ollama caps
   # context at num_ctx (OLLAMA_CONTEXT_LENGTH or the Modelfile),
-  # independent of the model's architectural ceiling of 262144. Shipping
+  # independent of a model's much larger architectural ceiling. Shipping
   # the ceiling would keep compaction from ever firing and let the server
   # silently truncate the oldest messages — the steering block goes
-  # first. 32768 is reachable on hardware that can run this model at all.
+  # first. 32768 is a conservative floor that local hardware can hold.
   # Raise it here once you have raised num_ctx to match.
   local:
     brain:
-      slug: qwen3.8:27b
+      # slug: your-model-tag   # omitted → resolved from /v1/models
       base_url: http://127.0.0.1:11434/v1
       input_price: 0.0
       output_price: 0.0
@@ -106,7 +115,7 @@ presets:
       context_window: 32768
       max_output_tokens: 4096
     worker:
-      slug: qwen3.8:27b
+      # slug: your-model-tag   # omitted → resolved from /v1/models
       base_url: http://127.0.0.1:11434/v1
       input_price: 0.0
       output_price: 0.0
@@ -114,7 +123,7 @@ presets:
       context_window: 32768
       max_output_tokens: 4096
     validator:
-      slug: qwen3.8:27b
+      # slug: your-model-tag   # omitted → resolved from /v1/models
       base_url: http://127.0.0.1:11434/v1
       input_price: 0.0
       output_price: 0.0

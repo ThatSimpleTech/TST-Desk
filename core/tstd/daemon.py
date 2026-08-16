@@ -32,6 +32,7 @@ from .boundary_config import (
 from .config import (
     ConfigError,
     ModelConfig,
+    ModelDiscoveryError,
     cached_config,
     is_loopback_url,
     save_active_preset,
@@ -39,6 +40,7 @@ from .config import (
 from .context.assembler import ContextAssembler
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
+from .discovery import resolve_tier_slugs
 from .keychain import (
     KeychainError,
     KeychainLockedError,
@@ -265,12 +267,20 @@ def _approved_import_allowlist(workspace: str | Path) -> frozenset[Path]:
 
 
 def _tier_state_event(session_id: str, router: TierRouter, config: ModelConfig) -> TierState:
-    """Build the ``tier_state`` event for the title bar (TD-1006)."""
+    """Build the ``tier_state`` event for the title bar (TD-1006).
+
+    A tier whose slug is still unresolved is omitted rather than sent as a
+    placeholder (TD-1805): the daemon does not yet know its model, and the
+    UI must never be handed a truth it wasn't given.  The loop re-emits
+    ``tier_state`` once discovery lands on the first turn.
+    """
     return TierState(
         session_id=session_id,
         tier=router.active_tier,
         override=router.override,
-        model_slugs={name: config.tier(name).slug for name in TIER_NAMES},
+        model_slugs={
+            name: slug for name in TIER_NAMES if (slug := config.tier(name).slug) is not None
+        },
         seq=1,  # overwritten by the event log
     )
 
@@ -364,8 +374,12 @@ class Daemon:
         With *api_key* the probe authenticates with that key directly
         (TD-1106); otherwise the stored key is read from the keychain.
         Returns None on success, the ProviderError on failure.  Raises
-        KeychainError only when the keychain is consulted and fails.
+        KeychainError only when the keychain is consulted and fails, and
+        ModelDiscoveryError when a local tier names no model and the
+        endpoint cannot supply one (TD-1805) — there is nothing to probe
+        with until that is settled.
         """
+        await resolve_tier_slugs(self.config)
         tier_cfg = self.config.tier("brain")
         if api_key is not None:
             client = ProviderClient(base_url=tier_cfg.base_url, api_key=api_key)
@@ -373,7 +387,7 @@ class Daemon:
             client = await self._brain_client()
         response = await client.chat_completion(
             ChatCompletionRequest(
-                model=tier_cfg.slug,
+                model=tier_cfg.require_slug(),
                 messages=[ChatMessage(role="user", content="ok")],
                 max_tokens=1,
                 stream=False,
@@ -393,6 +407,8 @@ class Daemon:
         try:
             err = await self._provider_probe(api_key)
         except KeychainError as e:
+            return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+        except ModelDiscoveryError as e:
             return ApiKeyValidated(seq=1, ok=False, detail=str(e))
         if err is not None:
             detail = auth_failure_message() if err.code == "auth_failed" else err.message
@@ -428,6 +444,18 @@ class Daemon:
                     status="skip",
                     detail="not checked — no API key to send",
                 ),
+            ]
+        except ModelDiscoveryError as e:
+            # The endpoint is the subject here, not the key: we never got a
+            # model to ask for, so no request was made and the key verdict
+            # would be invented (TD-1805).
+            return [
+                DiagnosticCheck(
+                    name="api_key",
+                    status="skip",
+                    detail="not checked — no model resolved to probe with",
+                ),
+                DiagnosticCheck(name="provider", status="fail", detail=str(e), fix=e.fix),
             ]
 
         base_url = self.config.tier("brain").base_url

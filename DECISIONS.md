@@ -3512,3 +3512,154 @@ carry both. Surfaced by TD-1804's per-call test and left alone: it is
 pre-existing, outside this story, and a change to what `turn_complete`
 means on the wire (§3). The test asserts session spend rather than turn
 tokens so it neither depends on the quirk nor pretends it is absent.
+
+---
+
+## 2026-08-16 — TD-1805: Resolve the local model from the endpoint
+
+### 1. "Unset" is `null`; the empty string is a validation error
+
+**Decision:** `TierConfig.slug` becomes
+`Annotated[str, Field(min_length=1)] | None = None`. An omitted key and an
+explicit `slug:` (which YAML parses as `None`) mean the same thing —
+discover it. `slug: ""` fails validation naming the key.
+
+**Rationale:** Omitted and `null` cannot be allowed to diverge: a bare
+`slug:` line *is* `null`, so splitting them would make trailing whitespace
+carry meaning, and a user commenting a value out would land on whichever
+one we did not handle. That leaves the empty string, which is never a
+statement of intent — it is a half-finished edit, a template variable that
+did not expand, or a key deleted by hand. Accepting it as a third spelling
+of "unset" would silently paper over the typo; rejecting it costs one line
+and names the key.
+
+The constraint sits inside the `Annotated` rather than on the union, so
+`min_length` applies to the `str` branch instead of to a nullable schema
+pydantic cannot constrain.
+
+### 2. Exactly one served model resolves; zero or several are refused by name
+
+**Decision:** `discover_model` resolves only when `/v1/models` returns
+exactly one id. Zero raises. Two or more raises, listing every id it saw
+and pointing at the tier's `slug:` key.
+
+**Rationale:** The alternative worth taking seriously is "take the first",
+which keeps a fresh install working on a machine with several models
+pulled. It was rejected because `/v1/models` is not a list of chat models —
+Ollama lists embedding models (`nomic-embed-text` and friends) beside
+them, in an order the caller does not control. Picking first would
+routinely bind the agent to a model that cannot answer a chat completion
+at all, and the failure would surface three layers down as a provider
+error about a malformed response rather than as "you have five models,
+name one".
+
+"Refuse unless exactly one" trades a rare one-time edit for never guessing.
+The error is a two-second fix — it prints the ids, and setting `slug:`
+takes precedence forever after — while a wrong silent guess is a debugging
+session. This is the same conservative shape as TD-1801's
+`requires_api_key()`: when the situation is ambiguous, fail toward the
+user's explicit statement rather than toward convenience.
+
+### 3. Discovery runs on the first turn, and a failure fails the turn
+
+**Decision:** `agent_loop` calls `resolve_tier_slugs(config)` after
+dequeuing a user message and before the round-trip loop. A
+`ModelDiscoveryError` there appends the error to the transcript, emits
+`turn_complete{failed: true, error_code: "model_unresolved"}`, and
+continues the loop.
+
+**Rationale:** Four placements were possible and three are worse. Import
+time is a network call on `import tstd` (§2.3). Daemon start would make
+the daemon's own startup depend on a model server. Session open would keep
+a workspace from opening at all when Ollama happens to be down — a user
+could not even browse files. The first turn is where the model is actually
+needed, and TD-1008 already set the precedent for exactly this shape with a
+missing keychain entry: the conversation survives, the user fixes the
+environment, and the next message goes through. `test_a_dead_endpoint_
+fails_the_turn_not_the_session` pins the whole cycle including recovery.
+
+The call is idempotent and returns after a dict scan once every slug is
+set, so it is invoked per turn without a round-trip per turn — no
+`_resolved` flag to keep in sync with the config it describes.
+
+### 4. Resolution mutates the loaded config in memory, and writes nothing
+
+**Decision:** `resolve_tier_slugs` assigns `tier_cfg.slug` on the live
+`ModelConfig` rather than returning a resolved copy. Nothing is written to
+`config.yaml`, ever.
+
+**Rationale:** The slug is read from six places, some of them synchronous
+and deep inside the call graph — `CostTracker._build_record` stamps every
+ledger row with it, and the compaction token counter is keyed on it.
+Threading a resolved copy through all of them would mean either an async
+signature change in the cost path or two configs in flight, one of which
+would eventually be the stale one. One object, settled once, is the
+smaller and less surprising design.
+
+Not persisting is a §2.2/§2.7 requirement and also the better behaviour:
+the next process re-reads the endpoint, so a model swapped on the server is
+picked up without a stale tag left behind in a file the user never edited.
+`test_it_writes_nothing_to_disk` asserts the config file is byte-identical
+after a resolution.
+
+### 5. A remote tier with no slug is a validation error, not a discovery one
+
+**Decision:** `TierConfig` refuses an unset slug on a non-loopback
+`base_url` in a `model_validator`, so `load_config` reports it as a
+`ConfigError` naming the tier. `ModelDiscoveryError` is a sibling of
+`ConfigError`, not a subclass.
+
+**Rationale:** This makes "remote tiers never trigger discovery" structural
+rather than a branch that has to be remembered — there is no reachable
+state in which discovery is asked about an off-box endpoint, so no request
+can leave the machine and no credential question can arise. Catching it at
+load also puts the error where the user can act on it, at the file, rather
+than mid-turn.
+
+The two errors stay siblings because they mean opposite things: a
+`ConfigError` says the file is wrong and editing it is the fix, while a
+`ModelDiscoveryError` says the file is right and the machine is not ready —
+the identical config succeeds once the server is up. Subclassing would let
+the daemon's existing `except ConfigError` fallbacks (workspace boundary,
+policy) swallow a discovery failure into a "using defaults" warning.
+
+### 6. `TierConfig.require_slug()` is the narrowing accessor
+
+**Decision:** Every place that sends a model to a provider calls
+`require_slug()` instead of reading `.slug`. It raises
+`ModelDiscoveryError` when the slug is `None`.
+
+**Rationale:** `str | None` has to be narrowed somewhere for `mypy
+--strict`, and the choice is between narrowing at each of a dozen call
+sites or once behind a name. Making it raise rather than fall back to a
+default turns a missed resolution into a loud typed failure instead of
+`"model": null` on the wire, where the provider's reply would be some
+generic 400 about a malformed request. It should never fire; that is the
+point of putting it where it would.
+
+### 7. `tier_state` omits a tier whose slug is unresolved
+
+**Decision:** `_tier_state_event` builds `model_slugs` from tiers with a
+resolved slug only. The loop re-emits `tier_state` on the first turn, once
+discovery has landed.
+
+**Rationale:** The session-open event fires before any turn, so on a local
+preset there is genuinely no model to report yet. A placeholder string
+would be the daemon inventing a truth the UI would then display (§6, "the
+UI never derives truth it wasn't given"), and widening `model_slugs` to
+`dict[str, str | null]` would be a wire change for a state that lasts one
+turn. `TitleBar.svelte` already guards each slug lookup for truthiness, so
+an absent key renders as no tooltip and then fills in — no frontend change
+was needed.
+
+### 8. Class C raised, not decided: the spec's model table is now stale
+
+`docs/tst-desk-spec.md` §7 documents the tier defaults and states "Slugs
+and prices live in `config.yaml`, not code". That is still true, but the
+spec does not say a loopback tier may omit `slug` and have it resolved from
+`/v1/models`, which is now part of the user-facing configuration contract —
+AGENTS.md §10 requires the docs to follow. Editing the spec is a scope
+boundary (§5 Class C), so it is raised here rather than taken: the spec
+needs a sentence in §7 covering optional slugs on loopback endpoints, the
+exactly-one rule, and the fact that config always wins. The backlog's
+TD-1805 acceptance boxes are likewise left unticked pending that call.

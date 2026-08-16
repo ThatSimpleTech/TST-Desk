@@ -40,8 +40,9 @@ from websockets.asyncio.client import connect
 
 from .audit import AuditStore
 from .audit_queries import cost_by_session
-from .config import cached_config
+from .config import ModelDiscoveryError, cached_config
 from .daemon import Daemon
+from .discovery import discover_model
 from .e2e_live import (
     LiveProvider,
     ProviderContractError,
@@ -116,7 +117,7 @@ def _prepare_workspace(workspace: Path, plan: HarnessPlan) -> None:
 def _mock_provider(workspace: Path) -> MockProvider:
     """Turn script: write hello.txt, then close the turn with text."""
     write_args = json.dumps({"path": str(workspace / "hello.txt"), "content": _WRITE_CONTENT})
-    brain = cached_config().tier("brain").slug
+    brain = cached_config().tier("brain").require_slug()
     return MockProvider(
         sequences={
             brain: [
@@ -345,7 +346,15 @@ def _run_live(workspace: Path, data_dir: Path, endpoint: str, model: str | None)
     """Drive one live pass.  0 pass, 1 checks failed, 2 not run, 3 provider broke."""
 
     async def _go() -> int:
-        slug = model or cached_config().tier("brain").slug
+        # The tier may leave its slug unset (TD-1805); resolving it here is
+        # what the daemon is about to do anyway, and a failure is a "not
+        # run" like any other absent-server reason, never a loop failure.
+        try:
+            slug = model or cached_config().tier("brain").slug or await discover_model(endpoint)
+        except ModelDiscoveryError as e:
+            print(f"SKIP  live harness not run: {e}")
+            return 2
+
         reason = await live_preflight(endpoint, slug)
         if reason is not None:
             print(f"SKIP  live harness not run: {reason}")

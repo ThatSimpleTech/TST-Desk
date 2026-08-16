@@ -13,7 +13,7 @@ that event, not on ``tool_call``), and a zero-price local preset is expected
 to bill nothing while still recording real token counts.
 
 Failure modes are kept apart on purpose.  No endpoint, or an endpoint that
-does not serve the configured slug, is a fact about the machine and skips.
+cannot supply exactly one model, is a fact about the machine and skips.
 An endpoint that answers but breaks the OpenAI-compatible contract raises
 ``ProviderContractError``.  Only an ``AssertionError`` here means the agent
 loop itself is broken.
@@ -25,7 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from tstd.config import cached_config, save_active_preset
+from tstd.config import ModelDiscoveryError, cached_config, save_active_preset
+from tstd.discovery import discover_model
 from tstd.e2e_harness import run
 from tstd.e2e_live import (
     LiveProvider,
@@ -58,7 +59,17 @@ def local_preset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.usefixtures("local_preset")
 async def test_headless_harness_live(tmp_path: Path) -> None:
     brain = cached_config().tier("brain")
-    reason = await live_preflight(brain.base_url, brain.slug)
+    # The shipped local preset names no model tag (TD-1805), so the model
+    # under test comes from the endpoint — the same resolution the daemon is
+    # about to perform.  A machine that cannot supply one is a fact about
+    # the machine, so it skips like every other absent-server reason.
+    assert brain.slug is None, "the shipped local preset must not pin a model tag"
+    try:
+        slug = await discover_model(brain.base_url, tier="brain")
+    except ModelDiscoveryError as e:
+        pytest.skip(f"live harness not run: {e}")
+
+    reason = await live_preflight(brain.base_url, slug)
     if reason is not None:
         pytest.skip(f"live harness not run: {reason}")
 
@@ -74,7 +85,7 @@ async def test_headless_harness_live(tmp_path: Path) -> None:
     raise_on_contract_failure(provider)
     assert result.ok, f"harness failed:\n{result.report()}"
 
-    # §2.7 on a live wire: the slug the daemon requested came from config,
-    # not from the harness.  Nothing in the report covers this — the checks
-    # see events, not requests.
-    assert provider.calls[0].model == brain.slug
+    # §2.7 on a live wire: the slug the daemon requested was resolved from
+    # the endpoint, not supplied by the harness.  Nothing in the report
+    # covers this — the checks see events, not requests.
+    assert provider.calls[0].model == slug

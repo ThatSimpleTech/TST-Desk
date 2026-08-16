@@ -19,11 +19,11 @@ from functools import lru_cache
 from importlib import resources
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from .logging import user_data_dir
 
@@ -64,16 +64,72 @@ def is_loopback_url(url: str) -> bool:
         return False
 
 
-class TierConfig(BaseModel):
-    """Configuration for one model tier."""
+class ModelDiscoveryError(Exception):
+    """A tier's model could not be resolved from its endpoint (TD-1805).
 
-    slug: str = Field(min_length=1)
+    Deliberately *not* a :class:`ConfigError`: a config error means the file
+    is wrong and editing it is the fix, while this means the file is right
+    and the machine is not ready — the same message may succeed once the
+    model server is up.  ``endpoint`` and ``fix`` are carried as attributes
+    so a caller can render them in its own shape (a doctor row, a wizard
+    detail) instead of re-deriving them from the text.
+    """
+
+    def __init__(self, message: str, *, endpoint: str, fix: str) -> None:
+        super().__init__(f"{message}. {fix}")
+        self.endpoint = endpoint
+        self.fix = fix
+
+
+class TierConfig(BaseModel):
+    """Configuration for one model tier.
+
+    ``slug`` is optional, and only for a loopback endpoint: a local server's
+    model tag belongs to the machine, not to the shipped defaults, so it is
+    discovered from ``/v1/models`` on first use (TD-1805).  Omitted and
+    ``null`` mean the same thing — a bare ``slug:`` in YAML *is* ``null``, so
+    letting them diverge would make whitespace meaningful.  An empty string
+    is a validation error rather than a third spelling of "unset": it is a
+    half-finished edit, never a statement of intent.
+    """
+
+    slug: Annotated[str, Field(min_length=1)] | None = None
     base_url: str = Field(min_length=1)
     input_price: float = Field(ge=0)
     output_price: float = Field(ge=0)
     cache_read_price: float = Field(ge=0)
     context_window: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _slug_required_off_box(self) -> TierConfig:
+        """An off-box tier must name its model (TD-1805).
+
+        Discovery is loopback-only, so a remote tier with no slug can never
+        be filled in later — it stays a config error, caught at load rather
+        than as a null ``model`` on the wire.
+        """
+        if self.slug is None and not is_loopback_url(self.base_url):
+            raise ValueError(
+                f"slug is required for the off-box endpoint {self.base_url}; "
+                "only a loopback endpoint discovers its model from /v1/models"
+            )
+        return self
+
+    def require_slug(self) -> str:
+        """The model slug, narrowed to ``str``.
+
+        Unset here means discovery never ran, which is a bug in the call
+        path rather than a user's mistake — raising keeps it loud instead of
+        sending ``"model": null`` to a provider and reading the reply.
+        """
+        if self.slug is None:
+            raise ModelDiscoveryError(
+                f"no model has been resolved for {self.base_url}",
+                endpoint=self.base_url,
+                fix="Resolve the tier's slug before using it (tstd.discovery).",
+            )
+        return self.slug
 
 
 class Preset(BaseModel):
