@@ -3276,3 +3276,58 @@ tier and shared it with the worker-tier classifier call, so per-tier
 clients keyed by endpoint — a scope change well beyond this story, raised
 rather than built (§5 Class C). The conservative `requires_api_key()` means
 the mismatch fails safe: a mixed preset still prompts for a key.
+
+---
+
+## 2026-08-16 — TD-1802: Local preset and zero-cost accounting
+
+### 1. The `local` preset ships a context window below the model's ceiling
+
+**Decision:** All three `local` tiers keep `context_window: 32768` even
+though the model's architectural ceiling is 262144, with the reasoning
+written into `config.yaml` next to the value.
+
+**Rationale:** `context_window` has exactly one consumer —
+`compaction.budget_threshold` — so it is a compaction budget, not a
+request parameter (nothing sends it to the provider). It must therefore be
+no larger than what the *server* will actually serve, and Ollama caps
+context at `num_ctx` independent of the model, defaulting far below the
+ceiling. Shipping 262144 would keep compaction from ever firing and let the
+server silently truncate the oldest messages — and message zero is the
+steering block, so the failure mode is losing AGENTS.md without a word.
+The two errors are not symmetric: too low compacts earlier than necessary,
+too high loses steering silently. A user who has raised `num_ctx` raises
+this to match, which is a config edit with no release.
+
+### 2. The cost meter renders exact zero as `$0.00`
+
+**Decision:** `formatUsd` moves out of `TitleBar.svelte` into
+`ui/src/lib/cost-format.ts` and returns `$0.00` for exactly `0`, keeping
+four decimals for everything below a dollar.
+
+**Rationale:** The acceptance criterion says the meter reads `$0.00`; it
+read `$0.0000`, which on a free preset looks like a value too small to
+display rather than a deliberate zero. The guard is exact equality, never
+a rounding window — real spend of `0.00001` still renders `$0.0000`, so
+the meter can never show "free" for money actually spent. That property is
+the reason this is worth a line here rather than a silent edit. Extraction
+to a `.ts` module is what makes it testable at all: the repo has no Svelte
+component-test harness, and §6 already wants logic out of presentational
+components.
+
+### 3. Known defect, not fixed: usage-only trailing chunks are never recorded
+
+**Decision:** Left alone and raised (§5 Class C). `loop.py` records usage
+only when a chunk carries **both** `finish_reason` and `usage`, but
+`provider.py` returns the usage-only trailing chunk with
+`finish_reason=None`. `stream_options: {"include_usage": true}` is sent
+unconditionally, and OpenAI and vLLM answer it with exactly that separate
+chunk — against those servers no `model_call` row is written and no
+`cost_update` fires, at any price.
+
+**Rationale:** Price-independent, so it is not this story's defect, and the
+fix changes the recording contract for every preset with a real
+double-counting risk on providers that send usage twice. Ollama co-emits
+usage with `finish_reason`, so the shipped `local` preset — and this
+story's ledger test — exercise the working path. `MockProvider` also
+co-emits, which is why the whole suite is blind to it. Wants its own story.

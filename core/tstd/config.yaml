@@ -79,28 +79,43 @@ presets:
       max_output_tokens: 8192
 
   # ── local ────────────────────────────────────────────────────────
-  # Zero-cost local models via a local vLLM / EZER endpoint.
-  # Update the base_url and slugs to match your local deployment.
+  # Zero-cost local models on this machine. Targets Ollama's
+  # OpenAI-compatible endpoint (the default port); any OpenAI-compatible
+  # server on loopback works — point base_url at it and set the slug.
+  # A loopback base_url needs no API key at all (TD-1801).
+  #
+  # One model serves all three tiers: a single local server usually has
+  # room for one loaded model, and swapping per tier would pay an unload
+  # and reload on every routing hop.
+  #
+  # context_window is a compaction budget, not a request parameter. It
+  # must be no larger than what the *server* actually serves: Ollama caps
+  # context at num_ctx (OLLAMA_CONTEXT_LENGTH or the Modelfile),
+  # independent of the model's architectural ceiling of 262144. Shipping
+  # the ceiling would keep compaction from ever firing and let the server
+  # silently truncate the oldest messages — the steering block goes
+  # first. 32768 is reachable on hardware that can run this model at all.
+  # Raise it here once you have raised num_ctx to match.
   local:
     brain:
-      slug: qwen/qwen-2.5-72b-instruct
-      base_url: http://localhost:8000/v1
+      slug: qwen3.8:27b
+      base_url: http://127.0.0.1:11434/v1
       input_price: 0.0
       output_price: 0.0
       cache_read_price: 0.0
       context_window: 32768
       max_output_tokens: 4096
     worker:
-      slug: qwen/qwen-2.5-32b-instruct
-      base_url: http://localhost:8000/v1
+      slug: qwen3.8:27b
+      base_url: http://127.0.0.1:11434/v1
       input_price: 0.0
       output_price: 0.0
       cache_read_price: 0.0
       context_window: 32768
       max_output_tokens: 4096
     validator:
-      slug: qwen/qwen-2.5-72b-instruct
-      base_url: http://localhost:8000/v1
+      slug: qwen3.8:27b
+      base_url: http://127.0.0.1:11434/v1
       input_price: 0.0
       output_price: 0.0
       cache_read_price: 0.0
