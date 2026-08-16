@@ -72,6 +72,19 @@ describe("error copy", () => {
     }
   });
 
+  it("an unresolved local model is a banner naming the fix, not a raw code", () => {
+    // TD-1805 shipped the error_code to the wire with no entry here, so the
+    // user read "model_unresolved" off the fallback. Nothing works until they
+    // act, so it is a banner; the endpoint is not on the event, so the copy
+    // points at diagnostics, which prints it.
+    const spec = turnFailureCopy("model_unresolved");
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.title).not.toBe("Turn failed");
+    expect(spec?.body).not.toContain("model_unresolved");
+    expect(spec?.body).toContain("slug:");
+    expect(spec?.body).toMatch(/diagnostics/i);
+  });
+
   it("transient provider failures are toasts", () => {
     for (const code of ["rate_limited", "server_error", "bad_gateway", "service_unavailable", "gateway_timeout"]) {
       expect(turnFailureCopy(code)?.severity).toBe("toast");

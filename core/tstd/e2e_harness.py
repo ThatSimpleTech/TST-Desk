@@ -40,15 +40,16 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
-from .config import ModelDiscoveryError, cached_config
+from .config import ModelDiscoveryError, TierConfig, cached_config
 from .daemon import Daemon
-from .discovery import discover_model
+from .discovery import discover_model, resolve_tier_slugs
 from .e2e_checks import HarnessResult, verify
 from .e2e_live import (
     LiveProvider,
     ProviderContractError,
     live_plan,
     live_preflight,
+    off_box_refusal,
     raise_on_contract_failure,
 )
 from .e2e_plan import HarnessPlan
@@ -91,13 +92,17 @@ def _prepare_workspace(workspace: Path, plan: HarnessPlan) -> None:
     git("commit", "-q", "-m", "baseline")
 
 
-def _mock_provider(workspace: Path) -> MockProvider:
-    """Turn script: write hello.txt, then close the turn with text."""
+def _mock_provider(workspace: Path, slug: str) -> MockProvider:
+    """Turn script: write hello.txt, then close the turn with text.
+
+    Scripts are keyed by *slug* because that is the model the loop will ask
+    for; a key that misses falls through to the ``(unused)`` default and the
+    scripted tool call never happens.
+    """
     write_args = json.dumps({"path": str(workspace / "hello.txt"), "content": _WRITE_CONTENT})
-    brain = cached_config().tier("brain").require_slug()
     return MockProvider(
         sequences={
-            brain: [
+            slug: [
                 Script(kind="tool_call", tool_name="fs_write", tool_arguments=write_args),
                 Script(kind="stream", content="Wrote hello.txt as requested."),
             ]
@@ -106,19 +111,40 @@ def _mock_provider(workspace: Path) -> MockProvider:
     )
 
 
-def mock_plan(workspace: Path) -> HarnessPlan:
+def _prices_anything(tier: TierConfig) -> bool:
+    """Whether a call against *tier* can cost anything at all.
+
+    Asserting that a turn billed only means something where there is a price
+    to bill.  A zero-price preset must still record real token counts and an
+    honest cost of zero — the distinction TD-1803's live plan already drew,
+    reached here because the mock leg can now run under a local preset too.
+    """
+    return max(tier.input_price, tier.output_price, tier.cache_read_price) > 0
+
+
+async def mock_plan(workspace: Path) -> HarnessPlan:
     """TD-1401's plan: scripted, offline, and the default.
 
     Frozen behaviour — the live leg (TD-1803) was added alongside it, never
-    on top of it.
+    on top of it.  Async only because the model tag may have to be read from
+    the endpoint before the scripts can be keyed on it (TD-1805): resolving
+    here is the call the daemon is about to make anyway, on the same shared
+    config object, so the pass pays one round-trip rather than two.  No
+    model call is made here and the provider is still the offline mock.
     """
+    config = cached_config()
+    await resolve_tier_slugs(config)
+    brain = config.tier("brain")
     return HarnessPlan(
-        provider=_mock_provider(workspace),
+        # require_slug() after resolution: unresolvable still raises, because
+        # a script keyed on a guess answers nothing the loop asks for and the
+        # pass would read as a broken loop instead of an absent server.
+        provider=_mock_provider(workspace, brain.require_slug()),
         steering=_STEERING_TEXT,
         prompt="write the greeting",
         approve_on="tool_call",
         content_ok=lambda text: text == _WRITE_CONTENT,
-        expect_spend=True,
+        expect_spend=_prices_anything(brain),
         turn_timeout=_TURN_TIMEOUT,
         budget_secs=60.0,
     )
@@ -145,7 +171,7 @@ async def run(workspace: Path, data_dir: Path, plan: HarnessPlan | None = None) 
     result are unchanged.
     """
     started = time.monotonic()
-    plan = plan or mock_plan(workspace)
+    plan = plan or await mock_plan(workspace)
     _prepare_workspace(workspace, plan)
 
     daemon = Daemon(data_dir=data_dir, provider=plan.provider)
@@ -216,6 +242,14 @@ def _run_live(workspace: Path, data_dir: Path, endpoint: str, model: str | None)
     """Drive one live pass.  0 pass, 1 checks failed, 2 not run, 3 provider broke."""
 
     async def _go() -> int:
+        # Refuse an off-box endpoint before anything is sent to it.  This
+        # used to sit inside live_preflight, below the discovery call, so a
+        # remote --live-endpoint was contacted and only then refused.
+        off_box = off_box_refusal(endpoint)
+        if off_box is not None:
+            print(f"SKIP  live harness not run: {off_box}")
+            return 2
+
         # The tier may leave its slug unset (TD-1805); resolving it here is
         # what the daemon is about to do anyway, and a failure is a "not
         # run" like any other absent-server reason, never a loop failure.
@@ -283,7 +317,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.live_endpoint is not None:
         return _run_live(workspace, data_dir, args.live_endpoint, args.live_model)
 
-    result = asyncio.run(run(workspace, data_dir))
+    try:
+        result = asyncio.run(run(workspace, data_dir))
+    except ModelDiscoveryError as e:
+        # The active preset leaves its model tag to the endpoint and the
+        # endpoint cannot supply one.  That is a fact about the machine, not
+        # a failed check — the same "not run" the live leg reports (2).
+        print(f"SKIP  harness not run: {e}")
+        return 2
     print(result.report())
     return 0 if result.ok else 1
 

@@ -305,6 +305,38 @@ V4 Pro as a heavier worker.
   be able to update model choices without a release.
 - First-run wizard: paste key → pick preset (`TST default` / `budget` / `local`) → go.
 
+### The `local` preset: the endpoint is ours to guess, the model tag is not
+
+The shipped `local` preset points every tier at `http://127.0.0.1:11434/v1` and names **no**
+model. An OpenAI-compatible endpoint on loopback is a safe convention — Ollama, vLLM, LM Studio
+and llama.cpp all serve one — but the model tag belongs to the user's machine, so shipping one
+developer's tag as everybody's default is the wrong default for a bring-your-own-model product.
+
+So `slug` is optional, on one condition, and resolved on first use:
+
+- **Optional only on a loopback `base_url`.** A tier with an off-box endpoint and no `slug` is a
+  config error at load, naming the tier. Discovery never runs for a remote tier, so no request
+  can leave the machine and no credential question arises.
+- **Resolved from `GET /v1/models` on the first turn that needs it.** Not at import, not at
+  daemon start, not at workspace open — an absent model server fails the *turn*, the way a
+  missing API key does, so the conversation survives, the user starts their server, and the next
+  message goes through.
+- **Config always wins.** A `slug` present in `config.yaml` is never overridden and triggers no
+  request at all. `slug:` with no value means the same as omitting it; `slug: ""` is an error.
+- **Exactly one served model resolves.** Zero, or several, is refused by name — `/v1/models`
+  lists embedding models beside chat models, so "take the first" would routinely bind the agent
+  to a model that cannot answer a chat completion. The error prints every id it saw and points
+  at the tier's `slug:` key.
+- **Nothing is written and nothing is sent.** Discovery reads no API key and sends no
+  `Authorization` header (§2.2); the resolved tag lives in memory for the life of the process
+  and is never written back to `config.yaml`, so swapping the model on the server is picked up
+  by the next run rather than leaving a stale tag in a file the user never edited.
+
+Failure is a typed error naming the endpoint and the fix — a dead endpoint, a wrong `base_url`
+and an idle server each say something different — surfaced on the turn as
+`turn_complete{failed, error_code: "model_unresolved"}` and in diagnostics as a failing
+`provider` row with the endpoint in it.
+
 ---
 
 ## 8. Coworker mode & remote

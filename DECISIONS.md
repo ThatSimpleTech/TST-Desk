@@ -3814,3 +3814,150 @@ An in-workspace `fs_read` matches no static rule, so it classifies B and
 parks on the approval gate — the runs about ordering give it an explicit
 `fs_read → auto` policy so the only approval in the transcript is the one
 the run is about. Found by writing the tests, not assumed.
+
+---
+
+## 2026-08-16 — TD-1805 (finish): the resolution had to happen before the requirement
+
+TD-1805 shipped an optional slug, a discovery path, and a narrowing
+accessor that assumed discovery had already run. Two shipped call sites had
+not run it. This entry closes the story and **corrects decision 6 of the
+2026-08-16 TD-1805 entry above**, which claimed of `require_slug()`: "It
+should never fire; that is the point of putting it where it would." That
+claim was false when it was written. `tstd/e2e_harness.py` and
+`tstd/benchmarks.py` both called it on the brain tier before anything
+resolved that tier, so under `active_preset: local` — the only shipped
+preset that leaves the slug unset — it fired every time and neither the
+headless harness nor the perf baselines could be run at all. Reproduced
+against the pre-fix branch: both raised `ModelDiscoveryError: no model has
+been resolved for http://127.0.0.1:11434/v1`, with a fix line addressed to
+a programmer ("Resolve the tier's slug before using it (tstd.discovery)")
+rather than to the user in front of it.
+
+The suite never saw it because every test ran under the default remote
+preset, where all three slugs are pinned in config. That is the general
+lesson worth keeping: an accessor whose contract is "the caller must have
+done X first" is only as good as the coverage of the callers, and the
+preset that exercises the branch has to be in the suite, not just in the
+story.
+
+### 1. Resolve before requiring — the two paths do what the daemon does
+
+**Decision:** `mock_plan` and `measure_first_token_latency` call
+`resolve_tier_slugs(cached_config())` and then `require_slug()`.
+`require_slug()` is unchanged and still raises.
+
+**Rationale:** Three options were real. *Tolerate an unresolved slug* was
+rejected outright: both call sites use the slug as the key of a
+`MockProvider` script map, so a missing or invented key falls through to the
+`(unused)` default, the scripted tool call never happens, and the pass fails
+as a broken agent loop instead of an absent model server — a silent
+substitution that produces a lie rather than an error. *Pin a synthetic slug
+for the mock leg* would keep that leg fully offline, but it would mean the
+harness rewrites the user's active configuration for the duration of the
+run and then reports a pass about a config they do not have; the M1.5 exit
+is supposed to prove the shipped chain works on this machine.
+
+*Resolve first* adds no dependency the run does not already have: under a
+local preset `agent_loop` resolves at the top of every turn anyway, so the
+endpoint was always going to be needed. `cached_config()` is `lru_cache`d,
+so the harness, the benchmark and the daemon share one `ModelConfig` object
+— resolving in the caller means the loop's own call is the dict scan it was
+designed to be, and the pass costs one `/v1/models` round-trip, not two.
+Verified against Ollama 0.32.13: the mock harness passes under
+`active_preset: local` in 0.8s, and `first_token_latency` measures 41 ms,
+unchanged against the committed baseline (0.0414 s) — resolution happens
+before the timed section.
+
+`mock_plan` becoming `async` is the only signature change. It is internal
+(`run()` is its only caller; `scripts/e2e_headless.py` and all three harness
+tests go through `run()`/`main()`), so TD-1401's call shape is untouched.
+
+### 2. The mock plan's spend expectation follows the preset's prices (Class B)
+
+**Decision:** `HarnessPlan.expect_spend` for the mock plan is derived —
+`max(input_price, output_price, cache_read_price) > 0` on the brain tier —
+instead of the literal `True`.
+
+**Rationale:** Fixing the crash was not enough to let a local-preset user
+*run* the harness: the `local` preset prices every tier at zero, so
+`cost > 0` failed a check for behaving correctly. TD-1803 had already drawn
+exactly this distinction when it set `expect_spend=False` on the live plan
+("a zero-price preset bills nothing, and nothing is the honest answer");
+the mock plan simply never faced it, because nothing had ever run the mock
+leg under a zero-price preset. Deriving it applies one rule to both plans
+rather than two hardcoded answers. Under any priced preset the derived
+value is `True`, so TD-1401's assertion is bit-for-bit what it was — pinned
+by `test_a_priced_preset_still_demands_a_bill`. The `ledger` check is what
+proves free work is still tracked: the local pass reports `cost=0.0
+tokens=3360`.
+
+### 3. The off-box refusal moves ahead of discovery (§2-adjacent)
+
+**Decision:** `is_loopback_url` on `--live-endpoint` is extracted from
+`live_preflight` into `off_box_refusal()` and called first in `_run_live`,
+before the slug is resolved.
+
+**Rationale:** TD-1805 inserted `discover_model(endpoint)` above
+`live_preflight`, which is where the loopback check lived. So
+`--live-endpoint https://…` sent a request to that host and *then* refused
+the run. Measured on the pre-fix branch against an unroutable off-box
+address: 10.3 s — a full `DISCOVERY_TIMEOUT` spent trying to connect —
+reported as "no model server answered", which is the harness telling the
+user it failed to reach a host it was never allowed to contact. Post-fix:
+0.23 s, refused with no connection attempted. This is not a §2.1 violation
+(that governs what we *bind*) and the request carried no credential, but it
+directly contradicts TD-1803's acceptance note that a non-loopback endpoint
+"is refused before any request leaves the box", and §2.3's zero-unrequested-
+network posture. Fixed rather than raised as Class C because it is a
+reordering inside the path this story changed, with no scope change: the
+refusal, its wording and its exit code are all as they were.
+
+### 4. Discovery's fix text is chosen by what actually failed
+
+**Decision:** `_START_SERVER_FIX` no longer answers every failure. A
+transport error keeps it; a 5xx gets `_SERVER_UNHEALTHY_FIX` (check the
+logs); any other non-200, and a 200 whose body is not an OpenAI model list,
+get `_WRONG_PATH_FIX` (point `base_url` at the API root). `_model_ids`
+returns `None` for "not a model list" so that an empty `data: []` — a
+correct server with nothing loaded — keeps its own "load a model" fix.
+
+**Rationale:** A reply is proof the address is live, so "start a server
+there" sends the user to check a process that is already running. The
+common real case is a `base_url` missing `/v1`: against the live Ollama,
+`http://127.0.0.1:11434` now reads "Something is listening there but it is
+not serving the OpenAI model list. Point the tier's base_url at the API
+root…" where it previously told the user to start the server that was
+answering it.
+
+### 5. `model_unresolved` gets UI copy; the endpoint stays off the wire (Class B)
+
+**Decision:** `TURN_ERROR_COPY` gains a `model_unresolved` banner. It names
+the two fixes (start the server, or set `slug:`) and points at diagnostics
+for the endpoint. `TurnComplete` is **not** widened to carry the endpoint.
+
+**Rationale:** The code reached the wire with no entry in the table, so
+`turnFailureCopy` fell through to "The turn ended with an unrecognised error
+(model_unresolved)" — a raw code, which is the generic provider error AC-3
+exists to prevent. A banner, not a toast, on the same reasoning as
+`missing_api_key`: nothing works until the user acts, and the conversation
+survives so they can act and resend.
+
+Carrying the endpoint would mean a new optional field on `TurnComplete`
+used by exactly one code path — protocol message design, Class B, and the
+spec is silent, so §5 says ask rather than decide. It is not needed to make
+the copy actionable: on a local preset the endpoint is a line in the user's
+own `config.yaml`, and `run_diagnostics` already reports it in the failing
+`provider` row (pinned by `test_the_provider_row_carries_the_endpoint_and_
+the_fix`). Recorded here as the open question if a future story wants the
+endpoint in the banner itself.
+
+### 6. Decision 8's Class C is answered: the spec now documents the contract
+
+The earlier entry raised the spec update as a scope boundary and left it.
+The story owner has since directed it, so `docs/tst-desk-spec.md` §7 gains
+"The `local` preset: the endpoint is ours to guess, the model tag is not" —
+optional-only-on-loopback, resolved on first turn, config always wins,
+exactly-one-resolves, and the no-key/no-write guarantee. §10 is satisfied:
+this story changed the user-facing configuration contract and the docs now
+say so.

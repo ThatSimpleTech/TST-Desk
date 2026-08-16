@@ -178,6 +178,23 @@ def live_plan(workspace: Path, provider: LiveProvider) -> HarnessPlan:
     )
 
 
+def off_box_refusal(endpoint: str) -> str | None:
+    """Why *endpoint* may not be contacted at all, or ``None`` if it may.
+
+    Split out of :func:`live_preflight` so it can be asked *before* anything
+    is sent.  Model discovery (TD-1805) also has to reach the endpoint, and
+    it ran ahead of this check — so pointing ``--live-endpoint`` at a remote
+    host sent it a request and only then refused the run.  A refusal that
+    fires after the packet has left is not a refusal.
+    """
+    if not is_loopback_url(endpoint):
+        return (
+            f"{endpoint} is not a loopback endpoint; the live harness targets "
+            "an on-box model server so a test run can never spend money"
+        )
+    return None
+
+
 async def live_preflight(endpoint: str, model: str) -> str | None:
     """Why a live pass cannot run against *endpoint*, or ``None`` if it can.
 
@@ -186,11 +203,9 @@ async def live_preflight(endpoint: str, model: str) -> str | None:
     would be a lie.  The caller decides how to say so — the test skips, the
     CLI exits without pretending it passed.
     """
-    if not is_loopback_url(endpoint):
-        return (
-            f"{endpoint} is not a loopback endpoint; the live harness targets "
-            "an on-box model server so a test run can never spend money"
-        )
+    off_box = off_box_refusal(endpoint)
+    if off_box is not None:
+        return off_box
 
     wire_model = cached_config().tier("brain").slug
     if wire_model is not None and wire_model != model:
