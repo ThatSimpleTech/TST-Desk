@@ -8,6 +8,9 @@ cost accounting.
 The daemon runs in-process but over the real WebSocket protocol — the
 harness is a protocol client, not a unit test.
 
+This module drives the session and collects its events; ``e2e_checks``
+decides what they prove (split under TD-1807).
+
 A :class:`HarnessPlan` says what to run the pass against.  The default
 plan is TD-1401's: a scripted :class:`MockProvider`, deterministic and
 offline, finishing well inside the sixty-second CI budget.  TD-1803 adds a
@@ -32,17 +35,15 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from websockets.asyncio.client import connect
 
-from .audit import AuditStore
-from .audit_queries import cost_by_session
 from .config import ModelDiscoveryError, cached_config
 from .daemon import Daemon
 from .discovery import discover_model
+from .e2e_checks import HarnessResult, verify
 from .e2e_live import (
     LiveProvider,
     ProviderContractError,
@@ -60,30 +61,6 @@ _WRITE_CONTENT = "hello from M1\n"
 # Per-check timeout: a healthy run finishes in a couple of seconds; the
 # story budget is sixty seconds for the whole pass including startup.
 _TURN_TIMEOUT = 45.0
-
-
-@dataclass
-class HarnessResult:
-    """Outcome of one harness pass: named checks with a detail line each."""
-
-    checks: list[tuple[str, bool, str]] = field(default_factory=list)
-    elapsed: float = 0.0
-
-    @property
-    def ok(self) -> bool:
-        return all(passed for _, passed, _ in self.checks)
-
-    def report(self) -> str:
-        lines = [
-            f"{'PASS' if p else 'FAIL'}  {name:<28} {detail}" for name, p, detail in self.checks
-        ]
-        verdict = "OVERALL PASS" if self.ok else "OVERALL FAIL"
-        lines.append(f"{verdict} in {self.elapsed:.1f}s")
-        return "\n".join(lines)
-
-
-def _check(result: HarnessResult, name: str, ok: bool, detail: str = "") -> None:
-    result.checks.append((name, ok, detail))
 
 
 def _prepare_workspace(workspace: Path, plan: HarnessPlan) -> None:
@@ -168,12 +145,10 @@ async def run(workspace: Path, data_dir: Path, plan: HarnessPlan | None = None) 
     result are unchanged.
     """
     started = time.monotonic()
-    result = HarnessResult()
     plan = plan or mock_plan(workspace)
     _prepare_workspace(workspace, plan)
 
-    provider = plan.provider
-    daemon = Daemon(data_dir=data_dir, provider=provider)
+    daemon = Daemon(data_dir=data_dir, provider=plan.provider)
     daemon_task = asyncio.create_task(daemon.run())
     events: list[dict[str, Any]] = []
     session_id = ""
@@ -227,119 +202,14 @@ async def run(workspace: Path, data_dir: Path, plan: HarnessPlan | None = None) 
             with contextlib.suppress(asyncio.CancelledError):
                 await daemon_task
 
-    by_type: dict[str, list[dict[str, Any]]] = {}
-    for event in events:
-        by_type.setdefault(str(event.get("type", "")), []).append(event)
-
-    # 1. Workspace open — session running, boundary resolved.
-    _check(
-        result,
-        "workspace open",
-        by_type.get("session_state", [{}])[0].get("state") in ("running", "idle"),
-        f"state={by_type.get('session_state', [{}])[0].get('state')!r}",
+    return await verify(
+        events=events,
+        plan=plan,
+        workspace=workspace,
+        data_dir=data_dir,
+        session_id=session_id,
+        started=started,
     )
-    boundary = by_type.get("boundary_update", [{}])[0]
-    _check(
-        result,
-        "boundary resolved",
-        bool(boundary.get("writable_paths")),
-        f"source={boundary.get('source')!r}",
-    )
-
-    # 2. Steering resolution — the workspace AGENTS.md must reach the
-    #    model's system prompt.  (steering_reloaded is a hot-reload event,
-    #    TD-509; it never fires on a fresh session's first turn.)
-    first_system = ""
-    if provider.calls:
-        first = provider.calls[0]
-        if first.messages and first.messages[0].role == "system":
-            first_system = first.messages[0].content or ""
-    _check(
-        result,
-        "steering resolved",
-        "Harness workspace" in first_system,
-        "workspace AGENTS.md in system prompt" if first_system else "no provider calls recorded",
-    )
-
-    # 3+4. Tool call with a classification attached.
-    calls = by_type.get("tool_call", [])
-    call = calls[0] if calls else {}
-    _check(
-        result,
-        "tool call classified",
-        call.get("name") == "fs_write" and call.get("decision_class") in ("A", "B"),
-        f"name={call.get('name')!r} class={call.get('decision_class')!r}",
-    )
-
-    # 4.5 Approval gate, when the plan expects one to open.  The mock
-    #     plan's scripted write classifies A and runs automatically, so
-    #     requiring a gate there would fail a pass that is behaving
-    #     correctly — this check exists precisely where approve_on says a
-    #     pending approval is registered.
-    if plan.approve_on == "approval_request":
-        gate = by_type.get("approval_request", [])
-        _check(
-            result,
-            "approval gate",
-            bool(gate) and gate[0].get("tool_call_id") == call.get("tool_call_id"),
-            f"requests={len(gate)} reason={gate[0].get('reason') if gate else None!r}",
-        )
-
-    # 5+6. Execution — successful result carrying the write diff.
-    results = by_type.get("tool_result", [])
-    tool_result = results[0] if results else {}
-    written = workspace / "hello.txt"
-    wrote_file = written.exists() and plan.content_ok(written.read_text(encoding="utf-8"))
-    _check(
-        result,
-        "execution",
-        tool_result.get("status") == "success" and wrote_file,
-        f"status={tool_result.get('status')!r} file={'written' if wrote_file else 'missing'}",
-    )
-
-    # 7. Checkpoint — the mutation is committed on the session branch.
-    branch = await asyncio.to_thread(
-        subprocess.run,
-        ["git", "-C", str(workspace), "log", "--oneline", f"tst/session/{session_id}"],
-        capture_output=True,
-        text=True,
-    )
-    _check(
-        result,
-        "checkpoint",
-        branch.returncode == 0 and bool(branch.stdout.strip()),
-        f"branch=tst/session/{session_id}",
-    )
-
-    # 8+9. Ledger + cost — audit rows carry real token counts, and the turn
-    #      billed what the plan's preset says it should.
-    aggregates = cost_by_session(AuditStore(data_dir / "audit.db"))
-    _check(
-        result,
-        "ledger",
-        any(a.key == session_id and a.prompt_tokens > 0 for a in aggregates),
-        f"sessions={len(aggregates)}",
-    )
-    turn = by_type.get("turn_complete", [{}])[-1]
-    cost = float(turn.get("cost", 0.0))
-    # A zero-price preset bills nothing, and nothing is the honest answer.
-    # The ledger check above is what proves free is still *tracked*.
-    billed = cost > 0 if plan.expect_spend else cost >= 0
-    _check(
-        result,
-        "cost accounting",
-        billed and int(turn.get("tokens", 0)) > 0,
-        f"cost={turn.get('cost')} tokens={turn.get('tokens')}",
-    )
-
-    result.elapsed = time.monotonic() - started
-    _check(
-        result,
-        f"under {int(plan.budget_secs)} seconds",
-        result.elapsed < plan.budget_secs,
-        f"{result.elapsed:.1f}s",
-    )
-    return result
 
 
 def _run_live(workspace: Path, data_dir: Path, endpoint: str, model: str | None) -> int:
