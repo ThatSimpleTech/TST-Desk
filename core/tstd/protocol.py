@@ -454,6 +454,9 @@ class CostUpdate(DaemonEvent):
 
     type: Literal["cost_update"] = "cost_update"
     session_id: str
+    # Spend on the current turn so far, across every provider call it has
+    # made — a turn using a tool emits several of these, each carrying the
+    # running total, and the last agrees with turn_complete.cost (TD-1806).
     turn_cost: float = Field(ge=0)
     session_cost: float = Field(ge=0)
     total_cost: float = Field(ge=0)
@@ -504,6 +507,10 @@ class BoundaryUpdate(DaemonEvent):
 
 class TurnComplete(DaemonEvent):
     """Summary of a completed turn.
+
+    ``tokens``, ``cost`` and ``duration`` cover the whole turn — every
+    provider call it made, tool round-trips included — not just the call
+    that produced the final response (TD-1806).
 
     ``failed`` marks a turn that ended on a provider/keychain error rather
     than a model response; ``error_code`` carries the typed cause (e.g.

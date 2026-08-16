@@ -3513,6 +3513,9 @@ pre-existing, outside this story, and a change to what `turn_complete`
 means on the wire (§3). The test asserts session spend rather than turn
 tokens so it neither depends on the quirk nor pretends it is absent.
 
+*Resolved by TD-1806 (below); this entry stands as the record of the
+deferral, not of current behaviour.*
+
 ---
 
 ## 2026-08-16 — TD-1805: Resolve the local model from the endpoint
@@ -3663,3 +3666,81 @@ boundary (§5 Class C), so it is raised here rather than taken: the spec
 needs a sentence in §7 covering optional slugs on loopback endpoints, the
 exactly-one rule, and the fact that config always wins. The backlog's
 TD-1805 acceptance boxes are likewise left unticked pending that call.
+
+---
+
+## 2026-08-16 — TD-1806: Count a whole turn's tokens and duration
+
+### 1. The turn accumulator opens at the turn, not at the provider call
+
+**Decision:** `tracker.begin_turn()` and `turn_start = time.time()` move out
+of the tool-call round-trip loop and up to the top of the turn loop, right
+after the user message is appended. The round-trip loop keeps everything
+else it had.
+
+**Rationale:** They measure a turn, and the loop they sat in runs once per
+*provider call*. A turn that called a tool therefore reported its final
+leg's tokens and its final leg's duration as the whole turn's. Measured on
+the live harness against Ollama 0.32.13, same task, both sides of the
+change:
+
+    before   ledger rows (1212, 190) + (1373, 28) = 2803   turn reported 1401
+    after    ledger rows (1214, 177) + (1377,  21) = 2789   turn reported 2789
+
+1401 is exactly `1373 + 28` — the last call, to the token.
+
+Alternatives rejected:
+
+- **Sum the ledger at `turn_complete` instead.** `CostTracker` already owns
+  a turn accumulator and every `turn_*` aggregate reads it; a second,
+  parallel notion of "this turn" computed in the loop would be two answers
+  to one question, and the cache-ratio and cached-token aggregates would
+  still report the last leg.
+- **Reset per call but keep a separate turn stopwatch.** Fixes the duration
+  and leaves the token defect exactly where it was.
+
+Only `_turn_calls` is reset by `begin_turn`, verified before moving it: the
+session ledger (`_calls`), the classifier ledger (`_classifier_calls`) and
+`last_cached_prompt_tokens` all read `_calls` and are indifferent to where
+`begin_turn` is called. `_cap_violation` measures `session_cost()`, not
+turn cost, so cap enforcement is unchanged. The docstring on `begin_turn`
+now states the once-per-turn contract so the next reader does not have to
+re-derive it.
+
+### 2. `cost_update.turn_cost` now accrues across the turn (Class B)
+
+**Decision:** Accepted as an entailed consequence and pinned by a test
+rather than left to be discovered: mid-turn `cost_update` events now carry
+the turn's spend *so far* instead of the last call's spend alone. TD-1804's
+guarantee is about the *count* — one ledger row and one `cost_update` per
+provider call — and that count is unchanged, asserted in the same tests.
+
+**Rationale:** `turn_cost` is a field named for the turn; reporting one leg
+of it was the same defect as `turn_complete.tokens`, just on the meter
+instead of the receipt. The alternative — freezing `turn_cost` at per-call
+semantics to avoid touching a shipped value — would leave the UI's running
+meter disagreeing with the `turn_complete` it lands on at the end of every
+turn that used a tool. No wire shape changed, so no client needs updating;
+`session_cost` and `cost_by_tier` are untouched.
+
+### 3. The turn clock starts before tier-slug resolution
+
+**Decision:** `turn_start` is taken before TD-1805's `resolve_tier_slugs`
+call, so a turn that fails discovery reports the time it spent trying, and
+that path's own `tracker.begin_turn()` (added when the reset lived in the
+inner loop, which the failure path never reaches) is deleted as redundant.
+
+**Rationale:** Discovery is work the turn does; a user waiting on an
+unreachable endpoint waited for real. A failed discovery still bills zero
+tokens because `begin_turn` cleared the accumulator and no call was made —
+`test_a_failed_discovery_bills_nothing` continues to pass unchanged.
+
+### 4. Noted, not changed: `router.record_turn_start()` also runs per call
+
+`record_turn_start` sits in the same round-trip loop at `loop.py:677`, so
+`router.turn_count` counts provider calls rather than turns, and a
+tool-using turn advances the lead-turn rotation faster than a plain one.
+That is the same shape of defect this story fixed, on a different counter,
+and no acceptance criterion here covers it — moving it would change tier
+selection, which is TD-303's contract and its tests. Raised for a story of
+its own rather than folded in.

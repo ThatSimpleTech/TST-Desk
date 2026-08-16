@@ -628,6 +628,16 @@ async def agent_loop(
 
         messages.append(ChatMessage(role="user", content=user_content))
 
+        # 1a. Open the turn's accumulators (TD-1806).  Both live out here,
+        #     at the turn boundary, because a turn is what they measure: a
+        #     turn that makes a tool call spends several provider calls, and
+        #     resetting per call reported the last leg's tokens and the last
+        #     leg's duration as if they were the whole turn.  Per-call
+        #     accounting is untouched — the ledger row and the cost_update
+        #     ride on ``record()``, once per call (TD-1804).
+        tracker.begin_turn()
+        turn_start = time.time()
+
         # 1b. Resolve any tier that leaves its slug unset (TD-1805).  This
         #     is the "first use" the story means: not import time, and not
         #     session open — an absent local model server must fail the
@@ -639,11 +649,10 @@ async def agent_loop(
             await resolve_tier_slugs(config)
         except ModelDiscoveryError as e:
             messages.append(ChatMessage(role="assistant", content=f"I encountered an error: {e}"))
-            tracker.begin_turn()
             await _emit_turn_complete(
                 session,
                 router.active_tier,
-                time.time(),
+                turn_start,
                 tracker,
                 failed=True,
                 error_code="model_unresolved",
@@ -681,8 +690,6 @@ async def agent_loop(
                     )
                 )
             tier_cfg = config.tier(tier)
-            tracker.begin_turn()
-            turn_start = time.time()
 
             # 2b. Assemble the per-tier system prompt in stable-prefix
             #     order (TD-305), gating external imports (TD-505): an

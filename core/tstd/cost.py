@@ -123,7 +123,15 @@ class CostTracker:
             listener(record, is_classifier)
 
     def begin_turn(self) -> None:
-        """Start a new turn. Resets the turn-level accumulator."""
+        """Start a new turn. Resets the turn-level accumulator.
+
+        Called once per *turn*, never per provider call: a turn that makes
+        a tool call spends several calls, and resetting between them makes
+        every ``turn_*`` aggregate report the last leg (TD-1806).  Only
+        ``_turn_calls`` is reset — the session ledger, the classifier
+        ledger and :attr:`last_cached_prompt_tokens` all read ``_calls``
+        and are unaffected by where this is called.
+        """
         self._turn_calls = []
 
     def record(self, tier: TierName, usage: Usage, cfg: TierConfig | None = None) -> float:
