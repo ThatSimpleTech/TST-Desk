@@ -3331,3 +3331,86 @@ double-counting risk on providers that send usage twice. Ollama co-emits
 usage with `finish_reason`, so the shipped `local` preset — and this
 story's ledger test — exercise the working path. `MockProvider` also
 co-emits, which is why the whole suite is blind to it. Wants its own story.
+
+---
+
+## 2026-08-16 — TD-1803: Live-provider end-to-end harness
+
+### 1. `run()` takes a `HarnessPlan`, not a provider factory
+
+**Decision:** `e2e_harness.run(workspace, data_dir, plan=None)` where
+`HarnessPlan` carries the provider, the steering text, the prompt, the
+event that approval is granted on, the written-content predicate, whether
+spend is expected, and the two timeouts. `plan=None` builds `mock_plan()`,
+so TD-1401's call shape and output are unchanged.
+
+**Rationale:** Swapping the provider alone is not enough to describe a live
+pass. A local model needs a fifteen-minute budget instead of forty-five
+seconds, bills nothing where the mock bills real money, cannot be held to
+byte-exact file content, and must approve on `approval_request` rather than
+`tool_call`. Those five differences would otherwise become five `if live:`
+branches through the run body — and a branch the mock never takes is a
+branch that rots. As data, there is exactly one code path and the mock pass
+executes every line the live pass does.
+
+### 2. Live tests are deselected by default via `addopts`
+
+**Decision:** `pyproject.toml` registers a `live` marker and sets
+`addopts = ["-m", "not live"]`. Opt in with `uv run pytest -m live`.
+
+**Rationale:** The story requires live runs excluded from the default CI
+leg. `ci.yml` runs a bare `uv run pytest -q --tb=short`, so the exclusion
+has to live in the config rather than the invocation — and putting it there
+means a developer's local `pytest` behaves identically to CI, which is the
+property worth having. The cost is that `addopts` now silently filters
+every run; the marker description and this entry are the compensating
+signal. A `skipif` on an environment variable was the alternative and was
+rejected: it reports "skipped" for a test that was never meant to run here,
+which trains people to ignore skips.
+
+### 3. A live endpoint must be loopback
+
+**Decision:** `live_preflight` refuses a non-loopback `--live-endpoint`.
+
+**Rationale:** TD-1801 made loopback tiers keyless, so an on-box endpoint
+needs no credential and the harness never touches the keychain. Allowing a
+remote endpoint would mean a test harness that can spend the user's money
+and would need an async, key-bearing construction path for no gain the
+story asks for. Refusing is one line and makes "a live run cannot bill
+anyone" a property rather than a hope.
+
+### 4. Class C raised, not fixed: the live ledger is empty, and TD-1802's premise was wrong
+
+**Decision:** Left alone and reported (§5 Class C). The live pass fails its
+`ledger` and `cost accounting` checks. `loop.py` records usage only when a
+chunk carries **both** `finish_reason` and `usage`; Ollama sends them on
+separate chunks, so no `model_call` row is written and the turn reports
+`tokens=0, cost=0.0`.
+
+**Rationale:** This is the defect TD-1802 recorded under "usage-only
+trailing chunks are never recorded" — but that entry claimed Ollama
+co-emits usage with `finish_reason` and therefore exercised the working
+path. That claim is false. Verified against the running server:
+
+    {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+    {"choices":[],"usage":{"prompt_tokens":16,"completion_tokens":39,...}}
+
+Two chunks, and the `and` short-circuits on both. So the shipped `local`
+preset exercises the *broken* path, and TD-1802's third criterion — "the
+ledger still records real token counts for a zero-price tier" — is proven
+only against `MockProvider`, which co-emits. The correction matters more
+than the bug: a deferred defect was deferred on a false premise.
+
+Still not fixed here. It is a change to the recording contract for every
+provider and every preset, with the double-counting risk TD-1802 named, and
+it is outside this story's files. Fixing it inside a harness story would
+also destroy the evidence: the live harness caught a real defect on its
+first run, which is the clearest possible demonstration of why the story
+exists.
+
+Worth noting what the failure did *not* do. `provider.errors` is empty and
+no `ProviderContractError` was raised — Ollama's chunk shape is exactly
+what `stream_options: {"include_usage": true}` specifies, so the endpoint
+kept its contract and the loop dropped the usage. The harness attributed
+the failure to the right side without being told, which is criterion four
+demonstrated on a real fault rather than a simulated one.

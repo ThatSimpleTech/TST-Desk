@@ -49,3 +49,8 @@ python_version = "3.11"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Live tests need a model server on this machine, which CI does not have
+# and a developer may not have running.  Deselected by default so the
+# ordinary suite stays offline; opt in with `uv run pytest -m live`.
+addopts = ["-m", "not live"]
+markers = ["live: needs a reachable local OpenAI-compatible model endpoint"]
