@@ -67,11 +67,12 @@ function emit(event: DaemonEventUnion): void {
   mocks.handler?.(event);
 }
 
-const setupState = (hasKey: boolean): DaemonEventUnion =>
+const setupState = (hasKey: boolean, keyRequired = true): DaemonEventUnion =>
   ({
     type: "setup_state",
     seq: 1,
     has_api_key: hasKey,
+    key_required: keyRequired,
     presets: ["budget", "local", "tst-default"],
     active_preset: "tst-default",
   }) as DaemonEventUnion;
@@ -97,6 +98,13 @@ describe("first-run detection", () => {
     emit(setupState(true));
     expect(onboarding.open).toBe(false);
     expect(onboarding.hasApiKey).toBe(true);
+  });
+
+  it("stays closed on a local-only preset that needs no key (TD-1801)", () => {
+    start();
+    emit(setupState(false, false));
+    expect(onboarding.open).toBe(false);
+    expect(onboarding.hasApiKey).toBe(false);
   });
 
   it("auto-opens at most once — closing is a decision, not a bug", () => {

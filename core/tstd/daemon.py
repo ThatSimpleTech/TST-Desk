@@ -29,7 +29,13 @@ from .boundary_config import (
     load_workspace_boundary,
     scaffold_workspace_config,
 )
-from .config import ConfigError, ModelConfig, cached_config, save_active_preset
+from .config import (
+    ConfigError,
+    ModelConfig,
+    cached_config,
+    is_loopback_url,
+    save_active_preset,
+)
 from .context.assembler import ContextAssembler
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
@@ -117,6 +123,13 @@ from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
+
+# The doctor's api_key verdict when the active preset sends no key (TD-1801).
+_KEYLESS_KEY_ROW = DiagnosticCheck(
+    name="api_key",
+    status="skip",
+    detail="not needed — the active preset runs on a local endpoint",
+)
 
 
 @dataclass
@@ -300,15 +313,27 @@ class Daemon:
             on_disconnect=self._on_connection_closed,
         )
 
+    async def _brain_client(self) -> ProviderClient:
+        """Build a client for the active brain tier.
+
+        A loopback base URL is on-box, so there is nothing to authenticate
+        against: the keychain is never consulted and no key prompt can occur
+        (TD-1801). Remote endpoints keep the keychain requirement unchanged —
+        this removes a requirement, it never invents a credential.
+        """
+        tier_cfg = self.config.tier("brain")
+        if is_loopback_url(tier_cfg.base_url):
+            return ProviderClient(base_url=tier_cfg.base_url, api_key=None)
+        return await ProviderClient.from_keychain(tier_cfg.base_url)
+
     async def _ensure_provider(self) -> ProviderLike:
         """Create the shared provider client on first use.
 
         Uses the brain tier's base URL for the OpenAI-compatible endpoint;
-        the API key comes from the OS keychain.
+        for a remote endpoint the API key comes from the OS keychain.
         """
         if self._provider is None:
-            tier_cfg = self.config.tier("brain")
-            self._provider = await ProviderClient.from_keychain(tier_cfg.base_url)
+            self._provider = await self._brain_client()
         return self._provider
 
     async def _setup_state_event(self) -> SetupState:
@@ -316,7 +341,9 @@ class Daemon:
 
         ``has_api_key`` is the wizard's first-run signal; presence is probed
         from the keychain, so it survives daemon restarts and never touches
-        the key value itself.
+        the key value itself.  ``key_required`` says whether the active preset
+        needs one at all, so a local-only workspace is never prompted for a
+        key it will never send (TD-1801).
         """
         try:
             await get_api_key()
@@ -326,6 +353,7 @@ class Daemon:
         return SetupState(
             seq=1,
             has_api_key=has_api_key,
+            key_required=self.config.requires_api_key(),
             presets=sorted(self.config.presets),
             active_preset=self.config.active_preset,
         )
@@ -342,7 +370,7 @@ class Daemon:
         if api_key is not None:
             client = ProviderClient(base_url=tier_cfg.base_url, api_key=api_key)
         else:
-            client = await ProviderClient.from_keychain(tier_cfg.base_url)
+            client = await self._brain_client()
         response = await client.chat_completion(
             ChatCompletionRequest(
                 model=tier_cfg.slug,
@@ -464,8 +492,14 @@ class Daemon:
             key_present = True
         except KeychainError:
             key_present = False
-        if key_present:
-            checks.extend(await self._doctor_key_provider_rows())
+        key_required = self.config.requires_api_key()
+        if key_present or not key_required:
+            rows = await self._doctor_key_provider_rows()
+            if not key_required:
+                # The probe still ran, so the provider verdict is real; only
+                # the key verdict is meaningless for a keyless endpoint.
+                rows = [_KEYLESS_KEY_ROW if r.name == "api_key" else r for r in rows]
+            checks.extend(rows)
         else:
             checks.append(
                 DiagnosticCheck(

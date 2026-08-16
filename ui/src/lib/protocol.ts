@@ -388,10 +388,13 @@ export interface PolicyRules extends DaemonEvent {
 // TD-1101 first-run wizard: the daemon's reply to get_setup_state
 // (and the ack for set_api_key / set_preset). has_api_key is the
 // first-run signal — probed from the keychain, never from disk.
+// key_required (TD-1801) is false when the active preset runs entirely
+// on loopback endpoints, which send no key at all.
 export interface SetupState extends DaemonEvent {
   type: "setup_state";
   seq: number;
   has_api_key: boolean;
+  key_required: boolean;
   presets: string[];
   active_preset: string;
 }

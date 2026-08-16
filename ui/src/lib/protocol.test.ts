@@ -437,6 +437,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const m = fixtures.setup_state as SetupState;
     expect(m.type).toBe("setup_state");
     expect(isBoolean(m.has_api_key)).toBe(true);
+    expect(isBoolean(m.key_required)).toBe(true);
     expect(Array.isArray(m.presets)).toBe(true);
     expect(m.presets.every(isString)).toBe(true);
     expect(isString(m.active_preset)).toBe(true);

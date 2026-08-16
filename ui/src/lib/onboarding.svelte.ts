@@ -84,8 +84,9 @@ function reduce(event: DaemonEventUnion): void {
 			onboarding.presets = event.presets;
 			onboarding.activePreset = event.active_preset;
 			// First run = no stored key. Open the wizard once; after that the
-			// user drives it (settings gear or skip path).
-			if (!event.has_api_key && !autoOpened) {
+			// user drives it (settings gear or skip path). A local-only preset
+			// never sends a key, so there is nothing for a first run to resolve.
+			if (!event.has_api_key && event.key_required && !autoOpened) {
 				autoOpened = true;
 				onboarding.open = true;
 				onboarding.step = "welcome";

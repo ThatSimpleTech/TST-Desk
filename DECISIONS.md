@@ -3195,3 +3195,84 @@ that's where the stderr is — and in one function, so a new marker is one
 line. The retry path is the wizard's own field retention plus named copy,
 not new plumbing: the banner body tells the user their key is still typed
 and which button retries.
+
+## 2026-08-16 — TD-1801: Keyless local provider
+
+### 1. A loopback `base_url` is the keyless signal
+
+**Decision:** `config.is_loopback_url` classifies a provider endpoint as
+on-box (127.0.0.0/8, `::1`, `localhost`) and the daemon's `_brain_client`
+skips the keychain entirely for one. Anything unclassifiable — no scheme,
+an unparseable host, a name that merely contains "localhost" — is treated
+as remote and keeps the key requirement.
+
+**Rationale:** The alternative was to catch `KeychainError` and continue
+without a key, which is wrong in the one case that matters: `KeychainLockedError`
+subclasses `KeychainError`, so a locked login keychain would silently
+degrade a *remote* call into an unauthenticated one and swallow TD-1105's
+unlock guidance. Keying off the URL means the keyless branch is chosen
+before the keychain is ever consulted, so a keychain fault on a remote tier
+still surfaces as a keychain fault. The predicate is deliberately separate
+from `ws.validate_interface`: that one guards which interface we *bind*
+(§2.1) and is a membership test over a bare host, this one classifies an
+endpoint we *call*.
+
+### 2. `ProviderClient.api_key` accepts `None`, and no key means no header
+
+**Decision:** `api_key` widens from `str` to `str | None` (still a required
+positional — keyless must be written out, never defaulted into) and
+`_headers` omits `Authorization` altogether when it is `None`.
+
+**Rationale:** The cheaper option was passing `""`, but that puts a literal
+`Authorization: Bearer ` on the wire. Ollama ignores it; a stricter
+OpenAI-compatible server (llama.cpp, LM Studio, vLLM with `--api-key`) can
+reject the malformed value, and "we sent an empty credential" is not the
+same statement as "we sent no credential". An absent header makes keyless
+provable on the wire, which is what the test asserts. §2.2 is untouched in
+both directions: this removes a keychain read, it adds no place a secret is
+stored or logged.
+
+### 3. `setup_state` gains `key_required`; the UI stops guessing
+
+**Decision:** `SetupState` carries `key_required: bool = True`, computed
+from the active preset. The wizard's auto-open gate becomes
+`!has_api_key && key_required`. The field is additive with a safe default,
+so `PROTOCOL_VERSION` does not move — a client that ignores it behaves
+exactly as before.
+
+**Rationale:** `has_api_key` is an honest probe of stored-key presence and
+should stay one; making it report `true` for a local preset would be a lie
+told to skip a modal. But the UI cannot derive "this preset needs no key"
+from `active_preset` without hardcoding preset names, which §6 forbids
+("the UI never derives truth it wasn't given"). A new field is the only
+shape that keeps both invariants. `requires_api_key()` is conservative —
+false only when *every* tier is loopback — so a mixed preset never reports
+keyless.
+
+### 4. The doctor skips the key row instead of failing it
+
+**Decision:** When the active preset needs no key, the `api_key` diagnostic
+row is `skip` ("not needed — the active preset runs on a local endpoint")
+rather than `fail`. The `provider` row is still a real probe.
+
+**Rationale:** Not named in an acceptance criterion, but making local-only
+a supported path turns the existing behaviour into a false failure: a
+working local setup would read "no API key stored — open the setup wizard".
+A diagnostic that lies about a healthy system is worse than no row. The
+provider row is unchanged because a keyless endpoint is still reachable or
+not, and that verdict is still worth having.
+
+### 5. Known limitation: resolution is brain-tier-wide, not per-tier
+
+**Decision:** `_brain_client` decides keyless-ness from the **brain** tier's
+`base_url`, matching the daemon's existing one-client-per-process shape.
+`requires_api_key()` looks at all three tiers. A mixed preset (loopback
+brain, remote worker) therefore resolves keyless while reporting
+`key_required: true`.
+
+**Rationale:** The daemon has always built a single client from the brain
+tier and shared it with the worker-tier classifier call, so per-tier
+`base_url` is decorative today. Making it genuinely per-tier means multiple
+clients keyed by endpoint — a scope change well beyond this story, raised
+rather than built (§5 Class C). The conservative `requires_api_key()` means
+the mismatch fails safe: a mixed preset still prompts for a key.
