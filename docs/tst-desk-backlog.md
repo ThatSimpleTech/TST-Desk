@@ -1085,6 +1085,34 @@ summed to 3520. The ledger was right; the turn total was not.
 
 ---
 
+### TD-1807 — The live harness must not assume tool-call ordering
+**Size:** 3 · **Depends on:** TD-1803
+
+**Acceptance criteria:**
+- [ ] The harness selects the tool call it checks by name, not by list position; a run in which
+      the model calls another tool first still passes when it performs the required write
+- [ ] The approval-gate check matches an approval to the tool call it belongs to, not to
+      whichever request arrived first
+- [ ] The execution check inspects the result of the write being verified, not `results[0]`
+- [ ] Extra tool calls neither fail the run nor pass it silently — the harness reports what the
+      model actually did
+- [ ] The live leg passes five consecutive runs against a local endpoint
+- [ ] `core/tstd/e2e_harness.py` is back under AGENTS.md §6's ~400-line limit
+
+`core/tstd/e2e_harness.py:265` takes `calls[0]` and requires `name == "fs_write"`; :283 compares
+`gate[0]`'s `tool_call_id` to that same positional pick; :289 takes `results[0]`. All three
+assume the model's first tool call is the one under test. A local model that reads before it
+writes fails a run it should pass — measured at one failure in five consecutive live runs.
+
+This matters more than an ordinary flake because TD-1803 declares this harness the M1.5 exit
+criterion. An exit criterion that passes four times in five for reasons unrelated to the system
+under test is worse than one that fails honestly.
+
+The file crossed §6's limit on the same branch (302 → 422 lines); bring it back under while the
+selection logic is being rewritten rather than filing that separately.
+
+---
+
 # MILESTONE M2 — The Window
 
 ## Epic E10 — Shell and panes
@@ -2316,10 +2344,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
-| M1.5 Local models | E18 | 6 | 17 |
+| M1.5 Local models | E18 | 7 | 20 |
 | M2 The window | E10–E12 | 16 | 53 |
 | M3 Shippable | E13–E17 | 36 | 105 |
-| **Total v0.1** | **18** | **108** | **333** |
+| **Total v0.1** | **18** | **109** | **336** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
