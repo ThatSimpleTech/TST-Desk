@@ -1755,6 +1755,39 @@ product-semantics work the skips point at.
 
 ---
 
+### TD-1407 — `test_cancelled_error_path_kills_group` times a race with fixed sleeps
+**Size:** 2 · **Depends on:** TD-605
+
+**Acceptance criteria:**
+- [ ] The run waits on conditions — the child being spawned, the group being gone — rather
+      than on wall-clock sleeps sized to beat the marker
+- [ ] It fails when a grandchild genuinely escapes the group kill; the fix must not become a
+      test that cannot fail
+- [ ] The existing `kill refused` escape hatch still short-circuits the assertion, so the
+      macOS EPERM veto stays a skip rather than a failure
+- [ ] 30 consecutive full-suite runs on a loaded machine with no failure
+
+`tests/test_shell_tools.py::TestCancel::test_cancelled_error_path_kills_group` failed once
+during TD-1703 and then passed three consecutive runs in isolation. It is a timing race, not a
+product defect — the product's cancel path is what TD-605 hardened and it works.
+
+The mechanism is in the test's own arithmetic. `_GROUP_ESCAPE_CMD` is
+`{ sleep 2; touch kicked.txt; } & wait`, so a backgrounded subshell writes the marker at
+t≈2.0s. The run sleeps 0.3s, cancels, sleeps 2.5s, then asserts the marker is absent — about
+1.7s of margin for the group kill to land before the escapee writes.
+
+That margin is wall-clock, and `asyncio.sleep` only guarantees a floor. Under full-suite load
+the same test measured 3.0s, 13.7s and 14.2s against a nominal 2.8s budget — a ~5× overshoot.
+Once the loop is delayed past t≈2.0s between the cancel and the kill, the subshell wins and
+the assertion fails for a reason that has nothing to do with the code under test. Isolated
+runs almost always beat the clock, which is why it looks intermittent.
+
+Note the sibling `test_cancel_during_spawn_kills_group` already comments that "the flake
+family above traced to this window" — the spawn race was fixed in the product, but this run
+kept the wall-clock assumption.
+
+---
+
 ## Epic E15 — Documentation
 
 ---
@@ -2513,8 +2546,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M1 Headless core | E2–E9 | 46 | 145 |
 | M1.5 Local models | E18 | 10 | 25 |
 | M2 The window | E10–E12 | 16 | 52 |
-| M3 Shippable | E13–E17 | 38 | 113 |
-| **Total v0.1** | **18** | **117** | **350** |
+| M3 Shippable | E13–E17 | 39 | 115 |
+| **Total v0.1** | **18** | **118** | **352** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
