@@ -87,7 +87,8 @@ Each OS will warn on first launch; that is expected, not a defect.
 
 v0.1 — in development. See [`docs/tst-desk-backlog.md`](docs/tst-desk-backlog.md) for the
 current milestone and [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) for the full
-architecture spec.
+architecture spec. Every configuration key is documented in
+[`docs/configuration.md`](docs/configuration.md).
 
 ## License
 
