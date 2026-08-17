@@ -25,29 +25,37 @@
 	import DoctorPane from './DoctorPane.svelte';
 	import DecisionsPane from './DecisionsPane.svelte';
 	import SettingsPane from './SettingsPane.svelte';
+	import CommandPalette from './CommandPalette.svelte';
 	import Icon from './Icon.svelte';
 	import { start as startOnboarding, onboarding } from '../onboarding.svelte.js';
 	import { startSettings, openSettings, settings } from '../settings.svelte.js';
 	import { startDoctor, runDoctor, doctor } from '../doctor.svelte.js';
 	import { startDecisions, openDecisions, decisions } from '../decisions.svelte.js';
+	import { palette, openPalette, closePalette } from '../palette-store.svelte.js';
+	import { rightPane, showRightPane } from '../right-pane.svelte.js';
 	import { resolveShortcut } from '../shortcuts';
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
 	import { workspaces, closeWorkspaceMenu } from '../workspaces.svelte.js';
 
-	// Global shortcuts (TD-1609): Esc peels layers (menu → modal → turn),
-	// ⌘, opens settings (TD-1703 — it used to reopen the wizard). The mapping
-	// itself is pure — see shortcuts.ts.
+	// Global shortcuts (TD-1609): Esc peels layers (menu → palette → modal →
+	// turn), ⌘, opens settings (TD-1703), ⌘K the command palette (TD-1707).
+	// The mapping itself is pure — see shortcuts.ts. One listener, one layer
+	// order: no pane installs a keydown handler of its own.
 	function onGlobalKeydown(event: KeyboardEvent): void {
 		const action = resolveShortcut(event, {
 			workspaceMenuOpen: workspaces.menuOpen,
-			modalOpen: onboarding.open || doctor.open || decisions.open || settings.open,
+			paletteOpen: palette.open,
+			modalOpen:
+				onboarding.open || doctor.open || decisions.open || settings.open || palette.open,
 			turnLive: showCancel(chat.turnState),
 		});
 		if (action === null) return;
 		event.preventDefault();
 		if (action === 'close-menu') closeWorkspaceMenu();
+		else if (action === 'close-palette') closePalette();
 		else if (action === 'cancel-turn') cancelTurn();
+		else if (action === 'open-palette') openPalette();
 		else openSettings();
 	}
 
@@ -71,7 +79,6 @@
 		};
 	});
 
-	let rightTab = $state<'activity' | 'stack'>('activity');
 </script>
 
 <svelte:window onkeydown={onGlobalKeydown} />
@@ -80,6 +87,15 @@
 	<span class="shell-title">TST Desk</span>
 	<TitleBar />
 	<span class="shell-spacer"></span>
+	<!-- Command palette (TD-1707) — also ⌘K. The title is how the shortcut is
+	     discovered, the same way the gear announces ⌘, (TD-1609). -->
+	<button
+		class="shell-gear"
+		type="button"
+		title="Commands (⌘K)"
+		aria-label="Open command palette"
+		onclick={openPalette}><Icon name="search" size={16} /></button
+	>
 	<!-- Review the session's decisions (TD-1202) at any time. -->
 	<button
 		class="shell-gear"
@@ -121,24 +137,24 @@
 				<div class="pane-tabs" role="tablist" aria-label="Right pane views">
 					<button
 						role="tab"
-						aria-selected={rightTab === 'activity'}
+						aria-selected={rightPane.tab === 'activity'}
 						class="tab"
-						class:tab-active={rightTab === 'activity'}
-						onclick={() => (rightTab = 'activity')}
+						class:tab-active={rightPane.tab === 'activity'}
+						onclick={() => showRightPane('activity')}
 					>
 						Activity
 					</button>
 					<button
 						role="tab"
-						aria-selected={rightTab === 'stack'}
+						aria-selected={rightPane.tab === 'stack'}
 						class="tab"
-						class:tab-active={rightTab === 'stack'}
-						onclick={() => (rightTab = 'stack')}
+						class:tab-active={rightPane.tab === 'stack'}
+						onclick={() => showRightPane('stack')}
 					>
 						Stack
 					</button>
 				</div>
-				{#if rightTab === 'activity'}
+				{#if rightPane.tab === 'activity'}
 					<ActivityTimeline />
 				{:else}
 					<StackPanel />
@@ -154,6 +170,7 @@
 <DoctorPane />
 <DecisionsPane />
 <SettingsPane />
+<CommandPalette />
 
 <style>
 	.shell-header {

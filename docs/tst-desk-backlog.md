@@ -2347,12 +2347,17 @@ are already wired before adding UI.
 **Size:** 2 · **Depends on:** TD-1701, TD-1703
 
 **Acceptance criteria:**
-- [ ] ⌘K opens a palette over sessions and actions (new session, attach, open
+- [x] ⌘K opens a palette over sessions and actions (new session, attach, open
       decisions/doctor/stack/settings, toggle theme)
-- [ ] Fuzzy match, full keyboard operation, Esc dismisses
-- [ ] Palette entries reuse the icon map
+- [x] Fuzzy match, full keyboard operation, Esc dismisses
+- [x] Palette entries reuse the icon map
 
 **Notes:** lands after the sidebar and settings so it has things to command.
+⌘K joins the one pure mapping in `shortcuts.ts`; Escape gains a palette layer
+between the menu and the panes. The registry and the matcher are pure
+(`palette.ts`), the dispatch is a store (`palette-store.svelte.ts`) that calls
+the same exported actions the buttons call. The Stack tab moved out of
+AppShell into `right-pane.svelte.ts` so a command can reach it.
 
 ---
 

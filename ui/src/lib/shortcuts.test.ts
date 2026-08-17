@@ -1,10 +1,16 @@
-// Shortcut mapping tests (TD-1609): Escape layer order and the ⌘, wizard
-// reopen, including the combos that must stay inert.
+// Shortcut mapping tests (TD-1609): Escape layer order, the ⌘, settings
+// shortcut and the ⌘K palette (TD-1707), including the combos that must
+// stay inert.
 
 import { describe, expect, it } from "vitest";
 import { resolveShortcut, type ShortcutContext } from "./shortcuts";
 
-const IDLE: ShortcutContext = { workspaceMenuOpen: false, modalOpen: false, turnLive: false };
+const IDLE: ShortcutContext = {
+	workspaceMenuOpen: false,
+	paletteOpen: false,
+	modalOpen: false,
+	turnLive: false,
+};
 const LIVE: ShortcutContext = { ...IDLE, turnLive: true };
 
 function esc(metaKey = false, ctrlKey = false) {
@@ -22,6 +28,23 @@ describe("resolveShortcut — Escape", () => {
 
 	it("does nothing when a modal is open — Escape never reaches through it", () => {
 		expect(resolveShortcut(esc(), { ...LIVE, modalOpen: true })).toBeNull();
+	});
+
+	it("dismisses the palette without reaching the turn behind it (TD-1707)", () => {
+		// The palette counts in modalOpen too, so this is the layered case: it
+		// must close the palette, and it must not cancel the running turn.
+		expect(resolveShortcut(esc(), { ...LIVE, paletteOpen: true, modalOpen: true })).toBe(
+			"close-palette",
+		);
+	});
+
+	it("closes the menu before the palette, and the palette before a pane", () => {
+		expect(
+			resolveShortcut(esc(), { ...LIVE, workspaceMenuOpen: true, paletteOpen: true }),
+		).toBe("close-menu");
+		expect(resolveShortcut(esc(), { ...IDLE, paletteOpen: true, modalOpen: true })).toBe(
+			"close-palette",
+		);
 	});
 
 	it("does nothing when the session is idle", () => {
@@ -60,6 +83,36 @@ describe("resolveShortcut — settings (TD-1703)", () => {
 	it("no longer reaches the wizard — it is first-run only now", () => {
 		const action = resolveShortcut({ key: ",", metaKey: true, ctrlKey: false }, IDLE);
 		expect(action).not.toBe("open-wizard");
+	});
+});
+
+describe("resolveShortcut — command palette (TD-1707)", () => {
+	it("opens on ⌘K (meta) and Ctrl+K", () => {
+		expect(resolveShortcut({ key: "k", metaKey: true, ctrlKey: false }, IDLE)).toBe(
+			"open-palette",
+		);
+		expect(resolveShortcut({ key: "k", metaKey: false, ctrlKey: true }, IDLE)).toBe(
+			"open-palette",
+		);
+	});
+
+	it("opens with caps lock or shift on the key", () => {
+		expect(resolveShortcut({ key: "K", metaKey: true, ctrlKey: false }, IDLE)).toBe(
+			"open-palette",
+		);
+	});
+
+	it("opens over a running turn and over an open pane", () => {
+		expect(resolveShortcut({ key: "k", metaKey: true, ctrlKey: false }, LIVE)).toBe(
+			"open-palette",
+		);
+		expect(
+			resolveShortcut({ key: "k", metaKey: true, ctrlKey: false }, { ...IDLE, modalOpen: true }),
+		).toBe("open-palette");
+	});
+
+	it("leaves a bare k alone so typing works", () => {
+		expect(resolveShortcut({ key: "k", metaKey: false, ctrlKey: false }, IDLE)).toBeNull();
 	});
 });
 

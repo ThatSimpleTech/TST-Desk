@@ -14,13 +14,20 @@ export interface ShortcutEvent {
 export interface ShortcutContext {
 	/** The title-bar workspace recents menu is open. */
 	workspaceMenuOpen: boolean;
-	/** A modal pane (wizard, doctor, decisions) is open. */
+	/** The command palette is open (TD-1707) — a modal layer of its own. */
+	paletteOpen: boolean;
+	/** A modal pane (wizard, doctor, decisions, settings, palette) is open. */
 	modalOpen: boolean;
 	/** A turn is running or parked awaiting approval (chat-store showCancel). */
 	turnLive: boolean;
 }
 
-export type ShortcutAction = "close-menu" | "cancel-turn" | "open-settings";
+export type ShortcutAction =
+	| "close-menu"
+	| "close-palette"
+	| "cancel-turn"
+	| "open-settings"
+	| "open-palette";
 
 /** Map a keydown to one app-level action, or null when nothing applies. */
 export function resolveShortcut(
@@ -29,7 +36,10 @@ export function resolveShortcut(
 ): ShortcutAction | null {
 	if (event.key === "Escape" && !event.metaKey && !event.ctrlKey) {
 		if (context.workspaceMenuOpen) return "close-menu";
-		// Modals keep today's close-button behavior; Escape never reaches
+		// The palette dismisses itself (TD-1707) — it is a modal layer, so it
+		// eats the key rather than letting it reach the turn behind it.
+		if (context.paletteOpen) return "close-palette";
+		// Other modals keep today's close-button behavior; Escape never reaches
 		// through one to cancel the turn behind it.
 		if (context.modalOpen) return null;
 		return context.turnLive ? "cancel-turn" : null;
@@ -38,5 +48,9 @@ export function resolveShortcut(
 	// reopen the wizard; the wizard is first-run only now, so the key that
 	// every app spends on preferences points at preferences.
 	if (event.key === "," && (event.metaKey || event.ctrlKey)) return "open-settings";
+	// ⌘K / Ctrl+K — the command palette (TD-1707). Works from anywhere,
+	// including on top of an open modal; opening it twice just clears it.
+	if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey))
+		return "open-palette";
 	return null;
 }

@@ -4190,3 +4190,58 @@ TD-1805) is exactly what breaks it. Because the fixture IS the shipped
 default, the pinned values (slugs, 16384 max_output, prices) keep their
 bite: a shipped config that drifts from its documented tags still fails
 these tests, on any machine.
+
+## 2026-08-17 — TD-1707: The command palette is a doorway, not a second implementation
+
+### 1. The right pane's tab moved out of AppShell into a store (Class B)
+
+**Decision:** The Activity | Stack choice, until now `let rightTab = $state(...)`
+inside `AppShell.svelte`, lives in `ui/src/lib/right-pane.svelte.ts` as
+`rightPane.tab` with a `showRightPane(tab)` setter. AppShell renders it and no
+longer owns it.
+
+**Rationale:** "Open stack" is one of the acceptance criteria's commands, and a
+command can only drive state that something other than the markup owns. The
+alternatives were worse: exporting a setter from a component, or having the
+palette store poke a prop through the tree. It also matches how every other
+commandable surface in the app already works — doctor, decisions and settings
+each own their `open` flag in a store, and the palette calls the same function
+their header buttons call.
+
+### 2. Escape gains a palette layer, and `ShortcutContext` gains a field (Class B)
+
+**Decision:** `resolveShortcut` peels menu → palette → modal → turn, returning
+the new `"close-palette"` action, and `ShortcutContext` grows a `paletteOpen`
+flag. AppShell also counts the palette in `modalOpen`.
+
+**Rationale:** The palette is a modal layer, so Escape must dismiss it and must
+not reach through to cancel a running turn — the exact failure TD-1609's layer
+order exists to prevent. Two ways to spell that were available: handle Escape
+inside `CommandPalette.svelte`, or extend the one pure mapping. A local handler
+would be a second opinion about what Escape means, and the order between two
+listeners is not something the tests could pin. Counting the palette in
+`modalOpen` as well is belt and braces: if the palette layer is ever removed
+from the chain, the turn still doesn't get cancelled by an Escape aimed at the
+palette. The added field is why `shortcuts.test.ts` contexts changed shape.
+
+### 3. "Toggle theme" swings between light and dark; "system" is a way in, not a stop (Class A)
+
+**Decision:** The palette's theme command sets light when the current theme is
+dark, and dark otherwise — so from "system" the first press lands on dark and
+the next on light. It never selects "system".
+
+**Rationale:** A two-state toggle is what a palette entry named "Toggle theme"
+promises; cycling three states makes the same keystroke mean different things on
+consecutive presses. "System" stays reachable where it is chosen deliberately —
+the settings Appearance section, which is one palette entry away.
+
+### 4. Greedy subsequence matching, not optimal placement (Class A)
+
+**Decision:** `fuzzyScore` walks the query left to right taking the first
+available character, scoring word-start hits (+10) and adjacent runs (+6)
+against a capped gap penalty. A title hit always outranks a hit in an entry's
+subtitle or keywords.
+
+**Rationale:** Greedy placement is not always the best-scoring placement, but
+the corpus is six actions plus the listed sessions. An optimal matcher would
+cost more to read and maintain than the ranking it buys at that size.
