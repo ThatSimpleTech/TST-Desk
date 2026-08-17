@@ -4384,3 +4384,68 @@ components, both taking a `compact` prop for the collapsed strip.
 past §6. Neither block shares scoped CSS with what stayed behind, so the split
 removed lines instead of duplicating them — the same test decision #10 applied
 to `PolicyRuleList`.
+
+---
+
+## 2026-08-17 — TD-1716: Resume healing
+
+### 1. `ping` is a frame, not a `DaemonEvent` (Class B)
+
+**Decision:** The liveness frame is `Ping` — `{"type": "ping"}`, no `session_id`,
+no `seq` — and it does **not** inherit `DaemonEvent`, whose
+`seq: int = Field(gt=0)` is the per-session event log's contract. It joins
+`DaemonEventT` and `_KNOWN_EVENT_TYPES` so `parse_daemon_event` accepts it, and
+`build_ping()` sits beside `build_hello_ack()`. In the TypeScript mirror `Ping`
+is its own interface and is deliberately **absent** from `DaemonEventUnion`; the
+client consumes it in `handleMessage` and it never reaches a store.
+
+**Rationale:** A ping has nothing to sequence. Giving it a seq would mean either
+inventing a session to charge it to or minting a second, connection-scoped
+counter that no replay could ever use — and the moment it carries a seq, the
+client's gap detection is entitled to reason about it, which is precisely the
+machinery a liveness frame must stay out of. The two unions have different jobs
+and the asymmetry follows from that: Python's `DaemonEventT` is the wire's parse
+union (a frame the daemon really sends must parse, or a strict client chokes on
+its own daemon), while TypeScript's `DaemonEventUnion` is the set of events
+stores reduce. `hello_ack` already sets the precedent on both sides — sent by
+the daemon, defined in `protocol.ts`, absent from the union, handled in the
+transport. `ping` is the same kind of thing.
+
+**Rejected:** making `seq` optional on the `DaemonEvent` base. That weakens the
+guarantee every sequenced event depends on, to describe one frame that isn't
+sequenced at all.
+
+### 2. The zombie test runs on resume, never on a timer (Class B)
+
+**Decision:** The client stamps `lastFrameAt` on every inbound frame and
+compares it against `ZOMBIE_SILENCE_MS` (30s, two ping intervals) **only** in
+`resume()`. There is no client-side heartbeat watchdog.
+
+**Rationale:** A heartbeat timer would be defeated by exactly the condition it
+exists to detect — a suspended webview's timers do not fire, so the check would
+sleep through the outage and then run late against a clock that had already
+healed. It would also be wrong in the other direction: a legitimately
+backgrounded window is silent and healthy, and tearing its socket down on a
+timer would be fighting App Nap, which the story explicitly rules out. The
+resume edge is the one moment the page is provably running and the evidence
+(a stale `lastFrameAt`) is still on the floor where the suspension left it.
+
+**Consequence:** ping cadence and the silence threshold are coupled —
+`PING_INTERVAL_SECONDS * 2 <= 30` is asserted in `test_resume_healing.py` so a
+future cadence change cannot silently make one dropped ping look like a death.
+
+### 3. Re-attach had to become repeatable on the wire (Class A)
+
+**Decision:** Two fixes the unconditional re-attach forced into the open:
+`_handle_attach` cancels any stream the same connection already had for that
+session before replaying (with an `owner` guard in `_cleanup_attach` so the
+superseded task's teardown cannot tear down its replacement), and
+`ProtocolClient.forceReconnect` disowns a socket before closing it, with
+`onclose` ignoring a socket that is no longer current.
+
+**Rationale:** Before this story a second attach on one connection was a wiring
+mistake; now it happens every time the user comes back to the window. Left
+alone, each resume added a streaming task that duplicated every event to the
+same socket, and each zombie close scheduled a retry on top of the reconnect it
+had just started — one suspension, two sockets, then four. Both are the same
+shape of bug: a superseded thing that never learned it was superseded.
