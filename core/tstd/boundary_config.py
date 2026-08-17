@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from .attachments import AttachmentLimits
 from .config import ConfigError
 
 # Defaults when `.tst/config.yaml` is absent: workspace-only writes, no
@@ -92,6 +93,12 @@ class BoundaryConfig(BaseModel):
 
     boundary: BoundarySection = Field(default_factory=BoundarySection)
     caps: CapsSection = Field(default_factory=CapsSection)
+    # Attachment caps (TD-1709).  Its own section rather than a fourth key
+    # under ``caps``: every cap there pauses a running agent and is re-read on
+    # resume, while these refuse a client's message outright and never pause
+    # anything.  Filing them together would break the one sentence that makes
+    # ``caps`` legible.
+    attachments: AttachmentLimits = Field(default_factory=AttachmentLimits)
 
     @property
     def allowed_hosts(self) -> frozenset[str]:
@@ -132,6 +139,11 @@ DEFAULT_CONFIG_TEMPLATE = """\
 #   spend_usd: 25.0        # autonomy pauses past this spend
 #   wall_clock_hours: 8.0  # autonomy pauses past this runtime
 #   max_iterations: 200    # autonomy pauses past this many iterations
+
+# attachments:
+#   max_file_bytes: 256000   # per text file attached to a message
+#   max_total_bytes: 512000  # per message, across all its attachments
+#   max_count: 10            # files per message
 """
 
 

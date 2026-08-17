@@ -5,7 +5,9 @@
 	// hidden the moment messages exist, including attach/replay with history,
 	// since both paths rebuild chat.messages through the same store. Cancel
 	// lives in the composer's send→stop morph; Esc cancels too (TD-1609).
-	// Presentational composition only — protocol state lives in the stores.
+	// Presentational composition only — protocol state lives in the stores:
+	// the composer's attachment caps (TD-1709) come from the session store,
+	// which reads them off boundary_update rather than inventing them.
 	import { onMount } from "svelte";
 	import {
 		cancelTurn,
@@ -19,6 +21,7 @@
 		teardownChat,
 	} from "../../chat-store.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
+	import { session } from "../../session-status.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
 	import { greetingForHour, SUGGESTIONS } from "../../greeting";
 	import { workingVerb } from "../../working-flavor";
@@ -108,8 +111,9 @@
 			disabled={!canSend(chat.sessionId, ws.state)}
 			running={showCancel(chat.turnState) || chat.awaitingFirstToken}
 			bind:value={draft}
-			onsubmit={(text) => {
-				sendUserMessage(text);
+			limits={session.attachmentLimits}
+			onsubmit={(text, attachments) => {
+				sendUserMessage(text, attachments);
 			}}
 			oncancel={cancelTurn}
 		/>

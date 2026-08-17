@@ -25,10 +25,33 @@ export interface OpenWorkspace extends ClientMessage {
   path: string;
 }
 
+/** One text file riding along with a user_message (TD-1709).
+ *
+ *  `content_b64` carries the file's bytes, not a decode the client made first:
+ *  the daemon answers "is this text?" itself, because a UI-only gate is no
+ *  gate. Nothing else is declared — a client-stated size or mime type is a
+ *  fact the daemon has to re-derive anyway. */
+export interface Attachment {
+  name: string;
+  content_b64: string;
+}
+
+/** Attachment caps, from `.tst/config.yaml` via `boundary_update` (TD-1709).
+ *  The composer refuses against these rather than a hardcoded guess. */
+export interface AttachmentLimits {
+  max_file_bytes: number;
+  max_total_bytes: number;
+  max_count: number;
+}
+
 export interface UserMessage extends ClientMessage {
   type: "user_message";
   session_id: string;
   content: string;
+  // TD-1709: additive — a client that never sends one behaves as it did.
+  // The daemon vets these against the workspace caps and refuses the whole
+  // message if any one fails.
+  attachments?: Attachment[];
 }
 
 export interface Approve extends ClientMessage {
@@ -348,6 +371,9 @@ export interface BoundaryUpdate extends DaemonEvent {
   wall_clock_hours: number;
   max_iterations: number;
   source: string;
+  // TD-1709: the workspace's attachment caps, so the composer refuses early
+  // against real numbers. Optional because an older daemon does not send it.
+  attachments?: AttachmentLimits;
 }
 
 export interface TurnComplete extends DaemonEvent {
