@@ -35,8 +35,8 @@ from .config import (
     ModelDiscoveryError,
     cached_config,
     is_loopback_url,
-    save_active_preset,
 )
+from .config_write import save_active_preset
 from .context.assembler import ContextAssembler
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack

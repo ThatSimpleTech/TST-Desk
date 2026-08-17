@@ -30,7 +30,8 @@ import pytest
 
 from tests.test_model_discovery import ModelsEndpoint, closed_endpoint
 from tstd.benchmarks import measure_first_token_latency
-from tstd.config import ModelDiscoveryError, cached_config, default_config_yaml, save_active_preset
+from tstd.config import ModelDiscoveryError, cached_config, default_config_yaml
+from tstd.config_write import save_active_preset
 from tstd.discovery import discover_model
 from tstd.e2e_harness import main, mock_plan, run
 from tstd.e2e_live import off_box_refusal
