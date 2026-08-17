@@ -1255,14 +1255,41 @@ that this row had been quietly holding red.
 **Size:** 2 · **Depends on:** TD-1802
 
 **Acceptance criteria:**
-- [ ] The assembled system prompt states the workspace's absolute root, once, in a stable
+- [x] The assembled system prompt states the workspace's absolute root, once, in a stable
       position that does not disturb the cached prefix (TD-305)
-- [ ] A model given only the prompt can construct a valid absolute path for any file the
+- [x] A model given only the prompt can construct a valid absolute path for any file the
       manifest lists, without guessing
-- [ ] The manifest's relative listing is unchanged — this adds the root, it does not rewrite
+- [x] The manifest's relative listing is unchanged — this adds the root, it does not rewrite
       every entry
-- [ ] A test asserts the root appears in the assembled prompt for a workspace whose path was
+- [x] A test asserts the root appears in the assembled prompt for a workspace whose path was
       never mentioned in the user's message
+
+**Done (2026-08-17):** Block `[1b]` states the root once, between the base prompt and steering,
+inside the TD-305 cache prefix — the root is constant for a session, so keeping it out of the
+prefix would re-bill unchanging bytes every turn, and putting it *ahead* of steering keeps it
+out of the blast radius of a mid-session steering reload (TD-509), since a prefix cache dies
+from the first changed byte onward.  All three tiers get it at the same offset, so the
+`base + root` head they share stays shared; ~80–125 heuristic tokens, paid once.  The block
+spells the join out with a worked example built from the real root rather than implying it.
+The manifest is untouched: `test_manifest_listing_is_unchanged` asserts its rendered text is
+embedded verbatim and no entry starts with `/`, and
+`test_absolute_path_derivable_for_every_manifest_entry` reads the root and the entries back out
+of the assembled text, joins them the way the prompt says to, and checks the result against the
+disk — the criterion with no guessing step available to the reader.  Proved on the wire, not
+just in a unit test: the same fixture workspace and the same real tool schemas sent to
+`gemma4:26b-a4b-it-q4_K_M`, A/B against the prompt as it was assembled before this story, went
+**0/3 → 3/3** absolute at temperature 0 and **0/12 → 12/12** at temperature 0.8 across four
+tasks (`fs_read`, `fs_list`, `fs_write`, and one naming no file at all).  The BEFORE prompt
+already contained the root *substring* — steering provenance renders `<!-- from: /abs/ws/
+AGENTS.md (workspace) -->` — and still drew a relative path every time, which is the finding:
+the bytes were never the problem, stating them as the root was.  The TD-1803 live leg still
+passes end to end with the block present (fs_write → class A → approval gate → write → ledger,
+4.8s, cost 0.0).  Class B: the prefix position, and the decision *not* to interpolate the root
+into the four `fs_*` schema descriptions — four copies per request is the opposite of stating
+it once, and it would make `create_registry()` workspace-dependent for no measurable gain.
+Both in `DECISIONS.md`, along with why a workspace path is not a §2.2 secret and which sinks
+were checked.  Not done: `docs/tst-desk-spec.md` §4.5 still shows the five-block order without
+`[1b]` — flagged in `DECISIONS.md`, one line to fix.
 
 Every `fs_*` tool advertises its `path` argument as "Absolute path to the file to …", but
 `WorkspaceManifest.build()` renders entries workspace-relative (`README.md`, `src/app.py`) and
