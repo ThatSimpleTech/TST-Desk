@@ -24,7 +24,9 @@ from tstd.protocol import (
     Deny,
     Detach,
     Error,
+    ExportUsage,
     GetInstructionStack,
+    GetUsage,
     HandshakeError,
     Hello,
     ListPolicyRules,
@@ -43,6 +45,9 @@ from tstd.protocol import (
     ToolResult,
     TurnComplete,
     UnknownMessageTypeError,
+    UsageExported,
+    UsageReport,
+    UsageRollup,
     UserMessage,
     build_error,
     build_hello_ack,
@@ -207,6 +212,30 @@ class TestClientMessages:
     def test_move_session_rejects_an_empty_target(self) -> None:
         with pytest.raises(ValidationError):
             MoveSession(session_id="sess-1", workspace_path="")
+
+    # ── Usage and cost (TD-1706) ────────────────────────────────────
+    #
+    # `_roundtrip` parses through `parse_client_message`, so these also
+    # prove both types reached `_KNOWN_CLIENT_TYPES` and not just the
+    # union — a message added to one alone parses as "unknown_message".
+
+    def test_get_usage(self) -> None:
+        back = _roundtrip(GetUsage())
+        assert isinstance(back, GetUsage)
+
+    def test_export_usage_defaults_to_jsonl(self) -> None:
+        back = _roundtrip(ExportUsage())
+        assert isinstance(back, ExportUsage)
+        assert back.format == "jsonl"
+
+    def test_export_usage_takes_csv(self) -> None:
+        back = _roundtrip(ExportUsage(format="csv"))
+        assert isinstance(back, ExportUsage)
+        assert back.format == "csv"
+
+    def test_export_usage_rejects_an_unknown_format(self) -> None:
+        with pytest.raises(ValidationError):
+            ExportUsage(format="parquet")  # type: ignore[arg-type]
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────
@@ -440,6 +469,56 @@ class TestDaemonEvents:
         evt = Error(session_id="sess-1", code="test", message="fail", seq=10)
         assert isinstance(evt, Error)
         assert evt.session_id == "sess-1"
+
+    # ── Usage and cost (TD-1706) ────────────────────────────────────
+
+    def test_usage_report(self) -> None:
+        evt = UsageReport(
+            rows=[
+                UsageRollup(
+                    bucket="day",
+                    key="2026-08-17",
+                    tier="brain",
+                    prompt_tokens=40_000,
+                    cached_prompt_tokens=10_000,
+                    completion_tokens=5_000,
+                    cost=0.165,
+                    classifier_cost=0.0008,
+                )
+            ]
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, UsageReport)
+        assert back.seq == 1  # connection-scoped, like diagnostics_report
+        assert back.rows[0].bucket == "day"
+        assert back.rows[0].cost == pytest.approx(0.165)
+        # Classifier spend rides its own field, never folded into cost.
+        assert back.rows[0].classifier_cost == pytest.approx(0.0008)
+
+    def test_usage_report_defaults_to_no_rows(self) -> None:
+        back = _roundtrip(UsageReport())
+        assert isinstance(back, UsageReport)
+        assert back.rows == []
+
+    def test_usage_rollup_rejects_negative_money(self) -> None:
+        with pytest.raises(ValidationError):
+            UsageRollup(
+                bucket="day",
+                key="2026-08-17",
+                tier="brain",
+                prompt_tokens=1,
+                cached_prompt_tokens=0,
+                completion_tokens=0,
+                cost=-0.01,
+            )
+
+    def test_usage_exported(self) -> None:
+        evt = UsageExported(format="csv", path="/data/exports/usage.csv", rows=42)
+        back = _roundtrip(evt)
+        assert isinstance(back, UsageExported)
+        assert back.format == "csv"
+        assert back.path == "/data/exports/usage.csv"
+        assert back.rows == 42
 
 
 # ── Discriminated union dispatch ───────────────────────────────────────

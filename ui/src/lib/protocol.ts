@@ -182,6 +182,20 @@ export interface RunDiagnostics extends ClientMessage {
   type: "run_diagnostics";
 }
 
+// TD-1706: ask for the audit store's usage rollups. Connection-scoped —
+// the audit database spans every session, so it carries no session id.
+export interface GetUsage extends ClientMessage {
+  type: "get_usage";
+}
+
+// TD-1706: write the model-call records to a file. Format only — the
+// destination is the daemon's own exports directory, deliberately not a
+// client-supplied path, so this cannot become a "write anywhere" verb.
+export interface ExportUsage extends ClientMessage {
+  type: "export_usage";
+  format: "jsonl" | "csv";
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -209,7 +223,9 @@ export type ClientMessageUnion =
   | ValidateApiKey
   | SetPreset
   | SetTierSlug
-  | RunDiagnostics;
+  | RunDiagnostics
+  | GetUsage
+  | ExportUsage;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -484,6 +500,38 @@ export interface DiagnosticsReport extends DaemonEvent {
   checks: DiagnosticCheck[];
 }
 
+// TD-1706 usage view: one bucket's spend on one tier. `key` is a session
+// id, an ISO day, or the ISO day the week opened on, per `bucket`.
+// classifier_cost stays on its own field exactly as it does in the audit
+// store — folding it into cost would make this disagree with the meter.
+export interface UsageRollup {
+  bucket: "session" | "day" | "week";
+  key: string;
+  tier: string;
+  prompt_tokens: number;
+  cached_prompt_tokens: number;
+  completion_tokens: number;
+  cost: number;
+  classifier_cost: number;
+}
+
+export interface UsageReport extends DaemonEvent {
+  type: "usage_report";
+  seq: number;
+  rows: UsageRollup[];
+}
+
+// TD-1706: where the export landed. `rows` is the model-call record count
+// written, so the client can say "42 calls" rather than claim success
+// over an empty file.
+export interface UsageExported extends DaemonEvent {
+  type: "usage_exported";
+  seq: number;
+  format: "jsonl" | "csv";
+  path: string;
+  rows: number;
+}
+
 export interface Error extends DaemonEvent {
   type: "error";
   session_id?: string | null;
@@ -531,4 +579,6 @@ export type DaemonEventUnion =
   | SetupState
   | ApiKeyValidated
   | DiagnosticsReport
+  | UsageReport
+  | UsageExported
   | Error;

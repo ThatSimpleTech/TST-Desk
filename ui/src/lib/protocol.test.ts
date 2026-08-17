@@ -55,6 +55,10 @@ import type {
   ApiKeyValidated,
   RunDiagnostics,
   DiagnosticsReport,
+  GetUsage,
+  ExportUsage,
+  UsageReport,
+  UsageExported,
   Ping,
   Error,
 } from "./protocol";
@@ -205,6 +209,22 @@ describe("Client message fixtures match TypeScript types", () => {
   it("run_diagnostics", () => {
     const m = fixtures.run_diagnostics as RunDiagnostics;
     expect(m.type).toBe("run_diagnostics");
+  });
+
+  // TD-1706 usage view
+  it("get_usage", () => {
+    const m = fixtures.get_usage as GetUsage;
+    expect(m.type).toBe("get_usage");
+    // Connection-scoped: the audit store spans every session.
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("export_usage", () => {
+    const m = fixtures.export_usage as ExportUsage;
+    expect(m.type).toBe("export_usage");
+    expect(["jsonl", "csv"]).toContain(m.format);
+    // Format only — no client-supplied destination path.
+    expect("path" in m).toBe(false);
   });
 
   // hello_ack is out-of-band and unsequenced: daemon→client, no seq.
@@ -476,6 +496,39 @@ describe("Daemon event fixtures match TypeScript types", () => {
     }
   });
 
+  it("usage_report", () => {
+    // TD-1706: connection-scoped (no session_id), seq=1 like diagnostics_report.
+    const m = fixtures.usage_report as UsageReport;
+    expect(m.type).toBe("usage_report");
+    expect(m.seq).toBe(1);
+    expect("session_id" in m).toBe(false);
+    expect(Array.isArray(m.rows)).toBe(true);
+    // One row per bucket kind, so all three key shapes are covered.
+    expect(new Set(m.rows.map((r) => r.bucket))).toEqual(
+      new Set(["session", "day", "week"]),
+    );
+    for (const r of m.rows) {
+      expect(["session", "day", "week"]).toContain(r.bucket);
+      expect(isString(r.key)).toBe(true);
+      expect(isString(r.tier)).toBe(true);
+      expect(isNumber(r.prompt_tokens)).toBe(true);
+      expect(isNumber(r.cached_prompt_tokens)).toBe(true);
+      expect(isNumber(r.completion_tokens)).toBe(true);
+      expect(isNumber(r.cost)).toBe(true);
+      // Classifier spend always rides its own field (TD-703).
+      expect(isNumber(r.classifier_cost)).toBe(true);
+    }
+  });
+
+  it("usage_exported", () => {
+    const m = fixtures.usage_exported as UsageExported;
+    expect(m.type).toBe("usage_exported");
+    expect(m.seq).toBe(1);
+    expect(["jsonl", "csv"]).toContain(m.format);
+    expect(isString(m.path)).toBe(true);
+    expect(isNumber(m.rows)).toBe(true);
+  });
+
   it("ping", () => {
     // TD-1716: the liveness frame is the one daemon→client frame with no seq
     // and no session — a fact about the connection, not an event in any log.
@@ -508,6 +561,7 @@ describe("All fixtures have required shape", () => {
       "get_instruction_stack",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
       "run_diagnostics",
+      "get_usage", "export_usage",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -524,7 +578,7 @@ describe("All fixtures have required shape", () => {
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
-      "diagnostics_report",
+      "diagnostics_report", "usage_report", "usage_exported",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
