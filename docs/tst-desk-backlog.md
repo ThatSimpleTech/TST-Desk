@@ -1995,6 +1995,34 @@ matching touch, active after.
 
 ---
 
+### TD-1203 — The decisions panel duplicates every row on re-attach
+**Size:** 1 · **Depends on:** TD-1202
+
+**Acceptance criteria:**
+- [ ] Switching away from a session and back shows each decision once, not twice
+- [ ] The panel scopes to the bound session — it already does; the fix must not lose that
+- [ ] A test drives A → B → A through a real client and asserts no row repeats
+
+`decisions.svelte.ts`'s reducer appends unconditionally: `decisions.rows.push({ id:
+`${event.session_id}:${event.seq}`, ... })`. The id is documented as "stable identity" and
+nothing consults it, and nothing clears the rows when the bound session changes.
+
+The session filter one line above (`event.session_id !== session.sessionId`) stops *another*
+session's decisions arriving, so the panel looks correct in the obvious test. It does not stop
+the same session's own replay: attach re-delivers every `decision_logged` from `from_seq`, each
+passes the filter because it genuinely is this session's, and each is appended a second time.
+TD-1716's resume healing makes this more reachable — every resume re-attaches.
+
+Found by the TD-1009 agent, which had just fixed the identical shape in the timeline store, and
+confirmed by reading the reducer: the append has no guard and the stable id has no reader.
+
+The timeline's answer is next door and probably transfers: bind-and-clear plus idempotence keyed
+on the log position, in `timeline.ts` (TD-1009). Worth checking whether the two stores should
+share it rather than growing a second copy.
+
+---
+
+
 # MILESTONE M3 — Shippable
 
 ## Epic E13 — Packaging and distribution
@@ -3212,11 +3240,11 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 49 | 150 |
+| M1 Headless core | E2–E9 | 51 | 153 |
 | M1.5 Local models | E18 | 11 | 28 |
-| M2 The window | E10–E12 | 17 | 55 |
+| M2 The window | E10–E12 | 19 | 57 |
 | M3 Shippable | E13–E17 | 40 | 117 |
-| **Total v0.1** | **18** | **124** | **365** |
+| **Total v0.1** | **18** | **128** | **370** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
