@@ -2254,6 +2254,36 @@ a coworker.
 list/revoke may need protocol messages — check what TD-803 landed before
 assuming.
 
+**In progress (2026-08-17).** No criterion is met yet — nothing is on screen. What the
+plumbing now has:
+
+- **Config write.** `save_tier_slug` edits `user_data_dir()/config.yaml`, never the packaged
+  copy an upgrade would overwrite. Surgical, because the shipped config is mostly teaching and
+  a PyYAML round-trip would drop it; the value is JSON-encoded so a colon in a model tag is
+  fine and a newline cannot inject YAML. Split into `config_write.py` when `config.py` passed
+  §6's limit.
+- **Wire.** `SetTierSlug`, deliberately narrow rather than a general `update_config` — §2.2
+  forbids a secret reaching a config file and a message carrying only a tier and a slug cannot
+  smuggle one in. `setup_state` gains `tier_slugs`, additive like `key_required`.
+- **Slugs as configured, not as resolved.** `resolve_tier_slugs` fills unset slugs *in place*,
+  so after one probe a loopback tier holds a tag that was never in the file. Reporting that
+  would make the field look set and put the user one save from pinning a model TD-1805 left
+  floating. A snapshot is taken when a config is adopted; `model_copy` is shallow and shares
+  tier objects, so keeping a copy is not a snapshot — pinned by a test, because the obvious
+  implementation silently does not work.
+- **Theme hooks.** `tokens.css` only followed `prefers-color-scheme`. The OS rule is now scoped
+  to `:root:not([data-theme="light"])` with the same palette reachable from
+  `:root[data-theme="dark"]`, so an explicit choice wins in both directions. The palette
+  appears twice — CSS cannot share a block across a media query — and `tokens.test.ts` fails
+  on drift.
+
+Answering the note's own question: **TD-803 landed everything the policy section needs.**
+`list_policy_rules`, `revoke_policy_rule` and the `policy_rules` event exist on both sides. No
+new wire types for AC-4.
+
+Remaining: the settings store, the pane with its four sections, and retargeting the gear and
+⌘, away from the wizard.
+
 ---
 
 ### TD-1704 — Queue and steer UI
