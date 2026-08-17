@@ -1414,6 +1414,39 @@ them, since the failure is concentrated in exactly one category rather than spre
 
 ---
 
+### TD-1811 — Do not report prefix reuse that did not happen
+**Size:** 3 · **Depends on:** TD-1802, TD-304
+
+**Acceptance criteria:**
+- [ ] Cache telemetry (`last_cached_prompt_tokens`, the cache ratio in the turn log, and any
+      cached-token figure the meter surfaces) reflects reuse the provider actually reported,
+      never an assumption
+- [ ] A provider that reports no cached tokens produces a cache ratio of zero, not a blank or a
+      silently-carried previous value
+- [ ] The zero-price local path still records real prompt-token counts — free is not untracked,
+      the same rule TD-1802 established for output
+- [ ] A test drives a provider that reports zero cached tokens across two turns with an
+      identical prefix and asserts the reported ratio stays zero
+
+TD-305 assembles the prompt in stable-prefix order so a provider can cache it, and the cost and
+latency story assumes that reuse happens. On a local hybrid model it does not. Measured
+2026-08-17 against `qwen3.8:27b` on Ollama 0.32.13: llama.cpp builds context checkpoints, then
+discards them —
+
+    forcing full prompt re-processing due to lack of cache data
+      (likely due to SWA or hybrid/recurrent memory)
+    erased invalidated context checkpoint ... cached n_tokens = 0
+
+166 such events in one day's logs, across both `qwen3.8:27b` and `gemma4:26b-a4b`. Every turn
+re-prefills the whole system prompt and tool schemas (~1083 tokens observed). The same defect is
+documented upstream in vLLM, which disables prefix caching outright for hybrid-attention models.
+
+This is not a bug we can fix in the engine, and TD-305's ordering stays correct — it still pays
+off against cloud providers. What must not happen is the meter claiming a saving the user never
+received. Report the truth and let the number be zero.
+
+---
+
 # MILESTONE M2 — The Window
 
 ## Epic E10 — Shell and panes
@@ -2899,10 +2932,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 49 | 150 |
-| M1.5 Local models | E18 | 10 | 25 |
+| M1.5 Local models | E18 | 11 | 28 |
 | M2 The window | E10–E12 | 17 | 55 |
 | M3 Shippable | E13–E17 | 40 | 117 |
-| **Total v0.1** | **18** | **123** | **362** |
+| **Total v0.1** | **18** | **124** | **365** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
