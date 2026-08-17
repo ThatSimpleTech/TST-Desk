@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -505,43 +505,66 @@ class ToolDispatcher:
             session: Optional session object, passed to each handler.
 
         Returns:
-            Results in the same order as the input tool calls.
+            Results in the same order as the input tool calls.  Order is
+            keyed on each call's *position* in ``tool_calls`` — never on
+            ``tool_call_id``, which the client supplies and may repeat.
         """
-        # Partition into parallel-safe and sequential
-        parallel_batch: list[asyncio.Task[ToolResult]] = []
-        sequential_batch: list[tuple[str, str, dict[str, Any]]] = []
+        # Partition into parallel-safe and sequential, carrying each call's
+        # input position so the two partitions reassemble into the caller's
+        # order (TD-607).  Concatenating the partitions returned the batch
+        # in partition order, which is not the order the model asked for.
+        parallel_calls: list[tuple[int, str, str]] = []
+        parallel_coros: list[Coroutine[Any, Any, ToolResult]] = []
+        sequential_calls: list[tuple[int, str, str, dict[str, Any]]] = []
 
-        for tc_id, name, args in tool_calls:
+        for index, (tc_id, name, args) in enumerate(tool_calls):
             tool = self.registry.get(name)
             if tool is not None and tool.parallel_safe:
-                task = asyncio.create_task(self.dispatch(tc_id, name, args, session))
-                parallel_batch.append(task)
+                parallel_calls.append((index, tc_id, name))
+                parallel_coros.append(self.dispatch(tc_id, name, args, session))
             else:
-                sequential_batch.append((tc_id, name, args))
+                sequential_calls.append((index, tc_id, name, args))
 
-        # Run parallel batch concurrently
-        parallel_results: list[ToolResult] = []
-        if parallel_batch:
-            await asyncio.gather(*parallel_batch, return_exceptions=True)
-            for task in parallel_batch:
-                result = task.result()
-                if isinstance(result, Exception):
-                    result = ToolResult(
-                        tool_call_id="",
-                        name="",
+        by_index: dict[int, ToolResult] = {}
+
+        # Run parallel batch concurrently.  ``return_exceptions`` governs
+        # what ``gather`` *returns*, so the outcomes are read from its
+        # result list; ``task.result()`` would re-raise and take the whole
+        # batch down with one failing call.
+        if parallel_coros:
+            outcomes: list[ToolResult | BaseException] = await asyncio.gather(
+                *parallel_coros, return_exceptions=True
+            )
+            for (index, tc_id, name), outcome in zip(parallel_calls, outcomes, strict=True):
+                if isinstance(outcome, BaseException):
+                    # A chokepoint bypass (prime §2.6) and anything that is
+                    # not an ordinary error stay loud, exactly as they do on
+                    # the sequential path.  A dispatch that failed for one
+                    # call must not decide the fate of its siblings.
+                    if isinstance(outcome, UnclassifiedToolCall) or not isinstance(
+                        outcome, Exception
+                    ):
+                        raise outcome
+                    log.exception(
+                        "concurrent dispatch failed",
+                        exc_info=outcome,
+                        extra={"extra_fields": {"tool_call_id": tc_id, "tool": name}},
+                    )
+                    by_index[index] = ToolResult(
+                        tool_call_id=tc_id,
+                        name=name,
                         status="error",
-                        output=f"Concurrent dispatch failed: {result}",
+                        output=f"Concurrent dispatch failed: {outcome}",
                         error_code="concurrent_error",
                     )
-                parallel_results.append(result)
+                else:
+                    by_index[index] = outcome
 
         # Run sequential batch one at a time
-        sequential_results: list[ToolResult] = []
-        for tc_id, name, args in sequential_batch:
-            result = await self.dispatch(tc_id, name, args, session)
-            sequential_results.append(result)
+        for index, tc_id, name, args in sequential_calls:
+            by_index[index] = await self.dispatch(tc_id, name, args, session)
 
-        return parallel_results + sequential_results
+        return [by_index[index] for index in range(len(tool_calls))]
 
     # ── Validation ────────────────────────────────────────────────────
 

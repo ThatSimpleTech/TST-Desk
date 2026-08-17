@@ -21,7 +21,7 @@ from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.protocol import TurnComplete
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
-from tstd.tools import Tool, ToolDispatcher, ToolRegistry
+from tstd.tools import Tool, ToolDispatcher, ToolRegistry, UnclassifiedToolCall
 from tstd.tools.boundary import PathGuard
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -390,6 +390,167 @@ class TestDispatcherParallel:
         elapsed = asyncio.get_running_loop().time() - start
         assert elapsed >= 0.09  # sequential: 2 x 0.05s should take ~0.1s
         assert len(results) == 2
+
+
+# ── Mixed-batch ordering and failure isolation (TD-607) ────────────────
+
+
+def make_mixed_dispatcher() -> ToolDispatcher:
+    """A dispatcher with one parallel-safe and one sequential tool.
+
+    Every pre-TD-607 ``dispatch_many`` test used a batch of a single tool
+    type, so the partition boundary was never crossed within one call —
+    which is why the reordering survived.
+    """
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            name="par_tool",
+            description="Parallel-safe",
+            parameters={
+                "type": "object",
+                "properties": {"delay": {"type": "number", "default": 0.0}},
+                "required": [],
+            },
+            side_effect_class="auto",
+            parallel_safe=True,
+        )
+    )
+    registry.register(
+        Tool(
+            name="seq_tool",
+            description="Not parallel-safe",
+            parameters={
+                "type": "object",
+                "properties": {"delay": {"type": "number", "default": 0.0}},
+                "required": [],
+            },
+            side_effect_class="ask",
+            parallel_safe=False,
+        )
+    )
+    dispatcher = attach_auto_approver(ToolDispatcher(registry, classifier=make_classifier()))
+
+    async def handler(session, delay=0.0, tool_call_id=""):
+        import asyncio
+
+        if delay:
+            await asyncio.sleep(delay)
+        return f"ran {tool_call_id}"
+
+    dispatcher.register_handler("par_tool", handler)
+    dispatcher.register_handler("seq_tool", handler)
+    return dispatcher
+
+
+class TestDispatchManyOrdering:
+    async def test_mixed_batch_returns_results_in_input_order(self) -> None:
+        """A batch mixing both partitions comes back in the caller's order.
+
+        Order is keyed on input position, not on tool_call_id: the id is
+        client-supplied and carries no uniqueness guarantee.
+        """
+        dispatcher = make_mixed_dispatcher()
+
+        results = await dispatcher.dispatch_many(
+            [("c1", "seq_tool", {}), ("c2", "par_tool", {}), ("c3", "seq_tool", {})]
+        )
+
+        assert [r.tool_call_id for r in results] == ["c1", "c2", "c3"]
+        assert [r.name for r in results] == ["seq_tool", "par_tool", "seq_tool"]
+        assert all(r.status == "success" for r in results)
+
+    async def test_order_holds_when_tool_call_ids_repeat(self) -> None:
+        """Duplicate ids in one batch still map back to their own slot."""
+        dispatcher = make_mixed_dispatcher()
+
+        results = await dispatcher.dispatch_many(
+            [("dup", "par_tool", {}), ("dup", "seq_tool", {}), ("dup", "par_tool", {})]
+        )
+
+        assert [r.name for r in results] == ["par_tool", "seq_tool", "par_tool"]
+
+    async def test_mixed_batch_still_parallelises_the_safe_tools(self) -> None:
+        """Restoring input order must not serialise the parallel batch."""
+        import asyncio
+
+        dispatcher = make_mixed_dispatcher()
+
+        start = asyncio.get_running_loop().time()
+        results = await dispatcher.dispatch_many(
+            [
+                ("c1", "par_tool", {"delay": 0.05}),
+                ("c2", "seq_tool", {"delay": 0.05}),
+                ("c3", "par_tool", {"delay": 0.05}),
+                ("c4", "par_tool", {"delay": 0.05}),
+            ]
+        )
+        elapsed = asyncio.get_running_loop().time() - start
+
+        # 3 parallel (~0.05s together) + 1 sequential (0.05s) ≈ 0.10s.
+        # Fully serialised would be ~0.20s.
+        assert elapsed < 0.16
+        assert [r.tool_call_id for r in results] == ["c1", "c2", "c3", "c4"]
+
+    async def test_raising_handler_in_parallel_batch_does_not_escape(self) -> None:
+        """A handler that raises becomes an error result for its own call
+        and leaves its siblings alone."""
+        dispatcher = make_mixed_dispatcher()
+
+        async def boom(session, delay=0.0, tool_call_id=""):
+            raise RuntimeError("handler exploded")
+
+        dispatcher.register_handler("par_tool", boom)
+
+        results = await dispatcher.dispatch_many(
+            [("c1", "seq_tool", {}), ("c2", "par_tool", {}), ("c3", "seq_tool", {})]
+        )
+
+        assert [r.tool_call_id for r in results] == ["c1", "c2", "c3"]
+        assert results[1].status == "error"
+        assert "handler exploded" in results[1].output
+        assert results[0].status == "success"
+        assert results[2].status == "success"
+
+    async def test_dispatch_failure_in_parallel_batch_becomes_concurrent_error(self) -> None:
+        """An exception from *outside* the handler's own try/except is
+        reported as a ``concurrent_error`` result for that call.
+
+        A handler returning ``None`` instead of a string is the realistic
+        shape: the handler returns cleanly, then truncation blows up past
+        the point where dispatch guards itself.  ``gather`` was collecting
+        that exception and ``task.result()`` was re-raising it, so it left
+        ``dispatch_many`` and took the healthy siblings with it.
+        """
+        dispatcher = make_mixed_dispatcher()
+
+        async def returns_none(session, delay=0.0, tool_call_id=""):
+            return None
+
+        dispatcher.register_handler("par_tool", returns_none)
+
+        results = await dispatcher.dispatch_many(
+            [("c1", "seq_tool", {}), ("c2", "par_tool", {}), ("c3", "seq_tool", {})]
+        )
+
+        assert [r.tool_call_id for r in results] == ["c1", "c2", "c3"]
+        failed = results[1]
+        assert failed.status == "error"
+        assert failed.error_code == "concurrent_error"
+        assert failed.name == "par_tool"  # not "" — the loop keys events on this
+        assert failed.output.startswith("Concurrent dispatch failed:")
+        assert results[0].status == "success"
+        assert results[2].status == "success"
+
+    async def test_chokepoint_bypass_still_raises_from_a_parallel_batch(self) -> None:
+        """Failure isolation does not soften the classifier chokepoint
+        (prime §2.6): a call reaching execution unguarded still raises out
+        of ``dispatch_many``, as it does on the sequential path."""
+        dispatcher = make_mixed_dispatcher()
+        dispatcher.approval_handler = None  # the ask gate is part of the chokepoint
+
+        with pytest.raises(UnclassifiedToolCall):
+            await dispatcher.dispatch_many([("c1", "par_tool", {}), ("c2", "seq_tool", {})])
 
 
 # ── Loop integration ────────────────────────────────────────────────────
