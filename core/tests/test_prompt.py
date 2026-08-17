@@ -440,6 +440,11 @@ class TestRootWithControlCharacters:
             ("vertical tab", "\x0b"),
             ("escape", "\x1b"),
             ("delete", "\x7f"),
+            # C1 is not decorative here: U+0085 NEL is a mandatory line break
+            # under UAX-14, so it truncates the stated root exactly as \n does.
+            ("next line", "\u0085"),
+            ("c1 low", "\u0080"),
+            ("c1 high", "\u009f"),
             ("line separator", "\u2028"),
             ("paragraph separator", "\u2029"),
         ],
