@@ -34,27 +34,32 @@ describe("resolveShortcut — Escape", () => {
 	});
 });
 
-describe("resolveShortcut — wizard reopen", () => {
+describe("resolveShortcut — settings (TD-1703)", () => {
 	it("opens on ⌘, (meta) and Ctrl+,", () => {
 		expect(resolveShortcut({ key: ",", metaKey: true, ctrlKey: false }, IDLE)).toBe(
-			"open-wizard",
+			"open-settings",
 		);
 		expect(resolveShortcut({ key: ",", metaKey: false, ctrlKey: true }, IDLE)).toBe(
-			"open-wizard",
+			"open-settings",
 		);
 	});
 
 	it("works while a turn runs and while a modal is already open", () => {
 		expect(resolveShortcut({ key: ",", metaKey: true, ctrlKey: false }, LIVE)).toBe(
-			"open-wizard",
+			"open-settings",
 		);
 		expect(resolveShortcut({ key: ",", metaKey: true, ctrlKey: false }, { ...IDLE, modalOpen: true })).toBe(
-			"open-wizard",
+			"open-settings",
 		);
 	});
 
 	it("leaves an unmodified comma alone", () => {
 		expect(resolveShortcut({ key: ",", metaKey: false, ctrlKey: false }, IDLE)).toBeNull();
+	});
+
+	it("no longer reaches the wizard — it is first-run only now", () => {
+		const action = resolveShortcut({ key: ",", metaKey: true, ctrlKey: false }, IDLE);
+		expect(action).not.toBe("open-wizard");
 	});
 });
 
