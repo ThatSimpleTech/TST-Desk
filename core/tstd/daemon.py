@@ -35,8 +35,9 @@ from .config import (
     ModelDiscoveryError,
     cached_config,
     is_loopback_url,
+    load_config,
 )
-from .config_write import save_active_preset
+from .config_write import save_active_preset, save_tier_slug
 from .context.assembler import ContextAssembler
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
@@ -88,6 +89,7 @@ from .protocol import (
     SetApiKey,
     SetPreset,
     SetTier,
+    SetTierSlug,
     SetupState,
     Shutdown,
     TierState,
@@ -132,6 +134,26 @@ _KEYLESS_KEY_ROW = DiagnosticCheck(
     status="skip",
     detail="not needed — the active preset runs on a local endpoint",
 )
+
+
+def _snapshot_slugs(config: ModelConfig) -> dict[str, dict[str, str | None]]:
+    """Every preset's slugs as configured, captured before discovery runs.
+
+    ``resolve_tier_slugs`` fills unset slugs *in place* (TD-1805), so after
+    one probe a loopback tier carries a tag that was never in the file. The
+    settings screen must not show that as the configured value: the field
+    would look set, and saving it would pin a model the user deliberately
+    left for the endpoint to choose.
+
+    Plain strings, taken at the moment a config is adopted. ``model_copy`` is
+    shallow — a copied config shares its tier objects with the original, and
+    so shares their mutations — so copying the config is not a snapshot and
+    this cannot be derived from ``self.config`` later (TD-1703).
+    """
+    return {
+        name: {tier: getattr(preset, tier).slug for tier in TIER_NAMES}
+        for name, preset in config.presets.items()
+    }
 
 
 @dataclass
@@ -306,6 +328,7 @@ class Daemon:
         self.session_registry = SessionRegistry()
         self._session_store = SessionStore(self.data_dir)
         self.config = cached_config()
+        self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
@@ -366,6 +389,7 @@ class Daemon:
             key_required=self.config.requires_api_key(),
             presets=sorted(self.config.presets),
             active_preset=self.config.active_preset,
+            tier_slugs=dict(self._slug_snapshot.get(self.config.active_preset, {})),
         )
 
     async def _provider_probe(self, api_key: str | None = None) -> ProviderError | None:
@@ -1054,9 +1078,33 @@ class Daemon:
             # sessions keep the tier slugs they opened with.  model_copy
             # keeps the process-wide cached instance untouched.
             self.config = self.config.model_copy(update={"active_preset": msg.name})
+            self._slug_snapshot = _snapshot_slugs(self.config)
             log.info(
                 "active preset changed",
                 extra={"extra_fields": {"preset": msg.name}},
+            )
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetTierSlug):
+            try:
+                save_tier_slug(msg.preset, msg.tier, msg.slug)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            # Reload so the edit takes effect on new sessions without a
+            # restart. Existing sessions keep the slug they opened with, the
+            # same contract set_preset holds them to.
+            try:
+                self.config = load_config().model_copy(
+                    update={"active_preset": self.config.active_preset}
+                )
+                self._slug_snapshot = _snapshot_slugs(self.config)
+            except ConfigError as e:
+                # The write landed but the result will not load. Say so rather
+                # than serving a stale config that disagrees with the file.
+                return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+            log.info(
+                "tier slug changed",
+                extra={"extra_fields": {"preset": msg.preset, "tier": msg.tier}},
             )
             return (await self._setup_state_event()).model_dump_json()
 
