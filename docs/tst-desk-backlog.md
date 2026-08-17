@@ -1134,12 +1134,11 @@ summed to 3520. The ledger was right; the turn total was not.
 - [x] The approval-gate check matches an approval to the tool call it belongs to, not to
       whichever request arrived first
 - [x] The execution check inspects the result of the write being verified, not `results[0]`
-- [ ] Extra tool calls neither fail the run nor pass it silently — the harness reports what the
+- [x] Extra tool calls neither fail the run nor pass it silently — the harness reports what the
       model actually did
-      (half met: extras are reported as NOTE lines and excluded from the verdict, but an extra
-      call can still fail the run — `e2e_checks.py` derives `wrote_file` from the file's final
-      content, so a second `fs_write` changing it fails a run whose checked call succeeded.
-      Scoping that to the checked call is TD-1808.)
+      (closed by TD-1808 on 2026-08-17: extras were already reported as NOTE lines and excluded
+      from the verdict; the remaining half — an extra `fs_write` failing a run whose checked
+      call succeeded — went with `wrote_file`, which no longer reads the file's final content.)
 - [x] The live leg passes five consecutive runs against a local endpoint
       (5/5 green against `qwen3.8:27b` on Ollama 0.32.13, 13–30s each; none of the five
       happened to make an extra call, so the selection rule itself is pinned offline)
@@ -1179,14 +1178,14 @@ selection logic is being rewritten rather than filing that separately.
 **Size:** 2 · **Depends on:** TD-1807
 
 **Acceptance criteria:**
-- [ ] The execution check judges the effect of the checked call, not the workspace's final state
-- [ ] A second `fs_write` that rewrites the file after the checked call succeeded does not fail
+- [x] The execution check judges the effect of the checked call, not the workspace's final state
+- [x] A second `fs_write` that rewrites the file after the checked call succeeded does not fail
       the run; it is reported as an extra call, closing TD-1807's fourth criterion
-- [ ] A checked call that reports success while writing nothing still FAILS — the check must not
+- [x] A checked call that reports success while writing nothing still FAILS — the check must not
       be weakened into always passing
-- [ ] The failure detail distinguishes "file absent" from "file present with other content";
+- [x] The failure detail distinguishes "file absent" from "file present with other content";
       today both render as `file='missing'`
-- [ ] Offline tests pin all three: extra write after, no write at all, wrong content
+- [x] Offline tests pin all three: extra write after, no write at all, wrong content
 
 `core/tstd/e2e_checks.py` derives `wrote_file` from the file's final content on disk, so an
 extra `fs_write` arriving after the checked call fails a run in which the checked call did
@@ -1194,7 +1193,27 @@ exactly what was asked. That is the same conflation TD-1807 removed from `calls[
 `gate[0]` and `results[0]` — one call's outcome judged by the transcript's aggregate state —
 left behind on the file-content half.
 
-TD-1807's fourth criterion stays unticked until this lands.
+**Done (2026-08-17):** the verdict now rests on two facts that have to agree, neither of them
+the workspace's final state — the checked call asked to write content `plan.content_ok`
+accepts, and the diff the dispatcher rendered around that one handler (TD-604) proves that
+exact content landed.  A `tool_result` carries `diff` only when the write actually changed
+the file, so "reported success, wrote nothing" fails on the diff rather than being taken on
+the handler's word — a strictly stronger check than reading disk, where a later call creating
+the file used to mask it.
+
+Content is compared as `added == asked.splitlines()`, not by rebuilding the file from the
+diff: `render_diff` is built from `splitlines()` and no longer knows about line terminators,
+so a rebuilt post-image can never compare equal to the mock plan's `"hello from M1\n"`.
+Putting both sides through the same transformation is the only lossless match, and it avoided
+adding a second content callable to `HarnessPlan` — no Class B decision was needed, so
+`DECISIONS.md` is untouched.
+
+Disk state survives only in the detail line, now `absent` / `other-content` / `written`
+instead of one `missing` covering the first two.  `core/tests/test_e2e_ordering.py` grew the
+four runs (extra write after, no change at all, wrong content, refused write); all four fail
+against the previous `e2e_checks.py`, so they pin the new rule rather than restating it.
+That file covers TD-1807 and TD-1808 together — same defect, two halves — and five of its
+nine runs must FAIL (§7).
 
 ---
 

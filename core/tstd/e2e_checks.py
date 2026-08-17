@@ -1,4 +1,4 @@
-"""What one harness pass proves — the verdict half (TD-1401, TD-1803, TD-1807).
+"""What one harness pass proves — the verdict half (TD-1401, TD-1803, TD-1807, TD-1808).
 
 ``e2e_harness`` drives a session and collects the events it produced; this
 module decides what those events prove.  The split is by responsibility:
@@ -16,6 +16,13 @@ read — measured at one failure in five consecutive live runs.
 nor slip by unmentioned: they land in :attr:`HarnessResult.notes`, printed
 under the checks.  The pass proves the required write went through the whole
 chain, not that the model was economical about getting there.
+
+**Effects are read per call, never off the workspace.**  What the checked
+write did is read from its own ``tool_result`` — the status, and the diff the
+dispatcher rendered around that one handler — so a second write to the same
+path cannot fail a run the checked call got right.  The workspace's final
+state survives only in the detail line, where it tells a file that never
+appeared apart from one holding someone else's content.
 """
 
 from __future__ import annotations
@@ -212,6 +219,42 @@ def _check_approval(
     )
 
 
+def _diff_additions(own: dict[str, Any]) -> list[str] | None:
+    """The lines *this* call's write added, or ``None`` if it changed nothing.
+
+    The dispatcher renders ``diff`` from a snapshot taken either side of this
+    handler (TD-604), so it is evidence about one call and nothing else on the
+    transcript.  It leaves the field unset when the write left the file as it
+    found it, so ``None`` and ``""`` both mean "changed nothing" — which is
+    what keeps a call that reports success while writing nothing from passing.
+    """
+    diff = own.get("diff")
+    if not diff:
+        return None
+    return [
+        line[1:]
+        for line in str(diff).splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+
+
+def _disk_state(workspace: Path, plan: HarnessPlan) -> str:
+    """How the file looks *now* — for the detail line, never for the verdict.
+
+    Three outcomes, not two: a file that never appeared and a file holding
+    someone else's content are different failures and used to render
+    identically as ``missing``.
+    """
+    written = workspace / _WRITTEN_FILE
+    if not written.exists():
+        return "absent"
+    try:
+        text = written.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return "unreadable"
+    return "written" if plan.content_ok(text) else "other-content"
+
+
 def _check_execution(
     result: HarnessResult,
     by_type: dict[str, list[dict[str, Any]]],
@@ -219,18 +262,39 @@ def _check_execution(
     workspace: Path,
     call: dict[str, Any],
 ) -> None:
-    """5+6. The selected call's own result, and the file it should have left."""
+    """5+6. The selected call's own result, and what that call itself wrote.
+
+    Judged from the call's own ``tool_result`` — its status, and the diff the
+    dispatcher rendered around it — never from the file's final content.  A
+    later ``fs_write`` to the same path changes the workspace without changing
+    what this call did, and used to fail a run in which the checked call did
+    exactly what was asked (TD-1808).  That is the conflation TD-1807 removed
+    from ``calls[0]``, ``gate[0]`` and ``results[0]``, left behind here.
+
+    Two independent facts have to line up, so that neither the handler's own
+    say-so nor the model's stated intent is taken on trust: the call asked to
+    write content the plan accepts, and the diff proves that exact content
+    landed.
+    """
     call_id = _call_id(call)
     results = by_type.get("tool_result", [])
     own = next((r for r in results if r.get("tool_call_id") == call_id), {}) if call_id else {}
-    written = workspace / _WRITTEN_FILE
-    wrote_file = written.exists() and plan.content_ok(written.read_text(encoding="utf-8"))
+    added = _diff_additions(own)
+    # ``content_ok`` is defined over whole-file text, and for this task the
+    # call's ``content`` argument is exactly that — the harness writes, it
+    # never appends.  Comparing against ``splitlines()`` puts both sides
+    # through the transformation ``render_diff`` already applied, which is
+    # the only lossless way to match them: the diff is built from
+    # ``splitlines()`` and no longer knows about line terminators.
+    asked = str(call.get("arguments", {}).get("content", ""))
+    wrote_asked = added is not None and added == asked.splitlines() and plan.content_ok(asked)
     status = own.get("status") if own else f"no result for {_REQUIRED_TOOL}#{call_id or '?'}"
+    effect = "nothing" if added is None else f"{len(added)} line(s)"
     _check(
         result,
         "execution",
-        own.get("status") == "success" and wrote_file,
-        f"status={status!r} file={'written' if wrote_file else 'missing'}",
+        own.get("status") == "success" and wrote_asked,
+        f"status={status!r} wrote={effect} file={_disk_state(workspace, plan)}",
     )
 
 

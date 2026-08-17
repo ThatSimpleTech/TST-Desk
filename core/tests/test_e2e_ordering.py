@@ -1,20 +1,26 @@
-"""The harness judges the call it means to judge (TD-1807).
+"""The harness judges the call it means to judge (TD-1807, TD-1808).
 
 The live leg failed one run in five because a local model read a file before
 it wrote one: the checks took ``calls[0]``, matched the approval against
 ``gate[0]``, and inspected ``results[0]``.  Every one of those is a guess
 about ordering that the OpenAI tool-call contract never made.
 
+TD-1808 is the same defect on the file-content half, which TD-1807 left
+behind: the execution check read ``hello.txt``'s final content, so a second
+write arriving after the checked one failed a run whose checked call did
+exactly what was asked.  One call's outcome, judged by the transcript's
+aggregate state.
+
 These runs are offline — a scripted provider replaying chunk sequences,
 which is the only way to pin a *multi-call* ordering with no model running
 (``MockProvider`` emits one tool call per script and reuses a single call
-id, so it cannot express the transcripts this story is about).  The daemon,
-the classifier, the policy gate and the dispatcher are all real; only the
-model is scripted.
+id, so it cannot express the transcripts these stories are about).  The
+daemon, the classifier, the policy gate and the dispatcher are all real;
+only the model is scripted.
 
-Two of the five runs must FAIL, and that is the point: a selection rule
-that made every transcript pass would have replaced one broken check with
-a check that proves nothing (AGENTS.md §7).
+Five of the nine runs must FAIL, and that is the point: a rule that made
+every transcript pass would have replaced one broken check with a check
+that proves nothing (AGENTS.md §7).
 """
 
 from __future__ import annotations
@@ -76,12 +82,12 @@ def _read(path: Path, call_id: str) -> list[StreamChunk]:
     return _tool_call("fs_read", {"path": str(path)}, call_id)
 
 
+def _write_to(path: Path, call_id: str, content: str = _CONTENT) -> list[StreamChunk]:
+    return _tool_call("fs_write", {"path": str(path), "content": content}, call_id)
+
+
 def _write(workspace: Path, call_id: str) -> list[StreamChunk]:
-    return _tool_call(
-        "fs_write",
-        {"path": str(workspace / "hello.txt"), "content": _CONTENT},
-        call_id,
-    )
+    return _write_to(workspace / "hello.txt", call_id)
 
 
 def _plan(
@@ -223,4 +229,97 @@ async def test_missing_write_fails_and_names_what_happened(tmp_path: Path) -> No
     passed, detail = _detail(result, "tool call classified")
     assert not passed, f"a run with no fs_write must fail:\n{result.report()}"
     assert "no fs_write call" in detail and "fs_read" in detail, detail
+    assert not result.ok
+
+
+async def test_a_later_write_does_not_fail_the_checked_call(tmp_path: Path) -> None:
+    """TD-1808: the checked call did what was asked; something else moved on.
+
+    The second write leaves ``hello.txt`` holding content the plan rejects,
+    so the workspace's final state and the checked call's own effect
+    disagree — which is exactly the run the old check failed.
+    """
+    workspace = tmp_path / "workspace"
+    result = await run(
+        workspace,
+        tmp_path / "data",
+        _plan(
+            _write(workspace, "call-write"),
+            _write_to(workspace / "hello.txt", "call-clobber", "something else entirely\n"),
+            _text("Wrote the greeting, then thought better of it."),
+        ),
+    )
+
+    passed, detail = _detail(result, "execution")
+    assert passed, f"a later write must not fail the checked call:\n{result.report()}"
+    # The verdict came from the call; the detail still tells the truth about disk.
+    assert "wrote=1 line(s)" in detail and "file=other-content" in detail, detail
+    assert any("fs_write#call-clobber" in note for note in result.notes), result.report()
+    assert result.ok
+
+
+async def test_success_that_changed_nothing_fails(tmp_path: Path) -> None:
+    """TD-1808: a call cannot pass on its own say-so.
+
+    ``hello.txt`` already holds the expected content, so the write succeeds
+    and changes nothing.  Reading disk would call that a pass — the file is
+    right there, holding exactly what was asked for.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "hello.txt").write_text(_CONTENT, encoding="utf-8")
+
+    result = await run(
+        workspace,
+        tmp_path / "data",
+        _plan(_write(workspace, "call-write"), _text("Nothing needed changing.")),
+    )
+
+    passed, detail = _detail(result, "execution")
+    assert not passed, f"a write that changed nothing must fail:\n{result.report()}"
+    assert "status='success'" in detail, detail
+    assert "wrote=nothing" in detail and "file=written" in detail, detail
+    assert not result.ok
+
+
+async def test_wrong_content_fails_and_says_so(tmp_path: Path) -> None:
+    """TD-1808: the file is present, holding the wrong thing."""
+    workspace = tmp_path / "workspace"
+    result = await run(
+        workspace,
+        tmp_path / "data",
+        _plan(
+            _write_to(workspace / "hello.txt", "call-write", "goodbye from M1\n"),
+            _text("Wrote a farewell."),
+        ),
+    )
+
+    passed, detail = _detail(result, "execution")
+    assert not passed, f"the wrong content must fail:\n{result.report()}"
+    assert "file=other-content" in detail, detail
+    assert "missing" not in detail, detail
+    assert not result.ok
+
+
+async def test_absent_file_is_not_reported_as_other_content(tmp_path: Path) -> None:
+    """TD-1808: a file that never appeared reads differently from a wrong one.
+
+    The write is refused at the boundary, so nothing lands in the workspace
+    at all.  Before this story both this run and the one above rendered
+    ``file='missing'``.
+    """
+    workspace = tmp_path / "workspace"
+    result = await run(
+        workspace,
+        tmp_path / "data",
+        _plan(
+            _write_to(Path("/etc/hello.txt"), "call-outside"),
+            _text("Tried to write outside the workspace."),
+        ),
+    )
+
+    passed, detail = _detail(result, "execution")
+    assert not passed, f"a refused write must fail:\n{result.report()}"
+    assert "file=absent" in detail, detail
+    assert "other-content" not in detail, detail
     assert not result.ok
