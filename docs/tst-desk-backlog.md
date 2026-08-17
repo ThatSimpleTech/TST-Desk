@@ -1134,8 +1134,12 @@ summed to 3520. The ledger was right; the turn total was not.
 - [x] The approval-gate check matches an approval to the tool call it belongs to, not to
       whichever request arrived first
 - [x] The execution check inspects the result of the write being verified, not `results[0]`
-- [x] Extra tool calls neither fail the run nor pass it silently — the harness reports what the
+- [ ] Extra tool calls neither fail the run nor pass it silently — the harness reports what the
       model actually did
+      (half met: extras are reported as NOTE lines and excluded from the verdict, but an extra
+      call can still fail the run — `e2e_checks.py` derives `wrote_file` from the file's final
+      content, so a second `fs_write` changing it fails a run whose checked call succeeded.
+      Scoping that to the checked call is TD-1808.)
 - [x] The live leg passes five consecutive runs against a local endpoint
       (5/5 green against `qwen3.8:27b` on Ollama 0.32.13, 13–30s each; none of the five
       happened to make an extra call, so the selection rule itself is pinned offline)
@@ -1168,6 +1172,29 @@ under test is worse than one that fails honestly.
 
 The file crossed §6's limit on the same branch (302 → 422 lines); bring it back under while the
 selection logic is being rewritten rather than filing that separately.
+
+---
+
+### TD-1808 — Scope the execution check to the call it is checking
+**Size:** 2 · **Depends on:** TD-1807
+
+**Acceptance criteria:**
+- [ ] The execution check judges the effect of the checked call, not the workspace's final state
+- [ ] A second `fs_write` that rewrites the file after the checked call succeeded does not fail
+      the run; it is reported as an extra call, closing TD-1807's fourth criterion
+- [ ] A checked call that reports success while writing nothing still FAILS — the check must not
+      be weakened into always passing
+- [ ] The failure detail distinguishes "file absent" from "file present with other content";
+      today both render as `file='missing'`
+- [ ] Offline tests pin all three: extra write after, no write at all, wrong content
+
+`core/tstd/e2e_checks.py` derives `wrote_file` from the file's final content on disk, so an
+extra `fs_write` arriving after the checked call fails a run in which the checked call did
+exactly what was asked. That is the same conflation TD-1807 removed from `calls[0]`,
+`gate[0]` and `results[0]` — one call's outcome judged by the transcript's aggregate state —
+left behind on the file-content half.
+
+TD-1807's fourth criterion stays unticked until this lands.
 
 ---
 
@@ -2402,10 +2429,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 43 | 143 |
-| M1.5 Local models | E18 | 7 | 20 |
+| M1.5 Local models | E18 | 8 | 22 |
 | M2 The window | E10–E12 | 16 | 53 |
 | M3 Shippable | E13–E17 | 36 | 105 |
-| **Total v0.1** | **18** | **109** | **336** |
+| **Total v0.1** | **18** | **110** | **338** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
