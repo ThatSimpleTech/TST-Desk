@@ -9,8 +9,10 @@ from .manifest import ManifestConfig, ManifestResult, WorkspaceManifest
 from .prompt import (
     BASE_SYSTEM_PROMPT,
     MEMORY_PLACEHOLDER,
+    WORKSPACE_ROOT_LABEL,
     AssembledPrompt,
     PromptAssembler,
+    workspace_root_block,
 )
 from .stack import build_instruction_stack
 from .tier import (
@@ -33,6 +35,7 @@ __all__ = [
     "BASE_SYSTEM_PROMPT",
     "DEFAULT_VALIDATOR_SUBSET",
     "MEMORY_PLACEHOLDER",
+    "WORKSPACE_ROOT_LABEL",
     "AssembledPrompt",
     "AssembledSteering",
     "ContextAssembler",
@@ -55,4 +58,5 @@ __all__ = [
     "build_instruction_stack",
     "default_config_for_tier",
     "make_token_counter",
+    "workspace_root_block",
 ]

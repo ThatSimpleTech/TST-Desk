@@ -1,9 +1,13 @@
-"""Tests for cache-aware prompt assembly in the agent loop (TD-305).
+"""Tests for cache-aware prompt assembly in the agent loop (TD-305, TD-1810).
 
 Verifies, using a real multi-turn session with the mock provider, that
 the stable prefix (blocks 1-2) is byte-identical across turns when
 steering files have not changed, and that the prefix hash and cache
 ratio are observable in the turn logs.
+
+TD-1810 adds the other half: the absolute workspace root reaches the
+provider on the wire, in the system message, for a session whose user
+messages never say where the workspace is.
 """
 
 from __future__ import annotations
@@ -191,3 +195,63 @@ class TestMultiTurnPrefixStability:
         assert before != after, "prefix hash should change after steering file modification"
 
         await runner.cancel()
+
+
+# ── Workspace root on the wire (TD-1810) ────────────────────────────────
+
+
+class TestWorkspaceRootOnTheWire:
+    async def test_root_reaches_the_provider_though_the_user_never_says_it(
+        self, tmp_path: Path
+    ) -> None:
+        """The root is in the system message of a request the loop really sent.
+
+        The user asks for work in prose that names no path at all — the
+        production case where the model would otherwise have to guess the
+        prefix that turns a manifest entry into the absolute path every
+        ``fs_*`` tool demands.
+        """
+        home, ws = _build_workspace(tmp_path, "root: use python3")
+        _write(ws / "src" / "app.py", "print('hi')")
+
+        assembler = PromptAssembler(ws, home_dir=home)
+        session = Session(str(ws))
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(kind="stream", content="Reply"),
+                "test-worker": Script(kind="stream", content="Reply"),
+            },
+        )
+
+        runner = SessionRunner(
+            session,
+            loop_factory=lambda s: agent_loop(
+                s,
+                router,
+                mock_factory(mock),
+                config,
+                prompt_assembler=assembler,
+            ),
+        )
+        await runner.start()
+
+        await session.add_user_message("Add a docstring to the app module")
+        await wait_for_turn(session, 1)
+        await runner.cancel()
+
+        request = mock.calls[0]
+        root = ws.resolve().as_posix()
+
+        system = request.messages[0]
+        assert system.role == "system"
+        assert root in (system.content or "")
+
+        # The path was never mentioned by the user, so the system block is
+        # the only place the model could have learned it.
+        for message in request.messages[1:]:
+            assert root not in (message.content or "")
+
+        # And the manifest is still listed relative, not rewritten.
+        assert "\nsrc/app.py" in (system.content or "")

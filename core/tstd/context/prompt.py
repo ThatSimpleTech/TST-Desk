@@ -2,11 +2,12 @@
 
 Assembles the system prompt in the stable-prefix order from spec §4.5:
 
-    [1] TST Desk base system prompt   ← never changes
-    [2] Steering block (resolved)     ← changes only when files change
-    [3] Memory block (relevant)       ← changes between sessions
-    [4] Workspace manifest            ← changes as files change
-    [5] Conversation                  ← appended by the loop, per turn
+    [1]  TST Desk base system prompt  ← never changes
+    [1b] Workspace root (absolute)    ← constant for the session (TD-1810)
+    [2]  Steering block (resolved)    ← changes only when files change
+    [3]  Memory block (relevant)      ← changes between sessions
+    [4]  Workspace manifest           ← changes as files change
+    [5]  Conversation                 ← appended by the loop, per turn
 
 Blocks 1-2 are the provider prefix-cache target: on a long session they
 are the difference between full-price and cache-read pricing on the
@@ -45,6 +46,47 @@ BASE_SYSTEM_PROMPT = (
 #: block can slot in without reordering the cache prefix.
 MEMORY_PLACEHOLDER = "<!-- memory: none loaded for this session -->"
 
+#: Opening label of block [1b].  Exposed so callers can assert the root
+#: is stated exactly once rather than counting occurrences of the path
+#: itself, which also appears in steering provenance comments.
+WORKSPACE_ROOT_LABEL = "Workspace root:"
+
+#: Block [1b] — the workspace root (TD-1810).  Every ``fs_*`` tool
+#: advertises its ``path`` argument as absolute while the manifest lists
+#: entries workspace-relative, so without this block the model has to
+#: guess the prefix that joins the two.  The worked example is spelled
+#: out rather than implied: the failing behaviour is a small model
+#: emitting the relative path verbatim, and showing the join once costs
+#: less than a retry.
+_WORKSPACE_ROOT_TEMPLATE = (
+    "{label} {root}\n"
+    "That is an absolute path on this machine. Workspace files are listed "
+    "relative to this root, so the absolute path of a listed file is the root "
+    'joined with its listed path: the entry "src/app.py" means '
+    '"{root}/src/app.py". Tool arguments that ask for an absolute path must be '
+    "written that way — never pass a relative path to a tool."
+)
+
+
+def workspace_root_block(workspace_path: str | Path) -> str:
+    """Render block [1b]: the absolute workspace root, stated once.
+
+    The root is rendered resolved and with POSIX separators for the same
+    reason the manifest renders its entries that way (TD-1406): the model
+    concatenates the two, and on Windows a backslash root would also have
+    to survive JSON string escaping inside a tool-call argument.
+
+    Args:
+        workspace_path: Path to the workspace root.  Resolved, so a
+            relative or symlinked path still yields the canonical root
+            the path guard will accept.
+
+    Returns:
+        The rendered block text.
+    """
+    root = Path(workspace_path).resolve().as_posix()
+    return _WORKSPACE_ROOT_TEMPLATE.format(label=WORKSPACE_ROOT_LABEL, root=root)
+
 
 @dataclass(frozen=True)
 class AssembledPrompt:
@@ -54,8 +96,8 @@ class AssembledPrompt:
         tier: The tier this prompt was assembled for.
         text: The full system prompt - blocks 1-4 in stable-prefix
             order, ready to be placed before the conversation.
-        prefix: Blocks 1-2 (base + steering) - the provider
-            prefix-cache target.
+        prefix: Blocks 1-2 (base + workspace root + steering) - the
+            provider prefix-cache target.
         prefix_hash: SHA-256 of *prefix*.
         prefix_tokens: Heuristic token count of *prefix*.
         steering: The underlying :class:`AssembledSteering` from the
@@ -172,14 +214,23 @@ class PromptAssembler:
             denied_imports=denied_imports,
         )
 
-        # Stable-prefix order: base first, then the tier blocks in
-        # TD-508's insertion order (steering → memory → manifest for
-        # brain; steering → task → relevant files for worker; steering
-        # → diff → test output for validator).
-        parts = [BASE_SYSTEM_PROMPT] + [block for block in context.blocks.values()]
+        # Stable-prefix order: base, then the workspace root, then the
+        # tier blocks in TD-508's insertion order (steering → memory →
+        # manifest for brain; steering → task → relevant files for
+        # worker; steering → diff → test output for validator).
+        #
+        # The root sits ahead of steering, not after it (TD-1810).  It is
+        # constant for the session, and steering is the earliest block
+        # that can change mid-session (a reload, TD-509) — anything after
+        # a changed byte is re-tokenised, so the root would pay for every
+        # steering edit if it followed.  Every tier gets it: the worker
+        # calls the same fs_* tools, and a per-tier position would split
+        # the base+root prefix the tiers currently share.
+        root_block = workspace_root_block(self._workspace)
+        parts = [BASE_SYSTEM_PROMPT, root_block] + [block for block in context.blocks.values()]
         text = "\n\n".join(parts)
 
-        prefix_parts = [BASE_SYSTEM_PROMPT]
+        prefix_parts = [BASE_SYSTEM_PROMPT, root_block]
         if "steering" in context.blocks:
             prefix_parts.append(context.blocks["steering"])
         prefix = "\n\n".join(prefix_parts)
