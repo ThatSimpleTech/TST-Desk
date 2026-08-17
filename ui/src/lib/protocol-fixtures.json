@@ -77,6 +77,25 @@
   "list_sessions": {
     "type": "list_sessions"
   },
+  "archive_session": {
+    "type": "archive_session",
+    "session_id": "sess-1",
+    "archived": true
+  },
+  "unarchive_session": {
+    "type": "archive_session",
+    "session_id": "sess-1",
+    "archived": false
+  },
+  "delete_session": {
+    "type": "delete_session",
+    "session_id": "sess-1"
+  },
+  "move_session": {
+    "type": "move_session",
+    "session_id": "sess-1",
+    "workspace_path": "/home/user/other"
+  },
   "get_setup_state": {
     "type": "get_setup_state"
   },
@@ -393,7 +412,17 @@
         "state": "interrupted",
         "created_at": "2026-08-13T10:00:00Z",
         "updated_at": "2026-08-13T10:00:00Z",
-        "event_count": 0
+        "event_count": 0,
+        "archived": false
+      },
+      {
+        "session_id": "sess-2",
+        "workspace_path": "/home/user/project",
+        "state": "complete",
+        "created_at": "2026-08-13T09:00:00Z",
+        "updated_at": "2026-08-13T09:30:00Z",
+        "event_count": 12,
+        "archived": true
       }
     ]
   },

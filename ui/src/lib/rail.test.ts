@@ -15,6 +15,11 @@ import {
 	historyBadge,
 	entryHint,
 	accountRow,
+	rowActions,
+	archivedToggle,
+	emptyRowsCopy,
+	DELETE_CONFIRM,
+	MOVE_HINT,
 } from "./rail";
 
 describe("rail sections", () => {
@@ -127,5 +132,93 @@ describe("accountRow", () => {
 	it("skips punctuation when picking the initial", () => {
 		expect(accountRow("-local", true).initial).toBe("L");
 		expect(accountRow("...", true).initial).toBeNull();
+	});
+});
+// ── Row lifecycle affordances (TD-1715) ──────────────────────────────────
+//
+// The grammar of the row menu, pinned here for the same reason the surface
+// registry is: it is pure, and the rules that matter are about what is *not*
+// offered.
+
+describe("rowActions", () => {
+	it("offers archive, move and delete on a live row", () => {
+		expect(rowActions(false).map((a) => a.id)).toEqual(["archive", "move", "delete"]);
+	});
+
+	it("swaps archive for unarchive on a filed row, never both", () => {
+		const ids = rowActions(true).map((a) => a.id);
+		expect(ids).toEqual(["unarchive", "move", "delete"]);
+		expect(ids).not.toContain("archive");
+	});
+
+	it("marks only delete destructive", () => {
+		for (const archived of [false, true]) {
+			const danger = rowActions(archived).filter((a) => a.danger).map((a) => a.id);
+			expect(danger).toEqual(["delete"]);
+		}
+	});
+
+	it("names an icon the shared map actually has", () => {
+		for (const archived of [false, true]) {
+			for (const a of rowActions(archived)) expect(ICONS).toHaveProperty(a.icon);
+		}
+	});
+
+	it("gives every action hover copy that says what it costs", () => {
+		for (const archived of [false, true]) {
+			for (const a of rowActions(archived)) expect(a.hint.length).toBeGreaterThan(0);
+		}
+	});
+});
+
+describe("lifecycle copy", () => {
+	// The backlog is explicit that Move must say the working context moves — a
+	// session silently running against the wrong root is the failure this copy
+	// exists to prevent.
+	it("says plainly that moving changes the agent's working context", () => {
+		expect(MOVE_HINT).toMatch(/working directory/i);
+		expect(MOVE_HINT).toMatch(/boundary root/i);
+		expect(MOVE_HINT).toMatch(/next turn/i);
+	});
+
+	it("delete's confirm names what is destroyed and offers archive instead", () => {
+		expect(DELETE_CONFIRM).toMatch(/event log/i);
+		expect(DELETE_CONFIRM).toMatch(/archive/i);
+	});
+
+	it("move's hint is the same sentence wherever Move is offered", () => {
+		const move = rowActions(false).find((a) => a.id === "move");
+		expect(move?.hint).toBe(MOVE_HINT);
+	});
+});
+
+describe("archived shelf", () => {
+	it("renames the history heading rather than adding a second section", () => {
+		expect(railSections(2, false)[1].label).toBe("History");
+		expect(railSections(2, true)[1].label).toBe("Archived");
+		expect(railSections(2, true)).toHaveLength(2);
+	});
+
+	it("badges the archived shelf with its own count", () => {
+		expect(railSections(0, true)[1].badge).toBeNull();
+		expect(railSections(7, true)[1].badge).toBe("7");
+	});
+
+	it("labels the toggle with where the click goes, not where you are", () => {
+		expect(archivedToggle(false).label).toBe("Archived");
+		expect(archivedToggle(true).label).toBe("Sessions");
+	});
+});
+
+describe("emptyRowsCopy", () => {
+	it("tells an empty shelf apart from an empty filter", () => {
+		expect(emptyRowsCopy(false, false, false)).toBe("No sessions yet");
+		expect(emptyRowsCopy(true, false, false)).toBe("No archived sessions");
+		expect(emptyRowsCopy(false, true, true)).toBe("No matching sessions");
+		expect(emptyRowsCopy(true, true, true)).toBe("No matching sessions");
+	});
+
+	it("does not claim a filter hid rows when the shelf itself is empty", () => {
+		expect(emptyRowsCopy(true, true, false)).toBe("No archived sessions");
 	});
 });

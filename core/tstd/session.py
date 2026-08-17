@@ -215,6 +215,44 @@ class Session:
         # activate only once a matching file is in play.
         self.touched_paths: set[str] = set()
         self._workspace_root: Path | None = None  # resolved lazily by record_touched
+        # Turns owed to the user (TD-1715): raised when a message is queued,
+        # lowered when the loop reports that turn finished. `session_state`
+        # cannot answer "is a turn in flight" — "running" means the loop is
+        # alive and spans the session's whole life (TD-1714) — so the count
+        # is tracked here, off the one event that proves a turn ended.
+        self._open_turns = 0
+        self.event_log.subscribe(self._observe_turn_end)  # type: ignore[arg-type]
+
+    async def _observe_turn_end(self, event: DaemonEvent, _log: SessionEventLog) -> None:
+        """Lower the open-turn count when the loop reports a turn complete."""
+        from .protocol import TurnComplete
+
+        if isinstance(event, TurnComplete):
+            self._open_turns = max(0, self._open_turns - 1)
+
+    @property
+    def turn_in_flight(self) -> bool:
+        """True while the loop owes the user a turn (TD-1715).
+
+        Terminal sessions always read False: their loop is gone, so an
+        unanswered message can never become a turn and must not wedge the
+        session against Delete forever.
+        """
+        if not self.VALID_TRANSITIONS.get(self._state, set()):
+            return False
+        return self._open_turns > 0
+
+    def reassign_workspace(self, workspace_path: str) -> None:
+        """Point the session at another workspace (TD-1715 move to project).
+
+        The event log, id, and conversation stay exactly as they are — only
+        the working context moves. Touched paths are dropped because they
+        are relative to the workspace that no longer applies; keeping them
+        would activate path-scoped steering rules against the wrong tree.
+        """
+        self.workspace_path = workspace_path
+        self._workspace_root = None
+        self.touched_paths.clear()
 
     def record_touched(self, paths: Iterable[str]) -> None:
         """Mark tool-call paths as touched (TD-503).
@@ -283,6 +321,8 @@ class Session:
     async def cancel(self) -> None:
         """Request cancellation of this session."""
         self._cancel_event.set()
+        # Nothing will answer the queued turns now.
+        self._open_turns = 0
         # Wake any parked approvals so their dispatchers unwind.
         for pending in self._pending_approvals.values():
             pending.future.cancel()
@@ -509,6 +549,7 @@ class Session:
 
     async def add_user_message(self, content: str) -> None:
         """Enqueue a user message for the agent loop to process."""
+        self._open_turns += 1
         self._user_message_queue.put_nowait(content)
 
     async def wait_for_user_message(self) -> str | None:

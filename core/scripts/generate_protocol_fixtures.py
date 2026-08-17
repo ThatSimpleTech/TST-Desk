@@ -19,6 +19,7 @@ from tstd.protocol import (
     ApiKeyValidated,
     ApprovalRequest,
     Approve,
+    ArchiveSession,
     AssistantDelta,
     Attach,
     BoundaryUpdate,
@@ -28,6 +29,7 @@ from tstd.protocol import (
     CostUpdate,
     DecisionLogged,
     DeleteApiKey,
+    DeleteSession,
     Deny,
     Detach,
     DiagnosticCheck,
@@ -39,6 +41,7 @@ from tstd.protocol import (
     InstructionStack,
     ListPolicyRules,
     ListSessions,
+    MoveSession,
     OpenWorkspace,
     Ping,
     PolicyRules,
@@ -85,6 +88,11 @@ FIXTURES = {
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
     "shutdown": Shutdown(),
     "list_sessions": ListSessions(),
+    # Session lifecycle (TD-1715): archive/restore, delete, move to project.
+    "archive_session": ArchiveSession(session_id="sess-1"),
+    "unarchive_session": ArchiveSession(session_id="sess-1", archived=False),
+    "delete_session": DeleteSession(session_id="sess-1"),
+    "move_session": MoveSession(session_id="sess-1", workspace_path="/home/user/other"),
     # Onboarding (TD-1101 first-run wizard)
     "get_setup_state": GetSetupState(),
     "set_api_key": SetApiKey(api_key="sk-or-test-key"),
@@ -298,7 +306,17 @@ FIXTURES = {
                 "created_at": "2026-08-13T10:00:00Z",
                 "updated_at": "2026-08-13T10:00:00Z",
                 "event_count": 0,
-            }
+            },
+            # TD-1715: the list stays complete and marks what is filed away.
+            {
+                "session_id": "sess-2",
+                "workspace_path": "/home/user/project",
+                "state": "complete",
+                "created_at": "2026-08-13T09:00:00Z",
+                "updated_at": "2026-08-13T09:30:00Z",
+                "event_count": 12,
+                "archived": True,
+            },
         ]
     ),
     "policy_rules": PolicyRules(

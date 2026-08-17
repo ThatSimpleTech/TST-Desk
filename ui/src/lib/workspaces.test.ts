@@ -56,6 +56,7 @@ function sessionList(entries: Array<[path: string, updatedAt: string]>): DaemonE
 			created_at: updated_at,
 			updated_at,
 			event_count: 3,
+			archived: false,
 		})),
 	} as DaemonEventUnion;
 }

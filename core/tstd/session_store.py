@@ -36,6 +36,11 @@ class SessionRecord:
     state: str
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
+    # Filed away rather than deleted (TD-1715). Durable, so the rail's
+    # default list stays hidden across a restart. Defaulted so a store
+    # written before this field loads unchanged instead of being dropped
+    # as malformed.
+    archived: bool = False
 
 
 class SessionStore:
@@ -72,6 +77,7 @@ class SessionStore:
             workspace_path=workspace_path,
             state=state,
             created_at=existing.created_at if existing else (created_at or _now_iso()),
+            archived=existing.archived if existing else False,
         )
         self._records[session_id] = record
         await self._persist()
@@ -84,6 +90,35 @@ class SessionStore:
         record.state = state
         record.updated_at = _now_iso()
         await self._persist()
+
+    async def set_archived(self, session_id: str, archived: bool) -> bool:
+        """File a session away, or restore it (TD-1715).
+
+        Returns False when the id is unknown, so the caller can answer with
+        a typed error rather than pretending the write landed.
+        """
+        record = self._records.get(session_id)
+        if record is None:
+            return False
+        record.archived = archived
+        record.updated_at = _now_iso()
+        await self._persist()
+        return True
+
+    async def set_workspace(self, session_id: str, workspace_path: str) -> bool:
+        """Reassign a session to another workspace (TD-1715 move to project).
+
+        Durable half of the move: the record keeps its id, creation time,
+        and archived flag, so nothing about the session's history is
+        rewritten — only where it now lives.
+        """
+        record = self._records.get(session_id)
+        if record is None:
+            return False
+        record.workspace_path = workspace_path
+        record.updated_at = _now_iso()
+        await self._persist()
+        return True
 
     async def remove(self, session_id: str) -> None:
         """Drop a session from the store and persist."""

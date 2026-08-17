@@ -41,6 +41,10 @@ import type {
   TierSwitched,
   InstructionStack,
   SessionList,
+  SessionSummary,
+  ArchiveSession,
+  DeleteSession,
+  MoveSession,
   PolicyRules,
   PolicyRuleSummary,
   GetSetupState,
@@ -527,5 +531,51 @@ describe("All fixtures have required shape", () => {
       expect(typeof evt.type).toBe("string");
       expect(typeof evt.seq).toBe("number");
     }
+  });
+});
+
+// ── Session lifecycle (TD-1715) ───────────────────────────────────────
+//
+// Three verbs added to the client union and one field added to every
+// session summary. The union and the daemon's known-type set are separate
+// lists in protocol.py, and a message in only one of them fails at runtime
+// rather than at import — so these fixtures come from the Python side that
+// checks both.
+
+describe("Session lifecycle messages match TypeScript types", () => {
+  it("archive_session", () => {
+    const m = fixtures.archive_session as ArchiveSession;
+    expect(m.type).toBe("archive_session");
+    expect(isString(m.session_id)).toBe(true);
+    expect(m.archived).toBe(true);
+  });
+
+  it("archive_session carries the restore direction too", () => {
+    const m = fixtures.unarchive_session as ArchiveSession;
+    expect(m.type).toBe("archive_session");
+    expect(m.archived).toBe(false);
+  });
+
+  it("delete_session", () => {
+    const m = fixtures.delete_session as DeleteSession;
+    expect(m.type).toBe("delete_session");
+    expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("move_session", () => {
+    const m = fixtures.move_session as MoveSession;
+    expect(m.type).toBe("move_session");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.workspace_path)).toBe(true);
+  });
+
+  it("every session summary reports whether it is archived", () => {
+    const list = fixtures.session_list as SessionList;
+    expect(list.sessions.length).toBeGreaterThan(1);
+    for (const s of list.sessions as SessionSummary[]) {
+      expect(isBoolean(s.archived)).toBe(true);
+    }
+    expect(list.sessions.some((s) => s.archived)).toBe(true);
+    expect(list.sessions.some((s) => !s.archived)).toBe(true);
   });
 });
