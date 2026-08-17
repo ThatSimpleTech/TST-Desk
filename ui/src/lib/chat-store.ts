@@ -8,6 +8,7 @@
 // replays the session's event log, so full conversation history rebuilds
 // through the same reducer as live events: there is no separate history path.
 
+import { createMessageQueue, type QueuedMessage } from "./chat-queue";
 import type {
   ClientMessageUnion,
   DaemonEventUnion,
@@ -28,6 +29,10 @@ export interface ChatState {
   sessionId: string | null;
   turnState: SessionState["state"] | null;
   messages: ChatMessage[];
+  /** Messages typed while a turn was live (TD-1704), drained one per turn
+   *  end so the tail stays editable. See chat-queue.ts for why they wait
+   *  here instead of going straight to the daemon's own queue. */
+  queued: QueuedMessage[];
   /** Set between a user send and the first assistant_delta — the "Working…"
    *  shimmer's window (TD-1607). Only a local send arms it (TD-1714): the
    *  daemon's "running" means the session loop is alive, not that a turn is
@@ -62,6 +67,13 @@ export interface ChatStore {
    *  through the same reducer as live events. No-op for the attached id. */
   selectSession(sessionId: string, turnState: SessionState["state"] | null): void;
   refreshSessions(): boolean;
+  /** Hand one queued row to the daemon now, ahead of the rows before it
+   *  (TD-1704) — the steer. It leaves the local queue either way. */
+  sendQueuedNow(id: string): boolean;
+  /** Replace a queued row's text in place, keeping its id and position. */
+  editQueuedMessage(id: string, text: string): void;
+  /** Drop a queued row without ever sending it. */
+  removeQueuedMessage(id: string): void;
   dispose(): void;
 }
 
@@ -70,6 +82,7 @@ export function createChatState(): ChatState {
     sessionId: null,
     turnState: null,
     messages: [],
+    queued: [],
     awaitingFirstToken: false,
     turnStalled: false,
     awaitingSince: null,
@@ -161,18 +174,34 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
   // Closure-level so retryLastUserMessage can call it without `this` —
   // the reactive shell re-exports these methods detached.
-  function sendUserMessageToWire(text: string): boolean {
+  /** `armWait` false hands the message over without touching the first-token
+   *  clock — see the queue's send-now (TD-1704). */
+  function sendUserMessageToWire(text: string, armWait = true): boolean {
     const content = text.trim();
     if (state.sessionId === null || content === "") return false;
     const sent = deps.send({ type: "user_message", session_id: state.sessionId, content });
     if (!sent) return false;
     nextId += 1;
     state.messages.push({ id: `m${nextId}`, role: "user", text: content, complete: true, at: Date.now() });
+    if (!armWait) return true;
     // A fresh send restarts the wait and its watchdog even atop one already
     // in flight — the honest clock is from the latest send.
     endFirstTokenWait();
     startFirstTokenWait();
     state.lastTurnDuration = null;
+    return true;
+  }
+
+  const queue = createMessageQueue(state, sendUserMessageToWire, () =>
+    showCancel(state.turnState),
+  );
+
+  /** Queue or send, depending on whether a turn owns the loop (TD-1704). */
+  function sendUserMessage(text: string): boolean {
+    const content = text.trim();
+    if (state.sessionId === null || content === "") return false;
+    if (!showCancel(state.turnState)) return sendUserMessageToWire(content);
+    queue.add(content);
     return true;
   }
 
@@ -195,6 +224,9 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     // replay re-derives it through the reducer below.
     state.turnState = turnState === "running" ? null : turnState;
     state.messages = [];
+    // Queued text belongs to the session it was composed against; carrying it
+    // across would deliver it to a conversation that never asked for it.
+    queue.clear();
     endFirstTokenWait();
     state.lastTurnDuration = null;
     if (sessionId !== null) deps.attach(sessionId);
@@ -239,6 +271,10 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           // Daemon-measured seconds — the duration line reports what the wire
           // said; the client never clocks turns itself (AGENTS §6).
           state.lastTurnDuration = event.duration;
+          // The loop is free: the queue's head becomes the next turn (TD-1704).
+          // Only here, never on a terminal session_state — the daemon refuses
+          // sends to a dead session, so flushing into one would void the text.
+          queue.flushHead();
           return;
         }
         case "session_state": {
@@ -311,7 +347,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       }
     },
 
-    sendUserMessage: sendUserMessageToWire,
+    sendUserMessage,
 
     /** Retry (TD-1606): resend the last user message verbatim over the same
      *  user_message wire message, refused while a turn is live. Today's
@@ -344,11 +380,16 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       return deps.send({ type: "list_sessions" });
     },
 
+    sendQueuedNow: queue.sendNow,
+    editQueuedMessage: queue.edit,
+    removeQueuedMessage: queue.remove,
+
     dispose(): void {
       if (state.sessionId !== null) deps.detach(state.sessionId);
       state.sessionId = null;
       state.turnState = null;
       state.messages = [];
+      queue.clear();
       endFirstTokenWait();
       state.lastTurnDuration = null;
     },

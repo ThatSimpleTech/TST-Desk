@@ -7,13 +7,24 @@
 	// lives in the composer's send→stop morph; Esc cancels too (TD-1609).
 	// Presentational composition only — protocol state lives in the stores.
 	import { onMount } from "svelte";
-	import { cancelTurn, chat, initChat, retryLastUserMessage, sendUserMessage, teardownChat } from "../../chat-store.svelte.js";
+	import {
+		cancelTurn,
+		chat,
+		editQueuedMessage,
+		initChat,
+		removeQueuedMessage,
+		retryLastUserMessage,
+		sendQueuedNow,
+		sendUserMessage,
+		teardownChat,
+	} from "../../chat-store.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
 	import { greetingForHour, SUGGESTIONS } from "../../greeting";
 	import { workingVerb } from "../../working-flavor";
 	import Composer from "./Composer.svelte";
 	import MessageList from "./MessageList.svelte";
+	import QueuedMessages from "./QueuedMessages.svelte";
 
 	onMount(() => {
 		initChat();
@@ -84,6 +95,15 @@
 				<span class="duration">Worked for {formatTurnDuration(chat.lastTurnDuration)}</span>
 			{/if}
 		</div>
+		<!-- TD-1704: sits directly above the composer, between the turn status
+		     and the card, so the rows read as "these go next". Renders nothing
+		     at all while the queue is empty. -->
+		<QueuedMessages
+			queued={chat.queued}
+			onsendnow={sendQueuedNow}
+			onedit={editQueuedMessage}
+			onremove={removeQueuedMessage}
+		/>
 		<Composer
 			disabled={!canSend(chat.sessionId, ws.state)}
 			running={showCancel(chat.turnState) || chat.awaitingFirstToken}

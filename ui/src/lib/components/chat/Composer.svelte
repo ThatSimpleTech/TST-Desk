@@ -39,9 +39,13 @@
 		textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
 	});
 
+	// A running turn no longer refuses the submit (TD-1704): the store parks
+	// the text as a queued row instead. The button still morphs to stop, so
+	// while a turn runs Enter is the way in — the queued row above the card
+	// is the confirmation that it landed.
 	function submit(): void {
 		const text = value.trim();
-		if (text === "" || disabled || running) return;
+		if (text === "" || disabled) return;
 		onsubmit(text);
 		value = "";
 	}
