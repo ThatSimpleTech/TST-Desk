@@ -20,7 +20,7 @@ export interface ShortcutContext {
 	turnLive: boolean;
 }
 
-export type ShortcutAction = "close-menu" | "cancel-turn" | "open-wizard";
+export type ShortcutAction = "close-menu" | "cancel-turn" | "open-settings";
 
 /** Map a keydown to one app-level action, or null when nothing applies. */
 export function resolveShortcut(
@@ -34,7 +34,9 @@ export function resolveShortcut(
 		if (context.modalOpen) return null;
 		return context.turnLive ? "cancel-turn" : null;
 	}
-	// ⌘, on macOS, Ctrl+, elsewhere — reopens the setup wizard from anywhere.
-	if (event.key === "," && (event.metaKey || event.ctrlKey)) return "open-wizard";
+	// ⌘, on macOS, Ctrl+, elsewhere — opens settings (TD-1703). It used to
+	// reopen the wizard; the wizard is first-run only now, so the key that
+	// every app spends on preferences points at preferences.
+	if (event.key === "," && (event.metaKey || event.ctrlKey)) return "open-settings";
 	return null;
 }

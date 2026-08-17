@@ -24,8 +24,10 @@
 	import WizardPane from './WizardPane.svelte';
 	import DoctorPane from './DoctorPane.svelte';
 	import DecisionsPane from './DecisionsPane.svelte';
+	import SettingsPane from './SettingsPane.svelte';
 	import Icon from './Icon.svelte';
-	import { start as startOnboarding, reopen as reopenWizard, onboarding } from '../onboarding.svelte.js';
+	import { start as startOnboarding, onboarding } from '../onboarding.svelte.js';
+	import { startSettings, openSettings, settings } from '../settings.svelte.js';
 	import { startDoctor, runDoctor, doctor } from '../doctor.svelte.js';
 	import { startDecisions, openDecisions, decisions } from '../decisions.svelte.js';
 	import { resolveShortcut } from '../shortcuts';
@@ -34,18 +36,19 @@
 	import { workspaces, closeWorkspaceMenu } from '../workspaces.svelte.js';
 
 	// Global shortcuts (TD-1609): Esc peels layers (menu → modal → turn),
-	// ⌘, reopens the wizard. The mapping itself is pure — see shortcuts.ts.
+	// ⌘, opens settings (TD-1703 — it used to reopen the wizard). The mapping
+	// itself is pure — see shortcuts.ts.
 	function onGlobalKeydown(event: KeyboardEvent): void {
 		const action = resolveShortcut(event, {
 			workspaceMenuOpen: workspaces.menuOpen,
-			modalOpen: onboarding.open || doctor.open || decisions.open,
+			modalOpen: onboarding.open || doctor.open || decisions.open || settings.open,
 			turnLive: showCancel(chat.turnState),
 		});
 		if (action === null) return;
 		event.preventDefault();
 		if (action === 'close-menu') closeWorkspaceMenu();
 		else if (action === 'cancel-turn') cancelTurn();
-		else reopenWizard();
+		else openSettings();
 	}
 
 	// Feed every daemon event into the timeline for the lifetime of the shell,
@@ -58,11 +61,13 @@
 		const offWizard = startOnboarding();
 		const offDoctor = startDoctor();
 		const offDecisions = startDecisions();
+		const offSettings = startSettings();
 		return () => {
 			offTimeline();
 			offWizard();
 			offDoctor();
 			offDecisions();
+			offSettings();
 		};
 	});
 
@@ -91,13 +96,13 @@
 		aria-label="Run doctor diagnostics"
 		onclick={runDoctor}><Icon name="stethoscope" size={16} /></button
 	>
-	<!-- Revisit first-run setup (TD-1101) at any time — also ⌘, (TD-1609). -->
+	<!-- Settings (TD-1703) — also ⌘,. The wizard is first-run only. -->
 	<button
 		class="shell-gear"
 		type="button"
-		title="Setup wizard (⌘,)"
-		aria-label="Open setup wizard"
-		onclick={reopenWizard}><Icon name="settings" size={16} /></button
+		title="Settings (⌘,)"
+		aria-label="Open settings"
+		onclick={() => openSettings()}><Icon name="settings" size={16} /></button
 	>
 	<ConnectionBanner />
 </header>
@@ -148,6 +153,7 @@
 <WizardPane />
 <DoctorPane />
 <DecisionsPane />
+<SettingsPane />
 
 <style>
 	.shell-header {
