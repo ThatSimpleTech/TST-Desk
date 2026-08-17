@@ -4,7 +4,8 @@
 // the reactive shell that components consume lives in chat-store.svelte.ts.
 //
 // The store follows one session at a time, chosen from the daemon's
-// session_list — the UI never invents a session id (AGENTS §6). Attaching
+// session_list — the UI never invents a session id (AGENTS §6). Which one it
+// follows, and what changing it costs, live in session-binding.ts. Attaching
 // replays the session's event log, so full conversation history rebuilds
 // through the same reducer as live events: there is no separate history path.
 
@@ -16,6 +17,7 @@ import {
 } from "./attachments";
 import { createMessageQueue, type QueuedMessage } from "./chat-queue";
 import { createFirstTokenWait } from "./first-token-wait";
+import { applyBind, chooseBoundSession, isTerminal } from "./session-binding";
 import type {
   ClientMessageUnion,
   DaemonEventUnion,
@@ -144,17 +146,6 @@ export function formatTurnDuration(seconds: number): string {
  *  apart for everyone who reads them together. */
 export { STALL_TIMEOUT_MS } from "./first-token-wait";
 
-/** Terminal turn states seal any in-flight assistant message so it does not
- *  show a streaming cursor forever. */
-function isTerminal(state: SessionState["state"]): boolean {
-  return (
-    state === "complete" ||
-    state === "failed" ||
-    state === "cancelled" ||
-    state === "interrupted"
-  );
-}
-
 export function createChatStore(deps: ChatDeps, state: ChatState = createChatState()): ChatStore {
   let nextId = 0;
 
@@ -228,27 +219,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   }
 
   function switchSession(sessionId: string | null, turnState: SessionState["state"] | null): void {
-    if (state.sessionId === sessionId) return;
-    if (state.sessionId !== null) deps.detach(state.sessionId);
-    state.sessionId = sessionId;
-    // TD-1714: a summary's "running" means the session's loop is alive — the
-    // daemon sets it once at open and it spans the session's whole life — not
-    // that a turn is in flight. Mapping it straight into turnState locked the
-    // composer behind the stop morph on every live bind. Only turn evidence
-    // (a delta, an approval round-trip) may raise "running"; the attach
-    // replay re-derives it through the reducer below.
-    state.turnState = turnState === "running" ? null : turnState;
-    state.messages = [];
-    // Queued text belongs to the session it was composed against; carrying it
-    // across would deliver it to a conversation that never asked for it.
-    queue.clear();
-    wait.end();
-    state.lastTurnDuration = null;
-    // The activity lane scopes to the same session (TD-1009). Bind it before
-    // the attach, so the replay the attach fetches lands in a list already
-    // pointing at the session it describes.
-    deps.onBind?.(sessionId);
-    if (sessionId !== null) deps.attach(sessionId);
+    applyBind(state, { queue, wait, deps }, sessionId, turnState);
   }
 
   return {
@@ -319,39 +290,16 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           return;
         }
         case "session_list": {
-          const summaries = event.sessions;
-          if (summaries.length === 0) {
+          const choice = chooseBoundSession(event.sessions, state.sessionId);
+          if (choice.action === "bind") {
+            switchSession(choice.sessionId, choice.turnState);
+          } else if (choice.action === "unbind") {
             switchSession(null, null);
-            return;
+          } else if (choice.turnState !== null) {
+            // Staying put, and the refresh brought a turn state worth taking.
+            // A null there is the one that must not be taken (TD-1714).
+            state.turnState = choice.turnState;
           }
-          // Keep the current session while the daemon still lists it *and*
-          // still files it under the default view; else bind the most
-          // recently updated one. Archiving the bound session (TD-1715) is
-          // therefore a rebind, not a pane left pointing at a filed-away
-          // conversation the rail no longer shows.
-          if (summaries.some((s) => s.session_id === state.sessionId && !s.archived)) {
-            const current = summaries.find((s) => s.session_id === state.sessionId);
-            // TD-1714: a summary's "running" is session-liveness, not turn
-            // evidence — a refresh must never stamp it over the local state
-            // (neither raising a phantom turn nor standing down a real one).
-            if (current !== undefined && current.state !== "running") state.turnState = current.state;
-            return;
-          }
-          // Auto-bind liveness (TD-1711): a terminal session can never run
-          // another turn (the daemon refuses its user_message with
-          // session_not_running). Binding one would strand the composer on
-          // a corpse — e.g. the post-restart auto-adopt of an interrupted
-          // tombstone observed 2026-08-14. With nothing live, stay unbound:
-          // the empty state points at the rail's New Session.
-          // Archived sessions never win auto-bind (TD-1715): the user filed
-          // them away, so adopting one would undo that on the next refresh.
-          const live = summaries.filter((s) => !isTerminal(s.state) && !s.archived);
-          if (live.length === 0) {
-            switchSession(null, null);
-            return;
-          }
-          const newest = live.reduce((a, b) => (a.updated_at >= b.updated_at ? a : b));
-          switchSession(newest.session_id, newest.state);
           return;
         }
         case "error": {
