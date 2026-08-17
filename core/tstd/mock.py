@@ -53,7 +53,10 @@ class Script:
         chunk_delay: Seconds to ``await asyncio.sleep()`` between stream
             chunks.  Used by cancellation tests so the mock doesn't complete
             before the test can cancel.
-        prompt_tokens / completion_tokens / cached_tokens: usage figures.
+        prompt_tokens / completion_tokens: usage figures.
+        cached_tokens: cached-prompt-token figure to report, or ``None``
+            to script a provider that reports no cache figure at all —
+            what Ollama's OpenAI-compatible endpoint does (TD-1811).
     """
 
     kind: Literal[
@@ -69,7 +72,7 @@ class Script:
     chunk_delay: float = 0.0
     prompt_tokens: int = DEFAULT_PROMPT_TOKENS
     completion_tokens: int = DEFAULT_COMPLETION_TOKENS
-    cached_tokens: int = DEFAULT_CACHED_TOKENS
+    cached_tokens: int | None = DEFAULT_CACHED_TOKENS
 
     @property
     def usage(self) -> Usage:

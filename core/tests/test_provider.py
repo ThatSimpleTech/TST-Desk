@@ -595,11 +595,17 @@ class TestRequestBuilding:
         assert usage.total_tokens == 150
 
     def test_usage_empty(self) -> None:
-        """Test Usage parsing with no data."""
+        """Test Usage parsing with no data.
+
+        Token counts default to zero because no tokens were reported spent.
+        The cache figure defaults to ``None`` instead: zero cached tokens is
+        a claim about the provider's cache, and a response that said nothing
+        has not made it (TD-1811).
+        """
         usage = Usage.from_api_dict(None)
         assert usage.prompt_tokens == 0
         assert usage.completion_tokens == 0
-        assert usage.cached_prompt_tokens == 0
+        assert usage.cached_prompt_tokens is None
 
     def test_delta_tool_call(self) -> None:
         """Test DeltaToolCall creation."""

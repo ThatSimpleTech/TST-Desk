@@ -1445,15 +1445,37 @@ them, since the failure is concentrated in exactly one category rather than spre
 **Size:** 3 · **Depends on:** TD-1802, TD-304
 
 **Acceptance criteria:**
-- [ ] Cache telemetry (`last_cached_prompt_tokens`, the cache ratio in the turn log, and any
+- [x] Cache telemetry (`last_cached_prompt_tokens`, the cache ratio in the turn log, and any
       cached-token figure the meter surfaces) reflects reuse the provider actually reported,
       never an assumption
-- [ ] A provider that reports no cached tokens produces a cache ratio of zero, not a blank or a
+- [x] A provider that reports no cached tokens produces a cache ratio of zero, not a blank or a
       silently-carried previous value
-- [ ] The zero-price local path still records real prompt-token counts — free is not untracked,
+- [x] The zero-price local path still records real prompt-token counts — free is not untracked,
       the same rule TD-1802 established for output
-- [ ] A test drives a provider that reports zero cached tokens across two turns with an
+- [x] A test drives a provider that reports zero cached tokens across two turns with an
       identical prefix and asserts the reported ratio stays zero
+
+**Done (2026-08-17):** the one number that was invented is gone. `usage.prompt_tokens_details
+.cached_tokens` is the only ground truth, and `Usage.cached_prompt_tokens` /
+`CallRecord.cached_prompt_tokens` are now `int | None` — `None` when the response carried no
+such field, an integer (including `0`) when it did.  The old parse folded absent into `0`, and
+`0` reached `StackPanel` as **cache miss**: the story's defect pointed the other way, and the
+one the local path actually hits.  Measured on the live endpoint at `127.0.0.1:11434` — both
+`qwen3.8:27b` and `gemma4:26b-a4b-it-q4_K_M` return exactly `prompt_tokens`,
+`completion_tokens`, `total_tokens`, streaming and blocking alike, so two identical-prefix
+turns now surface `last_cached_prompt_tokens=None`, `turn_cache_ratio=0.0`, `prompt_tokens`
+1955/1956 recorded in full at `$0.00`, and the badge reads *provider reports no cache figure*
+where it used to read *cache miss*.  `mypy --strict` is the enforcement: `None` is
+unrepresentable as a token count, so no caller can inherit a fabricated zero by accident.
+`InstructionStack` gains an additive `cache_observed` (no `PROTOCOL_VERSION` bump, TD-1801's
+precedent) so the viewer tells "no turn yet" from "the provider said nothing" instead of
+guessing — TD-1810 §3's split, applied to the reuse figure it said TD-1811 would need.  Cost
+keeps a single documented fallback, `cost.billable_cached_tokens`: an unreported figure bills
+the whole prompt at the input rate, erring toward overstating spend.  Ratios stay turn-scoped,
+so a cached turn followed by an uncached one reports `0.0` and not `0.8`.  19 tests in
+`core/tests/test_cache_honesty.py`, including the named two-turn identical-prefix case in both
+the reported-zero and the reported-nothing flavours; suite 1436 passed / 2 skipped, vitest
+544, svelte-check 0/0. Decisions in DECISIONS.md TD-1811 §§1–4.
 
 TD-305 assembles the prompt in stable-prefix order so a provider can cache it, and the cost and
 latency story assumes that reuse happens. On a local hybrid model it does not. Measured

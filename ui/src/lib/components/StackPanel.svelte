@@ -3,8 +3,10 @@
 	//
 	// Presentational view over stack-store: sources arrive in precedence
 	// order from the daemon, per-file token counts and total come from the
-	// same payload, and the cache badge reports the provider-observed state
-	// (never inferred here — "unknown until a turn runs" is a real answer).
+	// same payload, and the cache badge reports the provider-reported state
+	// (never inferred here — "unknown until a turn runs" and "provider
+	// reports no cache figure" are both real answers, and neither is a
+	// miss).
 	// The loop pushes a fresh stack when steering changes at a turn
 	// boundary (TD-509), and this view re-queries on mount and session
 	// switch. Clicking a file opens it in the system editor via
@@ -12,9 +14,11 @@
 	import { onMount } from 'svelte';
 	import { session } from '../session-status.svelte.js';
 	import { initStack, refreshStack, stack, teardownStack } from '../stack-store.svelte.js';
-	import { cacheLabel, formatTokens } from '../stack-store';
+	import { cacheBadge, cacheLabel, formatTokens } from '../stack-store';
 	import { openInEditor } from '../open-file';
 	import Icon from './Icon.svelte';
+
+	const badge = $derived(cacheBadge(stack.lastCachedTokens, stack.cacheObserved));
 
 	onMount(() => {
 		initStack();
@@ -108,10 +112,10 @@
 			<span class="total">{formatTokens(stack.totalTokens)} tokens ({stack.tokenMethod})</span>
 			<span
 				class="cache"
-				class:cache-hit={(stack.lastCachedTokens ?? 0) > 0}
-				class:cache-miss={stack.lastCachedTokens === 0}
+				class:cache-hit={badge === 'hit'}
+				class:cache-miss={badge === 'miss'}
 			>
-				{cacheLabel(stack.lastCachedTokens)}
+				{cacheLabel(stack.lastCachedTokens, stack.cacheObserved)}
 			</span>
 		</footer>
 	{/if}

@@ -4824,3 +4824,80 @@ not happen, and nothing here touches the reuse figure — but the field it
 adds is the one TD-1811 will need in order to say what actually got billed.
 Counted, not subtracted, because the prefix is joined with separators and a
 figure that is nearly right is the failure this split exists to remove.
+
+---
+
+## 2026-08-17 — TD-1811: Do not report prefix reuse that did not happen
+
+### 1. `Usage.cached_prompt_tokens` becomes `int | None`; absent is not zero (Class B)
+
+**Decision:** `Usage.cached_prompt_tokens` and `CallRecord.cached_prompt_tokens`
+are `int | None`. `None` means the response carried no cached-token figure;
+an integer — including `0` — means the provider reported one. The parse is
+`usage.prompt_tokens_details.cached_tokens` and nothing else, and a missing
+or non-dict `prompt_tokens_details` yields `None` rather than `0`.
+
+**Rationale:** Measured 2026-08-17 against the live endpoint at
+`127.0.0.1:11434`: `qwen3.8:27b` and `gemma4:26b-a4b-it-q4_K_M` both return
+exactly `prompt_tokens`, `completion_tokens`, `total_tokens`, on the
+streaming path and the blocking one. No `prompt_tokens_details`, no
+`cached_tokens`. The old parse folded that silence into `0`, and `0` was then
+surfaced by `last_cached_prompt_tokens` and rendered by `StackPanel` as
+**cache miss** — a claim about the provider's cache the provider never made.
+The story is about not overstating reuse; asserting a miss is the same defect
+pointed the other way, and it is the one the local path actually hits.
+
+A companion boolean on `CallRecord` (`cached_prompt_tokens: int` plus
+`cache_reported: bool`) was considered and rejected. It leaves
+`record.cached_prompt_tokens == 0` readable by anyone who forgets the flag,
+which is precisely the mistake being removed. `None` is unrepresentable as a
+token count, so `mypy --strict` makes every reader decide what unknown means.
+That is §2.4's "enforced in the tool, not by convention" applied to a number.
+
+Six call sites now route through `cost.billable_cached_tokens`, which is
+documented as a *pricing* fallback only: an unreported figure bills as zero
+cached tokens, i.e. the whole prompt at the input rate. That errs toward
+overstating spend, which is the safe direction — a provider that never
+confirms reuse is not one whose invoice we may assume was discounted.
+
+### 2. The audit column stores reported reuse, and stays `NOT NULL` (Class B)
+
+**Decision:** `model_calls.cached_prompt_tokens` keeps its `INTEGER NOT NULL`
+shape. `audit_writer` coerces an unreported figure to `0` on the way in. No
+migration, no nullable column, no second column.
+
+**Rationale:** The column answers "how many tokens did providers report as
+reused", and a silent provider contributes none — so every `SUM` over it
+stays a sum of real claims and none of the `audit_queries` rollups change
+meaning. A nullable column would buy the ability to distinguish silence
+retrospectively, at the cost of a schema migration and `NULL`-handling in
+every aggregate, to answer a question no surface asks of the ledger. The live
+distinction is carried where it is actually consumed — the tracker and the
+protocol event. Prompt tokens are stored in full either way, so TD-1802's
+"free is not untracked" holds on a silent provider too.
+
+### 3. `InstructionStack` gains `cache_observed` rather than an enum (Class B)
+
+**Decision:** The event carries `last_cached_tokens: int | None` (unchanged
+shape, meaning tightened to "the figure the provider reported") plus an
+additive `cache_observed: bool` defaulting to `False`. No `PROTOCOL_VERSION`
+bump — same additive precedent as TD-1801's `key_required`. The UI derives
+four badge states from the pair: *unobserved*, *unreported*, *miss*, *hit*.
+
+**Rationale:** TD-1810 §3 split `steering_tokens` out of `prefix_tokens` so a
+figure stopped meaning two things; this is the same move. `last_cached_tokens
+= null` meant both "no turn yet" and "the provider said nothing", and those
+are different sentences to show a user — the second tells them their engine
+will never report reuse, which is the actionable half of this story. A
+three-valued enum field was the alternative; two orthogonal fields, each
+meaning exactly one thing, is smaller and keeps the count and the
+observed-ness independent. §6.3's "the UI never derives truth it wasn't
+given" rules out having the viewer guess between them.
+
+### 4. The turn log gains `cache_reported` beside `cache_ratio` (Class A)
+
+`cache_ratio` stays `0.0` in both the reported-miss and the reported-nothing
+case, because a ratio is a claim about a saving and there is no saving to
+claim in either. Log-side, `cache_reported` says which `0.0` this is.
+Grepping a day of logs for cache behaviour is how this story started; the
+field is what makes that grep answer the question.

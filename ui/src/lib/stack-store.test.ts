@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { ClientMessageUnion, DaemonEventUnion, InstructionStack, InstructionStackEntry } from "./protocol";
 import {
+	cacheBadge,
 	cacheLabel,
 	clearStack,
 	createStackState,
@@ -95,6 +96,22 @@ describe("applyEvent", () => {
 		store.applyEvent(event, "s1");
 		expect(state.lastCachedTokens).toBeNull();
 	});
+
+	// TD-1811: the two reasons last_cached_tokens is null, kept apart.
+	it("carries cache_observed so silence is not read as a miss", () => {
+		const { state, store } = harness();
+		store.applyEvent(stackEvent({ cache_observed: true }), "s1");
+		expect(state.cacheObserved).toBe(true);
+		expect(state.lastCachedTokens).toBeNull();
+	});
+
+	it("a missing cache_observed becomes false, not true", () => {
+		const { state, store } = harness();
+		const event = stackEvent();
+		delete event.cache_observed;
+		store.applyEvent(event, "s1");
+		expect(state.cacheObserved).toBe(false);
+	});
 });
 
 describe("refresh", () => {
@@ -161,14 +178,33 @@ describe("labels", () => {
 	});
 
 	it("cacheLabel is honest before the first turn", () => {
-		expect(cacheLabel(null)).toContain("unknown");
+		expect(cacheLabel(null, false)).toContain("unknown");
 	});
 
-	it("cacheLabel reports a miss", () => {
-		expect(cacheLabel(0)).toBe("cache miss");
+	// TD-1811: a provider that sends no cached-token figure (Ollama sends
+	// none) has not reported a miss, and must not be shown as one.
+	it("cacheLabel says so when the provider reported no figure", () => {
+		expect(cacheLabel(null, true)).toBe("provider reports no cache figure");
+	});
+
+	it("cacheLabel reports a miss only on a reported zero", () => {
+		expect(cacheLabel(0, true)).toBe("cache miss");
 	});
 
 	it("cacheLabel reports a hit with the token count", () => {
-		expect(cacheLabel(4200)).toBe("cached 4,200 tokens");
+		expect(cacheLabel(4200, true)).toBe("cached 4,200 tokens");
+	});
+});
+
+describe("cacheBadge", () => {
+	it("distinguishes all four states", () => {
+		expect(cacheBadge(null, false)).toBe("unobserved");
+		expect(cacheBadge(null, true)).toBe("unreported");
+		expect(cacheBadge(0, true)).toBe("miss");
+		expect(cacheBadge(4200, true)).toBe("hit");
+	});
+
+	it("an unreported figure is not styled as a miss", () => {
+		expect(cacheBadge(null, true)).not.toBe("miss");
 	});
 });
