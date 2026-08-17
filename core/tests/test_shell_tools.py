@@ -49,15 +49,19 @@ from tstd.tools import (
 from tstd.tools.boundary import PathGuard
 from tstd.tools.shell import sanitized_env
 
-# A command whose side effect survives only if the process group escapes
-# the kill: the backgrounded child sleeps, then touches a marker file.
-_GROUP_ESCAPE_CMD = "{ sleep 2; touch kicked.txt; } & wait"
+# A command that names its own process group, then parks an escapee in it:
+# the shell (the group leader) writes its pid — the test's spawn-ack and
+# probe handle — then backgrounds a subshell that writes a marker only by
+# surviving the kill.  The marker sleep is long so the kill has a wide
+# window to land: the tests wait on the group being GONE (a condition),
+# never on wall-clock arithmetic sized to beat the marker (TD-1407).
+_ESCAPE_PROBE_CMD = "echo $$ > pgid.txt; { sleep 30; touch kicked.txt; } & wait"
 
 # macOS intermittently vetoes same-uid process-group kills with EPERM:
 # the refusal attaches to the group and no userspace retry or external
-# kill breaks it, so the command runs out and the marker escapes.  The
-# product reports the refusal (result header or log) instead of claiming
-# the kill; only then are group-death assertions vacuous.
+# kill breaks it, so the command survives the whole test.  The product
+# reports the refusal (result header or log) instead of claiming the
+# kill; only then are group-death assertions vacuous.
 _KILL_REFUSED = "kill refused"
 
 # Process-group kill semantics are POSIX-only: Windows has no killpg, so
@@ -69,6 +73,55 @@ requires_posix_process_group = pytest.mark.skipif(
         "TD-1406: process-group kill relies on POSIX killpg; Windows kills only the direct child"
     ),
 )
+
+
+async def _wait_for_file(path: Path, seconds: float = 5.0) -> None:
+    """Poll for *path* to appear — the condition a fixed sleep approximates.
+
+    Failing to appear within *seconds* means the command never started:
+    a product failure worth failing the test for, not a flake to absorb.
+    """
+    deadline = asyncio.get_running_loop().time() + seconds
+    while not await asyncio.to_thread(path.exists):
+        if asyncio.get_running_loop().time() > deadline:
+            pytest.fail(f"{path.name} never appeared — the command did not start")
+        await asyncio.sleep(0.02)
+
+
+async def _assert_group_gone(tmp_path: Path, seconds: float = 5.0) -> None:
+    """Assert the killed process group is gone (TD-1407).
+
+    The condition the kicked.txt marker approximated: a surviving group
+    IS the escaped grandchild this battery exists to catch, so the probe
+    cannot become a test that cannot fail.  Only ever called after the
+    product reported the kill delivered — a veto round (refusal reported)
+    returns before probing, because the vetoed group outlives the test.
+
+    A kill landing before the leader's first write leaves no pgid file;
+    nothing was ever forked, so nothing could escape — the assertion is
+    vacuous and passes by waiting the file out.
+    """
+    pgid_file = tmp_path / "pgid.txt"
+    deadline = asyncio.get_running_loop().time() + seconds
+    while not await asyncio.to_thread(pgid_file.exists):
+        if asyncio.get_running_loop().time() > deadline:
+            return
+        await asyncio.sleep(0.02)
+    pgid = int((await asyncio.to_thread(pgid_file.read_text)).strip())
+    deadline = asyncio.get_running_loop().time() + seconds
+    while True:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            # Probing is still kill(2): a vetoed group reads alive.  We
+            # only probe on a reported-delivered kill, so this is out of
+            # model — treat it as alive and let the deadline decide.
+            pass
+        if asyncio.get_running_loop().time() > deadline:
+            pytest.fail(f"process group {pgid} survived the reported kill — a grandchild escaped")
+        await asyncio.sleep(0.02)
 
 
 def _python(code: str) -> str:
@@ -146,20 +199,21 @@ class TestTimeoutAndGroupKill:
         dispatcher = make_shell_dispatcher(tmp_path)
         start = asyncio.get_running_loop().time()
         result = await dispatcher.dispatch(
-            "c1", "shell", {"command": _GROUP_ESCAPE_CMD, "timeout_secs": 1}, session
+            "c1", "shell", {"command": _ESCAPE_PROBE_CMD, "timeout_secs": 1}, session
         )
         elapsed = asyncio.get_running_loop().time() - start
         assert result.status == "success"
         if _KILL_REFUSED in result.output:
             # The OS vetoed the kill; the refusal is reported and the
-            # command ran out — timing and marker assertions are vacuous.
+            # command ran out — timing and group assertions are vacuous.
             return
         assert "timed out after 1s — process group killed" in result.output
-        assert elapsed < 2.0  # the timeout is honored, not the command's runtime
-        # The backgrounded child died with the group: no marker file even
-        # after its sleep would have finished.
-        await asyncio.sleep(2.5)
-        assert not (tmp_path / "kicked.txt").exists()
+        # The timeout fired long before the command's natural 30s end; a
+        # generous bound, because the loop's own stalls count toward it.
+        assert elapsed < 25
+        # The kill was reported delivered: the whole group — the parked
+        # subshell included — must be gone (TD-1407).
+        await _assert_group_gone(tmp_path)
 
     @pytest.mark.parametrize("bad_timeout", [0, -5])
     async def test_nonpositive_timeout_refused(self, tmp_path: Path, bad_timeout: int) -> None:
@@ -185,19 +239,20 @@ class TestCancel:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         task = asyncio.create_task(
-            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
         )
-        await asyncio.sleep(0.3)
+        # Cancel only once the group provably exists — its leader wrote
+        # its pgid — so this always exercises the mid-run cancel path.
+        await _wait_for_file(tmp_path / "pgid.txt")
         await session.cancel()
         result = await task
         assert result.status == "success"
         if _KILL_REFUSED in result.output:
             # The OS vetoed the kill; the refusal is reported and the
-            # command ran out — the marker assertion is vacuous.
+            # command ran out — the group assertion is vacuous.
             return
         assert "cancelled — process group killed" in result.output
-        await asyncio.sleep(2.5)
-        assert not (tmp_path / "kicked.txt").exists()
+        await _assert_group_gone(tmp_path)
 
     async def test_cancel_before_start_does_not_run(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
@@ -217,16 +272,17 @@ class TestCancel:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         task = asyncio.create_task(
-            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
         )
-        await asyncio.sleep(0.3)
+        # Cancel only once the group provably exists — never mid-spawn,
+        # which is the next test's window.
+        await _wait_for_file(tmp_path / "pgid.txt")
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        await asyncio.sleep(2.5)
         if any(_KILL_REFUSED in r.getMessage() for r in caplog.records):
             return  # the OS vetoed the kill; the command ran out
-        assert not (tmp_path / "kicked.txt").exists()
+        await _assert_group_gone(tmp_path)
 
     @requires_posix_process_group
     async def test_cancel_during_spawn_kills_group(
@@ -247,17 +303,16 @@ class TestCancel:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         task = asyncio.create_task(
-            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
         )
         # Cancel only once the handler is provably inside the spawn.
         await entered.wait()
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        await asyncio.sleep(2.5)
         if any(_KILL_REFUSED in r.getMessage() for r in caplog.records):
             return  # the OS vetoed the kill; the command ran out
-        assert not (tmp_path / "kicked.txt").exists()
+        await _assert_group_gone(tmp_path)
 
     @requires_posix_process_group
     async def test_kill_refusal_reported_in_result(
@@ -272,7 +327,7 @@ class TestCancel:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         task = asyncio.create_task(
-            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
         )
         await asyncio.sleep(0.3)
         await session.cancel()
@@ -297,7 +352,7 @@ class TestCancel:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         task = asyncio.create_task(
-            dispatcher.dispatch("c1", "shell", {"command": _GROUP_ESCAPE_CMD}, session)
+            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
         )
         await asyncio.sleep(0.3)
         task.cancel()
