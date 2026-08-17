@@ -180,6 +180,7 @@ export type ClientMessageUnion =
   | DeleteApiKey
   | ValidateApiKey
   | SetPreset
+  | SetTierSlug
   | RunDiagnostics;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
