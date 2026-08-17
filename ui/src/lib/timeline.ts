@@ -167,6 +167,7 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
         details: {
           prefix_hash: event.prefix_hash,
           prefix_tokens: event.prefix_tokens,
+          steering_tokens: event.steering_tokens,
           source_count: event.source_count,
         },
       };

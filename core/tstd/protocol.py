@@ -603,12 +603,23 @@ class ContextCompacted(DaemonEvent):
 
 
 class SteeringReloaded(DaemonEvent):
-    """Emitted when steering files are re-resolved after a detected change."""
+    """Emitted when steering files are re-resolved after a detected change.
+
+    Two token figures, because they answer different questions and one
+    cannot stand in for the other: ``prefix_tokens`` is the size of the
+    whole cache prefix (base prompt + workspace root + steering), which is
+    what the provider re-bills when the hash moves, while
+    ``steering_tokens`` is the size of the steering block alone — what the
+    user's own files cost.  Reporting only the prefix figure under a
+    "steering reloaded" heading overstates steering by the fixed cost of
+    the machinery around it (TD-1810 block [1b] and the base prompt).
+    """
 
     type: Literal["steering_reloaded"] = "steering_reloaded"
     session_id: str
     prefix_hash: str
     prefix_tokens: int = Field(ge=0)
+    steering_tokens: int = Field(ge=0)
     source_count: int = Field(ge=0)
 
 
