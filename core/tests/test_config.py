@@ -31,6 +31,18 @@ def _write_config(tmp_path: Path, content: str) -> Path:
     return p
 
 
+def _load_shipped(tmp_path: Path) -> ModelConfig:
+    """Load the shipped default config from a fixture path.
+
+    Never ``load_config()`` with no path: that resolves to
+    ``user_data_dir()/config.yaml`` — the developer's own file, whose
+    preset and pinned slugs are none of this suite's business (TD-1408).
+    The fixture IS the shipped default, so these tests still fail the day
+    the shipped config drifts from the values pinned below.
+    """
+    return load_config(_write_config(tmp_path, default_config_yaml()))
+
+
 DEFAULT_YAML_SNIPPET = default_config_yaml()[:200]
 
 
@@ -38,25 +50,25 @@ DEFAULT_YAML_SNIPPET = default_config_yaml()[:200]
 
 
 class TestLoading:
-    def test_default_config_is_valid(self) -> None:
+    def test_default_config_is_valid(self, tmp_path: Path) -> None:
         """The shipped config.yaml must pass validation."""
-        cfg = load_config()
+        cfg = _load_shipped(tmp_path)
         assert isinstance(cfg, ModelConfig)
         assert cfg.active_preset == "tst-default"
 
-    def test_all_presets_are_present(self) -> None:
+    def test_all_presets_are_present(self, tmp_path: Path) -> None:
         """Shipped config has all 3 presets."""
-        cfg = load_config()
+        cfg = _load_shipped(tmp_path)
         assert sorted(cfg.presets) == sorted(PRESETS)
 
-    def test_each_preset_has_all_tiers(self) -> None:
+    def test_each_preset_has_all_tiers(self, tmp_path: Path) -> None:
         """Every preset has brain, worker, and validator.
 
         Tier presence, not slug presence: a loopback tier may leave its slug
         to discovery (TD-1805), so asserting a slug here would assert the
         opposite of what the local preset ships.
         """
-        cfg = load_config()
+        cfg = _load_shipped(tmp_path)
         for name, preset in cfg.presets.items():
             assert preset.brain.base_url, f"{name} missing brain"
             assert preset.worker.base_url, f"{name} missing worker"
@@ -81,10 +93,19 @@ class TestLoading:
         ensure_user_config(config_path)
         assert config_path.read_text() == "# custom"
 
-    def test_cached_config(self) -> None:
-        """cached_config returns the same object on repeated calls."""
-        c1 = cached_config()
-        c2 = cached_config()
+    def test_cached_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """cached_config returns the same object on repeated calls.
+
+        The no-path loader resolves through user_data_dir(); redirect it so
+        the identity check never reads the developer's own file (TD-1408).
+        """
+        monkeypatch.setattr("tstd.config.user_data_dir", lambda: tmp_path)
+        cached_config.cache_clear()
+        try:
+            c1 = cached_config()
+            c2 = cached_config()
+        finally:
+            cached_config.cache_clear()
         assert c1 is c2
 
 
@@ -92,34 +113,34 @@ class TestLoading:
 
 
 class TestTiers:
-    def test_tier_method(self) -> None:
-        cfg = load_config()
+    def test_tier_method(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
         brain = cfg.tier("brain")
         assert isinstance(brain, TierConfig)
         assert brain.slug == "moonshotai/kimi-k3"
 
-    def test_tiers_method(self) -> None:
-        cfg = load_config()
+    def test_tiers_method(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
         tiers = cfg.tiers()
         assert sorted(tiers) == ["brain", "validator", "worker"]
         assert tiers["brain"].slug == "moonshotai/kimi-k3"
         assert tiers["worker"].slug == "deepseek/deepseek-v4-flash"
         assert tiers["validator"].slug == "deepseek/deepseek-v4-pro"
 
-    def test_tier_alternate_preset(self) -> None:
-        cfg = load_config()
+    def test_tier_alternate_preset(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
         cfg.active_preset = "budget"
         assert cfg.tier("brain").slug == "z-ai/glm-5.2"
 
-    def test_tier_local_preset(self) -> None:
-        cfg = load_config()
+    def test_tier_local_preset(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
         cfg.active_preset = "local"
         assert cfg.tier("brain").input_price == 0.0
         assert cfg.tier("worker").input_price == 0.0
 
-    def test_worker_max_output(self) -> None:
+    def test_worker_max_output(self, tmp_path: Path) -> None:
         """Worker tier defaults to 16K max_output_tokens for edits."""
-        cfg = load_config()
+        cfg = _load_shipped(tmp_path)
         assert cfg.tier("worker").max_output_tokens == 16384
 
 
