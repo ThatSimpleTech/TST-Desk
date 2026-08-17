@@ -4384,3 +4384,50 @@ components, both taking a `compact` prop for the collapsed strip.
 past §6. Neither block shares scoped CSS with what stayed behind, so the split
 removed lines instead of duplicating them — the same test decision #10 applied
 to `PolicyRuleList`.
+
+## 2026-08-17 — TD-1705: The files pane reads the diffs, not the arguments
+
+### 1. A written file's identity comes from the diff header (Class B)
+
+**Decision:** `foldFileWrites` (ui/src/lib/files.ts) keys the file list on the
+path in each diff section's `+++ b/<path>` header. It never reads the
+`tool_call`'s `path` argument, and it keeps no list of which tool names write.
+
+**Rationale:** The header is the only place the daemon states what it actually
+wrote: `dispatch.py` labels the diff with the *canonical* path
+(`path_guard.check_write`'s resolved, absolute result), while the argument is
+whatever the model typed and may be relative or a symlink alias. It is also the
+only source that survives a call with two write targets — a move renders two
+sections in one `tool_result`, and the arguments would have to be un-mapped
+field by field to tell which is which. Keying on the header is §6's "the UI
+never derives truth it wasn't given" applied literally, and it means the pane
+needs no table of write tools to fall out of date with the registry. The cost
+is that a write the daemon could not diff (binary, oversized, unreadable —
+`snapshot_text` returns `None`) does not appear in the pane. That is the right
+failure: listing a file with no diff would be the UI asserting a write it was
+not told about.
+
+### 2. The fold is a pure function over the timeline, not a second store (Class B)
+
+**Decision:** There is no `files.svelte.ts`. `FilesPanel.svelte` derives its
+whole model with `$derived(foldFileWrites(entries))` over the existing
+`timeline-store` array.
+
+**Rationale:** The diffs are already in the timeline store — a second store
+subscribed to the same event stream would keep a second copy of every write in
+step for no gain, and would need its own clearing rule. Recomputing costs an
+O(total diff bytes) pass, and only while the Files tab is the visible one,
+because `$derived` does not run when nothing reads it. The fold being pure is
+also what makes it testable at all: this repo tests stores and pure functions,
+not `.svelte` components (files.test.ts drives it through the real `Timeline`).
+
+### 3. Most-recently-written first (Class A)
+
+**Decision:** `FilesSummary.files` sorts by the seq of each path's latest
+write, newest first; a file written again moves back to the top. Within a file,
+its writes stay oldest-first.
+
+**Rationale:** The pane is watched live while an agent works, and what it just
+touched is what the reader is looking for. Discovery order would bury the
+active file under whatever was written first. The per-file write list keeps
+stream order because it reads as a history of that one file.

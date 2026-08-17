@@ -3,8 +3,9 @@
 	// Left = chat pane, right = activity pane. The title bar (TD-1006) and
 	// connection banner (TD-1003) sit in the shell header so daemon/socket
 	// state is visible at all times. The activity pane hosts the activity
-	// timeline (TD-1005), fed live from the daemon event stream, and the
-	// resolved-stack panel (TD-1201) behind an Activity | Stack tab strip.
+	// timeline (TD-1005), fed live from the daemon event stream, the files
+	// pane (TD-1705), and the resolved-stack panel (TD-1201) behind an
+	// Activity | Files | Stack tab strip.
 	// Failure notices (TD-1008) render as banners under the header (blocking)
 	// or toasts bottom-right (transient); the footer hosts pending approval
 	// cards (TD-1007).
@@ -13,6 +14,7 @@
 	import SessionRail from './SessionRail.svelte';
 	import ConnectionBanner from '../ConnectionBanner.svelte';
 	import ActivityTimeline from './ActivityTimeline.svelte';
+	import FilesPanel from './FilesPanel.svelte';
 	import StackPanel from './StackPanel.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
@@ -127,7 +129,7 @@
 			<section class="pane-chat" aria-label="Chat pane"><ChatPane /></section>
 		{/snippet}
 		{#snippet right()}
-			<section class="pane-activity" aria-label="Activity and stack pane">
+			<section class="pane-activity" aria-label="Activity, files, and stack pane">
 				<div class="pane-tabs" role="tablist" aria-label="Right pane views">
 					<button
 						role="tab"
@@ -137,6 +139,16 @@
 						onclick={() => showRightPane('activity')}
 					>
 						Activity
+					</button>
+					<!-- Files (TD-1705): the same event stream, folded by path. -->
+					<button
+						role="tab"
+						aria-selected={rightPane.tab === 'files'}
+						class="tab"
+						class:tab-active={rightPane.tab === 'files'}
+						onclick={() => showRightPane('files')}
+					>
+						Files
 					</button>
 					<button
 						role="tab"
@@ -150,6 +162,8 @@
 				</div>
 				{#if rightPane.tab === 'activity'}
 					<ActivityTimeline />
+				{:else if rightPane.tab === 'files'}
+					<FilesPanel />
 				{:else}
 					<StackPanel />
 				{/if}
@@ -266,6 +280,7 @@
 	}
 
 	.pane-activity > :global(.timeline),
+	.pane-activity > :global(.files-panel),
 	.pane-activity > :global(.stack-panel) {
 		flex: 1;
 		min-height: 0;

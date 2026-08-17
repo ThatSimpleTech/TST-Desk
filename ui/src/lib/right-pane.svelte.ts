@@ -5,7 +5,7 @@
 // can only drive state that something other than the markup owns — so the
 // choice moved out here. AppShell still renders it; it no longer holds it.
 
-export type RightPaneTab = "activity" | "stack";
+export type RightPaneTab = "activity" | "files" | "stack";
 
 export const rightPane = $state({ tab: "activity" as RightPaneTab });
 
