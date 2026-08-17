@@ -1269,8 +1269,15 @@ inside the TD-305 cache prefix — the root is constant for a session, so keepin
 prefix would re-bill unchanging bytes every turn, and putting it *ahead* of steering keeps it
 out of the blast radius of a mid-session steering reload (TD-509), since a prefix cache dies
 from the first changed byte onward.  All three tiers get it at the same offset, so the
-`base + root` head they share stays shared; ~80–125 heuristic tokens, paid once.  The block
-spells the join out with a worked example built from the real root rather than implying it.
+`base + root` head they share stays shared.  Cost, paid once per session: the block is fixed
+prose plus the root written twice, so it scales with the root — `71 + ceil(len(root)/2)`
+heuristic tokens, i.e. **72** for a two-character root, **93** for this repository's own
+44-character root, **121** for a 100-character pytest temp root.  (This originally read
+"~80–125 heuristic tokens", stated as a constant; both ends were wrong for the block as first
+written, which cost 87–136 over those same roots.  Measured through `tstd.context.tokens` —
+tiktoken is not a dependency, so `make_token_counter` returns the `ceil(chars/4)` heuristic for
+every slug.)  The block spells the join out with a worked example built from the real root
+rather than implying it.
 The manifest is untouched: `test_manifest_listing_is_unchanged` asserts its rendered text is
 embedded verbatim and no entry starts with `/`, and
 `test_absolute_path_derivable_for_every_manifest_entry` reads the root and the entries back out
@@ -1279,17 +1286,37 @@ disk — the criterion with no guessing step available to the reader.  Proved on
 just in a unit test: the same fixture workspace and the same real tool schemas sent to
 `gemma4:26b-a4b-it-q4_K_M`, A/B against the prompt as it was assembled before this story, went
 **0/3 → 3/3** absolute at temperature 0 and **0/12 → 12/12** at temperature 0.8 across four
-tasks (`fs_read`, `fs_list`, `fs_write`, and one naming no file at all).  The BEFORE prompt
-already contained the root *substring* — steering provenance renders `<!-- from: /abs/ws/
-AGENTS.md (workspace) -->` — and still drew a relative path every time, which is the finding:
-the bytes were never the problem, stating them as the root was.  The TD-1803 live leg still
+tasks (`fs_read`, `fs_list`, `fs_write`, and one naming no file at all).  (This sentence
+originally continued: "The BEFORE prompt already contained the root *substring* — steering
+provenance renders `<!-- from: /abs/ws/AGENTS.md (workspace) -->` — and still drew a relative
+path every time, which is the finding: the bytes were never the problem, stating them as the
+root was."  Both halves are wrong.  The BEFORE prompt contained `<root>/AGENTS.md`, not the
+root: reconstructing it over this fixture, the root occurs once on every tier and always as
+the head of that longer path, and zero times on every tier when the workspace carries no
+steering file of its own — so recovering it needs a filename stripped, which is the inference
+this story removes, and a workspace steered only from `~/.tstdesk` has nothing to strip.  And
+the A/B swapped the whole block in and out — labelled statement, worked join, and the "never
+pass a relative path to a tool" imperative together — so it shows the block works, not which
+of the three sentences did the work.  Corrected in `DECISIONS.md`.)  The TD-1803 live leg still
 passes end to end with the block present (fs_write → class A → approval gate → write → ledger,
 4.8s, cost 0.0).  Class B: the prefix position, and the decision *not* to interpolate the root
 into the four `fs_*` schema descriptions — four copies per request is the opposite of stating
 it once, and it would make `create_registry()` workspace-dependent for no measurable gain.
 Both in `DECISIONS.md`, along with why a workspace path is not a §2.2 secret and which sinks
-were checked.  Not done: `docs/tst-desk-spec.md` §4.5 still shows the five-block order without
-`[1b]` — flagged in `DECISIONS.md`, one line to fix.
+were checked.
+
+**Defect pass (2026-08-17):** six defects logged by the story's verifiers, all closed.  The
+block no longer claims "workspace files are listed relative to this root" — only the brain
+tier receives the manifest, so that sentence was false on the worker and the validator; it now
+states the resolution rule instead, which is true whatever follows it, and costs 15 tokens
+less.  A control character in the workspace path is refused with a `ValueError` naming the
+codepoint rather than silently truncating the stated root at the label line.
+`steering_reloaded` now carries `steering_tokens` beside `prefix_tokens`, because the prefix
+figure also counts the base prompt and block `[1b]` and was being read as the cost of the
+user's steering files.  `test_root_stated_once` asserts exactly one labelled statement
+carrying the resolved root — it previously counted the bare label, which a statement with no
+path after it would have satisfied.  The two wrong figures in this note are corrected above.
+`docs/tst-desk-spec.md` §4.5 now shows `[1b]` in the block order.
 
 Every `fs_*` tool advertises its `path` argument as "Absolute path to the file to …", but
 `WorkspaceManifest.build()` renders entries workspace-relative (`README.md`, `src/app.py`) and

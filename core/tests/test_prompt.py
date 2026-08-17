@@ -10,6 +10,9 @@ Covers:
 - Async entry point and prefix token count
 - The absolute workspace root, stated once, inside the cache prefix, with
   the manifest's relative listing left intact (TD-1810)
+- Block [1b] claims nothing that is false on a tier without a manifest
+- A root that cannot be stated verbatim is refused, not truncated
+- Steering is reported as steering, separately from the cache prefix
 """
 
 from __future__ import annotations
@@ -25,8 +28,10 @@ from tstd.context import (
     WORKSPACE_ROOT_LABEL,
     PromptAssembler,
     WorkspaceManifest,
+    workspace_root_block,
 )
 from tstd.context.prompt import AssembledPrompt
+from tstd.context.tokens import heuristic_count
 
 # ── Fixture helpers ──────────────────────────────────────────────────────
 
@@ -227,10 +232,49 @@ class TestWorkspaceRoot:
         assert _root_from_prompt(result.text) == ws.resolve().as_posix()
 
     def test_root_stated_once(self, tmp_path: Path) -> None:
-        """One labelled statement of the root, not one per manifest entry."""
+        """Exactly one labelled statement carrying the real root.
+
+        AC-1 is "states the workspace's absolute root, once", which is two
+        claims: the statement is there and carries the right path (fails at
+        zero, and at a label with the wrong or an empty path after it), and
+        there is only one of it (fails at two).  Counting the bare label
+        tests neither — ``Workspace root:`` followed by nothing counts as
+        one.  So the assertion is over whole statements: the label and the
+        resolved root, on one line.
+        """
         home, ws = _sample_workspace(tmp_path)
         result = PromptAssembler(ws, home_dir=home).assemble_sync("brain")
-        assert result.text.count(WORKSPACE_ROOT_LABEL) == 1
+        statement = f"{WORKSPACE_ROOT_LABEL} {ws.resolve().as_posix()}"
+        statements = [line for line in result.text.splitlines() if line.strip() == statement]
+        assert len(statements) == 1, statements
+
+    def test_exactly_once_counter_discriminates_one_from_two(self, tmp_path: Path) -> None:
+        """The exactly-once assertion has teeth: a duplicated block trips it.
+
+        A "once" assertion is only worth its name if it can reach two.
+        Emitting the block a second time is the regression the criterion
+        guards against, so the counter is run against a prompt that has it.
+        """
+        home, ws = _sample_workspace(tmp_path)
+        result = PromptAssembler(ws, home_dir=home).assemble_sync("brain")
+        statement = f"{WORKSPACE_ROOT_LABEL} {ws.resolve().as_posix()}"
+        doubled = result.text + "\n\n" + workspace_root_block(ws)
+        found = [line for line in doubled.splitlines() if line.strip() == statement]
+        assert len(found) == 2, found
+
+    def test_worked_example_is_not_a_second_statement(self, tmp_path: Path) -> None:
+        """The root appears twice; only one occurrence is a statement.
+
+        The block spells the join out with the real root, so the path's
+        bytes occur again inside the example.  That is deliberate — it is
+        what a reader joins against — and the exactly-once claim is about
+        labelled statements, not about the substring.
+        """
+        _, ws = _sample_workspace(tmp_path)
+        block = workspace_root_block(ws)
+        root = ws.resolve().as_posix()
+        assert block.count(root) == 2, block
+        assert block.count(WORKSPACE_ROOT_LABEL) == 1, block
 
     @pytest.mark.parametrize("tier", ["brain", "worker", "validator"])
     def test_every_tier_is_told_the_root(self, tmp_path: Path, tier: str) -> None:
@@ -241,8 +285,11 @@ class TestWorkspaceRoot:
             task="Fix the bug",
             diff="+new code",
         )
+        statement = f"{WORKSPACE_ROOT_LABEL} {ws.resolve().as_posix()}"
         assert _root_from_prompt(result.text) == ws.resolve().as_posix()
-        assert result.text.count(WORKSPACE_ROOT_LABEL) == 1
+        assert [line for line in result.text.splitlines() if line.strip() == statement] == [
+            statement
+        ]
 
     def test_absolute_path_derivable_for_every_manifest_entry(self, tmp_path: Path) -> None:
         """Prompt-only join: every listed file resolves to a real file.
@@ -319,3 +366,190 @@ class TestWorkspaceRoot:
 
         result = PromptAssembler(link, home_dir=home).assemble_sync("brain")
         assert _root_from_prompt(result.text) == ws.resolve().as_posix()
+
+
+# ── What block [1b] claims is true on every tier (TD-1810) ───────────────
+
+
+class TestRootBlockClaimsHoldOnEveryTier:
+    """The block goes to all three tiers verbatim, so it may not describe
+    blocks only one tier receives.  Only brain is given the manifest."""
+
+    def test_only_brain_receives_a_file_listing(self, tmp_path: Path) -> None:
+        """The premise: worker and validator get no manifest at all."""
+        home, ws = _sample_workspace(tmp_path)
+        assembler = PromptAssembler(ws, home_dir=home)
+        manifest_header = "Workspace files ("
+        assert manifest_header in assembler.assemble_sync("brain").text
+        assert manifest_header not in assembler.assemble_sync("worker", task="Fix it").text
+        assert manifest_header not in assembler.assemble_sync("validator", diff="+x").text
+
+    @pytest.mark.parametrize("tier", ["brain", "worker", "validator"])
+    def test_block_does_not_claim_a_listing_exists(self, tmp_path: Path, tier: str) -> None:
+        """No sentence asserts that workspace files *are listed*.
+
+        A tier without a manifest would be reading a false statement, and
+        a model that believes a listing exists has a reason to act as if
+        it saw one.  The rule the block states — how a relative path
+        resolves — is true whether or not anything was listed.
+        """
+        home, ws = _sample_workspace(tmp_path)
+        result = PromptAssembler(ws, home_dir=home).assemble_sync(
+            tier,  # type: ignore[arg-type]
+            task="Fix the bug",
+            diff="+new code",
+        )
+        block = workspace_root_block(ws)
+        assert block in result.text
+        assert "are listed" not in block
+        assert "files are listed" not in block
+
+    def test_block_states_the_resolution_rule(self, tmp_path: Path) -> None:
+        """What survives the rewording: the join, with a worked example."""
+        _, ws = _sample_workspace(tmp_path)
+        block = workspace_root_block(ws)
+        root = ws.resolve().as_posix()
+        assert f'"{root}/src/app.py"' in block
+        assert "never pass a relative path to a tool" in block
+
+    def test_block_is_byte_identical_across_tiers(self, tmp_path: Path) -> None:
+        """One shared head for all three tiers — the reason for one wording."""
+        home, ws = _sample_workspace(tmp_path)
+        assembler = PromptAssembler(ws, home_dir=home)
+        blocks = {
+            assembler.assemble_sync(tier).prefix.split("\n\n")[1]  # type: ignore[arg-type]
+            for tier in ("brain", "worker", "validator")
+        }
+        assert len(blocks) == 1, blocks
+
+
+# ── A root that cannot be stated verbatim (TD-1810) ──────────────────────
+
+
+class TestRootWithControlCharacters:
+    """A newline in the path truncates the stated root at the label line
+    and turns the tail into prose — a total, silent failure of the block.
+    Refused instead, loudly, at the point of rendering."""
+
+    @pytest.mark.parametrize(
+        ("name", "codepoint"),
+        [
+            ("newline", "\n"),
+            ("carriage return", "\r"),
+            ("tab", "\t"),
+            ("vertical tab", "\x0b"),
+            ("escape", "\x1b"),
+            ("delete", "\x7f"),
+            ("line separator", "\u2028"),
+            ("paragraph separator", "\u2029"),
+        ],
+    )
+    def test_control_character_in_root_is_refused(self, name: str, codepoint: str) -> None:
+        """Every rejected class names itself in the error, not just newline."""
+        with pytest.raises(ValueError, match="control characters"):
+            workspace_root_block(f"/tmp/ws{codepoint}name")
+
+    def test_error_names_the_offending_codepoint(self) -> None:
+        """Loud means actionable: the message says which character and why."""
+        with pytest.raises(ValueError) as excinfo:
+            workspace_root_block("/tmp/ws\nname")
+        message = str(excinfo.value)
+        assert "U+000A" in message
+        assert "rename or relocate" in message
+
+    def test_nul_is_refused_before_the_guard_sees_it(self) -> None:
+        """``pathlib`` rejects an embedded NUL, so the root never renders.
+
+        Pinned separately because the refusal comes from a different
+        layer: the guard's message is not the one raised here, and a
+        future change that stopped resolving the path would silently
+        hand a NUL to the prompt.
+        """
+        with pytest.raises(ValueError):
+            workspace_root_block("/tmp/ws\x00name")
+
+    def test_ordinary_root_still_renders(self, tmp_path: Path) -> None:
+        """The guard rejects control characters, not spaces or unicode."""
+        ws = tmp_path / "my workspace" / "pläts"
+        ws.mkdir(parents=True)
+        block = workspace_root_block(ws)
+        assert f"{WORKSPACE_ROOT_LABEL} {ws.resolve().as_posix()}" in block
+
+    def test_assembly_refuses_rather_than_stating_a_truncated_root(self, tmp_path: Path) -> None:
+        """End to end on a real directory whose name contains a newline.
+
+        Without the guard this assembles fine and ships a prompt whose
+        stated root is the text before the newline — a path that exists
+        often enough to be joined against and acted on.
+        """
+        home = tmp_path / "home"
+        home.mkdir()
+        ws = tmp_path / "work\nspace"
+        try:
+            ws.mkdir()
+        except OSError:  # filesystem refuses the name — the guard is moot
+            pytest.skip("filesystem rejects newlines in directory names")
+        _write(ws / "AGENTS.md", "root: steering")
+
+        with pytest.raises(ValueError, match="control characters"):
+            PromptAssembler(ws, home_dir=home).assemble_sync("brain")
+
+
+# ── Steering is billed as steering (TD-1810 / TD-1811 sibling) ───────────
+
+
+class TestSteeringTokensAreNotPrefixTokens:
+    """``prefix_tokens`` counts the base prompt and block [1b] as well as
+    steering.  Reported alone under a "steering reloaded" heading it
+    overstates what the user's files cost."""
+
+    def test_steering_tokens_count_the_steering_block_alone(self, tmp_path: Path) -> None:
+        home, ws = _build_workspace(tmp_path, root_file="root: use python3")
+        result = PromptAssembler(ws, home_dir=home).assemble_sync("brain")
+        steering_block = result.steering.block
+        assert result.steering_tokens == heuristic_count(steering_block).count
+
+    def test_prefix_tokens_exceed_steering_tokens_by_the_machinery(self, tmp_path: Path) -> None:
+        """The gap is the base prompt plus block [1b], not rounding."""
+        home, ws = _build_workspace(tmp_path, root_file="root: use python3")
+        result = PromptAssembler(ws, home_dir=home).assemble_sync("brain")
+        machinery = (
+            heuristic_count(BASE_SYSTEM_PROMPT).count
+            + heuristic_count(workspace_root_block(ws)).count
+        )
+        assert result.prefix_tokens > result.steering_tokens
+        assert result.prefix_tokens - result.steering_tokens >= machinery - 2
+
+    def test_steering_figure_moves_only_when_steering_moves(self, tmp_path: Path) -> None:
+        """Editing steering grows the steering figure; the machinery holds.
+
+        This is the distinction the split exists to pin.  The difference
+        between the two figures is the base prompt plus block [1b] plus
+        the joins between them — none of which the user wrote — and it
+        does not drift when a steering file is edited.  (Within one token:
+        the heuristic rounds each count up independently.)
+        """
+        home, ws = _build_workspace(tmp_path, root_file="root: use python3")
+        assembler = PromptAssembler(ws, home_dir=home)
+        small = assembler.assemble_sync("worker")
+
+        _write(ws / "AGENTS.md", "root: use python3\n" + "prefer explicit imports\n" * 40)
+        large = assembler.assemble_sync("worker")
+
+        assert large.steering_tokens > small.steering_tokens
+        assert large.prefix_tokens > small.prefix_tokens
+        machinery_small = small.prefix_tokens - small.steering_tokens
+        machinery_large = large.prefix_tokens - large.steering_tokens
+        assert abs(machinery_large - machinery_small) <= 1
+
+    def test_tier_without_steering_reports_zero_not_the_prefix(self, tmp_path: Path) -> None:
+        """A validator whose subset matches nothing costs no steering."""
+        home = tmp_path / "home"
+        home.mkdir()
+        ws = tmp_path / "workspace"
+        _write(ws / "notes.md", "not a steering file")
+
+        result = PromptAssembler(ws, home_dir=home).assemble_sync("validator", diff="+x")
+        assert result.steering.block == ""
+        assert result.steering_tokens == 0
+        assert result.prefix_tokens > 0
