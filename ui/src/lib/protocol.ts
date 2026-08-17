@@ -135,6 +135,17 @@ export interface ValidateApiKey extends ClientMessage {
   api_key?: string | null;
 }
 
+// TD-1703: name the model one tier of one preset uses. Deliberately narrow
+// rather than a general config write — a message carrying only a tier and a
+// slug cannot smuggle a secret into config.yaml. Acked with a fresh
+// setup_state, same pattern as set_preset.
+export interface SetTierSlug extends ClientMessage {
+  type: "set_tier_slug";
+  preset: string;
+  tier: string;
+  slug: string;
+}
+
 export interface SetPreset extends ClientMessage {
   type: "set_preset";
   name: string;
@@ -397,6 +408,12 @@ export interface SetupState extends DaemonEvent {
   key_required: boolean;
   presets: string[];
   active_preset: string;
+  // TD-1703: the active preset's slug per tier, as the config file has it.
+  // null where a loopback tier leaves its model to discovery (TD-1805) — the
+  // settings screen shows that as discovered, never as an empty field, so a
+  // save cannot pin a model the user left floating. Optional because an
+  // older daemon does not send it.
+  tier_slugs?: Record<string, string | null>;
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the

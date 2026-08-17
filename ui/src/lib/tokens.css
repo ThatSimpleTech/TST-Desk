@@ -129,9 +129,14 @@
 	--transition-slow: 300ms ease;
 }
 
-/* ---- Dark theme (follows OS preference): warm charcoal, accent lifted ---- */
+/* ---- Dark theme ---- 
+   Two selectors reach the same palette: the OS preference, unless the user
+   has explicitly chosen light, and an explicit dark choice that overrides a
+   light OS (TD-1703). CSS cannot share one declaration block between a
+   media query and a plain selector, so the list appears twice and
+   `tokens.test.ts` fails if the two ever drift apart. */
 @media (prefers-color-scheme: dark) {
-	:root {
+	:root:not([data-theme="light"]) {
 		--color-ground:         #232320;
 		--color-lifted:         #2c2c28;
 		--color-sunken:         #2a2a26;
@@ -159,4 +164,33 @@
 		--shadow-md: 0 4px 8px rgb(0 0 0 / 0.05);
 		--shadow-lg: 0 12px 24px rgb(0 0 0 / 0.06);
 	}
+}
+
+:root[data-theme="dark"] {
+	--color-ground:         #232320;
+	--color-lifted:         #2c2c28;
+	--color-sunken:         #2a2a26;
+	--color-ink:            #edeae3;
+	--color-ink-secondary:  #a39e93;
+	--color-ink-muted:      #6e6a61;
+	--color-hairline:       #3d3d37;
+	--color-user-bubble:    #3a382f;
+	--color-accent:         #d0794f;
+	--color-accent-hover:   #dc8a64;
+	--color-on-accent:      #ffffff;
+	/* Status hues lifted to stay legible on charcoal. */
+	--color-ok:             #7fb08c;
+	--color-warn:           #d2a45c;
+	--color-err:            #d98a75;
+
+	--syn-comment:          #6e6a61;
+	--syn-keyword:          #d0794f;
+	--syn-string:           #7fb08c;
+	--syn-number:           #d2a45c;
+	--syn-title:            #b87a9e;
+
+	/* Shadows go near-silent on dark; the hairline carries separation. */
+	--shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
+	--shadow-md: 0 4px 8px rgb(0 0 0 / 0.05);
+	--shadow-lg: 0 12px 24px rgb(0 0 0 / 0.06);
 }
