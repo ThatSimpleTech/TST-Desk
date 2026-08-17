@@ -2927,7 +2927,7 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 
 | Version | Epic | Summary |
 |---|---|---|
-| **v0.2** | Memory | `.tst/memory/`, relevance-based loading, worker-tier distillation, diff-before-write, git commits per accepted memory |
+| **v0.2** | Memory | `.tst/memory/`, relevance-based loading, worker-tier distillation, diff-before-write, git commits per accepted memory. Local embeddings run as a **sidecar**, not through Ollama: measured 2026-08-17, an `/api/embed` call evicts the resident 17 GB chat model and pays a 20–48s reload, while `llama-server --embeddings` on its own port stays resident at 0.8 GB alongside it and serves the same OpenAI `/v1/embeddings` shape. Ollama's scheduler only evicts models Ollama loaded |
 | **v0.3** | Cowork parity | Durable session event log, detached sessions surviving window close, session list pane, artifact delivery, file-diff work view |
 | **v0.4** | Computer use | Screen pane, `tst-cua` drivers, OS permission onboarding, grounding model evaluation |
 | **v0.5** | Remote & notify | Tailscale interface binding, phone attach, Slack notifier (Hermes pattern), lightweight scheduler |
