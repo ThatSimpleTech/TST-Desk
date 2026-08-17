@@ -212,6 +212,7 @@ Order the system prompt so the **stable prefix comes first**:
 
 ```
 [1] TST Desk base system prompt      ← never changes
+[1b] Workspace root (absolute)       ← constant for the session
 [2] Steering block (resolved)        ← changes only when files change
 [3] Memory block (relevant subset)   ← changes between sessions
 [4] Workspace manifest (file tree)   ← changes as files change

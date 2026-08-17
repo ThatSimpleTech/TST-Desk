@@ -412,6 +412,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.type).toBe("steering_reloaded");
     expect(isString(m.prefix_hash)).toBe(true);
     expect(isNumber(m.prefix_tokens)).toBe(true);
+    expect(isNumber(m.steering_tokens)).toBe(true);
+    // The steering figure is the block alone, so it is strictly smaller
+    // than the prefix that also carries the base prompt and the root.
+    expect(m.steering_tokens).toBeLessThan(m.prefix_tokens);
     expect(isNumber(m.source_count)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
   });

@@ -317,7 +317,11 @@ export interface SteeringReloaded extends DaemonEvent {
   type: "steering_reloaded";
   session_id: string;
   prefix_hash: string;
+  // The whole cache prefix (base prompt + workspace root + steering), which
+  // is what gets re-billed when the hash moves — not the cost of the user's
+  // steering files. That is steering_tokens (TD-1810).
   prefix_tokens: number;
+  steering_tokens: number;
   source_count: number;
 }
 

@@ -781,6 +781,7 @@ async def agent_loop(
                         session_id=session.id,
                         prefix_hash=assembled.prefix_hash,
                         prefix_tokens=assembled.prefix_tokens,
+                        steering_tokens=assembled.steering_tokens,
                         source_count=len(assembled.steering.sources),
                         seq=1,  # overwritten by the event log
                     )
@@ -800,6 +801,7 @@ async def agent_loop(
                             "session_id": session.id,
                             "prefix_hash": assembled.prefix_hash,
                             "prefix_tokens": assembled.prefix_tokens,
+                            "steering_tokens": assembled.steering_tokens,
                         }
                     },
                 )
