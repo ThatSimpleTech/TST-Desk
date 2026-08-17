@@ -184,6 +184,17 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			body: message,
 		};
 	}
+	if (code === "session_busy") {
+		// TD-1715: Delete or Move aimed at a session mid-turn. The daemon's
+		// message already names the way out (wait, stop, or archive instead),
+		// and the rail shows it under the row that asked — so this stays a
+		// toast, not a banner: nothing is broken and no other work is blocked.
+		return {
+			severity: "toast",
+			title: "That session is mid-turn",
+			body: message,
+		};
+	}
 	if (code === "workspace_not_found") {
 		// TD-1103: the user tried to open a path that doesn't exist (usually
 		// from the recents menu — the folder was moved or deleted). The fix

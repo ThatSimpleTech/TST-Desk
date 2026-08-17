@@ -92,6 +92,7 @@ function sessionList(
 			created_at: updatedAt,
 			updated_at: updatedAt,
 			event_count: 3,
+			archived: false,
 		})),
 	};
 }

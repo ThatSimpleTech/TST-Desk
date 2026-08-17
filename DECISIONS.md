@@ -4495,3 +4495,92 @@ alone, each resume added a streaming task that duplicated every event to the
 same socket, and each zombie close scheduled a retry on top of the reconnect it
 had just started — one suspension, two sockets, then four. Both are the same
 shape of bug: a superseded thing that never learned it was superseded.
+## 2026-08-17 — TD-1715: Archive, delete, and re-project sessions
+
+### 1. One complete `session_list`, with an `archived` flag per row (Class B)
+
+**Decision:** `SessionSummary` gained `archived: bool` (default false) and the
+daemon keeps listing every session. "Hidden from the default list" is rendered
+from the flag — the rail shows one shelf or the other — rather than by scoping
+the request.
+
+**Rationale:** The alternative was an `include_archived` flag on
+`list_sessions`, which reads cleaner right up until you count the consumers.
+Three stores reduce the same `session_list` event: the rail, the recents menu
+(`workspaces.svelte.ts`), and the chat pane's auto-bind. Making the event's
+*contents* depend on who asked would mean a rail click on "Archived" silently
+rewrites the recents menu and unbinds the chat pane, because to those two
+stores a narrowed list is indistinguishable from sessions having disappeared.
+Every consumer would then need to know the scope of a list it did not request.
+One complete list with a flag keeps `session_list` meaning exactly what it has
+always meant, and makes each consumer's filter its own business.
+
+### 2. In-flight turn is counted on the session, not read off `session_state` (Class B)
+
+**Decision:** `Session` tracks `_open_turns` — raised in `add_user_message`,
+lowered on the `turn_complete` event via a subscription to its own event log —
+and exposes `turn_in_flight`. Delete and Move refuse on it with
+`session_busy`; Archive ignores it.
+
+**Rationale:** `session_state "running"` cannot answer this. TD-1714 established
+that it means the session's *loop* is alive: set once at open, spanning the
+whole session, replayed at the head of every attach. Refusing Delete on
+"running" would refuse it for every healthy session forever. `turn_complete` is
+the only frame on the wire that proves a turn ended, so it is what lowers the
+count. Terminal states force `turn_in_flight` false regardless, so a session
+whose loop died mid-turn can still be deleted rather than being wedged by a
+count nothing will ever decrement.
+
+### 3. Move keeps the pane bound; Archive and Delete rebind it (Class B)
+
+**Decision:** All three verbs answer with a refreshed `session_list`, and the
+chat store's existing binding rule resolves the pane: keep the current session
+while it is listed *and unarchived*, else bind the newest live unarchived one,
+else empty state. A moved session stays listed and unarchived, so the pane
+stays on it and the title bar follows it to the new project.
+
+**Rationale:** The criterion pairs "archiving, deleting, or moving" with "never
+a stranded composer", and a rebind is what prevents stranding when the session
+leaves the shelf. A move doesn't remove it — that is the point of criterion 3,
+where the event log moves *with* the session — so evicting the user from a
+conversation that survived intact would be the worse reading of the same
+sentence. One rule covers all three cases and lives in one place, so no verb
+can grow its own rebinding logic later.
+
+### 4. Move validates that the target is a directory, not that it is "known" (Class B)
+
+**Decision:** `move_session` accepts any path and refuses one that is not a
+directory (`workspace_not_found`), mirroring `open_workspace`'s own check. The
+picker offers only workspaces the recents store already knows.
+
+**Rationale:** "Another known workspace" is a UI affordance, not a new
+capability boundary: `open_workspace` has always accepted an arbitrary path
+from the client, so restricting this verb further would guard nothing while
+blocking the obvious case of moving into a project opened moments ago. The
+substantive validation — it exists, it is a directory — is the same one the
+open path performs, and the boundary and policy are re-resolved from the new
+root so the next turn runs under the target's wall, not the origin's.
+
+### 5. `session_lifecycle.py` and `session-actions.svelte.ts` split out (Class A)
+
+**Decision:** The three daemon verbs live in `core/tstd/session_lifecycle.py`
+rather than `daemon.py`; the rail's row commands live in
+`ui/src/lib/session-actions.svelte.ts` rather than `sessions.svelte.ts`. The
+row markup moved to `RailSessionRow.svelte`.
+
+**Rationale:** §6's file-size rule, applied before the fact in each case.
+`daemon.py` is already the largest module in the package and gains three lines
+of dispatch instead of a hundred of logic; `sessions.svelte.ts` crossed 400
+lines with the commands inline and came back to 341 without them. The store
+keeps `closeRowMenus` because its own reducer calls it on every refreshed list
+— imports run store → actions only, never back.
+
+### 6. Delete leaves the audit database alone (Class A)
+
+**Decision:** Deleting a session drops its registry entry, its runner, its
+in-memory event log, and its durable record. The append-only audit log is not
+touched.
+
+**Rationale:** The criterion says the event log; the audit database is the
+forensic record §2 requires to be append-only. A delete that could rewrite it
+would make it not that.

@@ -2747,19 +2747,19 @@ the only wait the user can actually be watching.
 **Size:** 3 · **Depends on:** TD-1701
 
 **Acceptance criteria:**
-- [ ] Rail session rows offer Archive (hidden from the default list;
+- [x] Rail session rows offer Archive (hidden from the default list;
       restorable through an Archived filter or section) and Delete behind a
       confirm; deleting removes the session's event log and drops it from
       `session_list`
-- [ ] Archive state persists in the daemon's session metadata and survives
+- [x] Archive state persists in the daemon's session metadata and survives
       restart; archived sessions never win auto-bind
-- [ ] Move to project: a rail affordance reassigns the session's
+- [x] Move to project: a rail affordance reassigns the session's
       `workspace_path` to another known workspace (daemon validates the
       target and updates durable metadata; the event log moves with the
       session)
-- [ ] Archiving, deleting, or moving the bound session moves the pane to the
+- [x] Archiving, deleting, or moving the bound session moves the pane to the
       next live session or the empty state — never a stranded composer
-- [ ] A session with an in-flight turn refuses Delete and Move with copy
+- [x] A session with an in-flight turn refuses Delete and Move with copy
       (Archive is allowed and does not cancel the turn)
 
 **Notes:** user ask 2026-08-14/15 ("option to delete or archive the older

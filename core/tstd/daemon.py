@@ -63,11 +63,13 @@ from .protocol import (
     AlwaysAllow,
     ApiKeyValidated,
     Approve,
+    ArchiveSession,
     Attach,
     Cancel,
     ClientMessageT,
     DaemonEvent,
     DeleteApiKey,
+    DeleteSession,
     Deny,
     Detach,
     DiagnosticCheck,
@@ -77,6 +79,7 @@ from .protocol import (
     HandshakeError,
     ListPolicyRules,
     ListSessions,
+    MoveSession,
     NewSession,
     OpenWorkspace,
     PolicyRules,
@@ -122,6 +125,7 @@ from .session import (
     SessionRegistry,
     SessionRunner,
 )
+from .session_lifecycle import archive_session, delete_session, move_session
 from .session_store import SessionStore
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .ws import WebSocketServer
@@ -1029,6 +1033,32 @@ class Daemon:
         if isinstance(msg, ListSessions):
             return await self._handle_list_sessions()
 
+        # ── Session lifecycle (TD-1715) ──────────────────────────────
+        # Each verb answers with the refreshed list, so one reply carries
+        # both the acknowledgement and the rebinding the client needs when
+        # the session it was following just left the default view.
+        if isinstance(msg, ArchiveSession):
+            refusal = await archive_session(self._session_store, msg.session_id, msg.archived)
+            return refusal if refusal is not None else await self._handle_list_sessions()
+
+        if isinstance(msg, DeleteSession):
+            refusal = await delete_session(
+                self.session_registry,
+                self._session_store,
+                msg.session_id,
+                self._release_session,
+            )
+            return refusal if refusal is not None else await self._handle_list_sessions()
+
+        if isinstance(msg, MoveSession):
+            refusal = await move_session(
+                self.session_registry,
+                self._session_store,
+                msg.session_id,
+                msg.workspace_path,
+            )
+            return refusal if refusal is not None else await self._handle_list_sessions()
+
         if isinstance(msg, GetInstructionStack):
             return await self._handle_get_instruction_stack(msg)
 
@@ -1290,9 +1320,22 @@ class Daemon:
                     created_at=record.created_at,
                     updated_at=record.updated_at,
                     event_count=sess.event_log.last_seq if sess else 0,
+                    archived=record.archived,
                 )
             )
         return SessionList(seq=1, sessions=summaries).model_dump_json()
+
+    def _release_session(self, session_id: str) -> None:
+        """Drop every client subscription for a session being deleted (TD-1715).
+
+        Each attached connection has a streaming task parked on the session's
+        event log; with the session gone they would wait forever on a log
+        nothing can append to.
+        """
+        for connection in list(self._attached_clients.get(session_id, set())):
+            self._cleanup_attach(connection, session_id, (id(connection), session_id))
+        self._attached_clients.pop(session_id, None)
+        self.state.active_sessions = max(0, self.state.active_sessions - 1)
 
     async def _handle_get_instruction_stack(self, msg: GetInstructionStack) -> str:
         """Assemble and answer with the session's current instruction stack.

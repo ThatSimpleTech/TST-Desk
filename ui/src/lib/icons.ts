@@ -73,6 +73,22 @@ export const ICONS = {
 	clock: '<circle cx="12" cy="12" r="9"/>' + '<path d="M12 7v5l3 2"/>',
 	/** Account anchor avatar fallback (rail footer, TD-1712). */
 	user: '<circle cx="12" cy="8" r="4"/>' + '<path d="M4 21a8 8 0 0 1 16 0"/>',
+	/** Archive / unarchive a session (rail row actions, TD-1715). */
+	archive:
+		'<rect x="2" y="3" width="20" height="5" rx="1"/>' +
+		'<path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>' +
+		'<path d="M10 12h4"/>',
+	/** Delete a session (rail row actions, TD-1715). */
+	trash:
+		'<path d="M3 6h18"/>' +
+		'<path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/>' +
+		'<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>' +
+		'<path d="M10 11v6"/><path d="M14 11v6"/>',
+	/** Row action menu affordance (rail rows, TD-1715). */
+	ellipsis:
+		'<circle cx="5" cy="12" r="1"/>' +
+		'<circle cx="12" cy="12" r="1"/>' +
+		'<circle cx="19" cy="12" r="1"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;
