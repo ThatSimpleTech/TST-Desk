@@ -30,6 +30,7 @@ from tstd.context import (
     PromptAssembler,
     SteeringFileResolver,
     assemble_for_tier_sync,
+    workspace_root_block,
 )
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
@@ -312,17 +313,24 @@ async def test_cache_prefix_stable_across_turns(fixture: tuple[Path, Path], tmp_
     # (empty here: no tool calls), which is what gates scoped rules (TD-503).
     direct = assembler.assemble_sync("brain", matched_paths=set(session.touched_paths))
     assert hashes[0] == direct.prefix_hash
-    # And the hash really is sha256(BASE_SYSTEM_PROMPT + steering block).
+    # And the hash really is sha256 of the session-constant blocks: the
+    # base prompt, the workspace root (TD-1810), and the steering block.
     expect = hashlib.sha256(
-        (BASE_SYSTEM_PROMPT + "\n\n" + _assemble(home, ws, matched_paths=set()).block).encode(
-            "utf-8"
-        )
+        "\n\n".join(
+            [
+                BASE_SYSTEM_PROMPT,
+                workspace_root_block(ws),
+                _assemble(home, ws, matched_paths=set()).block,
+            ]
+        ).encode("utf-8")
     ).hexdigest()
     assert hashes[0] == expect
     # Every turn's system message carried the stable prefix first.
     for call in mock.calls:
         first = call.messages[0].content or ""
-        assert first.startswith(BASE_SYSTEM_PROMPT + "\n\n<!-- from: ")
+        assert first.startswith(
+            BASE_SYSTEM_PROMPT + "\n\n" + workspace_root_block(ws) + "\n\n<!-- from: "
+        )
 
 
 async def test_worker_task_and_tier_do_not_touch_the_prefix(
