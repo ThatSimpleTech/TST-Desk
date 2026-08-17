@@ -116,8 +116,9 @@ Asking about Class A wastes the user's attention. Deciding Class C unilaterally 
 
 ### Rust / Tauri host
 
-- Keep it thin. The host manages the window, the daemon process lifecycle, the keychain, and
-  native dialogs. **Business logic belongs in Python.**
+- Keep it thin. The host manages the window, the daemon process lifecycle, and native dialogs.
+  The keychain is not the host's — it is `core/tstd/keychain.py`, reached over the protocol like
+  everything else. **Business logic belongs in Python.**
 - `clippy` clean.
 
 ### Frontend (SvelteKit / Svelte 5)
