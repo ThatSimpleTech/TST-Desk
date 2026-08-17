@@ -15,6 +15,7 @@ import {
   type NewAttachment,
 } from "./attachments";
 import { createMessageQueue, type QueuedMessage } from "./chat-queue";
+import { createFirstTokenWait } from "./first-token-wait";
 import type {
   ClientMessageUnion,
   DaemonEventUnion,
@@ -134,11 +135,10 @@ export function formatTurnDuration(seconds: number): string {
   return `${minutes}m ${rest}s`;
 }
 
-/** First-token watchdog (TD-1713): a wait this long with no assistant_delta
- *  and no terminal turn event stops claiming "Working" and says so. Long
- *  enough that a cold model on a big prompt stays unflagged; short enough
- *  that the 2026-08-14 silent stall could not sit an hour unremarked. */
-export const STALL_TIMEOUT_MS = 25_000;
+/** The wait owns the threshold (first-token-wait.ts); the store re-exports it
+ *  so the Working line's threshold and the state it describes stay one import
+ *  apart for everyone who reads them together. */
+export { STALL_TIMEOUT_MS } from "./first-token-wait";
 
 /** Terminal turn states seal any in-flight assistant message so it does not
  *  show a streaming cursor forever. */
@@ -154,46 +154,10 @@ function isTerminal(state: SessionState["state"]): boolean {
 export function createChatStore(deps: ChatDeps, state: ChatState = createChatState()): ChatStore {
   let nextId = 0;
 
-  // First-token watchdog (TD-1713). One outstanding timer per store; every
-  // transition out of the first-token wait clears it.
-  let stallTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function clearStallTimer(): void {
-    if (stallTimer !== null) {
-      clearTimeout(stallTimer);
-      stallTimer = null;
-    }
-  }
-
-  /** `delay` is the remaining wait, which a resume shortens (TD-1716). */
-  function armStallWatchdog(delay: number = STALL_TIMEOUT_MS): void {
-    clearStallTimer();
-    stallTimer = setTimeout(() => {
-      stallTimer = null;
-      if (state.awaitingFirstToken) state.turnStalled = true;
-    }, delay);
-    // Under node/vitest the timer is a Timeout object; unref so a pending
-    // watchdog never holds a test process open. Browsers return a number.
-    (stallTimer as unknown as { unref?: () => void }).unref?.();
-  }
-
-  /** Begin waiting if not already: stamps the elapsed basis and arms the
-   *  watchdog. A wait already in progress keeps its original stamp — a
-   *  replayed "running" must not restart the user's clock. */
-  function startFirstTokenWait(): void {
-    if (state.awaitingFirstToken) return;
-    state.awaitingFirstToken = true;
-    state.turnStalled = false;
-    state.awaitingSince = Date.now();
-    armStallWatchdog();
-  }
-
-  function endFirstTokenWait(): void {
-    state.awaitingFirstToken = false;
-    state.turnStalled = false;
-    state.awaitingSince = null;
-    clearStallTimer();
-  }
+  // The "Working…" wait and its watchdog (TD-1713/TD-1716). The store says
+  // when a wait starts and stops, from turn evidence; the wait itself decides
+  // what one in progress is worth.
+  const wait = createFirstTokenWait(state);
 
   // Closure-level so retryLastUserMessage can call it without `this` —
   // the reactive shell re-exports these methods detached.
@@ -233,8 +197,8 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     if (!armWait) return true;
     // A fresh send restarts the wait and its watchdog even atop one already
     // in flight — the honest clock is from the latest send.
-    endFirstTokenWait();
-    startFirstTokenWait();
+    wait.end();
+    wait.begin();
     state.lastTurnDuration = null;
     return true;
   }
@@ -274,7 +238,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     // Queued text belongs to the session it was composed against; carrying it
     // across would deliver it to a conversation that never asked for it.
     queue.clear();
-    endFirstTokenWait();
+    wait.end();
     state.lastTurnDuration = null;
     if (sessionId !== null) deps.attach(sessionId);
   }
@@ -291,7 +255,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           // back through the replayed turn_complete that follows them.
           state.turnState = "running";
           // First token recovers a stalled wait: the model was slow, not gone.
-          endFirstTokenWait();
+          wait.end();
           const last = state.messages[state.messages.length - 1];
           if (last !== undefined && last.role === "assistant" && !last.complete) {
             // Append in place: the message object keeps its identity so the
@@ -312,7 +276,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
         case "turn_complete": {
           if (event.session_id !== state.sessionId) return;
           sealInFlightAssistant();
-          endFirstTokenWait();
+          wait.end();
           // The turn is provably over; the session itself stays alive.
           state.turnState = null;
           // Daemon-measured seconds — the duration line reports what the wire
@@ -341,7 +305,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
             state.turnState = turnLive ? "running" : null;
           } else {
             state.turnState = event.state;
-            endFirstTokenWait();
+            wait.end();
           }
           if (isTerminal(event.state)) sealInFlightAssistant();
           return;
@@ -389,7 +353,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           if (event.code !== "session_not_running") return;
           if (event.session_id != null && event.session_id !== state.sessionId) return;
           sealInFlightAssistant();
-          endFirstTokenWait();
+          wait.end();
           return;
         }
         default:
@@ -425,7 +389,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       // The user said stop waiting: drop the local wait (and its watchdog)
       // immediately — the daemon's session_state remains the truth for the
       // turn itself and lands separately.
-      if (sent) endFirstTokenWait();
+      if (sent) wait.end();
       return sent;
     },
 
@@ -433,22 +397,9 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       switchSession(sessionId, turnState);
     },
 
-    /** Resume healing, watchdog half (TD-1716). A suspended webview's timers
-     *  do not fire, and the OS hands back the backlog coalesced into one late
-     *  tick — so on the way back the timer is worth nothing and the wall clock
-     *  is worth everything. A wait already past the threshold says so now
-     *  rather than after a timer that may be another 25s away; a wait still
-     *  inside it re-arms for what is actually left. */
-    resume(): void {
-      if (!state.awaitingFirstToken || state.awaitingSince === null) return;
-      const waited = Date.now() - state.awaitingSince;
-      if (waited >= STALL_TIMEOUT_MS) {
-        state.turnStalled = true;
-        clearStallTimer();
-        return;
-      }
-      armStallWatchdog(STALL_TIMEOUT_MS - waited);
-    },
+    /** Resume healing, watchdog half (TD-1716) — the socket's half is the
+     *  re-attach in connection-status. */
+    resume: wait.resume,
 
     refreshSessions(): boolean {
       return deps.send({ type: "list_sessions" });
@@ -464,7 +415,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       state.turnState = null;
       state.messages = [];
       queue.clear();
-      endFirstTokenWait();
+      wait.end();
       state.lastTurnDuration = null;
     },
   };
