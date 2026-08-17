@@ -1746,10 +1746,10 @@ error.
 **Size:** 3 · **Depends on:** TD-1005
 
 **Acceptance criteria:**
-- [ ] Switching the bound session shows that session's activity, not the previous one's
-- [ ] The Files pane (TD-1705), which folds the same store, scopes with it
-- [ ] Replay after re-attach does not double-count entries already shown
-- [ ] A test drives two sessions through one client and asserts the second's view contains
+- [x] Switching the bound session shows that session's activity, not the previous one's
+- [x] The Files pane (TD-1705), which folds the same store, scopes with it
+- [x] Replay after re-attach does not double-count entries already shown
+- [x] A test drives two sessions through one client and asserts the second's view contains
       none of the first's entries
 
 `timeline-store.svelte.ts` exports `clear()`, but nothing imports it — `AppShell.svelte`,
@@ -1769,6 +1769,17 @@ has no callers anywhere in `ui/src`.
 
 Milestone note: an M2 defect surfacing after M2 closed. Filed in E10 because the defective
 store is TD-1005's; the fix likely coordinates with E17's attach work.
+
+**Done (2026-08-17):** `Timeline` now holds a bound session: `bind()` drops the previous
+session's entries, `push()` folds only events naming the bound one, and the chat store
+declares the binding through a new optional `ChatDeps.onBind` from `switchSession` — the one
+place the pane's session changes — just before the attach whose replay re-hydrates the list.
+Because `entries` stays the single list the components read, the Files pane scopes with no
+markup change. Double-counting is refused by the store itself: an event at or below the log
+position already folded is dropped, so a re-attach at `lastSeq + 1` (TD-1716's resume) and the
+full replay after a switch both land exactly once. `timeline-scope.test.ts` drives two sessions
+through a real `ProtocolClient` and a fake daemon with per-session logs; it failed on all four
+criteria before the fix. See DECISIONS.md — TD-1009.
 
 ---
 
