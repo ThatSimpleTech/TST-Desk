@@ -3961,3 +3961,156 @@ optional-only-on-loopback, resolved on first turn, config always wins,
 exactly-one-resolves, and the no-key/no-write guarantee. §10 is satisfied:
 this story changed the user-facing configuration contract and the docs now
 say so.
+
+---
+
+## 2026-08-17 — TD-1808: Scope the execution check to the call it is checking
+
+### 1. The call's own effect is read from its `tool_result`, not from the workspace (Class B)
+
+**Decision:** The execution check judges the checked `fs_write` from two facts on its own
+`tool_result` — `status == "success"`, and a non-empty `diff` — plus the `content` argument of
+the `tool_call` that produced it. The workspace's final file content no longer decides
+anything; it survives only in the detail line.
+
+**Rationale:** `diff` is rendered by the dispatcher from a snapshot taken either side of that
+one handler (TD-604), so it is evidence about one call and cannot be moved by a later one.
+Deriving `wrote_file` from the file's final content conflated one call's outcome with the
+transcript's aggregate state — the same defect TD-1807 removed from `calls[0]`, `gate[0]` and
+`results[0]`, left behind on the content half. Two independent facts are required rather than
+one so that neither the handler's self-report nor the model's stated intent passes alone: the
+call must ask for content the plan accepts *and* the diff must prove it landed.
+
+### 2. Content compares as line lists, and `HarnessPlan` gained no second callable (Class B)
+
+**Decision:** Rejected adding a `wrote_ok` field to `HarnessPlan` for per-call content. The
+check reuses `plan.content_ok` against the call's `content` argument, and separately asserts
+`added == asked.splitlines()`.
+
+**Rationale:** The obvious design — rebuild the post-image from the diff and feed it to
+`content_ok` — cannot work. `render_diff` builds from `splitlines()` with `lineterm=""`, which
+discards line terminators, and `difflib` never emits the `\ No newline at end of file` marker
+because it never saw them. A rebuilt image can therefore never compare equal to the mock plan's
+`"hello from M1\n"`. Putting both sides through the same `splitlines()` transformation is the
+only lossless match available, and it avoided widening a shared dataclass that
+`e2e_harness`, `e2e_live` and the tests all name.
+
+### 3. Both stories' runs share one test module (Class A)
+
+**Decision:** The four new runs went into `core/tests/test_e2e_ordering.py` rather than a new
+module, and its docstring now covers TD-1807 and TD-1808.
+
+**Rationale:** Same defect, two halves. A separate module would either duplicate the chunk
+scripting helpers or import private names across test modules. 325 lines, inside §6.
+
+---
+
+## 2026-08-17 — TD-1809 / TD-1407 / TD-1408: three tests that read the machine
+
+### 1. The doctor's probe test resolves slugs itself (Class A)
+
+**Decision:** `TestDoctorRows` patches `tstd.daemon.resolve_tier_slugs` with a stand-in that
+fills unset slugs the way a single-model endpoint would. No product code changed.
+
+**Rationale:** `_provider_probe` resolves slugs before it builds a client, and the shipped
+`local` preset sets none, so the row's verdict was decided by how many models the developer
+happened to have pulled. `discover_model` refusing to guess among several is correct and is
+what TD-1805 shipped — the doctor was telling the truth. The test was what assumed a machine.
+
+### 2. A pattern, not three incidents (recorded so it is not re-learned)
+
+Three defects this session share one shape: a run whose verdict depends on the developer's
+machine rather than on the code. The doctor probe read the live endpoint's model list
+(TD-1809). `test_cancelled_error_path_kills_group` times a race with fixed sleeps and loses
+under suite load (TD-1407). `test_config` and `test_cost` read the real user `config.yaml` and
+assert shipped defaults (TD-1408). The repo already knows the answer — `test_e2e_live` and
+`test_local_preset_paths` redirect `HOME` before touching preset state, on the stated grounds
+that changing the developer's preset from a test "would be a rude side effect that survives the
+run." New tests should reach for a fixture or a redirect before they reach for the machine.
+
+---
+
+## 2026-08-17 — TD-1703: Settings screen v1
+
+### 1. Slug edits land in the user config, never the packaged one (Class B)
+
+**Decision:** `save_tier_slug` writes `user_data_dir()/config.yaml`. Directed by the story
+owner when asked.
+
+**Rationale:** `core/tstd/config.yaml` is packaged (`pyproject.toml` `include`), so an upgrade
+overwrites it and any edit written there is silently lost. The user copy is the one
+`ensure_user_config` already creates and `load_config` already reads.
+
+### 2. `set_tier_slug` is narrow, not a general `update_config` (Class B)
+
+**Decision:** The message carries exactly `preset`, `tier`, `slug`. No general config-write
+message exists.
+
+**Rationale:** §2.2 forbids a secret reaching a config file. A message that can only carry a
+tier name and a slug cannot smuggle one in by construction, so the guarantee is structural
+rather than a validation rule someone can forget. Widening this later is easy; narrowing a
+shipped message is not.
+
+### 3. `setup_state` gained `tier_slugs` rather than a new event (Class B)
+
+**Decision:** An additive field with a default, following `key_required`'s precedent, acked on
+the same event that already answers `set_preset`.
+
+**Rationale:** The settings screen needs the slugs at exactly the moments it already needs
+`presets` and `active_preset`. A separate event would need its own request, its own reducer and
+its own reconnect handling for data that always travels with this one. A client that ignores
+the field behaves as it did, so this is not a version bump.
+
+### 4. Reported slugs are the file's, captured by snapshot (Class B)
+
+**Decision:** The daemon snapshots every preset's slugs when it adopts a config, and reports
+from that snapshot. It does not re-read the file, and it does not read `self.config`.
+
+**Rationale:** `resolve_tier_slugs` fills unset slugs *in place* (TD-1805), so after one probe a
+loopback tier carries a tag that was never in the file. Reporting that would make the settings
+field look configured and leave the user one save from pinning a model they deliberately left
+for the endpoint to choose. Re-reading from disk would also have been correct, but
+`load_config()` with no path reads the real user config — reintroducing exactly the trap
+TD-1809 had just removed, into every test that calls `_setup_state_event`. The snapshot needs no
+I/O. Note `model_copy` is shallow and shares tier objects, so keeping a copy of the config is
+*not* a snapshot; a test pins that, because the obvious implementation silently does not work.
+
+### 5. The nested YAML edit is surgical; `ruamel.yaml` was declined (Class B)
+
+**Decision:** `save_tier_slug` locates the `presets → <preset> → <tier>` block by scanning
+indentation, replaces the shipped `# slug:` placeholder in place, and writes atomically. The
+value is JSON-encoded. No new dependency.
+
+**Rationale:** The same reason `save_active_preset` avoids a dump: the shipped config is mostly
+teaching, and a PyYAML round-trip drops every comment. A round-trip-preserving library
+(`ruamel.yaml`) would solve it but adding a dependency is Class C and would need sign-off for a
+2-point story. JSON encoding is not cosmetic — model tags carry colons (`qwen3.8:27b`) and a raw
+newline in the value would inject arbitrary YAML into a user's config; a test pins that.
+
+Known limit, documented on the function: it loads before it writes, so it cannot repair a config
+that a missing slug already made invalid. Not reachable from the settings screen, which only
+edits a config the daemon already loaded.
+
+### 6. `config_write.py` split out of `config.py` (Class B)
+
+**Decision:** The write half — `save_active_preset`, `save_tier_slug` and their helpers — moved
+to `core/tstd/config_write.py`. `save_active_preset` now shares the atomic-write helper instead
+of carrying its own copy.
+
+**Rationale:** `config.py` reached 409 lines, past §6, and the two halves are different jobs:
+one parses and validates, the other edits a file a human also edits. Same split rationale as
+`e2e_checks.py` out of `e2e_harness.py` in TD-1807.
+
+### 7. The dark palette is duplicated, and a test keeps the copies honest (Class B)
+
+**Decision:** `tokens.css` scopes the OS rule to `:root:not([data-theme="light"])` and repeats
+the same palette under `:root[data-theme="dark"]`. `ui/src/lib/tokens.test.ts` compares the two
+token-by-token.
+
+**Rationale:** A theme the user can force needs the dark tokens reachable from a plain selector,
+and CSS cannot share one declaration block between a media query and an attribute selector. The
+alternatives were an indirection layer (`--dark-*` variables, three mentions per token) or
+`light-dark()`, which is too new to rely on across the webviews TD-1302 targets. Duplication's
+only real risk is drift, and drift is machine-checkable: the test fails naming whichever value
+moved. The `:not()` is what makes an explicit light choice beat a dark OS —
+`:root[data-theme="dark"]` outranks the media rule, so the choice wins in both directions.
