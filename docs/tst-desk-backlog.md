@@ -298,6 +298,45 @@ shape must be right; the behavior can be trivial.
 
 ---
 
+### TD-208 — `parse_daemon_event` rejects `rule_activated`, an event the daemon emits
+**Size:** 1 · **Depends on:** TD-204
+
+**Acceptance criteria:**
+- [ ] `parse_daemon_event` round-trips every member of `DaemonEventT`, `rule_activated` included
+- [ ] A test derives the expected set from the union rather than restating it, so the next
+      message added to `DaemonEventT` without its frozenset entry fails the suite
+- [ ] The same check covers `ClientMessageT` / `_KNOWN_CLIENT_TYPES`, which agree today and
+      should stay that way
+- [ ] The TD-208 note in `docs/architecture.md` §3 comes out with the fix — its doc test asserts
+      the gap still exists and goes red when it does not
+
+`RuleActivated` is declared at `protocol.py:615`, is a member of `DaemonEventT` at
+`protocol.py:883`, and is emitted by the agent loop at `loop.py:759`. It is absent from
+`_KNOWN_EVENT_TYPES` (`protocol.py:931`). `_check_known_type` runs before validation, so the
+parser refuses an event the daemon itself sends:
+
+    >>> raw = RuleActivated(seq=3, session_id="s1", rule_path=".tst/rules/api.md").model_dump_json()
+    >>> parse_daemon_event(raw)
+    UnknownMessageTypeError: unknown_message: Unknown message type 'rule_activated'.
+
+The union has 25 members; the frozenset has 24. Every other member matches, and
+`ClientMessageT` and `_KNOWN_CLIENT_TYPES` agree at 27 each — so this is a single missed line,
+not a pattern.
+
+No user-visible symptom today, which is why it survived: the shipping clients do not use this
+parser. The Rust host only checks for `hello_ack`, and the UI has its own hand-mirrored
+`KNOWN_EVENT_TYPES` in `ui/src/lib/client.ts` — which *does* list `rule_activated`, so the
+timeline renders the event correctly. The break is latent in the Python client surface, and
+`tst attach` (spec §2) is a stated goal that would hit it.
+
+`test_protocol.py` round-trips only the message types it imports, and `RuleActivated` is not
+among them. That gap is the second criterion: a hand-listed test cannot catch a hand-listed
+frozenset drifting.
+
+Found while writing TD-1504 and confirmed by execution, not by reading.
+
+---
+
 ## Epic E3 — Model router
 
 **Goal:** one client, three tiers, prices in config, costs accounted, caching exploited.
@@ -784,6 +823,49 @@ reverted — the same gap that let this ship, reproduced in its own fix. `TestTh
 now spies on `register_builtin_handlers` while calling `_start_session`; two of its runs go red
 on revert, verified. `docs/configuration.md` updated, and its executable-examples harness keeps
 it honest.
+
+---
+
+### TD-607 — `dispatch_many` returns results out of order when a batch is mixed
+**Size:** 2 · **Depends on:** TD-601
+
+**Acceptance criteria:**
+- [ ] `dispatch_many` returns results in the same order as the input tool calls, as its
+      docstring already promises — or the docstring and callers change to say order is not
+      guaranteed, and the timeline ordering is handled explicitly
+- [ ] A test covers a *mixed* batch (parallel-safe and sequential in one call); every existing
+      test uses a homogeneous batch, which is why this survived
+- [ ] Parallelism is preserved — the fix must not serialise parallel-safe tools
+- [ ] A tool handler raising inside the parallel batch produces an error `ToolResult` rather
+      than propagating out of `dispatch_many`
+
+`dispatch_many` (`tools/dispatch.py:496`) partitions the batch, runs the parallel-safe tools
+concurrently and the rest sequentially, then returns `parallel_results + sequential_results`
+(`dispatch.py:544`). Concatenating the two partitions discards the caller's order. The docstring
+four lines above says the opposite: "Results in the same order as the input tool calls."
+
+Reproduced with a three-call batch, one parallel-safe tool between two sequential ones:
+
+    input order : ['c1', 'c2', 'c3']
+    result order: ['c2', 'c1', 'c3']
+
+`loop.py:397` is the only production caller, and it iterates the results to emit one
+`tool_result` event each. So a turn that mixes a read with a shell command emits the read's
+result first regardless of the order the model asked for them, and the timeline shows them that
+way. The conversation itself is likely unaffected — tool messages carry `tool_call_id` and
+OpenAI-compatible providers match on it — but "likely" is doing real work in that sentence, and
+the ordering is not something the loop should have to reason about.
+
+The fourth criterion is a second, smaller bug in the same method: `dispatch.py:525-535` calls
+`asyncio.gather(..., return_exceptions=True)` and then `task.result()`. `return_exceptions`
+governs what `gather` returns, not what `task.result()` does — `.result()` re-raises. So the
+`isinstance(result, Exception)` branch below it is unreachable, and a handler that raises inside
+the parallel batch propagates out of `dispatch_many` instead of becoming the `concurrent_error`
+result that branch was written to produce.
+
+Found while writing TD-1504, and confirmed by execution. Every existing `dispatch_many` test
+(`test_dispatch.py:347`, `:387`) uses a batch of one tool type, so neither the ordering nor the
+exception path is exercised today.
 
 ---
 
@@ -2048,10 +2130,42 @@ it.
 **Size:** 3 · **Depends on:** M2 complete
 
 **Acceptance criteria:**
-- [ ] Daemon/shell split explained, including why the session owns the loop
-- [ ] Protocol documented
-- [ ] Extension points named for contributors
-- [ ] A "how to add a tool" walkthrough
+- [x] Daemon/shell split explained, including why the session owns the loop
+- [x] Protocol documented
+- [x] Extension points named for contributors
+- [x] A "how to add a tool" walkthrough
+
+**Done (2026-08-17).** `docs/architecture.md`, checked by
+`core/tests/test_docs_architecture_guide.py` in the same spirit as TD-1502 and TD-1503: nothing
+in the guide is taken on trust.
+
+Both protocol tables are compared against `ClientMessageT` and `DaemonEventT` in both
+directions, so an undocumented message and a documented-but-deleted one both fail the suite —
+verified by adding a real message to the union and watching it go red. The per-row metadata is
+derived too: whether a client message carries `session_id`, and whether an event's `seq` is
+session- or connection-scoped, are read off the models rather than typed by hand. The session
+state machine is compared against `Session.VALID_TRANSITIONS`, every named extension seam is
+resolved through a real import at the path the guide gives for it, and the "how to add a tool"
+walkthrough is executed — its blocks are run against a real registry and a real `ToolDispatcher`
+and the output is compared with the result the guide promises. Six deliberate mutations of the
+doc were each caught by exactly one test.
+
+Ownership (prime directive §2.5) gets both treatments: the guide quotes `SessionRunner`'s own
+docstring verbatim so rewording the guarantee in the code fails here, and
+`test_a_session_outlives_its_viewer` proves it end to end — real daemon, real socket, attach,
+drop the socket, assert the runner still runs and the event log still accepts events.
+
+Two product defects found while documenting and filed rather than fixed: TD-208
+(`parse_daemon_event` rejects `rule_activated`) and TD-607 (`dispatch_many` reorders a mixed
+batch). Two documentation-vs-code divergences were corrected in the guide rather than filed,
+because in both cases the code is right and the older prose is wrong: AGENTS.md §6 lists the OS
+keychain among the Rust host's jobs, but there is no keychain code in `shell/` at all — it is
+`core/tstd/keychain.py`; and `ready` is a declared, parseable `DaemonEventT` member that no code
+in `core/tstd` ever constructs, so it is documented as declared-but-not-emitted and clients are
+told not to wait for it.
+
+The TD-208 note in §3 is pinned by a test that asserts the gap is still there, so the note has
+to come out with the fix rather than outliving it.
 
 ---
 
