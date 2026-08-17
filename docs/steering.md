@@ -312,7 +312,7 @@ Patterns are matched against workspace-relative paths.
 | Pattern | Matches | Does not match |
 |---|---|---|
 | `*.py` | `src/deep/thing.py` | `src/thing.pyi` |
-| `Dockerfile` | `Dockerfile`, `infra/Dockerfile`, **`MyDockerfile`** | `Dockerfile.dev` |
+| `Dockerfile` | `Dockerfile`, `infra/Dockerfile` | `MyDockerfile`, `Dockerfile.dev` |
 | `src/api/*` | `src/api/routes.py` | `src/api/v1/routes.py` |
 | `src/api/**` | `src/api/routes.py`, `src/api/v1/routes.py` | `src/api` itself |
 | `ui/**/*.svelte` | `ui/App.svelte`, `ui/src/App.svelte` | `src/App.svelte` |
@@ -322,8 +322,9 @@ A pattern with **no** `/` matches at any depth, the way `.gitignore` does. A pat
 is matched against the whole relative path, where `*` stops at a separator and `**` crosses
 them. `?` and `[abc]` / `[!abc]` character classes work too.
 
-Note the bolded row. A bare name is matched as a **suffix**, not as a whole basename, so it
-also matches filenames that merely *end* with it — `config.py` catches `oldconfig.py`:
+A bare name matches the **whole basename**, not a suffix of it, so a longer filename that
+merely *ends* with the pattern does not activate the rule. `config.py` does not catch
+`oldconfig.py`:
 
 <!-- verify: example basename-suffix -->
 <!-- verify: file .tst/rules/config.md -->
@@ -341,13 +342,25 @@ src/oldconfig.py
 
 <!-- verify: stack -->
 ```
+.tst/rules/config.md    (rules) [scoped inactive]
+```
+
+Touch the file it actually names and it activates, at any depth:
+
+<!-- verify: touched -->
+```
+pkg/config.py
+```
+
+<!-- verify: stack -->
+```
 .tst/rules/config.md    (rules) [scoped]
 ```
 
-Until that is fixed (§10) there is no bare-name form that anchors — `**/config.py` compiles to
-the identical pattern. Write the path you actually mean (`src/config.py`), or accept the wider
-net. Over-matching activates a rule you did not intend rather than dropping one you did, so it
-costs you tokens, not correctness.
+`config.py` and `**/config.py` are synonyms — both mean "a file named `config.py`, anywhere in
+the tree" — so the bare name is already the anchored spelling and there is nothing longer to
+write for the strict match. To narrow it further, name the directory: `src/config.py` matches
+only there, because a pattern containing a `/` is matched against the whole relative path.
 
 ### Three ways a rule quietly fails to scope
 
@@ -870,14 +883,13 @@ serving both tools indefinitely.
 ## 10. Sharp edges
 
 Writing this guide against the running assembler surfaced three places where the behaviour is
-not what an author would predict. One has since been fixed and the example above now
-demonstrates the corrected behaviour; the rest are reported as defects, are not worked around
-here, and every one of them is demonstrated by a live example above rather than asserted.
+not what an author would predict. Two have since been fixed and the examples above now
+demonstrate the corrected behaviour; the one that remains is reported as a defect, is not
+worked around here, and is demonstrated by a live example above rather than asserted.
 
-- **A bare-name `appliesTo` pattern matches a filename suffix, not a basename.** `config.py`
-  activates on `oldconfig.py`, and `**/config.py` compiles to the same thing, so there is no
-  anchored spelling. See §4. The direction of the error is safe — a rule loads when it need
-  not have — but a scoped rule can be quietly wider than its name suggests.
+- **A bare-name `appliesTo` pattern matches a filename suffix, not a basename.** *Fixed.*
+  `config.py` no longer activates on `oldconfig.py` — a pattern with no `/` is anchored at the
+  whole basename, and `**/config.py` means the same thing. See §4.
 - **`appliesTo` outside `.tst/rules/` is neither honoured nor stripped.** *Fixed.* Frontmatter
   is stripped at every level now, so nothing reaches the model. It is still not honoured
   outside `.tst/rules/` — that half is deliberate, and flagged rather than silent. See §4.

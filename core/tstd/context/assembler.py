@@ -339,18 +339,30 @@ def _glob_to_re(pattern: str) -> re.Pattern[str]:
     Supports ``*`` (any chars except ``/``), ``**`` (any chars including
     ``/``), ``?`` (single char except ``/``), and ``[seq]`` / ``[!seq]``
     character classes.
+
+    ``**/`` is translated as a unit to ``(?:.*/)?`` — zero or more whole
+    path segments — rather than as ``**`` with the separator dropped.
+    That distinction is what anchors the rest of the pattern to a segment
+    boundary: ``.*config\\.py`` matches ``oldconfig.py``, while
+    ``(?:.*/)?config\\.py`` does not (TD-511).
     """
     regex_parts: list[str] = []
     i = 0
     while i < len(pattern):
         c = pattern[i]
         if c == "*" and i + 1 < len(pattern) and pattern[i + 1] == "*":
-            # ** — match everything including path separators.
-            regex_parts.append(".*")
             i += 2
-            # Skip the trailing / that often follows **
             if i < len(pattern) and pattern[i] == "/":
+                # `**/` spans whole segments or none at all.  Consuming
+                # the separator into the group is what anchors whatever
+                # follows to a segment boundary — translating `**` alone
+                # and dropping the `/` let `**/config.py` match
+                # `oldconfig.py` (TD-511).
+                regex_parts.append("(?:.*/)?")
                 i += 1
+            else:
+                # A trailing `**` takes everything below it.
+                regex_parts.append(".*")
         elif c == "*":
             regex_parts.append("[^/]*")
             i += 1
@@ -405,7 +417,10 @@ def _any_path_matches(paths: set[str], patterns: tuple[str, ...]) -> bool:
 def _path_matches_glob(path: str, pattern: str) -> bool:
     """Check if a single *path* matches a single *pattern*.
 
-    Patterns without ``/`` are matched against the basename at any depth.
+    A pattern with no ``/`` is rewritten to ``**/<pattern>`` and so is
+    matched against the whole basename at any depth — ``config.py``
+    matches ``pkg/config.py`` but not ``oldconfig.py``.  The two
+    spellings are deliberately synonyms: both anchor.
     """
     if "/" not in pattern and pattern != "**":
         # Match at any depth — like .gitignore convention.
