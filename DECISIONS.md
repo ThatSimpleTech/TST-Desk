@@ -5274,3 +5274,65 @@ inventing a fact the daemon did not send.
 `bind` compares before it clears. A bind that emptied the pane without a full
 replay behind it would leave it blank for good, which is a worse defect than
 the one being fixed; the guard means no caller can cause it by calling twice.
+
+---
+
+## 2026-08-17 — TD-1813 (finish): the session-binding cut
+
+The first-token wait left `chat-store.ts` at 422 and TD-1009's `onBind` put it
+back to 431, so the ~400-line criterion needed a second cut. The commit that
+made the first one named this one: `switchSession` plus the `session_list`
+case.
+
+### 1. Cut along the pure/effectful line, not around `switchSession` (Class B)
+
+**Decision:** `session-binding.ts` holds two things. `chooseBoundSession
+(summaries, currentId)` is pure and returns `{action:"keep"|"unbind"|"bind"}`;
+`applyBind(state, ctx, sessionId, turnState)` is the teardown-and-attach that
+was `switchSession`'s body. The store's `session_list` case reads the choice
+and calls the effect; `switchSession` is a one-line forward.
+
+**Rationale:** `switchSession` on its own is a weak seam. It writes four state
+fields and calls into the queue, the wait and all three deps — extracting it
+alone hands the new module nearly the whole store and buys a line count, not a
+boundary. The rules are the part that keeps attracting defects (TD-1711's
+adopted tombstone, TD-1715's adopted archive, TD-1714's session-liveness read
+as turn evidence), and every one of them is decidable from the list and the
+bound id. Making that half pure puts the policy table under direct test with no
+transport in the way, which is where the 12 new cases live.
+
+### 2. The context is collaborators, not a state slice (Class B)
+
+**Decision:** `applyBind` takes the `ChatState` it mutates plus a `BindContext`
+of `{ queue, wait, deps }`, each narrowed with `Pick<>` to the calls a bind is
+allowed to make — `queue.clear`, `wait.end`, `deps.attach/detach/onBind`.
+
+**Rationale:** `first-token-wait.ts` takes a structural slice
+(`FirstTokenWaitState`) and `chat-queue.ts` takes `{ queued }`, because each
+owns a few fields and nothing else. Binding owns no fields: it resets most of
+the pane and its real dependencies are the store's other collaborators. So the
+shape differs, on the same principle — `ChatState` goes on declaring all its
+own fields, and no module inherits or re-declares them. The `Pick<>`s keep the
+house habit of narrow surfaces: a bind cannot grow a `deps.send` or a
+`queue.flushHead` without the signature saying so.
+
+The type import of `ChatState` and `ChatDeps` runs back to `chat-store.ts`. It
+is `import type`, erased at build, so there is no runtime cycle — and it keeps
+`ChatState` declared in exactly one place, which the alternative (a fourth
+structural slice, this one spanning `messages`) would not.
+
+### 3. `keep` carries the turn state it would stamp (Class A)
+
+The keep branch is not a no-op: a refresh may bring a newer turn state for the
+session already bound. Carrying it on the result keeps the TD-1714 rule — a
+summary's `running` is session-liveness and must never overwrite local turn
+evidence — inside the pure function with the rest of the policy, expressed as
+`turnState: null`. The store's remaining share is one guarded assignment.
+
+### 4. `isTerminal` moves with the policy that needs it (Class A)
+
+It was module-private in `chat-store.ts` and is now exported from
+`session-binding.ts`, which is where the liveness filter reads it; the store
+imports it back for the one other use, sealing an in-flight assistant message
+on a terminal `session_state`. One definition, and it sits with the rule that
+gives it its meaning.
