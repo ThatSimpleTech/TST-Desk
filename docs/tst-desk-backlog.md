@@ -680,6 +680,42 @@ control, not a convenience.
 - [x] `allowed_commands` allowlist enforced when configured, matching on the resolved binary
 
 ---
+### TD-606 — An empty `allowed_commands` refuses every command instead of allowing any
+**Size:** 2 · **Depends on:** TD-605
+
+**Acceptance criteria:**
+- [ ] A workspace with no `.tst/config.yaml` can run a shell command — the default is
+      unrestricted, matching the shipped template's own comment
+- [ ] An explicitly empty `allowed_commands: []` means whatever the documented semantics are
+      decided to be, and the template comment and the configuration reference agree with the
+      code — today they contradict it
+- [ ] A non-empty allowlist still restricts to exactly those binaries; the fix must not turn
+      the allowlist off
+- [ ] A test covers the daemon's own wiring, not just `ShellPolicy` constructed directly —
+      this defect lives in the wiring and every existing shell test bypasses it
+
+`ShellPolicy.allowed_commands` uses `None` as the unrestricted sentinel (`tools/shell.py`).
+`daemon.py:1179` passes `tuple(sess.boundary_config.boundary.allowed_commands)`, and
+`BoundaryConfig.allowed_commands` defaults to `[]` (`boundary_config.py:36`). `tuple([])` is
+`()`, which is not `None`, so the allowlist is present and empty and every command is refused:
+
+    'echo' (resolved to 'echo') is not in allowed_commands []
+
+Because `[]` is the default, this applies to any workspace without a `.tst/config.yaml` — which
+is the default state. The shipped template says the opposite at `boundary_config.py:107`:
+"Command allowlist for the shell tool; empty means any command."
+
+Found while writing TD-1503, and confirmed independently: the default loads as `[]`, and
+`tuple([]) is None` is `False`. The whole existing shell suite passes because it constructs
+`ShellPolicy` directly with either `None` or a populated list, so nothing exercises the path the
+daemon actually takes. That gap is the fourth criterion.
+
+Milestone note: this is an M1 product defect surfacing after M1 closed. It is filed in E6 rather
+than a testing epic because the product is wrong, not the test — but the missing coverage is
+what let it survive.
+
+---
+
 
 ## Epic E7 — Autonomy hooks
 
@@ -2629,11 +2665,11 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 46 | 145 |
+| M1 Headless core | E2–E9 | 47 | 147 |
 | M1.5 Local models | E18 | 10 | 25 |
 | M2 The window | E10–E12 | 16 | 52 |
 | M3 Shippable | E13–E17 | 40 | 117 |
-| **Total v0.1** | **18** | **119** | **354** |
+| **Total v0.1** | **18** | **120** | **356** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
