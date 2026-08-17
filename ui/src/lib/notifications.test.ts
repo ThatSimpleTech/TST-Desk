@@ -206,6 +206,18 @@ describe("notification routing", () => {
     expect(toasts[0].body).toBe(message);
   });
 
+  it("a refused Delete/Move becomes a toast, not a banner (TD-1715)", () => {
+    // Nothing is broken and no other work is blocked — the session is simply
+    // busy — so this must not raise a blocking banner.
+    const message =
+      "This session has a turn in flight, so it can't be deleted yet. Wait for the turn to finish or stop it first — archiving works either way and leaves the turn running.";
+    notifyEvent({ type: "error", code: "session_busy", message, session_id: "s1", seq: 3 } as DaemonEventUnion);
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe("That session is mid-turn");
+    expect(toasts[0].body).toBe(message);
+  });
+
   it("a locked keychain is a banner that names the retry path (TD-1105)", () => {
     notifyEvent({
       type: "error",

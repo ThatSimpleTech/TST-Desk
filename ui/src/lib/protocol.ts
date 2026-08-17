@@ -110,6 +110,31 @@ export interface NewSession extends ClientMessage {
   session_id: string;
 }
 
+/** File a session away, or restore it (TD-1715). Filing, never killing: an
+ *  archived session keeps its loop, its log, and any turn in flight. The
+ *  daemon answers with a refreshed session_list. */
+export interface ArchiveSession extends ClientMessage {
+  type: "archive_session";
+  session_id: string;
+  archived: boolean;
+}
+
+/** Destroy a session and its event log (TD-1715) — irreversible, so the rail
+ *  confirms first. Refused with `session_busy` while a turn is in flight. */
+export interface DeleteSession extends ClientMessage {
+  type: "delete_session";
+  session_id: string;
+}
+
+/** Move to project (TD-1715): reassign the session's workspace. The session
+ *  and its event log survive; the agent's cwd and boundary root change on the
+ *  next turn. Refused with `session_busy` while a turn is in flight. */
+export interface MoveSession extends ClientMessage {
+  type: "move_session";
+  session_id: string;
+  workspace_path: string;
+}
+
 // ── Onboarding (TD-1101 first-run wizard) ────────────────────────────
 
 export interface GetSetupState extends ClientMessage {
@@ -175,6 +200,9 @@ export type ClientMessageUnion =
   | Shutdown
   | ListSessions
   | NewSession
+  | ArchiveSession
+  | DeleteSession
+  | MoveSession
   | GetSetupState
   | SetApiKey
   | DeleteApiKey
@@ -383,6 +411,10 @@ export interface SessionSummary {
   created_at: string;
   updated_at: string;
   event_count: number;
+  /** Filed away by the user (TD-1715). The list stays complete — the rail,
+   *  the recents menu, and the pane's auto-bind all read one event — and this
+   *  is the flag "hidden from the default list" is rendered from. */
+  archived: boolean;
 }
 
 export interface SessionList extends DaemonEvent {

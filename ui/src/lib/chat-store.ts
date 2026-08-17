@@ -305,9 +305,12 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
             switchSession(null, null);
             return;
           }
-          // Keep the current session while the daemon still lists it; else
-          // bind the most recently updated one.
-          if (summaries.some((s) => s.session_id === state.sessionId)) {
+          // Keep the current session while the daemon still lists it *and*
+          // still files it under the default view; else bind the most
+          // recently updated one. Archiving the bound session (TD-1715) is
+          // therefore a rebind, not a pane left pointing at a filed-away
+          // conversation the rail no longer shows.
+          if (summaries.some((s) => s.session_id === state.sessionId && !s.archived)) {
             const current = summaries.find((s) => s.session_id === state.sessionId);
             // TD-1714: a summary's "running" is session-liveness, not turn
             // evidence — a refresh must never stamp it over the local state
@@ -321,7 +324,9 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           // a corpse — e.g. the post-restart auto-adopt of an interrupted
           // tombstone observed 2026-08-14. With nothing live, stay unbound:
           // the empty state points at the rail's New Session.
-          const live = summaries.filter((s) => !isTerminal(s.state));
+          // Archived sessions never win auto-bind (TD-1715): the user filed
+          // them away, so adopting one would undo that on the next refresh.
+          const live = summaries.filter((s) => !isTerminal(s.state) && !s.archived);
           if (live.length === 0) {
             switchSession(null, null);
             return;

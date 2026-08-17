@@ -10,24 +10,29 @@
 	// above, session history sectioned below with a count badge, and the
 	// account/settings row anchored bottom-left. The grouping rules are pure
 	// (../rail.ts) — this file only renders them.
+	//
+	// TD-1715 added the row lifecycle affordances and the archived shelf. The
+	// rows themselves moved to RailSessionRow, which owns a row's menu/confirm
+	// states; this file stayed the list.
 	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
 	import RailFunctions from './RailFunctions.svelte';
 	import RailAccount from './RailAccount.svelte';
+	import RailSessionRow from './RailSessionRow.svelte';
 	import { chat } from '../chat-store.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
-	import { railSections } from '../rail';
+	import { archivedToggle, emptyRowsCopy, railSections } from '../rail';
+	import { toggleArchivedView } from '../session-actions.svelte.js';
 	import {
 		sessions,
 		startSessions,
 		setFilter,
 		visibleRows,
+		shelfRowCount,
 		toggleCollapsed,
 		selectRow,
 		newSession,
 		stateTone,
-		rowTitle,
-		rowSubtitle,
 		ROW_STATE_LABELS,
 		type SessionRow,
 	} from '../sessions.svelte.js';
@@ -40,8 +45,13 @@
 
 	let rows = $derived(visibleRows());
 	// The history section badges what it actually lists, so the count can
-	// never disagree with the rows under it.
-	let history = $derived(railSections(rows.length)[1]);
+	// never disagree with the rows under it — and its heading names the shelf
+	// you are on, which is the only thing distinguishing the two.
+	let history = $derived(railSections(rows.length, sessions.showArchived)[1]);
+	let shelfToggle = $derived(archivedToggle(sessions.showArchived));
+	let emptyCopy = $derived(
+		emptyRowsCopy(sessions.showArchived, sessions.filter.trim() !== '', shelfRowCount() > 0)
+	);
 </script>
 
 <aside class="rail" class:collapsed={sessions.collapsed} aria-label="Sessions">
@@ -113,26 +123,27 @@
 			{#if history.badge !== null}
 				<span class="badge">{history.badge}</span>
 			{/if}
+			<button
+				class="shelf"
+				type="button"
+				title={shelfToggle.hint}
+				aria-label={shelfToggle.hint}
+				aria-pressed={sessions.showArchived}
+				onclick={toggleArchivedView}
+			>
+				<Icon name="archive" size={12} />
+				<span>{shelfToggle.label}</span>
+			</button>
 		</div>
-		<div class="list" role="list" aria-label="Sessions">
+		<div class="list" role="list" aria-label={history.label}>
 			{#each rows as row (row.sessionId)}
-				<button
-					class="row"
-					class:row-active={row.sessionId === chat.sessionId}
-					type="button"
-					aria-current={row.sessionId === chat.sessionId ? 'true' : undefined}
-					onclick={() => selectRow(row.sessionId)}
-				>
-					<span class="dot dot-{stateTone(row.state)}" aria-hidden="true"></span>
-					<span class="row-text">
-						<span class="row-title">{rowTitle(row)}</span>
-						<span class="row-sub">{rowSubtitle(row)} · {ROW_STATE_LABELS[row.state]}</span>
-					</span>
-				</button>
+				<RailSessionRow
+					{row}
+					active={row.sessionId === chat.sessionId}
+					onselect={() => selectRow(row.sessionId)}
+				/>
 			{:else}
-				<p class="empty">
-					{sessions.rows.length === 0 ? 'No sessions yet' : 'No matching sessions'}
-				</p>
+				<p class="empty">{emptyCopy}</p>
 			{/each}
 		</div>
 		<RailAccount />
@@ -188,6 +199,30 @@
 		border-radius: var(--radius-full);
 		padding: 0 var(--space-2);
 		line-height: var(--leading-relaxed);
+	}
+
+	/* Shelf toggle (TD-1715): the heading says where you are, this says where
+	   the click goes. Pushed right so it never crowds the count. */
+	.shelf {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		margin-left: auto;
+		border: none;
+		background: transparent;
+		border-radius: var(--radius-sm);
+		padding: 0 var(--space-1);
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
+		cursor: pointer;
+		line-height: var(--leading-relaxed);
+	}
+
+	.shelf:hover,
+	.shelf[aria-pressed='true'] {
+		color: var(--color-ink);
+		background: var(--color-lifted);
 	}
 
 	/* ── Header (expanded) ─────────────────────────────────────────── */
@@ -272,56 +307,6 @@
 		padding: var(--space-1) var(--space-2) var(--space-2);
 		display: flex;
 		flex-direction: column;
-	}
-
-	.row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		width: 100%;
-		text-align: left;
-		border: none;
-		border-left: 2px solid transparent;
-		background: transparent;
-		border-radius: var(--radius-sm);
-		padding: var(--space-1) var(--space-2);
-		cursor: pointer;
-		color: var(--color-ink);
-	}
-
-	.row:hover {
-		background: var(--color-lifted);
-	}
-
-	.row-active,
-	.row-active:hover {
-		background: var(--color-lifted);
-		border-left-color: var(--color-accent);
-	}
-
-	.row-text {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-		line-height: var(--leading-tight);
-	}
-
-	.row-title {
-		font-size: var(--text-sm);
-		font-weight: var(--weight-medium);
-		font-family: var(--font-mono);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.row-sub {
-		font-size: var(--text-xs);
-		font-family: var(--font-sans);
-		color: var(--color-ink-secondary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	.empty {

@@ -156,6 +156,16 @@ export function focusSession(
   pendingPath = null;
 }
 
+/** Follow a session that moved to another project (TD-1715).
+ *
+ *  Only the workspace changes — same session, same conversation — so this is
+ *  deliberately not `focusSession`, which resets the session-derived fields.
+ *  Ignored unless the store is actually following that session. */
+export function retargetWorkspace(sessionId: string, workspacePath: string): void {
+  if (session.sessionId !== sessionId) return;
+  session.workspacePath = workspacePath;
+}
+
 /** Pin a tier on the active session (a chip click). */
 export function setTier(tier: "brain" | "worker" | "validator"): void {
   if (session.sessionId === null) return;
