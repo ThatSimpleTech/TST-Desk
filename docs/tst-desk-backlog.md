@@ -1765,7 +1765,7 @@ product-semantics work the skips point at.
       test that cannot fail
 - [x] The existing `kill refused` escape hatch still short-circuits the assertion, so the
       macOS EPERM veto stays a skip rather than a failure
-- [ ] 30 consecutive full-suite runs on a loaded machine with no failure
+- [x] 30 consecutive full-suite runs on a loaded machine with no failure
 
 `tests/test_shell_tools.py::TestCancel::test_cancelled_error_path_kills_group` failed once
 during TD-1703 and then passed three consecutive runs in isolation. It is a timing race, not a
@@ -1785,6 +1785,18 @@ runs almost always beat the clock, which is why it looks intermittent.
 Note the sibling `test_cancel_during_spawn_kills_group` already comments that "the flake
 family above traced to this window" — the spawn race was fixed in the product, but this run
 kept the wall-clock assumption.
+
+**Hammer (2026-08-17):** 30 consecutive full-suite runs at `7db6320`, 0 failures — 1277 passed
+every time. Run wall-clock ranged 82s to 213s, a 2.6× spread, so the machine was genuinely under
+varying load: a run taking 2.6× the baseline is exactly the condition the old 0.3s/2.5s
+arithmetic lost to, and the condition-waiting version did not notice.
+
+Two process notes. Runs 24+ were once recorded against a worktree that had been switched to
+another branch mid-hammer; those results were discarded, not kept. The script now pins the
+expected HEAD and refuses to record a run if the worktree moves, so the invariant is checked
+rather than remembered. "Loaded" is only partly satisfied: the load was the suite's own
+concurrency plus whatever else the machine was doing, not synthetic contention.
+
 
 ---
 
