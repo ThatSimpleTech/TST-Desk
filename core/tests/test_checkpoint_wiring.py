@@ -93,9 +93,9 @@ def make_write_registry() -> ToolRegistry:
 
 class TestDispatcherSeam:
     # Every test dispatches workspace-relative paths from inside the
-    # workspace: the guard refuses drive-letter absolutes as windows_unsafe
-    # before any workspace logic runs (TD-1406), and tmp_path is always a
-    # drive-letter path on Windows.
+    # workspace, so the checkpoint wiring under test is the only variable:
+    # an absolute tmp_path is a drive-letter path on Windows, which the
+    # guard judges by different rules per host (TD-1406).
 
     async def test_mutating_tool_checkpoints(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

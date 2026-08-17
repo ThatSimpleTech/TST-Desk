@@ -51,18 +51,29 @@ class TestPortFile:
             assert pf.exists()
             assert pf == data_dir / "port.json"
 
-    @pytest.mark.skipif(
-        sys.platform == "win32",
-        reason="TD-1406: Windows has no POSIX mode bits — os.chmod only toggles "
-        "the read-only flag, so 0o600 is a no-op (ACL hardening is a separate story)",
-    )
     def test_write_port_file_restricted_mode(self) -> None:
+        """0o600 on POSIX; on Windows the chmod is a no-op, by decision.
+
+        The port file carries the daemon's auth token, so this is the
+        sharper of the two permission stories — and the answer is still
+        the containing directory.  ``%LOCALAPPDATA%`` grants Full to the
+        user, SYSTEM and Administrators only; an ``icacls`` call on every
+        port-file write would restate that at the cost of a subprocess.
+        Asserted rather than skipped so the no-op is on the record — see
+        ``docs/windows.md``.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp)
             pf = write_port_file(data_dir, 9999, "test-token")
-            # Check mode is 0o600 (owner read/write only)
             mode = pf.stat().st_mode & 0o777
-            assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+            if sys.platform == "win32":
+                # os.chmod can only toggle the read-only attribute, and
+                # 0o600 carries a write bit, so the file stays writable
+                # and stat reports the Windows default.
+                assert mode == 0o666, f"expected the Windows no-op 0o666, got {oct(mode)}"
+                assert json.loads(pf.read_text())["token"] == "test-token"
+            else:
+                assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
 
     def test_write_port_file_contains_correct_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

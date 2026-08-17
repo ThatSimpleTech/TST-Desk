@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import sqlite3
+import sys
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -170,10 +171,9 @@ def test_symlinked_parent_dir_escape_refused(
 
 
 WINDOWS_VECTORS = [
-    "C:\\Windows\\system.ini",  # drive absolute
     "C:relative.txt",  # drive relative
     "\\\\server\\share\\file.txt",  # UNC
-    "PROGRA~1.txt",  # 8.3 short name
+    "PROGRA~1.txt",  # 8.3 short name, naming nothing that can expand
     "notes.txt:hidden",  # alternate data stream
 ]
 
@@ -186,6 +186,23 @@ def test_windows_unsafe_refused_on_every_platform(ws: Path, vector: str) -> None
         with pytest.raises(RefusalError) as excinfo:
             check(vector)
         assert excinfo.value.code == "windows_unsafe"
+
+
+def test_drive_absolute_outside_workspace_refused(ws: Path) -> None:
+    """Drive-absolute paths are refused everywhere — for different reasons.
+
+    TD-1406 made the drive-absolute form legal on Windows, where it is the
+    only way to write an absolute path; it then faces the workspace wall
+    like any other absolute path.  Off Windows it stays a form refusal,
+    because no POSIX host can resolve a drive letter.  Either way the
+    system32 path does not get written.
+    """
+    g = guard(ws)
+    expected = "outside_workspace" if sys.platform == "win32" else "windows_unsafe"
+    for check in (g.check_read, g.check_write):
+        with pytest.raises(RefusalError) as excinfo:
+            check("C:\\Windows\\system.ini")
+        assert excinfo.value.code == expected
 
 
 def test_percent_encoded_traversal_is_inert(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:

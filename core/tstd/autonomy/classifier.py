@@ -242,6 +242,12 @@ def _rule_unsafe_path(req: DecisionRequest, boundary: Boundary) -> bool:
     Drive-relative/absolute, UNC, 8.3 short names, and alternate data
     streams are refused fail-closed by the guard; the classifier mirrors
     that so the audit event carries C for these refusals too.
+
+    No canonical form is passed: the rule runs on every classification and
+    the cheap string checks short-circuit ahead of the 8.3 rule, so a UNC
+    path is judged without asking the OS to resolve ``\\\\server\\share``
+    first.  Windows still expands short names there — ``windows_unsafe_reason``
+    resolves for itself when it reaches that rule (TD-1406).
     """
     from ..tools.boundary import windows_unsafe_reason  # local import: no cycle
 

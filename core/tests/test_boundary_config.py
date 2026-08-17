@@ -161,10 +161,9 @@ class TestLoopWiring:
         ws = tmp_path
         # Feed a workspace-relative path from inside the workspace: the
         # loop parses tool arguments as JSON (an absolute tmp_path has
-        # backslashes on Windows — invalid JSON), and the guard refuses
-        # drive-letter absolutes as windows_unsafe before any writable
-        # logic runs (TD-1406).  Relative input pins the C refusal on
-        # every platform.
+        # backslashes on Windows — invalid JSON), and a drive-letter path
+        # is judged by different guard rules per host (TD-1406).  Relative
+        # input pins the C refusal on every platform.
         monkeypatch.chdir(ws)
         session = Session(str(ws))
         session.boundary_config = BoundaryConfig(
