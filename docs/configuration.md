@@ -248,7 +248,7 @@ Four top-level sections live here, each read by a different part of the daemon: 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `writable_paths` | list of glob strings | `["**"]` | Workspace-relative globs the agent may **write** to. A write outside them is refused as `outside_writable_paths` and classified Class C. |
-| `allowed_commands` | list of strings | `[]` | Allowlist for the shell tool, matched on the basename of the resolved binary. **See the gap in §4.5 before relying on the default.** |
+| `allowed_commands` | list of strings | `[]` | Allowlist for the shell tool, matched on the basename of the resolved binary. **Empty or omitted means any command** — the list narrows a path the classifier and approval gate already guard (TD-606). |
 | `network` | `deny` or a list of hosts | `deny` | Hosts the agent may reach. Any other string is a load error. Declarative in v0.1 — see §4.5. |
 
 **Glob semantics for `writable_paths`.** Patterns are relative to the workspace root, and the
@@ -329,13 +329,13 @@ external import in the UI appends to it.
 Documenting this file surfaced two places where the shipped comments promise more than the code
 delivers. Both are reported as defects; neither is fixed here.
 
-- **`allowed_commands: []` refuses every command, it does not allow every command.** The
-  shipped template says "empty means any command". It does not: the daemon passes the empty
-  list through to the shell tool as a configured-but-empty allowlist, and `echo` is rejected
-  with `'echo' (resolved to 'echo') is not in allowed_commands []`. Because the empty list is
-  also the default, this applies to a workspace with no `.tst/config.yaml` at all. Until it is
-  fixed, treat this key as: name every binary you need, and expect the shell tool to be unusable
-  if you do not.
+- ~~**`allowed_commands: []` refuses every command.**~~ **Fixed in TD-606.** The daemon passed
+  the empty list to the shell tool as a configured-but-empty allowlist, so `echo` was rejected
+  with `'echo' (resolved to 'echo') is not in allowed_commands []` — in any workspace with no
+  `.tst/config.yaml`, which is the default state. Empty now means what the template always said
+  it meant: any command. The allowlist narrows a path that is already guarded, since no rule in
+  the classifier's table matches on tool name, so a shell call defaults to class B and the user
+  answers for it.
 - **`network` is declared but not enforced.** No tool that ships in v0.1 reaches the network, so
   the host allowlist has nothing to gate; it is carried into the boundary display and the
   classifier, and nothing rejects a host today. `deny` does not stop `curl` — shell egress is
