@@ -858,7 +858,7 @@ describe("empty queue chrome", () => {
   });
 
   it("shows the strip as soon as one message is queued", () => {
-    expect(showQueue([{ id: "q1", text: "later" }])).toBe(true);
+    expect(showQueue([{ id: "q1", text: "later", attachments: [] }])).toBe(true);
   });
 
   it("gives every queued row a send-now and a remove control", () => {
@@ -964,5 +964,108 @@ describe("archived sessions never win auto-bind (TD-1715)", () => {
     store.applyEvent(sessionList([{ id: "mover", updated: "2026-08-14T11:30:00Z", state: "idle" }]));
     expect(state.sessionId).toBe("mover");
     expect(detached).toEqual([]);
+  });
+});
+
+// ── Attachments (TD-1709) ─────────────────────────────────────────────
+//
+// The store's share of the story: attachments ride the same `user_message`
+// they were composed with, they wait with a queued row rather than being
+// dropped at the queue, and the sent row keeps chips rather than bytes.
+// Whether a given file is *allowed* is decided in attachments.ts and, for
+// real, in the daemon — none of that is re-litigated here.
+
+function file(name: string, size = 4): { name: string; size: number; content_b64: string } {
+  return { name, size, content_b64: "eA==" };
+}
+
+describe("attachments", () => {
+  it("sends attachments on the user_message they were composed with", () => {
+    const { store, sent } = boundStore();
+    expect(store.sendUserMessage("look at this", [file("a.txt")])).toBe(true);
+    const msg = sent.find((m) => m.type === "user_message");
+    expect(msg).toEqual({
+      type: "user_message",
+      session_id: "s1",
+      content: "look at this",
+      attachments: [{ name: "a.txt", content_b64: "eA==" }],
+    });
+  });
+
+  it("omits the field entirely when there are no attachments", () => {
+    // Additive means an unchanged send is unchanged on the wire too, so the
+    // message a client without this feature builds is byte-identical.
+    const { store, sent } = boundStore();
+    store.sendUserMessage("plain");
+    const msg = sent.find((m) => m.type === "user_message");
+    expect(msg).toEqual({ type: "user_message", session_id: "s1", content: "plain" });
+  });
+
+  it("keeps chips, not bytes, on the sent row", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("look", [file("a.txt", 12)]);
+    const row = state.messages[state.messages.length - 1];
+    expect(row.role).toBe("user");
+    expect(row.attachments).toEqual([{ name: "a.txt", size: 12 }]);
+  });
+
+  it("leaves a plain message without an attachments field", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("plain");
+    expect(state.messages[state.messages.length - 1].attachments).toBeUndefined();
+  });
+
+  it("sends a message that is attachments and nothing else", () => {
+    const { store, sent } = boundStore();
+    expect(store.sendUserMessage("", [file("a.txt")])).toBe(true);
+    expect(sent.some((m) => m.type === "user_message")).toBe(true);
+  });
+
+  it("still refuses a message that is neither text nor files", () => {
+    const { store, sent } = boundStore();
+    expect(store.sendUserMessage("   ", [])).toBe(false);
+    expect(sent.some((m) => m.type === "user_message")).toBe(false);
+  });
+
+  it("attachments wait with a queued row instead of being dropped", () => {
+    const { store, state, sent } = boundStore();
+    store.applyEvent(delta("s1", "…"));  // a turn now owns the loop
+    store.sendUserMessage("later", [file("q.txt")]);
+    expect(sent.some((m) => m.type === "user_message")).toBe(false);
+    expect(state.queued[0].attachments).toEqual([file("q.txt")]);
+
+    store.applyEvent(turnComplete("s1"));
+    const msg = sent.find((m) => m.type === "user_message");
+    expect(msg).toMatchObject({ content: "later", attachments: [{ name: "q.txt", content_b64: "eA==" }] });
+  });
+
+  it("send-now carries the row's files too", () => {
+    const { store, state, sent } = boundStore();
+    store.applyEvent(delta("s1", "…"));
+    store.sendUserMessage("steer", [file("s.txt")]);
+    store.sendQueuedNow(state.queued[0].id);
+    const msg = sent.find((m) => m.type === "user_message");
+    expect(msg).toMatchObject({ attachments: [{ name: "s.txt", content_b64: "eA==" }] });
+  });
+
+  it("refuses to retry a message that carried files", () => {
+    // The row keeps chips, not bytes: a silent resend without the files
+    // would be a different message wearing the same label.
+    const { store, sent } = boundStore();
+    store.sendUserMessage("look", [file("a.txt")]);
+    store.applyEvent(delta("s1", "hi"));
+    store.applyEvent(turnComplete("s1"));
+    const before = sent.filter((m) => m.type === "user_message").length;
+    expect(store.retryLastUserMessage()).toBe(false);
+    expect(sent.filter((m) => m.type === "user_message").length).toBe(before);
+  });
+
+  it("still retries a message that carried none", () => {
+    const { store, sent } = boundStore();
+    store.sendUserMessage("plain");
+    store.applyEvent(delta("s1", "hi"));
+    store.applyEvent(turnComplete("s1"));
+    expect(store.retryLastUserMessage()).toBe(true);
+    expect(sent.filter((m) => m.type === "user_message").length).toBe(2);
   });
 });

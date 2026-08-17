@@ -6,6 +6,7 @@
 // the picker/set-tier actions it sends back.
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { DEFAULT_ATTACHMENT_LIMITS } from "./attachments";
 import type { ProtocolClient } from "./client";
 import {
   session,
@@ -160,5 +161,57 @@ describe("workspaceName", () => {
     expect(workspaceName("/Users/me/project")).toBe("project");
     expect(workspaceName("C:\\work\\repo")).toBe("repo");
     expect(workspaceName("/")).toBe("/");
+  });
+});
+
+// ── Attachment caps (TD-1709) ─────────────────────────────────────────
+
+describe("attachment limits", () => {
+  it("starts on the shipped defaults so the composer can judge a drop", () => {
+    resetSession();
+    expect(session.attachmentLimits).toEqual(DEFAULT_ATTACHMENT_LIMITS);
+  });
+
+  it("takes the workspace's caps off boundary_update", () => {
+    resetSession();
+    ingestEvent({ type: "session_state", session_id: "s1", state: "idle", seq: 1 });
+    ingestEvent({
+      type: "boundary_update",
+      session_id: "s1",
+      seq: 2,
+      writable_paths: ["**"],
+      allowed_commands: [],
+      network: "deny",
+      spend_usd: 25,
+      wall_clock_hours: 8,
+      max_iterations: 200,
+      source: "defaults",
+      attachments: { max_file_bytes: 1024, max_total_bytes: 2048, max_count: 2 },
+    });
+    expect(session.attachmentLimits).toEqual({
+      max_file_bytes: 1024,
+      max_total_bytes: 2048,
+      max_count: 2,
+    });
+  });
+
+  it("keeps the last known caps when a daemon omits them", () => {
+    // An older daemon sends no `attachments`; standing the composer's early
+    // refusal down to nothing would be worse than a slightly stale number.
+    resetSession();
+    ingestEvent({ type: "session_state", session_id: "s1", state: "idle", seq: 1 });
+    ingestEvent({
+      type: "boundary_update",
+      session_id: "s1",
+      seq: 2,
+      writable_paths: ["**"],
+      allowed_commands: [],
+      network: "deny",
+      spend_usd: 25,
+      wall_clock_hours: 8,
+      max_iterations: 200,
+      source: "defaults",
+    });
+    expect(session.attachmentLimits).toEqual(DEFAULT_ATTACHMENT_LIMITS);
   });
 });

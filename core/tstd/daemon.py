@@ -23,6 +23,7 @@ from typing import Any, Literal, cast
 
 import websockets.exceptions
 
+from .attachments import AttachmentError, decode_attachments, render_user_content
 from .audit import AuditStore
 from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
 from .audit_writer import AuditWriter
@@ -890,13 +891,35 @@ class Daemon:
                     "the message was not delivered. Start a new session and resend it.",
                     session_id=msg.session_id,
                 )
-            await found.add_user_message(msg.content)
+            # Attachment caps and the text/binary test are enforced here
+            # (TD-1709), not in the composer: the client is not trustworthy,
+            # so a UI-only gate is no gate at all. A refusal drops the whole
+            # message — the copy says so — rather than delivering a turn the
+            # user believes carried files it did not.
+            try:
+                decoded = decode_attachments(msg.attachments, found.boundary_config.attachments)
+            except AttachmentError as e:
+                log.info(
+                    "attachment refused",
+                    extra={
+                        "extra_fields": {
+                            "session_id": msg.session_id,
+                            "code": e.code,
+                            "attachment_count": len(msg.attachments),
+                        }
+                    },
+                )
+                return build_error(e.code, e.message, session_id=msg.session_id)
+
+            await found.add_user_message(render_user_content(msg.content, decoded))
             log.info(
                 "user message enqueued",
                 extra={
                     "extra_fields": {
                         "session_id": msg.session_id,
                         "content_length": len(msg.content),
+                        "attachment_count": len(decoded),
+                        "attachment_bytes": sum(a.size for a in decoded),
                     }
                 },
             )
@@ -946,6 +969,7 @@ class Daemon:
                     wall_clock_hours=cfg.caps.wall_clock_hours,
                     max_iterations=cfg.caps.max_iterations,
                     source="resume",
+                    attachments=cfg.attachments,
                     seq=1,
                 )
             )
@@ -1331,6 +1355,7 @@ class Daemon:
                 wall_clock_hours=cfg.caps.wall_clock_hours,
                 max_iterations=cfg.caps.max_iterations,
                 source=source,
+                attachments=cfg.attachments,
                 seq=1,
             )
         )

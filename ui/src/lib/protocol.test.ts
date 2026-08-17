@@ -61,6 +61,7 @@ import type {
   UsageExported,
   Ping,
   Error,
+  Attachment,
 } from "./protocol";
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -387,6 +388,34 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const ov = fixtures.tier_state_override as TierState;
     expect(ov.tier).toBe("validator");
     expect(ov.override).toBe("validator");
+  });
+
+  it("boundary_update carries the attachment caps (TD-1709)", () => {
+    // The composer refuses an oversize file against these, so a drift here
+    // means the early refusal disagrees with the daemon's real answer.
+    const m = fixtures.boundary_update as BoundaryUpdate;
+    expect(m.attachments).toBeDefined();
+    expect(isNumber(m.attachments?.max_file_bytes)).toBe(true);
+    expect(isNumber(m.attachments?.max_total_bytes)).toBe(true);
+    expect(isNumber(m.attachments?.max_count)).toBe(true);
+  });
+
+  it("user_message carries attachments when there are any (TD-1709)", () => {
+    const plain = fixtures.user_message as UserMessage;
+    // The fixture is a Pydantic dump, so the default materialises as `[]`.
+    // The client omits the key instead; both parse, which is what makes the
+    // field additive rather than a version bump.
+    expect(plain.attachments).toEqual([]);
+
+    const withFiles = fixtures.user_message_attachments as UserMessage;
+    expect(withFiles.type).toBe("user_message");
+    expect(Array.isArray(withFiles.attachments)).toBe(true);
+    const first = withFiles.attachments?.[0] as Attachment;
+    expect(isString(first.name)).toBe(true);
+    // base64, because the daemon decides whether the bytes are text.
+    expect(atob(first.content_b64)).toBe("# Title\n");
+    // An empty file is legal text and encodes to an empty string.
+    expect((withFiles.attachments?.[1] as Attachment).content_b64).toBe("");
   });
 
   it("boundary_update", () => {

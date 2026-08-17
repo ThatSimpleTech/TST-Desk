@@ -8,8 +8,11 @@
 	// copy the markdown source, retry (resend the last user message), and the
 	// message timestamp. The bar also surfaces on focus-within so the buttons
 	// are keyboard-reachable with visible focus.
+	//
+	// A user row that carried attachments shows them as chips (TD-1709).
 	import type { ChatMessage } from "../../chat-store";
 	import Icon from "../Icon.svelte";
+	import AttachmentChips from "./AttachmentChips.svelte";
 	import Markdown from "./Markdown.svelte";
 
 	let {
@@ -89,7 +92,14 @@
 		</div>
 	{:else}
 		<div class="bubble">
-			<p class="user-text">{message.text}</p>
+			{#if message.text !== ""}<p class="user-text">{message.text}</p>{/if}
+			{#if message.attachments !== undefined}
+				<!-- TD-1709: the row shows what went with it. No remove control —
+				     a message already sent cannot lose a file it carried. -->
+				<div class="sent-attachments">
+					<AttachmentChips chips={message.attachments} label="Files sent with this message" />
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -181,6 +191,12 @@
 	.user-text {
 		white-space: pre-wrap;
 		word-break: break-word;
+	}
+
+	/* Only spaced when there is text above it — an attachment-only message
+	   should not open with a gap. */
+	.user-text + .sent-attachments {
+		margin-top: var(--space-2);
 	}
 
 	.cursor {

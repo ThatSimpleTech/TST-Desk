@@ -11,7 +11,23 @@
   "user_message": {
     "type": "user_message",
     "session_id": "sess-1",
-    "content": "hello world"
+    "content": "hello world",
+    "attachments": []
+  },
+  "user_message_attachments": {
+    "type": "user_message",
+    "session_id": "sess-1",
+    "content": "what does this do?",
+    "attachments": [
+      {
+        "name": "notes.md",
+        "content_b64": "IyBUaXRsZQo="
+      },
+      {
+        "name": "empty.txt",
+        "content_b64": ""
+      }
+    ]
   },
   "approve": {
     "type": "approve",
@@ -283,7 +299,12 @@
     "spend_usd": 25.0,
     "wall_clock_hours": 8.0,
     "max_iterations": 200,
-    "source": "defaults"
+    "source": "defaults",
+    "attachments": {
+      "max_file_bytes": 256000,
+      "max_total_bytes": 512000,
+      "max_count": 10
+    }
   },
   "turn_complete": {
     "type": "turn_complete",

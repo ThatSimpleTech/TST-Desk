@@ -12,6 +12,7 @@ import {
   onResume,
   sendToDaemon,
 } from "./connection-status.svelte.js";
+import type { NewAttachment } from "./attachments";
 import { createChatState, createChatStore, type ChatState } from "./chat-store";
 import type { SessionState } from "./protocol";
 
@@ -45,7 +46,10 @@ export function teardownChat(): void {
   store.dispose();
 }
 
-export const sendUserMessage: (text: string) => boolean = store.sendUserMessage;
+export const sendUserMessage: (
+  text: string,
+  attachments?: readonly NewAttachment[],
+) => boolean = store.sendUserMessage;
 export const retryLastUserMessage: () => boolean = store.retryLastUserMessage;
 export const cancelTurn: () => boolean = store.cancelTurn;
 /** Queue actions (TD-1704), bound for the queued-row controls. */
