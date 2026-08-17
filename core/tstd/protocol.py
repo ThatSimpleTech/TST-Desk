@@ -243,6 +243,48 @@ class NewSession(ClientMessage):
     session_id: str
 
 
+class ArchiveSession(ClientMessage):
+    """File a session away, or restore it (TD-1715).
+
+    Archiving is a filing action, never a kill: an archived session keeps
+    its loop, its event log, and any turn already in flight.  The daemon
+    answers with a refreshed ``session_list``.
+    """
+
+    type: Literal["archive_session"] = "archive_session"
+    session_id: str
+    archived: bool = True
+
+
+class DeleteSession(ClientMessage):
+    """Destroy a session and its event log (TD-1715).
+
+    Irreversible, so the client confirms first.  Refused while a turn is in
+    flight — the answer the user is waiting on would vanish mid-sentence.
+    The append-only audit log is untouched: it is the forensic record
+    (§2.2), not the session's history.  Answered with ``session_list``.
+    """
+
+    type: Literal["delete_session"] = "delete_session"
+    session_id: str
+
+
+class MoveSession(ClientMessage):
+    """Reassign a session to another workspace (TD-1715 move to project).
+
+    The session, its id, and its event log all survive — only the working
+    context moves, so the agent's cwd and boundary root change on the next
+    turn.  The daemon validates the target and re-resolves the boundary and
+    policy from it.  Refused while a turn is in flight, because the running
+    turn is already executing against the old root.  Answered with
+    ``session_list``.
+    """
+
+    type: Literal["move_session"] = "move_session"
+    session_id: str
+    workspace_path: str = Field(min_length=1)
+
+
 class GetSetupState(ClientMessage):
     """Request the onboarding setup state (TD-1101 first-run wizard).
 
@@ -664,6 +706,12 @@ class SessionSummary(BaseModel):
     created_at: str
     updated_at: str
     event_count: int = Field(ge=0)
+    # Filed away by the user (TD-1715). The list stays complete — one list
+    # keeps the rail, the recents menu, and the chat pane's auto-bind
+    # reading the same event — and this flag is what "hidden from the
+    # default list" is rendered from. Additive with a default, so a client
+    # that ignores it behaves exactly as it did.
+    archived: bool = False
 
 
 class SessionList(DaemonEvent):
@@ -785,6 +833,9 @@ ClientMessageT = Annotated[
     | Shutdown
     | ListSessions
     | NewSession
+    | ArchiveSession
+    | DeleteSession
+    | MoveSession
     | GetSetupState
     | SetApiKey
     | ValidateApiKey
@@ -846,6 +897,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "shutdown",
         "list_sessions",
         "new_session",
+        "archive_session",
+        "delete_session",
+        "move_session",
         "get_setup_state",
         "set_api_key",
         "validate_api_key",

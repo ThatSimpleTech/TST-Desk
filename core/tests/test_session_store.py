@@ -82,3 +82,82 @@ class TestSessionStore:
             (Path(tmp) / "sessions.json").write_text("{not valid json")
             store = SessionStore(Path(tmp))
             assert store.records() == []
+
+
+class TestLifecycleMetadata:
+    """Archive + move-to-project durability (TD-1715)."""
+
+    async def test_archived_flag_persists_across_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            assert await store.set_archived("s1", True) is True
+
+            reloaded = SessionStore(Path(tmp))
+            rec = reloaded.get("s1")
+            assert rec is not None
+            assert rec.archived is True
+
+    async def test_unarchive_persists_too(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            await store.set_archived("s1", True)
+            await store.set_archived("s1", False)
+            rec = SessionStore(Path(tmp)).get("s1")
+            assert rec is not None
+            assert rec.archived is False
+
+    async def test_a_state_refresh_does_not_unfile_a_session(self) -> None:
+        """A live session's state changes constantly; archiving must survive it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            await store.set_archived("s1", True)
+            await store.update_state("s1", "running")
+            await store.upsert("s1", "/ws", "complete")
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.archived is True
+
+    async def test_workspace_reassignment_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws/origin", "idle")
+            created = store.get("s1")
+            assert created is not None
+            created_at = created.created_at
+
+            assert await store.set_workspace("s1", "/ws/target") is True
+            rec = SessionStore(Path(tmp)).get("s1")
+            assert rec is not None
+            assert rec.workspace_path == "/ws/target"
+            # A move is not a new session: identity and birthday are kept.
+            assert rec.session_id == "s1"
+            assert rec.created_at == created_at
+
+    async def test_unknown_ids_report_rather_than_pretending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            assert await store.set_archived("nope", True) is False
+            assert await store.set_workspace("nope", "/ws") is False
+
+    async def test_a_store_written_before_this_field_still_loads(self) -> None:
+        """Older snapshots have no `archived` key; they must load, not drop."""
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "sessions.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "session_id": "s1",
+                            "workspace_path": "/ws",
+                            "state": "complete",
+                            "created_at": "2026-08-13T10:00:00Z",
+                            "updated_at": "2026-08-13T10:00:00Z",
+                        }
+                    ]
+                )
+            )
+            rec = SessionStore(Path(tmp)).get("s1")
+            assert rec is not None
+            assert rec.archived is False

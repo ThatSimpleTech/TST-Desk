@@ -13,6 +13,13 @@
 //
 // TD-1712 added the dispatcher for the rail's function entries. The entries
 // themselves — and which of them can be clicked — live in the pure rail.ts.
+//
+// TD-1715 added the archived shelf and the open/confirm state the row
+// affordances need. The commands those affordances send live in
+// session-actions.svelte.ts; what stays here is the list, the filter, and the
+// shelf split. One daemon list feeds both shelves — the daemon marks each row
+// `archived` and the filter decides which shelf it lands on, so the recents
+// menu and the chat pane keep reading the same complete event they always did.
 
 import {
 	onEvent,
@@ -21,7 +28,12 @@ import {
 	ws,
 } from "./connection-status.svelte.js";
 import { chat, selectSession as selectChatSession } from "./chat-store.svelte.js";
-import { focusSession, session, workspaceName } from "./session-status.svelte.js";
+import {
+	focusSession,
+	retargetWorkspace,
+	session,
+	workspaceName,
+} from "./session-status.svelte.js";
 import { toggleWorkspaceMenu } from "./workspaces.svelte.js";
 import { RAIL_FUNCTIONS, type RailSurface } from "./rail";
 import type { DaemonEventUnion, SessionSummary } from "./protocol";
@@ -35,12 +47,27 @@ export interface SessionRow {
 	state: SessionSummary["state"];
 	/** Daemon's updated_at — drives newest-first ordering. Never clocks locally. */
 	updatedAt: string;
+	/** Filed away (TD-1715). Daemon truth; the rail only decides which shelf
+	 *  it renders on. */
+	archived: boolean;
 }
 
 export const sessions = $state({
 	rows: [] as SessionRow[],
 	filter: "",
 	collapsed: false,
+	/** Which shelf the history section is showing (TD-1715). */
+	showArchived: false,
+	/** Row whose action menu is open; one at a time. */
+	menuFor: null as string | null,
+	/** Row whose Delete is awaiting confirmation — Delete is irreversible, so
+	 *  it never fires on the first click. */
+	confirmDeleteFor: null as string | null,
+	/** Row whose move-to-project picker is open. */
+	moveFor: null as string | null,
+	/** The daemon's refusal copy for the last lifecycle action, or null.
+	 *  Rendered in the rail so the answer lands where the click did. */
+	refusal: null as string | null,
 });
 
 // While an anchor id sits here, the first session_state that isn't the
@@ -82,6 +109,8 @@ export function resetSessions(): void {
 	sessions.rows = [];
 	sessions.filter = "";
 	sessions.collapsed = false;
+	sessions.showArchived = false;
+	closeRowMenus();
 }
 
 /** Ask the daemon for the authoritative list (answer: session_list). */
@@ -102,8 +131,26 @@ function reduce(event: DaemonEventUnion): void {
 				workspacePath: s.workspace_path,
 				state: s.state,
 				updatedAt: s.updated_at,
+				archived: s.archived,
 			}))
 			.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+		// A move re-homes the bound session without unbinding it (TD-1715),
+		// so the title bar's workspace has to follow the list rather than the
+		// attach it never re-ran.
+		const bound = sessions.rows.find((r) => r.sessionId === chat.sessionId);
+		if (bound !== undefined) retargetWorkspace(bound.sessionId, bound.workspacePath);
+		// Any list is an answer to something; a stale refusal outlives its click.
+		sessions.refusal = null;
+		closeRowMenus();
+		return;
+	}
+	// A refused lifecycle action (TD-1715): the daemon owns "is a turn in
+	// flight", so the copy it sends is the copy the rail shows — the UI never
+	// second-guesses it or invents its own reason.
+	if (event.type === "error" && event.code === "session_busy") {
+		sessions.refusal = event.message;
+		sessions.confirmDeleteFor = null;
+		sessions.moveFor = null;
 		return;
 	}
 	if (event.type !== "session_state") return;
@@ -140,16 +187,28 @@ function reduce(event: DaemonEventUnion): void {
 	}
 }
 
-/** The rendered rows: newest first, narrowed by the filter. Matches the
- *  session id and the workspace path (its basename included via the path). */
+/** The rendered rows: the current shelf, newest first, narrowed by the
+ *  filter. Matches the session id and the workspace path (its basename
+ *  included via the path).
+ *
+ *  The shelf split is why archived sessions are "hidden from the default
+ *  list" (TD-1715): one daemon list, one filter, two views — never a second
+ *  request whose scope the other stores would also have to reason about. */
 export function visibleRows(): SessionRow[] {
 	const needle = sessions.filter.trim().toLowerCase();
-	if (needle === "") return sessions.rows;
 	return sessions.rows.filter(
 		(r) =>
-			r.sessionId.toLowerCase().includes(needle) ||
-			r.workspacePath.toLowerCase().includes(needle),
+			r.archived === sessions.showArchived &&
+			(needle === "" ||
+				r.sessionId.toLowerCase().includes(needle) ||
+				r.workspacePath.toLowerCase().includes(needle)),
 	);
+}
+
+/** Rows on the shelf being shown, before the filter — tells "nothing here"
+ *  apart from "nothing matches". */
+export function shelfRowCount(): number {
+	return sessions.rows.filter((r) => r.archived === sessions.showArchived).length;
 }
 
 export function setFilter(value: string): void {
@@ -179,6 +238,16 @@ export function newSession(): boolean {
 	if (!sendToDaemon({ type: "new_session", session_id: anchor })) return false;
 	pendingNewAnchor = anchor;
 	return true;
+}
+
+/** Close whatever row affordance is open (TD-1715). Lives here rather than
+ *  with the actions themselves because the reducer above closes menus on
+ *  every refreshed list, and a store must not import from its own consumer. */
+export function closeRowMenus(): void {
+	sessions.menuFor = null;
+	sessions.confirmDeleteFor = null;
+	sessions.moveFor = null;
+	sessions.refusal = null;
 }
 
 export function toggleCollapsed(): void {

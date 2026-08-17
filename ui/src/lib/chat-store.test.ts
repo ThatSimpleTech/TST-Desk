@@ -49,7 +49,7 @@ function sessionState(sessionId: string, state: SessionState["state"]): DaemonEv
   return { type: "session_state", session_id: sessionId, state, seq: 3 };
 }
 
-type Summary = { id: string; updated: string; state?: SessionSummaryState };
+type Summary = { id: string; updated: string; state?: SessionSummaryState; archived?: boolean };
 type SessionSummaryState = "idle" | "running" | "awaiting_approval" | "complete" | "failed" | "cancelled" | "interrupted";
 
 function sessionList(summaries: Summary[]): DaemonEventUnion {
@@ -63,6 +63,7 @@ function sessionList(summaries: Summary[]): DaemonEventUnion {
       created_at: s.updated,
       updated_at: s.updated,
       event_count: 0,
+      archived: s.archived ?? false,
     })),
   };
 }
@@ -863,5 +864,105 @@ describe("empty queue chrome", () => {
   it("gives every queued row a send-now and a remove control", () => {
     expect(COMPONENT).toContain('aria-label="Send now"');
     expect(COMPONENT).toContain('aria-label="Remove from queue"');
+  });
+});
+
+describe("archived sessions never win auto-bind (TD-1715)", () => {
+  // Archiving is the user saying "not this one". Auto-bind adopting it on the
+  // next refresh would undo that silently, and the pane would sit on a
+  // conversation the rail no longer lists — a stranded composer by another
+  // route. The daemon marks every row; the binding rule reads the mark.
+  it("skips an archived session even when it is the newest live one", () => {
+    const { deps, attached } = fakeDeps();
+    const store = createChatStore(deps, createChatState());
+    store.applyEvent(
+      sessionList([
+        { id: "older-live", updated: "2026-08-14T09:00:00Z", state: "idle" },
+        { id: "newest-filed", updated: "2026-08-14T11:00:00Z", state: "idle", archived: true },
+      ]),
+    );
+    expect(store.state.sessionId).toBe("older-live");
+    expect(attached).toEqual(["older-live"]);
+  });
+
+  it("falls to the empty state when every live session is archived", () => {
+    const { deps, attached } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(
+      sessionList([
+        { id: "filed-a", updated: "2026-08-14T09:00:00Z", state: "idle", archived: true },
+        { id: "filed-b", updated: "2026-08-14T11:00:00Z", state: "running", archived: true },
+      ]),
+    );
+    expect(state.sessionId).toBeNull();
+    expect(state.turnState).toBeNull();
+    expect(attached).toEqual([]);
+  });
+
+  it("moves the pane off the bound session when it is archived", () => {
+    const { deps, attached, detached } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(
+      sessionList([
+        { id: "bound", updated: "2026-08-14T11:00:00Z", state: "idle" },
+        { id: "other", updated: "2026-08-14T10:00:00Z", state: "idle" },
+      ]),
+    );
+    expect(state.sessionId).toBe("bound");
+
+    store.applyEvent(
+      sessionList([
+        { id: "bound", updated: "2026-08-14T11:30:00Z", state: "idle", archived: true },
+        { id: "other", updated: "2026-08-14T10:00:00Z", state: "idle" },
+      ]),
+    );
+    expect(state.sessionId).toBe("other");
+    expect(detached).toContain("bound");
+    expect(attached).toEqual(["bound", "other"]);
+  });
+
+  it("empties the pane when the bound session is archived and nothing else is live", () => {
+    const { deps } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(sessionList([{ id: "only", updated: "2026-08-14T11:00:00Z", state: "idle" }]));
+    expect(state.sessionId).toBe("only");
+
+    store.applyEvent(
+      sessionList([
+        { id: "only", updated: "2026-08-14T11:30:00Z", state: "idle", archived: true },
+      ]),
+    );
+    expect(state.sessionId).toBeNull();
+    expect(state.messages).toEqual([]);
+  });
+
+  it("empties the pane when the bound session is deleted", () => {
+    // Delete removes the row entirely, so this is the existing "not listed"
+    // path — pinned here because it is the criterion, not an implementation
+    // detail that may be refactored away.
+    const { deps, detached } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(sessionList([{ id: "doomed", updated: "2026-08-14T11:00:00Z", state: "idle" }]));
+    expect(state.sessionId).toBe("doomed");
+
+    store.applyEvent(sessionList([]));
+    expect(state.sessionId).toBeNull();
+    expect(detached).toContain("doomed");
+  });
+
+  it("keeps the pane on a session that only moved project", () => {
+    // A move keeps the session listed and unarchived, so the conversation
+    // stays put — the composer is not stranded, it is re-homed.
+    const { deps, detached } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(sessionList([{ id: "mover", updated: "2026-08-14T11:00:00Z", state: "idle" }]));
+    store.applyEvent(sessionList([{ id: "mover", updated: "2026-08-14T11:30:00Z", state: "idle" }]));
+    expect(state.sessionId).toBe("mover");
+    expect(detached).toEqual([]);
   });
 });

@@ -13,12 +13,14 @@ from tstd.protocol import (
     AlwaysAllow,
     ApprovalRequest,
     Approve,
+    ArchiveSession,
     AssistantDelta,
     Attach,
     Cancel,
     CostUpdate,
     DaemonEvent,
     DecisionLogged,
+    DeleteSession,
     Deny,
     Detach,
     Error,
@@ -26,6 +28,7 @@ from tstd.protocol import (
     HandshakeError,
     Hello,
     ListPolicyRules,
+    MoveSession,
     NewSession,
     OpenWorkspace,
     PolicyRules,
@@ -170,6 +173,40 @@ class TestClientMessages:
         back = _roundtrip(msg)
         assert isinstance(back, NewSession)
         assert back.session_id == "sess-1"
+
+    # ── Session lifecycle (TD-1715) ─────────────────────────────────
+    #
+    # These go through `_roundtrip`, which calls `parse_client_message` —
+    # so each one also proves the type is in `_KNOWN_CLIENT_TYPES`. A
+    # message added to the union alone parses as "unknown_message", which
+    # is the failure mode this trio is most likely to hit.
+
+    def test_archive_session(self) -> None:
+        msg = ArchiveSession(session_id="sess-1")
+        back = _roundtrip(msg)
+        assert isinstance(back, ArchiveSession)
+        assert back.session_id == "sess-1"
+        # Archiving is the common case, so it is the default.
+        assert back.archived is True
+
+    def test_archive_session_restores_too(self) -> None:
+        back = _roundtrip(ArchiveSession(session_id="sess-1", archived=False))
+        assert isinstance(back, ArchiveSession)
+        assert back.archived is False
+
+    def test_delete_session(self) -> None:
+        back = _roundtrip(DeleteSession(session_id="sess-1"))
+        assert isinstance(back, DeleteSession)
+        assert back.session_id == "sess-1"
+
+    def test_move_session(self) -> None:
+        back = _roundtrip(MoveSession(session_id="sess-1", workspace_path="/ws/other"))
+        assert isinstance(back, MoveSession)
+        assert back.workspace_path == "/ws/other"
+
+    def test_move_session_rejects_an_empty_target(self) -> None:
+        with pytest.raises(ValidationError):
+            MoveSession(session_id="sess-1", workspace_path="")
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────

@@ -74,8 +74,14 @@ export function historyBadge(count: number): string | null {
 }
 
 /** The rail top to bottom: function entries grouped above, session history
- *  sectioned below. `historyCount` is the number of rows the rail will list. */
-export function railSections(historyCount: number): RailSection[] {
+ *  sectioned below. `historyCount` is the number of rows the rail will list.
+ *
+ *  `archivedView` swaps the history section to the archived shelf rather than
+ *  adding a second section: archived sessions are the same rows filed
+ *  elsewhere, and two live lists in a 260px column would compete for the same
+ *  scroll. The heading is the only thing that tells you which you are in, so
+ *  it has to change (TD-1715). */
+export function railSections(historyCount: number, archivedView = false): RailSection[] {
 	return [
 		{
 			id: "functions",
@@ -86,12 +92,97 @@ export function railSections(historyCount: number): RailSection[] {
 		},
 		{
 			id: "history",
-			label: "History",
+			label: archivedView ? "Archived" : "History",
 			heading: true,
 			badge: historyBadge(historyCount),
 			entries: [],
 		},
 	];
+}
+
+// ── Row lifecycle actions (TD-1715) ────────────────────────────────────
+
+export type RailRowActionId = "archive" | "unarchive" | "move" | "delete";
+
+export interface RailRowAction {
+	id: RailRowActionId;
+	label: string;
+	icon: IconName;
+	/** Irreversible: rendered in the danger tone and confirmed before firing. */
+	danger: boolean;
+	/** Hover/assistive text — says what the action costs, not what it is. */
+	hint: string;
+}
+
+/** Copy for Move, stated wherever Move is offered.
+ *
+ *  The backlog is explicit that this must say so plainly: reassigning the
+ *  workspace moves the agent's working context, not just a label in a list. */
+export const MOVE_HINT =
+	"Reassign this session to another project. The agent's working directory " +
+	"and boundary root change on the next turn; the conversation moves with it.";
+
+/** Copy for Delete's confirm step.
+ *
+ *  Names exactly what is destroyed and what is not, because "delete" in a
+ *  session list could plausibly mean either. */
+export const DELETE_CONFIRM =
+	"Delete this session and its event log? The conversation can't be " +
+	"recovered. Archive instead to hide it and keep it.";
+
+/** The actions a row offers, given whether it is filed away.
+ *
+ *  Archive and Unarchive are one slot, never both: a row is in exactly one of
+ *  the two shelves, so offering the other is offering a no-op. Whether Delete
+ *  and Move can actually run is the daemon's call — it alone knows if a turn
+ *  is in flight — so they are always offered and the refusal comes back typed
+ *  (§6: the UI never derives truth it wasn't given). */
+export function rowActions(archived: boolean): RailRowAction[] {
+	return [
+		archived
+			? {
+					id: "unarchive",
+					label: "Unarchive",
+					icon: "archive",
+					danger: false,
+					hint: "Restore this session to the session list.",
+				}
+			: {
+					id: "archive",
+					label: "Archive",
+					icon: "archive",
+					danger: false,
+					hint: "Hide this session from the list. Keeps everything, cancels nothing.",
+				},
+		{ id: "move", label: "Move to project", icon: "folder", danger: false, hint: MOVE_HINT },
+		{
+			id: "delete",
+			label: "Delete",
+			icon: "trash",
+			danger: true,
+			hint: "Delete this session and its event log. Can't be undone.",
+		},
+	];
+}
+
+/** The shelf toggle's label and assistive text: it names where the click
+ *  goes, never where you already are. */
+export function archivedToggle(archivedView: boolean): { label: string; hint: string } {
+	return archivedView
+		? { label: "Sessions", hint: "Back to the session list" }
+		: { label: "Archived", hint: "Show archived sessions" };
+}
+
+/** Empty-state copy per shelf and filter — four different situations that
+ *  must not share one sentence. */
+export function emptyRowsCopy(
+	archivedView: boolean,
+	filtered: boolean,
+	anyRows: boolean,
+): string {
+	if (filtered && anyRows) return "No matching sessions";
+	if (archivedView) return "No archived sessions";
+	return "No sessions yet";
 }
 
 /** Hover/assistive text for a function entry: each non-clickable row says why

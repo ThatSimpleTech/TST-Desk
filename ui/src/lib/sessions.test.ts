@@ -27,6 +27,10 @@ const mocks = vi.hoisted(() => {
     focuses: [] as Array<{ id: string; state: string; workspacePath: string | undefined }>,
     // Recorded calls the rail's function entries make (TD-1712).
     surfaceCalls: [] as string[],
+    // Recorded re-points of the title bar after a move (TD-1715).
+    retargets: [] as Array<{ id: string; workspacePath: string }>,
+    // The recents store the move picker reads (TD-1715).
+    workspacesState: { entries: [] as Array<{ path: string; lastSeen: string }> },
   };
 });
 
@@ -63,15 +67,22 @@ vi.mock("./session-status.svelte.js", () => ({
   focusSession: (id: string, state: string, workspacePath?: string) => {
     mocks.focuses.push({ id, state, workspacePath });
   },
+  // TD-1715: a moved session keeps its binding, so the title bar is
+  // re-pointed rather than re-focused.
+  retargetWorkspace: (id: string, workspacePath: string) => {
+    mocks.retargets.push({ id, workspacePath });
+  },
   session: mocks.statusState,
   workspaceName: (p: string) => p.split(/[\\/]/).filter((s) => s.length > 0).pop() ?? p,
 }));
 
 // The seam the rail's function entries drive (TD-1712). Recording it is how
 // "never a dead click" is asserted in both directions: a ready entry moves
-// something, every other entry moves nothing.
+// something, every other entry moves nothing. `workspaces` is the recents
+// store the move-to-project picker reads its targets from (TD-1715).
 vi.mock("./workspaces.svelte.js", () => ({
   toggleWorkspaceMenu: () => void mocks.surfaceCalls.push("toggleWorkspaceMenu"),
+  workspaces: mocks.workspacesState,
 }));
 
 import {
@@ -79,8 +90,10 @@ import {
   startSessions,
   resetSessions,
   visibleRows,
+  shelfRowCount,
   setFilter,
   toggleCollapsed,
+  closeRowMenus,
   selectRow,
   newSession,
   activateRailFunction,
@@ -90,23 +103,38 @@ import {
   rowSubtitle,
   COLLAPSED_STORAGE_KEY,
 } from "./sessions.svelte.js";
+import {
+  confirmDelete,
+  moveRow,
+  moveTargets,
+  requestDelete,
+  requestMove,
+  setArchived,
+  toggleArchivedView,
+  toggleRowMenu,
+} from "./session-actions.svelte.js";
 import { RAIL_FUNCTIONS } from "./rail";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
 type SummaryState = SessionSummary["state"];
 
-function sessionList(entries: Array<[id: string, updatedAt: string, state?: SummaryState, path?: string]>): DaemonEventUnion {
+function sessionList(
+  entries: Array<
+    [id: string, updatedAt: string, state?: SummaryState, path?: string, archived?: boolean]
+  >,
+): DaemonEventUnion {
   return {
     type: "session_list",
     seq: 1,
-    sessions: entries.map(([id, updatedAt, state, path]) => ({
+    sessions: entries.map(([id, updatedAt, state, path, archived]) => ({
       session_id: id,
       workspace_path: path ?? "/ws/proj",
       state: state ?? "idle",
       created_at: updatedAt,
       updated_at: updatedAt,
       event_count: 3,
+      archived: archived ?? false,
     })),
   };
 }
@@ -149,6 +177,8 @@ beforeEach(() => {
   mocks.chatSelects.length = 0;
   mocks.focuses.length = 0;
   mocks.surfaceCalls.length = 0;
+  mocks.retargets.length = 0;
+  mocks.workspacesState.entries = [];
   mocks.chatState.sessionId = null;
   mocks.statusState.workspacePath = null;
   mocks.sendResult = true;
@@ -432,8 +462,219 @@ describe("presentation helpers", () => {
       workspacePath: "/ws/api-server",
       state: "idle" as SummaryState,
       updatedAt: "2026-08-14T11:00:00Z",
+      archived: false,
     };
     expect(rowTitle(row)).toBe("abc12345");
     expect(rowSubtitle(row, now)).toBe("api-server · 1h");
+  });
+});
+
+// ── Archive, delete, move (TD-1715) ───────────────────────────────────────
+//
+// The rail's half of the story. The daemon owns durability and every refusal;
+// what is asserted here is that the rail sends the right verb, shows the right
+// shelf, and never invents an answer the daemon didn't give.
+
+describe("archived shelf", () => {
+  it("hides archived rows from the default list", () => {
+    emit(
+      sessionList([
+        ["live", "2026-08-14T09:00:00Z", "idle"],
+        ["filed", "2026-08-14T10:00:00Z", "idle", "/ws/proj", true],
+      ]),
+    );
+    expect(visibleRows().map((r) => r.sessionId)).toEqual(["live"]);
+  });
+
+  it("shows exactly the archived rows on the archived shelf", () => {
+    emit(
+      sessionList([
+        ["live", "2026-08-14T09:00:00Z", "idle"],
+        ["filed", "2026-08-14T10:00:00Z", "idle", "/ws/proj", true],
+      ]),
+    );
+    toggleArchivedView();
+    expect(sessions.showArchived).toBe(true);
+    expect(visibleRows().map((r) => r.sessionId)).toEqual(["filed"]);
+  });
+
+  it("keeps the archived flag as daemon truth, never inferred", () => {
+    emit(sessionList([["filed", "2026-08-14T10:00:00Z", "idle", "/ws/proj", true]]));
+    expect(sessions.rows[0].archived).toBe(true);
+  });
+
+  it("filters within the shelf being shown, not across both", () => {
+    emit(
+      sessionList([
+        ["aaa11111", "2026-08-14T09:00:00Z", "idle"],
+        ["aaa22222", "2026-08-14T10:00:00Z", "idle", "/ws/proj", true],
+      ]),
+    );
+    setFilter("aaa");
+    expect(visibleRows().map((r) => r.sessionId)).toEqual(["aaa11111"]);
+    toggleArchivedView();
+    expect(visibleRows().map((r) => r.sessionId)).toEqual(["aaa22222"]);
+  });
+
+  it("counts the shelf before the filter, so 'none here' reads differently", () => {
+    emit(
+      sessionList([
+        ["live", "2026-08-14T09:00:00Z", "idle"],
+        ["filed", "2026-08-14T10:00:00Z", "idle", "/ws/proj", true],
+      ]),
+    );
+    setFilter("zzz");
+    expect(visibleRows()).toEqual([]);
+    expect(shelfRowCount()).toBe(1);
+  });
+});
+
+describe("row lifecycle actions", () => {
+  beforeEach(() => {
+    emit(
+      sessionList([
+        ["s-live", "2026-08-14T09:00:00Z", "idle", "/ws/alpha"],
+        ["s-filed", "2026-08-14T10:00:00Z", "idle", "/ws/alpha", true],
+      ]),
+    );
+    mocks.sent.length = 0;
+  });
+
+  it("archives a row with the daemon's verb", () => {
+    setArchived("s-live", true);
+    expect(mocks.sent).toEqual([
+      { type: "archive_session", session_id: "s-live", archived: true },
+    ]);
+  });
+
+  it("unarchives with the same verb, flag flipped", () => {
+    setArchived("s-filed", false);
+    expect(mocks.sent).toEqual([
+      { type: "archive_session", session_id: "s-filed", archived: false },
+    ]);
+  });
+
+  it("never deletes on the first click — Delete arms a confirm and sends nothing", () => {
+    requestDelete("s-live");
+    expect(sessions.confirmDeleteFor).toBe("s-live");
+    expect(mocks.sent).toEqual([]);
+  });
+
+  it("sends delete only once confirmed", () => {
+    requestDelete("s-live");
+    confirmDelete();
+    expect(mocks.sent).toEqual([{ type: "delete_session", session_id: "s-live" }]);
+    expect(sessions.confirmDeleteFor).toBeNull();
+  });
+
+  it("confirming nothing sends nothing", () => {
+    expect(confirmDelete()).toBe(false);
+    expect(mocks.sent).toEqual([]);
+  });
+
+  it("cancelling the confirm sends nothing", () => {
+    requestDelete("s-live");
+    closeRowMenus();
+    expect(sessions.confirmDeleteFor).toBeNull();
+    expect(mocks.sent).toEqual([]);
+  });
+
+  it("moves a row to a chosen project", () => {
+    moveRow("s-live", "/ws/beta");
+    expect(mocks.sent).toEqual([
+      { type: "move_session", session_id: "s-live", workspace_path: "/ws/beta" },
+    ]);
+  });
+
+  it("offers every known project except the one the session is already in", () => {
+    mocks.workspacesState.entries = [
+      { path: "/ws/alpha", lastSeen: "2026-08-14T10:00:00Z" },
+      { path: "/ws/beta", lastSeen: "2026-08-13T10:00:00Z" },
+    ];
+    expect(moveTargets("s-live")).toEqual(["/ws/beta"]);
+  });
+
+  it("offers nothing for a row the list doesn't have", () => {
+    mocks.workspacesState.entries = [{ path: "/ws/beta", lastSeen: "2026-08-13T10:00:00Z" }];
+    expect(moveTargets("no-such-id")).toEqual([]);
+  });
+
+  it("opens one row's menu at a time", () => {
+    toggleRowMenu("s-live");
+    expect(sessions.menuFor).toBe("s-live");
+    toggleRowMenu("s-filed");
+    expect(sessions.menuFor).toBe("s-filed");
+    toggleRowMenu("s-filed");
+    expect(sessions.menuFor).toBeNull();
+  });
+});
+
+describe("refusals", () => {
+  // The rail cannot know whether a turn is in flight — the daemon can, and it
+  // says so. So the copy shown is the copy sent (AGENTS §6), never a guess.
+  const busy = (message: string): DaemonEventUnion => ({
+    type: "error",
+    seq: 1,
+    session_id: "s-live",
+    code: "session_busy",
+    message,
+  });
+
+  beforeEach(() => {
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z", "running"]]));
+  });
+
+  it("shows the daemon's refusal verbatim and stands the confirm down", () => {
+    requestDelete("s-live");
+    confirmDelete();
+    emit(busy("This session has a turn in flight, so it can't be deleted yet."));
+    expect(sessions.refusal).toBe(
+      "This session has a turn in flight, so it can't be deleted yet.",
+    );
+    expect(sessions.confirmDeleteFor).toBeNull();
+  });
+
+  it("closes the move picker on a refusal too", () => {
+    requestMove("s-live");
+    moveRow("s-live", "/ws/beta");
+    emit(busy("This session has a turn in flight, so it can't be moved yet."));
+    expect(sessions.moveFor).toBeNull();
+    expect(sessions.refusal).toMatch(/moved/);
+  });
+
+  it("clears a stale refusal when the next list lands", () => {
+    emit(busy("busy"));
+    expect(sessions.refusal).not.toBeNull();
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z", "idle"]]));
+    expect(sessions.refusal).toBeNull();
+  });
+
+  it("ignores error codes that are not lifecycle refusals", () => {
+    emit({
+      type: "error",
+      seq: 1,
+      session_id: "s-live",
+      code: "session_not_running",
+      message: "gone",
+    } as DaemonEventUnion);
+    expect(sessions.refusal).toBeNull();
+  });
+});
+
+describe("a moved session keeps its binding", () => {
+  // Move is the one action that does not unbind: the session survives, so the
+  // pane stays on it and the title bar follows it to the new project.
+  it("re-points the title bar at the new workspace", () => {
+    mocks.chatState.sessionId = "s-live";
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z", "idle", "/ws/alpha"]]));
+    mocks.retargets.length = 0;
+    emit(sessionList([["s-live", "2026-08-14T09:30:00Z", "idle", "/ws/beta"]]));
+    expect(mocks.retargets.at(-1)).toEqual({ id: "s-live", workspacePath: "/ws/beta" });
+  });
+
+  it("re-points nothing when no session is bound", () => {
+    mocks.chatState.sessionId = null;
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z", "idle", "/ws/beta"]]));
+    expect(mocks.retargets).toEqual([]);
   });
 });
