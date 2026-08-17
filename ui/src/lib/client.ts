@@ -44,6 +44,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "setup_state", // TD-1101 first-run wizard
   "api_key_validated", // TD-1101
   "diagnostics_report", // TD-1104 doctor
+  "usage_report", // TD-1706: was missing; the usage panel never loaded
+  "usage_exported", // TD-1706
   "error",
 ]);
 

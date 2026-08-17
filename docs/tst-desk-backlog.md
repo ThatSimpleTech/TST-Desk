@@ -1807,6 +1807,38 @@ store is TD-1005's; the fix likely coordinates with E17's attach work.
 ---
 
 
+### TD-1010 — The client's event gate silently drops events the daemon sends
+**Size:** 1 · **Depends on:** TD-1003
+
+**Acceptance criteria:**
+- [x] `usage_report` and `usage_exported` reach the usage store; the panel loads
+- [x] A test compares the client's gate against `DaemonEventUnion` in both directions and fails
+      when they disagree
+- [x] The gate still drops a genuinely unknown frame — the fix must not become "accept
+      everything", which would satisfy the criteria above trivially
+
+`ProtocolClient.dispatch` drops any frame whose type is absent from `KNOWN_EVENT_TYPES`
+(`ui/src/lib/client.ts`) before `sink.onEvent`, with only a `console.warn`. A new daemon event
+that reaches `DaemonEventUnion` but not that set is therefore invisible at runtime and green in
+every unit test, because the stores are tested by calling their reducers directly.
+
+This is the second occurrence. `policy_rules` carries the scar in a comment — "TD-803: was
+missing; settings events arrived as unknown". TD-1706's usage panel shipped the same way: both
+of its events were absent, so `usage.svelte.ts` never received a `usage_report` and the panel
+would have sat on `loading` forever, with an export's in-flight flag never clearing. Found by
+the TD-208 agent, which fixed the identical defect class on the Python side and looked across
+the boundary; confirmed by comparing the union against the set — exactly two missing, none
+stale.
+
+**Done (2026-08-17):** both events added, and `client-event-gate.test.ts` now parses
+`DaemonEventUnion` out of `protocol.ts` and `KNOWN_EVENT_TYPES` out of `client.ts` and compares
+them both ways. TypeScript cannot enumerate a union at runtime, so reading the source is crude
+and is the only thing that closes the gap from this side. Verified it fails by removing the two
+entries again. A fourth test pins that the gate still refuses unknown frames.
+
+---
+
+
 ## Epic E11 — Onboarding
 
 ---
