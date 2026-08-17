@@ -1726,10 +1726,8 @@ product-semantics work the skips point at.
 
 ---
 
-### TD-1810 — `test_cancelled_error_path_kills_group` times a race with fixed sleeps
+### TD-1407 — `test_cancelled_error_path_kills_group` times a race with fixed sleeps
 **Size:** 2 · **Depends on:** TD-605
-
-*(ID assigned by running sequence rather than E14's 1400s block.)*
 
 **Acceptance criteria:**
 - [ ] The run waits on conditions — the child being spawned, the group being gone — rather
