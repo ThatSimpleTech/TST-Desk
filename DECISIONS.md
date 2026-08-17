@@ -5053,3 +5053,56 @@ case, because a ratio is a claim about a saving and there is no saving to
 claim in either. Log-side, `cache_reported` says which `0.0` this is.
 Grepping a day of logs for cache behaviour is how this story started; the
 field is what makes that grep answer the question.
+
+---
+
+## 2026-08-17 — TD-607: `dispatch_many` order and failure isolation
+
+### 1. Input list position is the ordering key, not `tool_call_id` (Class B)
+
+**Decision:** Each call carries its index in `tool_calls` through the
+partition; the parallel and sequential halves write into one `dict` keyed on
+that index, and the method returns `[by_index[i] for i in range(len(...))]`.
+
+**Rationale:** The obvious alternative — reassemble by matching each result's
+`tool_call_id` back to the request list — reads more naturally and is wrong.
+`tool_call_id` comes from the provider's tool-call payload, not from us. The
+schema does not promise uniqueness within a batch, a mock or a local model
+can repeat one, and `""` is a representable value. An ordering key that a
+remote party controls is a key that a remote party can collide. Position in
+the caller's own list is ours, is total, and is unique by construction, so
+the reassembly cannot silently drop or double a result. A test in
+`TestDispatchManyOrdering` dispatches three calls all sharing the id `dup`
+to keep that property honest.
+
+Sorting the concatenated results by a recovered index was rejected for the
+same family of reasons: it reintroduces a derived key and a comparison where
+direct placement needs neither.
+
+### 2. A chokepoint bypass stays loud; ordinary failures become results (Class B)
+
+**Decision:** Reading `gather`'s returned list makes the `concurrent_error`
+branch reachable, but two things are re-raised out of it rather than
+converted: `UnclassifiedToolCall`, and any `BaseException` that is not an
+`Exception`.
+
+**Rationale:** §6 says errors "propagate as typed results or raise", and the
+two categories differ in who can act on them. A tool that failed is news for
+the model — it can retry, or route around, and one failing call in a batch
+has no business cancelling its siblings. `UnclassifiedToolCall` is not news
+for the model: it means the dispatcher was built without a classifier, a path
+guard, or an approval handler, and §2.6 makes that a bypass rather than an
+error. Folding it into a `concurrent_error` string would turn a misconfigured
+daemon into a stream of ordinary-looking tool failures the model would
+cheerfully retry against — loud in the transcript, silent in the way that
+matters. It already propagates from the sequential half of the same method,
+so re-raising keeps one rule for both halves. Non-`Exception` bases are
+re-raised for the usual reason: `CancelledError` is the session cancel path,
+and a batch that answers cancellation with an error result is a batch that
+does not cancel.
+
+**Not changed:** the sequential half still lets other exceptions propagate.
+An exception there already aborts nothing concurrent, `dispatch` catches
+handler failures itself, and widening the guard is scope this story did not
+buy. If a sequential call ever needs the same isolation, it is the same four
+lines.
