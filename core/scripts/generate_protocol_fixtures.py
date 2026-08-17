@@ -40,6 +40,7 @@ from tstd.protocol import (
     ListPolicyRules,
     ListSessions,
     OpenWorkspace,
+    Ping,
     PolicyRules,
     PolicyRuleSummary,
     Ready,
@@ -236,6 +237,9 @@ FIXTURES = {
         },
         seq=19,
     ),
+    # TD-1716 liveness frame: no session, no seq — deliberately unlike
+    # every other daemon→client frame, which is the point of the fixture.
+    "ping": Ping(),
     "error": Error(code="test", message="fail", seq=13),
     "error_with_session": Error(session_id="sess-1", code="test", message="fail", seq=14),
     "shell_output": ShellOutput(

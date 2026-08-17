@@ -191,6 +191,16 @@ export interface HelloAck {
   version: number;
 }
 
+/** Application-level liveness frame (TD-1716): no session, no seq.
+ *
+ *  Out-of-band like `hello_ack`, and for the same reason — it is a fact about
+ *  the connection, not an event in any session's log — so it is absent from
+ *  `DaemonEventUnion` and never reaches a store. The transport consumes it:
+ *  the proof it carries is that this page's JavaScript ran at all. */
+export interface Ping {
+  type: "ping";
+}
+
 export interface Ready extends DaemonEvent {
   type: "ready";
   version: string;

@@ -66,6 +66,10 @@ export interface ChatStore {
    *  current one, clear the pane, attach — the replay rebuilds history
    *  through the same reducer as live events. No-op for the attached id. */
   selectSession(sessionId: string, turnState: SessionState["state"] | null): void;
+  /** The window came back from suspension (TD-1716): re-decide the
+   *  first-token wait from the wall clock instead of trusting a timer that
+   *  was frozen through it. */
+  resume(): void;
   refreshSessions(): boolean;
   /** Hand one queued row to the daemon now, ahead of the rows before it
    *  (TD-1704) — the steer. It leaves the local queue either way. */
@@ -140,12 +144,20 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   // transition out of the first-token wait clears it.
   let stallTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function armStallWatchdog(): void {
-    if (stallTimer !== null) clearTimeout(stallTimer);
+  function clearStallTimer(): void {
+    if (stallTimer !== null) {
+      clearTimeout(stallTimer);
+      stallTimer = null;
+    }
+  }
+
+  /** `delay` is the remaining wait, which a resume shortens (TD-1716). */
+  function armStallWatchdog(delay: number = STALL_TIMEOUT_MS): void {
+    clearStallTimer();
     stallTimer = setTimeout(() => {
       stallTimer = null;
       if (state.awaitingFirstToken) state.turnStalled = true;
-    }, STALL_TIMEOUT_MS);
+    }, delay);
     // Under node/vitest the timer is a Timeout object; unref so a pending
     // watchdog never holds a test process open. Browsers return a number.
     (stallTimer as unknown as { unref?: () => void }).unref?.();
@@ -166,10 +178,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     state.awaitingFirstToken = false;
     state.turnStalled = false;
     state.awaitingSince = null;
-    if (stallTimer !== null) {
-      clearTimeout(stallTimer);
-      stallTimer = null;
-    }
+    clearStallTimer();
   }
 
   // Closure-level so retryLastUserMessage can call it without `this` —
@@ -374,6 +383,23 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
     selectSession(sessionId: string, turnState: SessionState["state"] | null): void {
       switchSession(sessionId, turnState);
+    },
+
+    /** Resume healing, watchdog half (TD-1716). A suspended webview's timers
+     *  do not fire, and the OS hands back the backlog coalesced into one late
+     *  tick — so on the way back the timer is worth nothing and the wall clock
+     *  is worth everything. A wait already past the threshold says so now
+     *  rather than after a timer that may be another 25s away; a wait still
+     *  inside it re-arms for what is actually left. */
+    resume(): void {
+      if (!state.awaitingFirstToken || state.awaitingSince === null) return;
+      const waited = Date.now() - state.awaitingSince;
+      if (waited >= STALL_TIMEOUT_MS) {
+        state.turnStalled = true;
+        clearStallTimer();
+        return;
+      }
+      armStallWatchdog(STALL_TIMEOUT_MS - waited);
     },
 
     refreshSessions(): boolean {

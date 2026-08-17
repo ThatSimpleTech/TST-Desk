@@ -67,6 +67,18 @@ export type SocketFactory = (url: string) => SocketLike;
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting" | "stopped";
 
+/**
+ * How long a socket the client still believes is connected may go without a
+ * single frame — daemon event or `ping` — before a resume calls it a zombie
+ * (TD-1716).
+ *
+ * The daemon pings every ~15s, so this is two missed frames: one late ping is
+ * not a verdict, but a webview that slept through a suspension has missed far
+ * more than two. The check only runs on resume; a quiet foreground app is
+ * never judged by it.
+ */
+export const ZOMBIE_SILENCE_MS = 30_000;
+
 /** A handler receiving a parsed, validated daemon event. */
 export type EventHandler = (event: DaemonEventUnion) => void;
 
@@ -113,6 +125,9 @@ export class ProtocolClient {
   private readonly attachedSessions = new Set<string>();
   // True after the first handshake; distinguishes first connect from a reconnect.
   private hasConnectedOnce = false;
+  // Epoch ms of the last frame this socket delivered — any frame, event or
+  // ping. Read only by `resume()` (TD-1716); 0 until the socket opens.
+  private lastFrameAt = 0;
 
   constructor(opts: ClientOptions, sink: ClientSink = {}) {
     this.opts = opts;
@@ -223,6 +238,36 @@ export class ProtocolClient {
     await this.open();
   }
 
+  /**
+   * Heal after the window came back (TD-1716).
+   *
+   * macOS suspends an occluded WKWebView's JavaScript: timers stop firing and
+   * socket frames queue at the OS while the socket itself stays open and
+   * healthy. Nothing in here notices — which is why the cure is applied on the
+   * way back rather than defended against. We make no attempt to work out what
+   * was missed: every followed session is re-attached at `lastSeq + 1` and the
+   * daemon's replay closes whatever gap the suspension left, losslessly.
+   *
+   * A socket that produced no frame at all — not even a ping — for longer than
+   * `ZOMBIE_SILENCE_MS` is dead however healthy the transport claims it is, so
+   * re-attaching into it would be shouting down a hole. Force it closed and let
+   * the existing reconnect path do the re-attach on its `hello_ack`.
+   */
+  resume(): void {
+    if (this.stopped || this.state !== "connected") return;
+
+    if (Date.now() - this.lastFrameAt > ZOMBIE_SILENCE_MS) {
+      console.warn("[tstd client] no frame since suspension; treating the socket as a zombie");
+      this.reconnectAttempt = 0; // reconnect now, not on a backoff
+      this.forceReconnect();
+      return;
+    }
+
+    for (const sessionId of this.attachedSessions) {
+      this.sendAttach(sessionId, this.lastSeq(sessionId) + 1);
+    }
+  }
+
   private sendAttach(sessionId: string, fromSeq: number): void {
     // Only meaningful on an open, handshaken socket.
     this.send({ type: "attach", session_id: sessionId, from_seq: fromSeq });
@@ -262,6 +307,7 @@ export class ProtocolClient {
     this.socket = socket;
 
     socket.onopen = () => {
+      this.lastFrameAt = Date.now();
       // hello carries the auth token; the daemon replies hello_ack then ready.
       socket.send(JSON.stringify({ type: "hello", token: info!.token, version: this.opts.protocolVersion ?? 1 }));
       this.handshake = "awaiting_ack";
@@ -270,6 +316,9 @@ export class ProtocolClient {
     socket.onmessage = (ev) => this.handleMessage(String(ev.data));
 
     socket.onclose = () => {
+      // A socket we already replaced (forceReconnect) closing later must not
+      // schedule a second reconnect on top of the one in flight.
+      if (this.socket !== socket) return;
       this.handshake = "idle";
       if (this.stopped) return;
       this.setState("reconnecting");
@@ -282,6 +331,11 @@ export class ProtocolClient {
   }
 
   private handleMessage(raw: string): void {
+    // Any frame at all proves this page's JavaScript is running, which is the
+    // only thing `resume()`'s zombie test asks of it — so stamp before
+    // parsing, malformed frames included (TD-1716).
+    this.lastFrameAt = Date.now();
+
     let msg: unknown;
     try {
       msg = JSON.parse(raw);
@@ -315,6 +369,11 @@ export class ProtocolClient {
       }
       return;
     }
+
+    // The daemon's liveness frame (TD-1716). Out-of-band like hello_ack: it
+    // belongs to no session's log, carries no seq, and says nothing a store
+    // could reduce. Its whole payload was the timestamp taken above.
+    if (type === "ping") return;
 
     // Sequenced daemon events carry `seq` and (for session-scoped events) a
     // session_id. Accept returns false for a duplicate or an out-of-order
@@ -378,13 +437,19 @@ export class ProtocolClient {
 
   private forceReconnect(): void {
     if (this.stopped) return;
-    this.socket?.close();
+    // Disown before closing, not after: `close()` can deliver `onclose`
+    // synchronously (and does on a zombie socket we closed ourselves), and a
+    // socket we have already replaced must not schedule a retry on top of the
+    // reconnect this call is about to start.
+    const dead = this.socket;
     this.socket = null;
+    dead?.close();
     void this.open();
   }
 
   private scheduleRetry(): void {
     if (this.stopped) return;
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     const attempt = this.reconnectAttempt;
     const backoff = Math.min(this.opts.baseBackoffMs ?? 500 * 2 ** attempt, this.opts.maxBackoffMs ?? 15_000);
     this.reconnectAttempt += 1;

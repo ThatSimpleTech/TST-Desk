@@ -305,6 +305,9 @@
       "validator": "test-validator-slug"
     }
   },
+  "ping": {
+    "type": "ping"
+  },
   "error": {
     "type": "error",
     "seq": 13,
@@ -420,7 +423,8 @@
       "local",
       "tst-default"
     ],
-    "active_preset": "tst-default"
+    "active_preset": "tst-default",
+    "tier_slugs": {}
   },
   "api_key_validated": {
     "type": "api_key_validated",

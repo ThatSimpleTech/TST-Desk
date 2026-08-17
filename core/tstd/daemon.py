@@ -1237,18 +1237,25 @@ class Daemon:
 
     async def _handle_attach(self, msg: Attach, session: Session, connection: Any) -> str | None:
         """Handle an attach: replay events from from_seq, then stream live."""
+        session_id = session.id
+        conn_key = (id(connection), session_id)
+
+        # A second attach on the same connection supersedes the first — the
+        # resume path re-attaches unconditionally (TD-1716), so this is a
+        # routine event, not an anomaly.  Cancel the old streamer before the
+        # replay so two of them never interleave frames on one socket.
+        superseded = self._streaming_tasks.pop(conn_key, None)
+        if superseded is not None and not superseded.done():
+            superseded.cancel()
+
         # Replay events from from_seq
         for event in session.event_log.events_from(msg.from_seq):
             await connection.send(event.model_dump_json())
 
         # Register as attached
-        session_id = session.id
         if session_id not in self._attached_clients:
             self._attached_clients[session_id] = set()
         self._attached_clients[session_id].add(connection)
-
-        # Start a background task that streams new events
-        conn_key = (id(connection), session_id)
 
         async def _stream() -> None:
             seen_seq = session.event_log.last_seq
@@ -1261,8 +1268,10 @@ class Daemon:
             except websockets.exceptions.ConnectionClosed:
                 pass
             finally:
-                # Clean up on disconnect
-                self._cleanup_attach(connection, session_id, conn_key)
+                # Clean up on disconnect.  Naming ourselves as the owner keeps
+                # a superseded streamer's teardown from tearing down the
+                # re-attach that replaced it.
+                self._cleanup_attach(connection, session_id, conn_key, owner=asyncio.current_task())
 
         task = asyncio.create_task(_stream())
         self._streaming_tasks[conn_key] = task
@@ -1324,8 +1333,23 @@ class Daemon:
         self._cleanup_attach(connection, session_id, conn_key)
         return None
 
-    def _cleanup_attach(self, connection: Any, session_id: str, conn_key: tuple[int, str]) -> None:
-        """Remove connection from attached clients and cancel its stream."""
+    def _cleanup_attach(
+        self,
+        connection: Any,
+        session_id: str,
+        conn_key: tuple[int, str],
+        owner: asyncio.Task[Any] | None = None,
+    ) -> None:
+        """Remove connection from attached clients and cancel its stream.
+
+        ``owner`` is the streaming task cleaning up after itself.  When the
+        slot already belongs to a newer stream — a re-attach on the same
+        connection — the cancelled one has nothing left to clean up and must
+        not detach the connection the newer stream is serving.
+        """
+        if owner is not None and self._streaming_tasks.get(conn_key) is not owner:
+            return
+
         # Remove from attached clients
         clients = self._attached_clients.get(session_id)
         if clients:

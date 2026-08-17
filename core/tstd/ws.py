@@ -27,6 +27,7 @@ from .protocol import (
     HandshakeError,
     build_error,
     build_hello_ack,
+    build_ping,
     parse_hello,
     validate_hello,
     validate_token,
@@ -37,6 +38,11 @@ log = get_logger("tstd.ws")
 # Token length in bytes (64 hex chars)
 _TOKEN_BYTES = 32
 _PORT_FILE = "port.json"
+
+# How often the server emits the application-level ping (TD-1716).  Fast
+# enough that a client can call a 30s silence a zombie after two missed
+# frames; slow enough to cost nothing.
+PING_INTERVAL_SECONDS = 15.0
 
 
 def generate_token() -> str:
@@ -126,15 +132,21 @@ class WebSocketServer:
         handshake_timeout: float = 10.0,
         message_handler: Callable[[str, ServerConnection], Awaitable[str | None]] | None = None,
         on_disconnect: Callable[[ServerConnection], Awaitable[None]] | None = None,
+        ping_interval: float = PING_INTERVAL_SECONDS,
     ) -> None:
         self.data_dir = data_dir
         self._server: Server | None = None
         self._token: str = ""
         self._port: int = 0
         self._connections: set[ServerConnection] = set()
+        # Connections past the handshake — the only ones a ping is meaningful
+        # to, and the only ones that ever receive one.
+        self._handshaken: set[ServerConnection] = set()
         self._handshake_timeout = handshake_timeout
         self._message_handler = message_handler
         self._on_disconnect = on_disconnect
+        self._ping_interval = ping_interval
+        self._ping_task: asyncio.Task[None] | None = None
 
     @property
     def port(self) -> int:
@@ -159,14 +171,41 @@ class WebSocketServer:
 
         write_port_file(self.data_dir, self._port, self._token)
 
+        if self._ping_interval > 0:
+            self._ping_task = asyncio.create_task(self._ping_loop())
+
         log.info(
             "ws server started",
             extra={"extra_fields": {"port": self._port}},
         )
 
+    async def _ping_loop(self) -> None:
+        """Emit an application-level ping to every handshaken client (TD-1716).
+
+        A suspended webview (macOS App Nap on an occluded window) keeps a
+        healthy socket while its JavaScript is frozen: the OS answers
+        transport-level ping/pong for it, so the transport can never report
+        the client dead.  This frame has to be processed by the client's own
+        event loop, which makes its absence the one honest signal that the
+        client stopped running — the basis of the client's zombie test on
+        resume.
+        """
+        frame = build_ping()
+        while True:
+            await asyncio.sleep(self._ping_interval)
+            for conn in list(self._handshaken):
+                with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+                    await conn.send(frame)
+
     async def stop(self) -> None:
         """Stop the WebSocket server and close all connections."""
         log.info("ws server stopping")
+
+        if self._ping_task is not None:
+            self._ping_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._ping_task
+            self._ping_task = None
 
         # Close all client connections (iterate over a copy to avoid
         # concurrent modification from disconnect callbacks)
@@ -175,6 +214,7 @@ class WebSocketServer:
             with contextlib.suppress(websockets.exceptions.ConnectionClosed):
                 await conn.close(1001, "Server shutting down")
         self._connections.clear()
+        self._handshaken.clear()
 
         # Close the server
         if self._server is not None:
@@ -204,6 +244,7 @@ class WebSocketServer:
             validate_hello(hello)
             validate_token(hello.token, self._token)
             await websocket.send(build_hello_ack())
+            self._handshaken.add(websocket)
             log.info(
                 "handshake ok",
                 extra={"extra_fields": {"version": hello.version}},
@@ -230,6 +271,7 @@ class WebSocketServer:
             pass
         finally:
             self._connections.discard(websocket)
+            self._handshaken.discard(websocket)
             if self._on_disconnect is not None:
                 await self._on_disconnect(websocket)
             log.info("client disconnected")

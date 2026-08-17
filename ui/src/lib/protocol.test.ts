@@ -51,6 +51,7 @@ import type {
   ApiKeyValidated,
   RunDiagnostics,
   DiagnosticsReport,
+  Ping,
   Error,
 } from "./protocol";
 
@@ -469,6 +470,15 @@ describe("Daemon event fixtures match TypeScript types", () => {
       // `fix` is present-and-string on fails, absent or null otherwise.
       if (c.status === "fail") expect(typeof c.fix).toBe("string");
     }
+  });
+
+  it("ping", () => {
+    // TD-1716: the liveness frame is the one daemon→client frame with no seq
+    // and no session — a fact about the connection, not an event in any log.
+    const m = fixtures.ping as Ping;
+    expect(m.type).toBe("ping");
+    expect("seq" in m).toBe(false);
+    expect("session_id" in m).toBe(false);
   });
 
   it("error", () => {
