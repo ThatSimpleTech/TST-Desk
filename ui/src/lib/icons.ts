@@ -65,6 +65,14 @@ export const ICONS = {
 	moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
 	/** A session (command palette, TD-1707). */
 	'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+	/** Home surface (rail functions, TD-1712). */
+	home:
+		'<path d="M3 10.2 12 3l9 7.2V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>' +
+		'<path d="M9 22v-8h6v8"/>',
+	/** Scheduled surface (rail functions, TD-1712). */
+	clock: '<circle cx="12" cy="12" r="9"/>' + '<path d="M12 7v5l3 2"/>',
+	/** Account anchor avatar fallback (rail footer, TD-1712). */
+	user: '<circle cx="12" cy="8" r="4"/>' + '<path d="M4 21a8 8 0 0 1 16 0"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

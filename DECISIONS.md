@@ -4322,3 +4322,65 @@ opposite of what they asked for, which for `allowed_commands` means an
 unusable shell tool on the default settings. Scope discipline (§3) says a
 docs story does not change product code, and describing the gap keeps the
 reader correct today while leaving the fix to be scheduled on its own.
+## 2026-08-17 — TD-1712: Rail information architecture
+
+### 1. Rail entries carry a three-way state, not a landed/unlanded flag (Class B)
+
+**Decision:** `RAIL_FUNCTIONS` (ui/src/lib/rail.ts) gives each surface `state:
+"current" | "ready" | "planned"`. Only `ready` activates. Home is `current`,
+Projects is `ready`, Scheduled is `planned` with the note `v0.5`.
+
+**Rationale:** The AC forbids a dead click, and a boolean can't tell the two
+non-clickable rows apart: "the pane is already showing this" and "this epic
+lands in v0.5" are different claims, and rendering them alike would lie about
+one of them. Home began as a `landed` entry that dismissed the stacked
+overlays; the preview killed it — the settings pane covers the rail with a
+full-viewport overlay, so the one situation that action existed for is the one
+situation in which it can't be clicked. Navigating home for real would mean
+unbinding the pane from its session, which is TD-1711/TD-1713's attach
+machinery, not a size-2 IA story. So Home renders selected (`aria-current`,
+accent edge) and the dispatcher refuses it.
+
+### 2. The account row's identity is the active preset + key presence (Class B)
+
+**Decision:** `accountRow(activePreset, hasApiKey)` labels the row with the
+daemon's `setup_state.active_preset` verbatim (falling back to "No provider"),
+takes the avatar initial from it, and notes "Key stored" / "No key".
+
+**Rationale:** §2 says there is no account, so the row can only anchor the
+identity the app actually has: which provider preset is active and whether a
+key exists. Both are daemon truth from an event the settings store already
+reduces — §6's "never derive truth it wasn't given". The preset name shows
+verbatim because capitalizing `tst-default` would invent a name the config
+never used. The note is presence only; the key itself never reaches UI state
+(§2.2), which TD-1703's tests already pin.
+
+### 3. Settings left the header for the rail's account anchor (Class B)
+
+**Decision:** AppShell's settings gear is gone. Settings is reached from the
+account row or ⌘, (`resolveShortcut` unchanged). Decisions and doctor keep
+their header buttons.
+
+**Rationale:** The AC places the settings entry in the rail "not buried in the
+title bar". Keeping both would leave two doorways to one pane and the buried
+one would stay the muscle memory.
+
+### 4. Projects raises TD-1103's recents menu (Class A)
+
+**Decision:** The Projects row calls `toggleWorkspaceMenu()` rather than
+growing a rail-side picker.
+
+**Rationale:** One workspace-switching surface, not two. Known seam: the menu
+still anchors under the title bar, so the popover opens away from the row that
+raised it. Re-anchoring belongs with the Projects surface proper (TD-1103's
+epic), not here.
+
+### 5. `RailFunctions` and `RailAccount` split out of `SessionRail` (Class A)
+
+**Decision:** The function group and the account anchor are their own
+components, both taking a `compact` prop for the collapsed strip.
+
+**Rationale:** SessionRail reached 586 lines with the new markup and styles,
+past §6. Neither block shares scoped CSS with what stayed behind, so the split
+removed lines instead of duplicating them — the same test decision #10 applied
+to `PolicyRuleList`.
