@@ -3233,6 +3233,59 @@ unfired. 8 daemon tests cover ping shape, cadence, handshake gating, shutdown, a
 superseding its predecessor.
 
 
+### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
+**Size:** 2 · **Depends on:** TD-1006
+
+*(Filed after the fact. The work landed in `1f6e407` under an id no story existed for; these
+criteria are reconstructed from what shipped, so they describe it rather than having driven it.
+The id sits in E18's block because a background task chose it, not the epic's range.)*
+
+**Acceptance criteria:**
+- [x] `TitleBar.svelte` is back under §6's ~400 lines, and so is everything split out of it
+- [x] The split follows the seams already in the file — each extracted concern owns its markup
+      and its style block
+- [x] Extracted components stay presentational, reading the same stores they read inline; no
+      store state moves into a component
+- [x] Nothing outside the file changes — `TitleBar` keeps the `pickDirectory` prop and forwards
+      it
+
+**Done (2026-08-17).** `TitleBar` 507 → 175, with `WorkspacePicker.svelte` (243) taking the name
+button, recents menu, `pick()` and the Escape backdrop, and `CostMeter.svelte` (120) taking the
+meter, its hover breakdown and the link to the usage pane. `TitleBar` keeps the row itself —
+tier chips, state indicator, wall summary.
+
+The drift was not one story's doing: the file was already 482 before TD-1706 added the popover
+link. No component tests, per §7 — this repo tests stores and pure functions, not `.svelte`.
+
+---
+
+### TD-1813 — Extract the first-token wait from `chat-store`
+**Size:** 2 · **Depends on:** TD-1714
+
+*(Filed after the fact. The work landed in `9d8ac11` under an id no story existed for. The id
+sits in E18's block because a background task chose it, not the epic's range.)*
+
+**Acceptance criteria:**
+- [x] The first-token wait moves to its own module: the timer, `STALL_TIMEOUT_MS`, and
+      begin/end/resume, with no protocol knowledge — no session id, no events, no wire
+- [x] The store keeps deciding *when* a wait starts and stops from turn evidence; the module
+      decides what a wait already in progress is worth
+- [ ] `chat-store.ts` is under §6's ~400 lines — **not met: it is 431 today.** The extraction
+      took it 471 → 422, and TD-1009's `onBind` has since taken it back to 431. One cut was
+      never going to clear 60 lines of overshoot.
+
+**Partially done (2026-08-17).** `first-token-wait.ts` (98 lines) owns the wait; `arm()` and
+`clearStallTimer()` are no longer visible to the store at all. Class B, recorded at the time: the
+wait takes its state as a structural slice (`FirstTokenWaitState`), the way `chat-queue` already
+takes `{ queued }`, so `ChatState` goes on declaring all its own fields.
+
+The commit named its own next cut: session binding — `switchSession` plus the `session_list`
+case, roughly 55 lines — which would land the store near 370. That is the remaining work, and it
+is why this story is not ticked.
+
+---
+
+
 # Post-v0.1 backlog
 
 Named, sequenced, and deliberately not decomposed. Do not build these.
@@ -3273,8 +3326,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M1 Headless core | E2–E9 | 51 | 153 |
 | M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 19 | 57 |
-| M3 Shippable | E13–E17 | 40 | 117 |
-| **Total v0.1** | **18** | **129** | **372** |
+| M3 Shippable | E13–E17 | 42 | 121 |
+| **Total v0.1** | **18** | **131** | **376** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
