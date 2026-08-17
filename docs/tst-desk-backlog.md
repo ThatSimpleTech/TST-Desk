@@ -3270,18 +3270,20 @@ sits in E18's block because a background task chose it, not the epic's range.)*
       begin/end/resume, with no protocol knowledge — no session id, no events, no wire
 - [x] The store keeps deciding *when* a wait starts and stops from turn evidence; the module
       decides what a wait already in progress is worth
-- [ ] `chat-store.ts` is under §6's ~400 lines — **not met: it is 431 today.** The extraction
-      took it 471 → 422, and TD-1009's `onBind` has since taken it back to 431. One cut was
-      never going to clear 60 lines of overshoot.
+- [x] `chat-store.ts` is under §6's ~400 lines — **met: it is 379.** The second cut was session
+      binding, and it needed the pure/effectful seam rather than `switchSession` alone.
 
-**Partially done (2026-08-17).** `first-token-wait.ts` (98 lines) owns the wait; `arm()` and
+**Done (2026-08-17).** `first-token-wait.ts` (98 lines) owns the wait; `arm()` and
 `clearStallTimer()` are no longer visible to the store at all. Class B, recorded at the time: the
 wait takes its state as a structural slice (`FirstTokenWaitState`), the way `chat-queue` already
 takes `{ queued }`, so `ChatState` goes on declaring all its own fields.
 
-The commit named its own next cut: session binding — `switchSession` plus the `session_list`
-case, roughly 55 lines — which would land the store near 370. That is the remaining work, and it
-is why this story is not ticked.
+The second cut is `session-binding.ts` (103 lines): `chooseBoundSession` holds the whole
+auto-bind policy as a pure function returning keep/unbind/bind, and `applyBind` holds the
+teardown-and-attach that used to be `switchSession`'s body. The store keeps the wiring — the
+`session_list` case reads the choice, `switchSession` forwards to the effect. 431 → 379.
+`session-binding.test.ts` drives the policy table directly (12 cases); the store's own tests
+pass unchanged, which is what says the refactor moved code and not behavior.
 
 ---
 
