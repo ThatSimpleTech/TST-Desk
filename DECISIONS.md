@@ -5274,3 +5274,131 @@ inventing a fact the daemon did not send.
 `bind` compares before it clears. A bind that emptied the pane without a full
 replay behind it would leave it blank for good, which is a worse defect than
 the one being fixed; the guard means no caller can cause it by calling twice.
+
+---
+
+## 2026-08-17 — TD-1406: What Windows parity actually costs
+
+Three of the four open criteria were about the same thing wearing different
+clothes: a fail-closed rule written on a POSIX host, refusing a form that is
+ordinary on Windows and unresolvable anywhere else. Criterion 1 turned out to
+be already implemented — `dfe1ab7` carved drive-absolute paths out of
+`windows_unsafe_reason` 45 minutes *before* the skip complaining about it was
+written — but its companion security test was never made platform-honest, so
+the Windows leg would have gone red on the fix. See §4.
+
+### 1. On Windows the 8.3 rule reads the canonical path (Class B)
+
+**Decision:** `windows_unsafe_reason` gains an optional `canonical` argument.
+On win32 the 8.3 short-name check runs against the canonical path instead of
+the raw string; off win32 it runs against the raw string exactly as before.
+`PathGuard.check_read`/`check_write` pass the canonical form they already
+hold; the classifier passes nothing and the function resolves for itself when
+it reaches that rule.
+
+**Rationale:** the check ran against the raw string on every platform, and
+`%TEMP%` on a GitHub Windows runner is `C:\Users\RUNNER~1\AppData\Local\Temp`.
+Every `tmp_path` on that runner therefore carried a short-named ancestor, and
+an absolute in-workspace path was refused `windows_unsafe` for a segment that
+belonged to the machine rather than to anything the model wrote. That is
+collateral, not enforcement.
+
+Windows canonicalization is what dissolves it. `os.path.realpath` reaches
+`GetFinalPathNameByHandle`, which returns the long form, so by the time the
+guard checks containment the alias is already gone — there is nothing left to
+point somewhere else. A segment that *survives* resolution named nothing the
+filesystem could expand, and stays refused. Off Windows no filesystem knows
+the short→long mapping, so the canonical form is not evidence of anything and
+the fail-closed refusal is unchanged. Both branches are proven in
+`TestShortNameCanonicalization` by patching `sys.platform`, so the win32 half
+is not a claim only the Windows leg can check.
+
+The rejected alternative was expanding short names ourselves off Windows.
+There is nothing to expand with: the mapping lives in the filesystem, and any
+table we invented would be a guess with a security boundary resting on it.
+
+Two limits worth writing down. The expansion needs the path, or an ancestor,
+to exist and be openable — a short name naming nothing is not expanded and
+stays refused, which is fail-closed and fine. And a directory whose real long
+name happens to look like an alias (`my~1`) resolves to itself and is refused
+on Windows too; narrow, and refusing is the safe side of it.
+
+The classifier deliberately passes no canonical form. The rule runs on every
+classification and the cheap string checks short-circuit ahead of the 8.3 one,
+so a UNC vector is judged without first asking the OS to resolve
+`\\server\share` — which is a network round trip, or a stall, for a path we
+were always going to refuse.
+
+### 2. Windows file permissions are a documented no-op, asserted (Class B)
+
+**Decision:** the session store and the port file keep their `chmod(0o600)`
+and it stays a no-op on Windows. No `icacls`, no `pywin32`. The two
+`restricted_mode` tests stop skipping on win32 and assert the no-op instead:
+POSIX asserts `0o600`, Windows asserts the file exists, reads back, and
+carries the Windows default `0o666` — the observable proof the chmod did
+nothing.
+
+**Rationale:** the criterion allowed "real Windows ACLs or a documented
+no-op", and the honest answer is that `0o600` was never what secured these
+files on Windows. Both live under `%LOCALAPPDATA%`, whose default ACL grants
+Full to the user, SYSTEM and Administrators and to nobody else. An `icacls`
+call on every port-file write would restate a protection the directory
+already provides, at the cost of a subprocess on the startup path — and an
+Administrator, who is the only extra principal in scope, can take ownership
+of the file regardless.
+
+What matters is that "documented" is load-bearing. A skip is not
+documentation; it is the absence of a test wearing an explanation, and this
+story exists partly because a stale skip reason hid a live defect for three
+days. An assertion fails if a future Python makes `os.chmod` meaningful on
+Windows, which is exactly when we would want to revisit the decision.
+
+### 3. Windows gets a process-tree kill, and it is not ticked (Class B)
+
+**Decision:** `CREATE_NEW_PROCESS_GROUP` at the spawn and `taskkill /T /F
+/PID` in `_kill_process_group`, after the existing `proc.kill()` so the direct
+child dies even if the helper cannot. Criterion 4 stays **unticked** and the
+`requires_posix_process_group` skip stays in place.
+
+**Rationale:** `Process.kill` is `TerminateProcess`, which kills one process
+and leaves its children running — the docstring admitted grandchildren escape.
+`taskkill /T` walks the parent chain the OS already records, which is the
+closest Windows has to `killpg`; the creation flag is what gives that walk a
+defined edge, since without it the child joins the daemon's own group.
+`taskkill` ships with Windows, so this is Class B, not a new dependency.
+
+`taskkill` is invoked synchronously and blocks the event loop, which §6
+otherwise forbids. Deliberate, bounded, and Windows-only: the kill must have
+landed before the cancellation handler re-raises, and the `asyncio.to_thread`
+alternative puts an `await` inside a cancellation handler — where a second
+cancel can interrupt it — on a code path no test on this machine can reach.
+The timeout is 2s rather than the 5s used elsewhere precisely because it is
+the cap on a loop stall rather than a grace period; `taskkill` normally
+returns in tens of milliseconds. Nothing blocks on POSIX, where the kill is a
+syscall. Worth revisiting if a Windows run shows the helper is ever slow.
+
+It is not ticked because nothing has run it. A process-tree kill is a claim
+about an operating system's behaviour, and the only evidence that counts is a
+Windows host performing one. This backlog already records seven "green suite,
+dead feature" entries, and ticking a kill path from a macOS run where the code
+is `sys.platform`-gated out would be the eighth. The skip reason now says the
+implementation landed and names both things a Windows run must settle — the
+kill itself, and a cmd/PowerShell equivalent of the POSIX escape probe.
+
+### 4. Criterion 1 was implemented but not finished (Class A)
+
+`test_security_suite.py::test_windows_unsafe_refused_on_every_platform`
+parametrized `C:\Windows\system.ini` and asserted `windows_unsafe`
+unconditionally — a test whose name became false the moment the carve-out
+landed, and which would have failed on the first green Windows leg. The
+drive-absolute vector now has its own test asserting `outside_workspace` on
+win32 and `windows_unsafe` elsewhere: refused either way, for reasons that
+differ per platform, which is the decision stated as a test.
+
+Five other test files carried comments explaining that they feed
+workspace-relative paths *because* drive-letter absolutes are refused as
+`windows_unsafe`. That reason went half-false on Windows, but the practice it
+justifies is still right — relative inputs exercise identical semantics on
+every platform — so the comments were corrected in place and the tests left
+alone. A test-writing convention that outlives its stated reason is the same
+failure as a stale skip, one degree quieter.
