@@ -2428,14 +2428,18 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 43 | 143 |
+| M1 Headless core | E2–E9 | 46 | 145 |
 | M1.5 Local models | E18 | 8 | 22 |
-| M2 The window | E10–E12 | 16 | 53 |
-| M3 Shippable | E13–E17 | 36 | 105 |
-| **Total v0.1** | **18** | **110** | **338** |
+| M2 The window | E10–E12 | 16 | 52 |
+| M3 Shippable | E13–E17 | 38 | 113 |
+| **Total v0.1** | **18** | **115** | **347** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
+
+Recompute this table from the story headings and their `**Size:**` fields when you add or split
+a story; do not increment the total by hand. Hand-incrementing is how it drifted to 110/338
+against an actual 115/347.
 
 **The single most important sequencing rule in this document: M1 exits when TD-1401 passes.**
 A correct, tested, headless core is what makes the UI a presentation problem instead of a
