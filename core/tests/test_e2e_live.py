@@ -25,7 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from tstd.config import ModelDiscoveryError, cached_config, save_active_preset
+from tstd.config import ModelDiscoveryError, cached_config
+from tstd.config_write import save_active_preset
 from tstd.discovery import discover_model
 from tstd.e2e_harness import run
 from tstd.e2e_live import (
