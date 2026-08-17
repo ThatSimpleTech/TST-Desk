@@ -4190,3 +4190,43 @@ TD-1805) is exactly what breaks it. Because the fixture IS the shipped
 default, the pinned values (slugs, 16384 max_output, prices) keep their
 bite: a shipped config that drifts from its documented tags still fails
 these tests, on any machine.
+
+## 2026-08-17 — TD-1503: The configuration reference is executable, not prose
+
+### 1. Every YAML example carries a verify marker and is run through the real loader
+
+**Decision:** `docs/configuration.md` annotates each fenced YAML block with
+an HTML comment — `<!-- verify: model -->`, `tier`, `workspace`, and the
+`-invalid` variants — and `core/tests/test_docs_config_reference.py` runs
+each one through `load_config` or the three `.tst/config.yaml` readers.
+A `yaml` block with no marker fails collection, so an example cannot be
+added without also being checked. The test additionally pins three claims
+the prose makes: every key used in an example exists in the schema, every
+field of every config model appears in the document, and no slug from the
+shipped `config.yaml` appears in the text.
+
+**Rationale:** Both config models inherit pydantic's `extra="ignore"`, so a
+stale example validates cleanly while documenting a key that no longer
+exists — "does it parse" is not enough on its own. The undocumented-key
+check is what makes the reference stay complete: adding a field to
+`TierConfig` or `CapsSection` now fails the suite until someone writes it
+down, rather than leaving a gap nobody audits. The slug check enforces §7
+of the spec — the landscape moves weekly, so the shipped config is the one
+place slugs live, and a slug in prose would be a second one to forget.
+The marker sits in an HTML comment so it is invisible in rendered markdown.
+
+### 2. The reference documents enforced behaviour, not the shipped comments
+
+**Decision:** Where the shipped `.tst/config.yaml` template disagrees with
+the code, §4.5 documents what the code does and names the disagreement.
+Two cases: `allowed_commands: []` refuses every command (the template says
+"empty means any command"), and `network` is not enforced by any shipping
+tool (the template says `deny` blocks all network). Both are reported as
+defects; neither is fixed in this story.
+
+**Rationale:** A reference that repeats a comment the code contradicts is
+worse than no reference — the reader configures against it and gets the
+opposite of what they asked for, which for `allowed_commands` means an
+unusable shell tool on the default settings. Scope discipline (§3) says a
+docs story does not change product code, and describing the gap keeps the
+reader correct today while leaving the fix to be scheduled on its own.
