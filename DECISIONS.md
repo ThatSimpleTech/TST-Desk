@@ -5195,3 +5195,82 @@ nagging about a key we were never going to act on.
 `InstructionStack`, so this is additive with no protocol change. The guide
 quotes the warning verbatim and the doc suite provokes it out of the real
 assembler, on the same footing as the 200-line warning.
+## 2026-08-17 — TD-1009: The activity timeline is scoped to one session
+
+The store fed by `AppShell`'s `onEvent(push)` had no session at all. One
+connection carries every session the window follows, so attaching to a second
+session showed the first session's activity underneath it, and the Files pane
+(TD-1705), which folds the same entries, inherited the symptom. `clear()`
+existed and nothing but the TD-1404 benchmark ever called it.
+
+### 1. Clear and re-hydrate from the replay, rather than tagging entries (Class B)
+
+**Decision:** `Timeline` gains a bound session. `bind(sessionId)` drops what
+the previous session left and adopts the new one; `push` folds an event only
+when it names the bound session. The chat store declares the binding through
+a new optional `ChatDeps.onBind`, called from `switchSession` immediately
+before the attach that fetches the replay, and from `dispose` with `null`.
+
+**Rationale:** The two candidates were per-entry session tags with a filtered
+read, or a single scoped list rebuilt on bind. The second keeps `entries` the
+one list the components already read, so `ActivityTimeline` and `FilesPanel`
+scope without a line of markup changing — the Files criterion falls out of
+the timeline fix rather than needing its own. It also keeps the daemon the
+source of truth: the window holds one session's view and re-derives it from
+the log instead of caching every session it has visited and then owing
+someone the job of keeping those copies in step (§6, "the UI never derives
+truth it wasn't given").
+
+`switchSession` is the only place the pane's session changes — the rail's
+`selectRow`, the `session_list` auto-bind, and teardown all route through it —
+so it is the only place the binding is declared. `onBind` is optional because
+a chat pane with no activity lane beside it is still a chat pane; every
+existing `ChatDeps` construction keeps working unchanged.
+
+### 2. Re-hydration rests on the detach that precedes every bind (Class B)
+
+**Decision:** No new attach primitive. `switchSession` already detaches the
+outgoing session before attaching the incoming one, and `ProtocolClient.detach`
+drops that session's `lastSeq` — so the next `attach` asks `from_seq = 1` and
+the daemon replays the whole log. That is what refills the cleared list.
+
+**Rationale:** A `rebind`-from-the-top method on the client was written and
+rejected: every reachable bind already produces a full replay, so it would
+have bought a guarantee the existing pairing gives for free while adding a
+public method, a new export in `connection-status`, and a second meaning for
+"attach". The invariant is recorded here rather than defended in code because
+that is what it is — an invariant, not a mechanism. If a future story ever
+binds a pane to a session the connection is already following mid-log, the
+replay will be partial and the pane will re-hydrate short; that is the line
+to come back to.
+
+### 3. Idempotence is the store's own, keyed on the log position (Class B)
+
+**Decision:** `push` drops any event whose `seq` is at or below the highest
+the store has already folded, and `clear` resets that position along with the
+entries. Events with no numeric `seq` are exempt.
+
+**Rationale:** The double-count criterion is the one most easily got wrong,
+and the client's duplicate detection is not enough to rely on: `detach`
+deliberately forgets a session's `lastSeq`, so the very replay that re-hydrates
+a bind arrives with every frame looking new. Anchoring on the log position
+makes the store correct on its own terms — a re-attach at `lastSeq + 1`
+(TD-1716's resume, a reconnect's `hello_ack`) and a re-attach at 1 both land
+exactly once, whatever the client above did. The exemption is not a loophole:
+a daemon error is written straight to the socket outside the event log
+(`core/tstd/protocol.py build_error`), so it carries no seq and nothing can
+replay it.
+
+### 4. An event that names no session is not this session's activity (Class A)
+
+An `error` may arrive with no `session_id`, and those no longer render in the
+timeline. They are daemon-level failures — a bad frame, a refused handshake —
+and TD-1008's notification lane already gives them tailored copy as a toast or
+a banner. Attributing one to whichever session happened to be bound would be
+inventing a fact the daemon did not send.
+
+### 5. Re-binding the session already shown is a no-op (Class A)
+
+`bind` compares before it clears. A bind that emptied the pane without a full
+replay behind it would leave it blank for good, which is a worse defect than
+the one being fixed; the guard means no caller can cause it by calling twice.

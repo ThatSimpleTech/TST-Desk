@@ -61,6 +61,8 @@ function result(toolCallId: string, diff: string | null): DaemonEventUnion {
 function entriesFor(events: DaemonEventUnion[]): readonly TimelineEntry[] {
 	seq = 0;
 	const timeline = new Timeline();
+	// The store shows one session (TD-1009); these fixtures are all "s1".
+	timeline.bind("s1");
 	timeline.pushAll(events);
 	return timeline.entries;
 }
