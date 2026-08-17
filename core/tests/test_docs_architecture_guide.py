@@ -257,27 +257,6 @@ def test_event_seq_scoping_matches_the_models() -> None:
     assert not wrong, f"wrong `Seq` column for: {wrong}"
 
 
-def test_the_guide_flags_the_known_type_gap() -> None:
-    """The guide's TD-208 note must describe a gap that is really there.
-
-    ``_KNOWN_*_TYPES`` gate parsing before validation, so a union member
-    missing from its frozenset is rejected by the parser that is supposed
-    to accept it.  The guide documents that today's gap is
-    ``rule_activated``; when the defect is fixed this test fails, which is
-    the point — the note has to come out with the fix.
-    """
-    from tstd.protocol import _KNOWN_CLIENT_TYPES, _KNOWN_EVENT_TYPES
-
-    assert set(CLIENT_MESSAGES) == _KNOWN_CLIENT_TYPES, (
-        "client messages and _KNOWN_CLIENT_TYPES have drifted; document it in the guide"
-    )
-    gap = set(DAEMON_EVENTS) - _KNOWN_EVENT_TYPES
-    assert gap == {"rule_activated"}, (
-        f"the guide's TD-208 note is stale: the real gap is {sorted(gap)}"
-    )
-    assert "TD-208" in _doc_text(), "the guide no longer flags the known-type gap"
-
-
 # ── Why the session owns the loop ────────────────────────────────────────
 
 

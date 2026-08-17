@@ -1070,6 +1070,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tier_state",
         "context_compacted",
         "steering_reloaded",
+        "rule_activated",
         "tier_switched",
         "instruction_stack",
         "session_list",

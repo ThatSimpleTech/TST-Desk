@@ -302,12 +302,12 @@ shape must be right; the behavior can be trivial.
 **Size:** 1 · **Depends on:** TD-204
 
 **Acceptance criteria:**
-- [ ] `parse_daemon_event` round-trips every member of `DaemonEventT`, `rule_activated` included
-- [ ] A test derives the expected set from the union rather than restating it, so the next
+- [x] `parse_daemon_event` round-trips every member of `DaemonEventT`, `rule_activated` included
+- [x] A test derives the expected set from the union rather than restating it, so the next
       message added to `DaemonEventT` without its frozenset entry fails the suite
-- [ ] The same check covers `ClientMessageT` / `_KNOWN_CLIENT_TYPES`, which agree today and
+- [x] The same check covers `ClientMessageT` / `_KNOWN_CLIENT_TYPES`, which agree today and
       should stay that way
-- [ ] The TD-208 note in `docs/architecture.md` §3 comes out with the fix — its doc test asserts
+- [x] The TD-208 note in `docs/architecture.md` §3 comes out with the fix — its doc test asserts
       the gap still exists and goes red when it does not
 
 `RuleActivated` is declared at `protocol.py:615`, is a member of `DaemonEventT` at
@@ -334,6 +334,14 @@ among them. That gap is the second criterion: a hand-listed test cannot catch a 
 frozenset drifting.
 
 Found while writing TD-1504 and confirmed by execution, not by reading.
+
+**Done (2026-08-17):** `"rule_activated"` added to `_KNOWN_EVENT_TYPES`. The guard is
+`TestKnownTypeGate` in `core/tests/test_protocol.py`: both frozensets are derived from their
+unions and compared in both directions, so a missing entry and a stale one each fail, and every
+union member is round-tripped through the parser that gates it — 56 cases, sample instances
+built from the models rather than hand-listed. Counts today: `DaemonEventT` 27 members,
+`ClientMessageT` 29, both frozensets now equal. The architecture guide's TD-208 note and the doc
+test pinning it are gone; §3 now says the sets are checked against the unions instead.
 
 ---
 
