@@ -8,6 +8,12 @@
 // replays the session's event log, so full conversation history rebuilds
 // through the same reducer as live events: there is no separate history path.
 
+import {
+  toChips,
+  toWireAttachments,
+  type AttachmentChip,
+  type NewAttachment,
+} from "./attachments";
 import { createMessageQueue, type QueuedMessage } from "./chat-queue";
 import type {
   ClientMessageUnion,
@@ -23,6 +29,11 @@ export interface ChatMessage {
   /** Epoch ms when the client first saw the message (send echo or first
    *  delta). Replayed history stamps attach time — display-only (TD-1606). */
   at: number;
+  /** Files sent with a user row, rendered as chips (TD-1709). Names and
+   *  sizes only: the bytes are gone the moment they are on the wire, and
+   *  keeping them would hold the whole session's attachments in memory for
+   *  a transcript that only ever shows the label. */
+  attachments?: AttachmentChip[];
 }
 
 export interface ChatState {
@@ -59,7 +70,10 @@ export interface ChatDeps {
 export interface ChatStore {
   state: ChatState;
   applyEvent(event: DaemonEventUnion): void;
-  sendUserMessage(text: string): boolean;
+  /** Send, or queue while a turn holds the loop. Attachments ride along
+   *  either way; the daemon vets them and refuses the whole message if any
+   *  one fails its caps or its text test (TD-1709). */
+  sendUserMessage(text: string, attachments?: readonly NewAttachment[]): boolean;
   retryLastUserMessage(): boolean;
   cancelTurn(): boolean;
   /** Attach the pane to a session chosen in the rail (TD-1701): detach the
@@ -185,13 +199,37 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   // the reactive shell re-exports these methods detached.
   /** `armWait` false hands the message over without touching the first-token
    *  clock — see the queue's send-now (TD-1704). */
-  function sendUserMessageToWire(text: string, armWait = true): boolean {
+  function sendUserMessageToWire(
+    text: string,
+    armWait = true,
+    attachments: readonly NewAttachment[] = [],
+  ): boolean {
     const content = text.trim();
-    if (state.sessionId === null || content === "") return false;
-    const sent = deps.send({ type: "user_message", session_id: state.sessionId, content });
+    // TD-1709: attachments alone are a message. Empty-and-empty is not.
+    if (state.sessionId === null || (content === "" && attachments.length === 0)) return false;
+    // Omitted rather than sent empty when there are none (TD-1709): an
+    // attachment-free send stays byte-identical to what it was before this
+    // story, which is what "additive" is supposed to mean.
+    const sent = deps.send(
+      attachments.length === 0
+        ? { type: "user_message", session_id: state.sessionId, content }
+        : {
+            type: "user_message",
+            session_id: state.sessionId,
+            content,
+            attachments: toWireAttachments(attachments),
+          },
+    );
     if (!sent) return false;
     nextId += 1;
-    state.messages.push({ id: `m${nextId}`, role: "user", text: content, complete: true, at: Date.now() });
+    state.messages.push({
+      id: `m${nextId}`,
+      role: "user",
+      text: content,
+      complete: true,
+      at: Date.now(),
+      attachments: attachments.length === 0 ? undefined : toChips(attachments),
+    });
     if (!armWait) return true;
     // A fresh send restarts the wait and its watchdog even atop one already
     // in flight — the honest clock is from the latest send.
@@ -206,11 +244,11 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   );
 
   /** Queue or send, depending on whether a turn owns the loop (TD-1704). */
-  function sendUserMessage(text: string): boolean {
+  function sendUserMessage(text: string, attachments: readonly NewAttachment[] = []): boolean {
     const content = text.trim();
-    if (state.sessionId === null || content === "") return false;
-    if (!showCancel(state.turnState)) return sendUserMessageToWire(content);
-    queue.add(content);
+    if (state.sessionId === null || (content === "" && attachments.length === 0)) return false;
+    if (!showCancel(state.turnState)) return sendUserMessageToWire(content, true, attachments);
+    queue.add(content, attachments);
     return true;
   }
 
@@ -371,7 +409,12 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       if (showCancel(state.turnState)) return false;
       for (let i = state.messages.length - 1; i >= 0; i--) {
         const message = state.messages[i];
-        if (message.role === "user") return sendUserMessageToWire(message.text);
+        // TD-1709: the row keeps chips, not bytes, so a retry cannot resend
+        // the files. Refusing is the honest answer — a silent resend without
+        // them would be a different message wearing the same label.
+        if (message.role !== "user") continue;
+        if (message.attachments !== undefined) return false;
+        return sendUserMessageToWire(message.text);
       }
       return false;
     },

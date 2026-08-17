@@ -258,6 +258,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_preset` | — | Choose the active model preset. |
 | `set_tier_slug` | — | Set the model slug for one tier of one preset. |
 | `run_diagnostics` | — | Run the doctor checks. |
+| `get_usage` | — | Ask for token and cost rollups by session, day and week (TD-1706). |
+| `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
 
 ### Daemon → client
 
@@ -291,6 +293,8 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug`. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
+| `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
+| `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
 | `error` | session | A typed error, usually in response to a bad message. |
 

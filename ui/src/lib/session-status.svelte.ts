@@ -11,8 +11,9 @@
 //
 // Pure TypeScript — no Tauri imports — so vitest can drive the reducer.
 
+import { DEFAULT_ATTACHMENT_LIMITS } from "./attachments";
 import type { ProtocolClient } from "./client";
-import type { BoundaryUpdate, DaemonEventUnion } from "./protocol";
+import type { AttachmentLimits, BoundaryUpdate, DaemonEventUnion } from "./protocol";
 
 export type SessionIndicator =
   | "none"
@@ -42,6 +43,12 @@ export const session = $state({
     BoundaryUpdate,
     "writable_paths" | "allowed_commands" | "network" | "spend_usd" | "wall_clock_hours" | "max_iterations" | "source"
   > | null,
+  /** Attachment caps for the composer (TD-1709). Held separately from
+   *  `boundary` because it is never null: the composer has to judge a
+   *  dropped file before any session is bound, and the shipped defaults are
+   *  what the daemon would apply anyway. A daemon too old to send them
+   *  leaves these in place rather than blanking the gate. */
+  attachmentLimits: { ...DEFAULT_ATTACHMENT_LIMITS } as AttachmentLimits,
   tier: "brain" as "brain" | "worker" | "validator",
   tierOverride: null as "brain" | "worker" | "validator" | null,
   modelSlugs: {} as Record<string, string>,
@@ -64,6 +71,7 @@ export function resetSession(): void {
   session.reason = null;
   session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
   session.boundary = null;
+  session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;
   session.modelSlugs = {};
@@ -105,6 +113,9 @@ export function ingestEvent(event: DaemonEventUnion): void {
         max_iterations: event.max_iterations,
         source: event.source,
       };
+      // TD-1709: an older daemon omits these; keeping the last known caps
+      // beats standing the composer's early refusal down to nothing.
+      if (event.attachments !== undefined) session.attachmentLimits = event.attachments;
       break;
     case "tier_state":
       session.tier = event.tier;
@@ -150,6 +161,7 @@ export function focusSession(
   session.reason = null;
   session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
   session.boundary = null;
+  session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;
   session.modelSlugs = {};

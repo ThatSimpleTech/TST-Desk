@@ -4713,3 +4713,71 @@ this gets wrong if `weekday 0` is used without the step back, and the case
 `limit` caps *buckets*, not rows. A row cap would truncate a day mid-tier and
 report it as costing less than it did; `test_limit_never_truncates_a_bucket_mid_tier`
 is the test that would catch that regression.
+## 2026-08-17 — TD-1709: Attachments v1
+
+### 1. The cap lives on the workspace boundary, in its own section (Class B)
+
+**Decision:** attachment caps are a new top-level `attachments` section in
+`.tst/config.yaml` — `max_file_bytes`, `max_total_bytes`, `max_count` — modelled by
+`AttachmentLimits` in the new `tstd/attachments.py`. Not `config.yaml` (the model plane), and
+not a fourth key under `caps`.
+
+**Rationale:** the model plane was the tempting alternative, because attachment size does
+relate to how much context a model can take, and `context_window` already lives there. It is
+the wrong home. A tier is a per-turn routing decision — the router moves a session from brain
+to worker between turns — so a cap sourced from the model plane would accept a file on one turn
+and refuse the identical file on the next, with nothing the user did explaining the difference.
+A client-facing refusal has to be stable for as long as the composer is open. The workspace is
+also the unit a team shares: `.tst/config.yaml` is git-tracked, so a repo full of large
+generated files can tighten this for everyone who opens it, and the file is re-read on open and
+on resume rather than needing a daemon restart.
+
+Its own section rather than a fourth key under `caps` because §4.2's whole sentence is "checked
+before every model call, and hitting one pauses the run". These are checked when a client
+message arrives and they pause nothing — they refuse. Filing them together would cost that
+section the one description that makes it legible.
+
+### 2. Attachments travel as base64 bytes, not as decoded text (Class B)
+
+**Decision:** `Attachment` carries `name` and `content_b64`. Not a `content: str` the client
+decoded first, and no client-declared size or mime type.
+
+**Rationale:** this is what makes "the daemon refuses a binary attachment" true rather than
+decorative. Given bytes, the daemon runs strict UTF-8 plus a NUL scan itself and a PNG fails.
+Given a string, the client has already decoded — a client that reads a PNG with `readAsText`
+hands us replacement characters, which are indistinguishable from prose that legitimately
+contains them, and the gate degrades into trusting the sender. The costs are real and small:
+base64 adds a third to the frame, and the transport ceiling that implies is documented in
+§4.3 of the configuration reference. Declared size and mime are omitted for the same reason —
+the daemon has to measure the real bytes anyway, and two sources for one fact is how they start
+disagreeing.
+
+### 3. A refused attachment refuses the whole message (Class B)
+
+**Decision:** one bad file fails the send; nothing partial is delivered, and every refusal's
+copy ends by saying nothing was sent.
+
+**Rationale:** the alternative — drop the offending file, deliver the rest — leaves the user
+watching a turn run against a message they believe carried three files when it carried two,
+with no signal about which. Silent partial delivery is the failure mode §6 forbids. The cost is
+that the typed text is dropped too, which is why the copy says so explicitly rather than
+leaving the user to discover it.
+
+### 4. The sent row keeps chips, not bytes — so retry refuses (Class A)
+
+**Decision:** `ChatMessage.attachments` carries names and sizes only. `retryLastUserMessage`
+returns false when the last user row carried attachments.
+
+**Rationale:** holding the bytes would keep every file a session ever attached in memory for
+the life of a transcript that only ever renders the label. The consequence is that retry cannot
+faithfully resend such a message, and a resend without the files would be a different message
+wearing the same label — so it refuses instead. Re-attaching is a few seconds; a silently
+different retry is a bug report.
+
+### 5. No `accept` filter on the file picker (Class A)
+
+**Decision:** the picker accepts any file and the refusal explains.
+
+**Rationale:** the third acceptance criterion is that an oversize or binary attempt fails *with
+actionable copy*. A picker that greys out `.png` produces no copy at all — the user learns
+nothing about why, or that text files are the deliberate scope of v1.

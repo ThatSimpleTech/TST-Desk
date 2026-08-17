@@ -240,8 +240,8 @@ template whose values are the defaults, so a scaffolded file changes nothing unt
 file is read when a workspace opens and again when a paused session resumes, which is what lets
 you raise a cap and continue without restarting.
 
-Four top-level sections live here, each read by a different part of the daemon: `boundary`,
-`caps`, `policy`, and `approved_external_imports`.
+Five top-level sections live here, each read by a different part of the daemon: `boundary`,
+`caps`, `attachments`, `policy`, and `approved_external_imports`.
 
 ### 4.1 `boundary` — where the agent may act
 
@@ -249,7 +249,7 @@ Four top-level sections live here, each read by a different part of the daemon: 
 |---|---|---|---|
 | `writable_paths` | list of glob strings | `["**"]` | Workspace-relative globs the agent may **write** to. A write outside them is refused as `outside_writable_paths` and classified Class C. |
 | `allowed_commands` | list of strings | `[]` | Allowlist for the shell tool, matched on the basename of the resolved binary. **Empty or omitted means any command** — the list narrows a path the classifier and approval gate already guard (TD-606). |
-| `network` | `deny` or a list of hosts | `deny` | Hosts the agent may reach. Any other string is a load error. Declarative in v0.1 — see §4.5. |
+| `network` | `deny` or a list of hosts | `deny` | Hosts the agent may reach. Any other string is a load error. Declarative in v0.1 — see §4.6. |
 
 **Glob semantics for `writable_paths`.** Patterns are relative to the workspace root, and the
 target is resolved (symlinks followed) before matching:
@@ -294,7 +294,35 @@ violation as its reason, the UI raises a card, and the run waits — indefinitel
 a poll. Resuming re-reads this file and re-checks the caps, so resuming without raising the cap
 pauses again immediately. That is the loop: raise the number here, then resume.
 
-### 4.3 `policy` — what needs your approval
+### 4.3 `attachments` — what a message may carry
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_file_bytes` | int ≥ 1 | `256000` | Size of one attached file. Measured on the file's real bytes, after decoding. |
+| `max_total_bytes` | int ≥ 1 | `512000` | Size of all the attachments on one message, added together. |
+| `max_count` | int ≥ 1 | `10` | Files on one message. |
+
+**Text files only.** Anything that is not valid UTF-8, or that contains a NUL byte, is refused
+as binary — a PNG, a PDF, a compiled binary, and a UTF-16 text file all land here. Images are
+deliberately out: vision support depends on which models you have chosen and needs capability
+detection first.
+
+**These are enforced by the daemon, not by the composer.** The message-box refuses an oversize
+or binary file early, with copy that names the file, but that is a convenience. The same
+refusal happens again on arrival, so a client that skips the check — an older build, or
+anything that is not the app — gets the same answer. Both sides read the numbers above; the
+daemon sends them to the UI on the `boundary_update` event when the workspace opens.
+
+**A refusal drops the whole message**, including the text you typed alongside it. Nothing is
+half-sent, and the error says so. Attachments are also all-or-nothing within one message: one
+bad file refuses the send rather than quietly delivering the rest.
+
+**There is a ceiling above these numbers.** The daemon's local websocket accepts frames up to
+1 MiB, and base64 adds a third to whatever you attach — so a `max_total_bytes` much above
+`700000` gives you a message the transport drops before the daemon can refuse it politely.
+Keep the total under that and the failure modes stay legible.
+
+### 4.4 `policy` — what needs your approval
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -315,7 +343,7 @@ call is downgraded to `class_c_default` — you can loosen approvals for ordinar
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
 in the approval card writes a rule here for you.
 
-### 4.4 `approved_external_imports`
+### 4.5 `approved_external_imports`
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -324,7 +352,7 @@ in the approval card writes a rule here for you.
 Top-level, not nested under `boundary`. You do not normally hand-write it — approving an
 external import in the UI appends to it.
 
-### 4.5 Two gaps to know about
+### 4.6 Two gaps to know about
 
 Documenting this file surfaced two places where the shipped comments promise more than the code
 delivers. Both are reported as defects; neither is fixed here.
@@ -346,7 +374,7 @@ rewrites this file through a YAML dump, which **discards your comments**. Your `
 `caps:` values survive; the prose around them does not. The model `config.yaml` does not have
 this problem — it is edited surgically, line by line.
 
-### 4.6 Worked examples
+### 4.7 Worked examples
 
 **A tight wall on a Rust project.** Writes confined to three trees, three binaries allowed,
 default caps left alone:
@@ -373,7 +401,7 @@ caps:
   max_iterations: 40
 ```
 
-**Naming hosts instead of denying all.** Note §4.5 — this is a declaration today, not a control:
+**Naming hosts instead of denying all.** Note §4.6 — this is a declaration today, not a control:
 
 <!-- verify: workspace -->
 ```yaml
@@ -381,6 +409,18 @@ boundary:
   network:
     - api.github.com
     - registry.npmjs.org
+```
+
+**Tighter attachments on a repo full of large generated files.** One small text file per
+message, so a stray drag-and-drop of a build artifact is refused at the composer instead of
+being paid for as prompt tokens:
+
+<!-- verify: workspace -->
+```yaml
+attachments:
+  max_file_bytes: 40000
+  max_total_bytes: 40000
+  max_count: 1
 ```
 
 **Loosening approvals on a workspace you trust.** Reads never ask, `git status` never asks,
@@ -450,7 +490,7 @@ write.
 | A tier is missing from a preset | `presets.<name>.<tier>: Field required` |
 | A price is negative, or a window is zero | The key, and the constraint it broke |
 | Off-box tier with no `slug` | The message in §3.4, naming the endpoint |
-| `network` is any string but `deny` | The message in §4.6 |
+| `network` is any string but `deny` | The message in §4.7 |
 | A misspelled key | **Nothing.** It is ignored and the default applies. |
 
 Model configuration errors surface at load, which means at daemon start. Workspace boundary

@@ -193,6 +193,7 @@ async def _reload_working_context(session: Session, workspace_path: str) -> None
             wall_clock_hours=cfg.caps.wall_clock_hours,
             max_iterations=cfg.caps.max_iterations,
             source=source,
+            attachments=cfg.attachments,
             seq=1,
         )
     )

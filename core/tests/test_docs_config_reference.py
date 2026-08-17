@@ -31,6 +31,12 @@ from typing import Any
 import pytest
 import yaml
 
+from tstd.attachments import (
+    DEFAULT_MAX_COUNT,
+    DEFAULT_MAX_FILE_BYTES,
+    DEFAULT_MAX_TOTAL_BYTES,
+    AttachmentLimits,
+)
 from tstd.boundary_config import (
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_SPEND_USD,
@@ -186,6 +192,7 @@ _MODEL_FIELDS = frozenset(ModelConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
 _SECTION_FIELDS = frozenset(BoundarySection.model_fields)
 _CAPS_FIELDS = frozenset(CapsSection.model_fields)
+_ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
 
@@ -202,6 +209,8 @@ def _check_workspace(data: dict[str, Any], where: str) -> None:
         _check_keys(data["boundary"], _SECTION_FIELDS, f"{where} boundary")
     if "caps" in data:
         _check_keys(data["caps"], _CAPS_FIELDS, f"{where} caps")
+    if "attachments" in data:
+        _check_keys(data["attachments"], _ATTACHMENT_FIELDS, f"{where} attachments")
     if "policy" in data:
         _check_keys(data["policy"], _POLICY_FIELDS, f"{where} policy")
         for i, rule in enumerate(data["policy"].get("rules", [])):
@@ -246,6 +255,7 @@ def test_every_config_key_is_documented() -> None:
         | WORKSPACE_SECTIONS
         | _SECTION_FIELDS
         | _CAPS_FIELDS
+        | _ATTACHMENT_FIELDS
         | _POLICY_FIELDS
         | _RULE_FIELDS
     )
@@ -263,6 +273,9 @@ def test_documented_defaults_match_the_code() -> None:
         "spend_usd": str(DEFAULT_SPEND_USD),
         "wall_clock_hours": str(DEFAULT_WALL_CLOCK_HOURS),
         "max_iterations": str(DEFAULT_MAX_ITERATIONS),
+        "max_file_bytes": str(DEFAULT_MAX_FILE_BYTES),
+        "max_total_bytes": str(DEFAULT_MAX_TOTAL_BYTES),
+        "max_count": str(DEFAULT_MAX_COUNT),
         "rules": "[]",
         "class_c_default": str(PolicyConfig.model_fields["class_c_default"].default),
     }

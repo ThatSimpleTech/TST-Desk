@@ -2721,13 +2721,23 @@ backlog's sizing reflects that. Retry-without-edit stays the TD-1606 behavior.
 **Size:** 3 · **Depends on:** TD-1004
 
 **Acceptance criteria:**
-- [ ] Text files attach to a message as context chips (picker, drag-drop, paste)
-- [ ] Attachments travel with `user_message` within configured caps and render
+- [x] Text files attach to a message as context chips (picker, drag-drop, paste)
+- [x] Attachments travel with `user_message` within configured caps and render
       as chips in the sent row
-- [ ] Oversize/binary attachment attempts fail with actionable copy
+- [x] Oversize/binary attachment attempts fail with actionable copy
 
 **Notes:** images deliberately split out — vision support depends on the user's
 chosen models and needs capability detection first.
+
+**Done (2026-08-17):** caps and the text/binary test live in the daemon
+(`tstd/attachments.py`), not only the composer — a client is not trustworthy, so
+`user_message` carries base64 bytes and the daemon decides for itself whether
+they are text (strict UTF-8 + NUL scan). The composer refuses early for better
+copy on top of that. Caps are a new `attachments` section in `.tst/config.yaml`,
+ridden out on `boundary_update` so the composer judges against the workspace's
+real numbers; documented in `docs/configuration.md` §4.3. One bad file refuses
+the whole message. See DECISIONS.md 2026-08-17 TD-1709 for the four Class B
+calls.
 
 ---
 
