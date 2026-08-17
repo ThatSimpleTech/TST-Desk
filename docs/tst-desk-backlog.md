@@ -1251,7 +1251,7 @@ that this row had been quietly holding red.
 
 ---
 
-### TD-1809 — Tell the model the workspace root
+### TD-1810 — Tell the model the workspace root
 **Size:** 2 · **Depends on:** TD-1802
 
 **Acceptance criteria:**
