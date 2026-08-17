@@ -56,6 +56,15 @@ export const ICONS = {
 	plus: '<path d="M5 12h14"/>' + '<path d="M12 5v14"/>',
 	/** Filter field affordance (session rail, TD-1701). */
 	search: '<circle cx="11" cy="11" r="8"/>' + '<path d="m21 21-4.3-4.3"/>',
+	/** Resolved instruction stack (command palette, TD-1707). */
+	layers:
+		'<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.91a1 1 0 0 0 0-1.83Z"/>' +
+		'<path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/>' +
+		'<path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+	/** Theme toggle (command palette, TD-1707). */
+	moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+	/** A session (command palette, TD-1707). */
+	'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;
