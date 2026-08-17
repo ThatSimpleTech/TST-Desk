@@ -13,6 +13,7 @@
 //   - every entry carries the full payload for an expandable view (AC #2)
 //   - shell_output chunks merge into the parent tool_call's live buffer (AC #4)
 //   - each entry maps to a `kind` that drives distinct styling (AC #6)
+//   - one bound session's activity and no other's (TD-1009)
 //
 // Assistant text (assistant_delta) is deliberately not a timeline entry: it is
 // the chat conversation, not an activity record. The AC enumerates exactly the
@@ -201,13 +202,54 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
   }
 }
 
+/**
+ * The session an event belongs to, or null when it names none.
+ *
+ * A daemon error is written straight to the socket rather than through a
+ * session's event log (core/tstd/protocol.py `build_error`), so it may carry
+ * no session at all — and an event that names no session is not this
+ * session's activity. Those surface through TD-1008's notification lane,
+ * which is where a daemon-level failure belongs.
+ */
+function eventSessionId(event: DaemonEventUnion): string | null {
+  if (!("session_id" in event)) return null;
+  return event.session_id ?? null;
+}
+
 /** Accumulates a session's events into an ordered list of timeline entries. */
 export class Timeline {
   private _entries: TimelineEntry[];
+  /** The session whose activity this timeline shows; null when unbound. */
+  private _sessionId: string | null = null;
+  /** Highest log position already folded in — see `push`. */
+  private _lastSeq = 0;
 
   /** Storage is injected so the caller can supply a reactive (`$state`) array. */
   constructor(storage: TimelineEntry[] = []) {
     this._entries = storage;
+  }
+
+  /** The bound session, or null. */
+  get sessionId(): string | null {
+    return this._sessionId;
+  }
+
+  /**
+   * Show a different session's activity (TD-1009).
+   *
+   * The daemon's event log is the record, so a switch drops what the previous
+   * session left here and lets the bind's attach replay rebuild the new one.
+   * The window keeps no second copy of a history it would then have to hold
+   * in step — the pane is a view of the log, not a store of it.
+   *
+   * Re-binding the session already shown is a no-op, deliberately: an attach
+   * that replays only the gap (a reconnect, TD-1716's resume) would otherwise
+   * empty the pane with nothing coming back to refill it.
+   */
+  bind(sessionId: string | null): void {
+    if (sessionId === this._sessionId) return;
+    this._sessionId = sessionId;
+    this.clear();
   }
 
   /** The chronological entries, in arrival (seq) order. */
@@ -219,8 +261,27 @@ export class Timeline {
     return this._entries.length;
   }
 
-  /** Push a validated daemon event into the timeline. */
+  /**
+   * Push a validated daemon event into the timeline.
+   *
+   * One connection carries every session the window follows, so an event
+   * belonging to another one is not this pane's activity and is dropped
+   * (TD-1009). Within the session, `seq` is the log position: an attach
+   * replays from a requested seq, so an event at or below what we already
+   * folded is that replay handing back an entry already on screen, not a
+   * second occurrence of it. Dropping it here means no re-attach can double
+   * count, whatever the client's own duplicate detection did or did not do.
+   *
+   * A daemon error carries no seq — it bypasses the event log — so there is
+   * nothing to compare it against and nothing that can replay it.
+   */
   push(event: DaemonEventUnion): void {
+    if (this._sessionId === null || eventSessionId(event) !== this._sessionId) return;
+    const seq: unknown = event.seq;
+    if (typeof seq === "number") {
+      if (seq <= this._lastSeq) return;
+      this._lastSeq = seq;
+    }
     if (event.type === "shell_output") {
       this._mergeShellOutput(event);
       return;
@@ -245,9 +306,11 @@ export class Timeline {
     for (const event of events) this.push(event);
   }
 
-  /** Drop all entries. Mutates in place — reassigning would detach injected reactive storage. */
+  /** Drop all entries and the log position they were folded from. Mutates in
+   *  place — reassigning would detach injected reactive storage. */
   clear(): void {
     this._entries.length = 0;
+    this._lastSeq = 0;
   }
 
   /** Append a shell_output chunk to the live buffer of its tool_call entry. */

@@ -13,12 +13,22 @@ export const entries = $state<TimelineEntry[]>([]);
 
 const timeline = new Timeline(entries);
 
-/** Append one validated daemon event to the timeline. */
+/** Append one validated daemon event to the timeline. Events belonging to
+ *  any session but the bound one are dropped (TD-1009). */
 export function push(event: DaemonEventUnion): void {
   timeline.push(event);
 }
 
-/** Drop all timeline entries. */
+/** Point the pane at a session, or at nothing (TD-1009).
+ *
+ *  Called by the chat store, which owns the attach/detach pairing: binding
+ *  the pane and re-hydrating this list from the attach replay are the same
+ *  moment. Null unbinds — no session, no activity. */
+export function bindSession(sessionId: string | null): void {
+  timeline.bind(sessionId);
+}
+
+/** Drop all timeline entries, keeping the bound session. */
 export function clear(): void {
   timeline.clear();
 }
