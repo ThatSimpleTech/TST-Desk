@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from tstd.context import ContextAssembler, SteeringFileResolver
+from tstd.context.assembler import _path_matches_glob
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -590,3 +591,87 @@ class TestFrontmatterStrippedAtEveryLevel:
         result = _make_assembler(home).assemble_sync(ws)
         assert "Imported body." in result.block
         assert "---" not in result.block
+
+
+# ── Tests: glob translation table (TD-511) ─────────────────────────────────
+
+#: ``(pattern, path, expected)``.  The bare-name rows are the TD-511 case:
+#: a name with no ``/`` anchors at the basename, so it never matches a
+#: longer filename that merely ends with it.
+_GLOB_TABLE: list[tuple[str, str, bool]] = [
+    # A bare name is a basename at any depth — never a suffix.
+    ("config.py", "config.py", True),
+    ("config.py", "pkg/config.py", True),
+    ("config.py", "a/b/c/config.py", True),
+    ("config.py", "oldconfig.py", False),
+    ("config.py", "pkg/oldconfig.py", False),
+    ("config.py", "config.pyi", False),
+    ("Dockerfile", "Dockerfile", True),
+    ("Dockerfile", "infra/Dockerfile", True),
+    ("Dockerfile", "MyDockerfile", False),
+    ("Dockerfile", "Dockerfile.dev", False),
+    # The explicit `**/` spelling means the same thing, equally anchored.
+    ("**/config.py", "config.py", True),
+    ("**/config.py", "pkg/config.py", True),
+    ("**/config.py", "oldconfig.py", False),
+    ("**/config.py", "pkg/oldconfig.py", False),
+    # `**/` mid-pattern still crosses separators, and still anchors.
+    ("src/**/*.py", "src/main.py", True),
+    ("src/**/*.py", "src/api/user.py", True),
+    ("src/**/*.py", "src/api/v1/user.py", True),
+    ("src/**/*.py", "tests/main.py", False),
+    ("ui/**/*.svelte", "ui/App.svelte", True),
+    ("ui/**/*.svelte", "ui/src/App.svelte", True),
+    ("ui/**/*.svelte", "src/App.svelte", False),
+    ("src/**/config.py", "src/config.py", True),
+    ("src/**/config.py", "src/a/config.py", True),
+    ("src/**/config.py", "src/oldconfig.py", False),
+    # A trailing `**` takes everything below, but not the directory itself.
+    ("src/api/**", "src/api/routes.py", True),
+    ("src/api/**", "src/api/v1/routes.py", True),
+    ("src/api/**", "src/api", False),
+    # Bare `**` is everything.
+    ("**", "anything/at/all.py", True),
+    ("**", "top.py", True),
+    # A single star stops at a separator.
+    ("src/*", "src/routes.py", True),
+    ("src/*", "src/v1/routes.py", False),
+    # A bare extension glob matches at any depth.
+    ("*.py", "main.py", True),
+    ("*.py", "src/deep/thing.py", True),
+    ("*.py", "src/thing.pyi", False),
+    # Exact relative paths are unaffected.
+    ("src/main.py", "src/main.py", True),
+    ("src/main.py", "src/oldmain.py", False),
+    # Character classes and `?` keep working alongside the anchor.
+    ("src/?.py", "src/a.py", True),
+    ("src/?.py", "src/ab.py", False),
+    ("[a-z]onfig.py", "config.py", True),
+    ("[a-z]onfig.py", "oldconfig.py", False),
+]
+
+
+@pytest.mark.parametrize(("pattern", "path", "expected"), _GLOB_TABLE)
+def test_glob_translation(pattern: str, path: str, expected: bool) -> None:
+    """TD-511: the translator table, including the suffix case."""
+    assert _path_matches_glob(path, pattern) is expected
+
+
+@pytest.mark.parametrize(
+    ("touched", "expected_active"),
+    [
+        ("config.py", True),
+        ("pkg/config.py", True),
+        ("oldconfig.py", False),
+        ("src/oldconfig.py", False),
+    ],
+)
+def test_bare_name_scope_through_the_assembler(
+    touched: str, expected_active: bool, tmp_path: Path
+) -> None:
+    """TD-511 criterion 1, driven end to end rather than at the translator."""
+    home, ws = _build_workspace(
+        tmp_path, rules={"c.md": "---\nappliesTo: [config.py]\n---\nConfig rules."}
+    )
+    result = _make_assembler(home).assemble_sync(ws, matched_paths={touched})
+    assert result.sources[0].active is expected_active
