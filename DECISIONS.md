@@ -4629,3 +4629,78 @@ First attempt mirrored the daemon's wiring in the test and passed with `daemon.p
 the same shape of gap that let the defect ship, reproduced in the fix. The behavioural runs stay
 (they pin the semantics), but `TestTheDaemonsOwnWiring` now spies on `register_builtin_handlers`
 while calling `_start_session`, and two of its runs go red on revert. Verified by reverting.
+## 2026-08-17 — TD-1810: Tell the model the workspace root
+
+### 1. The root goes inside the cache prefix, ahead of steering (Class B)
+
+**Decision:** A new block `[1b]` states the absolute workspace root once,
+between the base system prompt and the steering block, and it is part of
+the TD-305 prefix that `AssembledPrompt.prefix_hash` covers. Spec §4.5's
+order becomes base → **workspace root** → steering → memory → manifest →
+conversation. Every tier gets it, at the same offset.
+
+**Rationale:** "Does not disturb the cached prefix" is a statement about
+stability, not about staying out of it. The root is constant for the life
+of a session, so the two positions that keep it out of the prefix — after
+memory, or after the manifest — would re-bill bytes that never change on
+every turn, which is the exact cost TD-305 exists to avoid. Inside the
+prefix it is paid for once per session and read from cache after that.
+
+Ahead of steering rather than behind it, because a prefix cache is
+invalidated from the first changed byte onward: steering is the earliest
+block that can change mid-session (a TD-509 reload), and a root that
+followed it would be re-tokenised every time someone edited `AGENTS.md`.
+Ordering stable-est-first is the whole mechanism.
+
+All three tiers, because the worker calls the same `fs_*` tools the brain
+does, and because a per-tier position would split the `base + root` head
+that brain, worker, and validator currently share.
+
+Cost measured on a real fixture: ~80–125 heuristic tokens, once. The
+existing TD-305 invariant is unchanged — `test_prefix_still_byte_identical_
+across_calls` and `test_cache_prefix_stable_across_turns` both hold.
+
+### 2. The `fs_*` schema descriptions are left alone (Class B, rejected)
+
+**Decision:** `fs_read`, `fs_list`, `fs_write`, and `fs_edit` keep
+"Absolute path to the file to …". The root is not interpolated into any
+tool description.
+
+**Rationale:** Considered, because a parameter description is the text
+closest to the argument being filled. Rejected on three counts. It would
+put the root on the wire four times per request instead of once, which is
+the opposite of the story's design constraint. It would make the registry
+workspace-dependent — today `create_registry()` is a module-level factory
+with static text, and parameterising it by workspace changes a public API
+shape for every provider and every caller. And it is unnecessary: the
+prompt block alone moved a real model from 0/12 to 12/12 on absolute-path
+emission, so the schema change would buy nothing measurable at a real cost.
+
+### 3. The root is rendered resolved, with POSIX separators (Class A)
+
+`Path(workspace_path).resolve().as_posix()`. Resolved because the path
+guard canonicalises before comparing, so stating a symlinked root would
+hand the model a prefix that only accidentally matches the boundary it is
+checked against. POSIX separators for the reason the manifest already
+renders its entries that way (TD-1406): the model concatenates the two, and
+on Windows a backslash root would additionally have to survive JSON string
+escaping inside a tool-call argument.
+
+### 4. The root is not a secret, and nothing new logs it
+
+§2.2 covers credentials — API keys in the keychain, redacted on every
+output path. A filesystem path the user chose when they opened a workspace
+is not one, and it was already the least-secret value in the system:
+`Session.workspace_path`, the boundary config, the steering provenance
+comments (`<!-- from: /abs/ws/AGENTS.md (workspace) -->`), and every
+`fs_*` tool result already carry it. This story adds no new sink — the
+audit database stores token counts and cost for a model call, never prompt
+text, so the assembled prompt does not reach it, and no log line was added.
+
+### 5. Spec §4.5 now understates the assembled order (flagged, not fixed)
+
+The story's instructions limited markdown edits to `DECISIONS.md` and the
+backlog tick, so `docs/tst-desk-spec.md` §4.5 still shows the five-block
+order without `[1b]`. §10 wants docs to match behaviour; recording the drift
+here rather than leaving it unremarked. The one-line diagram fix is the
+whole of it.
