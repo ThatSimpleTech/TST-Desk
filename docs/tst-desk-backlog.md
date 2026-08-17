@@ -1090,12 +1090,30 @@ YAML, and keep config authoritative when it does specify.
 **Size:** 2 · **Depends on:** TD-1804
 
 **Acceptance criteria:**
-- [ ] `turn_complete.tokens` is the sum across every provider call in the turn, including calls
+- [x] `turn_complete.tokens` is the sum across every provider call in the turn, including calls
       made before a tool round-trip
-- [ ] `turn_complete` duration covers the whole turn, not only its final leg
-- [ ] Per-call ledger rows and `cost_update` events stay at exactly one per provider call —
+- [x] `turn_complete` duration covers the whole turn, not only its final leg
+- [x] Per-call ledger rows and `cost_update` events stay at exactly one per provider call —
       TD-1804's guarantee is preserved, not traded away
-- [ ] A regression test pins a two-call turn (one tool round-trip) offline, with no model running
+- [x] A regression test pins a two-call turn (one tool round-trip) offline, with no model running
+
+**Done (2026-08-16):** `tracker.begin_turn()` and `turn_start = time.time()` move out of the
+tool-call round-trip loop in `core/tstd/loop.py` and up to the turn boundary, so both
+accumulators measure the thing they are named for.  The round-trip loop is otherwise untouched
+and per-call accounting still rides on `record()`, once per provider call (TD-1804).  Live
+against Ollama 0.32.13 `qwen3.8:27b`: a two-call turn wrote `model_calls` rows of (1249, 174)
+and (1448, 50) and `turn_complete` reported `tokens=2921` — their sum, where the pre-fix number
+was the last leg alone (1498) — with `turns.duration` 25.6s across a 25.9s pass.
+`core/tests/test_turn_totals.py` pins it offline through TD-1804's `ScriptedProvider` replaying
+the split `finish_reason`/`usage` shape: the sum, that the total is neither leg on its own, a
+first leg slowed to 0.25s so a stopwatch started at the wrong moment cannot hide inside
+sub-millisecond legs, exactly two ledger rows and two `cost_update`s, and a second turn starting
+from zero so the reset did not leave the turn loop as well.  Entailed and pinned rather than
+left to be discovered: `cost_update.turn_cost` is now the turn so far, and the last one agrees
+with the `turn_complete` it lands on.  Deferred: `router.record_turn_start()` sits in the same
+round-trip loop, so `turn_count` still counts provider calls rather than turns — the same defect
+on a different counter, raised in DECISIONS.md for a story of its own because moving it would
+change TD-303's tier selection.
 
 `agent_loop` opens its tool-call round-trip loop at `core/tstd/loop.py:630` and calls
 `tracker.begin_turn()` at :649 — inside it. Every round-trip resets the turn accumulator, so a
@@ -1111,15 +1129,33 @@ summed to 3520. The ledger was right; the turn total was not.
 **Size:** 3 · **Depends on:** TD-1803
 
 **Acceptance criteria:**
-- [ ] The harness selects the tool call it checks by name, not by list position; a run in which
+- [x] The harness selects the tool call it checks by name, not by list position; a run in which
       the model calls another tool first still passes when it performs the required write
-- [ ] The approval-gate check matches an approval to the tool call it belongs to, not to
+- [x] The approval-gate check matches an approval to the tool call it belongs to, not to
       whichever request arrived first
-- [ ] The execution check inspects the result of the write being verified, not `results[0]`
-- [ ] Extra tool calls neither fail the run nor pass it silently — the harness reports what the
+- [x] The execution check inspects the result of the write being verified, not `results[0]`
+- [x] Extra tool calls neither fail the run nor pass it silently — the harness reports what the
       model actually did
-- [ ] The live leg passes five consecutive runs against a local endpoint
-- [ ] `core/tstd/e2e_harness.py` is back under AGENTS.md §6's ~400-line limit
+- [x] The live leg passes five consecutive runs against a local endpoint
+      (5/5 green against `qwen3.8:27b` on Ollama 0.32.13, 13–30s each; none of the five
+      happened to make an extra call, so the selection rule itself is pinned offline)
+- [x] `core/tstd/e2e_harness.py` is back under AGENTS.md §6's ~400-line limit
+
+**Done (2026-08-16):** the verdict half — `HarnessResult` and every check — moved to
+`core/tstd/e2e_checks.py`, leaving `e2e_harness.py` with workspace prep, the mock plan, the
+protocol client and the CLI; `run()` and `main()` keep their signatures, so
+`scripts/e2e_headless.py` and TD-1401's test did not move a line.  333 and 310 lines, both under
+§6.  Selection is by identity: the first `fs_write` in the transcript, then its approval and its
+result matched on that call's `tool_call_id`, so all three checks are about one call by
+construction rather than by coincidence.  *First*, not whichever one passes — hunting for the
+call that makes the pass green would turn the M1.5 exit criterion into a search for its own
+agreement (§7).  Extra calls land in `HarnessResult.notes` as `name#id → status`, printed as
+`NOTE` lines and excluded from `ok`, and the checked call's line states where it sat
+(`call 2 of 2`).  `core/tests/test_e2e_ordering.py` pins all of it offline through the real
+daemon, classifier, policy gate and dispatcher with only the model scripted — `MockProvider`
+reuses one call id for every call and must stay byte-identical for TD-1401 — and two of the five
+transcripts it replays must FAIL, which is what keeps the new rule from being one that passes
+everything.
 
 `core/tstd/e2e_harness.py:265` takes `calls[0]` and requires `name == "fs_write"`; :283 compares
 `gate[0]`'s `tool_call_id` to that same positional pick; :289 takes `results[0]`. All three
