@@ -41,6 +41,10 @@ export function teardownChat(): void {
 export const sendUserMessage: (text: string) => boolean = store.sendUserMessage;
 export const retryLastUserMessage: () => boolean = store.retryLastUserMessage;
 export const cancelTurn: () => boolean = store.cancelTurn;
+/** Queue actions (TD-1704), bound for the queued-row controls. */
+export const sendQueuedNow: (id: string) => boolean = store.sendQueuedNow;
+export const editQueuedMessage: (id: string, text: string) => void = store.editQueuedMessage;
+export const removeQueuedMessage: (id: string) => void = store.removeQueuedMessage;
 /** Rail click target (TD-1701): attach the pane to a session from the list. */
 export const selectSession: (
   sessionId: string,
