@@ -656,13 +656,17 @@ no-touch / baseline (3), daemon inactive→active flip (1).
 **Size:** 2 · **Depends on:** TD-503
 
 **Acceptance criteria:**
-- [ ] An `AGENTS.md` or `CLAUDE.md` opening with a YAML frontmatter block does not send the
+- [x] An `AGENTS.md` or `CLAUDE.md` opening with a YAML frontmatter block does not send the
       `---` delimiters or the YAML to the model
-- [ ] Whether `appliesTo` is honoured outside `.tst/rules/` is decided and documented — today
+      — Done: `parse_frontmatter` now runs for every precedence level, not just `RULES`.
+- [x] Whether `appliesTo` is honoured outside `.tst/rules/` is decided and documented — today
       it is silently neither honoured nor removed
-- [ ] `docs/steering.md`'s migration section matches whatever is decided
-- [ ] A test drives a frontmattered `AGENTS.md` through the assembler and asserts the block is
+      — Done: stripped, never honoured, and flagged in the inspector. DECISIONS.md 2026-08-17.
+- [x] `docs/steering.md`'s migration section matches whatever is decided
+      — Done: §9 rewritten; §4 example and §10 updated with it, all verified live.
+- [x] A test drives a frontmattered `AGENTS.md` through the assembler and asserts the block is
       absent from the assembled prompt
+      — Done: `TestFrontmatterStrippedAtEveryLevel`, table-driven over all six file kinds.
 
 `assemble_sync` calls `parse_frontmatter` only when `source.precedence == Precedence.RULES`
 (`core/tstd/context/assembler.py:190`); for every other level `body = content` unchanged. A
@@ -679,11 +683,16 @@ Found while writing TD-1502, confirmed independently by reading the gate.
 **Size:** 1 · **Depends on:** TD-503
 
 **Acceptance criteria:**
-- [ ] `appliesTo: [config.py]` activates on `config.py` and on `pkg/config.py`, but not on
+- [x] `appliesTo: [config.py]` activates on `config.py` and on `pkg/config.py`, but not on
       `oldconfig.py`
-- [ ] An anchored spelling exists and is documented; today `config.py` and `**/config.py`
+      — Done: `**/` translates to `(?:.*/)?`, anchoring the next literal to a segment boundary.
+- [x] An anchored spelling exists and is documented; today `config.py` and `**/config.py`
       compile to the identical regex, so there is no way to ask for the strict match
-- [ ] Table-driven tests over the glob translator cover the suffix case
+      — Done: both still compile identically, but now both *anchor*, so the bare name is the
+      anchored spelling. §4 says so and names `src/config.py` for narrowing further. Root-only
+      anchoring (a leading `/`) is still unexpressible — left alone as out of scope, see below.
+- [x] Table-driven tests over the glob translator cover the suffix case
+      — Done: `_GLOB_TABLE`, 38 rows over `_path_matches_glob`, plus 4 end-to-end rows.
 
 `_glob_to_re` rewrites a bare name to `**/config.py`, then translates `**` to `.*` and skips the
 following `/` (`core/tstd/context/assembler.py:315-321`), yielding `^.*config\.py$`. The correct
