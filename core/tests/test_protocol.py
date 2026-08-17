@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from types import UnionType
+from typing import Any, Literal, Union, get_args, get_origin
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from tstd.protocol import (
+    _KNOWN_CLIENT_TYPES,
+    _KNOWN_EVENT_TYPES,
     PROTOCOL_VERSION,
     AlwaysAllow,
     ApprovalRequest,
@@ -17,8 +20,10 @@ from tstd.protocol import (
     AssistantDelta,
     Attach,
     Cancel,
+    ClientMessageT,
     CostUpdate,
     DaemonEvent,
+    DaemonEventT,
     DecisionLogged,
     DeleteSession,
     Deny,
@@ -551,6 +556,109 @@ class TestDiscriminatedUnion:
         with pytest.raises(UnknownMessageTypeError) as exc:
             parse_daemon_event('{"type": "bogus_event", "seq": 1}')
         assert "bogus_event" in str(exc)
+
+
+# ── The known-type gate ────────────────────────────────────────────────
+
+
+def _wire_types(union: Any) -> dict[str, type[BaseModel]]:
+    """Every model in a discriminated union, keyed by its wire ``type``.
+
+    Read off the annotation rather than restated: the union is the
+    contract, so it is what the frozensets are judged against.
+    """
+    return {
+        get_args(model.model_fields["type"].annotation)[0]: model
+        for model in get_args(get_args(union)[0])
+    }
+
+
+CLIENT_MESSAGES = _wire_types(ClientMessageT)
+DAEMON_EVENTS = _wire_types(DaemonEventT)
+
+
+def _placeholder(annotation: Any) -> Any:
+    """The smallest value satisfying ``annotation`` and the field
+    constraints the protocol uses (``gt=0``, ``ge=1``, ``min_length=1``).
+
+    Deliberately narrow.  A message introducing a shape this cannot build
+    fails loudly and costs one line here, which is the price of never
+    hand-listing the samples — a hand-listed set is what let TD-208 hide.
+    """
+    origin = get_origin(annotation)
+    if origin is Literal:
+        return get_args(annotation)[0]
+    if origin in (Union, UnionType):
+        return _placeholder(get_args(annotation)[0])
+    if origin is list:
+        return []
+    if origin is dict:
+        return {}
+    if annotation is bool:
+        return False
+    if annotation is str:
+        return "x"
+    if annotation in (int, float):
+        return 1
+    raise AssertionError(f"no placeholder for {annotation!r} — extend _placeholder")
+
+
+def _sample(model: type[BaseModel]) -> BaseModel:
+    """A minimal valid instance of ``model``: its required fields only."""
+    return model(
+        **{
+            name: _placeholder(field.annotation)
+            for name, field in model.model_fields.items()
+            if field.is_required()
+        }
+    )
+
+
+class TestKnownTypeGate:
+    """`_check_known_type` runs before validation, so the hand-maintained
+    frozensets are part of the parse contract, not a convenience.
+
+    A union member missing from its frozenset is refused by the parser
+    meant to accept it; a frozenset entry with no union member advertises
+    a type nothing can validate. TD-208 was the first case — the daemon
+    emitted `rule_activated` and its own parser rejected it. Both sets are
+    derived from the unions here and compared in both directions, so the
+    next omission fails the suite rather than shipping.
+    """
+
+    def test_known_event_types_match_the_union(self) -> None:
+        declared = set(DAEMON_EVENTS)
+        assert declared == _KNOWN_EVENT_TYPES, (
+            f"in DaemonEventT, missing from _KNOWN_EVENT_TYPES: "
+            f"{sorted(declared - _KNOWN_EVENT_TYPES)}; "
+            f"in _KNOWN_EVENT_TYPES, missing from DaemonEventT: "
+            f"{sorted(_KNOWN_EVENT_TYPES - declared)}"
+        )
+
+    def test_known_client_types_match_the_union(self) -> None:
+        declared = set(CLIENT_MESSAGES)
+        assert declared == _KNOWN_CLIENT_TYPES, (
+            f"in ClientMessageT, missing from _KNOWN_CLIENT_TYPES: "
+            f"{sorted(declared - _KNOWN_CLIENT_TYPES)}; "
+            f"in _KNOWN_CLIENT_TYPES, missing from ClientMessageT: "
+            f"{sorted(_KNOWN_CLIENT_TYPES - declared)}"
+        )
+
+    # The parsers are called directly rather than through ``_roundtrip``:
+    # that helper picks one by ``isinstance(msg, DaemonEvent)``, and
+    # ``ping`` is a member of ``DaemonEventT`` without being a
+    # ``DaemonEvent`` — it carries no seq.
+    @pytest.mark.parametrize("wire_type", sorted(DAEMON_EVENTS))
+    def test_every_daemon_event_round_trips(self, wire_type: str) -> None:
+        model = DAEMON_EVENTS[wire_type]
+        back = parse_daemon_event(_sample(model).model_dump_json())
+        assert type(back) is model
+
+    @pytest.mark.parametrize("wire_type", sorted(CLIENT_MESSAGES))
+    def test_every_client_message_round_trips(self, wire_type: str) -> None:
+        model = CLIENT_MESSAGES[wire_type]
+        back = parse_client_message(_sample(model).model_dump_json())
+        assert type(back) is model
 
 
 # ── Edge cases ─────────────────────────────────────────────────────────

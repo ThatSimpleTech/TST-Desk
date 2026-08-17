@@ -217,11 +217,10 @@ corrupt replay.
 `parse_client_message` and `parse_daemon_event` check the incoming `type` against
 `_KNOWN_CLIENT_TYPES` / `_KNOWN_EVENT_TYPES` before validating, so an unrecognised name gets
 `unknown_message` with an actionable string rather than a pydantic dump. These frozensets are
-hand-maintained alongside the unions.
-
-> **Known defect (TD-208).** `rule_activated` is a member of `DaemonEventT` and is emitted by the
-> agent loop, but it is missing from `_KNOWN_EVENT_TYPES`, so `parse_daemon_event` rejects an
-> event the daemon itself sends. See the backlog entry.
+hand-maintained alongside the unions, so a test derives both sets from the unions themselves and
+fails on drift in either direction — a union member with no frozenset entry is rejected by the
+parser meant to accept it, and a frozenset entry with no union member admits a type nothing can
+validate.
 
 ### Client → daemon
 
