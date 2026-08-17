@@ -5,10 +5,18 @@
 	// workspace's sessions newest-first; collapsed it's a 48px icon strip of
 	// state dots. All data comes from the sessions store; rows are keyed by
 	// session id and the daemon's list is the only source of rows.
+	//
+	// TD-1712 gave it its information architecture: function surfaces grouped
+	// above, session history sectioned below with a count badge, and the
+	// account/settings row anchored bottom-left. The grouping rules are pure
+	// (../rail.ts) — this file only renders them.
 	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
+	import RailFunctions from './RailFunctions.svelte';
+	import RailAccount from './RailAccount.svelte';
 	import { chat } from '../chat-store.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
+	import { railSections } from '../rail';
 	import {
 		sessions,
 		startSessions,
@@ -29,6 +37,11 @@
 	function activeTitle(row: SessionRow): string {
 		return `${workspaceName(row.workspacePath)} · ${ROW_STATE_LABELS[row.state]}`;
 	}
+
+	let rows = $derived(visibleRows());
+	// The history section badges what it actually lists, so the count can
+	// never disagree with the rows under it.
+	let history = $derived(railSections(rows.length)[1]);
 </script>
 
 <aside class="rail" class:collapsed={sessions.collapsed} aria-label="Sessions">
@@ -49,8 +62,9 @@
 			disabled={chat.sessionId === null && sessions.rows.length === 0}
 			onclick={() => newSession()}><Icon name="plus" size={16} /></button
 		>
+		<RailFunctions compact />
 		<div class="mini-list">
-			{#each visibleRows() as row (row.sessionId)}
+			{#each rows as row (row.sessionId)}
 				<button
 					class="mini"
 					class:mini-active={row.sessionId === chat.sessionId}
@@ -64,6 +78,7 @@
 				</button>
 			{/each}
 		</div>
+		<RailAccount compact />
 	{:else}
 		<div class="head">
 			<div class="filter">
@@ -92,8 +107,15 @@
 				onclick={toggleCollapsed}><Icon name="panel-left" size={16} /></button
 			>
 		</div>
+		<RailFunctions />
+		<div class="section-head">
+			<span class="section-label">{history.label}</span>
+			{#if history.badge !== null}
+				<span class="badge">{history.badge}</span>
+			{/if}
+		</div>
 		<div class="list" role="list" aria-label="Sessions">
-			{#each visibleRows() as row (row.sessionId)}
+			{#each rows as row (row.sessionId)}
 				<button
 					class="row"
 					class:row-active={row.sessionId === chat.sessionId}
@@ -113,6 +135,7 @@
 				</p>
 			{/each}
 		</div>
+		<RailAccount />
 	{/if}
 </aside>
 
@@ -131,7 +154,40 @@
 		flex-basis: 48px;
 		align-items: center;
 		gap: var(--space-1);
-		padding-top: var(--space-2);
+		padding: var(--space-2) 0;
+	}
+
+	/* ── Section heading + count badge (TD-1712) ───────────────────── */
+
+	.section-head {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-2) var(--space-2) var(--space-1);
+		margin: 0 var(--space-2);
+		border-top: var(--border-width) solid var(--color-hairline);
+		flex-shrink: 0;
+	}
+
+	.section-label {
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		font-weight: var(--weight-semibold);
+		/* Matches the timeline's uppercase kind label. */
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--color-ink-muted);
+	}
+
+	.badge {
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		color: var(--color-ink-secondary);
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
+		border-radius: var(--radius-full);
+		padding: 0 var(--space-2);
+		line-height: var(--leading-relaxed);
 	}
 
 	/* ── Header (expanded) ─────────────────────────────────────────── */

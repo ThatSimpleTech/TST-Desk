@@ -56,6 +56,14 @@ export const ICONS = {
 	plus: '<path d="M5 12h14"/>' + '<path d="M12 5v14"/>',
 	/** Filter field affordance (session rail, TD-1701). */
 	search: '<circle cx="11" cy="11" r="8"/>' + '<path d="m21 21-4.3-4.3"/>',
+	/** Home surface (rail functions, TD-1712). */
+	home:
+		'<path d="M3 10.2 12 3l9 7.2V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>' +
+		'<path d="M9 22v-8h6v8"/>',
+	/** Scheduled surface (rail functions, TD-1712). */
+	clock: '<circle cx="12" cy="12" r="9"/>' + '<path d="M12 7v5l3 2"/>',
+	/** Account anchor avatar fallback (rail footer, TD-1712). */
+	user: '<circle cx="12" cy="8" r="4"/>' + '<path d="M4 21a8 8 0 0 1 16 0"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => {
     // Recorded calls into the single-session stores.
     chatSelects: [] as Array<[id: string, turnState: string | null]>,
     focuses: [] as Array<{ id: string; state: string; workspacePath: string | undefined }>,
+    // Recorded calls the rail's function entries make (TD-1712).
+    surfaceCalls: [] as string[],
   };
 });
 
@@ -65,6 +67,13 @@ vi.mock("./session-status.svelte.js", () => ({
   workspaceName: (p: string) => p.split(/[\\/]/).filter((s) => s.length > 0).pop() ?? p,
 }));
 
+// The seam the rail's function entries drive (TD-1712). Recording it is how
+// "never a dead click" is asserted in both directions: a ready entry moves
+// something, every other entry moves nothing.
+vi.mock("./workspaces.svelte.js", () => ({
+  toggleWorkspaceMenu: () => void mocks.surfaceCalls.push("toggleWorkspaceMenu"),
+}));
+
 import {
   sessions,
   startSessions,
@@ -74,12 +83,14 @@ import {
   toggleCollapsed,
   selectRow,
   newSession,
+  activateRailFunction,
   stateTone,
   recencyLabel,
   rowTitle,
   rowSubtitle,
   COLLAPSED_STORAGE_KEY,
 } from "./sessions.svelte.js";
+import { RAIL_FUNCTIONS } from "./rail";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -137,6 +148,7 @@ beforeEach(() => {
   mocks.sent.length = 0;
   mocks.chatSelects.length = 0;
   mocks.focuses.length = 0;
+  mocks.surfaceCalls.length = 0;
   mocks.chatState.sessionId = null;
   mocks.statusState.workspacePath = null;
   mocks.sendResult = true;
@@ -353,6 +365,41 @@ describe("collapse", () => {
     expect(sessions.collapsed).toBe(false);
     toggleCollapsed();
     expect(sessions.collapsed).toBe(true);
+  });
+});
+
+// ── Rail function entries (TD-1712 AC: never a dead click) ────────────────
+
+describe("rail function entries", () => {
+  it("refuses a surface whose epic hasn't landed, and touches nothing", () => {
+    expect(activateRailFunction("scheduled")).toBe(false);
+    expect(mocks.surfaceCalls).toEqual([]);
+    expect(sentTypes()).toEqual([]);
+  });
+
+  it("refuses the surface the window is already on, and touches nothing", () => {
+    expect(activateRailFunction("home")).toBe(false);
+    expect(mocks.surfaceCalls).toEqual([]);
+    expect(sentTypes()).toEqual([]);
+  });
+
+  it("refuses an id the registry doesn't list", () => {
+    // @ts-expect-error — the guard has to hold for a caller that ignores types.
+    expect(activateRailFunction("dispatch")).toBe(false);
+    expect(mocks.surfaceCalls).toEqual([]);
+  });
+
+  it("activates every entry the registry calls ready", () => {
+    // Marking an entry ready without wiring it fails here rather than
+    // shipping a button that does nothing.
+    for (const entry of RAIL_FUNCTIONS) {
+      if (entry.state === "ready") expect(activateRailFunction(entry.id)).toBe(true);
+    }
+  });
+
+  it("Projects raises TD-1103's recents menu instead of a second picker", () => {
+    expect(activateRailFunction("projects")).toBe(true);
+    expect(mocks.surfaceCalls).toEqual(["toggleWorkspaceMenu"]);
   });
 });
 

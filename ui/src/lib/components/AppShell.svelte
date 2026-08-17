@@ -96,14 +96,8 @@
 		aria-label="Run doctor diagnostics"
 		onclick={runDoctor}><Icon name="stethoscope" size={16} /></button
 	>
-	<!-- Settings (TD-1703) — also ⌘,. The wizard is first-run only. -->
-	<button
-		class="shell-gear"
-		type="button"
-		title="Settings (⌘,)"
-		aria-label="Open settings"
-		onclick={() => openSettings()}><Icon name="settings" size={16} /></button
-	>
+	<!-- Settings is reached from the rail's account anchor (TD-1712) or ⌘,;
+	     the header no longer buries it behind a gear. -->
 	<ConnectionBanner />
 </header>
 
@@ -180,7 +174,7 @@
 		flex: 1;
 	}
 
-	/* Header affordances: decisions (TD-1202), doctor (TD-1104), wizard (TD-1101). */
+	/* Header affordances: decisions (TD-1202), doctor (TD-1104). */
 	.shell-gear {
 		display: inline-flex;
 		align-items: center;
