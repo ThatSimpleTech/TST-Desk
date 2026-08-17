@@ -87,7 +87,9 @@ Each OS will warn on first launch; that is expected, not a defect.
 
 v0.1 — in development. See [`docs/tst-desk-backlog.md`](docs/tst-desk-backlog.md) for the
 current milestone and [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) for the full
-architecture spec. Every configuration key is documented in
+architecture spec. How the pieces fit together — the daemon/shell split, the wire protocol, the
+extension points, and how to add a tool — is in
+[`docs/architecture.md`](docs/architecture.md). Every configuration key is documented in
 [`docs/configuration.md`](docs/configuration.md), and writing `AGENTS.md` and path-scoped rules
 is covered in [`docs/steering.md`](docs/steering.md).
 
