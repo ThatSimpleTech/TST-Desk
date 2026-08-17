@@ -2334,6 +2334,42 @@ same treatment. The suite does not write the user's config today, and should not
 
 ---
 
+### TD-1409 — TD-1407's fix narrowed the cancel race but did not close it
+**Size:** 2 · **Depends on:** TD-1407
+
+**Acceptance criteria:**
+- [ ] The escape assertion no longer depends on wall-clock margin at all: the marker's
+      writer is driven by a condition the test controls, not by `sleep 2` racing a kill
+- [ ] Reproduced under deliberate load before the fix, and the reproduction is what goes red
+- [ ] 30 consecutive full-suite runs **with the machine loaded** — TD-1407's hammer ran on
+      an idle host, which is the one condition under which this test was never going to fail
+- [ ] TD-1407's fourth criterion is corrected to say what its hammer actually proved
+
+Observed 2026-08-17 during the M3 batch: `test_cancelled_error_path_kills_group` failed on a
+full-suite run in `wt-e1406`, then passed the next two full runs, five isolated runs, and two
+file-scoped runs. The failing run was the only one executed while two other agents were
+building concurrently — three Python/Node toolchains on one machine.
+
+That is precisely the condition TD-1407 diagnosed and measured: "under full-suite load the
+same test measured 3.0s, 13.7s and 14.2s against a nominal 2.8s budget — a ~5× overshoot."
+The fix moved the run onto conditions for the *spawn* and the *group kill*, but the escapee
+still announces itself on a wall clock — `{ sleep 2; touch kicked.txt; } & wait` — so the
+1.7s of margin between the kill landing and the marker appearing is still wall-clock, and
+still loses under a ~5× overshoot.
+
+TD-1407's fourth criterion, "30 consecutive full-suite runs on a loaded machine with no
+failure," is ticked. Either the hammer's host was not loaded the way this one was, or 30 runs
+is not enough to catch a rate this low. Both readings point the same way: the criterion
+proved less than it claims, and the honest fix is to remove the last wall clock rather than
+to hammer harder.
+
+Not urgent — it is a test defect, not a product defect, and TD-605's cancel path is sound.
+It matters because §10 requires a green suite for every story, so an intermittent red row
+reads as a regression in whatever is being built at the time, which is exactly how it
+surfaced here.
+
+---
+
 ## Epic E15 — Documentation
 
 ---
@@ -3354,8 +3390,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M1 Headless core | E2–E9 | 51 | 153 |
 | M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 19 | 57 |
-| M3 Shippable | E13–E17 | 42 | 121 |
-| **Total v0.1** | **18** | **131** | **376** |
+| M3 Shippable | E13–E17 | 43 | 123 |
+| **Total v0.1** | **18** | **132** | **378** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
