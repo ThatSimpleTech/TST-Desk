@@ -4,8 +4,9 @@
 	// connection banner (TD-1003) sit in the shell header so daemon/socket
 	// state is visible at all times. The activity pane hosts the activity
 	// timeline (TD-1005), fed live from the daemon event stream, the files
-	// pane (TD-1705), and the resolved-stack panel (TD-1201) behind an
-	// Activity | Files | Stack tab strip.
+	// pane (TD-1705), the resolved-stack panel (TD-1201), and the usage and
+	// cost pane (TD-1706) behind an Activity | Files | Stack | Usage tab
+	// strip.
 	// Failure notices (TD-1008) render as banners under the header (blocking)
 	// or toasts bottom-right (transient); the footer hosts pending approval
 	// cards (TD-1007).
@@ -16,6 +17,7 @@
 	import ActivityTimeline from './ActivityTimeline.svelte';
 	import FilesPanel from './FilesPanel.svelte';
 	import StackPanel from './StackPanel.svelte';
+	import UsagePanel from './UsagePanel.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
 	import { push } from '../timeline-store.svelte.js';
@@ -35,6 +37,7 @@
 	import { startDecisions, openDecisions, decisions } from '../decisions.svelte.js';
 	import { palette, openPalette, closePalette } from '../palette-store.svelte.js';
 	import { rightPane, showRightPane } from '../right-pane.svelte.js';
+	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
 	import { resolveShortcut } from '../shortcuts';
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
@@ -72,14 +75,24 @@
 		const offDoctor = startDoctor();
 		const offDecisions = startDecisions();
 		const offSettings = startSettings();
+		const offUsage = startUsage();
 		return () => {
 			offTimeline();
 			offWizard();
 			offDoctor();
 			offDecisions();
 			offSettings();
+			offUsage();
 		};
 	});
+
+	// The usage pane (TD-1706) reads the audit store, which the live event
+	// stream does not update — so it loads when the tab is first opened
+	// rather than polling behind a tab nobody is looking at.
+	function showUsage(): void {
+		showRightPane('usage');
+		if (!usage.loaded) refreshUsage();
+	}
 
 </script>
 
@@ -129,7 +142,7 @@
 			<section class="pane-chat" aria-label="Chat pane"><ChatPane /></section>
 		{/snippet}
 		{#snippet right()}
-			<section class="pane-activity" aria-label="Activity, files, and stack pane">
+			<section class="pane-activity" aria-label="Activity, files, stack, and usage pane">
 				<div class="pane-tabs" role="tablist" aria-label="Right pane views">
 					<button
 						role="tab"
@@ -159,11 +172,23 @@
 					>
 						Stack
 					</button>
+					<!-- Usage (TD-1706): the audit store's rollups and exports. -->
+					<button
+						role="tab"
+						aria-selected={rightPane.tab === 'usage'}
+						class="tab"
+						class:tab-active={rightPane.tab === 'usage'}
+						onclick={showUsage}
+					>
+						Usage
+					</button>
 				</div>
 				{#if rightPane.tab === 'activity'}
 					<ActivityTimeline />
 				{:else if rightPane.tab === 'files'}
 					<FilesPanel />
+				{:else if rightPane.tab === 'usage'}
+					<UsagePanel />
 				{:else}
 					<StackPanel />
 				{/if}

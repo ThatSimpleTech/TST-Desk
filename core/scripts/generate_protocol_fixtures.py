@@ -35,8 +35,10 @@ from tstd.protocol import (
     DiagnosticCheck,
     DiagnosticsReport,
     Error,
+    ExportUsage,
     GetInstructionStack,
     GetSetupState,
+    GetUsage,
     Hello,
     InstructionStack,
     ListPolicyRules,
@@ -65,6 +67,9 @@ from tstd.protocol import (
     ToolCall,
     ToolResult,
     TurnComplete,
+    UsageExported,
+    UsageReport,
+    UsageRollup,
     UserMessage,
     ValidateApiKey,
 )
@@ -101,6 +106,9 @@ FIXTURES = {
     "set_preset": SetPreset(name="tst-default"),
     # Diagnostics (TD-1104 doctor)
     "run_diagnostics": RunDiagnostics(),
+    # Usage and cost (TD-1706)
+    "get_usage": GetUsage(),
+    "export_usage": ExportUsage(format="csv"),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
@@ -348,6 +356,45 @@ FIXTURES = {
             DiagnosticCheck(name="workspace", status="ok", detail="project is writable"),
             DiagnosticCheck(name="steering", status="ok", detail="3 steering source(s) parsed"),
         ]
+    ),
+    # Usage and cost (TD-1706): one row per bucket kind, each split by tier,
+    # so a consumer sees all three key shapes — session id, day, week start.
+    "usage_report": UsageReport(
+        rows=[
+            UsageRollup(
+                bucket="session",
+                key="sess-1",
+                tier="brain",
+                prompt_tokens=12000,
+                cached_prompt_tokens=8000,
+                completion_tokens=3000,
+                cost=0.117,
+                classifier_cost=0.0025,
+            ),
+            UsageRollup(
+                bucket="day",
+                key="2026-08-17",
+                tier="worker",
+                prompt_tokens=4000,
+                cached_prompt_tokens=0,
+                completion_tokens=900,
+                cost=0.0136,
+            ),
+            UsageRollup(
+                bucket="week",
+                key="2026-08-17",
+                tier="validator",
+                prompt_tokens=2500,
+                cached_prompt_tokens=500,
+                completion_tokens=200,
+                cost=0.0031,
+            ),
+        ]
+    ),
+    "usage_exported": UsageExported(
+        format="csv",
+        path="/home/user/.local/share/tst-desk/exports/usage-20260817T120000Z.csv",
+        rows=42,
     ),
 }
 

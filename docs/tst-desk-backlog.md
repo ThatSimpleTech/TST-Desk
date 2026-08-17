@@ -2653,13 +2653,35 @@ silently emptying the pane. Surfaced TD-1009 as an inherited defect.
 **Size:** 3 · **Depends on:** TD-903
 
 **Acceptance criteria:**
-- [ ] A usage view shows session/day/week token and cost rollups from the audit
+- [x] A usage view shows session/day/week token and cost rollups from the audit
       store, broken out by tier
-- [ ] Export buttons reuse the existing JSONL/CSV export
-- [ ] The title-bar meter's hover panel links here
+- [x] Export buttons reuse the existing JSONL/CSV export
+- [x] The title-bar meter's hover panel links here
 
 **Notes:** aggregation queries exist (TD-903); verify which export affordances
 are already wired before adding UI.
+
+**Done.** The premise check came back negative and shaped the story: TD-903's
+queries and exporters exist but nothing reaches them from the client — the only
+non-test caller is `e2e_checks.py`, and `cost_update` carries the meter's live
+session totals, not audit history. So this needed a protocol addition:
+`get_usage`/`export_usage` in, `usage_report`/`usage_exported` back, all four
+registration points plus both TS unions (see DECISIONS.md).
+
+`usage_rollup` is a fifth query beside the TD-903 four, reading the same `costs`
+view but grouping on bucket *and* tier at once — the existing ones answer one
+scope at a time. Weeks key on the Monday that opened them, which is the Sunday
+boundary a bare `weekday 0` gets wrong. `export_usage` carries a format and no
+path: the daemon writes to its own exports directory and reports where, so the
+message cannot become a general write-a-file verb. Reads open their own sqlite
+connection rather than borrowing the audit writer's, whose safety comes from its
+drain task serializing access.
+
+Cost math is tested per §7 with hand-computed dollar figures — cache reads priced
+at the cache rate, tiers priced apart, classifier spend off main-loop cost. 24
+core tests and 35 UI tests added; the bucket-limit test pins that a cap truncates
+buckets, never a bucket mid-tier. The pane is a right-pane tab through
+`right-pane.svelte.ts`, which is also what lets the title-bar popover link to it.
 
 ---
 

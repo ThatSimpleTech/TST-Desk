@@ -368,6 +368,32 @@ class RunDiagnostics(ClientMessage):
     type: Literal["run_diagnostics"] = "run_diagnostics"
 
 
+class GetUsage(ClientMessage):
+    """Ask for the audit store's usage rollups (TD-1706).
+
+    The daemon answers with one ``usage_report`` carrying every bucket —
+    session, day, and week — split by tier.  Connection-scoped, like
+    ``get_setup_state``: the audit database spans every session, so
+    scoping the question to one of them would answer a different one.
+    """
+
+    type: Literal["get_usage"] = "get_usage"
+
+
+class ExportUsage(ClientMessage):
+    """Write the audit store's model-call records to a file (TD-1706).
+
+    Carries the format and nothing else.  The destination is the daemon's
+    own exports directory, deliberately not a client-supplied path: this
+    message would otherwise be a general "write a file anywhere" verb
+    reachable from the socket, which is a wider hole than the feature
+    needs.  The chosen path comes back on ``usage_exported``.
+    """
+
+    type: Literal["export_usage"] = "export_usage"
+    format: Literal["jsonl", "csv"] = "jsonl"
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -804,6 +830,54 @@ class DiagnosticsReport(DaemonEvent):
     checks: list[DiagnosticCheck] = Field(default_factory=list)
 
 
+class UsageRollup(BaseModel):
+    """One bucket's spend on one tier (TD-1706).
+
+    ``key`` is a session id, an ISO day, or the ISO day the week opened
+    on, depending on ``bucket``.  Classifier spend (TD-703) stays on its
+    own field here exactly as it does in the store — folding it into
+    ``cost`` would make the view disagree with the title-bar meter.
+    """
+
+    bucket: Literal["session", "day", "week"]
+    key: str
+    tier: str
+    prompt_tokens: int = Field(ge=0)
+    cached_prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    cost: float = Field(ge=0)
+    classifier_cost: float = Field(default=0.0, ge=0)
+
+
+class UsageReport(DaemonEvent):
+    """Response to ``get_usage`` (TD-1706): every bucket, split by tier.
+
+    Connection-scoped like ``diagnostics_report``, so its seq is fixed at
+    1 — the audit database is a fact about the machine, not about any one
+    session's event log.  All three buckets ride one message because the
+    view switches between them locally and a round trip per tab would
+    show stale numbers next to fresh ones.
+    """
+
+    type: Literal["usage_report"] = "usage_report"
+    seq: int = 1
+    rows: list[UsageRollup] = Field(default_factory=list)
+
+
+class UsageExported(DaemonEvent):
+    """Response to ``export_usage`` (TD-1706): where the file landed.
+
+    ``rows`` is the model-call record count written, so the client can
+    say "42 calls" rather than claim success over an empty file.
+    """
+
+    type: Literal["usage_exported"] = "usage_exported"
+    seq: int = 1
+    format: Literal["jsonl", "csv"]
+    path: str
+    rows: int = Field(ge=0)
+
+
 class Ping(BaseModel):
     """Application-level liveness frame (TD-1716).  No session, no seq.
 
@@ -860,6 +934,8 @@ ClientMessageT = Annotated[
     | SetPreset
     | SetTierSlug
     | RunDiagnostics
+    | GetUsage
+    | ExportUsage
     | DeleteApiKey,
     Field(discriminator="type"),
 ]
@@ -888,6 +964,8 @@ DaemonEventT = Annotated[
     | SetupState
     | ApiKeyValidated
     | DiagnosticsReport
+    | UsageReport
+    | UsageExported
     | Ping
     | Error,
     Field(discriminator="type"),
@@ -926,6 +1004,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_preset",
         "set_tier_slug",
         "run_diagnostics",
+        "get_usage",
+        "export_usage",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -952,6 +1032,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "setup_state",
         "api_key_validated",
         "diagnostics_report",
+        "usage_report",
+        "usage_exported",
         "ping",
         "error",
     }

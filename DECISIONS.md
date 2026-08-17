@@ -4629,3 +4629,87 @@ First attempt mirrored the daemon's wiring in the test and passed with `daemon.p
 the same shape of gap that let the defect ship, reproduced in the fix. The behavioural runs stay
 (they pin the semantics), but `TestTheDaemonsOwnWiring` now spies on `register_builtin_handlers`
 while calling `_start_session`, and two of its runs go red on revert. Verified by reverting.
+
+---
+
+## 2026-08-17 — TD-1706: Usage and cost view
+
+The story's note said "aggregation queries exist (TD-903); verify which export
+affordances are already wired before adding UI." Verified first: TD-903 landed
+`core/tstd/audit_queries.py` — `cost_by_turn/session/day/tier`, `export_jsonl`,
+`export_csv` — and **none of it is reachable from the client**. Its only
+non-test caller is `e2e_checks.py`. The live `cost_update` event carries the
+running session totals the title-bar meter renders, not audit-store history,
+and no message triggers an export. So the UI could not be added over the
+existing protocol, and the four decisions below follow from that.
+
+### 1. Two new client verbs rather than one general "query the audit store" (Class B)
+
+**Decision:** `get_usage` → `usage_report` and `export_usage` → `usage_exported`.
+Both connection-scoped with `seq: 1`, like `diagnostics_report`.
+
+**Rationale:** The audit database spans every session, so a session-scoped
+message would answer a different question than the one asked. Two narrow verbs
+beat one parameterised query verb for the same reason `set_tier_slug` beat a
+general `update_config`: a message that can only ask for rollups cannot later
+be talked into reading rows it should not. Widening is easy; narrowing a
+shipped message is not.
+
+Registered in all four places — `ClientMessageT`, `_KNOWN_CLIENT_TYPES`,
+`DaemonEventT`, `_KNOWN_EVENT_TYPES` — plus both TypeScript unions. A type in
+the union but not the known-type set parses as `unknown_message` at runtime
+rather than failing at import, so the round-trip tests in `test_protocol.py`
+go through `parse_client_message` specifically to catch that.
+
+### 2. `export_usage` carries a format, never a destination path (Class B)
+
+**Decision:** The daemon writes to `<data_dir>/exports/usage-<UTC stamp>.<ext>`
+and returns the path on `usage_exported`. The client cannot name the file.
+
+**Rationale:** A client-supplied path would make this message a general
+"write a file anywhere the daemon can reach" verb reachable from the socket —
+a wider hole than an export button needs, and one no acceptance criterion
+asks for. The criterion is that the buttons *reuse* the existing exporters,
+which they do: the handler calls TD-903's `export_jsonl`/`export_csv`
+unchanged. The UI shows the returned path and opens it with the same
+`openInEditor` the stack panel uses on daemon-supplied paths.
+
+The cost is that the user does not get a native save dialog. Accepted: adding
+one later is additive (a new optional field, or a host-side reveal), whereas
+un-shipping a path parameter is not.
+
+### 3. Reads open their own connection to `audit.db` (Class B)
+
+**Decision:** `_usage_report` and `_usage_export` construct a short-lived
+`AuditStore` inside `asyncio.to_thread` rather than borrowing the
+`AuditWriter`'s.
+
+**Rationale:** What makes the writer's single sqlite connection safe under
+`check_same_thread=False` is that its one drain task serializes every call —
+`audit.py` says so explicitly. A query sharing that connection would run beside
+a write on it from a different pool thread and lose exactly that guarantee.
+WAL is already set in `AuditStore.__init__`, and a second connection is what
+WAL is *for*, so this is the supported way to ask rather than a workaround.
+The migration step a fresh handle runs is idempotent and writes nothing at the
+current version. `test_daemon_usage.py` queries a database a live daemon holds
+open, so the arrangement is tested rather than assumed.
+
+### 4. Weeks open on Monday, and the rollup groups on bucket *and* tier (Class A)
+
+**Decision:** `usage_rollup(store, bucket, limit)` is a new query beside the
+TD-903 four, not a replacement. Week keys are `date(day, 'weekday 0', '-6 days')`.
+
+**Rationale:** The existing queries answer one scope at a time, which is what
+the totals needed; the view needs "what did Tuesday cost, and how much of that
+was the brain" — a bucket and its tier split at once. It reads the same `costs`
+view, so it is another slice of identical rows and cannot disagree with them.
+
+The week expression steps forward to the coming Sunday, then back six days.
+SQLite leaves a date that already is Sunday where it stands, so Sunday resolves
+to the Monday that opened its own week rather than the next one — the boundary
+this gets wrong if `weekday 0` is used without the step back, and the case
+`test_week_bucket_keys_on_the_monday_that_opened_it` pins.
+
+`limit` caps *buckets*, not rows. A row cap would truncate a day mid-tier and
+report it as costing less than it did; `test_limit_never_truncates_a_bucket_mid_tier`
+is the test that would catch that regression.
