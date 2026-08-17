@@ -1759,11 +1759,11 @@ product-semantics work the skips point at.
 **Size:** 2 · **Depends on:** TD-605
 
 **Acceptance criteria:**
-- [ ] The run waits on conditions — the child being spawned, the group being gone — rather
+- [x] The run waits on conditions — the child being spawned, the group being gone — rather
       than on wall-clock sleeps sized to beat the marker
-- [ ] It fails when a grandchild genuinely escapes the group kill; the fix must not become a
+- [x] It fails when a grandchild genuinely escapes the group kill; the fix must not become a
       test that cannot fail
-- [ ] The existing `kill refused` escape hatch still short-circuits the assertion, so the
+- [x] The existing `kill refused` escape hatch still short-circuits the assertion, so the
       macOS EPERM veto stays a skip rather than a failure
 - [ ] 30 consecutive full-suite runs on a loaded machine with no failure
 
@@ -1792,12 +1792,12 @@ kept the wall-clock assumption.
 **Size:** 2 · **Depends on:** TD-302
 
 **Acceptance criteria:**
-- [ ] `test_config.py` and `test_cost.py` read a fixture config, never `user_data_dir()`
-- [ ] The runs pass whatever the developer's active preset is and whatever slugs they have
+- [x] `test_config.py` and `test_cost.py` read a fixture config, never `user_data_dir()`
+- [x] The runs pass whatever the developer's active preset is and whatever slugs they have
       pinned
-- [ ] The shipped default is still asserted somewhere — a config that stops matching its own
+- [x] The shipped default is still asserted somewhere — a config that stops matching its own
       documented tags should still fail something, so this must not trade one gap for another
-- [ ] No test in `core/tests/` reads configuration from `user_data_dir()`
+- [x] No test in `core/tests/` reads configuration from `user_data_dir()`
 
 Five runs call `load_config()` with no path. That resolves to
 `user_data_dir()/config.yaml` — the developer's real file — and they then assert on the values
