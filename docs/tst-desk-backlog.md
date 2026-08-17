@@ -1217,6 +1217,40 @@ nine runs must FAIL (§7).
 
 ---
 
+### TD-1809 — The doctor's probe test must not depend on the developer's model list
+**Size:** 1 · **Depends on:** TD-1805
+
+**Acceptance criteria:**
+- [x] `TestDoctorRows` resolves the brain tier's slug without reaching for a live endpoint
+- [x] The keyless-preset run passes on a machine serving no models, one model, or several
+- [x] The negative row — a remote preset with no key — still fails, so the fix does not blunt
+      what the class is for
+- [x] No test in `core/tests/` reaches a live model server as a side effect of a doctor probe
+
+`Daemon._provider_probe` calls `resolve_tier_slugs` before it builds a client, and the shipped
+`local` preset leaves every slug unset, so the probe discovers against the real loopback
+endpoint. `TestDoctorRows.test_local_preset_does_not_fail_the_key_row` patches `ProviderClient`
+but not discovery, so the row's verdict is decided by how many models the developer happens to
+have pulled: `discover_model` refuses to guess among several (TD-1805), the doctor reports
+`provider: fail`, and the assertion of `ok` fails. Measured on an endpoint serving four.
+
+The product behaviour is right — refusing to guess is what TD-1805 shipped, and the row carries
+the `slug:` fix text. The test is what assumes a machine.
+
+**Done (2026-08-17):** `TestDoctorRows` now patches `tstd.daemon.resolve_tier_slugs` with a
+stand-in that fills unset slugs the way a single-model endpoint would, so the probe never
+leaves the process.  Both rows patch it, including the remote one, where it is a no-op — the
+preset's slugs are already set — so neither row can regain a network dependency by having its
+preset retargeted later.  `_config_with_preset` still reads the shipped config, so no slug or
+URL is duplicated into test source (§2.7).
+
+Hermeticity is verified rather than assumed: with `discover_model` replaced by a stub that
+raises on call, both rows still pass.  No product code changed — the doctor was reporting the
+truth about a four-model endpoint.  Full suite green at 1255 passed, restoring the §10 gate
+that this row had been quietly holding red.
+
+---
+
 # MILESTONE M2 — The Window
 
 ## Epic E10 — Shell and panes
@@ -2448,10 +2482,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 46 | 145 |
-| M1.5 Local models | E18 | 8 | 22 |
+| M1.5 Local models | E18 | 9 | 23 |
 | M2 The window | E10–E12 | 16 | 52 |
 | M3 Shippable | E13–E17 | 38 | 113 |
-| **Total v0.1** | **18** | **115** | **347** |
+| **Total v0.1** | **18** | **116** | **348** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

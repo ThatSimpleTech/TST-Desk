@@ -47,6 +47,25 @@ def _daemon(monkeypatch: pytest.MonkeyPatch, data_dir: Path, preset: str) -> Dae
     return Daemon(data_dir=data_dir)
 
 
+# What an endpoint serving exactly one model would resolve to (TD-1809).
+_RESOLVED_SLUG = "local-model"
+
+
+async def _resolve_one_model(config: ModelConfig, **_: Any) -> None:
+    """Stand in for a single-model endpoint, without reaching for one.
+
+    ``_provider_probe`` resolves slugs before it builds a client, and the
+    shipped ``local`` preset sets none, so an unpatched probe discovers
+    against the real loopback endpoint — handing the verdict to whatever
+    models the developer has pulled.  ``discover_model`` refuses to guess
+    among several (TD-1805), which is right, and made this row fail for a
+    reason that has nothing to do with keyless auth.
+    """
+    for tier in config.tiers().values():
+        if tier.slug is None:
+            tier.slug = _RESOLVED_SLUG
+
+
 def _completion_body(model: str) -> dict[str, Any]:
     return {
         "id": "keyless-1",
@@ -258,6 +277,7 @@ class TestDoctorRows:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keychain_calls: list[str]
     ) -> None:
         monkeypatch.setattr("tstd.daemon.ProviderClient", _FakeClient)
+        monkeypatch.setattr("tstd.daemon.resolve_tier_slugs", _resolve_one_model)
         daemon = _daemon(monkeypatch, tmp_path, "local")
         report = await daemon._diagnostics_report()
         rows = {c.name: c for c in report.checks}
@@ -270,6 +290,7 @@ class TestDoctorRows:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keychain_calls: list[str]
     ) -> None:
         monkeypatch.setattr("tstd.daemon.ProviderClient", _FakeClient)
+        monkeypatch.setattr("tstd.daemon.resolve_tier_slugs", _resolve_one_model)
         daemon = _daemon(monkeypatch, tmp_path, "tst-default")
         report = await daemon._diagnostics_report()
         rows = {c.name: c for c in report.checks}
