@@ -17,12 +17,14 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import websockets.exceptions
 
 from .audit import AuditStore
+from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
 from .audit_writer import AuditWriter
 from .boundary_config import (
     boundary_source,
@@ -74,8 +76,10 @@ from .protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    ExportUsage,
     GetInstructionStack,
     GetSetupState,
+    GetUsage,
     HandshakeError,
     ListPolicyRules,
     ListSessions,
@@ -96,6 +100,9 @@ from .protocol import (
     SetupState,
     Shutdown,
     TierState,
+    UsageExported,
+    UsageReport,
+    UsageRollup,
     UserMessage,
     ValidateApiKey,
     build_error,
@@ -138,6 +145,11 @@ _KEYLESS_KEY_ROW = DiagnosticCheck(
     status="skip",
     detail="not needed — the active preset runs on a local endpoint",
 )
+
+# How many buckets of each kind the usage view is sent (TD-1706). Enough
+# history to see a trend, bounded so a year-old audit database does not
+# put thousands of rows on the socket for a panel showing a dozen.
+_USAGE_LIMITS: dict[UsageBucket, int] = {"session": 25, "day": 30, "week": 12}
 
 
 def _snapshot_slugs(config: ModelConfig) -> dict[str, dict[str, str | None]]:
@@ -588,6 +600,68 @@ class Daemon:
             checks.append(await self._check_steering(workspace))
 
         return DiagnosticsReport(seq=1, checks=checks)
+
+    # ── Usage and cost (TD-1706) ───────────────────────────────────────
+    #
+    # Reads open their own connection rather than borrowing the audit
+    # writer's. The writer's single drain task is what makes one sqlite
+    # connection safe to use from the thread pool; a query sharing it
+    # would run beside a write on that same connection and lose the
+    # guarantee. WAL (set in AuditStore) is what lets a second connection
+    # read while the first writes, so a separate handle is the supported
+    # way to ask, not a workaround.
+
+    def _audit_reader(self) -> AuditStore:
+        return AuditStore(self.data_dir / "audit.db")
+
+    async def _usage_report(self) -> UsageReport:
+        """Every usage bucket, split by tier, from the audit store."""
+
+        def _query() -> list[UsageRollup]:
+            store = self._audit_reader()
+            try:
+                return [
+                    UsageRollup(
+                        bucket=row.bucket,
+                        key=row.key,
+                        tier=row.tier,
+                        prompt_tokens=row.prompt_tokens,
+                        cached_prompt_tokens=row.cached_prompt_tokens,
+                        completion_tokens=row.completion_tokens,
+                        cost=row.cost,
+                        classifier_cost=row.classifier_cost,
+                    )
+                    for bucket, limit in _USAGE_LIMITS.items()
+                    for row in usage_rollup(store, bucket, limit)
+                ]
+            finally:
+                store.close()
+
+        return UsageReport(seq=1, rows=await asyncio.to_thread(_query))
+
+    async def _usage_export(self, fmt: Literal["jsonl", "csv"]) -> str:
+        """Write the TD-903 export to the daemon's exports directory."""
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        path = self.data_dir / "exports" / f"usage-{stamp}.{fmt}"
+
+        def _write() -> int:
+            store = self._audit_reader()
+            try:
+                writer = export_csv if fmt == "csv" else export_jsonl
+                return writer(store, path)
+            finally:
+                store.close()
+
+        try:
+            rows = await asyncio.to_thread(_write)
+        except OSError as e:
+            # A half-written export must not be reported as a success.
+            return build_error("export_failed", f"Could not write the usage export: {e}")
+        log.info(
+            "usage exported",
+            extra={"extra_fields": {"format": fmt, "rows": rows}},
+        )
+        return UsageExported(seq=1, format=fmt, path=str(path), rows=rows).model_dump_json()
 
     async def _check_steering(self, workspace: Path) -> DiagnosticCheck:
         """Steering stack parses: resolution runs and imports land."""
@@ -1141,6 +1215,13 @@ class Daemon:
         # ── Diagnostics (TD-1104 doctor) ─────────────────────────────
         if isinstance(msg, RunDiagnostics):
             return (await self._diagnostics_report()).model_dump_json()
+
+        # ── Usage and cost (TD-1706) ─────────────────────────────────
+        if isinstance(msg, GetUsage):
+            return (await self._usage_report()).model_dump_json()
+
+        if isinstance(msg, ExportUsage):
+            return await self._usage_export(msg.format)
 
         if isinstance(msg, Shutdown):
             log.info("shutdown requested via websocket")

@@ -22,6 +22,7 @@ from typing import Literal
 from .audit import AuditStore
 
 Scope = Literal["turn", "session", "day", "tier"]
+UsageBucket = Literal["session", "day", "week"]
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,91 @@ def cost_by_tier(store: AuditStore, session_id: str | None = None) -> list[CostA
     if session_id is None:
         return _aggregate(store._conn, "tier", "tier", "", ())
     return _aggregate(store._conn, "tier", "tier", "WHERE session_id = ?", (session_id,))
+
+
+# ── Two-dimensional rollup (TD-1706) ───────────────────────────────────
+#
+# The four queries above answer one scope at a time, which is what the
+# totals needed. The usage view needs a bucket *and* its tier split at
+# once — "what did Tuesday cost, and how much of that was the brain" —
+# so this groups on both. Same `costs` view, same classifier separation:
+# it is another way to slice the identical rows, never a second source.
+
+
+@dataclass(frozen=True)
+class UsageRow:
+    """One bucket's spend on one tier."""
+
+    bucket: UsageBucket
+    key: str  # session id, ISO day, or the ISO day the week opened on
+    tier: str
+    prompt_tokens: int
+    cached_prompt_tokens: int
+    completion_tokens: int
+    cost: float
+    classifier_cost: float
+
+    @property
+    def tokens(self) -> int:
+        """Every token the bucket moved, cached reads included."""
+        return self.prompt_tokens + self.cached_prompt_tokens + self.completion_tokens
+
+
+# Weeks open on Monday: step forward to the coming Sunday, then back six
+# days. SQLite's `weekday` modifier leaves a date that already is Sunday
+# where it stands, so Sunday resolves to the Monday that opened its own
+# week rather than the one opening the next.
+_BUCKET_KEY: dict[UsageBucket, str] = {
+    "session": "session_id",
+    "day": "day",
+    "week": "date(day, 'weekday 0', '-6 days')",
+}
+
+
+def usage_rollup(
+    store: AuditStore, bucket: UsageBucket, limit: int | None = None
+) -> list[UsageRow]:
+    """Token and cost totals per ``bucket`` per tier, most recent bucket first.
+
+    ``limit`` caps the number of *buckets* returned, never the number of
+    rows — a cap applied to rows would truncate a bucket mid-tier and
+    report a day as costing less than it did.
+    """
+    key_expr = _BUCKET_KEY[bucket]
+    rows = store._conn.execute(
+        f"SELECT {key_expr}, tier, SUM(prompt_tokens), SUM(cached_prompt_tokens),"
+        " SUM(completion_tokens), SUM(cost), SUM(classifier_cost), MAX(day)"
+        f" FROM costs GROUP BY {key_expr}, tier"
+    ).fetchall()
+
+    # Recency of a bucket is the latest day any of its tiers spent on.
+    # Session ids do not sort chronologically, so the key alone cannot
+    # order them; the day can, for all three bucket kinds.
+    latest: dict[str, str] = {}
+    for key, _tier, _p, _c, _o, _cost, _cls, day in rows:
+        k = str(key)
+        latest[k] = max(latest.get(k, ""), str(day))
+    keys = sorted(latest, key=lambda k: (latest[k], k), reverse=True)
+    if limit is not None:
+        keys = keys[:limit]
+    rank = {k: i for i, k in enumerate(keys)}
+
+    out = [
+        UsageRow(
+            bucket=bucket,
+            key=str(key),
+            tier=str(tier),
+            prompt_tokens=prompt,
+            cached_prompt_tokens=cached,
+            completion_tokens=completion,
+            cost=cost,
+            classifier_cost=classifier,
+        )
+        for key, tier, prompt, cached, completion, cost, classifier, _day in rows
+        if str(key) in rank
+    ]
+    out.sort(key=lambda r: (rank[r.key], r.tier))
+    return out
 
 
 # ── Export ─────────────────────────────────────────────────────────────

@@ -118,6 +118,13 @@
   "run_diagnostics": {
     "type": "run_diagnostics"
   },
+  "get_usage": {
+    "type": "get_usage"
+  },
+  "export_usage": {
+    "type": "export_usage",
+    "format": "csv"
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -502,6 +509,49 @@
         "fix": null
       }
     ]
+  },
+  "usage_report": {
+    "type": "usage_report",
+    "seq": 1,
+    "rows": [
+      {
+        "bucket": "session",
+        "key": "sess-1",
+        "tier": "brain",
+        "prompt_tokens": 12000,
+        "cached_prompt_tokens": 8000,
+        "completion_tokens": 3000,
+        "cost": 0.117,
+        "classifier_cost": 0.0025
+      },
+      {
+        "bucket": "day",
+        "key": "2026-08-17",
+        "tier": "worker",
+        "prompt_tokens": 4000,
+        "cached_prompt_tokens": 0,
+        "completion_tokens": 900,
+        "cost": 0.0136,
+        "classifier_cost": 0.0
+      },
+      {
+        "bucket": "week",
+        "key": "2026-08-17",
+        "tier": "validator",
+        "prompt_tokens": 2500,
+        "cached_prompt_tokens": 500,
+        "completion_tokens": 200,
+        "cost": 0.0031,
+        "classifier_cost": 0.0
+      }
+    ]
+  },
+  "usage_exported": {
+    "type": "usage_exported",
+    "seq": 1,
+    "format": "csv",
+    "path": "/home/user/.local/share/tst-desk/exports/usage-20260817T120000Z.csv",
+    "rows": 42
   },
   "hello_ack": {
     "type": "hello_ack",
