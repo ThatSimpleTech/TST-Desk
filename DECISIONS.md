@@ -4245,3 +4245,41 @@ subtitle or keywords.
 **Rationale:** Greedy placement is not always the best-scoring placement, but
 the corpus is six actions plus the listed sessions. An optimal matcher would
 cost more to read and maintain than the ranking it buys at that size.
+## 2026-08-17 — TD-1704: The steerable queue is the client's, not the daemon's
+
+### 1. Queued rows are held in the UI and drained one per turn end (Class B)
+
+**Decision:** A message composed while `showCancel(chat.turnState)` is true is
+parked in `chat.queued` and is not written to the wire. The store hands the head
+of that queue to the daemon on `turn_complete` — one row per turn end, in order —
+and `sendQueuedNow` hands one over immediately, ahead of the rows before it.
+Nothing flushes on a terminal `session_state`. Switching sessions or disposing
+drops the queue.
+
+**Rationale:** The daemon does already queue mid-turn user messages — the handler
+enqueues into `Session._user_message_queue` whenever the session is live, and the
+loop drains one at each turn boundary — so this story needed no core change. But
+that queue is write-only from the client's side: the protocol has no message that
+edits or withdraws a `user_message` once sent, and the only way to void one is to
+kill the session. Sending on submit and *also* drawing rows would give the user a
+send-now, an edit box and a remove button that could not affect what the daemon
+would run, which is worse than not offering them. Holding the rows client-side is
+what makes all three real. Draining one per turn end rather than the whole queue
+keeps that property for the tail: everything not yet running stays editable.
+
+**Consequence noted:** the queue gate is `showCancel` alone, deliberately not a
+second notion of running (AGENTS §6 — the UI does not derive truth it wasn't
+given). In the short window after a local send where `awaitingFirstToken` is set
+but no delta has yet raised `turnState` to `running` (TD-1714), a second send goes
+straight to the wire and the daemon queues it, as it does today — correct, just
+without a row.
+
+### 2. The composer's send→stop morph stands; Enter is the queue's way in (Class A)
+
+**Decision:** `Composer.submit()` no longer refuses while `running`, but the
+circular button still morphs to stop (TD-1604/TD-1609). While a turn is live,
+Enter queues and the button cancels.
+
+**Rationale:** Two live buttons in the card would need a second affordance and a
+layout for it, to duplicate a key that already submits. The queued row appearing
+directly above the card is the confirmation the send landed.

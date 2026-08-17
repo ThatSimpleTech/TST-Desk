@@ -3,6 +3,8 @@
 // the way the connection fan-out and the components do.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   canSend,
   createChatState,
@@ -13,6 +15,7 @@ import {
   STALL_TIMEOUT_MS,
   type ChatDeps,
 } from "./chat-store";
+import { showQueue } from "./chat-queue";
 import type { ClientMessageUnion, DaemonEventUnion, SessionState } from "./protocol";
 
 function fakeDeps(sendResult = true) {
@@ -639,5 +642,226 @@ describe("first-token watchdog (TD-1713)", () => {
     vi.advanceTimersByTime(STALL_TIMEOUT_MS - 5_000);
     expect(state.turnStalled).toBe(true);
     store.dispose();
+  });
+});
+
+// Queue and steer (TD-1704). The daemon already queues user messages — its
+// SessionRunner drops a mid-turn `user_message` into an asyncio.Queue the loop
+// drains at the next turn boundary — but that queue is write-only on the wire:
+// nothing in the protocol edits or withdraws a message once handed over. So the
+// rows live here, and these tests drive the store the way the composer does.
+describe("queued messages", () => {
+  /** A store bound to s1 with a turn provably in flight (a delta is the only
+   *  honest evidence of one, per TD-1714). */
+  function runningStore() {
+    const bound = boundStore();
+    bound.store.applyEvent(delta("s1", "thinking"));
+    expect(showCancel(bound.state.turnState)).toBe(true);
+    return bound;
+  }
+
+  function userSends(sent: ClientMessageUnion[]): string[] {
+    return sent.filter((m) => m.type === "user_message").map((m) => m.content);
+  }
+
+  it("queues a message sent while a turn runs instead of handing it over", () => {
+    const { store, state, sent } = runningStore();
+
+    expect(store.sendUserMessage("check the tests too")).toBe(true);
+
+    expect(state.queued.map((q) => q.text)).toEqual(["check the tests too"]);
+    // Not on the wire: the daemon would take it and never give it back.
+    expect(userSends(sent)).toEqual([]);
+    // And not in the transcript either — it has not been said yet.
+    expect(state.messages.some((m) => m.text === "check the tests too")).toBe(false);
+    store.dispose();
+  });
+
+  it("sends straight through when no turn is live", () => {
+    const { store, state, sent } = boundStore();
+
+    expect(store.sendUserMessage("hello")).toBe(true);
+
+    expect(state.queued).toEqual([]);
+    expect(userSends(sent)).toEqual(["hello"]);
+    store.dispose();
+  });
+
+  it("keeps queue order and gives each row its own id", () => {
+    const { store, state } = runningStore();
+    store.sendUserMessage("first");
+    store.sendUserMessage("second");
+
+    expect(state.queued.map((q) => q.text)).toEqual(["first", "second"]);
+    expect(new Set(state.queued.map((q) => q.id)).size).toBe(2);
+    // Queue ids share no namespace with conversation message ids.
+    const messageIds = new Set(state.messages.map((m) => m.id));
+    expect(state.queued.some((q) => messageIds.has(q.id))).toBe(false);
+    store.dispose();
+  });
+
+  it("send-now hands one row over ahead of the rows before it", () => {
+    const { store, state, sent } = runningStore();
+    store.sendUserMessage("first");
+    store.sendUserMessage("second");
+    const second = state.queued[1].id;
+
+    expect(store.sendQueuedNow(second)).toBe(true);
+
+    expect(userSends(sent)).toEqual(["second"]);
+    expect(state.queued.map((q) => q.text)).toEqual(["first"]);
+    store.dispose();
+  });
+
+  it("send-now during a live turn does not restage the running turn's clock", () => {
+    const { store, state } = runningStore();
+    store.sendUserMessage("while you're at it");
+    // A delta already landed, so no first-token wait is outstanding; the
+    // shimmer must not come back over a turn that is visibly streaming.
+    expect(state.awaitingFirstToken).toBe(false);
+
+    store.sendQueuedNow(state.queued[0].id);
+
+    expect(state.awaitingFirstToken).toBe(false);
+    store.dispose();
+  });
+
+  it("editing a queued row replaces its text", () => {
+    const { store, state } = runningStore();
+    store.sendUserMessage("run the linter");
+    const id = state.queued[0].id;
+
+    store.editQueuedMessage(id, "run the linter and the type check");
+
+    // Replaced in place: same row, same id, same position — not a second one.
+    expect(state.queued).toHaveLength(1);
+    expect(state.queued[0].id).toBe(id);
+    expect(state.queued[0].text).toBe("run the linter and the type check");
+    store.dispose();
+  });
+
+  it("sends the edited text, not the text as first typed", () => {
+    const { store, state, sent } = runningStore();
+    store.sendUserMessage("run the linter");
+    store.editQueuedMessage(state.queued[0].id, "run the linter and the type check");
+
+    store.applyEvent(turnComplete("s1"));
+
+    expect(userSends(sent)).toEqual(["run the linter and the type check"]);
+    store.dispose();
+  });
+
+  it("ignores an edit or a send-now for a row that is no longer queued", () => {
+    const { store, state, sent } = runningStore();
+    store.sendUserMessage("first");
+    const id = state.queued[0].id;
+    store.removeQueuedMessage(id);
+
+    store.editQueuedMessage(id, "resurrected");
+    expect(state.queued).toEqual([]);
+    expect(store.sendQueuedNow(id)).toBe(false);
+    expect(userSends(sent)).toEqual([]);
+    store.dispose();
+  });
+
+  it("remove drops a row and never sends it", () => {
+    const { store, state, sent } = runningStore();
+    store.sendUserMessage("first");
+    store.sendUserMessage("second");
+
+    store.removeQueuedMessage(state.queued[0].id);
+
+    expect(state.queued.map((q) => q.text)).toEqual(["second"]);
+    expect(userSends(sent)).toEqual([]);
+    store.dispose();
+  });
+
+  it("drains one row per turn end, in order, so the rest stay steerable", () => {
+    const { store, state, sent } = runningStore();
+    store.sendUserMessage("first");
+    store.sendUserMessage("second");
+
+    store.applyEvent(turnComplete("s1"));
+    expect(userSends(sent)).toEqual(["first"]);
+    // The tail is still here to edit or drop while the new turn runs.
+    expect(state.queued.map((q) => q.text)).toEqual(["second"]);
+
+    store.applyEvent(turnComplete("s1"));
+    expect(userSends(sent)).toEqual(["first", "second"]);
+    expect(state.queued).toEqual([]);
+    store.dispose();
+  });
+
+  it("does not flush into a session that can no longer run a turn", () => {
+    const { store, state, sent } = runningStore();
+    store.sendUserMessage("first");
+
+    // TD-1711: the daemon refuses a send to a terminal session, so flushing
+    // here would void the text with nothing to show for it.
+    store.applyEvent(sessionState("s1", "cancelled"));
+
+    expect(userSends(sent)).toEqual([]);
+    expect(state.queued.map((q) => q.text)).toEqual(["first"]);
+    store.dispose();
+  });
+
+  it("drops queued text when the pane leaves the session it was typed against", () => {
+    const { store, state, sent } = runningStore();
+    store.sendUserMessage("meant for s1");
+
+    store.selectSession("s2", "idle");
+
+    expect(state.queued).toEqual([]);
+    expect(userSends(sent)).toEqual([]);
+    store.dispose();
+  });
+
+  it("clears the queue on dispose", () => {
+    const { store, state } = runningStore();
+    store.sendUserMessage("first");
+
+    store.dispose();
+
+    expect(state.queued).toEqual([]);
+  });
+});
+
+describe("empty queue chrome", () => {
+  const COMPONENT = readFileSync(
+    resolve(process.cwd(), "src/lib/components/chat/QueuedMessages.svelte"),
+    "utf-8",
+  );
+
+  /** The component's markup, between the script and the style blocks. */
+  const template = COMPONENT.slice(
+    COMPONENT.indexOf("</script>") + "</script>".length,
+    COMPONENT.indexOf("<style>"),
+  ).trim();
+
+  it("is not empty, so a broken parse cannot pass this file", () => {
+    expect(template.length).toBeGreaterThan(100);
+  });
+
+  it("renders nothing — not empty chrome — when nothing is queued", () => {
+    expect(showQueue([])).toBe(false);
+
+    // The stronger half of the criterion: there is no markup for a zero-length
+    // queue to render *as*. Every element in the template sits inside the one
+    // showQueue guard, which opens the template and closes it, so an empty
+    // queue emits no container, no border and no reserved height above the
+    // composer. An assertion that the container is merely empty would pass a
+    // stray wrapper; this one cannot.
+    expect(template.startsWith("{#if showQueue(queued)}")).toBe(true);
+    expect(template.endsWith("{/if}")).toBe(true);
+    expect(template.match(/\{#if /g)).toHaveLength(1);
+  });
+
+  it("shows the strip as soon as one message is queued", () => {
+    expect(showQueue([{ id: "q1", text: "later" }])).toBe(true);
+  });
+
+  it("gives every queued row a send-now and a remove control", () => {
+    expect(COMPONENT).toContain('aria-label="Send now"');
+    expect(COMPONENT).toContain('aria-label="Remove from queue"');
   });
 });
