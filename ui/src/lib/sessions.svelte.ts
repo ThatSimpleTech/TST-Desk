@@ -10,6 +10,9 @@
 // chat pane (attach + replay, TD-1004) and the title bar's session-scoped
 // fields (TD-1006). Wiring mirrors the workspaces store: connection fan-out
 // in, no client reference, no import cycle.
+//
+// TD-1712 added the dispatcher for the rail's function entries. The entries
+// themselves — and which of them can be clicked — live in the pure rail.ts.
 
 import {
 	onEvent,
@@ -19,6 +22,8 @@ import {
 } from "./connection-status.svelte.js";
 import { chat, selectSession as selectChatSession } from "./chat-store.svelte.js";
 import { focusSession, session, workspaceName } from "./session-status.svelte.js";
+import { toggleWorkspaceMenu } from "./workspaces.svelte.js";
+import { RAIL_FUNCTIONS, type RailSurface } from "./rail";
 import type { DaemonEventUnion, SessionSummary } from "./protocol";
 
 /** localStorage key for the rail's collapsed flag. */
@@ -179,6 +184,24 @@ export function newSession(): boolean {
 export function toggleCollapsed(): void {
 	sessions.collapsed = !sessions.collapsed;
 	saveCollapsed(sessions.collapsed);
+}
+
+/** Activate a rail function entry (TD-1712). Returns false — having done
+ *  nothing — for any entry the registry doesn't call `ready`.
+ *
+ *  The guard lives here and not only in the markup, so a rail that forgets to
+ *  disable a row still can't produce a click that goes nowhere. Projects
+ *  raises TD-1103's recents menu rather than growing a second picker. */
+export function activateRailFunction(id: RailSurface): boolean {
+	const entry = RAIL_FUNCTIONS.find((e) => e.id === id);
+	if (entry === undefined || entry.state !== "ready") return false;
+	if (id === "projects") {
+		toggleWorkspaceMenu();
+		return true;
+	}
+	// Marking an entry ready without wiring it here lands back here;
+	// sessions.test.ts asserts every ready entry activates.
+	return false;
 }
 
 // ── Row presentation (pure; the component renders, these decide) ────────
