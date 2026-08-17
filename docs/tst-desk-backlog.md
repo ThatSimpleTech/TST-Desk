@@ -2370,6 +2370,37 @@ surfaced here.
 
 ---
 
+### TD-1410 — No test enumerates the daemon's outbound hosts
+**Size:** 3 · **Depends on:** TD-1402
+
+**Acceptance criteria:**
+- [ ] A test enumerates every outbound HTTP/WS destination the daemon can reach in a full
+      run, and asserts each one traces to configuration — not to a literal in the source
+- [ ] It fails when a new hardcoded remote host is introduced, proved by introducing one
+- [ ] Covers the paths that already send: the provider client, model discovery, and the
+      key-validation call — plus any transport a dependency opens on import
+- [ ] The README's no-telemetry line is updated to cite the test rather than construction
+
+§2.3 — "no telemetry, no analytics, no phone-home, no crash reporting to any remote; zero
+network calls the user did not initiate" — is a prime directive, and §7 says a gap in
+boundary enforcement is a defect rather than a missing nice-to-have. Every *other* prime
+directive has a test: `validate_interface()` for the loopback bind, the redactor for secrets,
+`tools/boundary.py` for steering writes. This one holds by construction only.
+
+Construction is a real argument here, and it is not nothing: there is exactly one chat client
+(`core/tstd/provider.py`), its endpoint comes from config, and `discovery.py` refuses a
+non-loopback endpoint before it sends. But "we only wrote one" is an argument about today's
+source, and the directive is a promise about every future version. A second client added in
+good faith by someone who never read §2 would break it silently, and nothing in the suite
+would notice.
+
+Surfaced while writing TD-1501 (2026-08-17). It matters more now than it did last week: the
+README states the promise in public, in a section whose whole claim is that these are
+enforced in code rather than asserted in prose. Three of the four promises name their
+enforcing test. This one names a habit.
+
+---
+
 ## Epic E15 — Documentation
 
 ---
@@ -3444,8 +3475,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M1 Headless core | E2–E9 | 51 | 153 |
 | M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 19 | 57 |
-| M3 Shippable | E13–E17 | 43 | 123 |
-| **Total v0.1** | **18** | **132** | **378** |
+| M3 Shippable | E13–E17 | 44 | 126 |
+| **Total v0.1** | **18** | **133** | **381** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
