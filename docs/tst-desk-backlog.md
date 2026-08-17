@@ -2317,10 +2317,64 @@ same treatment. The suite does not write the user's config today, and should not
 
 **Acceptance criteria:**
 - [ ] One-paragraph pitch, a screenshot, and install instructions per platform
-- [ ] A five-minute quickstart from download to first result
-- [ ] The cost story stated plainly with the default stack and real numbers
-- [ ] Explicit statement: no account, no server, no subscription, no telemetry
-- [ ] Comparison table against the closed alternatives, written fairly
+      (pitch and per-platform install both written, against the artifact names
+      `package.yml` actually produces.  The screenshot is the gap: no packaged
+      app exists (TD-1302), and the UI in a browser cannot reach the Tauri host
+      commands the session plumbing needs, so every capture showed panes out of
+      sync with the daemon.  Not faked.  Ticks with the first packaged build.)
+- [x] A five-minute quickstart from download to first result
+      (**caveat: the download step is written ahead of the first release.**  No
+      `v*` tag has been pushed, so the linked releases page is empty until one
+      is.  Steps 2–5 are the real first-run wizard, whose launch-to-first-message
+      time TD-1101 already measured under two minutes.  Install detail is not
+      duplicated — the quickstart points at TD-1302's unsigned-build section.)
+- [x] The cost story stated plainly with the default stack and real numbers
+      (every price derived from `core/tstd/config.yaml`, not hand-typed:
+      `core/tests/test_docs_readme_numbers.py` checks the table against the
+      shipped tiers in both directions, re-runs the worked example through
+      `compute_call_details`, traces the per-session figure to the spec line it
+      cites, and refuses a slug copied into the prose — TD-1503's trick, fourth
+      application.  Mutation-checked four ways.)
+- [x] Explicit statement: no account, no server, no subscription, no telemetry
+      (written as architectural fact with the enforcing code named for each:
+      `requires_api_key()`, `ws.validate_interface()`, the single config-sourced
+      provider client, `discovery.py`'s pre-send refusal, the shared redactor,
+      and `tools/boundary.py`'s steering refusal.  The telemetry line carries an
+      honest caveat: it holds by construction, not by a runtime egress gate —
+      there is no test enumerating outbound hosts.)
+- [x] Comparison table against the closed alternatives, written fairly
+      (Claude Desktop / Cowork / hosted workspaces.  Seven axes where they
+      genuinely win are named first — setup, polish, support, managed
+      infrastructure, out-of-the-box model quality, mobile and sync, predictable
+      flat pricing — and the maturity row says v0.1, unreleased, unsigned.
+      **Needs a human read before it ships**: fairness is the one thing here
+      that cannot be self-verified.)
+
+---
+
+**Partially done (2026-08-17).** `README.md` is now a user-facing front door — pitch, install,
+quickstart, cost, promises, comparison, status — with the developer sections kept below it. Four
+of five criteria met; the screenshot is the open one and the story stays open with it.
+
+The cost section is the part that would have rotted silently, so it does not: nine price rows,
+one per shipped preset and tier, all bound to `config.yaml` by
+`core/tests/test_docs_readme_numbers.py`. Slugs are deliberately absent, matching TD-1503's
+decision that prose points at the shipped config rather than restating a landscape that moves
+weekly — and the same guard enforces it here.
+
+Every prose claim was then audited back against the code, which caught six overstatements worth
+recording: the title bar pins the routing tier but does not swap the *model* behind it (that is a
+settings change, and `daemon.py` applies it to new sessions only); the `local` preset's `base_url`
+has no UI and needs a hand edit; only `model_calls` has an export path, not the whole audit store;
+and the credential-hygiene test's audit-row scan is conditional on a database existing. The
+decisions ledger was dropped from the comparison table entirely while TD-1203 stands open.
+
+Two claims are deliberately hedged rather than dropped. The per-session dollar figure is quoted
+from spec §1 and labelled an estimate, because this build has published no measurement of its
+own; the test asserts the README quotes the spec exactly rather than drifting its own version.
+And the no-telemetry promise names its own weakness: it is upheld by construction and review, not
+by a runtime egress gate, and no test enumerates outbound hosts. Closing that gap is a story
+nobody has filed.
 
 ---
 
