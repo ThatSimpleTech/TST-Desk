@@ -17,9 +17,13 @@ export interface StackState {
 	totalTokens: number;
 	/** How the daemon counted tokens (e.g. "exact" or an estimate marker). */
 	tokenMethod: string;
-	/** Provider-observed cached prompt tokens on the last main-loop call.
-	 *  null = no turn yet (or an older daemon) — unknown, not zero. */
+	/** Cached prompt tokens the provider reported on the last main-loop
+	 *  call. null = no figure was reported — unknown, not zero. */
 	lastCachedTokens: number | null;
+	/** Whether a main-loop call has come back at all. Separates the two
+	 *  reasons lastCachedTokens is null: no turn yet, versus a provider
+	 *  that reports no cache figure (TD-1811). */
+	cacheObserved: boolean;
 	/** False until the first stack for the session has landed. */
 	loaded: boolean;
 }
@@ -31,6 +35,7 @@ export function createStackState(): StackState {
 		totalTokens: 0,
 		tokenMethod: "",
 		lastCachedTokens: null,
+		cacheObserved: false,
 		loaded: false,
 	};
 }
@@ -41,6 +46,7 @@ export function clearStack(state: StackState): void {
 	state.totalTokens = 0;
 	state.tokenMethod = "";
 	state.lastCachedTokens = null;
+	state.cacheObserved = false;
 	state.loaded = false;
 }
 
@@ -64,6 +70,9 @@ export function createStackStore(deps: StackStoreDeps, state: StackState) {
 			state.totalTokens = event.total_tokens;
 			state.tokenMethod = event.token_method;
 			state.lastCachedTokens = event.last_cached_tokens ?? null;
+			// An older daemon omits the field; false is the honest read of
+			// "we were not told that a call has landed".
+			state.cacheObserved = event.cache_observed ?? false;
 			state.loaded = true;
 			return true;
 		},
@@ -93,10 +102,32 @@ export function formatTokens(tokens: number): string {
 	return tokens.toLocaleString("en-US");
 }
 
+/** Which of the four things the badge can honestly say (TD-1811). A miss
+ *  is a provider's report of zero reuse; a provider that reports nothing
+ *  has not reported a miss, and the two must not render alike. */
+export type CacheBadge = "unobserved" | "unreported" | "miss" | "hit";
+
+export function cacheBadge(
+	lastCachedTokens: number | null,
+	cacheObserved: boolean,
+): CacheBadge {
+	if (!cacheObserved) return "unobserved";
+	if (lastCachedTokens === null) return "unreported";
+	return lastCachedTokens > 0 ? "hit" : "miss";
+}
+
 /** Cache badge text. Never implies a hit or miss the provider didn't
- *  report: before the first turn the honest answer is "unknown". */
-export function cacheLabel(lastCachedTokens: number | null): string {
-	if (lastCachedTokens === null) return "cache unknown until a turn runs";
-	if (lastCachedTokens > 0) return `cached ${formatTokens(lastCachedTokens)} tokens`;
-	return "cache miss";
+ *  report: before the first turn, and on a provider that reports no cache
+ *  figure, the honest answer says so instead of naming a number. */
+export function cacheLabel(lastCachedTokens: number | null, cacheObserved: boolean): string {
+	switch (cacheBadge(lastCachedTokens, cacheObserved)) {
+		case "unobserved":
+			return "cache unknown until a turn runs";
+		case "unreported":
+			return "provider reports no cache figure";
+		case "hit":
+			return `cached ${formatTokens(lastCachedTokens as number)} tokens`;
+		case "miss":
+			return "cache miss";
+	}
 }

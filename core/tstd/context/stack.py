@@ -35,6 +35,7 @@ def build_instruction_stack(
     seq: int = 1,
     *,
     last_cached_tokens: int | None = None,
+    cache_observed: bool = False,
 ) -> InstructionStack:
     """Build the ``instruction_stack`` event for *steering*.
 
@@ -42,8 +43,12 @@ def build_instruction_stack(
     its path, precedence label, token count with method, warnings, and
     activity.  The event's totals cover active sources only — inactive
     rules are not in the prompt and cost nothing.  ``last_cached_tokens``
-    is the most recent provider-observed cache figure (None before the
-    first turn); the caller supplies it, this module never derives it.
+    is the most recent provider-reported cache figure and
+    ``cache_observed`` says whether any call has come back to report one;
+    the caller supplies both, this module never derives either.  Deriving
+    a cache figure from the stack it is describing is precisely the
+    circular claim TD-1811 exists to prevent — a stable prefix is not
+    evidence a provider reused it.
     """
     entries = [
         InstructionStackEntry(
@@ -68,4 +73,5 @@ def build_instruction_stack(
         total_tokens=steering.total_tokens.count,
         token_method=steering.total_tokens.method,
         last_cached_tokens=last_cached_tokens,
+        cache_observed=cache_observed,
     )

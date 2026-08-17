@@ -383,6 +383,7 @@
     "session_id": "sess-1",
     "prefix_hash": "abc123",
     "prefix_tokens": 100,
+    "steering_tokens": 60,
     "source_count": 3
   },
   "rule_activated": {
@@ -412,7 +413,8 @@
     ],
     "total_tokens": 500,
     "token_method": "cl100k_base",
-    "last_cached_tokens": null
+    "last_cached_tokens": null,
+    "cache_observed": false
   },
   "context_compacted": {
     "type": "context_compacted",

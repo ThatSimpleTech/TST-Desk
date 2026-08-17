@@ -1464,14 +1464,15 @@ class Daemon:
             matched_paths=set(found.touched_paths),
             approved_imports=_approved_import_allowlist(found.workspace_path),
         )
-        cached = (
-            found.cost_tracker.last_cached_prompt_tokens if found.cost_tracker is not None else None
-        )
+        tracker = found.cost_tracker
         return build_instruction_stack(
             found.id,
             assembled.steering,
             seq=1,
-            last_cached_tokens=cached,
+            last_cached_tokens=(tracker.last_cached_prompt_tokens if tracker is not None else None),
+            # No tracker means no call has been made, which is the same
+            # "nothing observed yet" the tracker itself reports (TD-1811).
+            cache_observed=(tracker.cache_observed if tracker is not None else False),
         ).model_dump_json()
 
     async def _handle_detach(self, msg: Detach, connection: Any) -> str | None:

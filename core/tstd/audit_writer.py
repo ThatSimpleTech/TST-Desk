@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .audit import AuditStore, DecisionClass, ToolCallStatus
+from .cost import billable_cached_tokens
 from .logging import get_logger
 from .protocol import DaemonEvent, DecisionLogged, Error, SessionState, ToolResult, TurnComplete
 from .protocol import ToolCall as ToolCallEvent
@@ -316,14 +317,21 @@ def _write_model_call(
     rec: CallRecord,
     is_classifier: bool,
 ) -> None:
-    """Single insert path for every model-call row."""
+    """Single insert path for every model-call row.
+
+    A call whose provider reported no cached figure stores ``0`` (TD-1811).
+    The column is a ledger of *reported* reuse, and a silent provider
+    contributes none, so every ``SUM`` over it stays a sum of reuse someone
+    actually claimed.  Prompt tokens are recorded in full either way — a
+    zero-price tier is still a tracked one (TD-1802).
+    """
     store.append_model_call(
         session_id=sid,
         turn_id=turn_id,
         tier=rec.tier,
         model=rec.model,
         prompt_tokens=rec.prompt_tokens,
-        cached_prompt_tokens=rec.cached_prompt_tokens,
+        cached_prompt_tokens=billable_cached_tokens(rec.cached_prompt_tokens),
         completion_tokens=rec.completion_tokens,
         cost=rec.cost,
         is_classifier=is_classifier,

@@ -161,11 +161,21 @@ class ChatCompletionRequest:
 
 @dataclass
 class Usage:
-    """Token usage returned by the API."""
+    """Token usage returned by the API.
+
+    ``cached_prompt_tokens`` is ``None`` when the response carried no
+    cached-token figure at all, and an integer — including ``0`` — when it
+    did (TD-1811).  Silence is not a report of zero reuse: Ollama's
+    OpenAI-compatible endpoint omits ``prompt_tokens_details`` entirely, so
+    folding absent into ``0`` would let every downstream surface state a
+    cache miss the provider never claimed.  ``None`` is unrepresentable as
+    a token count, so ``mypy --strict`` makes each reader decide what
+    "unknown" means instead of silently inheriting a fabricated zero.
+    """
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    cached_prompt_tokens: int = 0
+    cached_prompt_tokens: int | None = None
     total_tokens: int = 0
 
     @classmethod
@@ -173,12 +183,12 @@ class Usage:
         """Parse usage from an API response dict."""
         if not data:
             return cls()
+        details = data.get("prompt_tokens_details")
+        cached = details.get("cached_tokens") if isinstance(details, dict) else None
         return cls(
             prompt_tokens=data.get("prompt_tokens", 0),
             completion_tokens=data.get("completion_tokens", 0),
-            cached_prompt_tokens=data.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-            if isinstance(data.get("prompt_tokens_details"), dict)
-            else 0,
+            cached_prompt_tokens=cached,
             total_tokens=data.get("total_tokens", 0),
         )
 

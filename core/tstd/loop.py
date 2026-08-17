@@ -781,6 +781,7 @@ async def agent_loop(
                         session_id=session.id,
                         prefix_hash=assembled.prefix_hash,
                         prefix_tokens=assembled.prefix_tokens,
+                        steering_tokens=assembled.steering_tokens,
                         source_count=len(assembled.steering.sources),
                         seq=1,  # overwritten by the event log
                     )
@@ -791,6 +792,7 @@ async def agent_loop(
                         assembled.steering,
                         seq=1,
                         last_cached_tokens=tracker.last_cached_prompt_tokens,
+                        cache_observed=tracker.cache_observed,
                     )
                 )
                 log.info(
@@ -800,6 +802,7 @@ async def agent_loop(
                             "session_id": session.id,
                             "prefix_hash": assembled.prefix_hash,
                             "prefix_tokens": assembled.prefix_tokens,
+                            "steering_tokens": assembled.steering_tokens,
                         }
                     },
                 )
@@ -997,6 +1000,11 @@ async def agent_loop(
                         "cost": tracker.turn_cost(),
                         "cache_prefix_hash": assembled.prefix_hash,
                         "cache_ratio": round(tracker.turn_cache_ratio(), 4),
+                        # Without this, a 0.0 ratio reads the same whether
+                        # the provider reported a miss or reported nothing
+                        # — and only the first is a fact about the cache
+                        # (TD-1811).
+                        "cache_reported": tracker.last_cached_prompt_tokens is not None,
                     }
                 },
             )

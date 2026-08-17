@@ -123,11 +123,16 @@ describe("eventToEntry", () => {
         session_id: "s1",
         prefix_hash: "abc",
         prefix_tokens: 100,
+        steering_tokens: 60,
         source_count: 3,
         seq: 12,
       }),
     );
     expect(reload!.kind).toBe("steering_reload");
+    // Both figures reach the inspector: the prefix is what gets re-billed,
+    // steering_tokens is what the user's own files cost (TD-1810).
+    expect(reload!.details.prefix_tokens).toBe(100);
+    expect(reload!.details.steering_tokens).toBe(60);
 
     const activated = eventToEntry(
       evt({ type: "rule_activated", session_id: "s1", rule_path: ".tst/rules/api.md", seq: 13 }),

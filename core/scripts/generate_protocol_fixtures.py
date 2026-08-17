@@ -282,6 +282,7 @@ FIXTURES = {
         session_id="sess-1",
         prefix_hash="abc123",
         prefix_tokens=100,
+        steering_tokens=60,
         source_count=3,
         seq=16,
     ),

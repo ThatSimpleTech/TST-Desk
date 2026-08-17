@@ -141,6 +141,24 @@ the turn after an edit cannot reuse the cached prefix and pays full input price 
 steering mid-session is cheap but not free — batch your edits rather than tuning one sentence
 at a time.
 
+That assumes the prefix was being reused in the first place, which is a fact about your
+provider, not about the prompt. The inspector's cache badge reports only what the provider
+said:
+
+| Badge | What it means |
+| --- | --- |
+| `cache unknown until a turn runs` | No turn has completed yet. |
+| `provider reports no cache figure` | The endpoint returned no cached-token count. Nothing is known about reuse — this is not a miss. |
+| `cache miss` | The provider reported zero cached tokens. |
+| `cached N tokens` | The provider reported reusing N. |
+
+A local endpoint usually sits on `provider reports no cache figure`. Ollama's
+OpenAI-compatible responses carry `prompt_tokens`, `completion_tokens` and `total_tokens` and
+nothing else, and llama.cpp discards its context checkpoints on hybrid-attention models, so
+the whole prefix is re-processed every turn. The prefix ordering still pays off against cloud
+providers that do report and do reuse; on a local model, expect no saving and expect the badge
+to say so.
+
 ---
 
 ## 3. `CLAUDE.md` compatibility
