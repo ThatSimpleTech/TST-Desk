@@ -1480,6 +1480,36 @@ error.
 - [x] A "copy diagnostics" action produces a redacted, pasteable report
 
 ---
+### TD-1009 — The activity timeline is never scoped to a session
+**Size:** 3 · **Depends on:** TD-1005
+
+**Acceptance criteria:**
+- [ ] Switching the bound session shows that session's activity, not the previous one's
+- [ ] The Files pane (TD-1705), which folds the same store, scopes with it
+- [ ] Replay after re-attach does not double-count entries already shown
+- [ ] A test drives two sessions through one client and asserts the second's view contains
+      none of the first's entries
+
+`timeline-store.svelte.ts` exports `clear()`, but nothing imports it — `AppShell.svelte`,
+`ActivityTimeline.svelte` and `FilesPanel.svelte` import only `push` and `entries`. Neither
+`session-status.svelte.ts` nor `sessions.svelte.ts` clears on switch. Every daemon event the
+client sees is appended to one process-wide list, so attaching to a second session shows the
+first session's activity underneath it.
+
+Entries carry no `session_id` of their own — only two event details do — so the store cannot
+filter after the fact either. Either entries gain the session they belong to, or the store is
+cleared and re-hydrated from replay on bind. The second is simpler and matches the daemon
+being the source of truth, but it interacts with TD-1711/TD-1713's attach machinery, which is
+why this is filed rather than fixed inside a UI story.
+
+Found by the TD-1705 agent, which inherited the symptom, and confirmed independently: `clear`
+has no callers anywhere in `ui/src`.
+
+Milestone note: an M2 defect surfacing after M2 closed. Filed in E10 because the defective
+store is TD-1005's; the fix likely coordinates with E17's attach work.
+
+---
+
 
 ## Epic E11 — Onboarding
 
@@ -2667,9 +2697,9 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 47 | 147 |
 | M1.5 Local models | E18 | 10 | 25 |
-| M2 The window | E10–E12 | 16 | 52 |
+| M2 The window | E10–E12 | 17 | 55 |
 | M3 Shippable | E13–E17 | 40 | 117 |
-| **Total v0.1** | **18** | **120** | **356** |
+| **Total v0.1** | **18** | **121** | **359** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
