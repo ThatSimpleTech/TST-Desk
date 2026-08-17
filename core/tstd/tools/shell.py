@@ -43,6 +43,7 @@ import re
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +56,14 @@ from ..session import Session
 _READ_CHUNK = 4096
 # How long to wait for drains to settle after killing the process group.
 _KILL_GRACE_SECS = 5.0
+# Cap on how long the Windows taskkill helper may stall the event loop.
+_TASKKILL_TIMEOUT_SECS = 2.0
+# taskkill's "the process is not running" exit code.
+_TASKKILL_NOT_FOUND = 128
+# Windows-only creation flags, absent from `subprocess` on other platforms.
+# 0 means "no extra flags", which is what Popen requires off Windows.
+_CREATE_NEW_PROCESS_GROUP: int = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+_CREATE_NO_WINDOW: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _log = logging.getLogger(__name__)
 
@@ -195,15 +204,61 @@ class _StreamCapture:
         return "".join(self.parts)
 
 
+def _kill_windows_tree(pid: int) -> str | None:
+    """Kill *pid* and its descendants with ``taskkill /T /F`` (TD-1406).
+
+    ``Process.kill`` maps to ``TerminateProcess``, which kills one process
+    and leaves its children running — the shell dies and its backgrounded
+    grandchildren keep the pipes open.  ``taskkill /T`` walks the parent
+    chain the OS already records and kills the tree, which is the closest
+    Windows equivalent of ``killpg``.  It ships with Windows, so this
+    stays a stdlib-only change.
+
+    ``CREATE_NEW_PROCESS_GROUP`` at the spawn is what makes the tree
+    unambiguous: the child is a group leader, so nothing above it is in
+    scope for the walk.
+
+    This blocks the event loop, which §6 otherwise forbids: a deliberate,
+    bounded exception, because the kill must have landed before the
+    cancellation handler above re-raises, and the alternative puts an
+    ``await`` inside a cancellation handler on a path no test can reach.
+    ``taskkill`` normally returns in tens of milliseconds; the timeout is
+    the cap on how long a Windows cancel can stall the loop.  Nothing
+    blocks on POSIX, where the kill is a syscall.
+
+    ``creationflags`` keeps the helper's own console window hidden.
+    """
+    try:
+        completed = subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
+            capture_output=True,
+            timeout=_TASKKILL_TIMEOUT_SECS,
+            creationflags=_CREATE_NO_WINDOW,
+            check=False,
+        )
+    except FileNotFoundError:  # pragma: no cover — taskkill ships with Windows
+        return "taskkill not found; only the direct child was terminated"
+    except subprocess.TimeoutExpired:
+        return "taskkill timed out; the process tree may still be running"
+    if completed.returncode == _TASKKILL_NOT_FOUND:
+        return None  # already gone
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        return f"process tree kill refused by the OS ({detail or completed.returncode})"
+    return None
+
+
 def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
-    """Kill the command's process group (POSIX) or process (Windows).
+    """Kill the command's whole process tree.
 
     POSIX: the child leads its own group (``start_new_session``), so
     SIGKILL to the group takes backgrounded grandchildren with it.
-    Windows has no process-group kill: terminate the direct child.
-    Grandchildren can escape until a Job Object is introduced (TD-1406).
+    Windows has no ``killpg``; the child leads its own process group
+    (``CREATE_NEW_PROCESS_GROUP``) and ``taskkill /T /F`` walks the tree
+    from it.  ``proc.kill()`` still runs first there, so the direct child
+    dies even if the helper cannot (TD-1406).
 
-    Returns None when the signal was delivered (or the processes were
+    Returns None when the kill was delivered (or the processes were
     already gone).  macOS occasionally vetoes same-uid kills with EPERM —
     the refusal attaches to the process group, no userspace retry or
     external ``kill`` breaks it, and the command then runs to completion —
@@ -216,7 +271,7 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
             return None
         except OSError:
             return "process kill refused by the OS; it may still be running"
-        return None
+        return _kill_windows_tree(proc.pid)
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -330,7 +385,13 @@ async def run_shell(
             env=sanitized_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # POSIX: setsid, so the child leads a killable process group.
+            # start_new_session is silently ignored on Windows, where the
+            # equivalent is a creation flag — without it the child joins
+            # the daemon's own group and a tree walk from its pid has no
+            # defined edge (TD-1406).
             start_new_session=True,
+            creationflags=_CREATE_NEW_PROCESS_GROUP,
         )
     )
     try:

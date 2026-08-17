@@ -7,8 +7,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from tstd.session_store import SessionStore
 
 
@@ -41,19 +39,30 @@ class TestSessionStore:
             assert store.get("s1") is None
             assert store.records() == []
 
-    @pytest.mark.skipif(
-        sys.platform == "win32",
-        reason="TD-1406: Windows has no POSIX mode bits — os.chmod only toggles "
-        "the read-only flag, so 0o600 is a no-op (ACL hardening is a separate story)",
-    )
     async def test_restricted_mode(self) -> None:
+        """0o600 on POSIX; on Windows the chmod is a no-op, by decision.
+
+        TD-1406 chose the documented no-op over shelling out to ``icacls``:
+        the store lives under ``%LOCALAPPDATA%``, whose ACL already grants
+        the user, SYSTEM and Administrators and nobody else, so the
+        directory is what protects the file and 0o600 never was.  The
+        no-op is asserted rather than skipped so it stays a decision on
+        the record instead of an untested silence — see ``docs/windows.md``.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(Path(tmp))
             await store.upsert("s1", "/ws", "idle")
             path = Path(tmp) / "sessions.json"
             assert path.exists()
             mode = path.stat().st_mode & 0o777
-            assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+            if sys.platform == "win32":
+                # os.chmod can only toggle the read-only attribute, and
+                # 0o600 carries a write bit, so the file stays writable
+                # and stat reports the Windows default.
+                assert mode == 0o666, f"expected the Windows no-op 0o666, got {oct(mode)}"
+                assert path.read_text()  # still owner-readable, write did not raise
+            else:
+                assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
 
     async def test_writes_valid_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

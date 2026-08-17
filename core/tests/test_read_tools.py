@@ -171,10 +171,9 @@ class TestDispatchIntegration:
         f = tmp_path / "a.txt"
         f.write_text("hello")
         dispatcher = make_dispatcher(tmp_path)
-        # Dispatch a workspace-relative path from inside the workspace: the
-        # guard refuses drive-letter absolutes as windows_unsafe before any
-        # workspace logic runs (TD-1406), and tmp_path is always a
-        # drive-letter path on Windows.
+        # Dispatch a workspace-relative path from inside the workspace: an
+        # absolute tmp_path is a drive-letter path on Windows, which the
+        # guard judges by different rules per host (TD-1406).
         monkeypatch.chdir(tmp_path)
         result = await dispatcher.dispatch("c1", "fs_read", {"path": "a.txt"})
         assert result.status == "success"

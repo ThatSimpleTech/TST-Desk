@@ -97,9 +97,9 @@ class TestFsEdit:
 
 class TestWriteDiffs:
     # Every test dispatches workspace-relative paths from inside the
-    # workspace: the guard refuses drive-letter absolutes as windows_unsafe
-    # before any workspace logic runs (TD-1406), and tmp_path is always a
-    # drive-letter path on Windows.
+    # workspace, so the write semantics under test are the only variable:
+    # an absolute tmp_path is a drive-letter path on Windows, which the
+    # guard judges by different rules per host (TD-1406).
 
     async def test_overwrite_diff(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         target = tmp_path / "a.txt"
@@ -212,8 +212,8 @@ def _stray_files(directory: Path) -> list[Path]:
 
 class TestWriteCheckpoints:
     # Workspace-relative paths dispatched from inside the repo — TD-1406
-    # (drive-letter absolutes are guard-refused as windows_unsafe before
-    # the write semantics under test run).
+    # (an absolute tmp_path is a drive-letter path on Windows, judged by
+    # different guard rules per host).
 
     async def test_fs_write_checkpoints(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         repo = make_repo(tmp_path)
