@@ -10,7 +10,12 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # NOT cancel-in-progress: a bundle takes ~30-40 minutes, so on an active
+  # main every push killed the run before it produced an artifact -- 28
+  # cancelled runs and no successful one, which is why TD-1302 never ticked
+  # (TD-1302).  Queue them instead; the concurrency group still keeps one
+  # bundle per ref at a time.
+  cancel-in-progress: false
 
 jobs:
   bundle:
@@ -29,6 +34,10 @@ jobs:
           - os: windows-latest # x86_64-pc-windows-msvc
             platform: windows-x86_64
     runs-on: ${{ matrix.os }}
+    # A macos leg once ran 24h before the platform stopped it, on a private
+    # repo where macOS minutes bill at 10x.  No workflow here had any timeout
+    # (TD-1302).  A bundle that has not finished in an hour is stuck, not slow.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
