@@ -2241,50 +2241,53 @@ a coworker.
 **Size:** 3 · **Depends on:** TD-1106, TD-1701
 
 **Acceptance criteria:**
-- [ ] In-app settings page with left-nav sections, reached from the title-bar
+- [x] In-app settings page with left-nav sections, reached from the title-bar
       gear (gear stops reopening the wizard)
-- [ ] Appearance section: light / system / dark, overriding
+- [x] Appearance section: light / system / dark, overriding
       `prefers-color-scheme`
-- [ ] Model section: preset and tier slugs readable, editing writes through to
+- [x] Model section: preset and tier slugs readable, editing writes through to
       `config.yaml`
-- [ ] Policy section: persisted always-allow rules listed with revoke
-- [ ] Key section: re-enter / remove stored key (TD-1102's flows, surfaced here)
+- [x] Policy section: persisted always-allow rules listed with revoke
+- [x] Key section: re-enter / remove stored key (TD-1102's flows, surfaced here)
 
 **Notes:** the wizard stays for first run; ⌘, retargets to this screen. Policy
 list/revoke may need protocol messages — check what TD-803 landed before
 assuming.
 
-**In progress (2026-08-17).** No criterion is met yet — nothing is on screen. What the
-plumbing now has:
+**Done (2026-08-17).** The gear opens a four-section pane; the wizard is first-run only, and
+⌘, follows the gear rather than the wizard — a test asserts the wizard is no longer reachable
+that way.
 
-- **Config write.** `save_tier_slug` edits `user_data_dir()/config.yaml`, never the packaged
-  copy an upgrade would overwrite. Surgical, because the shipped config is mostly teaching and
-  a PyYAML round-trip would drop it; the value is JSON-encoded so a colon in a model tag is
-  fine and a newline cannot inject YAML. Split into `config_write.py` when `config.py` passed
-  §6's limit.
-- **Wire.** `SetTierSlug`, deliberately narrow rather than a general `update_config` — §2.2
-  forbids a secret reaching a config file and a message carrying only a tier and a slug cannot
-  smuggle one in. `setup_state` gains `tier_slugs`, additive like `key_required`.
-- **Slugs as configured, not as resolved.** `resolve_tier_slugs` fills unset slugs *in place*,
-  so after one probe a loopback tier holds a tag that was never in the file. Reporting that
-  would make the field look set and put the user one save from pinning a model TD-1805 left
-  floating. A snapshot is taken when a config is adopted; `model_copy` is shallow and shares
-  tier objects, so keeping a copy is not a snapshot — pinned by a test, because the obvious
-  implementation silently does not work.
-- **Theme hooks.** `tokens.css` only followed `prefers-color-scheme`. The OS rule is now scoped
-  to `:root:not([data-theme="light"])` with the same palette reachable from
-  `:root[data-theme="dark"]`, so an explicit choice wins in both directions. The palette
-  appears twice — CSS cannot share a block across a media query — and `tokens.test.ts` fails
-  on drift.
+- **Config write.** `save_tier_slug` edits `user_data_dir()/config.yaml`, never the packaged copy
+  an upgrade would overwrite. Surgical, because the shipped config is mostly teaching and a
+  PyYAML round-trip would drop it; the value is JSON-encoded so a colon in a model tag is fine
+  and a newline cannot inject YAML. Split into `config_write.py` when `config.py` passed §6.
+- **Wire.** `SetTierSlug`, narrow rather than a general `update_config` — §2.2 forbids a secret
+  reaching a config file, and a message carrying only a tier and a slug cannot smuggle one in.
+  `setup_state` gained `tier_slugs`, additive like `key_required`.
+- **Slugs as configured, not as resolved.** `resolve_tier_slugs` fills unset slugs *in place*, so
+  after one probe a loopback tier holds a tag that was never in the file. The daemon snapshots
+  slugs when it adopts a config; `model_copy` is shallow and shares tier objects, so keeping a
+  copy is not a snapshot — pinned by a test, because the obvious implementation silently fails.
+  The pane renders such a tier as *discovered from the endpoint*, never as an empty box: an empty
+  box invites a save, and saving would pin a model TD-1805 left floating.
+- **Theme.** The OS rule is scoped to `:root:not([data-theme="light"])` with the same palette
+  reachable from `:root[data-theme="dark"]`, so an explicit choice wins in both directions.
+  `tokens.test.ts` compares the two copies and fails naming whichever value drifts — verified by
+  drifting one on purpose. "System" *removes* the attribute rather than resolving in JS, so the
+  media query keeps re-answering when the OS flips.
+- **Policy.** TD-803 had already landed `list_policy_rules`, `revoke_policy_rule` and
+  `policy_rules`, so AC-4 needed no new wire types — the note's open question, answered. Rules
+  are per-workspace, so `PolicyRuleList` renders three states: no session is a different claim
+  from no rules. Revoke does not splice locally; the daemon's reply refreshes the list.
+- **Key.** Drives TD-1102's `storeKey` / `validateKey` / `removeKey` rather than repeating them —
+  one code path for a credential. A test asserts no credential appears anywhere in store state.
 
-Answering the note's own question: **TD-803 landed everything the policy section needs.**
-`list_policy_rules`, `revoke_policy_rule` and the `policy_rules` event exist on both sides. No
-new wire types for AC-4.
+`PolicyRuleList` was split out when `SettingsPane` hit 405 lines; its styles are exclusive to it,
+so the split cost no duplicated scoped CSS. 340 and 101 now.
 
-Remaining: the settings store, the pane with its four sections, and retargeting the gear and
-⌘, away from the wizard.
-
----
+Tests: 13 config-write, 9 wire, 18 store, 5 token-drift. Python 1277 green, UI 378 green,
+`ruff`/`mypy --strict`/`svelte-check` all clean.
 
 ### TD-1704 — Queue and steer UI
 **Size:** 2 · **Depends on:** TD-1004

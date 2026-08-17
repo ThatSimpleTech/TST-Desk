@@ -4114,6 +4114,36 @@ alternatives were an indirection layer (`--dark-*` variables, three mentions per
 only real risk is drift, and drift is machine-checkable: the test fails naming whichever value
 moved. The `:not()` is what makes an explicit light choice beat a dark OS —
 `:root[data-theme="dark"]` outranks the media rule, so the choice wins in both directions.
+
+### 8. "System" clears the attribute instead of resolving to light or dark (Class B)
+
+**Decision:** `setTheme("system")` *removes* `data-theme` from `<html>`. It does not read
+`prefers-color-scheme` and write back the resolved value.
+
+**Rationale:** Resolving in JS freezes the choice at whatever the OS was when the store started.
+The media query in `tokens.css` already answers the question and re-answers it when the OS flips,
+so removing the attribute hands the decision back to the layer that tracks it. The alternative
+would need a `matchMedia` listener to stay correct — more moving parts for a worse answer.
+
+### 9. The key section drives the onboarding store's flows (Class B)
+
+**Decision:** The settings Key section calls TD-1102's `storeKey`, `validateKey` and `removeKey`
+from `onboarding.svelte.ts` rather than adding equivalents to the settings store.
+
+**Rationale:** One code path for a credential, not two. A second path is a second place for §2.2
+to be violated, and the flows are identical — the settings screen is a different doorway to the
+same behavior, not different behavior. The settings store holds presence (`hasApiKey`) only; a
+test asserts no credential appears anywhere in its state.
+
+### 10. `PolicyRuleList` split out of `SettingsPane` (Class A)
+
+**Decision:** The policy section's markup and styles moved to their own component.
+
+**Rationale:** `SettingsPane` reached 405 lines, past §6. The policy list's styles are used by
+nothing else, so moving it reduced total lines rather than duplicating scoped CSS — which
+extracting the key section would have done, since that section shares `.field`/`.input`/`.btn`
+with the model section. It also isolates the three-state rendering: no session is a different
+claim from no rules.
 ## 2026-08-17 — TD-1407: The kill battery waits on conditions, not wall-clock
 
 ### 1. Spawn-ack and group-gone replace the 0.3s/2.5s sleeps
