@@ -82,13 +82,14 @@ _WORKSPACE_ROOT_TEMPLATE = (
 #: same on the consumer's side.  The rest are non-printing characters that
 #: a model, a log line, or the inspector may render, strip, or normalise
 #: differently, so a root containing one could not be shown to equal the
-#: root the path guard enforces.  C0 (tab included), DEL, and the Unicode
-#: line and paragraph separators.
-_FORBIDDEN_ROOT_CHARS = frozenset(chr(code) for code in range(0x20)) | {
-    "\x7f",
-    "\u2028",
-    "\u2029",
-}
+#: root the path guard enforces.  C0 (tab included), DEL, C1 \u2014 which carries
+#: U+0085 NEL, a line break to anything that follows Unicode UAX-14 \u2014 and the
+#: Unicode line and paragraph separators.
+_FORBIDDEN_ROOT_CHARS = (
+    frozenset(chr(code) for code in range(0x20))
+    | frozenset(chr(code) for code in range(0x7F, 0xA0))
+    | {"\u2028", "\u2029"}
+)
 
 
 def workspace_root_block(workspace_path: str | Path) -> str:
