@@ -1621,6 +1621,36 @@ received. Report the truth and let the number be zero.
 
 ---
 
+### TD-1814 — `cache_reported` must share the scope of the ratio beside it
+**Size:** 2 · **Depends on:** TD-1811
+
+**Acceptance criteria:**
+- [ ] `cache_ratio` and `cache_reported` in the turn log describe the same window, so the pair
+      can never contradict itself
+- [ ] Neither field carries a previous turn's answer into a turn whose calls reported nothing
+- [ ] A test drives two turns where the first reports cached tokens and the second reports none,
+      and asserts the second turn's log says the provider reported nothing
+- [ ] `billable_cached_tokens` is not called from any path that reports cache state to the user,
+      matching the guardrail its own docstring states
+
+TD-1811 shipped the right idea with a scope bug. `core/tstd/loop.py:1002` reads
+`tracker.turn_cache_ratio()`, which sums `_turn_calls` and resets every turn; `:1007` reads
+`tracker.last_cached_prompt_tokens`, which is the last call's value and is not turn-scoped. The
+two are logged side by side as if they described one thing.
+
+The consequence is the failure TD-1811's own second criterion forbids — "not a blank or a
+silently-carried previous value" — reintroduced one field over. A turn whose calls reported no
+cache figure can still log `cache_reported: true` inherited from an earlier turn, which is
+exactly the wrong answer for the local path, where the honest report is that no engine figure
+exists at all.
+
+Also flagged by verification and grouped here because it is the same surface:
+`cost.billable_cached_tokens` is called from `audit_writer.py:334`, while its docstring states it
+is "a pricing fallback only. Nothing that reports cache state to the user routes through it."
+Either the call site or the docstring is wrong; decide which.
+
+---
+
 # MILESTONE M2 — The Window
 
 ## Epic E10 — Shell and panes
@@ -3241,10 +3271,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 51 | 153 |
-| M1.5 Local models | E18 | 11 | 28 |
+| M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 19 | 57 |
 | M3 Shippable | E13–E17 | 40 | 117 |
-| **Total v0.1** | **18** | **128** | **370** |
+| **Total v0.1** | **18** | **129** | **372** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
