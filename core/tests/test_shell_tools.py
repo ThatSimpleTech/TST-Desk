@@ -64,13 +64,19 @@ _ESCAPE_PROBE_CMD = "echo $$ > pgid.txt; { sleep 30; touch kicked.txt; } & wait"
 # kill; only then are group-death assertions vacuous.
 _KILL_REFUSED = "kill refused"
 
-# Process-group kill semantics are POSIX-only: Windows has no killpg, so
-# the product terminates only the direct child there and grandchildren
-# can escape (TD-1406).
+# TD-1406 gave Windows a tree kill — CREATE_NEW_PROCESS_GROUP at the spawn
+# and `taskkill /T /F` in `_kill_process_group` — but no Windows run has
+# executed it, and a process-tree kill means nothing until a real OS has
+# been asked to perform one.  The escape probe is also POSIX shell (`$$`,
+# `&`, `wait`), so unskipping needs a cmd/PowerShell equivalent as well as
+# a green Windows leg.  Kept a skip rather than a passing assertion so the
+# suite does not claim a guarantee nobody has observed.
 requires_posix_process_group = pytest.mark.skipif(
     sys.platform == "win32",
     reason=(
-        "TD-1406: process-group kill relies on POSIX killpg; Windows kills only the direct child"
+        "TD-1406: the Windows tree kill (CREATE_NEW_PROCESS_GROUP + taskkill /T /F) is "
+        "implemented but unverified — no Windows run has exercised it, and the escape "
+        "probe is a POSIX shell command; unskip once a Windows leg confirms both"
     ),
 )
 

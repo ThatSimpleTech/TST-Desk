@@ -18,7 +18,12 @@ import pytest
 
 from tstd.autonomy import Boundary
 from tstd.autonomy.classifier import canonical_path
-from tstd.tools.boundary import PathGuard, RefusalError, is_8_3_short_name
+from tstd.tools.boundary import (
+    PathGuard,
+    RefusalError,
+    is_8_3_short_name,
+    windows_unsafe_reason,
+)
 
 
 def guard(workspace: Path, writable: tuple[str, ...] | None = None) -> PathGuard:
@@ -30,13 +35,12 @@ def guard(workspace: Path, writable: tuple[str, ...] | None = None) -> PathGuard
 def ws_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Chdir into the workspace so guard inputs can be workspace-relative.
 
-    TD-1406: the guard refuses drive-letter paths fail-closed on every
-    platform, and pytest's ``tmp_path`` is always a drive-letter path on
-    Windows — so an absolute tmp_path-based guard input is refused there
-    as ``windows_unsafe`` before any workspace logic runs.  Feeding
-    workspace-relative paths from inside the workspace exercises the real
-    boundary semantics (traversal, symlinks, hardlinks, steering,
-    writable globs) on every platform.
+    Relative inputs exercise the real boundary semantics (traversal,
+    symlinks, hardlinks, steering, writable globs) identically on every
+    platform, with no path-form question in the way.  Absolute inputs
+    would be judged differently per host: off Windows a drive-letter path
+    is refused for being unresolvable, and the two forms only converged on
+    Windows itself in TD-1406.
     """
     monkeypatch.chdir(tmp_path)
     return tmp_path
@@ -271,6 +275,89 @@ class TestWindowsForms:
             g.check_read(r"\\server\share\evil.txt")
 
 
+# ── TD-1406: 8.3 short names are a form problem only where they alias ───
+
+
+class TestShortNameCanonicalization:
+    """The 8.3 check reads the canonical path on Windows, the raw one else.
+
+    Windows canonicalization (``GetFinalPathNameByHandle``, reached through
+    ``os.path.realpath``) returns the long form, so a short-named *ancestor*
+    — ``C:\\Users\\RUNNER~1\\...``, which is where a CI runner's temp
+    directory lives — carries no aliasing risk once resolved.  No other
+    filesystem knows the short→long mapping, so off Windows the fail-closed
+    refusal stands.
+
+    ``sys.platform`` is patched rather than skipped so both branches are
+    proven on every host: the win32 branch must not be a claim only the
+    Windows leg can check.  The patch does not change ``pathlib``'s
+    flavour, so the vectors use forward slashes — legal on Windows, and
+    parsed into segments by ``PosixPath`` too.  Backslash vectors would
+    read as one segment off Windows and prove nothing.  ``TestWindowsNative``
+    carries the end-to-end check that only a real host can make.
+    """
+
+    # A short-named ancestor that canonicalization expanded away.  Drive
+    # letters are left off the shared vectors so the 8.3 rule is the only
+    # one in play on both branches — off Windows a drive letter is refused
+    # first, and would mask what these assertions are about.
+    EXPANDED_RAW = "/Users/RUNNER~1/AppData/Local/Temp/ws/a.txt"
+    EXPANDED_CANONICAL = Path("/Users/runneradmin/AppData/Local/Temp/ws/a.txt")
+
+    # A short name that survived canonicalization — still an alias risk.
+    SURVIVING = "/ws/PROGRA~1/x.dll"
+
+    def test_expanded_short_name_allowed_on_win32(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        assert windows_unsafe_reason(self.EXPANDED_RAW, self.EXPANDED_CANONICAL) is None
+
+    def test_drive_absolute_runner_temp_path_allowed_on_win32(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The real collateral this fixes: pytest's tmp_path on a Windows
+        # runner is a drive-absolute path under a short-named ancestor.
+        monkeypatch.setattr(sys, "platform", "win32")
+        raw = "C:/Users/RUNNER~1/AppData/Local/Temp/pytest-of-runneradmin/ws/a.txt"
+        canonical = Path("C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/ws/a.txt")
+        assert windows_unsafe_reason(raw, canonical) is None
+
+    def test_surviving_short_name_refused_on_win32(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The expansion is what removes the risk; a segment the filesystem
+        # did not expand is still refused on Windows.
+        monkeypatch.setattr(sys, "platform", "win32")
+        reason = windows_unsafe_reason(self.SURVIVING, Path(self.SURVIVING))
+        assert reason is not None
+        assert "8.3" in reason
+
+    def test_expanded_short_name_still_refused_off_win32(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Off Windows nothing knows the mapping, so the canonical form is
+        # not evidence of anything — the refusal is unchanged.
+        monkeypatch.setattr(sys, "platform", "linux")
+        reason = windows_unsafe_reason(self.EXPANDED_RAW, self.EXPANDED_CANONICAL)
+        assert reason is not None
+        assert "8.3" in reason
+
+    def test_omitted_canonical_form_is_fail_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Callers that hold no canonical path (the classifier) get the
+        # conservative answer for a short name no filesystem resolved.
+        monkeypatch.setattr(sys, "platform", "win32")
+        assert windows_unsafe_reason(self.SURVIVING) is not None
+
+    def test_other_unsafe_forms_ignore_the_canonical_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Only the 8.3 rule consults the canonical form; UNC and ADS stay
+        # raw-string judgements on every platform.
+        monkeypatch.setattr(sys, "platform", "win32")
+        assert windows_unsafe_reason(r"\\server\share\x.txt", Path("/ws/x.txt")) is not None
+        assert windows_unsafe_reason("/ws/note.txt:ads", Path("/ws/note.txt")) is not None
+        # Drive-relative stays refused on Windows too — TD-1406 legalised
+        # only the drive-*absolute* form.
+        assert windows_unsafe_reason("C:note.txt", Path("/ws/note.txt")) is not None
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows semantics")
 class TestWindowsNative:
     """Native Windows-only integration checks (run on the Windows CI runner)."""
@@ -284,6 +371,26 @@ class TestWindowsNative:
         g = guard(tmp_path)
         with pytest.raises(RefusalError):
             g.check_write(r"\\localhost\C$\Windows\evil.txt")
+
+    def test_drive_absolute_in_workspace_allowed(self, tmp_path: Path) -> None:
+        # TD-1406 criterion 1, end to end: the native absolute form of an
+        # in-workspace path is usable.  On a CI runner tmp_path also sits
+        # under a short-named ancestor (RUNNER~1), so this is criterion 2's
+        # end-to-end check too — the one no POSIX host can make.
+        target = tmp_path / "src" / "a.txt"
+        target.parent.mkdir(parents=True)
+        target.write_text("x")
+        g = guard(tmp_path)
+        assert g.check_write(str(target)) == canonical_path(target)
+        assert g.check_read(str(target)) == canonical_path(target)
+
+    def test_short_name_outside_workspace_still_refused(self, tmp_path: Path) -> None:
+        # Expansion removes the form problem, not the wall: a short-named
+        # path that resolves outside the workspace is still refused.
+        g = guard(tmp_path)
+        with pytest.raises(RefusalError) as ei:
+            g.check_read(r"C:\PROGRA~1\evil.dll")
+        assert ei.value.code == "outside_workspace"
 
 
 # ── Reads ───────────────────────────────────────────────────────────────

@@ -89,21 +89,52 @@ def is_8_3_short_name(segment: str) -> bool:
     return bool(_SHORT_NAME_RE.match(segment))
 
 
+def _short_name_target(p: str, canonical: Path | None) -> Path:
+    """The path the 8.3 rule judges: canonical on Windows, raw elsewhere.
+
+    Windows canonicalization (``GetFinalPathNameByHandle``, reached through
+    ``os.path.realpath``) returns the long form, so a short name that named
+    a real path is already gone by the time the guard checks containment —
+    there is nothing left to alias.  Any segment that *survives* resolution
+    named nothing the filesystem could expand, and stays refused.
+
+    Off Windows no filesystem knows the short→long mapping, so the raw
+    string is all there is and the refusal stays fail-closed (TD-1406).
+    """
+    if sys.platform != "win32":
+        return Path(p)
+    return canonical if canonical is not None else canonical_path(Path(p))
+
+
 def is_alternate_data_stream(p: str) -> bool:
     """Whether *p* names an NTFS alternate data stream (``file:stream``)."""
     return ":" in Path(p).name
 
 
-def windows_unsafe_reason(p: str) -> str | None:
+def windows_unsafe_reason(p: str, canonical: Path | None = None) -> str | None:
     """Reason *p* is Windows-unsafe, or ``None`` if it is safe.
 
     Ambiguous and unresolvable forms are refused fail-closed on all
     platforms — a workspace may be shared or moved across operating
-    systems.  The one platform-conditional form (TD-1406): a drive-absolute
-    path is the native absolute form on Windows, so on a Windows host it is
-    not a form problem — it canonicalizes and faces the normal workspace /
-    writable-paths checks below.  Refusing it there would make every path
-    tool unusable, since absolute Windows paths always carry a drive letter.
+    systems.  Two forms are platform-conditional (TD-1406), both because
+    Windows is the only host that can resolve them:
+
+    - A **drive-absolute** path is the native absolute form on Windows, so
+      on a Windows host it is not a form problem — it canonicalizes and
+      faces the normal workspace / writable-paths checks below.  Refusing
+      it there would make every path tool unusable, since absolute Windows
+      paths always carry a drive letter.
+    - An **8.3 short name** aliases a long name only until the path is
+      resolved, and on Windows resolution expands it.  See
+      ``_short_name_target``.
+
+    Args:
+        p: The raw path string, as the caller supplied it.
+        canonical: Its canonical form, when the caller already holds one.
+            Only the 8.3 rule reads it, and only on Windows.  Omitting it
+            costs a resolve on a Windows host and changes nothing
+            elsewhere; passing a canonical form never loosens any other
+            rule.
     """
     if is_drive_relative_or_absolute(p):
         if sys.platform != "win32":
@@ -112,7 +143,7 @@ def windows_unsafe_reason(p: str) -> str | None:
             return "drive-relative path (resolves against a drive's current directory)"
     if is_unc_path(p):
         return "UNC path (\\\\server\\share) — outside any workspace"
-    if any(is_8_3_short_name(part) for part in Path(p).parts):
+    if any(is_8_3_short_name(part) for part in _short_name_target(p, canonical).parts):
         return "8.3 short name segment (can alias a different path on Windows)"
     if is_alternate_data_stream(p):
         return "alternate data stream (colon in filename)"
@@ -152,7 +183,7 @@ class PathGuard:
                 canonical path lies outside the workspace.
         """
         target = self.canonicalize(raw)
-        unsafe = windows_unsafe_reason(str(raw))
+        unsafe = windows_unsafe_reason(str(raw), target)
         if unsafe:
             raise RefusalError("windows_unsafe", target, unsafe)
         if not is_in_workspace(self.boundary, target):
@@ -176,7 +207,7 @@ class PathGuard:
                 ``reason`` for the model.
         """
         target = self.canonicalize(raw)
-        unsafe = windows_unsafe_reason(str(raw))
+        unsafe = windows_unsafe_reason(str(raw), target)
         if unsafe:
             raise RefusalError("windows_unsafe", target, unsafe)
         if is_steering_write(self.boundary, target):

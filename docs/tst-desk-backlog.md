@@ -2206,20 +2206,46 @@ made platform-honest (posix-separator manifests, cross-platform test commands,
 product-semantics work the skips point at.
 
 **Acceptance criteria:**
-- [ ] Boundary guard semantics decided for Windows absolute paths: today every
-      drive-letter path is refused `windows_unsafe` on every platform
-      (TD-1402's fail-closed choice), which means the model cannot use
-      absolute in-workspace paths on Windows. Either containment-checked
-      drive-absolute paths become legal on win32, or the refusal copy teaches
-      the relative-path idiom — decide, implement, unskip the guard tests
-- [ ] 8.3 short-name handling on Windows temp/user dirs (`RUNNER~1`): alias
-      expansion vs. refusal, so legitimate absolute paths under short-named
-      ancestors aren't collateral
-- [ ] File-permission stories (session store, port file) get real Windows ACLs
-      or a documented no-op, and the `restricted_mode` tests unskip
+- [x] Boundary guard semantics decided for Windows absolute paths:
+      containment-checked drive-absolute paths are legal on win32 (the only
+      absolute form Windows has), where they face the workspace wall like any
+      other absolute path; every other Windows-unsafe form — drive-relative,
+      UNC, alternate data stream — stays fail-closed on all platforms. The
+      carve-out itself landed early in `dfe1ab7`, 45 minutes before the skip
+      complaining about it was written; what was missing was its companion
+      security test. `test_windows_unsafe_refused_on_every_platform` still
+      asserted `windows_unsafe` for `C:\Windows\system.ini` unconditionally
+      and would have gone red on the first Windows leg — the drive-absolute
+      vector now has its own test asserting `outside_workspace` on win32 and
+      `windows_unsafe` elsewhere. Refused either way, for different reasons
+- [x] 8.3 short-name handling: expand on Windows, keep refusing everywhere
+      else. The check ran against the raw string on every platform, so every
+      `tmp_path` on a runner (`C:\Users\RUNNER~1\...`) was refused for a
+      segment belonging to the machine. `realpath` reaches
+      `GetFinalPathNameByHandle` and returns the long form, so on win32 the
+      check now reads the canonical path — the alias is already gone by the
+      time containment is checked. A segment that survives resolution named
+      nothing expandable and stays refused; off win32 no filesystem knows the
+      mapping, so the refusal is unchanged. `test_ledger.py`'s skip, whose
+      reason cited the criterion above rather than this one, is removed
+- [x] File permissions: documented no-op on Windows, and the `restricted_mode`
+      tests assert it rather than skipping. `%LOCALAPPDATA%` already grants
+      Full to the user, SYSTEM and Administrators only, so the containing
+      directory is what protects both files and `0o600` never was; `icacls` on
+      every port-file write would restate that for a subprocess. POSIX asserts
+      `0o600`, win32 asserts the file exists, reads back, and carries `0o666`.
+      Written up in `docs/windows.md`
 - [ ] Shell-tool process-group kill semantics verified on Windows
       (CREATE_NEW_PROCESS_GROUP + taskkill/TerminateJobObject), skipped
-      cancel/timeout tests unskipped
+      cancel/timeout tests unskipped — **implemented, unverified.**
+      `CREATE_NEW_PROCESS_GROUP` at the spawn and `taskkill /T /F /PID` after
+      the direct-child kill have landed, replacing a `proc.kill()` whose own
+      docstring admitted grandchildren escape. Not ticked: no Windows host has
+      run it, and a process-tree kill is a claim about an OS that only that OS
+      can settle. Ticking it from a green macOS suite, where the code is
+      `sys.platform`-gated out, would be this backlog's eighth "green suite,
+      dead feature". Unskipping also needs a cmd/PowerShell equivalent of the
+      POSIX escape probe (`$$`, `&`, `wait`) the cancel tests use
 - [x] Parent-watchdog liveness probe works on Windows (OpenProcess) — first pass:
       OpenProcess plus `GetExitCodeProcess != STILL_ACTIVE` (a dead process with an
       open handle otherwise reports alive); `test_parent_watchdog` green on the

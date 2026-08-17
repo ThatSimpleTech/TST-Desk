@@ -91,7 +91,9 @@ architecture spec. How the pieces fit together — the daemon/shell split, the w
 extension points, and how to add a tool — is in
 [`docs/architecture.md`](docs/architecture.md). Every configuration key is documented in
 [`docs/configuration.md`](docs/configuration.md), and writing `AGENTS.md` and path-scoped rules
-is covered in [`docs/steering.md`](docs/steering.md).
+is covered in [`docs/steering.md`](docs/steering.md). Where Windows behaves differently — path
+forms, 8.3 short names, file permissions, killing a command — is in
+[`docs/windows.md`](docs/windows.md).
 
 ## License
 

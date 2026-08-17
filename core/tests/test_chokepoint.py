@@ -147,9 +147,9 @@ class TestClassificationPrecedesExecution:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Dispatch a workspace-relative path from inside the workspace: an
-        # absolute tmp_path is a drive-letter path on Windows, refused as
-        # windows_unsafe (C) before the in-workspace A classification under
-        # test (TD-1406).
+        # absolute tmp_path is a drive-letter path on Windows, judged by
+        # different rules per host, and the A classification under test is
+        # what this run is about (TD-1406).
         monkeypatch.chdir(tmp_path)
 
         class RecordingClassifier(DecisionClassifier):
