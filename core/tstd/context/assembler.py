@@ -12,6 +12,15 @@ rules whose globs match none of them.  Inactive rules are still present in
 ``sources`` (for the inspector) but absent from the ``block`` (for the
 model).
 
+**Frontmatter elsewhere (TD-510).**  Frontmatter is parsed at *every*
+level, so the ``---`` delimiters and their YAML never reach the model —
+instruction files arriving from other tools commonly open with a block.
+Only ``.tst/rules/`` gives ``appliesTo`` meaning, though: at any other
+level it is stripped and flagged for the inspector, never honoured.  A
+steering file's precedence *is* its scope, and letting a workspace-root
+``AGENTS.md`` scope itself out of the prompt would make the working
+agreement conditional on which files a session happened to touch.
+
 The primary public API is ``ContextAssembler.assemble()``, which runs
 filesystem I/O in a worker thread via ``asyncio.to_thread`` so the
 event loop is never blocked (AGENTS.md §6).  ``assemble_sync()`` is
@@ -46,8 +55,8 @@ class ResolvedSource:
     Attributes:
         path: Absolute path of the steering file.
         precedence: Precedence level.
-        content: Raw file contents decoded as UTF-8 (frontmatter stripped
-            for rule files).
+        content: Raw file contents decoded as UTF-8, with any frontmatter
+            block stripped (every level — TD-510).
         subtree: Workspace-relative subtree for nested files, else None.
         is_fallback: ``True`` when this source is a ``CLAUDE.md`` used
             because ``AGENTS.md`` is absent at the same path.
@@ -182,18 +191,23 @@ class ContextAssembler:
             if content is None:
                 continue  # missing or unreadable → not an error
 
-            # Parse frontmatter for rule files
+            # Parsed at every level so the delimiters and YAML never reach
+            # the model, but honoured only for rules (TD-510).
             applies_to: tuple[str, ...] | None = None
             active = True
-            body = content
+            ignored_applies_to = False
+            metadata, body = parse_frontmatter(content)
 
             if source.precedence == Precedence.RULES:
-                metadata, body = parse_frontmatter(content)
                 raw_applies_to = metadata.get("appliesTo", [])
                 if isinstance(raw_applies_to, list) and raw_applies_to:
                     applies_to = tuple(str(p) for p in raw_applies_to)
                     if matched_paths is not None:
                         active = _any_path_matches(matched_paths, applies_to)
+            elif "appliesTo" in metadata:
+                # Dropping it silently would swap one silent failure for
+                # another; the inspector says so instead.
+                ignored_applies_to = True
 
             # Process imports only for active sources — an inactive
             # scoped rule's imports would otherwise produce spurious
@@ -211,6 +225,7 @@ class ContextAssembler:
                 )
                 all_issues.extend(issues)
 
+            line_count = body.count("\n") + 1
             resolved.append(
                 ResolvedSource(
                     path=source.path,
@@ -223,14 +238,8 @@ class ContextAssembler:
                     active=active,
                     imports=imports,
                     token_count=self._token_counter.count(body),
-                    line_count=body.count("\n") + 1,
-                    warnings=(
-                        f"file exceeds {LINE_LIMIT} lines; "
-                        f"long files measurably reduce adherence — "
-                        f"see the steering authoring guide",
-                    )
-                    if body.count("\n") + 1 > LINE_LIMIT
-                    else (),
+                    line_count=line_count,
+                    warnings=self._warnings(line_count, ignored_applies_to),
                 )
             )
             if active:
@@ -242,6 +251,29 @@ class ContextAssembler:
             total_tokens=self._sum_tokens(resolved),
             pending_imports=tuple(sorted(pending)),
         )
+
+    @staticmethod
+    def _warnings(line_count: int, ignored_applies_to: bool) -> tuple[str, ...]:
+        """Soft warnings about one source, for the inspector (TD-506, TD-510).
+
+        Both texts end by naming the authoring guide, and the guide quotes
+        them back verbatim — rewording either here fails the doc suite
+        until that page catches up.
+        """
+        warnings: list[str] = []
+        if line_count > LINE_LIMIT:
+            warnings.append(
+                f"file exceeds {LINE_LIMIT} lines; "
+                f"long files measurably reduce adherence — "
+                f"see the steering authoring guide"
+            )
+        if ignored_applies_to:
+            warnings.append(
+                "appliesTo only scopes rules in .tst/rules/; "
+                "it was stripped from this file and had no effect — "
+                "see the steering authoring guide"
+            )
+        return tuple(warnings)
 
     @staticmethod
     def _sum_tokens(sources: list[ResolvedSource]) -> TokenCount:

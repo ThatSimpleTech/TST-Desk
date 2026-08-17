@@ -5053,3 +5053,95 @@ case, because a ratio is a claim about a saving and there is no saving to
 claim in either. Log-side, `cache_reported` says which `0.0` this is.
 Grepping a day of logs for cache behaviour is how this story started; the
 field is what makes that grep answer the question.
+
+---
+
+## 2026-08-17 — TD-510: Frontmatter is stripped everywhere, honoured only in `.tst/rules/`
+
+### 1. Every steering level parses frontmatter; none of it reaches the model (Class B)
+
+**Decision:** `assemble_sync` calls `parse_frontmatter` for every source
+regardless of precedence, not only `Precedence.RULES`. The body it returns is
+what gets imported, counted, rendered and sent. A steering file that opens
+with a `---` block therefore never ships its delimiters or its YAML to the
+model, at any level.
+
+**Rationale:** The old gate parsed only rule files, so an `AGENTS.md` or
+`CLAUDE.md` opening with frontmatter sent the raw YAML as though it were an
+instruction. That is worst for exactly the users the migration section tells
+that nothing needs porting: files written for Claude Code, Cursor and the rest
+routinely open with a block, and every one of them was arriving as prose. The
+parser already degrades to `({}, content)` on absent, empty, malformed and
+non-dict frontmatter, so widening the call site adds no new failure mode — a
+file with no frontmatter is byte-identical through it.
+
+Stripping now happens *before* import resolution rather than after, so an
+`@path` on the first line under a frontmatter block is seen as a directive.
+Previously the block sat above it and the directive still resolved, so this is
+order-preserving rather than behaviour-changing, but it is the order that
+makes sense: the block is not content.
+
+### 2. `appliesTo` outside `.tst/rules/` is stripped, never honoured (Class B)
+
+**Decision:** Only `.tst/rules/` gives `appliesTo` meaning. At every other
+level the key is removed with the rest of the block and has no effect on
+whether the file loads. `ResolvedSource.applies_to` stays `None` and `active`
+stays `True` for non-rule sources.
+
+**Rationale:** This is the half of TD-510 that was a real choice, and the
+conservative reading wins on three counts.
+
+A steering file's *location* is already its scope. Root `AGENTS.md` is the
+workspace-wide agreement; `src/api/AGENTS.md` is the agreement for that
+subtree, scoped by where it sits. Honouring frontmatter would give one file
+two scoping mechanisms that can disagree, with the narrower silently winning
+and nothing in the file naming the conflict.
+
+Honouring it would also make the working agreement conditional. A
+workspace-root `AGENTS.md` carrying `appliesTo: ["src/**"]` would be absent
+from every turn that had not yet touched `src/` — including turn one, where
+`matched_paths` is empty and nothing has been touched at all. `.tst/rules/` is
+built for absence: a rule that does not fire is the expected case, the
+inspector greys it, and the author went looking for scoping when they put it
+there. `AGENTS.md` is not built for absence, and the failure is silent and
+turn-dependent in the direction that loses instructions rather than the
+direction that costs tokens.
+
+The frontmatter in arriving files is also not ours. Those blocks carry
+`description`, `globs`, `alwaysApply`, `name` — foreign keys with foreign
+semantics. Honouring `appliesTo` alone would interpret one key as a scope
+while discarding the rest, which is a half-migration: the user gets partial
+semantics they cannot predict from either tool's documentation.
+
+Finally the asymmetry. Stripping-only is forward-compatible — if path-scoped
+`AGENTS.md` is later wanted, files already stripped keep working and gain
+scoping, and nothing that worked stops working. The reverse is not true:
+un-honouring later silently widens every scoped file in every workspace that
+adopted it. Where one direction is reversible and the other is not, and the
+spec is silent, take the reversible one.
+
+Argued against, honestly: a path-scoped `AGENTS.md` is a coherent idea, and a
+user arriving from Cursor — where `globs:` in frontmatter is the normal way to
+scope — will expect it to work. The answer is that `.tst/rules/` is that
+feature, is documented in the migration section as the destination, and
+carries the inspector affordance for "why did this not fire" that a scoped
+`AGENTS.md` would need built from scratch.
+
+### 3. The dropped scope is flagged, not silently swallowed (Class A)
+
+**Decision:** A non-rule source whose frontmatter carried an `appliesTo` gains
+an inspector warning beside the existing over-limit one. Any other frontmatter
+key is stripped without comment.
+
+**Rationale:** The story title is "neither honoured nor stripped"; stripping
+in silence would have answered only half of it and left the other half a
+quieter version of the same defect — the author writes a scope, sees the YAML
+disappear, and has no way to learn it did nothing. Warning only on `appliesTo`
+keeps the signal about a *dropped intent* rather than about frontmatter in
+general, so the common migration case of a `description:` block passes without
+nagging about a key we were never going to act on.
+
+`ResolvedSource.warnings` was already a tuple surfaced through
+`InstructionStack`, so this is additive with no protocol change. The guide
+quotes the warning verbatim and the doc suite provokes it out of the real
+assembler, on the same footing as the 200-line warning.

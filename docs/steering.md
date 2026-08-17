@@ -351,9 +351,10 @@ costs you tokens, not correctness.
 
 ### Three ways a rule quietly fails to scope
 
-**1. `appliesTo` outside `.tst/rules/`.** Frontmatter is only parsed for rule files. Put it in
-an `AGENTS.md` and it is not a scope — and worse, it is not stripped either, so the raw YAML
-goes to the model as if it were an instruction:
+**1. `appliesTo` outside `.tst/rules/`.** Scope is a rules-directory feature. Frontmatter is
+*stripped* from every steering file, so a block at the top of an `AGENTS.md` never reaches the
+model — but outside `.tst/rules/` that is all that happens to it. The `appliesTo` is dropped,
+not honoured, and the file stays unconditionally on:
 
 <!-- verify: example frontmatter-elsewhere -->
 <!-- verify: file AGENTS.md -->
@@ -371,19 +372,30 @@ Rebase, never merge.
 
 <!-- verify: stack -->
 ```
-AGENTS.md    (workspace)
+AGENTS.md    (workspace) [appliesTo-ignored]
 ```
 
 <!-- verify: block -->
 ````
 <!-- from: <workspace>/AGENTS.md (workspace) -->
----
-appliesTo: ["src/**"]
----
 Rebase, never merge.
 ````
 
-No `scoped` flag, and the delimiters are still in the prompt. Scope belongs in `.tst/rules/`.
+The delimiters are gone from the prompt, and there is no `scoped` flag — the session touched
+nothing, and a rule scoped to `src/**` would have been `inactive` here. This one is not. The
+inspector flags the file so the dropped scope is not itself silent:
+
+```
+appliesTo only scopes rules in .tst/rules/; it was stripped from this file and had no effect — see the steering authoring guide
+```
+
+Why stripped and not honoured: a steering file's *location* is already its scope. Root
+`AGENTS.md` is the workspace-wide agreement, `src/api/AGENTS.md` is the agreement for that
+subtree. Letting frontmatter re-scope a file on top of that would give one file two scoping
+mechanisms that can disagree, and would let the workspace-wide working agreement vanish from a
+turn because of which files the session happened to open first. Scope belongs in `.tst/rules/`,
+which exists for exactly this and where a missing rule is the expected outcome rather than a
+surprise.
 
 **2. An empty or malformed `appliesTo`.** `appliesTo: []`, a string instead of a list, or YAML
 that does not parse all degrade to *unscoped*, which means always on. That is the safe
@@ -842,9 +854,12 @@ What does **not** carry over, and what to do about it:
   `~/.claude/CLAUDE.md` at your home directory is read. Move anything you need out of it.
 - **MCP server definitions, hooks, slash commands, and subagent files** are configuration for
   another product, not steering. They are ignored.
-- **Frontmatter conventions from other tools** are ignored outside `.tst/rules/`, and are not
-  stripped — see §4. If your `CLAUDE.md` opens with a YAML block, delete it or move the file's
-  content into a rule.
+- **Frontmatter conventions from other tools** are stripped, not interpreted. If your
+  `CLAUDE.md` opens with a YAML block — `description`, `globs`, `alwaysApply`, or anything else
+  — it is removed before the file is assembled, so it never reaches the model and you have
+  nothing to clean up. What it *meant* does not carry over: only `.tst/rules/` scopes, and only
+  through `appliesTo`. A file whose frontmatter scoped it in your old tool arrives here
+  unconditional, and the inspector flags it if it carried an `appliesTo` — see §4.
 
 There is no import step and no migration command. When you are ready to commit to the open
 name, rename `CLAUDE.md` to `AGENTS.md`; until then, both work, and you can keep one repo
@@ -855,17 +870,17 @@ serving both tools indefinitely.
 ## 10. Sharp edges
 
 Writing this guide against the running assembler surfaced three places where the behaviour is
-not what an author would predict. All three are reported as defects; none is worked around
+not what an author would predict. One has since been fixed and the example above now
+demonstrates the corrected behaviour; the rest are reported as defects, are not worked around
 here, and every one of them is demonstrated by a live example above rather than asserted.
 
 - **A bare-name `appliesTo` pattern matches a filename suffix, not a basename.** `config.py`
   activates on `oldconfig.py`, and `**/config.py` compiles to the same thing, so there is no
   anchored spelling. See §4. The direction of the error is safe — a rule loads when it need
   not have — but a scoped rule can be quietly wider than its name suggests.
-- **`appliesTo` outside `.tst/rules/` is neither honoured nor stripped.** Put frontmatter in an
-  `AGENTS.md` or a `CLAUDE.md` and the `---` delimiters and the YAML go to the model verbatim,
-  as though they were an instruction. See §4. This is the one that bites people arriving from
-  other tools, whose files often open with a frontmatter block.
+- **`appliesTo` outside `.tst/rules/` is neither honoured nor stripped.** *Fixed.* Frontmatter
+  is stripped at every level now, so nothing reaches the model. It is still not honoured
+  outside `.tst/rules/` — that half is deliberate, and flagged rather than silent. See §4.
 - **Your user-global steering file's own imports are treated as external.**
   `~/.tstdesk/AGENTS.md` sits outside every workspace, so `@shared.md` beside it triggers the
   untrusted-read approval, once per workspace you ever open. See §5. It is defensible — the
@@ -881,8 +896,10 @@ here, and every one of them is demonstrated by a live example above rather than 
 1. Every example is materialised as a real workspace and home directory and assembled by the
    real `ContextAssembler`. The stacks, prompt blocks, import issues and pending approvals
    printed above are compared to its output exactly.
-2. The 200-line warning and the import-depth message are quoted from strings the test provokes
-   out of the assembler, so rewording either in code fails here until this page catches up.
+2. The 200-line warning, the dropped-`appliesTo` warning and the import-depth message are
+   quoted from strings the test provokes out of the assembler, so rewording any of them in code
+   fails here until this page catches up. Every warning the assembler can raise must also have
+   a flag named in this guide before a stack line can render it.
 3. Every precedence level, every directory skipped by the nested walk, and every pattern in the
    validator's default subset must appear in this text. Adding one fails the suite until it is
    documented.

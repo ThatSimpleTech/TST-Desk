@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tstd.context import ContextAssembler, SteeringFileResolver
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -500,3 +502,91 @@ class TestEdgeCases:
         result = _make_assembler(home).assemble_sync(ws, matched_paths=set())
         assert result.sources[0].applies_to is None
         assert result.sources[0].active is True
+
+
+# ── Tests: frontmatter is stripped at every level (TD-510) ─────────────────
+
+#: One steering file per precedence level, each the only file in its
+#: fixture so ``sources[0]`` is unambiguous.  A ``~/`` prefix lands in the
+#: home directory, everything else under the workspace root.
+_EVERY_LEVEL: list[tuple[str, str]] = [
+    ("user-global", "~/.tstdesk/AGENTS.md"),
+    ("user-global-claude", "~/.claude/CLAUDE.md"),
+    ("workspace", "AGENTS.md"),
+    ("workspace-claude-fallback", "CLAUDE.md"),
+    ("nested", "src/AGENTS.md"),
+    ("rule", ".tst/rules/r.md"),
+]
+
+#: Frontmatter in the shape an arrival from another tool actually writes:
+#: a scoping key we understand plus keys we do not.
+_FOREIGN_FRONTMATTER = '---\nappliesTo: ["src/**"]\ndescription: ported from elsewhere\n---\n'
+
+
+class TestFrontmatterStrippedAtEveryLevel:
+    """TD-510: no steering level ships its YAML block to the model."""
+
+    @pytest.mark.parametrize(
+        ("level", "relpath"),
+        _EVERY_LEVEL,
+        ids=[level for level, _ in _EVERY_LEVEL],
+    )
+    def test_frontmatter_never_reaches_the_block(
+        self, level: str, relpath: str, tmp_path: Path
+    ) -> None:
+        home = tmp_path / "home"
+        ws = tmp_path / "workspace"
+        ws.mkdir(parents=True, exist_ok=True)
+        body = f"Body for {level}."
+        target = home / relpath.removeprefix("~/") if relpath.startswith("~/") else ws / relpath
+        _write(target, f"{_FOREIGN_FRONTMATTER}{body}\n")
+
+        # src/main.py keeps the rule-level fixture active, so every level
+        # under test actually reaches the block.
+        result = _make_assembler(home).assemble_sync(ws, matched_paths={"src/main.py"})
+
+        assert len(result.sources) == 1, f"{relpath} was not discovered exactly once"
+        assert body in result.block
+        assert "---" not in result.block, "frontmatter delimiters reached the model"
+        assert "appliesTo" not in result.block
+        assert "description: ported from elsewhere" not in result.block
+        assert result.sources[0].content.strip() == body
+
+    def test_applies_to_outside_rules_is_stripped_but_not_honoured(self, tmp_path: Path) -> None:
+        """The recorded decision: strip it, never let it scope.
+
+        The touched path matches nothing in ``appliesTo``.  A rule file
+        would go inactive here; a workspace file must not.
+        """
+        home, ws = _build_workspace(tmp_path, root_file=f"{_FOREIGN_FRONTMATTER}Always on.\n")
+        result = _make_assembler(home).assemble_sync(ws, matched_paths={"docs/readme.md"})
+        assert result.sources[0].applies_to is None
+        assert result.sources[0].active is True
+        assert "Always on." in result.block
+
+    def test_applies_to_outside_rules_warns(self, tmp_path: Path) -> None:
+        """Stripping silently would swap one silent failure for another."""
+        home, ws = _build_workspace(tmp_path, root_file=f"{_FOREIGN_FRONTMATTER}Body.\n")
+        result = _make_assembler(home).assemble_sync(ws)
+        assert any("appliesTo" in w for w in result.sources[0].warnings)
+
+    def test_applies_to_in_a_rule_does_not_warn(self, tmp_path: Path) -> None:
+        """Where it works, it is not a mistake."""
+        home, ws = _build_workspace(tmp_path, rules={"r.md": f"{_FOREIGN_FRONTMATTER}Body.\n"})
+        result = _make_assembler(home).assemble_sync(ws, matched_paths={"src/a.py"})
+        assert result.sources[0].warnings == ()
+
+    def test_other_frontmatter_keys_do_not_warn(self, tmp_path: Path) -> None:
+        """Only a dropped *scope* is worth a warning, not any stray key."""
+        home, ws = _build_workspace(tmp_path, root_file="---\ndescription: hi\n---\nBody.\n")
+        result = _make_assembler(home).assemble_sync(ws)
+        assert result.sources[0].warnings == ()
+        assert "description" not in result.block
+
+    def test_imports_below_frontmatter_still_resolve(self, tmp_path: Path) -> None:
+        """Stripping happens before imports, so the first line still counts."""
+        home, ws = _build_workspace(tmp_path, root_file="---\ndescription: hi\n---\n@extra.md\n")
+        _write(ws / "extra.md", "Imported body.\n")
+        result = _make_assembler(home).assemble_sync(ws)
+        assert "Imported body." in result.block
+        assert "---" not in result.block

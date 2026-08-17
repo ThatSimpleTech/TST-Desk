@@ -157,6 +157,22 @@ def _relative(path: Path, workspace: Path, home: Path) -> str:
     return path.as_posix()  # pragma: no cover - fixtures stay inside the roots
 
 
+#: Every warning the assembler can raise, and the flag the guide writes
+#: for it.  Matching on the real text means a new warning kind fails here
+#: rather than quietly rendering as one of these.
+_WARNING_FLAGS: tuple[tuple[str, str], ...] = (
+    ("file exceeds", "over-limit"),
+    ("appliesTo only scopes", "appliesTo-ignored"),
+)
+
+
+def _warning_flag(warning: str) -> str:
+    for prefix, flag in _WARNING_FLAGS:
+        if warning.startswith(prefix):
+            return flag
+    raise AssertionError(f"warning kind not named in the guide: {warning!r}")
+
+
 def _render_source(source: ResolvedSource, workspace: Path, home: Path) -> str:
     """One stack line: path, scope label, and the flags the guide names."""
     label = source.precedence.label
@@ -171,8 +187,7 @@ def _render_source(source: ResolvedSource, workspace: Path, home: Path) -> str:
         flags.append("scoped")
     if not source.active:
         flags.append("inactive")
-    if source.warnings:
-        flags.append("over-limit")
+    flags.extend(_warning_flag(w) for w in source.warnings)
     line = f"{_relative(source.path, workspace, home)} ({label})"
     return f"{line} [{' '.join(flags)}]" if flags else line
 
@@ -267,6 +282,29 @@ def test_the_line_limit_warning_is_quoted_verbatim() -> None:
     assert _warning_text() in _doc_text(), (
         "the guide does not quote the assembler's over-limit warning verbatim"
     )
+
+
+def test_the_dropped_applies_to_warning_is_quoted_verbatim() -> None:
+    """TD-510: the guide quotes the warning a migrating author will hit.
+
+    Provoked out of the assembler rather than imported, so rewording it
+    in code fails here until this page catches up.
+    """
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp).resolve()
+        workspace, home = root / "workspace", root / "home"
+        workspace.mkdir()
+        home.mkdir()
+        (workspace / "AGENTS.md").write_text(
+            '---\nappliesTo: ["src/**"]\n---\nRebase, never merge.\n', encoding="utf-8"
+        )
+        result = ContextAssembler(resolver=SteeringFileResolver(home_dir=home)).assemble_sync(
+            workspace
+        )
+        assert result.sources[0].warnings, "appliesTo outside .tst/rules/ should warn"
+        assert result.sources[0].warnings[0] in _doc_text(), (
+            "the guide does not quote the dropped-appliesTo warning verbatim"
+        )
 
 
 def test_nothing_is_dropped_past_the_line_limit() -> None:
