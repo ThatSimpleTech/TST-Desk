@@ -9,6 +9,7 @@ import {
   attachToSession,
   detachFromSession,
   onDaemonEvent,
+  onResume,
   sendToDaemon,
 } from "./connection-status.svelte.js";
 import { createChatState, createChatStore, type ChatState } from "./chat-store";
@@ -22,12 +23,16 @@ const store = createChatStore(
 );
 
 let unsubscribe: (() => void) | null = null;
+let unsubscribeResume: (() => void) | null = null;
 
 /** Start following the daemon: subscribe to the event stream and ask for the
  *  session list so a session binds. Idempotent. */
 export function initChat(): void {
   if (unsubscribe !== null) return;
   unsubscribe = onDaemonEvent((event) => store.applyEvent(event));
+  // TD-1716: the first-token watchdog is a timer, and a suspended webview's
+  // timers do not fire — so the wait is re-judged from the clock on resume.
+  unsubscribeResume = onResume(() => store.resume());
   store.refreshSessions();
 }
 
@@ -35,6 +40,8 @@ export function initChat(): void {
 export function teardownChat(): void {
   unsubscribe?.();
   unsubscribe = null;
+  unsubscribeResume?.();
+  unsubscribeResume = null;
   store.dispose();
 }
 

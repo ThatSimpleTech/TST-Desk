@@ -17,6 +17,7 @@ import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 import { ProtocolClient, type ConnectionState, type SocketLike } from "./client";
 import { bindClient, ingestEvent, resetSession } from "./session-status.svelte.js";
 import { clearNotifications, notifyEvent } from "./notifications.svelte.js";
+import { watchResume } from "./resume";
 
 export interface DaemonStatus {
   state: "starting" | "connected" | "crashed" | "stopping" | "stopped";
@@ -42,6 +43,11 @@ const eventSubs = new Set<(event: DaemonEventUnion) => void>();
 // probe setup state immediately, not on the next keystroke.
 const stateSubs = new Set<(state: ConnectionState) => void>();
 
+// Resume fan-out (TD-1716): the webview can be suspended mid-turn, so stores
+// holding a wait need the same "you were asleep" signal the socket gets.
+const resumeSubs = new Set<() => void>();
+let stopResumeWatch: (() => void) | null = null;
+
 /** Subscribe to every validated daemon event. Returns an unsubscribe fn. */
 export function onDaemonEvent(handler: (event: DaemonEventUnion) => void): () => void {
   eventSubs.add(handler);
@@ -58,8 +64,25 @@ export function onConnectionState(handler: (state: ConnectionState) => void): ()
   };
 }
 
+/** Subscribe to resume — the page coming back from suspension (TD-1716).
+ *  Returns an unsubscribe fn. */
+export function onResume(handler: () => void): () => void {
+  resumeSubs.add(handler);
+  return () => {
+    resumeSubs.delete(handler);
+  };
+}
+
 /** Alias kept for the activity timeline lane (TD-1005/1007). */
 export const onEvent = onDaemonEvent;
+
+/** Heal the connection first — its re-attach frames go out on this tick and
+ *  the daemon's replay is already in flight — then let the stores re-decide
+ *  what they were waiting on. */
+function handleResume(): void {
+  client?.resume();
+  for (const sub of resumeSubs) sub();
+}
 
 /** Send a client→daemon message. False when no handshaken socket exists. */
 export function sendToDaemon(msg: ClientMessageUnion): boolean {
@@ -116,6 +139,9 @@ export async function connect(): Promise<void> {
       daemon.restart = payload.restart;
     });
   }
+  if (stopResumeWatch === null && typeof document !== "undefined" && typeof window !== "undefined") {
+    stopResumeWatch = watchResume(document, window, handleResume);
+  }
   if (client === null) makeClient();
   await client!.start();
 }
@@ -129,5 +155,7 @@ export function disconnect(): void {
   clearNotifications();
   unlistenDaemon?.();
   unlistenDaemon = null;
+  stopResumeWatch?.();
+  stopResumeWatch = null;
   ws.state = "stopped";
 }

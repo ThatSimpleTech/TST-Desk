@@ -756,6 +756,24 @@ class DiagnosticsReport(DaemonEvent):
     checks: list[DiagnosticCheck] = Field(default_factory=list)
 
 
+class Ping(BaseModel):
+    """Application-level liveness frame (TD-1716).  No session, no seq.
+
+    Deliberately not a ``DaemonEvent``: ``seq`` is the per-session event
+    log's contract and a ping belongs to no session's log — it is emitted
+    on a timer, replays nothing, and must never advance a client's
+    sequence bookkeeping.  It is nonetheless a daemon→client frame, so it
+    parses through ``parse_daemon_event`` like every other one.
+
+    Transport ping/pong cannot do this job: the OS network stack answers
+    those while a suspended webview's JavaScript is frozen, so a pong
+    proves the machine is alive, not the client.  Only a frame the
+    client's own event loop must process proves that.
+    """
+
+    type: Literal["ping"] = "ping"
+
+
 class Error(DaemonEvent):
     """A typed error, usually in response to a bad message."""
 
@@ -819,6 +837,7 @@ DaemonEventT = Annotated[
     | SetupState
     | ApiKeyValidated
     | DiagnosticsReport
+    | Ping
     | Error,
     Field(discriminator="type"),
 ]
@@ -879,6 +898,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "setup_state",
         "api_key_validated",
         "diagnostics_report",
+        "ping",
         "error",
     }
 )
@@ -955,6 +975,11 @@ def parse_hello(raw: str) -> Hello:
 def build_hello_ack() -> str:
     """Build the server's handshake acknowledgement."""
     return json.dumps({"type": "hello_ack", "version": PROTOCOL_VERSION})
+
+
+def build_ping() -> str:
+    """Build the application-level liveness frame (TD-1716)."""
+    return Ping().model_dump_json()
 
 
 def build_error(code: str, message: str, session_id: str | None = None) -> str:
