@@ -219,12 +219,14 @@ def _kill_windows_tree(pid: int) -> str | None:
     scope for the walk.
 
     This blocks the event loop, which §6 otherwise forbids: a deliberate,
-    bounded exception, because the kill must have landed before the
-    cancellation handler above re-raises, and the alternative puts an
-    ``await`` inside a cancellation handler on a path no test can reach.
-    ``taskkill`` normally returns in tens of milliseconds; the timeout is
-    the cap on how long a Windows cancel can stall the loop.  Nothing
-    blocks on POSIX, where the kill is a syscall.
+    bounded exception on the two cancellation paths only: the kill must
+    have landed before the handler re-raises, and awaiting there can be
+    cancelled again, so the kill would never land.  The timeout path is
+    normal async flow and offloads instead — see
+    ``_kill_process_group_offloaded``.  ``taskkill`` normally returns in
+    tens of milliseconds; the timeout is the cap on how long a Windows
+    cancel can stall the loop.  Nothing blocks on POSIX, where the kill
+    is a syscall.
 
     ``creationflags`` keeps the helper's own console window hidden.
     """
@@ -279,6 +281,22 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
     except PermissionError:
         return "group kill refused by the OS (EPERM); processes may still be running"
     return None
+
+
+async def _kill_process_group_offloaded(proc: asyncio.subprocess.Process) -> str | None:
+    """``_kill_process_group`` without blocking the event loop (TD-1406).
+
+    For callers in normal async flow — the timeout path, which is also the
+    common one.  A cancellation handler must NOT use this: awaiting while a
+    ``CancelledError`` is in flight can be cancelled again, and then the kill
+    never lands.  Those two sites keep the blocking call deliberately.
+
+    POSIX stays direct: ``killpg`` is a syscall, and a thread hop would cost
+    more than it saves.
+    """
+    if sys.platform != "win32":
+        return _kill_process_group(proc)
+    return await asyncio.to_thread(_kill_process_group, proc)
 
 
 def _check_workspace(workspace_path: str) -> None:
@@ -438,7 +456,10 @@ async def run_shell(
         )
 
         if not work_task.done():
-            kill_note = _kill_process_group(proc)
+            # Not a cancellation handler — this is the timeout and the
+            # cooperative-cancel path, so the Windows tree kill goes to a
+            # thread rather than stalling the socket for up to 2s (§6).
+            kill_note = await _kill_process_group_offloaded(proc)
             detail = kill_note or "process group killed"
             if session.cancel_requested:
                 header = f"cancelled — {detail}"
