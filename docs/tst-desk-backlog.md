@@ -736,14 +736,14 @@ control, not a convenience.
 **Size:** 2 · **Depends on:** TD-605
 
 **Acceptance criteria:**
-- [ ] A workspace with no `.tst/config.yaml` can run a shell command — the default is
+- [x] A workspace with no `.tst/config.yaml` can run a shell command — the default is
       unrestricted, matching the shipped template's own comment
-- [ ] An explicitly empty `allowed_commands: []` means whatever the documented semantics are
+- [x] An explicitly empty `allowed_commands: []` means whatever the documented semantics are
       decided to be, and the template comment and the configuration reference agree with the
       code — today they contradict it
-- [ ] A non-empty allowlist still restricts to exactly those binaries; the fix must not turn
+- [x] A non-empty allowlist still restricts to exactly those binaries; the fix must not turn
       the allowlist off
-- [ ] A test covers the daemon's own wiring, not just `ShellPolicy` constructed directly —
+- [x] A test covers the daemon's own wiring, not just `ShellPolicy` constructed directly —
       this defect lives in the wiring and every existing shell test bypasses it
 
 `ShellPolicy.allowed_commands` uses `None` as the unrestricted sentinel (`tools/shell.py`).
@@ -765,6 +765,25 @@ daemon actually takes. That gap is the fourth criterion.
 Milestone note: this is an M1 product defect surfacing after M1 closed. It is filed in E6 rather
 than a testing epic because the product is wrong, not the test — but the missing coverage is
 what let it survive.
+
+**Done (2026-08-17).** `BoundarySection.shell_allowlist()` returns `None` — `ShellPolicy`'s
+unrestricted sentinel — for an empty or omitted list, and `daemon.py` asks it instead of passing
+the raw list. The shipped template comment needed no change: it was right all along, and the
+code now agrees with it.
+
+Permissive is safe here because the allowlist is not the gate. No rule in `RULE_TABLE` matches on
+tool name, so a plain shell call falls through to the ambiguous classifier and defaults to class
+B — an approval the user answers (§2.6). The list narrows a path that is already guarded.
+
+The two other `allowed_commands` readers in `daemon.py` were left alone deliberately: both build
+`BoundaryUpdateEvent`, which reports the configured wall to the UI, and an empty list there
+means "no allowlist configured" rather than the sentinel.
+
+12 tests. The first cut of them mirrored the daemon's wiring and passed with `daemon.py`
+reverted — the same gap that let this ship, reproduced in its own fix. `TestTheDaemonsOwnWiring`
+now spies on `register_builtin_handlers` while calling `_start_session`; two of its runs go red
+on revert, verified. `docs/configuration.md` updated, and its executable-examples harness keeps
+it honest.
 
 ---
 

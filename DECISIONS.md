@@ -4584,3 +4584,48 @@ touched.
 **Rationale:** The criterion says the event log; the audit database is the
 forensic record §2 requires to be append-only. A delete that could rewrite it
 would make it not that.
+
+---
+
+## 2026-08-17 — TD-606: An empty `allowed_commands` means unrestricted
+
+### 1. Empty or absent means any command (Class B)
+
+**Decision:** `BoundarySection.shell_allowlist()` returns `None` — `ShellPolicy`'s unrestricted
+sentinel — for both an omitted and an explicitly empty `allowed_commands`. Rejected the
+alternative where absent means unrestricted and an explicit `[]` means deny-all.
+
+**Rationale:** The shipped template has always said "empty means any command"; the code disagreed
+and the code was wrong. The alternative needs a schema change to `list[str] | None`, silently
+flips the meaning of any config already carrying `[]`, and invents expressive power nobody asked
+for. If deny-all-shell is wanted it should be its own switch rather than an overloaded empty
+list — noted as a deliberate non-goal.
+
+The obvious objection is that this is a security boundary and fail-closed is normally right —
+TD-1402 chose exactly that for Windows paths. It does not apply here, because the allowlist is
+not the gate. No rule in `RULE_TABLE` matches on tool name, so a plain shell call falls through
+the static rules to the ambiguous classifier and defaults to class B, which is an approval the
+user answers (§2.6). Permissive-by-default restores a second wall to its documented shape; it
+does not remove the first one.
+
+### 2. The translation lives on the boundary, not at the call site (Class B)
+
+**Decision:** the empty-means-unrestricted rule is a method on `BoundarySection`. Not
+`daemon.py`, and not `ShellPolicy`.
+
+**Rationale:** fixing the call site repairs one caller and leaves the trap armed for the next.
+Teaching `ShellPolicy` that `()` means unrestricted makes `()` and `None` synonyms inside the
+tool, which buries config semantics in the wrong layer and forecloses ever expressing deny-all.
+The boundary object is what owns what the config *means* — §6's "validate at the boundary, trust
+internally".
+
+Note the two other `allowed_commands` readers in `daemon.py` were deliberately left alone: both
+build `BoundaryUpdateEvent`, which reports the configured wall to the UI. They should show the
+raw list, because an empty list there means "no allowlist configured", not "the sentinel".
+
+### 3. The regression test had to watch the daemon, not imitate it (Class A)
+
+First attempt mirrored the daemon's wiring in the test and passed with `daemon.py` reverted —
+the same shape of gap that let the defect ship, reproduced in the fix. The behavioural runs stay
+(they pin the semantics), but `TestTheDaemonsOwnWiring` now spies on `register_builtin_handlers`
+while calling `_start_session`, and two of its runs go red on revert. Verified by reverting.

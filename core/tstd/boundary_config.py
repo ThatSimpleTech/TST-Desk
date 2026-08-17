@@ -60,6 +60,24 @@ class BoundarySection(BaseModel):
             return v
         raise ValueError("network must be 'deny' or a list of allowed hosts")
 
+    def shell_allowlist(self) -> tuple[str, ...] | None:
+        """The shell tool's allowlist, or ``None`` for unrestricted (TD-606).
+
+        Empty means *any* command, which is what the template above has always
+        told users. Callers must not read ``allowed_commands`` directly:
+        ``ShellPolicy`` spells unrestricted as ``None``, and ``tuple([])`` is
+        ``()`` — present and empty — so passing the raw list refused every
+        command in any workspace without a `.tst/config.yaml`, which is the
+        default state. This is the one place that translation lives.
+
+        Permissive is safe here because the allowlist narrows a path that is
+        already guarded: no rule in ``RULE_TABLE`` matches on tool name, so a
+        shell call falls through to the ambiguous classifier and defaults to
+        class B — an approval the user answers (§2.6). The allowlist is a
+        second wall, not the only one.
+        """
+        return tuple(self.allowed_commands) or None
+
 
 class CapsSection(BaseModel):
     """Declared caps (spec §12.4 ``caps``); enforced by TD-707."""

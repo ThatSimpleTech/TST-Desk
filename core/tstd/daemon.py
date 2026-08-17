@@ -1206,7 +1206,7 @@ class Daemon:
         tool_dispatcher = ToolDispatcher(tool_registry)
         register_builtin_handlers(
             tool_dispatcher,
-            allowed_commands=tuple(sess.boundary_config.boundary.allowed_commands),
+            allowed_commands=sess.boundary_config.boundary.shell_allowlist(),
         )
 
         sink = self._audit_writer
