@@ -4005,7 +4005,7 @@ scripting helpers or import private names across test modules. 325 lines, inside
 
 ---
 
-## 2026-08-17 — TD-1809 / TD-1407 / TD-1408: three tests that read the machine
+## 2026-08-17 — TD-1809, and the pattern behind TD-1407 and TD-1408
 
 ### 1. The doctor's probe test resolves slugs itself (Class A)
 
@@ -4114,3 +4114,49 @@ alternatives were an indirection layer (`--dark-*` variables, three mentions per
 only real risk is drift, and drift is machine-checkable: the test fails naming whichever value
 moved. The `:not()` is what makes an explicit light choice beat a dark OS —
 `:root[data-theme="dark"]` outranks the media rule, so the choice wins in both directions.
+## 2026-08-17 — TD-1407: The kill battery waits on conditions, not wall-clock
+
+### 1. Spawn-ack and group-gone replace the 0.3s/2.5s sleeps
+
+**Decision:** The escape probe command now names itself:
+`echo $$ > pgid.txt; { sleep 30; touch kicked.txt; } & wait` — the group
+leader writes its own pgid (the test's spawn-ack), then parks a subshell
+whose marker window (30s) is far wider than any scheduling stall the
+suite has measured. Cancel/timeout tests wait for `pgid.txt` before
+cancelling (the cancel provably lands mid-run, never mid-spawn) and,
+after the kill settles, probe `killpg(pgid, 0)` until the group is gone
+instead of sleeping past a marker deadline. A kill that lands before the
+leader's first write leaves no pgid file — nothing was forked, so
+nothing could escape, and the assertion passes by waiting the file out.
+
+**Rationale:** The old arithmetic (`sleep 0.3` → cancel → `sleep 2.5` →
+assert no marker) only holds when the loop schedules the kill within
+~1.7s of the escapee's start; measured stalls under full-suite load ran
+3–14s, so the subshell won for reasons unrelated to the product. The
+group-gone probe keys on the condition the marker approximated — a
+surviving group IS the escaped grandchild — so the test still fails on a
+genuine escape (AC: the fix must not become a test that cannot fail),
+and the 30s window makes the environmental race unwinnable for the
+escapee instead of merely unlikely. The `kill refused` escape hatch is
+unchanged and still short-circuits before any probing: a vetoed group
+outlives the test, so veto rounds never probe.
+
+## 2026-08-17 — TD-1408: Config tests read the shipped default, not the developer's
+
+### 1. The fixture is the shipped default, loaded by explicit path
+
+**Decision:** test_config.py's eight no-arg `load_config()` calls and
+test_cost.py's tracker fixture now load `default_config_yaml()` written
+into tmp_path. `test_cached_config` redirects `tstd.config.user_data_dir`
+to tmp_path and clears the lru cache around the call. No test in
+core/tests/ reads configuration from `user_data_dir()` — the remaining
+no-arg `cached_config()` consumers (test_setup_state, test_e2e_live,
+test_local_preset_paths) redirect HOME first, as they already did.
+
+**Rationale:** A no-arg load resolves the developer's real file, so the
+suite was green only while that file byte-matched the shipped default —
+and the documented remedy for a multi-model endpoint (pin a slug,
+TD-1805) is exactly what breaks it. Because the fixture IS the shipped
+default, the pinned values (slugs, 16384 max_output, prices) keep their
+bite: a shipped config that drifts from its documented tags still fails
+these tests, on any machine.
