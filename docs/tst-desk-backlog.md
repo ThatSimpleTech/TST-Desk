@@ -605,6 +605,58 @@ no-touch / baseline (3), daemon inactive→active flip (1).
 
 ---
 
+### TD-510 — Frontmatter outside `.tst/rules/` is neither honoured nor stripped
+**Size:** 2 · **Depends on:** TD-503
+
+**Acceptance criteria:**
+- [ ] An `AGENTS.md` or `CLAUDE.md` opening with a YAML frontmatter block does not send the
+      `---` delimiters or the YAML to the model
+- [ ] Whether `appliesTo` is honoured outside `.tst/rules/` is decided and documented — today
+      it is silently neither honoured nor removed
+- [ ] `docs/steering.md`'s migration section matches whatever is decided
+- [ ] A test drives a frontmattered `AGENTS.md` through the assembler and asserts the block is
+      absent from the assembled prompt
+
+`assemble_sync` calls `parse_frontmatter` only when `source.precedence == Precedence.RULES`
+(`core/tstd/context/assembler.py:190`); for every other level `body = content` unchanged. A
+steering file that opens with frontmatter therefore ships its YAML to the model verbatim.
+
+This is the one that bites arrivals from other tools, whose instruction files commonly open with
+frontmatter — exactly the users TD-1502's migration note tells that nothing needs porting.
+
+Found while writing TD-1502, confirmed independently by reading the gate.
+
+---
+
+### TD-511 — A bare-name `appliesTo` pattern matches a filename suffix, not a basename
+**Size:** 1 · **Depends on:** TD-503
+
+**Acceptance criteria:**
+- [ ] `appliesTo: [config.py]` activates on `config.py` and on `pkg/config.py`, but not on
+      `oldconfig.py`
+- [ ] An anchored spelling exists and is documented; today `config.py` and `**/config.py`
+      compile to the identical regex, so there is no way to ask for the strict match
+- [ ] Table-driven tests over the glob translator cover the suffix case
+
+`_glob_to_re` rewrites a bare name to `**/config.py`, then translates `**` to `.*` and skips the
+following `/` (`core/tstd/context/assembler.py:315-321`), yielding `^.*config\.py$`. The correct
+translation for a leading `**/` is `(?:.*/)?`.
+
+Severity is scope-widening, not correctness: an over-matching rule activates when it should not,
+costing tokens and attention rather than producing a wrong answer. Filed at size 1 for that
+reason.
+
+Two smaller observations from the same pass, not filed separately: `~/.tstdesk/AGENTS.md` sits
+outside every workspace, so its own sibling imports trip TD-505's external-import gate once per
+workspace ever opened — defensible, since the gate is about where a file lives, but it makes
+splitting personal steering across files more friction than it looks. And
+`ui/src/lib/components/StackPanel.svelte:41` hardcodes `warning.includes('exceeds 200 lines')`
+to choose its badge text, so changing `LINE_LIMIT` silently drops the short badge back to the
+full warning string.
+
+---
+
+
 ## Epic E6 — Tools
 
 **Goal:** filesystem and shell, correctly bounded. Boundary enforcement here is a security
@@ -1922,11 +1974,26 @@ same treatment. The suite does not write the user's config today, and should not
 **Size:** 3 · **Depends on:** TD-503
 
 **Acceptance criteria:**
-- [ ] Explains `AGENTS.md`, the hierarchy, `CLAUDE.md` compatibility, path-scoped rules, and
+- [x] Explains `AGENTS.md`, the hierarchy, `CLAUDE.md` compatibility, path-scoped rules, and
       imports
-- [ ] States the 200-line guidance and why adherence drops on long files
-- [ ] Worked examples for a small project and a large one
-- [ ] A migration note for users arriving from other tools — emphasizing nothing needs porting
+- [x] States the 200-line guidance and why adherence drops on long files
+- [x] Worked examples for a small project and a large one
+- [x] A migration note for users arriving from other tools — emphasizing nothing needs porting
+
+---
+
+**Done (2026-08-17).** `docs/steering.md` covers the four-level hierarchy, `CLAUDE.md` fallback
+and shadowing, `appliesTo` scoping, `@path` imports (depth, cycles, fences, the external
+approval gate) and the 200-line guidance. Thirteen worked examples are executable:
+`core/tests/test_docs_steering_guide.py` materialises each as a real workspace plus home
+directory, runs it through `ContextAssembler`, and compares the documented stack, prompt block,
+import issues and pending approvals against real output — following TD-1503's pattern.
+
+The line-limit warning and the depth-exceeded message are quoted from strings the test provokes
+out of the assembler rather than restated, so rewording either in code fails the suite until the
+guide catches up. A test also fails if any `Precedence` level, any `_SKIP_DIRS` entry, or any
+`DEFAULT_VALIDATOR_SUBSET` pattern goes undocumented. Harness mutation-tested: falsifying an
+activation flag, an import result, or the quoted warning each fails it.
 
 ---
 
@@ -1934,11 +2001,29 @@ same treatment. The suite does not write the user's config today, and should not
 **Size:** 2 · **Depends on:** TD-302, TD-706
 
 **Acceptance criteria:**
-- [ ] Every key in `config.yaml` and `.tst/config.yaml` documented with type, default, effect
-- [ ] Model swap instructions with a note that the landscape moves and slugs should be verified
-- [ ] Boundary and cap configuration explained with worked examples
+- [x] Every key in `config.yaml` and `.tst/config.yaml` documented with type, default, effect
+- [x] Model swap instructions with a note that the landscape moves and slugs should be verified
+- [x] Boundary and cap configuration explained with worked examples
 
 ---
+
+**Done (2026-08-17).** `docs/configuration.md` documents every key of both config files with
+type, default and runtime effect, plus the three-layer story: the packaged seed inside the wheel
+(which an upgrade overwrites), the user copy the daemon actually loads, and the per-workspace
+file. It also documents `policy` and `approved_external_imports`, two `.tst/config.yaml` sections
+`policy.py` reads that the scaffolded template never mentioned.
+
+Every YAML example is executable — `core/tests/test_docs_config_reference.py` runs each through
+the real loader, and separate tests fail if a schema field goes undocumented, a stated default
+drifts from the code constant, or a shipped slug is copied into the prose. 33 tests,
+mutation-checked four ways.
+
+Two product defects found while documenting and filed rather than fixed: TD-606 (an empty
+`allowed_commands` refuses every command) and the unenforced `network` setting recorded inside
+it.
+
+---
+
 
 ### TD-1504 — Architecture guide
 **Size:** 3 · **Depends on:** M2 complete
@@ -2371,29 +2456,65 @@ Tests: 13 config-write, 9 wire, 18 store, 5 token-drift. Python 1277 green, UI 3
 **Size:** 2 · **Depends on:** TD-1004
 
 **Acceptance criteria:**
-- [ ] Sending while a turn runs queues the message; queued rows render with
+- [x] Sending while a turn runs queues the message; queued rows render with
       send-now and remove
-- [ ] Editing a queued row replaces its text
-- [ ] Empty-queue state is invisible (no chrome when nothing is queued)
+- [x] Editing a queued row replaces its text
+- [x] Empty-queue state is invisible (no chrome when nothing is queued)
 
 **Notes:** the daemon already queues user messages (E4); this is presentation.
 Drag-to-reorder is a follow-up if the rows prove useful.
 
 ---
 
+**Done (2026-08-17).** The story's premise was verified before any UI was written: the daemon
+*does* queue a mid-turn `user_message` (`daemon.py` enqueues with no in-flight gate,
+`session.py` holds it in an `asyncio.Queue`, `loop.py` dequeues one per turn), so this was
+correctly scoped as presentation and `core/` was not touched.
+
+What the daemon's queue cannot do is give a message back — no protocol message edits or
+withdraws a `user_message` — which is why the rows are parked client-side and handed over one
+per `turn_complete`. That is what makes send-now, edit and remove real rather than decorative.
+Recorded as Class B: the steerable queue is the client's, drained at turn end, never flushed
+into a terminal session.
+
+The empty-queue criterion is asserted as a negative — the whole template sits inside one
+`showQueue` guard, so a zero-length queue emits no node, border or reserved height.
+
+---
+
+
 ### TD-1705 — Files pane
 **Size:** 3 · **Depends on:** TD-1005, TD-1701
 
 **Acceptance criteria:**
-- [ ] A Files tab beside Activity aggregates the session's write diffs from the
+- [x] A Files tab beside Activity aggregates the session's write diffs from the
       event stream: file list, per-file diff view, running totals
-- [ ] Empty state explains what will appear here
-- [ ] Clicking a file can open it via the existing opener integration
+- [x] Empty state explains what will appear here
+- [x] Clicking a file can open it via the existing opener integration
 
 **Notes:** spec §3's right-pane tab. Data is already in the timeline events;
 this is aggregation and presentation, no new core events.
 
 ---
+
+**Done (2026-08-17).** A Files tab sits between Activity and Stack, driven through the
+`right-pane.svelte.ts` store TD-1707 extracted — no tab state returned to `AppShell`. It folds
+the session's write diffs by path: list ordered most-recent-first, expandable per-file diff,
+per-file line counts, running totals, and a click that opens the file through the existing
+`open-file.ts`.
+
+No protocol change was needed, and that was verified rather than assumed: `diff` is already on
+`tool_result` and already carried onto the entry by `timeline.ts`. A file's identity comes from
+the diff's `+++ b/` header — the canonical path the daemon wrote — rather than the tool call's
+arguments, so a two-target write is handled and the UI needs no table of which tools write. The
+accepted cost is that an undiffable write (binary, oversize, non-UTF-8) does not appear.
+
+21 tests over a pure reducer, driven by diff strings generated verbatim by
+`core/tstd/tools/diff.py`, so a change to the emitted header shape fails here instead of
+silently emptying the pane. Surfaced TD-1009 as an inherited defect.
+
+---
+
 
 ### TD-1706 — Usage and cost view
 **Size:** 3 · **Depends on:** TD-903
@@ -2506,12 +2627,12 @@ instruction.
 **Size:** 2 · **Depends on:** TD-1701, TD-1703
 
 **Acceptance criteria:**
-- [ ] The rail organizes surfaces into sections: function entries (Home,
+- [x] The rail organizes surfaces into sections: function entries (Home,
       Projects/courses-of-work, Scheduled) grouped above, session history
       sectioned below with a count badge when items queue
-- [ ] The account / settings row anchors the rail's bottom-left (not buried in
+- [x] The account / settings row anchors the rail's bottom-left (not buried in
       the title bar): avatar-or-initial, account label, settings entry
-- [ ] Sections whose epics haven't landed yet (Scheduled → v0.5) either hide or
+- [x] Sections whose epics haven't landed yet (Scheduled → v0.5) either hide or
       render disabled-with-note — never a dead click
 
 **Notes:** observed 2026-08-14 against the reference app's rail (Code/Home
@@ -2521,6 +2642,27 @@ epic — Artifacts v0.3, Scheduled+Dispatch v0.5, Customize TD-1703, Projects
 TD-1103 — but the *layout grammar* (sectioned rail, bottom account anchor) was
 captured nowhere. This story is the presentation rule; the surfaces arrive with
 their epics.
+
+**Done (2026-08-17).** The rail has a shape instead of one flat list: function surfaces grouped
+above, session history sectioned below under a heading that badges its count, and the
+account/settings row anchored bottom-left in both the expanded column and the collapsed strip.
+The grammar lives in a pure module (`rail.ts`) — registry, grouping, badge, account derivation —
+unit-tested without rendering. The settings gear left the shell header; the account row and ⌘,
+are the doorways now, and the account row calls TD-1703's `openSettings()`.
+
+Class B: entries carry `state: "current" | "ready" | "planned"` rather than a landed boolean.
+Home began as a landed entry that dismissed the stacked overlays, and driving the real app
+killed it — the settings pane covers the rail with a full-viewport overlay, so the one situation
+that action existed for is the one where it cannot be clicked. Home therefore renders selected
+and the dispatcher refuses it, a different claim from "arrives in v0.5" and rendered
+differently. Account identity is the daemon's `active_preset` plus `has_api_key` — §2 says there
+is no account, §2.2 says presence only, never the key.
+
+An invariant test asserts every entry the registry calls `ready` actually activates, so marking
+a surface ready without wiring it fails the suite rather than shipping a silent button.
+
+---
+
 
 ### TD-1713 — Working-state honesty and flavor
 **Size:** 3 · **Depends on:** TD-1711
@@ -2631,18 +2773,18 @@ split it into its own story.
 **Size:** 2 · **Depends on:** TD-1713
 
 **Acceptance criteria:**
-- [ ] On `visibilitychange` → visible (and window focus), the client
+- [x] On `visibilitychange` → visible (and window focus), the client
       unconditionally re-attaches every followed session at `lastSeq+1` — the
       daemon replay closes whatever gap the suspension caused; no user
       action required
-- [ ] Daemon emits an application-level `ping` event (no session, no seq)
+- [x] Daemon emits an application-level `ping` event (no session, no seq)
       every ~15s; on resume, a client that believes it is connected but has
       seen no frame (ping or event) for >30s treats the socket as a zombie:
       force close → existing reconnect path → re-attach replays the miss
-- [ ] The first-token watchdog re-evaluates from wall-clock on resume: an
+- [x] The first-token watchdog re-evaluates from wall-clock on resume: an
       `awaitingSince` older than the stall threshold flips to the honest
       copy immediately instead of waiting for a coalesced timer
-- [ ] Regression test (client-level, fake timers): suspend = drop all
+- [x] Regression test (client-level, fake timers): suspend = drop all
       frames + freeze timers; resume → re-attach issued, replay applied,
       watchdog state honest
 
@@ -2657,6 +2799,21 @@ suspended; only an application-level frame that JS must process proves the
 client is live. The event-log replay makes healing lossless by design.
 
 ---
+
+**Done (2026-08-17).** `ping` is a frame, not a `DaemonEvent`: it inherits `BaseModel`, so the
+base's `seq: int = Field(gt=0)` contract is untouched, and it is handled out-of-band in the
+client exactly as `hello_ack` is — no store sees it and no exhaustive handling changed. Making
+`seq` optional on the base was considered and rejected.
+
+The zombie check runs only on the resume edge, never on a heartbeat timer: a timer is precisely
+what a suspension defeats, and a quiet backgrounded window is not sick.
+
+`resume-healing.test.ts` (13 runs) drives the real `ProtocolClient` and chat store against a
+fake daemon with a per-session log and a real attach replay; suspend drops every inbound frame
+and advances the wall clock with `vi.setSystemTime` while pending timers are dragged along
+unfired. 8 daemon tests cover ping shape, cadence, handshake gating, shutdown, and a re-attach
+superseding its predecessor.
+
 
 # Post-v0.1 backlog
 
@@ -2695,11 +2852,11 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 47 | 147 |
+| M1 Headless core | E2–E9 | 49 | 150 |
 | M1.5 Local models | E18 | 10 | 25 |
 | M2 The window | E10–E12 | 17 | 55 |
 | M3 Shippable | E13–E17 | 40 | 117 |
-| **Total v0.1** | **18** | **121** | **359** |
+| **Total v0.1** | **18** | **123** | **362** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
