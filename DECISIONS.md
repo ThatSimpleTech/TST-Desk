@@ -3961,3 +3961,30 @@ optional-only-on-loopback, resolved on first turn, config always wins,
 exactly-one-resolves, and the no-key/no-write guarantee. §10 is satisfied:
 this story changed the user-facing configuration contract and the docs now
 say so.
+
+## 2026-08-17 — TD-1407: The kill battery waits on conditions, not wall-clock
+
+### 1. Spawn-ack and group-gone replace the 0.3s/2.5s sleeps
+
+**Decision:** The escape probe command now names itself:
+`echo $$ > pgid.txt; { sleep 30; touch kicked.txt; } & wait` — the group
+leader writes its own pgid (the test's spawn-ack), then parks a subshell
+whose marker window (30s) is far wider than any scheduling stall the
+suite has measured. Cancel/timeout tests wait for `pgid.txt` before
+cancelling (the cancel provably lands mid-run, never mid-spawn) and,
+after the kill settles, probe `killpg(pgid, 0)` until the group is gone
+instead of sleeping past a marker deadline. A kill that lands before the
+leader's first write leaves no pgid file — nothing was forked, so
+nothing could escape, and the assertion passes by waiting the file out.
+
+**Rationale:** The old arithmetic (`sleep 0.3` → cancel → `sleep 2.5` →
+assert no marker) only holds when the loop schedules the kill within
+~1.7s of the escapee's start; measured stalls under full-suite load ran
+3–14s, so the subshell won for reasons unrelated to the product. The
+group-gone probe keys on the condition the marker approximated — a
+surviving group IS the escaped grandchild — so the test still fails on a
+genuine escape (AC: the fix must not become a test that cannot fail),
+and the 30s window makes the environmental race unwinnable for the
+escapee instead of merely unlikely. The `kill refused` escape hatch is
+unchanged and still short-circuits before any probing: a vetoed group
+outlives the test, so veto rounds never probe.
