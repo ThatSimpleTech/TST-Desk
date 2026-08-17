@@ -19,6 +19,7 @@
 		startWorkspaces,
 	} from '../workspaces.svelte.js';
 	import { formatUsd } from '../cost-format.js';
+	import { openUsage } from '../usage.svelte.js';
 	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
 
@@ -183,6 +184,11 @@
 						<div><dt>classifier</dt><dd>{formatUsd(session.cost.classifier)}</dd></div>
 					{/if}
 				</dl>
+				<!-- The meter is this session's running spend; the usage pane
+				     (TD-1706) is the audit store's history across all of them. -->
+				<button class="popover-link" type="button" onclick={openUsage}>
+					Usage and cost history →
+				</button>
 			</div>
 		</div>
 
@@ -447,6 +453,25 @@
 	.popover dd {
 		margin: 0;
 		font-family: var(--font-mono);
+	}
+
+	.popover-link {
+		display: block;
+		width: 100%;
+		margin-top: var(--space-2);
+		padding-top: var(--space-2);
+		border: 0;
+		border-top: var(--border-width) solid var(--color-border);
+		background: transparent;
+		font-family: var(--font-family);
+		font-size: var(--text-xs);
+		color: var(--color-accent);
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.popover-link:hover {
+		color: var(--color-accent-hover);
 	}
 
 	.indicator {
