@@ -5367,15 +5367,22 @@ closest Windows has to `killpg`; the creation flag is what gives that walk a
 defined edge, since without it the child joins the daemon's own group.
 `taskkill` ships with Windows, so this is Class B, not a new dependency.
 
-`taskkill` is invoked synchronously and blocks the event loop, which §6
-otherwise forbids. Deliberate, bounded, and Windows-only: the kill must have
-landed before the cancellation handler re-raises, and the `asyncio.to_thread`
-alternative puts an `await` inside a cancellation handler — where a second
-cancel can interrupt it — on a code path no test on this machine can reach.
-The timeout is 2s rather than the 5s used elsewhere precisely because it is
-the cap on a loop stall rather than a grace period; `taskkill` normally
-returns in tens of milliseconds. Nothing blocks on POSIX, where the kill is a
-syscall. Worth revisiting if a Windows run shows the helper is ever slow.
+`taskkill` blocks the event loop, which §6 otherwise forbids — but only on
+the two cancellation paths, and that distinction is the decision. There are
+three call sites, and they are not alike. The two inside
+`except asyncio.CancelledError` keep the blocking call: the kill must have
+landed before the handler re-raises, and awaiting there can be cancelled
+again, so an offloaded kill might never land at all. The third is the
+timeout and cooperative-cancel path — normal async flow, no exception in
+flight — where nothing stops `asyncio.to_thread` from working. It is also
+the *common* path: an ordinary long-running command hitting its timeout. So
+it offloads (`_kill_process_group_offloaded`), and a Windows timeout no
+longer stalls the WebSocket for up to 2s.
+
+The 2s cap is deliberately shorter than the 5s used elsewhere because on the
+two remaining sites it is a bound on a loop stall, not a grace period;
+`taskkill` normally returns in tens of milliseconds. Nothing blocks on POSIX,
+where the kill is a syscall and a thread hop would cost more than it saves.
 
 It is not ticked because nothing has run it. A process-tree kill is a claim
 about an operating system's behaviour, and the only evidence that counts is a
