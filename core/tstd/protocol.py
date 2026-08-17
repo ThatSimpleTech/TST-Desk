@@ -296,6 +296,25 @@ class SetPreset(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class SetTierSlug(ClientMessage):
+    """Name the model one tier of one preset uses (TD-1703).
+
+    Deliberately narrow rather than a general ``update_config``: §2.2 forbids
+    a secret reaching a config file, and a message that carries only a tier
+    name and a slug cannot smuggle one in by construction.  Widening this
+    later is easy; narrowing a shipped message is not.
+
+    Persisted to the user's ``config.yaml`` — never the packaged copy, which
+    an upgrade overwrites — and acked with ``setup_state``, same as
+    ``set_preset``.  Applied to new sessions.
+    """
+
+    type: Literal["set_tier_slug"] = "set_tier_slug"
+    preset: str = Field(min_length=1)
+    tier: str = Field(min_length=1)
+    slug: str = Field(min_length=1)
+
+
 class RunDiagnostics(ClientMessage):
     """Ask the daemon to run the doctor checks (TD-1104 diagnostics).
 
@@ -689,6 +708,12 @@ class SetupState(DaemonEvent):
     key_required: bool = True
     presets: list[str] = Field(default_factory=list)
     active_preset: str
+    # The active preset's slug per tier, for the settings screen's model
+    # section (TD-1703). ``None`` where a loopback tier leaves its model to
+    # discovery (TD-1805) — the UI shows that as discovered, not as blank.
+    # Additive with a default, like ``key_required``: an older client that
+    # ignores it behaves exactly as it did.
+    tier_slugs: dict[str, str | None] = Field(default_factory=dict)
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -764,6 +789,7 @@ ClientMessageT = Annotated[
     | SetApiKey
     | ValidateApiKey
     | SetPreset
+    | SetTierSlug
     | RunDiagnostics
     | DeleteApiKey,
     Field(discriminator="type"),
@@ -825,6 +851,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "validate_api_key",
         "delete_api_key",
         "set_preset",
+        "set_tier_slug",
         "run_diagnostics",
     }
 )
