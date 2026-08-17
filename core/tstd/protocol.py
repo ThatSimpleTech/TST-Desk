@@ -16,6 +16,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from .attachments import AttachmentLimits
 from .logging import redact_secrets
 from .router import TierName
 
@@ -114,12 +115,34 @@ class OpenWorkspace(ClientMessage):
     path: str
 
 
+class Attachment(BaseModel):
+    """One text file riding along with a ``user_message`` (TD-1709).
+
+    ``content_b64`` carries the file's *bytes*, not a decode the client made
+    first, so the daemon answers "is this text?" itself — see
+    ``attachments.py`` for why that distinction is the whole gate.  Nothing
+    else is declared: a client-stated size or mime type would be a fact the
+    daemon has to re-derive anyway, and two sources for one fact is how they
+    start disagreeing.
+    """
+
+    name: str = Field(min_length=1, max_length=255)
+    content_b64: str = ""
+
+
 class UserMessage(ClientMessage):
-    """A user message to the current session."""
+    """A user message to the current session.
+
+    ``attachments`` is additive with a default (TD-1709): a client that never
+    sends one behaves exactly as it did.  The daemon decodes and vets them
+    against the workspace's ``attachments`` caps before the message is
+    enqueued, and refuses the whole message if any one fails.
+    """
 
     type: Literal["user_message"] = "user_message"
     session_id: str
     content: str
+    attachments: list[Attachment] = Field(default_factory=list)
 
 
 class Approve(ClientMessage):
@@ -564,6 +587,10 @@ class BoundaryUpdate(DaemonEvent):
     max_iterations: int = Field(ge=1)
     # Config file path, "defaults", or "defaults — invalid config (…)".
     source: str
+    # Attachment caps (TD-1709), so the composer refuses oversize files
+    # against this workspace's real numbers instead of a hardcoded guess.
+    # Additive with a default: a client that ignores it behaves as it did.
+    attachments: AttachmentLimits = Field(default_factory=AttachmentLimits)
 
 
 class TurnComplete(DaemonEvent):

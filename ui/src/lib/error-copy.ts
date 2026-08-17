@@ -195,6 +195,14 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			body: message,
 		};
 	}
+	if (code.startsWith("attachment_")) {
+		// TD-1709: the daemon refused an attachment on arrival — the case a
+		// composer-side check cannot cover. Its message already names the file,
+		// the cap, and the config key, and ends by saying nothing was sent, so
+		// it is surfaced verbatim rather than paraphrased over. A toast, not a
+		// banner: the draft is still in the composer and nothing else is blocked.
+		return { severity: "toast", title: "Attachment refused", body: message };
+	}
 	if (code === "workspace_not_found") {
 		// TD-1103: the user tried to open a path that doesn't exist (usually
 		// from the recents menu — the folder was moved or deleted). The fix

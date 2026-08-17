@@ -11,9 +11,15 @@
 // The queue owns its rows and its ids; the store owns the wire and the turn
 // lifecycle, and tells this module when a turn ends.
 
+import type { NewAttachment } from "./attachments";
+
 export interface QueuedMessage {
   id: string;
   text: string;
+  /** Files staged with the row (TD-1709). They wait here with it: dropping
+   *  them at queue time would send a message the user watched go out with
+   *  chips attached, minus the chips. */
+  attachments: NewAttachment[];
 }
 
 /** Whether the queue has any chrome at all. At zero length the container
@@ -25,7 +31,7 @@ export function showQueue(queued: readonly QueuedMessage[]): boolean {
 
 export interface MessageQueue {
   /** Park a message the running turn will not get to yet. */
-  add(text: string): void;
+  add(text: string, attachments?: readonly NewAttachment[]): void;
   /** Hand one row over now, ahead of the rows before it — the steer. */
   sendNow(id: string): boolean;
   /** Replace a row's text in place, keeping its id and its position. */
@@ -43,7 +49,7 @@ export interface MessageQueue {
  *  flight" predicate — the queue deliberately does not invent a second. */
 export function createMessageQueue(
   state: { queued: QueuedMessage[] },
-  toWire: (text: string, armWait: boolean) => boolean,
+  toWire: (text: string, armWait: boolean, attachments: readonly NewAttachment[]) => boolean,
   turnLive: () => boolean,
 ): MessageQueue {
   // Rows carry their own id space: they are not conversation messages and
@@ -59,9 +65,9 @@ export function createMessageQueue(
   }
 
   return {
-    add(text: string): void {
+    add(text: string, attachments: readonly NewAttachment[] = []): void {
       nextId += 1;
-      state.queued.push({ id: `q${nextId}`, text });
+      state.queued.push({ id: `q${nextId}`, text, attachments: [...attachments] });
     },
 
     sendNow(id: string): boolean {
@@ -69,7 +75,7 @@ export function createMessageQueue(
       if (row === undefined) return false;
       // Mid-turn, this must not restage the running turn's shimmer over deltas
       // that are already streaming, so it leaves the first-token clock alone.
-      const sent = toWire(row.text, !turnLive());
+      const sent = toWire(row.text, !turnLive(), row.attachments);
       if (sent) drop(id);
       return sent;
     },
@@ -87,7 +93,7 @@ export function createMessageQueue(
     flushHead(): void {
       const head = state.queued[0];
       if (head === undefined) return;
-      if (toWire(head.text, true)) state.queued.shift();
+      if (toWire(head.text, true, head.attachments)) state.queued.shift();
     },
 
     clear(): void {

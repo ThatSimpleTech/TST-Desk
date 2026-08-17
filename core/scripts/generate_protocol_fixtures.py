@@ -22,6 +22,7 @@ from tstd.protocol import (
     ArchiveSession,
     AssistantDelta,
     Attach,
+    Attachment,
     BoundaryUpdate,
     Cancel,
     CheckpointNotice,
@@ -74,6 +75,18 @@ FIXTURES = {
     "hello": Hello(token="test-token-abc", version=1),
     "open_workspace": OpenWorkspace(path="/home/user/project"),
     "user_message": UserMessage(session_id="sess-1", content="hello world"),
+    # TD-1709: additive field on an existing message, so the plain fixture
+    # above is also the proof that a client sending none behaves as it did.
+    # base64 is the payload because the daemon, not the client, decides
+    # whether the bytes are text.
+    "user_message_attachments": UserMessage(
+        session_id="sess-1",
+        content="what does this do?",
+        attachments=[
+            Attachment(name="notes.md", content_b64="IyBUaXRsZQo="),
+            Attachment(name="empty.txt"),
+        ],
+    ),
     "approve": Approve(session_id="sess-1", tool_call_id="tc-1"),
     "deny": Deny(session_id="sess-1", tool_call_id="tc-1", reason="not safe"),
     "deny_no_reason": Deny(session_id="sess-1", tool_call_id="tc-1"),
