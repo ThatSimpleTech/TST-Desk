@@ -838,13 +838,13 @@ it honest.
 **Size:** 2 · **Depends on:** TD-601
 
 **Acceptance criteria:**
-- [ ] `dispatch_many` returns results in the same order as the input tool calls, as its
+- [x] `dispatch_many` returns results in the same order as the input tool calls, as its
       docstring already promises — or the docstring and callers change to say order is not
       guaranteed, and the timeline ordering is handled explicitly
-- [ ] A test covers a *mixed* batch (parallel-safe and sequential in one call); every existing
+- [x] A test covers a *mixed* batch (parallel-safe and sequential in one call); every existing
       test uses a homogeneous batch, which is why this survived
-- [ ] Parallelism is preserved — the fix must not serialise parallel-safe tools
-- [ ] A tool handler raising inside the parallel batch produces an error `ToolResult` rather
+- [x] Parallelism is preserved — the fix must not serialise parallel-safe tools
+- [x] A tool handler raising inside the parallel batch produces an error `ToolResult` rather
       than propagating out of `dispatch_many`
 
 `dispatch_many` (`tools/dispatch.py:496`) partitions the batch, runs the parallel-safe tools
@@ -874,6 +874,32 @@ result that branch was written to produce.
 Found while writing TD-1504, and confirmed by execution. Every existing `dispatch_many` test
 (`test_dispatch.py:347`, `:387`) uses a batch of one tool type, so neither the ordering nor the
 exception path is exercised today.
+
+**Done (2026-08-17).** Each call now carries its index in `tool_calls` through the partition,
+and the two partitions write into one `dict` keyed on that index, read back out in range order.
+The invariant is the input list position — deliberately not `tool_call_id`, which the client
+supplies and may repeat, and not a sort over anything derived from the call. Parallelism is
+untouched: the parallel-safe coroutines still go to one `asyncio.gather`, and a mixed batch of
+three parallel plus one sequential still finishes in about one parallel round plus the
+sequential call.
+
+The exception path now reads `gather`'s returned list instead of calling `task.result()` on each
+task, which is what made the `concurrent_error` branch unreachable. That result also carries the
+call's real `tool_call_id` and `name` rather than `""` — `loop.py` keys its `tool_result` events
+on the id, so an empty one would have been a second bug wearing the first one's clothes.
+
+The fourth criterion was already half-true and half-false, which the story could not have known.
+A tool handler raising is caught inside `dispatch` itself (`dispatch.py:354`) and returns a
+`handler_error` result, so that exact case never escaped. What escaped was anything raised
+around the handler — the classifier, the approval gate, the path guard, or truncation choking on
+a handler that returned `None` instead of a string. The `concurrent_error` test uses that last
+one, since a handler forgetting its `return` is the realistic shape, and it fails on the unfixed
+code with a `TypeError` out of `dispatch_many`.
+
+`UnclassifiedToolCall` is deliberately re-raised rather than converted (see DECISIONS.md): the
+chokepoint is a §2.6 guarantee, and it already propagates from the sequential path. Six tests in
+`TestDispatchManyOrdering`; five of the six go red on the unfixed method, verified by stashing
+`dispatch.py` alone and rerunning.
 
 ---
 
