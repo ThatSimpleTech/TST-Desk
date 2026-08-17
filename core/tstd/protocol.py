@@ -656,12 +656,23 @@ class ContextCompacted(DaemonEvent):
 
 
 class SteeringReloaded(DaemonEvent):
-    """Emitted when steering files are re-resolved after a detected change."""
+    """Emitted when steering files are re-resolved after a detected change.
+
+    Two token figures, because they answer different questions and one
+    cannot stand in for the other: ``prefix_tokens`` is the size of the
+    whole cache prefix (base prompt + workspace root + steering), which is
+    what the provider re-bills when the hash moves, while
+    ``steering_tokens`` is the size of the steering block alone — what the
+    user's own files cost.  Reporting only the prefix figure under a
+    "steering reloaded" heading overstates steering by the fixed cost of
+    the machinery around it (TD-1810 block [1b] and the base prompt).
+    """
 
     type: Literal["steering_reloaded"] = "steering_reloaded"
     session_id: str
     prefix_hash: str
     prefix_tokens: int = Field(ge=0)
+    steering_tokens: int = Field(ge=0)
     source_count: int = Field(ge=0)
 
 
@@ -735,10 +746,17 @@ class InstructionStack(DaemonEvent):
     sources: list[InstructionStackEntry] = Field(default_factory=list)
     total_tokens: int = Field(ge=0)
     token_method: str
-    # Cached prompt tokens observed on the most recent provider call
-    # (TD-1201's "is the block currently cached"). ``None`` before the
-    # first turn — cache state is a provider-side fact, unknown until one.
+    # Cached prompt tokens the provider reported on the most recent
+    # main-loop call (TD-1201's "is the block currently cached"). ``None``
+    # means no figure to report — either no turn has run yet, or the
+    # provider sent none. Never 0 on a missing field: an engine that says
+    # nothing about reuse has not reported a miss (TD-1811).
     last_cached_tokens: int | None = None
+    # Whether a main-loop call has come back at all. Tells the two ``None``
+    # cases apart, so the viewer can say "no turn yet" and "this provider
+    # does not report cache reuse" instead of guessing between them
+    # (TD-1811). Additive with a safe default — no PROTOCOL_VERSION bump.
+    cache_observed: bool = False
 
 
 class SessionSummary(BaseModel):

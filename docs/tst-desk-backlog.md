@@ -1444,14 +1444,68 @@ that this row had been quietly holding red.
 **Size:** 2 · **Depends on:** TD-1802
 
 **Acceptance criteria:**
-- [ ] The assembled system prompt states the workspace's absolute root, once, in a stable
+- [x] The assembled system prompt states the workspace's absolute root, once, in a stable
       position that does not disturb the cached prefix (TD-305)
-- [ ] A model given only the prompt can construct a valid absolute path for any file the
+- [x] A model given only the prompt can construct a valid absolute path for any file the
       manifest lists, without guessing
-- [ ] The manifest's relative listing is unchanged — this adds the root, it does not rewrite
+- [x] The manifest's relative listing is unchanged — this adds the root, it does not rewrite
       every entry
-- [ ] A test asserts the root appears in the assembled prompt for a workspace whose path was
+- [x] A test asserts the root appears in the assembled prompt for a workspace whose path was
       never mentioned in the user's message
+
+**Done (2026-08-17):** Block `[1b]` states the root once, between the base prompt and steering,
+inside the TD-305 cache prefix — the root is constant for a session, so keeping it out of the
+prefix would re-bill unchanging bytes every turn, and putting it *ahead* of steering keeps it
+out of the blast radius of a mid-session steering reload (TD-509), since a prefix cache dies
+from the first changed byte onward.  All three tiers get it at the same offset, so the
+`base + root` head they share stays shared.  Cost, paid once per session: the block is fixed
+prose plus the root written twice, so it scales with the root — `71 + ceil(len(root)/2)`
+heuristic tokens, i.e. **72** for a two-character root, **93** for this repository's own
+44-character root, **121** for a 100-character pytest temp root.  (This originally read
+"~80–125 heuristic tokens", stated as a constant; both ends were wrong for the block as first
+written, which cost 87–136 over those same roots.  Measured through `tstd.context.tokens` —
+tiktoken is not a dependency, so `make_token_counter` returns the `ceil(chars/4)` heuristic for
+every slug.)  The block spells the join out with a worked example built from the real root
+rather than implying it.
+The manifest is untouched: `test_manifest_listing_is_unchanged` asserts its rendered text is
+embedded verbatim and no entry starts with `/`, and
+`test_absolute_path_derivable_for_every_manifest_entry` reads the root and the entries back out
+of the assembled text, joins them the way the prompt says to, and checks the result against the
+disk — the criterion with no guessing step available to the reader.  Proved on the wire, not
+just in a unit test: the same fixture workspace and the same real tool schemas sent to
+`gemma4:26b-a4b-it-q4_K_M`, A/B against the prompt as it was assembled before this story, went
+**0/3 → 3/3** absolute at temperature 0 and **0/12 → 12/12** at temperature 0.8 across four
+tasks (`fs_read`, `fs_list`, `fs_write`, and one naming no file at all).  (This sentence
+originally continued: "The BEFORE prompt already contained the root *substring* — steering
+provenance renders `<!-- from: /abs/ws/AGENTS.md (workspace) -->` — and still drew a relative
+path every time, which is the finding: the bytes were never the problem, stating them as the
+root was."  Both halves are wrong.  The BEFORE prompt contained `<root>/AGENTS.md`, not the
+root: reconstructing it over this fixture, the root occurs once on every tier and always as
+the head of that longer path, and zero times on every tier when the workspace carries no
+steering file of its own — so recovering it needs a filename stripped, which is the inference
+this story removes, and a workspace steered only from `~/.tstdesk` has nothing to strip.  And
+the A/B swapped the whole block in and out — labelled statement, worked join, and the "never
+pass a relative path to a tool" imperative together — so it shows the block works, not which
+of the three sentences did the work.  Corrected in `DECISIONS.md`.)  The TD-1803 live leg still
+passes end to end with the block present (fs_write → class A → approval gate → write → ledger,
+4.8s, cost 0.0).  Class B: the prefix position, and the decision *not* to interpolate the root
+into the four `fs_*` schema descriptions — four copies per request is the opposite of stating
+it once, and it would make `create_registry()` workspace-dependent for no measurable gain.
+Both in `DECISIONS.md`, along with why a workspace path is not a §2.2 secret and which sinks
+were checked.
+
+**Defect pass (2026-08-17):** six defects logged by the story's verifiers, all closed.  The
+block no longer claims "workspace files are listed relative to this root" — only the brain
+tier receives the manifest, so that sentence was false on the worker and the validator; it now
+states the resolution rule instead, which is true whatever follows it, and costs 15 tokens
+less.  A control character in the workspace path is refused with a `ValueError` naming the
+codepoint rather than silently truncating the stated root at the label line.
+`steering_reloaded` now carries `steering_tokens` beside `prefix_tokens`, because the prefix
+figure also counts the base prompt and block `[1b]` and was being read as the cost of the
+user's steering files.  `test_root_stated_once` asserts exactly one labelled statement
+carrying the resolved root — it previously counted the bare label, which a statement with no
+path after it would have satisfied.  The two wrong figures in this note are corrected above.
+`docs/tst-desk-spec.md` §4.5 now shows `[1b]` in the block order.
 
 Every `fs_*` tool advertises its `path` argument as "Absolute path to the file to …", but
 `WorkspaceManifest.build()` renders entries workspace-relative (`README.md`, `src/app.py`) and
@@ -1466,6 +1520,61 @@ behaviour.
 
 Fix this before choosing a local model. It plausibly lifts every candidate and may reorder
 them, since the failure is concentrated in exactly one category rather than spread.
+
+---
+
+### TD-1811 — Do not report prefix reuse that did not happen
+**Size:** 3 · **Depends on:** TD-1802, TD-304
+
+**Acceptance criteria:**
+- [x] Cache telemetry (`last_cached_prompt_tokens`, the cache ratio in the turn log, and any
+      cached-token figure the meter surfaces) reflects reuse the provider actually reported,
+      never an assumption
+- [x] A provider that reports no cached tokens produces a cache ratio of zero, not a blank or a
+      silently-carried previous value
+- [x] The zero-price local path still records real prompt-token counts — free is not untracked,
+      the same rule TD-1802 established for output
+- [x] A test drives a provider that reports zero cached tokens across two turns with an
+      identical prefix and asserts the reported ratio stays zero
+
+**Done (2026-08-17):** the one number that was invented is gone. `usage.prompt_tokens_details
+.cached_tokens` is the only ground truth, and `Usage.cached_prompt_tokens` /
+`CallRecord.cached_prompt_tokens` are now `int | None` — `None` when the response carried no
+such field, an integer (including `0`) when it did.  The old parse folded absent into `0`, and
+`0` reached `StackPanel` as **cache miss**: the story's defect pointed the other way, and the
+one the local path actually hits.  Measured on the live endpoint at `127.0.0.1:11434` — both
+`qwen3.8:27b` and `gemma4:26b-a4b-it-q4_K_M` return exactly `prompt_tokens`,
+`completion_tokens`, `total_tokens`, streaming and blocking alike, so two identical-prefix
+turns now surface `last_cached_prompt_tokens=None`, `turn_cache_ratio=0.0`, `prompt_tokens`
+1955/1956 recorded in full at `$0.00`, and the badge reads *provider reports no cache figure*
+where it used to read *cache miss*.  `mypy --strict` is the enforcement: `None` is
+unrepresentable as a token count, so no caller can inherit a fabricated zero by accident.
+`InstructionStack` gains an additive `cache_observed` (no `PROTOCOL_VERSION` bump, TD-1801's
+precedent) so the viewer tells "no turn yet" from "the provider said nothing" instead of
+guessing — TD-1810 §3's split, applied to the reuse figure it said TD-1811 would need.  Cost
+keeps a single documented fallback, `cost.billable_cached_tokens`: an unreported figure bills
+the whole prompt at the input rate, erring toward overstating spend.  Ratios stay turn-scoped,
+so a cached turn followed by an uncached one reports `0.0` and not `0.8`.  19 tests in
+`core/tests/test_cache_honesty.py`, including the named two-turn identical-prefix case in both
+the reported-zero and the reported-nothing flavours; suite 1436 passed / 2 skipped, vitest
+544, svelte-check 0/0. Decisions in DECISIONS.md TD-1811 §§1–4.
+
+TD-305 assembles the prompt in stable-prefix order so a provider can cache it, and the cost and
+latency story assumes that reuse happens. On a local hybrid model it does not. Measured
+2026-08-17 against `qwen3.8:27b` on Ollama 0.32.13: llama.cpp builds context checkpoints, then
+discards them —
+
+    forcing full prompt re-processing due to lack of cache data
+      (likely due to SWA or hybrid/recurrent memory)
+    erased invalidated context checkpoint ... cached n_tokens = 0
+
+166 such events in one day's logs, across both `qwen3.8:27b` and `gemma4:26b-a4b`. Every turn
+re-prefills the whole system prompt and tool schemas (~1083 tokens observed). The same defect is
+documented upstream in vLLM, which disables prefix caching outright for hybrid-attention models.
+
+This is not a bug we can fix in the engine, and TD-305's ordering stays correct — it still pays
+off against cloud providers. What must not happen is the meter claiming a saving the user never
+received. Report the truth and let the number be zero.
 
 ---
 
@@ -2986,7 +3095,7 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 
 | Version | Epic | Summary |
 |---|---|---|
-| **v0.2** | Memory | `.tst/memory/`, relevance-based loading, worker-tier distillation, diff-before-write, git commits per accepted memory |
+| **v0.2** | Memory | `.tst/memory/`, relevance-based loading, worker-tier distillation, diff-before-write, git commits per accepted memory. Local embeddings run as a **sidecar**, not through Ollama: measured 2026-08-17, an `/api/embed` call evicts the resident 17 GB chat model and pays a 20–48s reload, while `llama-server --embeddings` on its own port stays resident at 0.8 GB alongside it and serves the same OpenAI `/v1/embeddings` shape. Ollama's scheduler only evicts models Ollama loaded |
 | **v0.3** | Cowork parity | Durable session event log, detached sessions surviving window close, session list pane, artifact delivery, file-diff work view |
 | **v0.4** | Computer use | Screen pane, `tst-cua` drivers, OS permission onboarding, grounding model evaluation |
 | **v0.5** | Remote & notify | Tailscale interface binding, phone attach, Slack notifier (Hermes pattern), lightweight scheduler |
@@ -3018,10 +3127,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 49 | 150 |
-| M1.5 Local models | E18 | 10 | 25 |
+| M1.5 Local models | E18 | 11 | 28 |
 | M2 The window | E10–E12 | 17 | 55 |
 | M3 Shippable | E13–E17 | 40 | 117 |
-| **Total v0.1** | **18** | **123** | **362** |
+| **Total v0.1** | **18** | **124** | **365** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
