@@ -46,9 +46,11 @@ BASE_SYSTEM_PROMPT = (
 #: block can slot in without reordering the cache prefix.
 MEMORY_PLACEHOLDER = "<!-- memory: none loaded for this session -->"
 
-#: Opening label of block [1b].  Exposed so callers can assert the root
-#: is stated exactly once rather than counting occurrences of the path
-#: itself, which also appears in steering provenance comments.
+#: Opening label of block [1b].  Exposed so callers can find the one line
+#: that *states* the root: the path itself also occurs in the block's worked
+#: example, and as the head of a longer path in every steering provenance
+#: comment, so counting occurrences of the path answers a different
+#: question.  Label plus root is the statement; the label alone is not.
 WORKSPACE_ROOT_LABEL = "Workspace root:"
 
 #: Block [1b] — the workspace root (TD-1810).  Every ``fs_*`` tool
@@ -58,14 +60,35 @@ WORKSPACE_ROOT_LABEL = "Workspace root:"
 #: out rather than implied: the failing behaviour is a small model
 #: emitting the relative path verbatim, and showing the join once costs
 #: less than a retry.
+#:
+#: The resolution rule is stated as a rule, not as a claim about what the
+#: rest of the prompt contains.  Only the brain tier is given the
+#: workspace manifest (``tier.py``), so a block asserting that workspace
+#: files *are listed* relative to the root would be false on the worker
+#: and the validator, which get no listing at all.  The same bytes go to
+#: every tier — that shared head is the point of the position — so the
+#: sentence has to be true without knowing which blocks follow it.
 _WORKSPACE_ROOT_TEMPLATE = (
     "{label} {root}\n"
-    "That is an absolute path on this machine. Workspace files are listed "
-    "relative to this root, so the absolute path of a listed file is the root "
-    'joined with its listed path: the entry "src/app.py" means '
+    "That is an absolute path on this machine. Any path written relative to "
+    'the workspace resolves against it: the relative path "src/app.py" means '
     '"{root}/src/app.py". Tool arguments that ask for an absolute path must be '
     "written that way — never pass a relative path to a tool."
 )
+
+#: Characters that may not appear in a stated root.  ``\n`` ends the label
+#: line early and silently re-reads the tail of the path as prose, which
+#: breaks the feature without breaking anything visibly; ``\r`` does the
+#: same on the consumer's side.  The rest are non-printing characters that
+#: a model, a log line, or the inspector may render, strip, or normalise
+#: differently, so a root containing one could not be shown to equal the
+#: root the path guard enforces.  C0 (tab included), DEL, and the Unicode
+#: line and paragraph separators.
+_FORBIDDEN_ROOT_CHARS = frozenset(chr(code) for code in range(0x20)) | {
+    "\x7f",
+    "\u2028",
+    "\u2029",
+}
 
 
 def workspace_root_block(workspace_path: str | Path) -> str:
@@ -83,8 +106,26 @@ def workspace_root_block(workspace_path: str | Path) -> str:
 
     Returns:
         The rendered block text.
+
+    Raises:
+        ValueError: If the resolved root contains a control character.
+            Refusing is deliberate.  Escaping would put a string in the
+            prompt that is not the path, and emitting anyway is the one
+            outcome with no symptom: the model would read a truncated
+            root, join it with a listed entry, and hand the path guard an
+            absolute path that points somewhere else.  A workspace root
+            that cannot be stated verbatim cannot be stated at all, and
+            §6 forbids the silent failure.
     """
     root = Path(workspace_path).resolve().as_posix()
+    offenders = sorted(_FORBIDDEN_ROOT_CHARS.intersection(root))
+    if offenders:
+        codepoints = ", ".join(f"U+{ord(ch):04X}" for ch in offenders)
+        raise ValueError(
+            f"workspace root contains control characters ({codepoints}) and "
+            "cannot be stated in the system prompt; rename or relocate the "
+            "workspace directory"
+        )
     return _WORKSPACE_ROOT_TEMPLATE.format(label=WORKSPACE_ROOT_LABEL, root=root)
 
 
@@ -99,7 +140,15 @@ class AssembledPrompt:
         prefix: Blocks 1-2 (base + workspace root + steering) - the
             provider prefix-cache target.
         prefix_hash: SHA-256 of *prefix*.
-        prefix_tokens: Heuristic token count of *prefix*.
+        prefix_tokens: Heuristic token count of the whole *prefix* — the
+            base prompt and block [1b] included.  This is the cache
+            figure, not the cost of the user's steering files; read
+            *steering_tokens* for that.
+        steering_tokens: Heuristic token count of the steering block
+            alone, or 0 for a tier that received no steering.  Split out
+            because the two numbers answer different questions and the
+            prefix figure answers the steering one wrongly: block [1b] is
+            session-constant machinery, not something the user wrote.
         steering: The underlying :class:`AssembledSteering` from the
             context assembler.  Carried so the loop can emit the
             instruction stack and detect steering changes (TD-509).
@@ -110,6 +159,7 @@ class AssembledPrompt:
     prefix: str
     prefix_hash: str
     prefix_tokens: int
+    steering_tokens: int
     steering: AssembledSteering
 
 
@@ -230,11 +280,18 @@ class PromptAssembler:
         parts = [BASE_SYSTEM_PROMPT, root_block] + [block for block in context.blocks.values()]
         text = "\n\n".join(parts)
 
+        steering_block = context.blocks.get("steering")
         prefix_parts = [BASE_SYSTEM_PROMPT, root_block]
-        if "steering" in context.blocks:
-            prefix_parts.append(context.blocks["steering"])
+        if steering_block is not None:
+            prefix_parts.append(steering_block)
         prefix = "\n\n".join(prefix_parts)
         prefix_hash = hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+
+        # Counted separately, not derived by subtraction: the prefix is
+        # joined with separators, so prefix minus base minus root is off by
+        # the joins, and a figure that is nearly right is the failure mode
+        # this split exists to remove.
+        steering_tokens = heuristic_count(steering_block).count if steering_block else 0
 
         assembled = AssembledPrompt(
             tier=tier,
@@ -242,6 +299,7 @@ class PromptAssembler:
             prefix=prefix,
             prefix_hash=prefix_hash,
             prefix_tokens=heuristic_count(prefix).count,
+            steering_tokens=steering_tokens,
             steering=context.steering,
         )
         self.last_assembled = assembled

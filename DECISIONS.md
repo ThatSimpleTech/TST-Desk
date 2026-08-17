@@ -4656,9 +4656,20 @@ All three tiers, because the worker calls the same `fs_*` tools the brain
 does, and because a per-tier position would split the `base + root` head
 that brain, worker, and validator currently share.
 
-Cost measured on a real fixture: ~80–125 heuristic tokens, once. The
-existing TD-305 invariant is unchanged — `test_prefix_still_byte_identical_
-across_calls` and `test_cache_prefix_stable_across_turns` both hold.
+Cost, once. **Corrected 2026-08-17** (this read "~80–125 heuristic tokens,
+once", which was wrong at both ends and wrong in kind): the block is fixed
+prose plus the root written twice, so its size scales with the root and no
+single range describes it. Measured through `tstd.context.tokens`
+(`make_token_counter` returns the heuristic here — tiktoken is not a
+dependency, so every slug falls back to `ceil(chars / 4)`): the block as
+first written was 345 + 2·len(root) characters, i.e. 87 tokens for a
+two-character root, 108 for this repository's own 44-character root, and
+136 for a 100-character pytest temp root — over the top of the stated range,
+not inside it. The block as reworded below is 284 + 2·len(root) characters:
+`71 + ceil(len(root) / 2)` tokens, so **72 / 93 / 121** for those same three
+roots. The existing TD-305 invariant is unchanged —
+`test_prefix_still_byte_identical_across_calls` and
+`test_cache_prefix_stable_across_turns` both hold.
 
 ### 2. The `fs_*` schema descriptions are left alone (Class B, rejected)
 
@@ -4675,6 +4686,32 @@ with static text, and parameterising it by workspace changes a public API
 shape for every provider and every caller. And it is unnecessary: the
 prompt block alone moved a real model from 0/12 to 12/12 on absolute-path
 emission, so the schema change would buy nothing measurable at a real cost.
+
+**Corrected 2026-08-17.** The reading of that A/B which this third count
+leaned on — written out in the backlog's Done note as "the BEFORE prompt
+already contained the root *substring* … the bytes were never the problem,
+stating them as the root was" — does not survive checking. Two errors.
+
+The BEFORE prompt did not contain the root. It contained `<root>/AGENTS.md`,
+inside a steering provenance comment, and only when the workspace carried
+its own steering file. Reconstructing the pre-TD-1810 prompt over the
+story's own fixture: with a workspace `AGENTS.md` the root occurs exactly
+once on all three tiers, always as the head of that longer path; with no
+workspace steering file it occurs zero times on all three. Recovering the
+root from `<root>/AGENTS.md` means stripping a filename — an inference,
+which is the step the story exists to remove — and a workspace steered only
+from `~/.tstdesk` has no bytes to strip in the first place.
+
+And the A/B cannot attribute the delta to naming the root, because it never
+varied that alone. The block went in as one unit: the labelled statement,
+the worked join, and the imperative "never pass a relative path to a tool".
+0/12 → 12/12 is evidence the block works. It is not evidence about which of
+those three sentences did the work; no arm isolated one.
+
+What survives is the count this section actually needs: on the suite as run,
+the prompt block took absolute-path emission to 12/12, leaving no headroom
+for the schema change to occupy. The rejection stands. Its third reason is
+narrower than it was written.
 
 ### 3. The root is rendered resolved, with POSIX separators (Class A)
 
@@ -4704,3 +4741,86 @@ backlog tick, so `docs/tst-desk-spec.md` §4.5 still shows the five-block
 order without `[1b]`. §10 wants docs to match behaviour; recording the drift
 here rather than leaving it unremarked. The one-line diagram fix is the
 whole of it.
+
+**Closed 2026-08-17.** Spec §4.5's diagram now carries the `[1b]` line. The
+"Blocks 1–2 are the cache target" sentence below it was left alone: it is
+still true, since `[1b]` sits inside that span.
+
+## 2026-08-17 — TD-1810 defect pass: what the block may claim, and who pays
+
+Six defects logged against TD-1810 by its verifiers. Three needed a
+decision; the other three were a wording fix, a test that did not test its
+own name, and the record corrections filed above and in the backlog.
+
+### 1. Block [1b] states a rule, not a claim about the rest of the prompt (Class B)
+
+**Decision:** The block's middle sentence changes from "Workspace files are
+listed relative to this root, so the absolute path of a listed file is the
+root joined with its listed path" to "Any path written relative to the
+workspace resolves against it". The worked example (`"src/app.py"` →
+`"<root>/src/app.py"`) and the closing imperative are unchanged.
+
+**Rationale:** The old sentence asserted that a listing exists. Only the
+brain tier is given the workspace manifest (`context/tier.py`); the worker
+gets task and relevant files, the validator gets diff and test output, and
+neither is handed a file listing at all. The same bytes go to all three
+tiers on purpose — a per-tier wording would split the `base + root` head
+they share, which is the reason for the block's position — so the sentence
+has to hold without knowing which blocks follow it. A rule about how
+relative paths resolve does; a claim about what the prompt contains does
+not, and a model told it saw a listing has a reason to behave as though it
+did. Scoping the sentence per tier was the alternative and was rejected on
+the shared-prefix cost. Side effect: 15 tokens cheaper per session.
+
+### 2. A root that cannot be stated verbatim is refused, loudly (Class B)
+
+**Decision:** `workspace_root_block()` raises `ValueError` when the resolved
+root contains a C0 control character (tab included), DEL, or U+2028/U+2029,
+naming the offending codepoints. Session assembly fails at that point rather
+than emitting a block.
+
+**Rationale:** Block [1b] is one labelled line. A newline in the workspace
+path ends that line early, so the stated root becomes the text before the
+newline and the remainder reads as prose — the model then joins a real but
+*wrong* absolute path and the path guard is handed something outside the
+workspace. Nothing about that is visible: no exception, no wrong-looking
+output, a prompt that still parses. It is the worst failure shape available,
+so it gets the loudest handling. The two alternatives lose on the same
+ground: escaping puts a string in the prompt that is not the path, and the
+model has no way to know which of the two it is being shown; stripping
+silently states a root that does not exist. Tab and the other non-printing
+characters go with newline rather than being curated out, because the
+invariant is "the root as read equals the root the guard enforces", and a
+character that a model, a log line, or the inspector may render, strip, or
+normalise differently cannot be shown to satisfy it. A uniform rule is also
+one rule. NUL never reaches the guard — `pathlib` rejects it first — and is
+pinned by its own test so a future change that stops resolving the path does
+not quietly let one through. §6's "no silent failure" is the governing line;
+a workspace directory with a newline in its name can be renamed.
+
+Refusing does not crash the daemon: `SessionRunner._run` already catches the
+exception, logs it, and moves the session to `failed` carrying the message,
+so the user is told which codepoint and what to do about it. The message
+names the codepoints, not the path, though §4 above holds either way.
+
+### 3. `SteeringReloaded` reports steering separately from the prefix (Class B)
+
+**Decision:** `AssembledPrompt` gains `steering_tokens` — the steering block
+alone, counted directly rather than derived by subtracting — and the
+`steering_reloaded` event gains a `steering_tokens` field beside
+`prefix_tokens`. The UI type, the timeline detail row, and the protocol
+fixture follow. `prefix_tokens` keeps its meaning and its value.
+
+**Rationale:** `prefix_tokens` is the size of the whole cache prefix, which
+is the right number for "what will the provider re-bill" and the wrong
+number for "what do the user's steering files cost" — it also carries the
+base prompt and, since TD-1810, block [1b]. Under a heading that says
+*Steering reloaded*, the second reading is the one a person takes, and this
+story made the overstatement bigger. Renaming or shrinking `prefix_tokens`
+was rejected: the cache figure is real and is what TD-305 exists to expose.
+Two honest numbers beat one number doing two jobs. This is deliberately not
+a fix for TD-1811 — that story is about reporting prefix *reuse* that did
+not happen, and nothing here touches the reuse figure — but the field it
+adds is the one TD-1811 will need in order to say what actually got billed.
+Counted, not subtracted, because the prefix is joined with separators and a
+figure that is nearly right is the failure this split exists to remove.

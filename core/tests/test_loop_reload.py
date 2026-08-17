@@ -152,6 +152,14 @@ class TestReloadDetection:
         assert reloads[0].prefix_tokens > 0
         assert reloads[0].source_count >= 1
 
+        # The two token figures are distinct, and the event does not pass
+        # the prefix off as the cost of the user's steering: the prefix
+        # also carries the base prompt and the workspace root (TD-1810),
+        # which nobody edited.
+        assert reloads[0].steering_tokens == assembler.last_assembled.steering_tokens
+        assert reloads[0].steering_tokens > 0
+        assert reloads[0].steering_tokens < reloads[0].prefix_tokens
+
         # Cache prefix invalidated: the reload hash differs from turn 1
         # (which had no reload event, so compare against the emitted one)
         await runner.cancel()
