@@ -3988,3 +3988,23 @@ and the 30s window makes the environmental race unwinnable for the
 escapee instead of merely unlikely. The `kill refused` escape hatch is
 unchanged and still short-circuits before any probing: a vetoed group
 outlives the test, so veto rounds never probe.
+
+## 2026-08-17 — TD-1408: Config tests read the shipped default, not the developer's
+
+### 1. The fixture is the shipped default, loaded by explicit path
+
+**Decision:** test_config.py's eight no-arg `load_config()` calls and
+test_cost.py's tracker fixture now load `default_config_yaml()` written
+into tmp_path. `test_cached_config` redirects `tstd.config.user_data_dir`
+to tmp_path and clears the lru cache around the call. No test in
+core/tests/ reads configuration from `user_data_dir()` — the remaining
+no-arg `cached_config()` consumers (test_setup_state, test_e2e_live,
+test_local_preset_paths) redirect HOME first, as they already did.
+
+**Rationale:** A no-arg load resolves the developer's real file, so the
+suite was green only while that file byte-matched the shipped default —
+and the documented remedy for a multi-model endpoint (pin a slug,
+TD-1805) is exactly what breaks it. Because the fixture IS the shipped
+default, the pinned values (slugs, 16384 max_output, prices) keep their
+bite: a shipped config that drifts from its documented tags still fails
+these tests, on any machine.

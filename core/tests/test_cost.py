@@ -6,10 +6,12 @@ a mixed cached/uncached case.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pytest import approx
 
-from tstd.config import TierConfig, load_config
+from tstd.config import TierConfig, default_config_yaml, load_config
 from tstd.cost import CallRecord, CostTracker, compute_call_cost, compute_call_details
 from tstd.provider import Usage
 
@@ -173,8 +175,13 @@ class TestComputeCost:
 
 class TestTracker:
     @pytest.fixture
-    def tracker(self) -> CostTracker:
-        cfg = load_config()
+    def tracker(self, tmp_path: Path) -> CostTracker:
+        # The shipped default, from a fixture path — never the developer's
+        # own user config (TD-1408).  These tests pin the shipped prices, so
+        # a hand-pinned preset must not be able to break them.
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(default_config_yaml())
+        cfg = load_config(config_path)
         return CostTracker(cfg)
 
     def test_begin_turn_resets_turn_cost(self, tracker: CostTracker) -> None:
