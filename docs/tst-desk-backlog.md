@@ -1251,6 +1251,35 @@ that this row had been quietly holding red.
 
 ---
 
+### TD-1809 — Tell the model the workspace root
+**Size:** 2 · **Depends on:** TD-1802
+
+**Acceptance criteria:**
+- [ ] The assembled system prompt states the workspace's absolute root, once, in a stable
+      position that does not disturb the cached prefix (TD-305)
+- [ ] A model given only the prompt can construct a valid absolute path for any file the
+      manifest lists, without guessing
+- [ ] The manifest's relative listing is unchanged — this adds the root, it does not rewrite
+      every entry
+- [ ] A test asserts the root appears in the assembled prompt for a workspace whose path was
+      never mentioned in the user's message
+
+Every `fs_*` tool advertises its `path` argument as "Absolute path to the file to …", but
+`WorkspaceManifest.build()` renders entries workspace-relative (`README.md`, `src/app.py`) and
+no prompt block states the root. The model is shown relative paths, required to emit absolute
+ones, and never told the prefix — so correct behaviour depends on it guessing.
+
+Measured 2026-08-17 across a 552-trial tool-fidelity suite: relative-path emission was the
+single largest failure class, and the dominant one for `gemma4:e4b` (3/12 on the
+absolute-path category). The suite had to inject the root into its own steering block to make
+those trials winnable at all, so every score it produced is an OPTIMISTIC bound on production
+behaviour.
+
+Fix this before choosing a local model. It plausibly lifts every candidate and may reorder
+them, since the failure is concentrated in exactly one category rather than spread.
+
+---
+
 # MILESTONE M2 — The Window
 
 ## Epic E10 — Shell and panes
@@ -2482,10 +2511,10 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 46 | 145 |
-| M1.5 Local models | E18 | 9 | 23 |
+| M1.5 Local models | E18 | 10 | 25 |
 | M2 The window | E10–E12 | 16 | 52 |
 | M3 Shippable | E13–E17 | 38 | 113 |
-| **Total v0.1** | **18** | **116** | **348** |
+| **Total v0.1** | **18** | **117** | **350** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
