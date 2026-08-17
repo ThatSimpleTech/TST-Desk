@@ -385,7 +385,8 @@
     ],
     "total_tokens": 500,
     "token_method": "cl100k_base",
-    "last_cached_tokens": null
+    "last_cached_tokens": null,
+    "cache_observed": false
   },
   "context_compacted": {
     "type": "context_compacted",

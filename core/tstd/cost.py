@@ -21,12 +21,18 @@ if TYPE_CHECKING:
 
 @dataclass
 class CallRecord:
-    """A single API call with token usage and computed cost."""
+    """A single API call with token usage and computed cost.
+
+    ``cached_prompt_tokens`` carries the provider's own figure, or ``None``
+    when the response reported none (TD-1811).  It is never inferred from
+    the prompt's shape — a stable prefix is a reason to *expect* reuse, not
+    evidence that any happened.
+    """
 
     tier: str
     model: str
     prompt_tokens: int
-    cached_prompt_tokens: int
+    cached_prompt_tokens: int | None
     completion_tokens: int
     uncached_prompt_tokens: int
     prompt_cost: float
@@ -39,6 +45,20 @@ class CallRecord:
 # ── Cost computation ──────────────────────────────────────────────────
 
 
+def billable_cached_tokens(cached: int | None) -> int:
+    """Cached tokens to price, given what the provider reported (TD-1811).
+
+    An unreported figure (``None``) bills as zero cached tokens — the whole
+    prompt at the input rate.  That is the conservative direction: a
+    provider that stays silent about reuse is one whose invoice we cannot
+    assume was discounted, so the meter must not quietly under-state spend.
+    It is a *pricing* fallback only.  Nothing that reports cache state to
+    the user may route through here — see
+    :attr:`CostTracker.last_cached_prompt_tokens`.
+    """
+    return cached if cached is not None else 0
+
+
 def compute_call_cost(usage: Usage, tier_cfg: TierConfig) -> float:
     """Compute the dollar cost of a single API call.
 
@@ -49,9 +69,10 @@ def compute_call_cost(usage: Usage, tier_cfg: TierConfig) -> float:
     Returns:
         Cost in dollars.
     """
-    uncached = max(0, usage.prompt_tokens - usage.cached_prompt_tokens)
+    cached_tokens = billable_cached_tokens(usage.cached_prompt_tokens)
+    uncached = max(0, usage.prompt_tokens - cached_tokens)
     prompt_cost = uncached * tier_cfg.input_price / 1_000_000
-    cached_cost = usage.cached_prompt_tokens * tier_cfg.cache_read_price / 1_000_000
+    cached_cost = cached_tokens * tier_cfg.cache_read_price / 1_000_000
     completion_cost = usage.completion_tokens * tier_cfg.output_price / 1_000_000
 
     return round(prompt_cost + cached_cost + completion_cost, 6)
@@ -64,15 +85,16 @@ def compute_call_details(usage: Usage, tier_cfg: TierConfig) -> dict[str, float]
         Dict with keys: uncached_prompt_tokens, prompt_cost, cached_cost,
         completion_cost, total_cost.
     """
-    uncached = max(0, usage.prompt_tokens - usage.cached_prompt_tokens)
+    cached_tokens = billable_cached_tokens(usage.cached_prompt_tokens)
+    uncached = max(0, usage.prompt_tokens - cached_tokens)
     return {
         "uncached_prompt_tokens": uncached,
         "prompt_cost": round(uncached * tier_cfg.input_price / 1_000_000, 6),
-        "cached_cost": round(usage.cached_prompt_tokens * tier_cfg.cache_read_price / 1_000_000, 6),
+        "cached_cost": round(cached_tokens * tier_cfg.cache_read_price / 1_000_000, 6),
         "completion_cost": round(usage.completion_tokens * tier_cfg.output_price / 1_000_000, 6),
         "total_cost": round(
             uncached * tier_cfg.input_price / 1_000_000
-            + usage.cached_prompt_tokens * tier_cfg.cache_read_price / 1_000_000
+            + cached_tokens * tier_cfg.cache_read_price / 1_000_000
             + usage.completion_tokens * tier_cfg.output_price / 1_000_000,
             6,
         ),
@@ -178,9 +200,10 @@ class CostTracker:
         """Build a CallRecord for *usage* and compute its dollar cost."""
         tier_cfg = cfg or self._config.tier(tier)
         cost = compute_call_cost(usage, tier_cfg)
-        uncached = max(0, usage.prompt_tokens - usage.cached_prompt_tokens)
+        cached_tokens = billable_cached_tokens(usage.cached_prompt_tokens)
+        uncached = max(0, usage.prompt_tokens - cached_tokens)
         prompt_cost = round(uncached * tier_cfg.input_price / 1_000_000, 6)
-        cached_cost = round(usage.cached_prompt_tokens * tier_cfg.cache_read_price / 1_000_000, 6)
+        cached_cost = round(cached_tokens * tier_cfg.cache_read_price / 1_000_000, 6)
         completion_cost = round(usage.completion_tokens * tier_cfg.output_price / 1_000_000, 6)
 
         record = CallRecord(
@@ -208,18 +231,38 @@ class CostTracker:
         return sum(c.prompt_tokens + c.completion_tokens for c in self._turn_calls)
 
     def turn_cached_tokens(self) -> int:
-        """Total cached prompt tokens in the current turn."""
-        return sum(c.cached_prompt_tokens for c in self._turn_calls)
+        """Cached prompt tokens the provider reported this turn.
+
+        Calls that reported no figure contribute nothing, so this is a sum
+        of reported reuse — never a sum that includes an assumed one.
+        """
+        return sum(billable_cached_tokens(c.cached_prompt_tokens) for c in self._turn_calls)
+
+    @property
+    def cache_observed(self) -> bool:
+        """Whether any main-loop call has come back yet (TD-1811).
+
+        Splits "no data" from "the provider had nothing to say about
+        cache": both leave :attr:`last_cached_prompt_tokens` at ``None``,
+        and only this tells the two apart.  Without it a fresh session and
+        a session running on an engine that never reports reuse render
+        identically, and the user cannot tell which one they are looking
+        at.
+        """
+        return bool(self._calls)
 
     @property
     def last_cached_prompt_tokens(self) -> int | None:
-        """Cached prompt tokens on the most recent main-loop call.
+        """Cached prompt tokens the provider reported on the last call.
 
-        ``None`` before the first call — cache state is a provider-side
-        fact, unknown until one response comes back.  Read across turns
-        (not reset by ``begin_turn``): the inspector's "currently cached"
-        signal is about the last observed call (TD-1201).  Classifier
-        calls are excluded — they don't carry the steering block.
+        ``None`` in two cases, told apart by :attr:`cache_observed`: no
+        main-loop call has landed yet, or the last one reported no cached
+        figure at all.  Never ``0`` on the strength of a missing field —
+        cache state is a provider-side fact and an absent one stays
+        unknown (TD-1811).  Read across turns (not reset by
+        ``begin_turn``): the inspector's "currently cached" signal is
+        about the last observed call (TD-1201).  Classifier calls are
+        excluded — they don't carry the steering block.
         """
         if not self._calls:
             return None
@@ -230,12 +273,16 @@ class CostTracker:
         return sum(c.uncached_prompt_tokens for c in self._turn_calls)
 
     def turn_cache_ratio(self) -> float:
-        """Cache hit ratio for the current turn (0.0 to 1.0).
+        """Share of this turn's prompt tokens the provider reported as reused.
 
-        Returns 0.0 if no prompt tokens were consumed this turn.
+        ``0.0`` when the provider reported no reuse *and* when it reported
+        nothing — a ratio is a claim about money saved, and there is no
+        saving to claim in either case.  ``0.0`` too when the turn consumed
+        no prompt tokens at all.  Turn-scoped, so a previous turn's hit
+        rate can never be carried into one that had none.
         """
         total = sum(c.prompt_tokens for c in self._turn_calls)
-        cached = sum(c.cached_prompt_tokens for c in self._turn_calls)
+        cached = self.turn_cached_tokens()
         return cached / total if total > 0 else 0.0
 
     def session_cost(self) -> float:

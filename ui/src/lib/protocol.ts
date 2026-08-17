@@ -407,7 +407,12 @@ export interface InstructionStack extends DaemonEvent {
   sources: InstructionStackEntry[];
   total_tokens: number;
   token_method: string;
+  // Cached prompt tokens the provider reported on the last main-loop call.
+  // null when no figure was reported — never 0 on a missing field.
   last_cached_tokens?: number | null;
+  // Whether a main-loop call has come back at all: tells "no turn yet"
+  // apart from "the provider reports no cache figure" (TD-1811).
+  cache_observed?: boolean;
 }
 
 export interface SessionSummary {
