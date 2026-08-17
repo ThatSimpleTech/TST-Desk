@@ -8,6 +8,14 @@ function evt(e: DaemonEventUnion): DaemonEventUnion {
   return e;
 }
 
+/** A timeline showing session "s1" — the session every fixture below names.
+ *  An unbound timeline shows nothing at all (TD-1009). */
+function bound(sessionId = "s1"): Timeline {
+  const t = new Timeline();
+  t.bind(sessionId);
+  return t;
+}
+
 describe("eventToEntry", () => {
   it("maps a tool_call to a tool_call entry with arguments + class", () => {
     const entry = eventToEntry(
@@ -177,7 +185,7 @@ describe("summarizeArguments", () => {
 
 describe("Timeline", () => {
   it("accumulates entries in seq order and skips non-entries", () => {
-    const t = new Timeline();
+    const t = bound();
     t.push(evt({ type: "assistant_delta", session_id: "s1", delta: "hi", seq: 1 }));
     t.push(
       evt({
@@ -207,7 +215,7 @@ describe("Timeline", () => {
   });
 
   it("merges shell_output chunks into the parent tool_call live buffer", () => {
-    const t = new Timeline();
+    const t = bound();
     t.push(
       evt({
         type: "tool_call",
@@ -230,13 +238,13 @@ describe("Timeline", () => {
   });
 
   it("drops an orphan shell_output chunk with no parent tool_call", () => {
-    const t = new Timeline();
+    const t = bound();
     t.push(evt({ type: "shell_output", session_id: "s1", tool_call_id: "tc9", stream: "stdout", chunk: "orphan", seq: 1 }));
     expect(t.length).toBe(0);
   });
 
   it("flips an approval entry to denied when its tool_result resolves", () => {
-    const t = new Timeline();
+    const t = bound();
     t.push(
       evt({
         type: "approval_request",
@@ -268,7 +276,7 @@ describe("Timeline", () => {
   });
 
   it("marks an approval entry approved on a successful result", () => {
-    const t = new Timeline();
+    const t = bound();
     t.push(
       evt({
         type: "approval_request",
@@ -297,7 +305,7 @@ describe("Timeline", () => {
   });
 
   it("leaves an approval entry pending when an unrelated tool_result lands", () => {
-    const t = new Timeline();
+    const t = bound();
     t.push(
       evt({
         type: "approval_request",
@@ -326,7 +334,7 @@ describe("Timeline", () => {
   });
 
   it("clear resets the list", () => {
-    const t = new Timeline();
+    const t = bound();
     t.push(
       evt({
         type: "tool_call",

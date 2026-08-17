@@ -66,6 +66,10 @@ export interface ChatDeps {
   send(msg: ClientMessageUnion): boolean;
   attach(sessionId: string): void;
   detach(sessionId: string): void;
+  /** The pane now shows this session, or nothing (TD-1009). Views that scope
+   *  to one session rebuild here, from the replay `attach` then fetches.
+   *  Optional: a pane with no activity lane alongside it is still a pane. */
+  onBind?(sessionId: string | null): void;
 }
 
 export interface ChatStore {
@@ -240,6 +244,10 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     queue.clear();
     wait.end();
     state.lastTurnDuration = null;
+    // The activity lane scopes to the same session (TD-1009). Bind it before
+    // the attach, so the replay the attach fetches lands in a list already
+    // pointing at the session it describes.
+    deps.onBind?.(sessionId);
     if (sessionId !== null) deps.attach(sessionId);
   }
 
@@ -411,6 +419,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
     dispose(): void {
       if (state.sessionId !== null) deps.detach(state.sessionId);
+      deps.onBind?.(null);
       state.sessionId = null;
       state.turnState = null;
       state.messages = [];

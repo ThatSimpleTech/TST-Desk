@@ -14,12 +14,20 @@ import {
 } from "./connection-status.svelte.js";
 import type { NewAttachment } from "./attachments";
 import { createChatState, createChatStore, type ChatState } from "./chat-store";
+import { bindSession } from "./timeline-store.svelte.js";
 import type { SessionState } from "./protocol";
 
 export const chat: ChatState = $state(createChatState());
 
 const store = createChatStore(
-  { send: sendToDaemon, attach: attachToSession, detach: detachFromSession },
+  {
+    send: sendToDaemon,
+    attach: attachToSession,
+    detach: detachFromSession,
+    // The activity timeline and the Files pane show one session (TD-1009);
+    // the pane's binding is this store's to declare.
+    onBind: bindSession,
+  },
   chat,
 );
 

@@ -31,6 +31,9 @@ class StubResizeObserver {
   disconnect(): void {}
 }
 
+/** The session the synthesized log belongs to. */
+const BENCH_SESSION = "bench";
+
 export function installJsdomEnv(): void {
   if (typeof globalThis.ResizeObserver === "undefined") {
     globalThis.ResizeObserver = StubResizeObserver as unknown as typeof ResizeObserver;
@@ -46,7 +49,7 @@ export function synthesizeEvents(n: number): DaemonEventUnion[] {
   let callId = 0;
   while (events.length < n) {
     const next = (type: string, extra: Record<string, unknown>): DaemonEventUnion =>
-      ({ type, session_id: "bench", seq: ++seq, ...extra }) as DaemonEventUnion;
+      ({ type, session_id: BENCH_SESSION, seq: ++seq, ...extra }) as DaemonEventUnion;
     events.push(next("assistant_delta", { delta: `assistant text ${seq} ` }));
     if (events.length >= n) break;
     if (events.length % 4 === 0) {
@@ -79,7 +82,7 @@ export function synthesizeEvents(n: number): DaemonEventUnion[] {
       );
     }
     if (events.length % 50 === 0 && events.length < n) {
-      events.push(next("error", { code: "bench_error", message: "synthetic", session_id: "bench" }));
+      events.push(next("error", { code: "bench_error", message: "synthetic", session_id: BENCH_SESSION }));
     }
   }
   return events;
@@ -87,6 +90,9 @@ export function synthesizeEvents(n: number): DaemonEventUnion[] {
 
 /** One repetition: seconds for the 1000-event push plus mount + one flush. */
 async function benchOnce(events: DaemonEventUnion[]): Promise<number> {
+  // The store only folds the bound session's events (TD-1009), and the
+  // synthesized log is session "bench".
+  store.bindSession(BENCH_SESSION);
   const t0 = performance.now();
   for (const e of events) store.push(e);
   const target = document.body.appendChild(document.createElement("div"));
