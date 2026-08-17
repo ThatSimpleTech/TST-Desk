@@ -1788,6 +1788,42 @@ kept the wall-clock assumption.
 
 ---
 
+### TD-1408 — The config suite asserts shipped defaults against the developer's own config
+**Size:** 2 · **Depends on:** TD-302
+
+**Acceptance criteria:**
+- [ ] `test_config.py` and `test_cost.py` read a fixture config, never `user_data_dir()`
+- [ ] The runs pass whatever the developer's active preset is and whatever slugs they have
+      pinned
+- [ ] The shipped default is still asserted somewhere — a config that stops matching its own
+      documented tags should still fail something, so this must not trade one gap for another
+- [ ] No test in `core/tests/` reads configuration from `user_data_dir()`
+
+Five runs call `load_config()` with no path. That resolves to
+`user_data_dir()/config.yaml` — the developer's real file — and they then assert on the values
+the *shipped* config ships with:
+
+- `test_config.py::TestLoading::test_default_config_is_valid`
+- `test_config.py::TestTiers::{test_tier_method, test_tiers_method, test_worker_max_output}`
+- `test_cost.py::TestTracker::test_auto_lookup_tier_config`
+
+They pass only while the user config is still a byte copy of the shipped one. Pinning a slug
+breaks them — which is not a misuse but the documented fix for an endpoint serving more than
+one model, since `discover_model` refuses to guess (TD-1805). Measured expecting
+`moonshotai/kimi-k3` and getting `gemma4:26b-a4b-it-q4_K_M` on a machine whose `local` preset
+had been pinned by hand.
+
+This matters more than five red rows: §10 requires a green suite for every story, so while
+this stands, no story can satisfy its own definition of done on a machine that has been
+configured. It reads as a regression in whatever is being worked on at the time.
+
+The repo already has the pattern. `test_e2e_live.py` and `test_local_preset_paths.py` redirect
+`HOME` before touching preset state, with a docstring saying that changing the developer's
+preset from a test "would be a rude side effect that survives the run." These five want the
+same treatment. The suite does not write the user's config today, and should not start.
+
+---
+
 ## Epic E15 — Documentation
 
 ---
@@ -2546,8 +2582,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M1 Headless core | E2–E9 | 46 | 145 |
 | M1.5 Local models | E18 | 10 | 25 |
 | M2 The window | E10–E12 | 16 | 52 |
-| M3 Shippable | E13–E17 | 39 | 115 |
-| **Total v0.1** | **18** | **118** | **352** |
+| M3 Shippable | E13–E17 | 40 | 117 |
+| **Total v0.1** | **18** | **119** | **354** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
