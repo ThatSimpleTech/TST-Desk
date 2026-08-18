@@ -152,6 +152,20 @@ describe("refresh", () => {
 		const store = createStackStore({ send: () => false }, state);
 		expect(store.refresh("s1")).toBe(false);
 	});
+
+	// TD-1204: the panel stays empty when a reply arrives with nobody
+	// calling applyEvent. Refresh is the ask; applyEvent is the
+	// subscribe. This test names the required order so a wiring race
+	// cannot be "fixed" by dropping the send.
+	it("a refresh reply only lands if applyEvent is already the subscriber", () => {
+		const { state, sent, store } = harness();
+		expect(store.refresh("s1")).toBe(true);
+		expect(sent).toEqual([{ type: "get_instruction_stack", session_id: "s1" }]);
+		expect(state.loaded).toBe(false);
+		expect(store.applyEvent(stackEvent(), "s1")).toBe(true);
+		expect(state.loaded).toBe(true);
+		expect(state.sources).toHaveLength(1);
+	});
 });
 
 describe("clear", () => {

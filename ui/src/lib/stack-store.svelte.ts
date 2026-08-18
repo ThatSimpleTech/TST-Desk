@@ -28,6 +28,14 @@ export function teardownStack(): void {
 	unsubscribe = null;
 }
 
+/** Shell-lifetime subscribe (TD-1204). The panel mounts and unmounts with
+ *  the Stack tab; the store must not, or a `get_instruction_stack` reply
+ *  (and every live push from TD-509) arrives with nobody listening. */
+export function startStack(): () => void {
+	initStack();
+	return teardownStack;
+}
+
 /** Ask the daemon for the attached session's stack (panel open, switch). */
 export function refreshStack(): boolean {
 	return store.refresh(session.sessionId);
