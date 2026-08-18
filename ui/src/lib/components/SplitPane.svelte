@@ -7,9 +7,11 @@
 	// The left pane width is a percentage of the container.
 	import {
 		DEFAULT_LEFT_PCT,
+		DIVIDER_HIT_MIN_PX,
 		KEYBOARD_STEP_PCT,
 		MAX_LEFT_PCT,
 		MIN_LEFT_PCT,
+		attachDragListeners,
 		clampLeftPct,
 		pxToLeftPct,
 		readPersistedLeftPct,
@@ -29,14 +31,20 @@
 	let dragging = $state(false);
 
 	let container: HTMLDivElement | undefined = $state();
+	// Window listeners are the drag mechanism; pointer capture is only
+	// an optimisation. WKWebView does not always honour capture, and
+	// binding move/up to the 4px divider then latches `dragging` (TD-1011).
+	let detachDrag: (() => void) | null = null;
 
 	function persist() {
 		writePersistedLeftPct(window.localStorage, leftPct);
 	}
 
 	function onDividerDown(e: PointerEvent) {
+		if (dragging) return;
 		dragging = true;
-		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+		detachDrag = attachDragListeners(window, onDividerMove, onDividerUp);
 	}
 
 	function onDividerMove(e: PointerEvent) {
@@ -49,6 +57,8 @@
 	function onDividerUp() {
 		if (!dragging) return;
 		dragging = false;
+		detachDrag?.();
+		detachDrag = null;
 		// Persist once the drag settles.
 		persist();
 	}
@@ -70,13 +80,24 @@
 	$effect(() => {
 		leftPct = readPersistedLeftPct(window.localStorage);
 	});
+
+	// A drag in flight when the pane unmounts must not leave window
+	// listeners behind.
+	$effect(() => {
+		return () => {
+			detachDrag?.();
+			detachDrag = null;
+		};
+	});
 </script>
 
 <div
 	bind:this={container}
 	class="splitpane"
 	class:dragging
-	style={`grid-template-columns: ${leftPct}% var(--space-1) 1fr;`}
+	data-dragging={dragging ? "true" : "false"}
+	data-left-pct={leftPct}
+	style={`grid-template-columns: ${leftPct}% var(--space-1) 1fr; --divider-hit: ${DIVIDER_HIT_MIN_PX}px;`}
 >
 	<div class="pane left">{@render left()}</div>
 	<!-- ARIA window-splitter pattern: a focusable, keyboard-operable
@@ -92,9 +113,6 @@
 		aria-valuemin={MIN_LEFT_PCT}
 		aria-valuemax={MAX_LEFT_PCT}
 		onpointerdown={onDividerDown}
-		onpointermove={onDividerMove}
-		onpointerup={onDividerUp}
-		onpointercancel={onDividerUp}
 		onkeydown={onDividerKeydown}
 	></div>
 	<div class="pane right">{@render right()}</div>
@@ -117,11 +135,25 @@
 	}
 
 	.divider {
+		position: relative;
 		width: 100%;
 		height: 100%;
 		cursor: col-resize;
 		background: var(--color-border);
 		transition: background var(--transition-fast);
+		touch-action: none;
+	}
+
+	/* Painted rule stays the grid track (`--space-1` = 4px). The hit
+	   target is at least 8px without widening the line (TD-1011). */
+	.divider::before {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 50%;
+		width: var(--divider-hit);
+		transform: translateX(-50%);
 	}
 
 	.divider:hover,
