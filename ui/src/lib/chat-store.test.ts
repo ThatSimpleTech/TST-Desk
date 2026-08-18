@@ -1069,3 +1069,102 @@ describe("attachments", () => {
     expect(sent.filter((m) => m.type === "user_message").length).toBe(2);
   });
 });
+
+// ── Reasoning deltas (TD-1901) ─────────────────────────────────────────
+//
+// A reasoning model streams thinking before it streams an answer. The store
+// keeps the two apart on one message row, and treats thinking as proof the
+// turn is alive — before this, a thinking model produced no store activity
+// at all and the pane sat on the shimmer until the answer began.
+
+function reasoning(sessionId: string, text: string): DaemonEventUnion {
+  return { type: "assistant_reasoning", session_id: sessionId, delta: text, seq: 1 };
+}
+
+describe("reasoning deltas (TD-1901)", () => {
+  it("opens a message with reasoning and empty text", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(reasoning("s1", "Let me"));
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].reasoning).toBe("Let me");
+    expect(state.messages[0].text).toBe("");
+  });
+
+  it("appends reasoning to the same row without touching text", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(reasoning("s1", "Let me"));
+    const message = state.messages[0];
+    store.applyEvent(reasoning("s1", " think"));
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]).toBe(message); // identity stable, as for content
+    expect(state.messages[0].reasoning).toBe("Let me think");
+    expect(state.messages[0].text).toBe("");
+  });
+
+  it("content lands on the same row that carried the reasoning", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(reasoning("s1", "Thinking"));
+    store.applyEvent(delta("s1", "Answer"));
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].reasoning).toBe("Thinking");
+    expect(state.messages[0].text).toBe("Answer");
+  });
+
+  it("reasoning ends the first-token wait", () => {
+    // The defect this story fixes: reasoning was invisible, so the 25s
+    // watchdog fired "No response yet" at a model that was answering fine.
+    const { store, state } = boundStore();
+    store.sendUserMessage("hi");
+    expect(state.awaitingFirstToken).toBe(true);
+    store.applyEvent(reasoning("s1", "Hmm"));
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(state.turnStalled).toBe(false);
+  });
+
+  it("reasoning marks the turn running", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(reasoning("s1", "Hmm"));
+    expect(state.turnState).toBe("running");
+  });
+
+  it("stamps a duration once content begins, and only once", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(reasoning("s1", "Thinking"));
+    expect(state.messages[0].reasoningMs).toBeUndefined(); // still live
+    store.applyEvent(delta("s1", "A"));
+    const stamped = state.messages[0].reasoningMs;
+    expect(stamped).toBeTypeOf("number");
+    store.applyEvent(delta("s1", "B"));
+    expect(state.messages[0].reasoningMs).toBe(stamped);
+  });
+
+  it("a turn that ends on reasoning alone stops counting", () => {
+    // Cancel mid-thought, or a model that thought and then only called a
+    // tool: without the seal the disclosure would count forever.
+    const { store, state } = boundStore();
+    store.applyEvent(reasoning("s1", "Thinking"));
+    store.applyEvent(turnComplete("s1"));
+    expect(state.messages[0].complete).toBe(true);
+    expect(state.messages[0].reasoningMs).toBeTypeOf("number");
+  });
+
+  it("ignores reasoning for a session the pane is not bound to", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(reasoning("s2", "elsewhere"));
+    expect(state.messages).toHaveLength(0);
+  });
+
+  it("replays through the same reducer on attach", () => {
+    const { store, state } = boundStore();
+    const replay: DaemonEventUnion[] = [
+      reasoning("s1", "Thought"),
+      delta("s1", "Said"),
+      turnComplete("s1"),
+    ];
+    for (const event of replay) store.applyEvent(event);
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].reasoning).toBe("Thought");
+    expect(state.messages[0].text).toBe("Said");
+    expect(state.messages[0].complete).toBe(true);
+  });
+});

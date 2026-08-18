@@ -18,6 +18,7 @@ from tstd.protocol import (
     Approve,
     ArchiveSession,
     AssistantDelta,
+    AssistantReasoning,
     Attach,
     Cancel,
     ClientMessageT,
@@ -269,6 +270,12 @@ class TestDaemonEvents:
         back = _roundtrip(evt)
         assert isinstance(back, AssistantDelta)
         assert back.delta == "Hello "
+
+    def test_assistant_reasoning(self) -> None:
+        evt = AssistantReasoning(session_id="sess-1", delta="Let me think", seq=1)
+        back = _roundtrip(evt)
+        assert isinstance(back, AssistantReasoning)
+        assert back.delta == "Let me think"
 
     def test_tool_call(self) -> None:
         evt = ToolCall(

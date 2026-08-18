@@ -46,6 +46,7 @@ from .logging import get_logger
 from .policy import load_approved_imports, save_approved_imports
 from .protocol import (
     AssistantDelta,
+    AssistantReasoning,
     ContextCompacted,
     RuleActivated,
     SteeringReloaded,
@@ -266,6 +267,21 @@ async def _stream_and_parse(
         if isinstance(chunk, ProviderError):
             failed, error_msg, error_code = True, chunk.message, chunk.code
             break
+
+        # Stream reasoning delta (TD-1901).  Emitted, never accumulated:
+        # `collected_content` becomes the assistant message replayed to the
+        # provider on the next round trip, and feeding a model its own
+        # scratchpad back as something it said is both wrong and paid for.
+        # A reasoning model spends minutes here, so this is also the only
+        # sign of life the window gets before the answer starts.
+        if chunk.delta.reasoning:
+            await session.event_log.add(
+                AssistantReasoning(
+                    session_id=session.id,
+                    delta=chunk.delta.reasoning,
+                    seq=1,
+                )
+            )
 
         # Stream content delta
         if chunk.delta.content:

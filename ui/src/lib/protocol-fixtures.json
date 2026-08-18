@@ -167,6 +167,12 @@
     "session_id": "sess-1",
     "delta": "Hello "
   },
+  "assistant_reasoning": {
+    "type": "assistant_reasoning",
+    "seq": 3,
+    "session_id": "sess-1",
+    "delta": "Let me think"
+  },
   "tool_call": {
     "type": "tool_call",
     "seq": 4,

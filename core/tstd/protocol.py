@@ -455,6 +455,21 @@ class AssistantDelta(DaemonEvent):
     delta: str
 
 
+class AssistantReasoning(DaemonEvent):
+    """A streamed chunk of a reasoning model's thinking (TD-1901).
+
+    Deliberately not an ``assistant_delta`` with a flag.  The transcript
+    has to be able to tell thinking from answer long after the stream
+    ended — to fold one and not the other, and to keep reasoning out of
+    what is replayed to the provider — and a flag on a shared type makes
+    that a runtime check every consumer has to remember to perform.
+    """
+
+    type: Literal["assistant_reasoning"] = "assistant_reasoning"
+    session_id: str
+    delta: str
+
+
 class ToolCall(DaemonEvent):
     """A tool call about to be executed."""
 
@@ -989,6 +1004,7 @@ DaemonEventT = Annotated[
     Ready
     | SessionState
     | AssistantDelta
+    | AssistantReasoning
     | ToolCall
     | ToolResult
     | ShellOutput
@@ -1058,6 +1074,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "ready",
         "session_state",
         "assistant_delta",
+        "assistant_reasoning",
         "tool_call",
         "tool_result",
         "shell_output",
