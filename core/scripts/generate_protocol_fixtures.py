@@ -28,6 +28,7 @@ from tstd.protocol import (
     Cancel,
     CheckpointNotice,
     ContextCompacted,
+    ConversationReset,
     CostUpdate,
     DecisionLogged,
     DeleteApiKey,
@@ -38,6 +39,7 @@ from tstd.protocol import (
     DiagnosticsReport,
     Error,
     ExportUsage,
+    ForkFrom,
     GetInstructionStack,
     GetSetupState,
     GetUsage,
@@ -58,6 +60,7 @@ from tstd.protocol import (
     SessionList,
     SessionState,
     SetApiKey,
+    SetBranch,
     SetPreset,
     SetSkipAllApprovals,
     SetTier,
@@ -82,6 +85,8 @@ FIXTURES = {
     "hello": Hello(token="test-token-abc", version=1),
     "open_workspace": OpenWorkspace(path="/home/user/project"),
     "user_message": UserMessage(session_id="sess-1", content="hello world"),
+    "fork_from": ForkFrom(session_id="sess-1", user_index=0, content="hello again"),
+    "set_branch": SetBranch(session_id="sess-1", user_index=0, sibling_index=1),
     # TD-1709: additive field on an existing message, so the plain fixture
     # above is also the proof that a client sending none behaves as it did.
     # base64 is the payload because the daemon, not the client, decides
@@ -128,6 +133,14 @@ FIXTURES = {
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
+    "conversation_reset": ConversationReset(
+        session_id="sess-1",
+        user_index=0,
+        sibling_index=1,
+        sibling_count=2,
+        content="hello again",
+        seq=2,
+    ),
     "session_state_paused": SessionState(
         session_id="sess-1",
         state="paused",

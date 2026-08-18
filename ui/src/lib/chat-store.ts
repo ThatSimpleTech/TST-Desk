@@ -54,6 +54,10 @@ export interface ChatMessage {
    *  like reasoning so a tool-heavy turn does not grow the transcript
    *  without bound. Absent when the turn used no tools. */
   tools?: ToolBlock[];
+  /** 0-based index among user turns (TD-1708). Only on user rows. */
+  userIndex?: number;
+  siblingIndex?: number;
+  siblingCount?: number;
 }
 
 /** One tool call on an assistant row (TD-1902). `status` is unset while
@@ -111,6 +115,10 @@ export interface ChatStore {
    *  one fails its caps or its text test (TD-1709). */
   sendUserMessage(text: string, attachments?: readonly NewAttachment[]): boolean;
   retryLastUserMessage(): boolean;
+  /** Replace a past user turn and fork from there (TD-1708). */
+  forkFrom(userIndex: number, content: string): boolean;
+  /** Switch to another sibling at a forked user turn (TD-1708). */
+  setBranch(userIndex: number, siblingIndex: number): boolean;
   cancelTurn(): boolean;
   /** Attach the pane to a session chosen in the rail (TD-1701): detach the
    *  current one, clear the pane, attach — the replay rebuilds history
@@ -206,6 +214,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     );
     if (!sent) return false;
     nextId += 1;
+    const userIndex = state.messages.filter((m) => m.role === "user").length;
     state.messages.push({
       id: `m${nextId}`,
       role: "user",
@@ -213,6 +222,9 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       complete: true,
       at: Date.now(),
       attachments: attachments.length === 0 ? undefined : toChips(attachments),
+      userIndex,
+      siblingIndex: 0,
+      siblingCount: 1,
     });
     if (!armWait) return true;
     // A fresh send restarts the wait and its watchdog even atop one already
@@ -278,6 +290,24 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
   function switchSession(sessionId: string | null, turnState: SessionState["state"] | null): void {
     applyBind(state, { queue, wait, deps, onUnbind: resetDisclosures }, sessionId, turnState);
+    branchSnaps.clear();
+  }
+
+  const branchSnaps = new Map<string, ChatMessage[][]>();
+
+  function cloneMessages(): ChatMessage[] {
+    return state.messages.map((m) => ({
+      ...m,
+      tools: m.tools?.map((t) => ({ ...t })),
+    }));
+  }
+
+  function saveSnap(userIndex: number, sibling: number): void {
+    const key = String(userIndex);
+    const snaps = branchSnaps.get(key) ?? [];
+    while (snaps.length <= sibling) snaps.push([]);
+    snaps[sibling] = cloneMessages();
+    branchSnaps.set(key, snaps);
   }
 
   return {
@@ -351,6 +381,11 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           // Daemon-measured seconds — the duration line reports what the wire
           // said; the client never clocks turns itself (AGENTS §6).
           state.lastTurnDuration = event.duration;
+          for (const [key] of branchSnaps) {
+            const userIndex = Number(key);
+            const row = state.messages.find((m) => m.userIndex === userIndex);
+            if (row?.siblingIndex !== undefined) saveSnap(userIndex, row.siblingIndex);
+          }
           // The loop is free: the queue's head becomes the next turn (TD-1704).
           // Only here, never on a terminal session_state — the daemon refuses
           // sends to a dead session, so flushing into one would void the text.
@@ -418,6 +453,39 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           });
           return;
         }
+        case "conversation_reset": {
+          if (event.session_id !== state.sessionId) return;
+          const snaps = branchSnaps.get(String(event.user_index));
+          const saved = snaps?.[event.sibling_index];
+          if (saved !== undefined && saved.length > 0) {
+            state.messages = saved.map((m) => ({
+              ...m,
+              siblingIndex: m.userIndex === event.user_index ? event.sibling_index : m.siblingIndex,
+              siblingCount: m.userIndex === event.user_index ? event.sibling_count : m.siblingCount,
+            }));
+            wait.end();
+            return;
+          }
+          let seen = 0;
+          let cut = -1;
+          for (let i = 0; i < state.messages.length; i++) {
+            if (state.messages[i].role !== "user") continue;
+            if (seen === event.user_index) {
+              cut = i;
+              break;
+            }
+            seen += 1;
+          }
+          if (cut === -1) return;
+          const row = state.messages[cut];
+          row.text = event.content;
+          row.siblingIndex = event.sibling_index;
+          row.siblingCount = event.sibling_count;
+          state.messages.splice(cut + 1);
+          saveSnap(event.user_index, event.sibling_index);
+          wait.end();
+          return;
+        }
         case "tool_result": {
           if (event.session_id !== state.sessionId) return;
           const block = findTool(event.tool_call_id);
@@ -449,9 +517,36 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
         // them would be a different message wearing the same label.
         if (message.role !== "user") continue;
         if (message.attachments !== undefined) return false;
-        return sendUserMessageToWire(message.text);
+        if (message.userIndex === undefined) return sendUserMessageToWire(message.text);
+        return this.forkFrom(message.userIndex, message.text);
       }
       return false;
+    },
+
+    forkFrom(userIndex: number, content: string): boolean {
+      if (state.sessionId === null) return false;
+      const text = content.trim();
+      if (text === "") return false;
+      const existing = branchSnaps.get(String(userIndex));
+      if (existing === undefined || existing.length === 0) {
+        saveSnap(userIndex, 0);
+      }
+      return deps.send({
+        type: "fork_from",
+        session_id: state.sessionId,
+        user_index: userIndex,
+        content: text,
+      });
+    },
+
+    setBranch(userIndex: number, siblingIndex: number): boolean {
+      if (state.sessionId === null) return false;
+      return deps.send({
+        type: "set_branch",
+        session_id: state.sessionId,
+        user_index: userIndex,
+        sibling_index: siblingIndex,
+      });
     },
 
     cancelTurn(): boolean {

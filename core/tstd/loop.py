@@ -511,8 +511,9 @@ async def agent_loop(
     denied_imports: set[Path] = set()
 
     # Conversation messages only; the system message is assembled per
-    # turn below (TD-305).
-    messages: list[ChatMessage] = []
+    # turn below (TD-305).  Lives on the session so a fork can truncate
+    # it (TD-1708).  This name is an alias — never rebind the list.
+    messages = session.conversation
     tracker = CostTracker(config)
     # TD-1201: reachable from the daemon so get_instruction_stack can
     # report provider-observed cache state.
@@ -838,7 +839,7 @@ async def agent_loop(
                 _token_counters[model_slug] = counter
             compacted, compaction = maybe_compact(messages, tier_cfg, counter)
             if compaction is not None:
-                messages = compacted
+                messages[:] = compacted
                 await session.event_log.add(
                     ContextCompacted(
                         session_id=session.id,
@@ -1005,6 +1006,7 @@ async def agent_loop(
 
             # 2h. No tool calls (or no dispatcher) — turn is complete
             await _emit_turn_complete(session, tier, turn_start, tracker)
+            session.snapshot_branches()
             log.info(
                 "turn complete",
                 extra={

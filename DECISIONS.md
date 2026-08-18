@@ -5881,6 +5881,21 @@ approval card is already in the footer if one is pending.
 
 ---
 
+## 2026-08-18 — TD-1708: fork is a session conversation, not a new session
+
+**Decision:** Editing a past user turn truncates `session.conversation` and
+enqueues the new text. Siblings are snapshots of that list. The viewer
+learns about a fork through `conversation_reset`. Retry of a finished turn
+is the same verb (`fork_from`) so branch chrome covers both.
+
+**Rationale:** The event log is append-only and never stored user rows, so
+a new session-per-branch would lose the original transcript on attach
+anyway. Keeping both siblings on one session lets `set_branch` restore the
+model's context without inventing a second session id. Mid-turn forks are
+refused because `_open_turns > 0` already means the loop owes a turn.
+
+---
+
 ## 2026-08-18 — TD-1814: `cache_reported` is turn-scoped (Class B)
 
 **Decision:** The turn log's `cache_reported` reads `CostTracker.turn_cache_reported()`,

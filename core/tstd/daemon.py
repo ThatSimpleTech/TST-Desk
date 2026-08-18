@@ -80,6 +80,7 @@ from .protocol import (
     DiagnosticCheck,
     DiagnosticsReport,
     ExportUsage,
+    ForkFrom,
     GetInstructionStack,
     GetSetupState,
     GetUsage,
@@ -97,6 +98,7 @@ from .protocol import (
     SessionList,
     SessionSummary,
     SetApiKey,
+    SetBranch,
     SetPreset,
     SetSkipAllApprovals,
     SetTier,
@@ -930,6 +932,32 @@ class Daemon:
                     }
                 },
             )
+            return None
+
+        if isinstance(msg, ForkFrom):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            result = await found.fork_from(msg.user_index, msg.content)
+            if isinstance(result, str):
+                return build_error(result, result.replace("_", " "), session_id=msg.session_id)
+            await found.event_log.add(result)
+            return None
+
+        if isinstance(msg, SetBranch):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            result = await found.set_branch(msg.user_index, msg.sibling_index)
+            if isinstance(result, str):
+                return build_error(result, result.replace("_", " "), session_id=msg.session_id)
+            await found.event_log.add(result)
             return None
 
         if isinstance(msg, Cancel):

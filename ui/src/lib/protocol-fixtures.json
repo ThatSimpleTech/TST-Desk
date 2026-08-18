@@ -14,6 +14,18 @@
     "content": "hello world",
     "attachments": []
   },
+  "fork_from": {
+    "type": "fork_from",
+    "session_id": "sess-1",
+    "user_index": 0,
+    "content": "hello again"
+  },
+  "set_branch": {
+    "type": "set_branch",
+    "session_id": "sess-1",
+    "user_index": 0,
+    "sibling_index": 1
+  },
   "user_message_attachments": {
     "type": "user_message",
     "session_id": "sess-1",
@@ -157,6 +169,15 @@
     "session_id": "sess-1",
     "state": "running",
     "reason": null
+  },
+  "conversation_reset": {
+    "type": "conversation_reset",
+    "seq": 2,
+    "session_id": "sess-1",
+    "user_index": 0,
+    "sibling_index": 1,
+    "sibling_count": 2,
+    "content": "hello again"
   },
   "session_state_paused": {
     "type": "session_state",
