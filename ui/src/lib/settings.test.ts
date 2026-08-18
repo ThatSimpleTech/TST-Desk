@@ -3,8 +3,8 @@
 // Tests for the settings store (TD-1703).
 //
 // jsdom because the appearance section stamps `data-theme` on <html> and
-// reads localStorage — the store guards both for the node environment, but
-// asserting the guard is not asserting the behavior.
+// reads localStorage. The store guards a missing store; the tests stub
+// one so persistence is actually exercised (TD-1411).
 //
 // The store touches the daemon only through connection-status's
 // sendToDaemon/onEvent, so the tests mock exactly that seam and drive the
@@ -14,7 +14,7 @@
 // to discovery must never render as an empty editable field, and the key
 // section must not hold a credential anywhere in store state.
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ClientMessageUnion, DaemonEventUnion, SetupState } from "./protocol";
 
 const mocks = vi.hoisted(() => ({
@@ -55,6 +55,22 @@ function emit(event: DaemonEventUnion): void {
 	mocks.handler?.(event);
 }
 
+// Node 26's experimental localStorage is off unless --localstorage-file
+// is set; jsdom does not always install one either. Appearance is the
+// only section that reads it, so the store already guards — the test
+// has to supply a store if it wants to assert persistence (TD-1411).
+const memory = new Map<string, string>();
+const storageStub: Storage = {
+	get length() {
+		return memory.size;
+	},
+	clear: () => memory.clear(),
+	getItem: (k: string) => memory.get(k) ?? null,
+	key: (i: number) => [...memory.keys()][i] ?? null,
+	removeItem: (k: string) => void memory.delete(k),
+	setItem: (k: string, v: string) => void memory.set(k, v),
+};
+
 function setupState(over: Partial<SetupState> = {}): SetupState {
 	return {
 		type: "setup_state",
@@ -72,12 +88,14 @@ beforeEach(() => {
 	mocks.handler = null;
 	mocks.sent = [];
 	mocks.sendOk = true;
+	memory.clear();
+	vi.stubGlobal("localStorage", storageStub);
 	resetSettings();
 	document.documentElement.removeAttribute("data-theme");
-	// Node 26's experimental localStorage is off unless --localstorage-file
-	// is set; jsdom should supply one, but a missing store must not fail
-	// every section (policy/skip-all never touch it).
-	if (typeof localStorage !== "undefined") localStorage.clear();
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
 });
 
 describe("opening", () => {
@@ -125,6 +143,14 @@ describe("appearance", () => {
 		localStorage.setItem("tst-desk:theme", "chartreuse");
 		startSettings();
 		expect(settings.theme).toBe("system");
+	});
+
+	it("falls back to system when there is no localStorage at all", () => {
+		vi.stubGlobal("localStorage", undefined);
+		startSettings();
+		expect(settings.theme).toBe("system");
+		setTheme("dark");
+		expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
 	});
 });
 

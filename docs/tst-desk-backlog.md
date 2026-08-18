@@ -2645,6 +2645,27 @@ the package in a subprocess with sockets refused. The README now cites that file
 
 ---
 
+### TD-1411 — Settings appearance tests assume `localStorage` exists
+**Size:** 1 · **Depends on:** TD-1703
+
+Node 26's experimental `localStorage` is off unless `--localstorage-file`
+is set, and jsdom does not always install one either. Two appearance
+tests in `settings.test.ts` then fail: restart cannot persist "dark",
+and the junk-value case throws on `localStorage.setItem`. The store
+already guards; the tests did not.
+
+**Acceptance criteria:**
+- [x] Appearance tests stub `localStorage` the same way `workspaces.test.ts`
+      and `sessions.test.ts` already do
+- [x] A missing store still falls back to system and can stamp an explicit
+      theme on the document
+- [x] `settings.test.ts` is green on Node 26 without `--localstorage-file`
+
+**Completed (2026-08-18):** the stub is per-test, cleared in `beforeEach`,
+unstubbed in `afterEach`. Policy and key sections never touch it.
+
+---
+
 ## Epic E15 — Documentation
 
 ---
@@ -3850,8 +3871,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M1 Headless core | E2–E9 | 52 | 156 |
 | M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 23 | 66 |
-| M3 Shippable | E13–E17, E19 | 48 | 139 |
-| **Total v0.1** | **19** | **142** | **406** |
+| M3 Shippable | E13–E17, E19 | 49 | 140 |
+| **Total v0.1** | **19** | **143** | **407** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
