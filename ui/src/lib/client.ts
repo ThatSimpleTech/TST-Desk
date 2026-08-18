@@ -382,8 +382,23 @@ export class ProtocolClient {
     // session_id. Accept returns false for a duplicate or an out-of-order
     // (gapped) seq; those are dropped and must not reach the sink.
     const seq = typeof (msg as Record<string, unknown>).seq === "number" ? ((msg as Record<string, unknown>).seq as number) : undefined;
+    const sessionId = (msg as Record<string, unknown>).session_id as string | undefined;
+
+    // TD-1204: get_instruction_stack answers with a snapshot stamped
+    // seq=1 that is not in the session log. After attach has advanced
+    // lastSeq, acceptSequenced would drop it as a stale duplicate — which
+    // is why the Stack tab stayed on "No instruction stack yet." A live
+    // TD-509 push *is* in the log and arrives as last+1; still advance
+    // the cursor then, so the next logged event is not a false gap.
+    if (type === "instruction_stack") {
+      if (sessionId !== undefined && seq !== undefined && seq === this.lastSeq(sessionId) + 1) {
+        this.lastSeqBySession.set(sessionId, seq);
+      }
+      this.dispatch(msg as DaemonEventUnion);
+      return;
+    }
+
     if (seq !== undefined) {
-      const sessionId = (msg as Record<string, unknown>).session_id as string | undefined;
       if (sessionId !== undefined && !this.acceptSequenced(sessionId, seq)) {
         return;
       }
