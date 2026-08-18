@@ -176,3 +176,15 @@ def test_no_shipped_slug_is_copied_into_the_readme() -> None:
         }
     )
     assert not copied, "shipped slugs copied into the README: " + ", ".join(copied)
+
+
+_README_IMAGE = re.compile(r"!\[[^\]]*\]\((?P<path>docs/images/[^)]+)\)")
+
+
+def test_the_readme_embeds_a_real_window_capture() -> None:
+    """The screenshot is the last TD-1501 gap; a broken path would hide it."""
+    match = _README_IMAGE.search(_doc_text())
+    assert match is not None, f"{DOC}: no markdown image pointing at docs/images/"
+    image = ROOT / match.group("path")
+    assert image.is_file(), f"{DOC}: embeds {match.group('path')}, which is not in the tree"
+    assert image.stat().st_size > 10_000, f"{image}: too small to be a window capture"

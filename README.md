@@ -10,6 +10,8 @@ workspace, but it runs on models *you* choose through any OpenAI-compatible endp
 no account, and no subscription — and pointed at a local model server it needs no API key and no
 network at all.
 
+![TST Desk on macOS — session rail, greeting, composer, and activity pane](docs/images/window.png)
+
 ---
 
 ## Install
