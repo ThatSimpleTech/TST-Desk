@@ -75,3 +75,41 @@ export function thoughtLabel(message: ReasoningState): string {
   if (message.reasoningMs === undefined) return "Thinking";
   return `Thought for ${formatDuration(message.reasoningMs / 1000)}`;
 }
+
+// ── Tool-call folds (TD-1902 remaining criterion) ──────────────────────
+//
+// Same toggle map, different key. A tool-heavy turn would otherwise dump
+// every call into the transcript; the disclosure is the resting state,
+// open only while the call has no result yet.
+
+export interface ToolFoldState {
+  toolCallId: string;
+  name: string;
+  status?: "success" | "error";
+}
+
+function toolKey(messageId: string, toolCallId: string): string {
+  return `${messageId}:tool:${toolCallId}`;
+}
+
+export function isToolLive(block: ToolFoldState): boolean {
+  return block.status === undefined;
+}
+
+export function isToolExpanded(messageId: string, block: ToolFoldState): boolean {
+  const explicit = toggles[toolKey(messageId, block.toolCallId)];
+  if (explicit !== undefined) return explicit;
+  return isToolLive(block);
+}
+
+export function toggleTool(messageId: string, block: ToolFoldState): boolean {
+  const next = !isToolExpanded(messageId, block);
+  toggles[toolKey(messageId, block.toolCallId)] = next;
+  return next;
+}
+
+export function toolLabel(block: ToolFoldState): string {
+  if (isToolLive(block)) return block.name;
+  if (block.status === "error") return `${block.name} failed`;
+  return block.name;
+}

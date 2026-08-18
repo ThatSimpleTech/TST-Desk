@@ -4,9 +4,13 @@ import {
   hasReasoning,
   isExpanded,
   isThinkingLive,
+  isToolExpanded,
+  isToolLive,
   resetDisclosures,
   thoughtLabel,
   toggle,
+  toggleTool,
+  toolLabel,
   type ReasoningState,
 } from "./reasoning-disclosure.svelte.js";
 
@@ -104,5 +108,46 @@ describe("thoughtLabel", () => {
 
   it("never reports zero — a sub-second thought still took time", () => {
     expect(thoughtLabel(thought("m1", 120))).toBe("Thought for 1s");
+  });
+});
+
+describe("tool folds (TD-1902)", () => {
+  const live = { toolCallId: "tc-1", name: "fs_read" };
+  const done = { toolCallId: "tc-1", name: "fs_read", status: "success" as const };
+  const failed = { toolCallId: "tc-1", name: "fs_read", status: "error" as const };
+
+  it("is open while the call has no result", () => {
+    expect(isToolLive(live)).toBe(true);
+    expect(isToolExpanded("m1", live)).toBe(true);
+  });
+
+  it("closes on its own once the result arrives", () => {
+    expect(isToolLive(done)).toBe(false);
+    expect(isToolExpanded("m1", done)).toBe(false);
+  });
+
+  it("keeps an explicit toggle after the result lands", () => {
+    toggleTool("m1", live);
+    expect(isToolExpanded("m1", live)).toBe(false);
+    expect(isToolExpanded("m1", done)).toBe(false);
+  });
+
+  it("is per block, not per message", () => {
+    toggleTool("m1", done);
+    expect(isToolExpanded("m1", done)).toBe(true);
+    expect(isToolExpanded("m1", { toolCallId: "tc-2", name: "fs_write", status: "success" })).toBe(
+      false,
+    );
+  });
+
+  it("survives the row being destroyed and rebuilt", () => {
+    toggleTool("m1", done);
+    expect(isToolExpanded("m1", done)).toBe(true);
+  });
+
+  it("labels a failure distinctly", () => {
+    expect(toolLabel(live)).toBe("fs_read");
+    expect(toolLabel(done)).toBe("fs_read");
+    expect(toolLabel(failed)).toBe("fs_read failed");
   });
 });
