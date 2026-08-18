@@ -2161,8 +2161,9 @@ matched.
       reaps the grandchild
 - [x] After the host gives up, the pill says the daemon could not start —
       never **Connecting…** forever
-- [ ] Packaged `.app` launches, the pill goes Connected, quit leaves no `tstd`
-      (manual — rebuild the sidecar + bundle and launch)
+- [x] Packaged `.app` launches, the pill goes Connected, quit leaves no `tstd`
+      (2026-08-18: rebuilt host + UI, bundled `.app`, handshake in ~60ms,
+      one onefile pair, Cmd+Q left zero listeners)
 
 ---
 
