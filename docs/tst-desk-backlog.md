@@ -44,7 +44,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M1 — Headless core** | E2, E3, E4, E5, E6, E7, E8, E9 | A scripted request runs end-to-end from a CLI harness, with steering loaded, tools dispatched, decisions classified, cost accounted, all under test |
 | **M1.5 — Local models** | E18 | A scripted request runs end-to-end against a local OpenAI-compatible endpoint with no API key and no spend |
 | **M2 — The window** | E10, E11, E12 | A human does the same thing through the app, never touching a terminal |
-| **M3 — Shippable** | E13, E14, E15, E16, E17 | A stranger can install and use it from a fresh machine |
+| **M3 — Shippable** | E13, E14, E15, E16, E17, E19 | A stranger can install and use it from a fresh machine |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -67,6 +67,10 @@ and ships the TD-1007 approval cards, the last unchecked M2 interaction.
 
 E18 Local models hangs off E3 (router) and TD-1401 (the headless harness): it makes the
 model plane run without a key or a bill.
+
+E19 Reasoning visibility hangs off E18 (the local preset's brain is a reasoning model)
+and E10 (the chat pane has to show what the loop now emits). It is a bugfix epic:
+a shipped preset that thinks in silence fails M3's exit condition.
 
 E14 is not a phase at the end. Tests are written with each story. The E14 stories cover
 cross-cutting suites and CI gates that don't belong to a single feature.
@@ -1888,6 +1892,91 @@ entries again. A fourth test pins that the gate still refuses unknown frames.
 
 ---
 
+### TD-1011 — The split divider latches when its pointer capture is not honoured
+**Size:** 2 · **Depends on:** TD-1001
+
+**Bugfix.** Filed 2026-08-18 from a packaged-app pass: the findings were not
+on this main's backlog.
+
+**Acceptance criteria:**
+- [x] Releasing the pointer anywhere on screen ends the drag: `dragging` is false afterwards
+      and the divider returns to its resting colour
+- [x] A drag that outruns the 4px divider keeps resizing instead of stopping the moment the
+      cursor leaves it
+- [x] The divider's pointer target is at least 8px wide without widening the painted rule
+- [x] Keyboard operation and the ARIA separator semantics are unchanged
+- [x] Regression test: pointerdown on the divider → pointermove outside it → pointerup outside
+      it asserts the final width and that `dragging` cleared
+
+**Done (2026-08-18):** move/up/cancel attach to `window` for the drag
+(`attachDragListeners`); pointer capture is kept as an optimisation.
+The painted rule is still `--space-1`; `::before` is the 8px hit target.
+`splitpane-drag.test.ts` mounts the pane, stubs layout, and drives
+pointerdown on the divider then move/up on `window`.
+
+`SplitPane.svelte` binds `onpointermove` and `onpointerup` to the divider itself and relies
+solely on `setPointerCapture` to keep receiving them. Where the capture is not honoured the
+pointerup lands on another element, `onDividerUp` never runs, and `dragging` latches `true` —
+the pane freezes at whatever width it reached and the divider stays painted
+`--color-accent`, because `.splitpane.dragging .divider` shares the hover rule.
+
+Observed 2026-08-18 in the packaged webview, pinned at the 80% clamp with the divider stuck
+accent-coloured. Not reproducible in Chromium, where the capture is honoured and a scripted
+drag resizes and persists correctly — which is why the existing unit tests pass. Attach move
+and up to `window` for the duration of the drag and treat capture as an optimisation rather
+than the mechanism. Widening the hit area is a separate concern but belongs in the same fix:
+4px is below every platform's minimum pointer target, and the two together are what make the
+divider read as broken rather than fiddly.
+
+Consequence worth recording, because it presents as four unrelated bugs: at the 80% clamp the
+right pane is roughly 164px, narrower than its own tab strip, so `Usage` clips off-window and
+Activity, Files and Stack have no room to render. The pane is not broken, it is crushed by a
+divider that cannot be dragged back.
+
+Milestone note: an M2 defect surfacing after M2 closed. Filed in E10 because the divider is
+TD-1001's.
+
+---
+
+### TD-1012 — The message list's virtualizer effect re-triggers itself and freezes the window
+**Size:** 2 · **Depends on:** TD-1004
+
+**Bugfix.** Filed 2026-08-18 from a packaged-app pass: the findings were not
+on this main's backlog.
+
+**Acceptance criteria:**
+- [x] Mounting the chat pane with a replayed conversation raises no
+      `effect_update_depth_exceeded`
+- [x] Options are still re-set when the conversation grows and when the scroll element
+      appears — the fix must not trade the loop for a list that stops tracking
+- [x] A regression test mounts the list against a growing `messages` array and fails if the
+      options-setting effect runs unboundedly
+
+**Done (2026-08-18):** the options `$effect` reads `messages.length` and
+`scrollEl` explicitly, then `untrack`s `$virtualizer.setOptions`. Ten
+ticks of a 40-row replay no longer throw; appending rows still grows
+the sizer.
+
+`MessageList.svelte` re-sets the virtualizer's options from an `$effect`. `$virtualizer` is a
+store, so reading it inside the effect subscribes the effect to it, and `setOptions` notifies
+that store's subscribers — the effect writes the state it reads and re-triggers itself until
+Svelte gives up. The option getters are fresh closures on every run, so the notification fires
+every time rather than settling.
+
+The consequence is out of all proportion to the cause. Svelte throws the error out of the
+runtime, and once thrown it stops processing further updates — so the whole window goes inert,
+not just the transcript. Every button, tab, dropdown and the split divider stop responding,
+which reads as four unrelated defects and sent the live pass after the divider, the tab
+strip, and the provider before landing here.
+
+Reproduced 2026-08-18 on the packaged app (and earlier on a freshly rebooted machine at load
+2.9). It predates the live pass; a starved machine had masked it as resource contention.
+
+Milestone note: an M2 defect surfacing after M2 closed. Filed in E10 because the list is
+TD-1004's.
+
+---
+
 
 ### TD-1013 — One modal stack: Escape, click-outside, shared z-index
 **Size:** 3 · **Depends on:** TD-1008, TD-1703
@@ -2068,6 +2157,47 @@ confirmed by reading the reducer: the append has no guard and the stable id has 
 The timeline's answer is next door and probably transfers: bind-and-clear plus idempotence keyed
 on the log position, in `timeline.ts` (TD-1009). Worth checking whether the two stores should
 share it rather than growing a second copy.
+
+---
+
+### TD-1204 — The stack panel stays empty on a live session
+**Size:** 2 · **Depends on:** TD-1201
+
+**Bugfix.** Filed 2026-08-18 from a packaged-app pass: the findings were not
+on this main's backlog.
+
+**Acceptance criteria:**
+- [x] Opening Stack on a bound workspace with steering files shows those
+      sources — not "No instruction stack yet."
+- [x] A live `instruction_stack` push (turn boundary / hot reload) lands
+      even while the Stack tab is not the visible one
+- [x] Switching session while Stack is open re-asks for the new session
+- [x] Leaving the tab and coming back still shows the current session's
+      stack — unmounting the panel must not drop the subscription
+- [x] A test pins the mount contract: the store is subscribed before
+      `get_instruction_stack` is sent, so a reply cannot arrive with
+      nobody listening
+
+**Done (2026-08-18):** `startStack` lives on `AppShell` for the window's
+life, matching `startUsage`. The panel is presentational. An `$effect`
+in the shell refreshes when the Stack tab is visible and when the bound
+session changes under it — palette and tab button both go through
+`showRightPane`. The store test names the subscribe-then-apply order.
+
+`StackPanel` is only in the DOM on the Stack tab. `initStack` (the
+`onDaemonEvent` subscribe) lives in that panel's `onMount`, and
+`refreshStack` lives in a sibling `$effect`. Two things follow.
+
+First, a `get_instruction_stack` reply — or a loop-pushed stack from
+TD-509 — that arrives before the subscriber is registered is dropped,
+and the panel sits on the empty copy forever. Second, leaving the tab
+tears the subscriber down, so a turn that runs while the user is on
+Activity never updates the store; opening Stack then races the same
+refresh-before-subscribe path.
+
+The usage pane already has the shape this wants: subscribe for the
+shell's lifetime (`startUsage` from `AppShell.onMount`), refresh when
+the tab is shown. The panel itself is presentational.
 
 ---
 
@@ -3485,6 +3615,115 @@ pass unchanged, which is what says the refactor moved code and not behavior.
 ---
 
 
+## Epic E19 — Reasoning visibility
+
+**Goal:** show the agent's thinking while it happens, folded away when it doesn't matter. A
+reasoning model whose reasoning the UI discards is indistinguishable from a hung one, and
+since M1.5 the default brain tier is exactly that model.
+
+**This is a bugfix, not a flourish.** Nothing that worked stopped working, but a shipped
+preset that thinks for a minute in complete silence fails M3's exit condition. Support for
+reasoning models was never built; M1.5 shipped a preset that needs it. Filed as a new epic
+rather than folded into E17 so it stays separate from the familiarity stories it sits beside.
+
+Measured 2026-08-17 against `qwen3.8:27b` on Ollama. The endpoint streams reasoning as
+`delta.reasoning` with `delta.content` set to `""`:
+
+```
+"delta":{"content":"","reasoning":"The"}
+"delta":{"content":"","reasoning":" user"}
+```
+
+`provider.py` parses only `content`, and `loop.py` gates emission on its truthiness — an empty
+string is falsy, so an entire reasoning phase produces no `assistant_delta` at all. A
+59-character prompt bought 63 seconds of complete silence before the first content token, with
+the working shimmer running throughout. Reproduced 2026-08-18 on this main: send "Find what's
+failing" → Whittling, no thinking UI, no tokens, until the answer (if it) arrives.
+
+**Milestone: M3.** Pulled in on 2026-08-18 (see `DECISIONS.md`). M3 exits when "a stranger can
+install and use it from a fresh machine", and `local` is a shipped preset — a stranger who
+picks it gets an application that looks hung for a minute at a time.
+
+---
+
+### TD-1901 — Reasoning passthrough
+**Size:** 3 · **Depends on:** TD-1801
+
+**Bugfix.**
+
+**Acceptance criteria:**
+- [x] `Delta` carries a `reasoning` field parsed from the chunk, alongside `content`
+- [x] A chunk carrying reasoning with an empty `content` produces an event — the
+      `if chunk.delta.content:` gate no longer swallows it
+- [x] Reasoning is emitted as its own event kind rather than merged into `assistant_delta`, so
+      the transcript can still tell thinking from answer after the fact
+- [x] Reasoning never enters `collected_content`, so it is not replayed to the provider as
+      assistant content on the next round trip
+- [x] Reasoning is redacted on the audit and event surface on the same terms as content
+      (TD-1405)
+- [x] The first-token watchdog (TD-1713) counts a reasoning delta as a first token, so a
+      thinking model no longer trips "No response yet — the model may be slow or unreachable"
+- [x] Scripted-provider tests cover reasoning-only chunks, reasoning interleaved with content,
+      and a provider that emits neither field
+
+**Done (2026-08-18):** both spellings parse to `Delta.reasoning`; empty
+strings normalise to `None`. The loop emits `AssistantReasoning` and
+does not touch `collected_content` — a two-turn test asserts the
+scratchpad never appears in any message handed back to the provider.
+`Script.reasoning` emits `content=""` beside each thinking chunk so the
+mock reproduces the defect. Redaction is the same path `assistant_delta`
+already takes (`session._redact_event` does not scrub assistant prose).
+`assistant_reasoning` is in `KNOWN_EVENT_TYPES` and `DaemonEventUnion`.
+The chat store ends the first-token wait on reasoning.
+
+**Notes:** the field name is from a live capture, not from documentation. Ollama emits
+`reasoning`; some OpenAI-compatible providers emit `reasoning_content`. Accept both and do not
+invent a third. This is not local-only plumbing — remote reasoning models reach the same
+parser through OpenRouter.
+
+Do not conflate this with TD-1716. That was a twenty-minute "Whittling…" caused by WKWebView
+suspension freezing a healthy client; this is a healthy client being sent nothing. Both
+present identically to the user, which is the argument for the distinct event kind.
+
+---
+
+### TD-1902 — Collapsible thinking and tool blocks
+**Size:** 3 · **Depends on:** TD-1901
+
+**Bugfix** for the thinking half — without it TD-1901 stops the shimmer and leaves an empty
+bubble with a blinking caret for the minute the model spends thinking.
+
+**Acceptance criteria:**
+- [x] Reasoning renders as a collapsed disclosure labelled with its duration ("Thought for
+      63s"), expandable in place
+- [x] While it is the live thing the block is expanded and streaming; it collapses on its own
+      once content begins
+- [ ] Tool calls and their results fold into the same disclosure treatment instead of growing
+      the transcript without bound
+- [x] Collapsed state is per-block and survives scrolling away and back
+- [x] Expanded reasoning is selectable and copyable
+- [x] `prefers-reduced-motion` suppresses the expand and collapse animation
+
+**Partial (2026-08-18):** `ReasoningBlock` renders above the answer —
+open and shimmering while thinking is live, collapsing to "Thought for
+1m 3s" when content starts. An explicit toggle wins permanently.
+Disclosure state is module-level and keyed by message id, so a
+virtualized row scrolled away and back keeps its fold. Bind/dispose
+clears the map (`onUnbind`) because ids restart at m1. The caret no
+longer blinks over an empty body during a reasoning phase.
+
+Tool-call folding is the remaining criterion and is not this pass. The
+silent-Whittling bug is the thinking half; folding tool rows is a
+density follow-up, not what made the window look hung.
+
+**Notes:** the disclosure is the resting state, not a setting to find. At the brain tier's
+measured throughput a 27B thinker will out-produce its own answer several times over, so
+rendering reasoning inline and unfolded would bury the reply — which is the failure mode this
+story exists to avoid, not a smaller version of the one TD-1901 fixes.
+
+---
+
+
 # Post-v0.1 backlog
 
 Named, sequenced, and deliberately not decomposed. Do not build these.
@@ -3524,9 +3763,9 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 51 | 153 |
 | M1.5 Local models | E18 | 12 | 30 |
-| M2 The window | E10–E12 | 20 | 60 |
-| M3 Shippable | E13–E17 | 45 | 131 |
-| **Total v0.1** | **18** | **135** | **389** |
+| M2 The window | E10–E12 | 23 | 66 |
+| M3 Shippable | E13–E17, E19 | 47 | 137 |
+| **Total v0.1** | **19** | **140** | **401** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

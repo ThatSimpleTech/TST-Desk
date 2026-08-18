@@ -5499,3 +5499,46 @@ port — the case the pid key exists to refuse.
 
 **Windows:** parent walk uses `wmic`; tree kill uses `taskkill /T`. Job-object
 process-group kill stays TD-1406.
+
+---
+
+## 2026-08-18 — E19: reasoning visibility pulled into M3 (Class C)
+
+**Decision:** Epic E19 (TD-1901 reasoning passthrough, TD-1902 collapsible thinking) is
+scheduled into M3 rather than deferred past v0.1. Filed as a **bugfix**, not a familiarity
+story.
+
+**Rationale:** M3's exit condition is "a stranger can install and use it from a fresh
+machine." `local` is a shipped preset, and its brain tier is a reasoning model. Measured
+against `qwen3.8:27b` on Ollama, the endpoint streams reasoning as `delta.reasoning` with
+`delta.content` set to `""`; `provider.py` reads only `content` and `loop.py` gates emission
+on its truthiness, so an entire reasoning phase emits nothing. A packaged-app pass on
+2026-08-18 reproduced it as Whittling with no thinking UI. A stranger who picks the preset
+we ship gets an application that appears hung, which fails the exit condition on its own
+terms.
+
+The user asked to file and fix the live-pass findings that were not on this main's backlog.
+Silent reasoning was one of them. That is the sign-off.
+
+**Alternative rejected:** dropping `local` from the shipped presets until E19 lands. That
+trades a visible defect for a removed capability, and M1.5 exists precisely to make the free
+path first-class.
+
+**Also filed from the same pass, as M2 bugfixes in their home epics:** TD-1011 (divider
+latch), TD-1012 (virtualizer freeze), TD-1204 (empty stack panel). Hex rail titles stay
+TD-1701 / v0.3; title-bar "Running" stays TD-1006 session liveness.
+
+---
+
+## 2026-08-18 — TD-1901: `assistant_reasoning` is its own event (Class B)
+
+**Decision:** a reasoning model's thinking is a distinct `assistant_reasoning` event, not a
+flag on `assistant_delta`.
+
+**Rationale:** the transcript has to tell thinking from answer after the stream ends — to
+fold one and not the other (TD-1902), and to keep reasoning out of `collected_content` so it
+is never replayed to the provider as assistant speech. A flag on a shared type makes that a
+runtime check every consumer has to remember.
+
+Both spellings in the wild parse to `Delta.reasoning`: Ollama's `reasoning`, DeepSeek /
+OpenRouter's `reasoning_content`. Empty strings normalise to `None`.
