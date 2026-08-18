@@ -37,13 +37,26 @@
 	});
 
 	// Keep the virtualizer in sync as the conversation grows.
+	//
+	// The dependencies are read explicitly and the store call is untracked,
+	// which is load-bearing: `$virtualizer` is a store, so reading it here
+	// would subscribe this effect to it, and `setOptions` notifies that
+	// store's subscribers. The effect would then re-trigger itself forever —
+	// Svelte reports it as `effect_update_depth_exceeded`, and because the
+	// error is thrown out of the runtime it stops processing *any* further
+	// updates, so the whole window goes unresponsive rather than just the
+	// transcript (TD-1012).
 	$effect(() => {
-		$virtualizer.setOptions({
-			count: messages.length,
-			getScrollElement: () => scrollEl,
-			estimateSize: () => 96,
-			getItemKey: (index: number) => messages[index]?.id ?? index,
-			overscan: 6,
+		const count = messages.length;
+		void scrollEl;
+		untrack(() => {
+			$virtualizer.setOptions({
+				count,
+				getScrollElement: () => scrollEl,
+				estimateSize: () => 96,
+				getItemKey: (index: number) => messages[index]?.id ?? index,
+				overscan: 6,
+			});
 		});
 	});
 
