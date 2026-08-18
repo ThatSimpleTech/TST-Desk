@@ -368,6 +368,100 @@ class TestNever:
             await dispatcher.dispatch("tc-1", "echo", {"message": "hi"})
 
 
+# ── Skip-all (TD-804) ───────────────────────────────────────────────────
+
+
+class TestSkipAll:
+    async def test_class_b_runs_without_a_card(self, tmp_path: Path) -> None:
+        session = Session(str(tmp_path))
+        session.policy = ask_policy()
+        registry, dispatcher = make_echo()
+        dispatcher.skip_all_fn = lambda: True
+        mock = MockProvider(sequences=tool_call_then("done"))
+        await start_loop(session, TierRouter(), mock, make_config(), registry, dispatcher)
+
+        await session.add_user_message("echo hello")
+        await wait_for_turn(session, 1)
+
+        assert not any(isinstance(e, ApprovalRequestEvent) for e in session.event_log.all_events)
+        results = tool_results(session)
+        assert results[0].status == "success"
+        assert results[0].output == "Echo: hello"
+
+    async def test_never_rule_still_refuses(self, tmp_path: Path) -> None:
+        session = Session(str(tmp_path))
+        session.policy = PolicyConfig(rules=[PolicyRule(tool="echo", args="**", effect="never")])
+        registry, dispatcher = make_echo()
+        dispatcher.skip_all_fn = lambda: True
+        mock = MockProvider(sequences=tool_call_then("understood, skipping"))
+        await start_loop(session, TierRouter(), mock, make_config(), registry, dispatcher)
+
+        await session.add_user_message("echo hello")
+        await wait_for_turn(session, 1)
+
+        assert not any(isinstance(e, ApprovalRequestEvent) for e in session.event_log.all_events)
+        results = tool_results(session)
+        assert results[0].status == "error"
+        assert results[0].error_code == "policy_denied"
+
+    @pytest.mark.asyncio
+    async def test_turning_on_releases_parked_b_and_leaves_c(self, tmp_path: Path) -> None:
+        daemon = Daemon(data_dir=tmp_path / "data")
+        daemon_task = asyncio.create_task(daemon.run())
+        for _ in range(50):
+            if daemon.ws_server.port:
+                break
+            await asyncio.sleep(0.05)
+
+        try:
+            ws, session = await _open_workspace(daemon, tmp_path)
+            tool = Tool(name="fs_write", path_fields=("path",), mutates=True)
+            parked_b = asyncio.create_task(
+                session.request_approval(
+                    "tc-b",
+                    tool,
+                    {"path": "src/app.py"},
+                    DecisionClass.B,
+                    "Write src/app.py",
+                    "decision class B requires approval",
+                )
+            )
+            parked_c = asyncio.create_task(
+                session.request_approval(
+                    "tc-c",
+                    tool,
+                    {"path": "AGENTS.md"},
+                    DecisionClass.C,
+                    "Write AGENTS.md",
+                    "decision class C requires approval",
+                )
+            )
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 3.0
+            while loop.time() < deadline:
+                if session.get_pending_approval("tc-b") and session.get_pending_approval("tc-c"):
+                    break
+                await asyncio.sleep(0.02)
+            assert session.state == "awaiting_approval"
+
+            await ws.send(json.dumps({"type": "set_skip_all_approvals", "enabled": True}))
+            ack = await _recv_until(ws, "setup_state")
+            assert ack["skip_all_approvals"] is True
+
+            outcome = await asyncio.wait_for(parked_b, timeout=2)
+            assert outcome.approved
+            await asyncio.sleep(0.1)
+            assert not parked_c.done()
+            assert session.get_pending_approval("tc-c") is not None
+
+            assert session.resolve_approval("tc-c", False)
+            await asyncio.wait_for(parked_c, timeout=2)
+            await ws.close()
+        finally:
+            daemon._shutdown_event.set()
+            await asyncio.wait_for(daemon_task, timeout=3)
+
+
 # ── Always-allow (TD-803) ──────────────────────────────────────────────
 
 

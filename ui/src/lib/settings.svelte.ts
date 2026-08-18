@@ -43,6 +43,8 @@ export const settings = $state({
 	/** Policy section. Rules are per-workspace, so they need a session. */
 	rules: [] as PolicyRuleSummary[],
 	rulesSessionId: null as string | null,
+	/** Machine-wide skip-all (TD-804). From setup_state, not inferred. */
+	skipAllApprovals: false,
 });
 
 let started = false;
@@ -73,6 +75,7 @@ export function resetSettings(): void {
 	settings.keyRequired = true;
 	settings.rules = [];
 	settings.rulesSessionId = null;
+	settings.skipAllApprovals = false;
 	started = false;
 }
 
@@ -87,6 +90,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.keyRequired = event.key_required;
 		// setup_state is the ack for set_tier_slug, so it ends the save.
 		settings.savingTier = null;
+		settings.skipAllApprovals = event.skip_all_approvals ?? false;
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -181,4 +185,9 @@ export function revokeRule(tool: string, args: string): void {
 	// The daemon answers with a fresh policy_rules, so the list refreshes
 	// from the daemon rather than from a local splice.
 	sendToDaemon({ type: "revoke_policy_rule", session_id: sessionId, tool, args });
+}
+
+/** Turn skip-all on or off (TD-804). The daemon acks with setup_state. */
+export function setSkipAllApprovals(enabled: boolean): void {
+	sendToDaemon({ type: "set_skip_all_approvals", enabled });
 }

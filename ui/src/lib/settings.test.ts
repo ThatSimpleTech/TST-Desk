@@ -48,6 +48,7 @@ import {
 	saveSlug,
 	loadRules,
 	revokeRule,
+	setSkipAllApprovals,
 } from "./settings.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -73,7 +74,10 @@ beforeEach(() => {
 	mocks.sendOk = true;
 	resetSettings();
 	document.documentElement.removeAttribute("data-theme");
-	localStorage.clear();
+	// Node 26's experimental localStorage is off unless --localstorage-file
+	// is set; jsdom should supply one, but a missing store must not fail
+	// every section (policy/skip-all never touch it).
+	if (typeof localStorage !== "undefined") localStorage.clear();
 });
 
 describe("opening", () => {
@@ -224,6 +228,31 @@ describe("policy section", () => {
 		loadRules(null);
 		revokeRule("fs_read", "**");
 		expect(mocks.sent).toEqual([]);
+	});
+
+	it("reads skip-all from setup_state", () => {
+		startSettings();
+		emit(setupState({ skip_all_approvals: true }));
+		expect(settings.skipAllApprovals).toBe(true);
+	});
+
+	it("treats an omitted skip-all field as off", () => {
+		startSettings();
+		emit(setupState({ skip_all_approvals: true }));
+		const { skip_all_approvals: _omitted, ...without } = setupState();
+		emit(without as SetupState);
+		expect(settings.skipAllApprovals).toBe(false);
+	});
+
+	it("sends set_skip_all_approvals and waits for the ack", () => {
+		startSettings();
+		emit(setupState());
+		setSkipAllApprovals(true);
+		expect(mocks.sent).toEqual([{ type: "set_skip_all_approvals", enabled: true }]);
+		// Not flipped locally — setup_state is the source of truth.
+		expect(settings.skipAllApprovals).toBe(false);
+		emit(setupState({ skip_all_approvals: true }));
+		expect(settings.skipAllApprovals).toBe(true);
 	});
 });
 

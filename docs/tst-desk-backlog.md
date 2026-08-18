@@ -1078,6 +1078,41 @@ client messages round-trip through the daemon handler (`_handle_approve`/`_handl
 
 ---
 
+### TD-804 — Skip all approvals
+**Size:** 3 · **Depends on:** TD-802, TD-1703
+
+**A settings toggle, not a CLI flag.** One switch in Settings → Policy
+turns off approval cards for every Class B call on this machine. Asked
+for 2026-08-18 after Approve on a live card returned `no_pending_approval`
+and the user named YOLO / `--dangerously-skip-permissions` as the
+expected feature.
+
+This is not a wall bypass. The classifier still runs. Class C still
+cannot auto. A `never` rule still refuses. The boundary still wins
+before policy is consulted.
+
+**Acceptance criteria:**
+- [x] Settings → Policy has a Skip all approvals control, on or off
+- [x] The choice persists in the user data dir (not `.tst/config.yaml`,
+      so it is not committed with the workspace)
+- [x] While it is on, a Class B call that would have asked runs as auto
+- [x] A Class C call still parks or refuses — skip-all cannot make it auto
+- [x] A `never` rule still refuses
+- [x] Turning it on approves every currently parked non-C call
+- [x] `setup_state` reports the flag so the toggle is honest after restart
+- [x] Tests cover B→auto, C stays put, `never` stays never, and persist
+
+**Notes:** `effect: yolo` stays invalid. Skip-all is a separate bit, not
+a new policy effect, so existing rules keep their meaning.
+
+**Completed (2026-08-18):** Settings → Policy has an On/Off switch. The
+daemon persists it as `approvals.yaml` in the user data dir, reports it
+on `setup_state`, and `resolve()` promotes Class B `ask` to `auto` when
+the bit is on. Class C and `never` are unchanged. Turning it on approves
+every parked non-C call.
+
+---
+
 ## Epic E9 — Audit and cost
 
 ---
@@ -3768,11 +3803,11 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 51 | 153 |
+| M1 Headless core | E2–E9 | 52 | 156 |
 | M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 23 | 66 |
 | M3 Shippable | E13–E17, E19 | 47 | 137 |
-| **Total v0.1** | **19** | **140** | **401** |
+| **Total v0.1** | **19** | **141** | **404** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

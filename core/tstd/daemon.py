@@ -58,9 +58,11 @@ from .policy import (
     add_rule,
     load_approved_imports,
     load_policy,
+    load_skip_all,
     propose_always_allow,
     remove_rule,
     save_policy,
+    save_skip_all,
 )
 from .protocol import (
     AlwaysAllow,
@@ -96,6 +98,7 @@ from .protocol import (
     SessionSummary,
     SetApiKey,
     SetPreset,
+    SetSkipAllApprovals,
     SetTier,
     SetTierSlug,
     SetupState,
@@ -357,6 +360,9 @@ class Daemon:
         self._attached_clients: dict[str, set[Any]] = {}
         # (connection, session_id) -> streaming task
         self._streaming_tasks: dict[tuple[int, str], asyncio.Task[None]] = {}
+        # TD-804: machine-wide skip-all.  Loaded from the user data dir so
+        # a workspace file cannot carry it into someone else's clone.
+        self.skip_all_approvals = load_skip_all(self.data_dir)
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
@@ -407,6 +413,7 @@ class Daemon:
             presets=sorted(self.config.presets),
             active_preset=self.config.active_preset,
             tier_slugs=dict(self._slug_snapshot.get(self.config.active_preset, {})),
+            skip_all_approvals=self.skip_all_approvals,
         )
 
     async def _provider_probe(self, api_key: str | None = None) -> ProviderError | None:
@@ -1116,6 +1123,14 @@ class Daemon:
                 ],
             ).model_dump_json()
 
+        if isinstance(msg, SetSkipAllApprovals):
+            self.skip_all_approvals = msg.enabled
+            save_skip_all(self.data_dir, msg.enabled)
+            if msg.enabled:
+                for session in await self.session_registry.list_sessions():
+                    session.resolve_skippable_approvals()
+            return (await self._setup_state_event()).model_dump_json()
+
         if isinstance(msg, Attach):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -1309,6 +1324,7 @@ class Daemon:
         # the classifier, path guard, and checkpointer on first turn.
         tool_registry = create_registry()
         tool_dispatcher = ToolDispatcher(tool_registry)
+        tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals
         register_builtin_handlers(
             tool_dispatcher,
             allowed_commands=sess.boundary_config.boundary.shell_allowlist(),

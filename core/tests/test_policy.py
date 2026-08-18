@@ -22,10 +22,13 @@ from tstd.policy import (
     PolicyRule,
     add_rule,
     load_policy,
+    load_skip_all,
     propose_always_allow,
     remove_rule,
     resolve,
+    resolve_explained,
     save_policy,
+    save_skip_all,
     summarize_arguments,
 )
 from tstd.tools import Tool
@@ -307,3 +310,73 @@ class TestAlwaysAllow:
         assert remove_rule(config, "shell", "npm test") is True
         assert config.rules == [_rule("fs_*", "src/**")]
         assert remove_rule(config, "shell", "npm test") is False  # already gone
+
+
+# ── Skip-all (TD-804) ───────────────────────────────────────────────────
+
+
+class TestSkipAll:
+    def test_promotes_class_b_ask_to_auto(self) -> None:
+        decision = resolve_explained(PolicyConfig(), SHELL, {"command": "ls"}, B, skip_all=True)
+        assert decision.effect == "auto"
+        assert decision.reason == "skip-all approvals is on"
+
+    def test_promotes_an_ask_rule_for_class_b(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("shell", "**", "ask")])
+        assert resolve(cfg, SHELL, {"command": "ls"}, B, skip_all=True) == "auto"
+
+    def test_class_c_still_asks(self) -> None:
+        assert resolve(PolicyConfig(), SHELL, {"command": "ls"}, C, skip_all=True) == "ask"
+
+    def test_class_c_configured_never_still_never(self) -> None:
+        cfg = PolicyConfig(class_c_default="never")
+        assert resolve(cfg, SHELL, {"command": "ls"}, C, skip_all=True) == "never"
+
+    def test_auto_rule_still_cannot_downgrade_class_c(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("shell", "**", "auto")])
+        assert resolve(cfg, SHELL, {"command": "ls"}, C, skip_all=True) == "ask"
+
+    def test_never_rule_still_refuses(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("shell", "**", "never")])
+        assert resolve(cfg, SHELL, {"command": "ls"}, B, skip_all=True) == "never"
+
+    def test_off_leaves_class_b_asking(self) -> None:
+        assert resolve(PolicyConfig(), SHELL, {"command": "ls"}, B) == "ask"
+        assert resolve(PolicyConfig(), SHELL, {"command": "ls"}, B, skip_all=False) == "ask"
+
+
+class TestSkipAllPersist:
+    def test_absent_is_off(self, tmp_path: Path) -> None:
+        assert load_skip_all(tmp_path) is False
+
+    def test_round_trip(self, tmp_path: Path) -> None:
+        save_skip_all(tmp_path, True)
+        assert load_skip_all(tmp_path) is True
+        save_skip_all(tmp_path, False)
+        assert load_skip_all(tmp_path) is False
+
+    def test_lands_in_user_data_not_workspace_config(self, tmp_path: Path) -> None:
+        data = tmp_path / "data"
+        workspace = tmp_path / "ws"
+        (workspace / ".tst").mkdir(parents=True)
+        workspace_config = workspace / ".tst" / "config.yaml"
+        workspace_config.write_text("policy:\n  rules: []\n", encoding="utf-8")
+        before = workspace_config.read_text(encoding="utf-8")
+
+        save_skip_all(data, True)
+
+        assert (data / "approvals.yaml").exists()
+        assert not (data / ".tst").exists()
+        assert workspace_config.read_text(encoding="utf-8") == before
+        assert "skip_all" not in before
+
+    def test_unreadable_or_junk_is_off(self, tmp_path: Path) -> None:
+        path = tmp_path / "approvals.yaml"
+        path.write_text(":::: not yaml", encoding="utf-8")
+        assert load_skip_all(tmp_path) is False
+        path.write_text("- just a list\n", encoding="utf-8")
+        assert load_skip_all(tmp_path) is False
+        path.write_text("skip_all: false\n", encoding="utf-8")
+        assert load_skip_all(tmp_path) is False
+        path.write_text('skip_all: "false"\n', encoding="utf-8")
+        assert load_skip_all(tmp_path) is False

@@ -238,6 +238,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls. |
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
+| `set_skip_all_approvals` | — | Turn skip-all approvals on or off. Machine-wide; Class C and `never` are unaffected. Acked with `setup_state`. |
 | `resume` | yes | Resume a session paused at a declared cap, after the cap was raised. |
 | `cancel` | yes | Cancel a running session. |
 | `attach` | yes | Subscribe to a session, replaying from `from_seq`. |
@@ -290,7 +291,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state. |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug`. |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals`. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
@@ -316,8 +317,9 @@ TypeScript types are a deliberate hand-mirror rather than generated code (`DECIS
 §4) — the fixture round-trip is what keeps the mirror honest.
 
 Prefer additive fields with defaults over a version bump: a client that ignores a new optional
-field should keep behaving exactly as it did. That is why `SetupState.key_required` and
-`SessionSummary.archived` shipped without touching `PROTOCOL_VERSION`.
+field should keep behaving exactly as it did. That is why `SetupState.key_required`,
+`SetupState.skip_all_approvals`, and `SessionSummary.archived` shipped without touching
+`PROTOCOL_VERSION`.
 
 ---
 

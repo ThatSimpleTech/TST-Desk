@@ -5843,3 +5843,25 @@ precedent:
   unrelated to the MCP server, but the unanchored pattern silently excluded
   `mcp/tst-cu-mcp/src/tst_cu_mcp/backends/darwin.py` from staging, so the commit
   could not be correct without it.
+
+---
+
+## 2026-08-18 — TD-804: skip-all is a user setting, not a wall bypass (Class C)
+
+**Decision:** Settings → Policy gains a machine-wide **Skip all approvals** toggle. It
+promotes Class B `ask` to `auto`. It does not promote Class C, does not override a
+`never` rule, and does not run before the boundary. The classifier still runs; the
+ledger still logs.
+
+**Rationale:** The user asked for a normal Universal Skip-all setting after a live
+Approve failed with `no_pending_approval`. That is the sign-off. A Claude-style
+`--dangerously-skip-permissions` that also silences Class C would violate TD-803 and
+the spec's wall. Skip-all is the product's version of the feature: skip the *ask*,
+not the *wall*.
+
+**Persistence:** `approvals.yaml` in the user data dir, not `.tst/config.yaml`. A
+workspace file would be committed and surprise the next clone. `effect: yolo` stays
+invalid — skip-all is a separate bit so existing rules keep their meaning.
+
+**Turning it on** approves every currently parked non-C call so a card that is up
+does not stay up under a setting that says it should not.

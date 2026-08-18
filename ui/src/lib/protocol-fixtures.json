@@ -61,6 +61,10 @@
     "tool": "shell",
     "args": "rm *"
   },
+  "set_skip_all_approvals": {
+    "type": "set_skip_all_approvals",
+    "enabled": true
+  },
   "resume": {
     "type": "resume",
     "session_id": "sess-1"
@@ -489,7 +493,8 @@
       "tst-default"
     ],
     "active_preset": "tst-default",
-    "tier_slugs": {}
+    "tier_slugs": {},
+    "skip_all_approvals": false
   },
   "api_key_validated": {
     "type": "api_key_validated",

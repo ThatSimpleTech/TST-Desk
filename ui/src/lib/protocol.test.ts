@@ -52,6 +52,7 @@ import type {
   SetApiKey,
   ValidateApiKey,
   SetPreset,
+  SetSkipAllApprovals,
   SetupState,
   ApiKeyValidated,
   RunDiagnostics,
@@ -134,6 +135,13 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.list_policy_rules as ListPolicyRules;
     expect(m.type).toBe("list_policy_rules");
     expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("set_skip_all_approvals", () => {
+    const m = fixtures.set_skip_all_approvals as SetSkipAllApprovals;
+    expect(m.type).toBe("set_skip_all_approvals");
+    expect(isBoolean(m.enabled)).toBe(true);
+    expect("session_id" in m).toBe(false);
   });
 
   it("revoke_policy_rule", () => {
@@ -507,6 +515,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(Array.isArray(m.presets)).toBe(true);
     expect(m.presets.every(isString)).toBe(true);
     expect(isString(m.active_preset)).toBe(true);
+    expect(isBoolean(m.skip_all_approvals)).toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
   });
@@ -598,6 +607,7 @@ describe("All fixtures have required shape", () => {
     const clientTypes = [
       "hello", "open_workspace", "user_message", "approve", "deny",
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
+      "set_skip_all_approvals",
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",

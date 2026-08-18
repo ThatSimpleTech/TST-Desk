@@ -191,6 +191,18 @@ class RevokePolicyRule(ClientMessage):
     args: str
 
 
+class SetSkipAllApprovals(ClientMessage):
+    """Turn skip-all approvals on or off (TD-804).
+
+    Machine-wide, no session.  The daemon answers with a refreshed
+    ``setup_state`` so the toggle is honest after restart.  Class C and
+    ``never`` rules are unaffected.
+    """
+
+    type: Literal["set_skip_all_approvals"] = "set_skip_all_approvals"
+    enabled: bool
+
+
 class Resume(ClientMessage):
     """Resume a session paused at a declared cap (TD-707).
 
@@ -848,6 +860,9 @@ class SetupState(DaemonEvent):
     # Additive with a default, like ``key_required``: an older client that
     # ignores it behaves exactly as it did.
     tier_slugs: dict[str, str | None] = Field(default_factory=dict)
+    # TD-804: skip-all approvals. Additive, default off — an older client
+    # that ignores the field keeps asking, which is the safe read.
+    skip_all_approvals: bool = False
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -976,6 +991,7 @@ ClientMessageT = Annotated[
     | AlwaysAllow
     | ListPolicyRules
     | RevokePolicyRule
+    | SetSkipAllApprovals
     | Resume
     | Cancel
     | Attach
@@ -1046,6 +1062,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "always_allow",
         "list_policy_rules",
         "revoke_policy_rule",
+        "set_skip_all_approvals",
         "resume",
         "cancel",
         "attach",

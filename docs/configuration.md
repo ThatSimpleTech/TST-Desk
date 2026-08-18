@@ -343,6 +343,11 @@ call is downgraded to `class_c_default` — you can loosen approvals for ordinar
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
 in the approval card writes a rule here for you.
 
+**Skip all approvals** is not a key in this file. Settings → Policy has a machine-wide toggle
+that lives in the user data dir as `approvals.yaml`, so a clone cannot carry it. While it is
+on, a Class B call that would have asked runs as auto. Class C still parks or refuses. A
+`never` rule still refuses. The classifier still runs. `effect: yolo` is not a valid rule.
+
 ### 4.5 `approved_external_imports`
 
 | Key | Type | Default | Effect |

@@ -85,6 +85,12 @@ export interface RevokePolicyRule extends ClientMessage {
   args: string;
 }
 
+/** Turn skip-all approvals on or off (TD-804). Machine-wide, no session. */
+export interface SetSkipAllApprovals extends ClientMessage {
+  type: "set_skip_all_approvals";
+  enabled: boolean;
+}
+
 export interface Resume extends ClientMessage {
   type: "resume";
   session_id: string;
@@ -228,6 +234,7 @@ export type ClientMessageUnion =
   | AlwaysAllow
   | ListPolicyRules
   | RevokePolicyRule
+  | SetSkipAllApprovals
   | Resume
   | Cancel
   | Attach
@@ -500,7 +507,8 @@ export interface PolicyRules extends DaemonEvent {
 }
 
 // TD-1101 first-run wizard: the daemon's reply to get_setup_state
-// (and the ack for set_api_key / set_preset). has_api_key is the
+// (and the ack for set_api_key / set_preset / set_skip_all_approvals).
+// has_api_key is the
 // first-run signal — probed from the keychain, never from disk.
 // key_required (TD-1801) is false when the active preset runs entirely
 // on loopback endpoints, which send no key at all.
@@ -517,6 +525,8 @@ export interface SetupState extends DaemonEvent {
   // save cannot pin a model the user left floating. Optional because an
   // older daemon does not send it.
   tier_slugs?: Record<string, string | null>;
+  // TD-804: skip-all approvals. Additive, default off.
+  skip_all_approvals?: boolean;
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the

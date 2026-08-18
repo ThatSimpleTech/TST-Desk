@@ -143,6 +143,10 @@ class ToolDispatcher:
         self.policy = policy
         self.approval_handler = approval_handler
         self.workspace = workspace
+        # TD-804: live read of the machine-wide skip-all bit.  A callable
+        # so toggling the setting mid-session does not require rewiring
+        # every dispatcher.  Tests leave it None (off).
+        self.skip_all_fn: Callable[[], bool] | None = None
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
 
     # ── Handler registration ──────────────────────────────────────────
@@ -281,12 +285,14 @@ class ToolDispatcher:
         # The classifier contract (TD-703) already defaults failure to B;
         # a missing class here fails toward asking, never acting.
         gate_class = decision_class if decision_class is not None else DecisionClass.B
+        skip_all = self.skip_all_fn() if self.skip_all_fn is not None else False
         decision = resolve_explained(
             self.policy if self.policy is not None else PolicyConfig(),
             tool,
             arguments,
             gate_class,
             self.workspace,
+            skip_all=skip_all,
         )
         if decision.effect == "never":
             log.warning(
