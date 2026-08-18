@@ -138,6 +138,9 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
   ([`provider.py`](core/tstd/provider.py)), and its endpoint comes from config, never from a
   literal in the source. Model discovery refuses any non-loopback endpoint *before* it sends
   ([`discovery.py`](core/tstd/discovery.py)).
+  [`core/tests/test_outbound_hosts.py`](core/tests/test_outbound_hosts.py) enumerates every
+  destination the process can open — source literals, the live sending paths, and import-time
+  sockets — and fails if a host appears that configuration did not name.
 - **Your key never touches disk.** It lives in the OS keychain — Keychain, Secret Service, or
   Credential Manager ([`keychain.py`](core/tstd/keychain.py)). Every log and audit path runs
   through one shared redactor ([`logging.py`](core/tstd/logging.py)), and
@@ -148,11 +151,6 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
   refused by the filesystem tool itself ([`tools/boundary.py`](core/tstd/tools/boundary.py)),
   ahead of the workspace check and ahead of any approval — so no `writable_paths` grant can open
   them.
-
-One honest caveat on the telemetry line: it holds by construction and by review, not by a
-runtime egress gate. There is no test that enumerates outbound hosts and proves the process
-opened nothing else. If that guarantee matters to you, run it on the `local` preset and watch
-the socket yourself.
 
 ## How it compares
 
