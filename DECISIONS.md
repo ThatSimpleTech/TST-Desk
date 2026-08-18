@@ -5896,6 +5896,21 @@ refused because `_open_turns > 0` already means the loop owes a turn.
 
 ---
 
+## 2026-08-18 — TD-1815: chat-store keeps the wiring (Class B)
+
+**Decision:** `applyChatEvent` takes a collaborator context (wait, queue,
+forks, bind, id allocator). `createBranchSnaps` owns sibling snapshots.
+`ChatState` stays declared on the store.
+
+**Rationale:** TD-1708 pushed `chat-store.ts` to 590 lines. The last split
+(TD-1813) already took the wait and the bind policy; what was left was
+the reducer and the fork map. Moving either into the store's type file
+would make the hub grow again. The store still decides *when* to send
+`fork_from`; the fork module decides what a `conversation_reset` is
+worth to the transcript.
+
+---
+
 ## 2026-08-18 — TD-1814: `cache_reported` is turn-scoped (Class B)
 
 **Decision:** The turn log's `cache_reported` reads `CostTracker.turn_cache_reported()`,

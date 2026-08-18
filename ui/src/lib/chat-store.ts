@@ -15,10 +15,12 @@ import {
   type AttachmentChip,
   type NewAttachment,
 } from "./attachments";
+import { applyChatEvent } from "./chat-events";
+import { createBranchSnaps } from "./chat-fork";
 import { createMessageQueue, type QueuedMessage } from "./chat-queue";
 import { createFirstTokenWait } from "./first-token-wait";
 import { resetDisclosures } from "./reasoning-disclosure.svelte.js";
-import { applyBind, chooseBoundSession, isTerminal } from "./session-binding";
+import { applyBind } from "./session-binding";
 import type {
   ClientMessageUnion,
   DaemonEventUnion,
@@ -248,266 +250,36 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     return true;
   }
 
-  function currentAssistant(): ChatMessage {
-    const last = state.messages[state.messages.length - 1];
-    if (last !== undefined && last.role === "assistant" && !last.complete) {
-      return last;
-    }
-    nextId += 1;
-    const row: ChatMessage = {
-      id: `m${nextId}`,
-      role: "assistant",
-      text: "",
-      complete: false,
-      at: Date.now(),
-    };
-    state.messages.push(row);
-    return row;
-  }
-
-  function findTool(toolCallId: string): ToolBlock | null {
-    for (let i = state.messages.length - 1; i >= 0; i--) {
-      const tools = state.messages[i].tools;
-      if (tools === undefined) continue;
-      const found = tools.find((t) => t.toolCallId === toolCallId);
-      if (found !== undefined) return found;
-    }
-    return null;
-  }
-
-  function sealInFlightAssistant(): void {
-    const last = state.messages[state.messages.length - 1];
-    if (last !== undefined && last.role === "assistant" && !last.complete) {
-      last.complete = true;
-      // A turn can end on reasoning alone — a cancel mid-thought, or a
-      // model that thought and then only called a tool. Stamp the elapsed
-      // here too, or that disclosure counts forever (TD-1901).
-      if (last.reasoningStartedAt !== undefined && last.reasoningMs === undefined) {
-        last.reasoningMs = Date.now() - last.reasoningStartedAt;
-      }
-    }
-  }
+  const forks = createBranchSnaps();
 
   function switchSession(sessionId: string | null, turnState: SessionState["state"] | null): void {
     applyBind(state, { queue, wait, deps, onUnbind: resetDisclosures }, sessionId, turnState);
-    branchSnaps.clear();
+    forks.clear();
   }
 
-  const branchSnaps = new Map<string, ChatMessage[][]>();
-
-  function cloneMessages(): ChatMessage[] {
-    return state.messages.map((m) => ({
-      ...m,
-      tools: m.tools?.map((t) => ({ ...t })),
-    }));
-  }
-
-  function saveSnap(userIndex: number, sibling: number): void {
-    const key = String(userIndex);
-    const snaps = branchSnaps.get(key) ?? [];
-    while (snaps.length <= sibling) snaps.push([]);
-    snaps[sibling] = cloneMessages();
-    branchSnaps.set(key, snaps);
-  }
+  const eventCtx = {
+    state,
+    wait,
+    queue,
+    forks,
+    allocateId: () => {
+      nextId += 1;
+      return `m${nextId}`;
+    },
+    switchSession,
+  };
 
   return {
     state,
 
     applyEvent(event: DaemonEventUnion): void {
-      switch (event.type) {
-        case "assistant_reasoning": {
-          if (event.session_id !== state.sessionId) return;
-          // Reasoning is a turn in flight on exactly the terms a content
-          // delta is (TD-1714), and it is the only thing a reasoning model
-          // sends for whole minutes — so it ends the first-token wait too.
-          // Leaving that to content is what made a working local model
-          // look hung and trip the 25s stall copy (TD-1901).
-          state.turnState = "running";
-          wait.end();
-          const last = state.messages[state.messages.length - 1];
-          if (last !== undefined && last.role === "assistant" && !last.complete) {
-            last.reasoning = (last.reasoning ?? "") + event.delta;
-            last.reasoningStartedAt ??= Date.now();
-          } else {
-            nextId += 1;
-            state.messages.push({
-              id: `m${nextId}`,
-              role: "assistant",
-              text: "",
-              reasoning: event.delta,
-              reasoningStartedAt: Date.now(),
-              complete: false,
-              at: Date.now(),
-            });
-          }
-          return;
-        }
-        case "assistant_delta": {
-          if (event.session_id !== state.sessionId) return;
-          // A delta is proof a turn is in flight (TD-1714) — the only honest
-          // source of "running" the wire gives us. Replayed deltas converge
-          // back through the replayed turn_complete that follows them.
-          state.turnState = "running";
-          // First token recovers a stalled wait: the model was slow, not gone.
-          wait.end();
-          const last = state.messages[state.messages.length - 1];
-          if (last !== undefined && last.role === "assistant" && !last.complete) {
-            // Append in place: the message object keeps its identity so the
-            // keyed list never re-mounts the row while streaming.
-            last.text += event.delta;
-            // The first content token seals the thinking phase: stamp the
-            // elapsed once, so the disclosure can stop counting (TD-1902).
-            if (last.reasoningStartedAt !== undefined && last.reasoningMs === undefined) {
-              last.reasoningMs = Date.now() - last.reasoningStartedAt;
-            }
-          } else {
-            nextId += 1;
-            state.messages.push({
-              id: `m${nextId}`,
-              role: "assistant",
-              text: event.delta,
-              complete: false,
-              at: Date.now(),
-            });
-          }
-          return;
-        }
-        case "turn_complete": {
-          if (event.session_id !== state.sessionId) return;
-          sealInFlightAssistant();
-          wait.end();
-          // The turn is provably over; the session itself stays alive.
-          state.turnState = null;
-          // Daemon-measured seconds — the duration line reports what the wire
-          // said; the client never clocks turns itself (AGENTS §6).
-          state.lastTurnDuration = event.duration;
-          for (const [key] of branchSnaps) {
-            const userIndex = Number(key);
-            const row = state.messages.find((m) => m.userIndex === userIndex);
-            if (row?.siblingIndex !== undefined) saveSnap(userIndex, row.siblingIndex);
-          }
-          // The loop is free: the queue's head becomes the next turn (TD-1704).
-          // Only here, never on a terminal session_state — the daemon refuses
-          // sends to a dead session, so flushing into one would void the text.
-          queue.flushHead();
-          return;
-        }
-        case "session_state": {
-          if (event.session_id !== state.sessionId) return;
-          if (event.state === "running") {
-            // TD-1714: "running" reports the session loop is alive — emitted
-            // once at open and replayed on every attach — not that a turn is
-            // in flight. It may corroborate existing turn evidence (an
-            // approval just resolved, deltas are streaming, our send awaits
-            // its first token) but must never fabricate a turn or a wait by
-            // itself, and it must never cut a wait our send started.
-            const last = state.messages[state.messages.length - 1];
-            const turnLive =
-              state.awaitingFirstToken ||
-              state.turnState === "awaiting_approval" ||
-              (last !== undefined && last.role === "assistant" && !last.complete);
-            state.turnState = turnLive ? "running" : null;
-          } else {
-            state.turnState = event.state;
-            wait.end();
-          }
-          if (isTerminal(event.state)) sealInFlightAssistant();
-          return;
-        }
-        case "session_list": {
-          const choice = chooseBoundSession(event.sessions, state.sessionId);
-          if (choice.action === "bind") {
-            switchSession(choice.sessionId, choice.turnState);
-          } else if (choice.action === "unbind") {
-            switchSession(null, null);
-          } else if (choice.turnState !== null) {
-            // Staying put, and the refresh brought a turn state worth taking.
-            // A null there is the one that must not be taken (TD-1714).
-            state.turnState = choice.turnState;
-          }
-          return;
-        }
-        case "error": {
-          // The daemon refused a send to a dead session (TD-1711): the turn
-          // will never start, so drop the waiting shimmer immediately — the
-          // toast (notifications, TD-1008) carries the actionable copy.
-          if (event.code !== "session_not_running") return;
-          if (event.session_id != null && event.session_id !== state.sessionId) return;
-          sealInFlightAssistant();
-          wait.end();
-          return;
-        }
-        case "tool_call": {
-          if (event.session_id !== state.sessionId) return;
-          // A tool call is a turn in flight, same as a delta (TD-1902).
-          state.turnState = "running";
-          wait.end();
-          const row = currentAssistant();
-          const tools = row.tools ?? (row.tools = []);
-          if (tools.some((t) => t.toolCallId === event.tool_call_id)) return;
-          tools.push({
-            toolCallId: event.tool_call_id,
-            name: event.name,
-            arguments: event.arguments,
-            decisionClass: event.decision_class,
-          });
-          return;
-        }
-        case "conversation_reset": {
-          if (event.session_id !== state.sessionId) return;
-          const snaps = branchSnaps.get(String(event.user_index));
-          const saved = snaps?.[event.sibling_index];
-          if (saved !== undefined && saved.length > 0) {
-            state.messages = saved.map((m) => ({
-              ...m,
-              siblingIndex: m.userIndex === event.user_index ? event.sibling_index : m.siblingIndex,
-              siblingCount: m.userIndex === event.user_index ? event.sibling_count : m.siblingCount,
-            }));
-            wait.end();
-            return;
-          }
-          let seen = 0;
-          let cut = -1;
-          for (let i = 0; i < state.messages.length; i++) {
-            if (state.messages[i].role !== "user") continue;
-            if (seen === event.user_index) {
-              cut = i;
-              break;
-            }
-            seen += 1;
-          }
-          if (cut === -1) return;
-          const row = state.messages[cut];
-          row.text = event.content;
-          row.siblingIndex = event.sibling_index;
-          row.siblingCount = event.sibling_count;
-          state.messages.splice(cut + 1);
-          saveSnap(event.user_index, event.sibling_index);
-          wait.end();
-          return;
-        }
-        case "tool_result": {
-          if (event.session_id !== state.sessionId) return;
-          const block = findTool(event.tool_call_id);
-          if (block === null) return;
-          block.status = event.status;
-          block.output = event.output;
-          block.errorCode = event.error_code ?? null;
-          return;
-        }
-        default:
-          // Cost, approvals, and the rest stay the activity timeline's
-          // domain (TD-1005/TD-1007).
-          return;
-      }
+      applyChatEvent(eventCtx, event);
     },
 
     sendUserMessage,
 
-    /** Retry (TD-1606): resend the last user message verbatim over the same
-     *  user_message wire message, refused while a turn is live. Today's
-     *  protocol has no edit/fork, so the resend appends a new row — that
-     *  duplication is the honest record. */
+    /** Retry (TD-1606 / TD-1708): fork the last user turn in place so ‹ ›
+     *  can reach the original. Refused while a turn is live. */
     retryLastUserMessage(): boolean {
       if (showCancel(state.turnState)) return false;
       for (let i = state.messages.length - 1; i >= 0; i--) {
@@ -527,10 +299,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       if (state.sessionId === null) return false;
       const text = content.trim();
       if (text === "") return false;
-      const existing = branchSnaps.get(String(userIndex));
-      if (existing === undefined || existing.length === 0) {
-        saveSnap(userIndex, 0);
-      }
+      if (!forks.has(userIndex)) forks.save(userIndex, 0, state.messages);
       return deps.send({
         type: "fork_from",
         session_id: state.sessionId,
