@@ -38,11 +38,18 @@ export const decisions = $state({
 });
 
 let started = false;
+/** Session this list is a view of. Null when unbound (TD-1203). */
+let boundSessionId: string | null = null;
+/** Highest log position already folded in — see `reduce`. */
+let lastSeq = 0;
 
 /** Register the reducer once. Returns the unsubscribe for tests. */
 export function startDecisions(): () => void {
 	if (started) return () => {};
 	started = true;
+	// Adopt whatever the window is already showing, so a late subscribe
+	// does not wait for the next bind to become a view of that session.
+	if (boundSessionId === null) bindDecisions(session.sessionId);
 	const off = onEvent(reduce);
 	return () => {
 		started = false;
@@ -55,12 +62,34 @@ export function resetDecisions(): void {
 	decisions.open = false;
 	decisions.classFilter = null;
 	decisions.rows = [];
+	boundSessionId = null;
+	lastSeq = 0;
+	started = false;
+}
+
+/**
+ * Show a different session's decisions (TD-1203).
+ *
+ * Same contract as the timeline (TD-1009): the daemon's event log is the
+ * record, so a switch drops what the previous session left here and lets
+ * the bind's attach replay rebuild the new one. Re-binding the session
+ * already shown is a no-op — a reconnect that replays only the gap would
+ * otherwise empty the pane with nothing coming back to refill it.
+ */
+export function bindDecisions(sessionId: string | null): void {
+	if (sessionId === boundSessionId) return;
+	boundSessionId = sessionId;
+	decisions.rows = [];
+	lastSeq = 0;
 }
 
 function reduce(event: DaemonEventUnion): void {
 	if (event.type !== "decision_logged") return;
-	// The panel's scope is the active session (AC: session decisions).
-	if (session.sessionId === null || event.session_id !== session.sessionId) return;
+	if (boundSessionId === null || event.session_id !== boundSessionId) return;
+	// Attach replays from a requested seq. An event at or below what we
+	// already folded is that replay handing back a row already on screen.
+	if (event.seq <= lastSeq) return;
+	lastSeq = event.seq;
 	decisions.rows.push({
 		id: `${event.session_id}:${event.seq}`,
 		seq: event.seq,

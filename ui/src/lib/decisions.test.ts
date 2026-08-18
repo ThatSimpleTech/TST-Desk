@@ -31,10 +31,13 @@ vi.mock("./session-status.svelte.js", () => ({
   },
 }));
 
+import { ProtocolClient, type SocketLike } from "./client";
+import { createChatStore } from "./chat-store";
 import {
   decisions,
   startDecisions,
   resetDecisions,
+  bindDecisions,
   filteredDecisions,
   setClassFilter,
   openDecisions,
@@ -90,6 +93,53 @@ describe("stream reduce", () => {
     emit(logged(1, "A", "abc123"));
     expect(decisions.rows).toHaveLength(0);
   });
+
+  it("drops a replayed seq so a re-attach cannot double a row (TD-1203)", () => {
+    startDecisions();
+    emit(logged(1, "A", "abc123"));
+    emit(logged(2, "B", null));
+    emit(logged(1, "A", "abc123"));
+    emit(logged(2, "B", null));
+    expect(decisions.rows.map((r) => r.seq)).toEqual([1, 2]);
+  });
+});
+
+describe("session bind (TD-1203)", () => {
+  it("binding another session drops what the previous one left", () => {
+    startDecisions();
+    emit(logged(1, "A", "abc123"));
+    bindDecisions("s2");
+    expect(decisions.rows).toHaveLength(0);
+    emit(logged(1, "A", "s2commit", "s2"));
+    expect(decisions.rows).toHaveLength(1);
+    expect(decisions.rows[0].id).toBe("s2:1");
+  });
+
+  it("re-binding the session already shown keeps the rows", () => {
+    startDecisions();
+    emit(logged(1, "A", "abc123"));
+    bindDecisions("s1");
+    expect(decisions.rows).toHaveLength(1);
+  });
+
+  it("binding null unbinds and empties", () => {
+    startDecisions();
+    emit(logged(1, "A", "abc123"));
+    bindDecisions(null);
+    emit(logged(2, "A", "def456"));
+    expect(decisions.rows).toHaveLength(0);
+  });
+
+  it("re-binding resets the log position so a fresh replay is folded whole", () => {
+    startDecisions();
+    emit(logged(1, "A", "abc123"));
+    emit(logged(2, "B", null));
+    bindDecisions("s2");
+    bindDecisions("s1");
+    emit(logged(1, "A", "abc123"));
+    emit(logged(2, "B", null));
+    expect(decisions.rows.map((r) => r.id)).toEqual(["s1:1", "s1:2"]);
+  });
 });
 
 describe("revert command (AC: copyable revert per entry)", () => {
@@ -137,5 +187,135 @@ describe("panel open/close and ledger path", () => {
   it("no workspace, no path", () => {
     mocks.session.workspacePath = null;
     expect(ledgerPath()).toBeNull();
+  });
+});
+
+// ── A → B → A through a real client (TD-1203 AC 3) ─────────────────────
+//
+// Same harness shape as timeline-scope.test.ts: a real ProtocolClient
+// talking to a fake daemon that answers attach with a real replay. The
+// decisions store is fed the way AppShell feeds it — onEvent — and bind
+// rides the chat store's onBind, the same moment the pane attaches.
+
+class FakeSocket implements SocketLike {
+  onopen: (() => void) | null = null;
+  onmessage: ((ev: { data: unknown }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  constructor(private readonly onSend: (raw: string) => void) {}
+
+  send(raw: string): void {
+    this.onSend(raw);
+  }
+
+  close(): void {
+    this.onclose?.();
+  }
+}
+
+class FakeDaemon {
+  socket: FakeSocket | null = null;
+  private readonly logs = new Map<string, Record<string, unknown>[]>();
+
+  connect(socket: FakeSocket): void {
+    this.socket = socket;
+  }
+
+  private log(sessionId: string): Record<string, unknown>[] {
+    const existing = this.logs.get(sessionId);
+    if (existing !== undefined) return existing;
+    const fresh: Record<string, unknown>[] = [];
+    this.logs.set(sessionId, fresh);
+    return fresh;
+  }
+
+  private deliver(frame: Record<string, unknown>): void {
+    this.socket?.onmessage?.({ data: JSON.stringify(frame) });
+  }
+
+  emit(sessionId: string, event: Record<string, unknown>): void {
+    const log = this.log(sessionId);
+    const frame = { ...event, session_id: sessionId, seq: log.length + 1 };
+    log.push(frame);
+    this.deliver(frame);
+  }
+
+  receive(raw: string): void {
+    const msg = JSON.parse(raw) as ClientMessageUnion;
+    if (msg.type === "hello") {
+      this.deliver({ type: "hello_ack", version: 1 });
+      return;
+    }
+    if (msg.type === "attach") {
+      for (const frame of this.log(msg.session_id)) {
+        if ((frame.seq as number) >= msg.from_seq) this.deliver(frame);
+      }
+    }
+  }
+}
+
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+}
+
+describe("A → B → A through a real client (TD-1203)", () => {
+  it("switching away and back shows each decision once, not twice", async () => {
+    const daemon = new FakeDaemon();
+    startDecisions();
+
+    const client = new ProtocolClient(
+      {
+        async getDaemonInfo() {
+          return { port: 9000, token: "t" };
+        },
+        socketFactory() {
+          const socket = new FakeSocket((raw) => daemon.receive(raw));
+          daemon.connect(socket);
+          queueMicrotask(() => socket.onopen?.());
+          return socket;
+        },
+      },
+      {
+        onEvent(event) {
+          store.applyEvent(event);
+          emit(event);
+        },
+      },
+    );
+
+    const store = createChatStore({
+      send: (msg) => client.send(msg),
+      attach: (id) => client.attach(id),
+      detach: (id) => client.detach(id),
+      onBind: bindDecisions,
+    });
+
+    await client.start();
+    await flush();
+
+    store.selectSession("session-a", "idle");
+    daemon.emit("session-a", {
+      type: "decision_logged",
+      decision_class: "A",
+      what: "wrote a",
+      why: "because a",
+      commit: "aaa",
+    });
+    expect(decisions.rows.map((r) => r.id)).toEqual(["session-a:1"]);
+
+    store.selectSession("session-b", "idle");
+    daemon.emit("session-b", {
+      type: "decision_logged",
+      decision_class: "B",
+      what: "wrote b",
+      why: "because b",
+      commit: null,
+    });
+    expect(decisions.rows.map((r) => r.id)).toEqual(["session-b:1"]);
+
+    store.selectSession("session-a", "idle");
+    expect(decisions.rows.map((r) => r.id)).toEqual(["session-a:1"]);
+    expect(decisions.rows.map((r) => r.what)).toEqual(["wrote a"]);
   });
 });
