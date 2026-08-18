@@ -64,6 +64,8 @@ export const sendUserMessage: (
   attachments?: readonly NewAttachment[],
 ) => boolean = store.sendUserMessage;
 export const retryLastUserMessage: () => boolean = store.retryLastUserMessage;
+export const forkFrom: (userIndex: number, content: string) => boolean = store.forkFrom;
+export const setBranch: (userIndex: number, siblingIndex: number) => boolean = store.setBranch;
 export const cancelTurn: () => boolean = store.cancelTurn;
 /** Queue actions (TD-1704), bound for the queued-row controls. */
 export const sendQueuedNow: (id: string) => boolean = store.sendQueuedNow;

@@ -54,6 +54,22 @@ export interface UserMessage extends ClientMessage {
   attachments?: Attachment[];
 }
 
+/** Replace a past user turn and fork from there (TD-1708). */
+export interface ForkFrom extends ClientMessage {
+  type: "fork_from";
+  session_id: string;
+  user_index: number;
+  content: string;
+}
+
+/** Switch to another sibling at a forked user turn (TD-1708). */
+export interface SetBranch extends ClientMessage {
+  type: "set_branch";
+  session_id: string;
+  user_index: number;
+  sibling_index: number;
+}
+
 export interface Approve extends ClientMessage {
   type: "approve";
   session_id: string;
@@ -229,6 +245,8 @@ export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
   | UserMessage
+  | ForkFrom
+  | SetBranch
   | Approve
   | Deny
   | AlwaysAllow
@@ -294,6 +312,16 @@ export interface SessionState extends DaemonEvent {
     | "cancelled"
     | "interrupted";
   reason?: string | null;
+}
+
+/** The conversation forked or a sibling was selected (TD-1708). */
+export interface ConversationReset extends DaemonEvent {
+  type: "conversation_reset";
+  session_id: string;
+  user_index: number;
+  sibling_index: number;
+  sibling_count: number;
+  content: string;
 }
 
 export interface AssistantDelta extends DaemonEvent {
@@ -612,6 +640,7 @@ export interface TierSwitched extends DaemonEvent {
 export type DaemonEventUnion =
   | Ready
   | SessionState
+  | ConversationReset
   | AssistantDelta
   | AssistantReasoning
   | ToolCall

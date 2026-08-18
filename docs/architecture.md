@@ -233,6 +233,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `hello` | — | Opening handshake: auth token plus protocol version. |
 | `open_workspace` | — | Open a workspace directory as a new session. |
 | `user_message` | yes | Queue a user turn for the session's loop. |
+| `fork_from` | yes | Replace a past user turn and fork a sibling from there. Refused mid-turn. |
+| `set_branch` | yes | Switch to another sibling at a forked user turn. |
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
 | `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls. |
@@ -272,6 +274,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 |---|---|---|
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
 | `session_state` | session | A session state transition, with an optional reason. |
+| `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
 | `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. |
 | `tool_call` | session | A tool call about to execute, with its decision class. |

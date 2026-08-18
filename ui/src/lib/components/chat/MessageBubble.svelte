@@ -11,6 +11,7 @@
 	//
 	// A user row that carried attachments shows them as chips (TD-1709).
 	import type { ChatMessage } from "../../chat-store";
+	import { forkFrom, setBranch } from "../../chat-store.svelte.js";
 	import { hasReasoning } from "../../reasoning-disclosure.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
@@ -31,6 +32,24 @@
 		turnLive?: boolean;
 		onretry?: () => void;
 	} = $props();
+
+	let editing = $state(false);
+	let editDraft = $state("");
+
+	function startEdit(): void {
+		editDraft = message.text;
+		editing = true;
+	}
+
+	function commitEdit(): void {
+		if (message.userIndex === undefined) return;
+		const text = editDraft.trim();
+		if (text === "" || text === message.text) {
+			editing = false;
+			return;
+		}
+		if (forkFrom(message.userIndex, text)) editing = false;
+	}
 
 	let copied = $state(false);
 	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -108,7 +127,60 @@
 		</div>
 	{:else}
 		<div class="bubble">
-			{#if message.text !== ""}<p class="user-text">{message.text}</p>{/if}
+			{#if editing}
+				<textarea
+					class="edit"
+					bind:value={editDraft}
+					onkeydown={(e) => {
+						if (e.key === 'Enter' && !e.shiftKey) {
+							e.preventDefault();
+							commitEdit();
+						}
+						if (e.key === 'Escape') editing = false;
+					}}
+				></textarea>
+				<div class="edit-actions">
+					<button class="action" type="button" onclick={commitEdit}>Save</button>
+					<button class="action" type="button" onclick={() => (editing = false)}>Cancel</button>
+				</div>
+			{:else if message.text !== ""}<p class="user-text">{message.text}</p>{/if}
+			{#if !editing && message.userIndex !== undefined}
+				<div class="branch">
+					{#if (message.siblingCount ?? 1) > 1}
+						<button
+							class="action"
+							type="button"
+							disabled={turnLive || (message.siblingIndex ?? 0) <= 0}
+							aria-label="Previous branch"
+							onclick={() =>
+								setBranch(message.userIndex!, (message.siblingIndex ?? 0) - 1)}
+						>
+							‹
+						</button>
+						<span class="stamp"
+							>{(message.siblingIndex ?? 0) + 1}/{message.siblingCount}</span
+						>
+						<button
+							class="action"
+							type="button"
+							disabled={turnLive ||
+								(message.siblingIndex ?? 0) + 1 >= (message.siblingCount ?? 1)}
+							aria-label="Next branch"
+							onclick={() =>
+								setBranch(message.userIndex!, (message.siblingIndex ?? 0) + 1)}
+						>
+							›
+						</button>
+					{/if}
+					<button
+						class="action"
+						type="button"
+						disabled={turnLive}
+						aria-label="Edit message"
+						onclick={startEdit}>Edit</button
+					>
+				</div>
+			{/if}
 			{#if message.attachments !== undefined}
 				<!-- TD-1709: the row shows what went with it. No remove control —
 				     a message already sent cannot lose a file it carried. -->
@@ -207,6 +279,25 @@
 	.user-text {
 		white-space: pre-wrap;
 		word-break: break-word;
+	}
+
+	.edit {
+		width: 100%;
+		min-height: 4rem;
+		font: inherit;
+		color: inherit;
+		background: var(--color-ground);
+		border: 1px solid var(--color-hairline);
+		border-radius: var(--radius-sm);
+		padding: var(--space-2);
+	}
+
+	.edit-actions,
+	.branch {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		margin-top: var(--space-2);
 	}
 
 	/* Only spaced when there is text above it — an attachment-only message

@@ -145,6 +145,28 @@ class UserMessage(ClientMessage):
     attachments: list[Attachment] = Field(default_factory=list)
 
 
+class ForkFrom(ClientMessage):
+    """Replace a past user turn and fork the conversation from there (TD-1708).
+
+    ``user_index`` is 0-based among user turns.  Refused while a turn is
+    in flight.  The daemon answers with ``conversation_reset``.
+    """
+
+    type: Literal["fork_from"] = "fork_from"
+    session_id: str
+    user_index: int
+    content: str
+
+
+class SetBranch(ClientMessage):
+    """Switch to another sibling at a forked user turn (TD-1708)."""
+
+    type: Literal["set_branch"] = "set_branch"
+    session_id: str
+    user_index: int
+    sibling_index: int
+
+
 class Approve(ClientMessage):
     """Approve a pending tool call."""
 
@@ -457,6 +479,22 @@ class SessionState(DaemonEvent):
         "interrupted",
     ]
     reason: str | None = None
+
+
+class ConversationReset(DaemonEvent):
+    """The conversation forked or a sibling was selected (TD-1708).
+
+    The viewer drops every row after the ``user_index``-th user message,
+    replaces that user message with ``content``, and treats later events
+    as the active sibling.  ``seq`` is stamped by the session log.
+    """
+
+    type: Literal["conversation_reset"] = "conversation_reset"
+    session_id: str
+    user_index: int
+    sibling_index: int
+    sibling_count: int
+    content: str
 
 
 class AssistantDelta(DaemonEvent):
@@ -991,6 +1029,8 @@ ClientMessageT = Annotated[
     | AlwaysAllow
     | ListPolicyRules
     | RevokePolicyRule
+    | ForkFrom
+    | SetBranch
     | SetSkipAllApprovals
     | Resume
     | Cancel
@@ -1019,6 +1059,7 @@ ClientMessageT = Annotated[
 DaemonEventT = Annotated[
     Ready
     | SessionState
+    | ConversationReset
     | AssistantDelta
     | AssistantReasoning
     | ToolCall
@@ -1062,6 +1103,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "always_allow",
         "list_policy_rules",
         "revoke_policy_rule",
+        "fork_from",
+        "set_branch",
         "set_skip_all_approvals",
         "resume",
         "cancel",
@@ -1090,6 +1133,7 @@ _KNOWN_EVENT_TYPES = frozenset(
     {
         "ready",
         "session_state",
+        "conversation_reset",
         "assistant_delta",
         "assistant_reasoning",
         "tool_call",

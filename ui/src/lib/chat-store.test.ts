@@ -281,8 +281,8 @@ describe("sending and cancelling", () => {
 });
 
 describe("retry (TD-1606)", () => {
-  it("resends the last user message verbatim as a new user_message", () => {
-    const { store, state, sent } = boundStore();
+  it("retries the last user turn as a fork, not a third row", () => {
+    const { store, sent } = boundStore();
     store.sendUserMessage("first prompt");
     store.applyEvent(delta("s1", "answer one"));
     store.applyEvent(turnComplete("s1"));
@@ -290,18 +290,13 @@ describe("retry (TD-1606)", () => {
     store.applyEvent(delta("s1", "answer two"));
     store.applyEvent(turnComplete("s1"));
     expect(store.retryLastUserMessage()).toBe(true);
-    expect(sent.filter((m) => m.type === "user_message")).toEqual([
-      { type: "user_message", session_id: "s1", content: "first prompt" },
-      { type: "user_message", session_id: "s1", content: "second prompt" },
-      { type: "user_message", session_id: "s1", content: "second prompt" },
-    ]);
-    // The resend appends a new row: the protocol has no edit/fork, so the
-    // duplication is the honest record of the retry.
-    expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual([
-      "first prompt",
-      "second prompt",
-      "second prompt",
-    ]);
+    expect(sent.filter((m) => m.type === "user_message")).toHaveLength(2);
+    expect(sent[sent.length - 1]).toEqual({
+      type: "fork_from",
+      session_id: "s1",
+      user_index: 1,
+      content: "second prompt",
+    });
   });
 
   it("refuses while a turn is running or awaiting approval", () => {
@@ -1066,7 +1061,7 @@ describe("attachments", () => {
     store.applyEvent(delta("s1", "hi"));
     store.applyEvent(turnComplete("s1"));
     expect(store.retryLastUserMessage()).toBe(true);
-    expect(sent.filter((m) => m.type === "user_message").length).toBe(2);
+    expect(sent.some((m) => m.type === "fork_from")).toBe(true);
   });
 });
 
@@ -1254,6 +1249,42 @@ describe("tool folds (TD-1902)", () => {
     store.applyEvent(toolCall("s1", "tc-1"));
     store.applyEvent(toolResult("s2", "tc-1", "error"));
     expect(state.messages[0].tools![0].status).toBeUndefined();
+  });
+});
+
+describe("fork (TD-1708)", () => {
+  it("conversation_reset replaces the user turn and drops the tail", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("first");
+    store.applyEvent(delta("s1", "one"));
+    store.applyEvent(turnComplete("s1"));
+    store.sendUserMessage("second");
+    store.applyEvent(delta("s1", "two"));
+    store.applyEvent(turnComplete("s1"));
+    store.applyEvent({
+      type: "conversation_reset",
+      session_id: "s1",
+      seq: 9,
+      user_index: 0,
+      sibling_index: 1,
+      sibling_count: 2,
+      content: "first, edited",
+    });
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].text).toBe("first, edited");
+    expect(state.messages[0].siblingCount).toBe(2);
+  });
+
+  it("forkFrom sends fork_from", () => {
+    const { store, sent } = boundStore();
+    store.sendUserMessage("first");
+    expect(store.forkFrom(0, "first, edited")).toBe(true);
+    expect(sent[sent.length - 1]).toEqual({
+      type: "fork_from",
+      session_id: "s1",
+      user_index: 0,
+      content: "first, edited",
+    });
   });
 });
 

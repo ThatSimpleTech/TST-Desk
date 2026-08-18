@@ -9,6 +9,9 @@ import type {
   HelloAck,
   OpenWorkspace,
   UserMessage,
+  ForkFrom,
+  SetBranch,
+  ConversationReset,
   Approve,
   Deny,
   AlwaysAllow,
@@ -99,6 +102,19 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.open_workspace as OpenWorkspace;
     expect(m.type).toBe("open_workspace");
     expect(isString(m.path)).toBe(true);
+  });
+
+  it("fork_from", () => {
+    const m = fixtures.fork_from as ForkFrom;
+    expect(m.type).toBe("fork_from");
+    expect(isNumber(m.user_index)).toBe(true);
+    expect(isString(m.content)).toBe(true);
+  });
+
+  it("set_branch", () => {
+    const m = fixtures.set_branch as SetBranch;
+    expect(m.type).toBe("set_branch");
+    expect(isNumber(m.sibling_index)).toBe(true);
   });
 
   it("user_message", () => {
@@ -520,6 +536,15 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect("session_id" in m).toBe(false);
   });
 
+  it("conversation_reset", () => {
+    const m = fixtures.conversation_reset as ConversationReset;
+    expect(m.type).toBe("conversation_reset");
+    expect(isNumber(m.user_index)).toBe(true);
+    expect(isNumber(m.sibling_index)).toBe(true);
+    expect(isNumber(m.sibling_count)).toBe(true);
+    expect(isString(m.content)).toBe(true);
+  });
+
   it("api_key_validated", () => {
     const m = fixtures.api_key_validated as ApiKeyValidated;
     expect(m.type).toBe("api_key_validated");
@@ -605,7 +630,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
 describe("All fixtures have required shape", () => {
   it("every client message has a type field", () => {
     const clientTypes = [
-      "hello", "open_workspace", "user_message", "approve", "deny",
+      "hello", "open_workspace", "user_message", "fork_from", "set_branch", "approve", "deny",
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
       "set_skip_all_approvals",
       "cancel", "attach", "detach", "set_tier",
@@ -622,7 +647,7 @@ describe("All fixtures have required shape", () => {
 
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
-      "ready", "session_state", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
+      "ready", "session_state", "conversation_reset", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_denied",
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",

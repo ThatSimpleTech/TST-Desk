@@ -3355,13 +3355,18 @@ AppShell into `right-pane.svelte.ts` so a command can reach it.
 **Size:** 5 · **Depends on:** TD-1606
 
 **Acceptance criteria:**
-- [ ] Editing a past user message forks the conversation from that point and
+- [x] Editing a past user message forks the conversation from that point and
       resends
-- [ ] Branch navigation (‹ ›) on edited messages and retried assistant turns
-- [ ] Daemon-side fork covered by core tests; replay shows the active branch
+- [x] Branch navigation (‹ ›) on edited messages and retried assistant turns
+- [x] Daemon-side fork covered by core tests; replay shows the active branch
 
 **Notes:** needs daemon conversation forking and protocol additions; the
 backlog's sizing reflects that. Retry-without-edit stays the TD-1606 behavior.
+
+**Completed (2026-08-18):** `fork_from` / `set_branch` / `conversation_reset`.
+The loop's conversation lives on the session so a fork can truncate it.
+Retry of a finished turn is a fork of that user index, so ‹ › applies.
+A turn in flight (`turn_in_flight` / open turns) refuses the fork.
 
 ---
 

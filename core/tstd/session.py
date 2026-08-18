@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
@@ -18,8 +19,17 @@ from .autonomy.classifier import DecisionClass
 from .boundary_config import BoundaryConfig
 from .logging import get_logger, redact_secrets, redact_structure
 from .policy import ApprovalOutcome, PolicyConfig, propose_always_allow
-from .protocol import DaemonEvent, Error, PolicyRuleSummary, ShellOutput, ToolCall, ToolResult
+from .protocol import (
+    ConversationReset,
+    DaemonEvent,
+    Error,
+    PolicyRuleSummary,
+    ShellOutput,
+    ToolCall,
+    ToolResult,
+)
 from .protocol import SessionState as SessionStateEvent
+from .provider import ChatMessage
 
 if TYPE_CHECKING:
     from .cost import CostTracker
@@ -192,6 +202,12 @@ class Session:
         self.event_log = SessionEventLog()
         self._cancel_event = asyncio.Event()
         self._user_message_queue: asyncio.Queue[str] = asyncio.Queue()
+        # The loop's conversation lives here so a fork can truncate it
+        # (TD-1708).  The loop aliases this list; it must not rebind.
+        self.conversation: list[ChatMessage] = []
+        # user_index -> sibling snapshots of conversation
+        self._branches: dict[int, list[list[ChatMessage]]] = {}
+        self._branch_cursor: dict[int, int] = {}
         self._resume_event = asyncio.Event()
         # Workspace boundary (TD-706), resolved by the daemon on open.
         self.boundary_config = BoundaryConfig()
@@ -579,6 +595,84 @@ class Session:
                 return self._user_message_queue.get_nowait()
             except asyncio.QueueEmpty:
                 await asyncio.sleep(0.05)
+
+    # ── Conversation fork (TD-1708) ─────────────────────────────────
+
+    def _user_positions(self) -> list[int]:
+        return [i for i, msg in enumerate(self.conversation) if msg.role == "user"]
+
+    def _copy_conversation(self) -> list[ChatMessage]:
+        return deepcopy(self.conversation)
+
+    def _save_active_sibling(self, user_index: int) -> None:
+        cursor = self._branch_cursor.get(user_index, 0)
+        siblings = self._branches.setdefault(user_index, [])
+        while len(siblings) <= cursor:
+            siblings.append([])
+        siblings[cursor] = self._copy_conversation()
+
+    def _emit_reset(self, user_index: int, content: str) -> ConversationReset:
+        siblings = self._branches.get(user_index, [[]])
+        return ConversationReset(
+            session_id=self.id,
+            user_index=user_index,
+            sibling_index=self._branch_cursor.get(user_index, 0),
+            sibling_count=max(len(siblings), 1),
+            content=content,
+            seq=1,
+        )
+
+    async def fork_from(self, user_index: int, content: str) -> ConversationReset | str:
+        """Replace the user_index-th user turn and drop everything after it.
+
+        Returns the reset event, or an error code.
+        """
+        text = content.strip()
+        if text == "":
+            return "empty_content"
+        if self.turn_in_flight:
+            return "turn_in_progress"
+        positions = self._user_positions()
+        if user_index < 0 or user_index >= len(positions):
+            return "user_turn_not_found"
+        self._save_active_sibling(user_index)
+        siblings = self._branches[user_index]
+        siblings.append([])
+        self._branch_cursor[user_index] = len(siblings) - 1
+        cut = positions[user_index]
+        self.conversation[cut:] = []
+        self._drain_user_queue()
+        await self.add_user_message(text)
+        return self._emit_reset(user_index, text)
+
+    def _drain_user_queue(self) -> None:
+        while True:
+            try:
+                self._user_message_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            self._open_turns = max(0, self._open_turns - 1)
+
+    def snapshot_branches(self) -> None:
+        """Refresh the active sibling after a turn lands (TD-1708)."""
+        for user_index in list(self._branches):
+            self._save_active_sibling(user_index)
+
+    async def set_branch(self, user_index: int, sibling_index: int) -> ConversationReset | str:
+        """Restore a sibling snapshot at *user_index*."""
+        if self.turn_in_flight:
+            return "turn_in_progress"
+        siblings = self._branches.get(user_index)
+        if siblings is None or sibling_index < 0 or sibling_index >= len(siblings):
+            return "branch_not_found"
+        self._save_active_sibling(user_index)
+        self._branch_cursor[user_index] = sibling_index
+        restored = deepcopy(siblings[sibling_index])
+        self.conversation[:] = restored
+        self._drain_user_queue()
+        users = [m for m in self.conversation if m.role == "user"]
+        text = users[user_index].content or "" if user_index < len(users) else ""
+        return self._emit_reset(user_index, text)
 
     @property
     def summary(self) -> dict[str, Any]:
