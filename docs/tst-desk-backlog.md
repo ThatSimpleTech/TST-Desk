@@ -3819,3 +3819,130 @@ against an actual 115/347.
 **The single most important sequencing rule in this document: M1 exits when TD-1401 passes.**
 A correct, tested, headless core is what makes the UI a presentation problem instead of a
 debugging problem.
+
+---
+
+
+## Epic E20 — Linux support for the computer-use MCP server
+
+**Goal:** `mcp/tst-cu-mcp` runs on Linux, or says clearly and early that it cannot.
+
+**Filed as a new epic, not folded into E17.** E17's TD-1710 is the *product's* computer-use
+feature — the Screen pane and the `tst-cua` drivers under `core/`. This epic is the **developer
+tooling** under `mcp/`, which had no backlog home at all until now. That gap was flagged twice
+while shipping v0.2.0 of the server and is closed here. If the two ever merge, TD-1710 is the
+place they meet.
+
+**This work cannot be done or verified on Windows or macOS.** It needs a Linux session in front
+of it. Filed so the reconnaissance below is not repeated, not so it can be started remotely.
+
+### Current behaviour on Linux
+
+`backends/__init__.py` declares `SUPPORTED_PLATFORMS = ("darwin", "win32")`. On Linux,
+`get_backend()` raises `UnsupportedPlatformError` naming what is supported, and `health` reports
+`supported: false` rather than raising. So the failure is clean and diagnostic by design — but
+there is no functionality whatsoever.
+
+**One rough edge worth fixing regardless of whether the backend gets built:** the wheel
+*installs* on Linux. It is pure-Python `py3-none-any`, the PyObjC dependencies are gated behind
+`sys_platform == 'darwin'`, and the Windows backend adds no dependency at all. So `pip install`
+succeeds and the first tool call is where the user finds out. Platform classifiers or an
+import-time check would move that discovery to install time.
+
+### Why this is two backends, not one
+
+**X11 is tractable** — comparable in shape and size to the Windows backend (~700 lines):
+
+| Protocol method | X11 mechanism |
+|---|---|
+| `list_displays` | XRandR |
+| `capture_png` | `XGetImage`, or MSS |
+| `move_mouse` / `click` / `scroll` | XTest (`XTestFakeMotionEvent`, `XTestFakeButtonEvent`) |
+| `type_text` / `press_keys` | XTest (`XTestFakeKeyEvent`) plus keysym mapping |
+| `cursor_position` | `XQueryPointer` |
+| `foreground_window` | `_NET_ACTIVE_WINDOW` via EWMH |
+| `check_permissions` | No gate exists — X11 has essentially no security boundary here |
+
+**Wayland is a different problem, not more of the same.** Wayland deliberately forbids what this
+server does: no unprivileged client may read the screen or synthesise global input. Capture
+requires `xdg-desktop-portal` ScreenCast over PipeWire with per-session consent; input requires
+the portal RemoteDesktop interface or libei.
+
+The hard part is `foreground_window`. **No general Wayland protocol exposes the active window to
+an unprivileged client.** That is the method the `expect_window` guard depends on — the mechanism
+that stops a click landing in the wrong application after the UI moves. On Wayland that guard is
+likely unimplementable through Wayland alone, which means a Linux port either accepts a weaker
+safety guarantee there or finds the answer elsewhere.
+
+This matters because modern distributions default to Wayland: Ubuntu since 21.04, Fedora, RHEL 9.
+X11-only support covers X11 sessions, older distributions, VNC and remote setups, and Xvfb
+containers — real, but shrinking.
+
+### Prior art already in the tree
+
+TD-102's `docs/REUSE.md` classifies an **AT-SPI driver** from `tst-cua` as intact but deferred to
+v0.4. AT-SPI is the Linux accessibility bus, works under both X11 and Wayland, and could supply
+element-level targeting *and* possibly active-window information — which would answer the Wayland
+`foreground_window` problem above.
+
+That is the same accessibility-tree approach identified during the Windows port as the real fix
+for coordinate brittleness, rather than a third copy of the fragile approach. **Read the existing
+AT-SPI driver before writing anything.** Linux may be where the robust design lands first.
+
+---
+
+### TD-2001 — X11 backend for `tst-cu-mcp`
+**Size:** 8 · **Depends on:** TD-102
+
+Implement the `Backend` protocol for X11 and add `"linux"` to `SUPPORTED_PLATFORMS`. Follow the
+structure the Windows backend established: platform code confined to the backend, policy
+(kill-switch, argument validation, focus guard) staying in `input_control` where a new platform
+cannot skip it.
+
+**Acceptance criteria:**
+- [ ] `docs/REUSE.md`'s AT-SPI driver read and assessed first, with a written statement of what
+      it can supply that raw X11 cannot — before any code is written
+- [ ] Every `Backend` protocol method implemented; `mypy --strict` clean
+- [ ] Display enumeration reports true pixel bounds on a multi-monitor layout, including a
+      display at a negative origin
+- [ ] Capture returns a valid PNG for a full display and for a sub-region, without writing to disk
+- [ ] Coordinate round-trip verified: `move_mouse` then `cursor_position` agree within tolerance
+      at several points across every display
+- [ ] `foreground_window` returns a title and a process name for a real window
+- [ ] `expect_window` refuses on a mismatch **without actuating** — the same assertion the
+      Windows suite makes, since a guard that refuses after acting is worse than none
+- [ ] Kill-switch halts actuation while capture and state reads keep working
+- [ ] A `test_desktop_linux.py` tier mirroring `test_desktop_windows.py`, marked `desktop`, that
+      moves the pointer and restores it and **does not type**
+- [ ] Keystroke tests live in their own module behind `TST_CU_MCP_ALLOW_INTRUSIVE_TESTS`, never
+      reachable by marker selection alone (see the 2026-08-18 correction in `DECISIONS.md`)
+- [ ] `health` reports `supported: true` under X11
+- [ ] Behaviour under Wayland is explicit, not accidental — either a clean refusal or whatever
+      TD-2002 decides
+
+**Notes:** The Windows port's two live-use findings are likely to have X11 analogues worth
+checking early: a key that only works with the right flag set (`VK_LWIN` needed the extended
+flag), and input silently discarded by a window that has focus but is not yet ready. Neither was
+found by review.
+
+---
+
+### TD-2002 — Decide the Wayland strategy
+**Size:** 3 · **Depends on:** TD-2001
+
+A decision story, not an implementation one. Wayland cannot be served by extending the X11
+backend, and the choice affects what safety guarantees the server can honestly claim.
+
+**Acceptance criteria:**
+- [ ] Portal-based capture (`xdg-desktop-portal` ScreenCast over PipeWire) and input (portal
+      RemoteDesktop or libei) each assessed for feasibility, with the consent flow described
+- [ ] A definite answer on whether `foreground_window` is obtainable under Wayland — via AT-SPI,
+      via a compositor-specific protocol, or not at all
+- [ ] If it is not obtainable: a stated position on whether `expect_window` degrades, refuses, or
+      is unavailable there, since silently weakening a safety guard is not an option
+- [ ] Recommendation recorded in `DECISIONS.md` as a Class B or C decision with rationale
+- [ ] Scope and size for the implementation work, or an explicit decision not to support Wayland
+      and what `health` should then report
+
+**Notes:** Resist implementing while investigating. The output of this story is a decision and a
+size, and the honest answer may be "X11 only, Wayland reports unsupported".
