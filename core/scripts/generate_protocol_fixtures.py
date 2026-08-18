@@ -59,6 +59,7 @@ from tstd.protocol import (
     SessionState,
     SetApiKey,
     SetPreset,
+    SetSkipAllApprovals,
     SetTier,
     SetupState,
     ShellOutput,
@@ -99,6 +100,7 @@ FIXTURES = {
     "always_allow": AlwaysAllow(session_id="sess-1", tool_call_id="tc-1"),
     "list_policy_rules": ListPolicyRules(session_id="sess-1"),
     "revoke_policy_rule": RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *"),
+    "set_skip_all_approvals": SetSkipAllApprovals(enabled=True),
     "resume": Resume(session_id="sess-1"),
     "cancel": Cancel(session_id="sess-1"),
     "attach": Attach(session_id="sess-1", from_seq=5),
@@ -354,6 +356,7 @@ FIXTURES = {
         has_api_key=False,
         presets=["budget", "local", "tst-default"],
         active_preset="tst-default",
+        skip_all_approvals=False,
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so

@@ -1,12 +1,13 @@
 <script lang="ts">
-	// Saved always-allow rules with revoke (TD-1703 policy section, TD-803).
+	// Policy section (TD-1703 / TD-803 / TD-804): skip-all, then saved
+	// always-allow rules with revoke.
 	//
 	// Split from SettingsPane so that pane stays inside §6's line budget; the
 	// styles here are used by nothing else, so the split costs no duplication.
 	//
 	// Three states, not two: rules live in a workspace, so "no session yet" is
 	// a different claim from "no rules saved" and reads differently.
-	import { settings, revokeRule } from '../settings.svelte.js';
+	import { settings, revokeRule, setSkipAllApprovals } from '../settings.svelte.js';
 
 	interface Props {
 		/** The attached session, or null when no workspace is open. */
@@ -14,6 +15,26 @@
 	}
 	let { sessionId }: Props = $props();
 </script>
+
+<div class="skip-all">
+	<div>
+		<p class="skip-title">Skip all approvals</p>
+		<p class="hint">
+			Class B calls run without asking. Class C and anything the
+			boundary forbids still stop. The classifier and the ledger still
+			run.
+		</p>
+	</div>
+	<button
+		class="choice"
+		class:choice--active={settings.skipAllApprovals}
+		type="button"
+		role="switch"
+		aria-checked={settings.skipAllApprovals}
+		onclick={() => setSkipAllApprovals(!settings.skipAllApprovals)}
+		>{settings.skipAllApprovals ? 'On' : 'Off'}</button
+	>
+</div>
 
 {#if sessionId === null}
 	<p class="empty">Open a workspace to see the rules saved for it.</p>
@@ -40,6 +61,46 @@
 {/if}
 
 <style>
+	.skip-all {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: var(--space-3);
+		margin-bottom: var(--space-4);
+		padding-bottom: var(--space-4);
+		border-bottom: 1px solid var(--color-hairline);
+	}
+
+	.skip-title {
+		font-size: var(--text-sm);
+		font-weight: var(--weight-medium);
+		color: var(--color-ink);
+		margin: 0 0 var(--space-1);
+	}
+
+	.hint {
+		font-size: var(--text-sm);
+		color: var(--color-ink-secondary);
+		margin: 0;
+	}
+
+	.choice {
+		flex-shrink: 0;
+		font-size: var(--text-sm);
+		color: var(--color-ink-secondary);
+		background: transparent;
+		border: 1px solid var(--color-hairline);
+		border-radius: var(--radius-full);
+		padding: var(--space-1) var(--space-3);
+		cursor: pointer;
+	}
+
+	.choice--active {
+		color: var(--color-on-accent);
+		background: var(--color-accent);
+		border-color: var(--color-accent);
+	}
+
 	.empty {
 		font-size: var(--text-sm);
 		color: var(--color-ink-secondary);

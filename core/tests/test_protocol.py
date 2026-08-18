@@ -45,6 +45,7 @@ from tstd.protocol import (
     Resume,
     RevokePolicyRule,
     SessionState,
+    SetSkipAllApprovals,
     SetTier,
     ShellOutput,
     ToolCall,
@@ -124,6 +125,14 @@ class TestClientMessages:
         assert isinstance(back, RevokePolicyRule)
         assert back.tool == "shell"
         assert back.args == "rm *"
+
+    def test_set_skip_all_approvals(self) -> None:
+        msg = SetSkipAllApprovals(enabled=True)
+        back = _roundtrip(msg)
+        assert isinstance(back, SetSkipAllApprovals)
+        assert back.enabled is True
+        # Machine-wide: a session_id would make a clone-local setting.
+        assert "session_id" not in SetSkipAllApprovals.model_fields
 
     def test_resume(self) -> None:
         msg = Resume(session_id="sess-1")

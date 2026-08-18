@@ -164,6 +164,7 @@ def resolve(
     arguments: dict[str, Any],
     decision_class: DecisionClass,
     workspace: Path | None = None,
+    skip_all: bool = False,
 ) -> PolicyEffect:
     """Resolve the policy effect for a classified tool call.
 
@@ -172,7 +173,9 @@ def resolve(
     call never resolves to ``auto`` — policy cannot grant what the boundary
     forbids.  Thin wrapper over :func:`resolve_explained` (TD-802).
     """
-    return resolve_explained(config, tool, arguments, decision_class, workspace).effect
+    return resolve_explained(
+        config, tool, arguments, decision_class, workspace, skip_all=skip_all
+    ).effect
 
 
 def resolve_explained(
@@ -181,9 +184,14 @@ def resolve_explained(
     arguments: dict[str, Any],
     decision_class: DecisionClass,
     workspace: Path | None = None,
+    skip_all: bool = False,
 ) -> PolicyDecision:
     """Like :func:`resolve`, but carries the deciding rule and a
-    human-readable reason for the approval gate (TD-802)."""
+    human-readable reason for the approval gate (TD-802).
+
+    ``skip_all`` (TD-804) promotes a Class B ``ask`` to ``auto``. It
+    cannot make Class C automatic and cannot override a ``never`` rule.
+    """
     summary = summarize_arguments(tool, arguments, workspace)
     matches = [
         rule
@@ -219,6 +227,14 @@ def resolve_explained(
         return PolicyDecision(
             config.class_c_default,
             f"{decision.reason}, but decision class C may not run automatically",
+            decision.rule,
+        )
+    # TD-804: skip-all takes the *ask*, not the wall. A never rule and
+    # Class C stay exactly as they resolved.
+    if skip_all and decision.effect == "ask" and decision_class is not DecisionClass.C:
+        return PolicyDecision(
+            "auto",
+            "skip-all approvals is on",
             decision.rule,
         )
     return decision
@@ -443,3 +459,45 @@ def remove_rule(config: PolicyConfig, tool: str, args: str) -> bool:
     before = len(config.rules)
     config.rules = [r for r in config.rules if (r.tool, r.args) != (tool, args)]
     return len(config.rules) < before
+
+
+# ── Skip-all (TD-804) ──────────────────────────────────────────────────
+#
+# Machine-wide, not workspace-wide: a `.tst/config.yaml` bit would be
+# committed and surprise the next clone.  Lives next to the daemon's
+# other user-data files.
+
+
+def skip_all_path(data_dir: str | Path) -> Path:
+    """Path of the user-data file that holds the skip-all bit."""
+    return Path(data_dir) / "approvals.yaml"
+
+
+def load_skip_all(data_dir: str | Path) -> bool:
+    """Load skip-all from the user data dir. Absent or unreadable is off."""
+    path = skip_all_path(data_dir)
+    if not path.exists():
+        return False
+    try:
+        data: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    # Only YAML true counts. bool("false") is True, which is the wrong
+    # read of a hand-edited file.
+    return data.get("skip_all") is True
+
+
+def save_skip_all(data_dir: str | Path, enabled: bool) -> None:
+    """Persist skip-all atomically in the user data dir."""
+    path = skip_all_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".approvals.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump({"skip_all": enabled}, f, sort_keys=False)
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
