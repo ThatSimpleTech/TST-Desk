@@ -538,7 +538,7 @@ class ProviderClient:
 
         api_key = "sk-your-key-here"  # loaded from keychain via from_keychain()
         client = ProviderClient(
-            base_url="https://openrouter.ai/api/v1",
+            base_url="<your-provider-endpoint>",  # comes from config.yaml, never hardcoded
             api_key=api_key,
         )
         request = ChatCompletionRequest(

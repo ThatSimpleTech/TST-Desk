@@ -2606,12 +2606,12 @@ surfaced here.
 **Size:** 3 · **Depends on:** TD-1402
 
 **Acceptance criteria:**
-- [ ] A test enumerates every outbound HTTP/WS destination the daemon can reach in a full
+- [x] A test enumerates every outbound HTTP/WS destination the daemon can reach in a full
       run, and asserts each one traces to configuration — not to a literal in the source
-- [ ] It fails when a new hardcoded remote host is introduced, proved by introducing one
-- [ ] Covers the paths that already send: the provider client, model discovery, and the
+- [x] It fails when a new hardcoded remote host is introduced, proved by introducing one
+- [x] Covers the paths that already send: the provider client, model discovery, and the
       key-validation call — plus any transport a dependency opens on import
-- [ ] The README's no-telemetry line is updated to cite the test rather than construction
+- [x] The README's no-telemetry line is updated to cite the test rather than construction
 
 §2.3 — "no telemetry, no analytics, no phone-home, no crash reporting to any remote; zero
 network calls the user did not initiate" — is a prime directive, and §7 says a gap in
@@ -2630,6 +2630,11 @@ Surfaced while writing TD-1501 (2026-08-17). It matters more now than it did las
 README states the promise in public, in a section whose whole claim is that these are
 enforced in code rather than asserted in prose. Three of the four promises name their
 enforcing test. This one names a habit.
+
+**Completed (2026-08-18):** `test_outbound_hosts.py` scans every `tstd` module for URL
+literals (must be loopback), confines which modules may open a transport, records the
+provider / discovery / key-validation paths under a patched httpx transport, and imports
+the package in a subprocess with sockets refused. The README now cites that file.
 
 ---
 
