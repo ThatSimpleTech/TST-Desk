@@ -5542,3 +5542,304 @@ runtime check every consumer has to remember.
 
 Both spellings in the wild parse to `Delta.reasoning`: Ollama's `reasoning`, DeepSeek /
 OpenRouter's `reasoning_content`. Empty strings normalise to `None`.
+
+---
+
+## 2026-08-18 — `mcp/tst-cu-mcp`: Windows port of the computer-use MCP server
+
+Six decisions taken while porting `tst-cu-mcp` 0.1.0 (macOS-only) to Windows and moving it
+into this repository. Recorded together because they only make sense as a set.
+
+### 1. An out-of-milestone MCP area lives in-repo (Class C, user-authorised)
+
+**Decision:** `tst-cu-mcp` lives at `mcp/tst-cu-mcp/` in this repository, detached from the
+app.
+
+**Context:** This is a scope decision that `AGENTS.md` §3 and §5 reserve for the user, and
+`tst-desk-kickoff-prompt.md` explicitly places MCP in v0.8 and out of scope. It was raised as
+such and the user directed the work to proceed here rather than in a separate repository.
+
+**Why detachment is real rather than asserted:** `ci.yml` scopes all three of its jobs with
+`defaults.run.working-directory` (`core`, `shell`, `ui`), so a new top-level directory is
+invisible to the app's lint, typecheck, test and build legs. Nothing under `mcp/` is imported
+by `core/`, `shell/` or `ui/`, and the server ships nothing into them. The pre-commit hook does
+lint this area's Python, using this area's own `pyproject.toml` config — deliberately kept, so
+standards stay consistent.
+
+**Consequence to resolve:** `AGENTS.md` §11 documents the directory tree and does not list
+`mcp/`. Prime directive §2.4 makes `AGENTS.md` read-only to the agent, so **the user must add
+that line**. No test pins the tree, so nothing is currently red.
+
+### 2. Missing dependency markers, not missing code, were the blocker (Class B)
+
+**Decision:** The three `pyobjc-framework-*` pins carry `; sys_platform == 'darwin'`.
+
+**Rationale:** They had no environment markers at all, so `uv sync` failed while *resolving* on
+Windows — before any platform-specific code was reached. This was the whole reason the server
+could not be installed on Windows, and it is one line per dependency. `tests/test_version.py`
+asserts the markers are still present, and that no Windows-only runtime dependency has crept
+in: the Windows backend is `ctypes` (stdlib) plus Pillow, which macOS already required.
+
+### 3. Windows reports physical pixels; macOS keeps logical points (Class B)
+
+**Decision:** Each backend reports geometry in its own native space, and nothing above the
+backend layer knows which.
+
+**Rationale:** macOS has one global logical-point space with a per-display backing scale.
+Windows has per-monitor DPI, so there is no single logical space spanning a 150%-scaled laptop
+panel and a 100% external monitor. Reporting real pixels keeps one coherent space shared by
+display bounds, capture rectangles and input events. This costs nothing above the boundary
+because `coordinates.py` maps image pixels to global coordinates *proportionally* over the
+captured region — it never needs a scale factor, which is why that module was not touched by
+this port.
+
+The Windows backend opts into `PER_MONITOR_AWARE_V2` before reading any geometry. Without it
+the OS returns scaled rectangles and every capture and click lands short on a scaled display.
+
+### 4. `cmd` is an alias for Ctrl on Windows; `fn` is refused (Class B)
+
+**Decision:** `cmd`/`command` map to `VK_CONTROL`. `win`/`super` map to the Windows key.
+`fn` raises a `ValueError` naming it as macOS-only.
+
+**Rationale:** Models carry a mac-shaped shortcut vocabulary and will ask for `cmd+c`.
+Refusing it would fail every copy, paste and save; aliasing it does the thing the model
+intended. The alias deliberately does not swallow the Windows key — `win+d` stays distinct
+from `cmd+d`, so "show desktop" cannot silently become Ctrl+D. `fn` refuses loudly rather than
+being dropped, because a dropped modifier sends a bare arrow key and looks like it worked.
+`delete` resolves to Backspace, matching what the key is called on a Mac, with
+`forward_delete` for the PC Delete key.
+
+### 5. Windows has no permission gate, so `check_permissions` reports the silent failures
+
+**Decision:** The Windows report says `all_granted: true` **and** names two limits: UIPI and
+the secure desktop. `limits_apply` distinguishes which are live, based on whether this process
+is elevated.
+
+**Rationale:** An unqualified "granted" would be technically true and practically a lie. Both
+Windows failure modes are silent: input aimed at a higher-integrity window is discarded by the
+OS, and the secure desktop (UAC prompt, lock screen) can be neither captured nor driven. A
+model that believes it clicked something it did not is worse off than one told it cannot.
+`_send` also raises when `SendInput` reports fewer events delivered than submitted, so the
+UIPI case surfaces as an error rather than a successful no-op.
+
+### 6. Test markers: `desktop` and `intrusive` are separate, and one is unverified
+
+**Decision:** Three tiers. The default run is headless and passes anywhere. `-m desktop`
+reads live OS state and restores what it touches. `-m intrusive` synthesizes keystrokes into
+whatever holds focus and is excluded from both.
+
+**Rationale:** Backend modules import on every platform and construct without OS calls, so one
+host proves both selection branches — the same technique `docs/windows.md` §2 uses, and what
+keeps the macOS path from rotting now that development happens on Windows.
+
+**Not verified:** the `intrusive` tier has not been run. Keyboard and scroll actuation are
+implemented and unit-tested at the record-building level, but no test has confirmed the OS
+accepted a synthesized keystroke. Following the standard TD-1406 set for the shell tree-kill,
+that is recorded as unverified rather than assumed. Verifying it needs a deliberate run with
+nothing important focused.
+
+### Local note: uv's venv trampoline is blocked on this Windows host
+
+Not a decision, but it will cost the next person an hour. `uv sync` creates
+`.venv\Scripts\python.exe` as a small trampoline binary, and on this machine executing it fails
+with "Access is denied" — for uv itself as well as for a shell. A copied real `python.exe` in
+the same directory runs fine (it fails only for a missing DLL), and Smart App Control is off, so
+the block is specific to that binary rather than to the location. The working setup is a stdlib
+venv, whose `python.exe` is a copy of the interpreter:
+
+```
+& <managed-python> -m venv .venv
+uv pip install --python .\.venv\Scripts\python.exe -e . --group dev
+```
+
+Also on this host: the registered Python 3.12 at
+`%LOCALAPPDATA%\Programs\Python\Python312\python.exe` is a 0-byte file, which makes `uv` fail
+during interpreter discovery with os error 193 until that directory is off `PATH`. `uv python
+install 3.12` provides a working interpreter under `%APPDATA%\uv\python`.
+
+---
+
+## 2026-08-18 — `mcp/tst-cu-mcp`: focus guard, state read-back, bounded waits
+
+Four additions, all driven by failures observed in a live driving session rather
+than by design review. Recorded together because they answer the same question:
+*how does a model driving a UI by coordinates know it is aiming at the right
+thing?*
+
+### 1. Per-action approval is the wrong gate; the stop-file is the right one
+
+**Decision:** Recommend auto-approving every tool in the MCP client, and treat
+the kill-switch stop-file as the session-level gate.
+
+**Rationale:** Reported from live use, and it is a correctness problem rather than
+an ergonomics one. Approving a `screenshot` alters the screen before the capture
+is taken. Approving a `click` or `type_text` gives the client window focus
+immediately before an input event aimed at a different window. The approval
+dialog perturbs exactly the state the server exists to observe and drive — the
+gate corrupts the thing it gates.
+
+A file-based gate has none of that: creating or deleting `~/.tst-cu-mcp/STOP`
+steals no focus and moves no pointer, and it is checked before every actuation on
+every platform. Consent moves from per-keystroke to per-session, which is also
+the honest granularity — nobody meaningfully evaluates the thirtieth click.
+
+The residual risk is real and is documented rather than mitigated: screen content
+is untrusted input, and with actuation auto-approved there is no human checkpoint
+between reading it and acting on it. Staying unelevated is load-bearing here,
+because UIPI then protects every administrator window for free.
+
+### 2. `expect_window` guards every input tool (Class B)
+
+**Decision:** Every input tool takes an optional `expect_window`. When given, the
+foreground window is read and the action refused — before anything is sent —
+unless its title or process name contains that string, case-insensitively.
+
+**Rationale:** Two silent misfires in one session. Keystrokes intended for a
+just-opened Start menu went nowhere; a click aimed at a Start menu tile landed in
+the editor behind it, because the menu had closed between the screenshot and the
+click. A coordinate aims at a point, not at a thing, and points change meaning.
+
+Matching is substring-against-title-or-process rather than equality because real
+titles carry volatile detail — a browser tab is
+`"2026_Engineer Report - Google Docs - Google Chrome"` — and an exact match would
+make the guard unusable. A blank expectation matches *nothing* rather than
+everything: it almost certainly means an unset variable, and silently disabling a
+guard is the opposite of its purpose.
+
+The check lives in `input_control` beside the kill-switch, not in the backends, so
+a future platform cannot ship without it. Order is kill-switch → argument
+validation → focus check → actuate: "stop" must not depend on anything else being
+well-formed, a malformed call should fail on its own merits rather than on
+whatever is in front, and the focus check belongs as late as possible so it
+reflects the state at the moment of acting.
+
+**Known limit, documented not fixed:** a window can be in front and still not
+ready for keystrokes. `expect_window` cannot detect that, and neither can
+`SendInput`, which reports success because it genuinely delivered. Only a
+screenshot confirms a caret.
+
+### 3. Reads are not gated by the kill-switch (Class B)
+
+**Decision:** `get_foreground_window`, `get_cursor_position`, `get_screen_info`
+and `screenshot` work while actuation is halted.
+
+**Rationale:** Halting the hands should not blind the eyes. A caller that has just
+been refused an action is precisely the caller that most needs to see where things
+stand. Consistent with the pre-existing choice that the stop-file leaves
+screenshots working.
+
+### 4. Waits are bounded, and `wait_for_window` waits on a condition (Class B)
+
+**Decision:** `wait` sleeps up to 30 seconds; `wait_for_window` polls the
+foreground window until it matches or times out, and *returns* on timeout rather
+than raising.
+
+**Rationale:** Without these, sequencing a desktop task required shelling out to
+`sleep` — a computer-use server that cannot wait cannot complete a task by
+itself. `wait_for_window` is the better tool because it answers the real question
+("is the thing I launched ready?") instead of guessing a duration; it checks once
+before sleeping, so an already-correct window is free. A timeout returns
+`matched: false` plus what is actually in front, because that is information the
+caller must act on — the app failed to start, or something stole focus — and an
+exception would discard it.
+
+`wait` blocks the server thread. Acceptable only because the stdio transport
+serves one client processing one call at a time, so there is no concurrent request
+to starve. Both are capped: an unbounded wait in that model is a wedged session
+the caller cannot cancel.
+
+### Retired: the `intrusive` marker is no longer entirely unverified
+
+The 2026-08-18 entry above recorded keyboard and scroll actuation as implemented
+but unproven. A live session has now exercised `type_text`, `press_keys`, `click`
+and `scroll` against a real Windows desktop, including typing into a Google Doc
+and opening the Start menu. Still unverified: multi-monitor layouts, UIPI (the
+short-delivery raise in `_send` has never fired), the secure desktop, multi-click
+`count>=2`, horizontal scroll, and the kill-switch in live use.
+
+### Still open
+
+Not built, and worth naming so they are choices rather than oversights: **drag**
+is absent entirely (`click` is down-and-up at one point, so no drag-select, slider
+or drag-and-drop), `screenshot` has no frame hash for cheap change-polling, there
+is no launch-an-application tool (the shell covers it), and there is no
+element-level targeting — an accessibility-tree or text-query layer is what would
+make this robust rather than merely careful. Coordinate-driven automation is
+brittle by construction, and every guard above manages that rather than removing
+it.
+
+---
+
+## 2026-08-18 — Correction: the `intrusive` tests ran, and typed into a live window
+
+Two statements in the entries above were false when written, and are corrected
+here rather than edited away.
+
+**What was claimed.** The first 2026-08-18 entry said "the `intrusive` tier has
+not been run" and described the tests as "excluded from both the default run and
+the `desktop` selection". The second entry then said a live session had exercised
+keyboard actuation, without connecting that to the tests.
+
+**What actually happened.** `TestKeyboardIntoARealWindow` lived in
+`tests/test_desktop_windows.py`, which applies `pytest.mark.desktop` to every test
+in the module via `pytestmark`. The class added `@pytest.mark.intrusive` on top,
+so it carried *both* marks. A command-line `-m desktop` **replaces** the
+`addopts` filter `-m 'not desktop and not intrusive'` rather than intersecting
+with it, so `pytest -m desktop` selected it.
+
+It ran three times. Each run typed `tst-cu-mcp`, then `café 😀`, pressed
+`ctrl+f6`, and scrolled up and down into whichever window held focus — which was
+the user's chat input. The user found it; the test suite reported 33, 38 and 49
+passing desktop tests and gave no indication.
+
+**Root cause.** A pytest marker is a *selector*, not a guard. Marking something
+`intrusive` expresses an intention about how it should be selected and enforces
+nothing. Any other selection that happens to match will run it, and this one
+matched because the mark it was hiding behind was applied module-wide to a file it
+did not belong in.
+
+**Fix.** Two independent gates, on the principle that the dangerous thing should
+be unreachable by accident rather than merely labelled:
+
+1. `tests/test_intrusive_windows.py` — its own module, with no `desktop` mark
+   anywhere in it, so no `desktop` selection can reach it. A test asserts the
+   absence of that mark, so reintroducing it fails the suite.
+2. `TST_CU_MCP_ALLOW_INTRUSIVE_TESTS` — a `skipif` checked at collection. Even
+   `pytest -m intrusive` skips unless it is set, and a test reads the variable
+   back so the gate is proven to be the thing gating.
+
+`-m desktop` is now genuinely non-typing: it moves the pointer and restores it,
+and nothing else.
+
+**The wider lesson, recorded because it generalises past this bug.** The suite was
+green throughout. Every gate reported success. The thing that caught it was a
+human noticing text in a chat box. Tests that actuate a shared, stateful resource
+— a desktop, a database, a live account — cannot be made safe by naming
+conventions, because the harness will happily select them by any matching
+criterion. They need a gate that fails closed and is independent of how they were
+selected. This is the same standard TD-1406 applied to the shell tree-kill, and it
+should have been applied here from the start.
+
+---
+
+## 2026-08-18 — Deviation: committed `mcp/tst-cu-mcp` directly to `main`
+
+**AGENTS.md §8 says "Never commit to `main` directly."** This commit does. Recorded
+here because §3 requires a chat instruction that conflicts with the contract to be
+surfaced and resolved rather than silently followed — it was raised, and the user
+chose `main` over a branch and PR.
+
+Two related irregularities in the same commit, noted so they are not mistaken for
+precedent:
+
+- **No story ID.** §8's `td/<story-id>-<slug>` branch and `TD-###:` subject both
+  assume a backlog story. This work has none, so the subject is prefixed `mcp:`
+  instead. The backlog places computer use in v0.4 (`TD-1710`); this server is
+  developer tooling under `mcp/` rather than the product feature under `core/`,
+  which is why it was not treated as a v0.4 scope breach — but the distinction is
+  a judgement, not something the backlog states, and it should be settled if more
+  work lands here.
+- **The `.gitignore` fix rides along.** Anchoring `darwin.py` to `/darwin.py` is
+  unrelated to the MCP server, but the unanchored pattern silently excluded
+  `mcp/tst-cu-mcp/src/tst_cu_mcp/backends/darwin.py` from staging, so the commit
+  could not be correct without it.

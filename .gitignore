@@ -27,7 +27,11 @@ credentials.json
 /secrets/
 
 # --- Stray development artifacts ---
-darwin.py
+# Anchored to the repo root on purpose. Unanchored, `darwin.py` matched
+# mcp/tst-cu-mcp/src/tst_cu_mcp/backends/darwin.py — a real source file — and
+# silently excluded it from staging, which would have shipped a package that
+# cannot import on macOS.
+/darwin.py
 files_*.zip
 
 # --- OS artifacts ---

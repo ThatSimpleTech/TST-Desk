@@ -1,0 +1,88 @@
+[project]
+name = "tst-cu-mcp"
+version = "0.2.0"
+description = "Local computer-use MCP server: lets a model see the screen (vision) and drive the desktop over stdio. macOS and Windows."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "That Simple Tech" }]
+keywords = ["mcp", "computer-use", "macos", "windows", "automation", "vision"]
+dependencies = [
+    "mcp==2.0.0",
+    "pillow==12.3.0",
+    "pyyaml==6.0.3",
+    # pyobjc is the macOS backend's only dependency and has no Windows wheels.
+    # Without these markers `uv sync` fails outright on Windows while resolving
+    # a platform that can never satisfy them — which is what kept this server
+    # off Windows entirely, before any code was even reached.
+    "pyobjc-framework-applicationservices==12.2.2; sys_platform == 'darwin'",
+    "pyobjc-framework-cocoa==12.2.2; sys_platform == 'darwin'",
+    "pyobjc-framework-quartz==12.2.2; sys_platform == 'darwin'",
+]
+
+# The Windows backend deliberately adds no runtime dependency: display
+# enumeration and input synthesis go through `ctypes` (stdlib) against
+# user32/shcore, and capture reuses Pillow, which is already required for
+# the downscale/re-encode path on both platforms.
+
+[project.scripts]
+tst-cu-mcp = "tst_cu_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy==2.3.0",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.16.3",
+    "types-pyyaml==6.0.12.20260724",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+# pyobjc ships no type stubs; its framework modules are resolved at runtime
+# only, and on Windows they are not installed at all.
+[[tool.mypy.overrides]]
+module = [
+    "Quartz.*",
+    "Quartz",
+    "AppKit.*",
+    "AppKit",
+    "ApplicationServices.*",
+    "ApplicationServices",
+    "CoreFoundation.*",
+    "CoreFoundation",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Desktop tests actuate a real machine, so they are opt-in rather than part of
+# the default run. `desktop` reads live OS state and restores what it touches;
+# `intrusive` synthesizes keystrokes into whatever holds focus and is never run
+# unattended. Select with `-m desktop`.
+addopts = "-m 'not desktop and not intrusive'"
+markers = [
+    "desktop: requires a real desktop session; reads live OS state, restores what it touches",
+    # A marker is a selector, not a guard. `-m desktop` once selected the
+    # intrusive tests because they carried both marks, and a command-line `-m`
+    # replaces this filter instead of narrowing it. The intrusive tests are now
+    # gated by TST_CU_MCP_ALLOW_INTRUSIVE_TESTS as well, which no marker
+    # expression can bypass.
+    "intrusive: sends real keystrokes to the focused window; also requires TST_CU_MCP_ALLOW_INTRUSIVE_TESTS=1",
+]

@@ -1,0 +1,26 @@
+# tst-cu-mcp configuration — entirely optional.
+#
+# No config file is needed: every field below is already its default. Copy this
+# to ~/.tst-cu-mcp/config.yaml (or point TST_CU_MCP_CONFIG at it) only to change
+# something. Applies identically on macOS and Windows.
+
+actuation:
+  # The master switch for the hands. false refuses every mouse and keyboard
+  # action while leaving screenshots working, so the model can still see but not
+  # touch. Checked before every action, on every platform.
+  enabled: true
+
+killswitch:
+  # Path to the stop-file. While it exists, actuation is refused. Create it to
+  # halt immediately, delete it to resume — no restart either way.
+  #
+  # Default: ~/.tst-cu-mcp/STOP
+  # The TST_CU_MCP_STOP_FILE environment variable overrides the default; this
+  # setting overrides both.
+  #
+  # stop_file: C:\Users\you\.tst-cu-mcp\STOP
+
+scoping:
+  # Reserved for a future milestone and currently unenforced. Listing apps here
+  # does nothing yet; it is not a restriction you can rely on today.
+  allowed_apps: []
