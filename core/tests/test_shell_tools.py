@@ -51,11 +51,17 @@ from tstd.tools.shell import sanitized_env
 
 # A command that names its own process group, then parks an escapee in it:
 # the shell (the group leader) writes its pid — the test's spawn-ack and
-# probe handle — then backgrounds a subshell that writes a marker only by
-# surviving the kill.  The marker sleep is long so the kill has a wide
-# window to land: the tests wait on the group being GONE (a condition),
-# never on wall-clock arithmetic sized to beat the marker (TD-1407).
-_ESCAPE_PROBE_CMD = "echo $$ > pgid.txt; { sleep 30; touch kicked.txt; } & wait"
+# probe handle — then backgrounds a subshell that writes a marker only if
+# it is still alive when the test *releases* it.  The writer is gated on
+# ``release.txt``, not on ``sleep N`` (TD-1409): a delayed kill cannot
+# lose a race against a wall clock, because the grandchild never writes
+# unless the test says so — and the test never says so until the group
+# is gone (or the kill was refused).
+_ESCAPE_PROBE_CMD = (
+    "echo $$ > pgid.txt; "
+    "{ while [ ! -f release.txt ]; do sleep 0.05; done; touch kicked.txt; } & "
+    "wait"
+)
 
 # macOS intermittently vetoes same-uid process-group kills with EPERM:
 # the refusal attaches to the group and no userspace retry or external
@@ -97,11 +103,12 @@ async def _wait_for_file(path: Path, seconds: float = 5.0) -> None:
 async def _assert_group_gone(tmp_path: Path, seconds: float = 5.0) -> None:
     """Assert the killed process group is gone (TD-1407).
 
-    The condition the kicked.txt marker approximated: a surviving group
-    IS the escaped grandchild this battery exists to catch, so the probe
-    cannot become a test that cannot fail.  Only ever called after the
-    product reported the kill delivered — a veto round (refusal reported)
-    returns before probing, because the vetoed group outlives the test.
+    The condition the old kicked.txt + ``sleep 2`` marker approximated: a
+    surviving group IS the escaped grandchild this battery exists to
+    catch, so the probe cannot become a test that cannot fail.  Only ever
+    called after the product reported the kill delivered — a veto round
+    (refusal reported) returns before probing, because the vetoed group
+    outlives the test.
 
     A kill landing before the leader's first write leaves no pgid file;
     nothing was ever forked, so nothing could escape — the assertion is
@@ -289,6 +296,34 @@ class TestCancel:
         if any(_KILL_REFUSED in r.getMessage() for r in caplog.records):
             return  # the OS vetoed the kill; the command ran out
         await _assert_group_gone(tmp_path)
+
+    @requires_posix_process_group
+    async def test_escape_writer_does_not_fire_on_a_clock(self, tmp_path: Path) -> None:
+        """TD-1409: a ``sleep 2; touch kicked`` writer would produce the
+        marker during a 3s delayed kill.  The release-gated writer must
+        not — this is the reproduction the old arithmetic lost to."""
+        session = make_session(tmp_path)
+        dispatcher = make_shell_dispatcher(tmp_path)
+        task = asyncio.create_task(
+            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
+        )
+        await _wait_for_file(tmp_path / "pgid.txt")
+        # The old race window, plus margin.  If the writer is still a
+        # sleep, kicked.txt appears here and this assertion is the red.
+        await asyncio.sleep(3.0)
+        assert not (tmp_path / "kicked.txt").exists(), (
+            "escapee wrote kicked.txt without release.txt — the writer "
+            "is still a wall clock (TD-1409)"
+        )
+        await session.cancel()
+        result = await task
+        if _KILL_REFUSED in result.output:
+            return
+        await _assert_group_gone(tmp_path)
+        # Releasing after the group is gone cannot raise the dead.
+        (tmp_path / "release.txt").write_text("", encoding="utf-8")
+        await asyncio.sleep(0.2)
+        assert not (tmp_path / "kicked.txt").exists()
 
     @requires_posix_process_group
     async def test_cancel_during_spawn_kills_group(

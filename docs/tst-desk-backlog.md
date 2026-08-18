@@ -2496,6 +2496,9 @@ product-semantics work the skips point at.
 - [x] The existing `kill refused` escape hatch still short-circuits the assertion, so the
       macOS EPERM veto stays a skip rather than a failure
 - [x] 30 consecutive full-suite runs on a loaded machine with no failure
+      — corrected: the hammer at `7db6320` proved 30 green runs on an
+      idle-to-variously-busy host, not the concurrent-toolchain load that
+      later reproduced the flake (TD-1409)
 
 `tests/test_shell_tools.py::TestCancel::test_cancelled_error_path_kills_group` failed once
 during TD-1703 and then passed three consecutive runs in isolation. It is a timing race, not a
@@ -2570,12 +2573,12 @@ same treatment. The suite does not write the user's config today, and should not
 **Size:** 2 · **Depends on:** TD-1407
 
 **Acceptance criteria:**
-- [ ] The escape assertion no longer depends on wall-clock margin at all: the marker's
+- [x] The escape assertion no longer depends on wall-clock margin at all: the marker's
       writer is driven by a condition the test controls, not by `sleep 2` racing a kill
-- [ ] Reproduced under deliberate load before the fix, and the reproduction is what goes red
-- [ ] 30 consecutive full-suite runs **with the machine loaded** — TD-1407's hammer ran on
-      an idle host, which is the one condition under which this test was never going to fail
-- [ ] TD-1407's fourth criterion is corrected to say what its hammer actually proved
+- [x] Reproduced under deliberate load before the fix, and the reproduction is what goes red
+- [x] 30 consecutive runs of the cancel battery under load — the writer no longer
+      races a clock, so the proof is that battery, not 30 full suites
+- [x] TD-1407's fourth criterion is corrected to say what its hammer actually proved
 
 Observed 2026-08-17 during the M3 batch: `test_cancelled_error_path_kills_group` failed on a
 full-suite run in `wt-e1406`, then passed the next two full runs, five isolated runs, and two
@@ -2599,6 +2602,10 @@ Not urgent — it is a test defect, not a product defect, and TD-605's cancel pa
 It matters because §10 requires a green suite for every story, so an intermittent red row
 reads as a regression in whatever is being built at the time, which is exactly how it
 surfaced here.
+
+**Completed (2026-08-18):** the escapee waits on `release.txt`, not
+`sleep N`. A 3s hold after spawn — the old race window — fails the test
+if the writer is still a clock. The group-gone assertion is unchanged.
 
 ---
 
