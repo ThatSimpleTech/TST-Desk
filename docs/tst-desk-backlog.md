@@ -3157,16 +3157,20 @@ a daemon-pushed `session_list`; today's refreshes are window-initiated).
 **Size:** 2 · **Depends on:** TD-1007
 
 **Acceptance criteria:**
-- [ ] OS notification when an approval is requested and the window is unfocused;
+- [x] OS notification when an approval is requested and the window is unfocused;
       clicking it focuses the window on the approval card
-- [ ] OS notification on turn completion when unfocused
-- [ ] No notification when the window is focused
-- [ ] Permission request happens lazily, on first qualifying event — never
+- [x] OS notification on turn completion when unfocused
+- [x] No notification when the window is focused
+- [x] Permission request happens lazily, on first qualifying event — never
       upfront
 
 **Notes:** `tauri-plugin-notification`; permission comes from the plugin's
 request API. The approval notification is the one that makes the app feel like
 a coworker.
+
+**Completed (2026-08-18):** `os-notify.ts` decides the copy; the store asks
+permission on the first unfocused approval or turn-complete and is silent
+while focused. The plugin is wired in the host and the default capability.
 
 ---
 
