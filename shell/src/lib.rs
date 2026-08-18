@@ -44,6 +44,7 @@ pub fn run() {
         // TD-1201: the stack panel opens resolved steering files in the
         // system editor. Paths come from the daemon's assembled stack.
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

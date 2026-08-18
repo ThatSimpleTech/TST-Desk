@@ -5868,6 +5868,19 @@ does not stay up under a setting that says it should not.
 
 ---
 
+## 2026-08-18 — TD-1702: OS notifications via the named plugin (Class B)
+
+**Decision:** `tauri-plugin-notification` is the OS notification path, as the
+story names. Permission is requested on the first unfocused qualifying event,
+never at startup. Focus is the webview `focus`/`blur` pair.
+
+**Rationale:** In-app toasts (TD-1008) already cover the focused window. The
+OS notice is for the coworker-is-waiting case: an approval card or a finished
+turn while the user is elsewhere. Clicking the notice focuses the window; the
+approval card is already in the footer if one is pending.
+
+---
+
 ## 2026-08-18 — TD-1814: `cache_reported` is turn-scoped (Class B)
 
 **Decision:** The turn log's `cache_reported` reads `CostTracker.turn_cache_reported()`,

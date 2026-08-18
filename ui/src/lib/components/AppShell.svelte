@@ -39,6 +39,8 @@
 	import { rightPane, showRightPane } from '../right-pane.svelte.js';
 	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
 	import { startStack, refreshStack } from '../stack-store.svelte.js';
+	import { startOsNotify, createTauriOsNotifyBridge } from '../os-notify.svelte.js';
+	import { isTauri } from '../open-file';
 	import { session } from '../session-status.svelte.js';
 	import { resolveShortcut } from '../shortcuts';
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
@@ -92,6 +94,7 @@
 		// panel is only mounted on Stack; a reply with no subscriber is
 		// dropped and the pane stays on "No instruction stack yet."
 		const offStack = startStack();
+		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
 		return () => {
 			offTimeline();
 			offWizard();
@@ -100,6 +103,7 @@
 			offSettings();
 			offUsage();
 			offStack();
+			offOsNotify();
 		};
 	});
 
