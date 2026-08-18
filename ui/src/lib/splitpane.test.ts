@@ -3,11 +3,14 @@ import {
 	MIN_LEFT_PCT,
 	MAX_LEFT_PCT,
 	DEFAULT_LEFT_PCT,
+	DIVIDER_HIT_MIN_PX,
 	STORAGE_KEY,
+	attachDragListeners,
 	clampLeftPct,
 	pxToLeftPct,
 	readPersistedLeftPct,
 	writePersistedLeftPct,
+	type DragTarget,
 	type KVStorage
 } from "./splitpane";
 
@@ -86,5 +89,63 @@ describe("writePersistedLeftPct", () => {
 		const storage = fakeStorage();
 		writePersistedLeftPct(storage, 200);
 		expect(storage.data.get(STORAGE_KEY)).toBe(String(MAX_LEFT_PCT));
+	});
+});
+
+describe("divider hit target (TD-1011)", () => {
+	it("is at least 8px so the painted 4px rule is not the only target", () => {
+		expect(DIVIDER_HIT_MIN_PX).toBeGreaterThanOrEqual(8);
+	});
+});
+
+describe("attachDragListeners (TD-1011)", () => {
+	function fakeTarget(): DragTarget & {
+		listeners: Map<string, Set<(e: PointerEvent) => void>>;
+		dispatch(type: "pointermove" | "pointerup" | "pointercancel", e: PointerEvent): void;
+	} {
+		const listeners = new Map<string, Set<(e: PointerEvent) => void>>();
+		return {
+			listeners,
+			addEventListener(type, listener) {
+				const set = listeners.get(type) ?? new Set();
+				set.add(listener);
+				listeners.set(type, set);
+			},
+			removeEventListener(type, listener) {
+				listeners.get(type)?.delete(listener);
+			},
+			dispatch(type, e) {
+				for (const listener of listeners.get(type) ?? []) listener(e);
+			},
+		};
+	}
+
+	it("delivers move and up on the target, not on the divider", () => {
+		const target = fakeTarget();
+		const seen: string[] = [];
+		const detach = attachDragListeners(
+			target,
+			() => seen.push("move"),
+			() => seen.push("up"),
+		);
+		target.dispatch("pointermove", {} as PointerEvent);
+		target.dispatch("pointerup", {} as PointerEvent);
+		expect(seen).toEqual(["move", "up"]);
+		detach();
+		target.dispatch("pointermove", {} as PointerEvent);
+		target.dispatch("pointerup", {} as PointerEvent);
+		expect(seen).toEqual(["move", "up"]);
+	});
+
+	it("treats cancel as up so a lost capture still ends the drag", () => {
+		const target = fakeTarget();
+		const seen: string[] = [];
+		attachDragListeners(
+			target,
+			() => seen.push("move"),
+			() => seen.push("up"),
+		);
+		target.dispatch("pointercancel", {} as PointerEvent);
+		expect(seen).toEqual(["up"]);
 	});
 });
