@@ -2653,12 +2653,12 @@ the package in a subprocess with sockets refused. The README now cites that file
 **Size:** 3 · **Depends on:** TD-1302
 
 **Acceptance criteria:**
-- [ ] One-paragraph pitch, a screenshot, and install instructions per platform
+- [x] One-paragraph pitch, a screenshot, and install instructions per platform
       (pitch and per-platform install both written, against the artifact names
-      `package.yml` actually produces.  The screenshot is the gap: no packaged
-      app exists (TD-1302), and the UI in a browser cannot reach the Tauri host
-      commands the session plumbing needs, so every capture showed panes out of
-      sync with the daemon.  Not faked.  Ticks with the first packaged build.)
+      `package.yml` actually produces.  Screenshot is `docs/images/window.png`,
+      captured from the packaged `.app` on 2026-08-18: Connected, greeting
+      empty state, rail and activity pane live against the bundled sidecar.
+      Not a browser capture.)
 - [x] A five-minute quickstart from download to first result
       (**caveat: the download step is written ahead of the first release.**  No
       `v*` tag has been pushed, so the linked releases page is empty until one
@@ -2689,9 +2689,12 @@ the package in a subprocess with sockets refused. The README now cites that file
 
 ---
 
-**Partially done (2026-08-17).** `README.md` is now a user-facing front door — pitch, install,
-quickstart, cost, promises, comparison, status — with the developer sections kept below it. Four
-of five criteria met; the screenshot is the open one and the story stays open with it.
+**Done (2026-08-18).** `README.md` is a user-facing front door — pitch, a real
+window capture, install, quickstart, cost, promises, comparison, status — with
+the developer sections kept below it. The screenshot is the packaged `.app`
+on the greeting empty state (`docs/images/window.png`);
+`test_docs_readme_numbers.py` refuses a README that drops the image or a
+tree that drops the file.
 
 The cost section is the part that would have rotted silently, so it does not: nine price rows,
 one per shipped preset and tier, all bound to `config.yaml` by
@@ -2703,15 +2706,12 @@ Every prose claim was then audited back against the code, which caught six overs
 recording: the title bar pins the routing tier but does not swap the *model* behind it (that is a
 settings change, and `daemon.py` applies it to new sessions only); the `local` preset's `base_url`
 has no UI and needs a hand edit; only `model_calls` has an export path, not the whole audit store;
-and the credential-hygiene test's audit-row scan is conditional on a database existing. The
-decisions ledger was dropped from the comparison table entirely while TD-1203 stands open.
+and the credential-hygiene test's audit-row scan is conditional on a database existing.
 
-Two claims are deliberately hedged rather than dropped. The per-session dollar figure is quoted
+Two claims stay labelled rather than dropped. The per-session dollar figure is quoted
 from spec §1 and labelled an estimate, because this build has published no measurement of its
 own; the test asserts the README quotes the spec exactly rather than drifting its own version.
-And the no-telemetry promise names its own weakness: it is upheld by construction and review, not
-by a runtime egress gate, and no test enumerates outbound hosts. Closing that gap is a story
-nobody has filed.
+The no-telemetry promise is now pinned by `core/tests/test_outbound_hosts.py` (TD-1410).
 
 ---
 
