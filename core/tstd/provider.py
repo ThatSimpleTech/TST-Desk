@@ -195,9 +195,16 @@ class Usage:
 
 @dataclass
 class Delta:
-    """A streaming delta — a chunk of assistant output."""
+    """A streaming delta — a chunk of assistant output.
+
+    ``reasoning`` is a reasoning model's visible scratchpad, carried
+    separately from ``content`` because it is not part of the answer: it
+    is shown to the user but must never be replayed to the provider as
+    something the assistant said (TD-1901).
+    """
 
     content: str | None = None
+    reasoning: str | None = None
     tool_calls: list[DeltaToolCall] | None = None
 
 
@@ -928,6 +935,15 @@ class ProviderClient:
         # Parse content delta
         content = delta_data.get("content")
 
+        # Reasoning delta (TD-1901).  Two spellings are in the wild and
+        # neither is in the OpenAI schema: Ollama emits ``reasoning``,
+        # DeepSeek and several OpenRouter passthroughs emit
+        # ``reasoning_content``.  Accept both, prefer neither — a provider
+        # sending one sends only one.  Empty strings normalise to None so
+        # a chunk carrying nothing but ``content: ""`` cannot be mistaken
+        # for a reasoning chunk.
+        reasoning = delta_data.get("reasoning") or delta_data.get("reasoning_content")
+
         # Parse tool call deltas
         tool_calls = None
         if "tool_calls" in delta_data:
@@ -943,7 +959,7 @@ class ProviderClient:
 
         return StreamChunk(
             id=data.get("id", ""),
-            delta=Delta(content=content, tool_calls=tool_calls),
+            delta=Delta(content=content, reasoning=reasoning, tool_calls=tool_calls),
             finish_reason=finish_reason,
             usage=usage,
         )

@@ -24,6 +24,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "ready",
   "session_state",
   "assistant_delta",
+  "assistant_reasoning", // TD-1901
   "tool_call",
   "tool_result",
   "shell_output",

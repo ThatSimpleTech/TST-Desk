@@ -19,7 +19,7 @@ from tstd.autonomy import Boundary
 from tstd.config import ModelConfig, Preset, TierConfig
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
-from tstd.protocol import AssistantDelta, RuleActivated, TurnComplete
+from tstd.protocol import AssistantDelta, AssistantReasoning, RuleActivated, TurnComplete
 from tstd.protocol import ToolCall as ToolCallEvent
 from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
@@ -816,4 +816,76 @@ class TestTurnStartedLogging:
         assert started[0].content_length == 3
         assert started[1].queued_messages == 0
 
+        await runner.cancel()
+
+
+# ── Reasoning deltas (TD-1901) ─────────────────────────────────────────
+#
+# A reasoning model streams its thinking in a field of its own, with
+# ``content=""`` beside it.  The loop must emit that thinking so the window
+# has something to show, and must keep it out of ``collected_content`` — the
+# value that becomes the assistant message replayed to the provider on the
+# next round trip.
+
+
+class TestReasoningDeltas:
+    async def test_reasoning_is_emitted_as_its_own_event(self) -> None:
+        """Thinking reaches the timeline, apart from the answer."""
+        session = Session("/tmp/ws")
+        mock = MockProvider(
+            scripts={"test-brain": Script(kind="stream", reasoning="Let me think", content="Four.")}
+        )
+        runner = await start_loop(session, TierRouter(), mock, make_config())
+        await session.add_user_message("2+2?")
+        await wait_for_turn(session, 1)
+
+        thinking = "".join(
+            e.delta for e in session.event_log.all_events if isinstance(e, AssistantReasoning)
+        )
+        answer = "".join(
+            e.delta for e in session.event_log.all_events if isinstance(e, AssistantDelta)
+        )
+        assert thinking == "Let me think"
+        assert answer == "Four."
+        await runner.cancel()
+
+    async def test_reasoning_only_turn_still_emits(self) -> None:
+        """A model that thinks and says nothing is not a silent turn.
+
+        This is the defect verbatim: before TD-1901 the loop emitted no
+        event whatsoever for a reasoning phase, so the window showed a
+        shimmer and nothing else for as long as the model thought.
+        """
+        session = Session("/tmp/ws")
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", reasoning="Thinking")})
+        runner = await start_loop(session, TierRouter(), mock, make_config())
+        await session.add_user_message("hi")
+        await wait_for_turn(session, 1)
+
+        assert [e for e in session.event_log.all_events if isinstance(e, AssistantReasoning)]
+        await runner.cancel()
+
+    async def test_reasoning_never_reaches_the_next_request(self) -> None:
+        """The scratchpad is not replayed to the provider as assistant speech.
+
+        Reasoning in ``collected_content`` would be sent back as something
+        the assistant said — wrong, and paid for by the token on every
+        subsequent round trip.
+        """
+        session = Session("/tmp/ws")
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(kind="stream", reasoning="SECRET SCRATCHPAD", content="Hello")
+            }
+        )
+        runner = await start_loop(session, TierRouter(), mock, make_config())
+        await session.add_user_message("first")
+        await wait_for_turn(session, 1)
+        await session.add_user_message("second")
+        await wait_for_turn(session, 2)
+
+        # Every message the provider was handed across both turns.
+        sent = "".join(str(m.content or "") for req in mock.calls for m in req.messages)
+        assert "SECRET SCRATCHPAD" not in sent
+        assert "Hello" in sent
         await runner.cancel()

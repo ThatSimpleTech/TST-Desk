@@ -202,4 +202,16 @@ describe("applying a bind", () => {
     expect(attached).toEqual(["only"]);
     expect(bound).toEqual(["only", null]);
   });
+
+  it("fires onUnbind when the pane leaves a session (TD-1902)", () => {
+    const { ctx } = bindContext();
+    const unbound: string[] = [];
+    ctx.onUnbind = () => unbound.push("cleared");
+    const state = createChatState();
+    applyBind(state, ctx, "first", "idle");
+    applyBind(state, ctx, "second", "idle");
+    expect(unbound).toEqual(["cleared", "cleared"]);
+    applyBind(state, ctx, "second", "idle");
+    expect(unbound).toEqual(["cleared", "cleared"]);
+  });
 });

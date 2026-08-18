@@ -295,6 +295,15 @@ export interface AssistantDelta extends DaemonEvent {
   delta: string;
 }
 
+/** A chunk of a reasoning model's thinking (TD-1901). Same shape as
+ *  AssistantDelta, deliberately a different type: the transcript folds one
+ *  and shows the other, and only content is the answer. */
+export interface AssistantReasoning extends DaemonEvent {
+  type: "assistant_reasoning";
+  session_id: string;
+  delta: string;
+}
+
 export interface ToolCall extends DaemonEvent {
   type: "tool_call";
   session_id: string;
@@ -594,6 +603,7 @@ export type DaemonEventUnion =
   | Ready
   | SessionState
   | AssistantDelta
+  | AssistantReasoning
   | ToolCall
   | ToolResult
   | ShellOutput

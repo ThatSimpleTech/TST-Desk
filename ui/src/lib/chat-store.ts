@@ -17,6 +17,7 @@ import {
 } from "./attachments";
 import { createMessageQueue, type QueuedMessage } from "./chat-queue";
 import { createFirstTokenWait } from "./first-token-wait";
+import { resetDisclosures } from "./reasoning-disclosure.svelte.js";
 import { applyBind, chooseBoundSession, isTerminal } from "./session-binding";
 import type {
   ClientMessageUnion,
@@ -28,6 +29,18 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  /** A reasoning model's thinking for this message (TD-1901), kept apart
+   *  from `text` because it is not the answer: TD-1902 folds it behind a
+   *  disclosure, and nothing may ever concatenate the two. Absent for
+   *  models that do not reason. */
+  reasoning?: string;
+  /** Epoch ms of the first reasoning delta, so the disclosure can label
+   *  itself with a duration. Cleared to a final elapsed by `reasoningMs`
+   *  once content starts. */
+  reasoningStartedAt?: number;
+  /** How long reasoning ran, once the answer began. Undefined while it is
+   *  still streaming — that is what distinguishes live from finished. */
+  reasoningMs?: number;
   complete: boolean;
   /** Epoch ms when the client first saw the message (send echo or first
    *  delta). Replayed history stamps attach time — display-only (TD-1606). */
@@ -131,15 +144,11 @@ export function canSend(sessionId: string | null, wsState: string): boolean {
   return sessionId !== null && wsState === "connected";
 }
 
-/** Turn-duration line (TD-1607): a sub-second turn still reads "1s" — "0s"
- *  would claim work didn't happen. */
-export function formatTurnDuration(seconds: number): string {
-  const total = Math.max(1, Math.round(seconds));
-  if (total < 60) return `${total}s`;
-  const minutes = Math.floor(total / 60);
-  const rest = total % 60;
-  return `${minutes}m ${rest}s`;
-}
+/** Turn-duration line (TD-1607). The wording lives in `duration.ts` so the
+ *  reasoning disclosure can share it without importing this module back
+ *  (TD-1902); re-exported under the old name so existing callers are
+ *  untouched. */
+export { formatDuration as formatTurnDuration } from "./duration";
 
 /** The wait owns the threshold (first-token-wait.ts); the store re-exports it
  *  so the Working line's threshold and the state it describes stay one import
@@ -215,11 +224,17 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     const last = state.messages[state.messages.length - 1];
     if (last !== undefined && last.role === "assistant" && !last.complete) {
       last.complete = true;
+      // A turn can end on reasoning alone — a cancel mid-thought, or a
+      // model that thought and then only called a tool. Stamp the elapsed
+      // here too, or that disclosure counts forever (TD-1901).
+      if (last.reasoningStartedAt !== undefined && last.reasoningMs === undefined) {
+        last.reasoningMs = Date.now() - last.reasoningStartedAt;
+      }
     }
   }
 
   function switchSession(sessionId: string | null, turnState: SessionState["state"] | null): void {
-    applyBind(state, { queue, wait, deps }, sessionId, turnState);
+    applyBind(state, { queue, wait, deps, onUnbind: resetDisclosures }, sessionId, turnState);
   }
 
   return {
@@ -227,6 +242,33 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
     applyEvent(event: DaemonEventUnion): void {
       switch (event.type) {
+        case "assistant_reasoning": {
+          if (event.session_id !== state.sessionId) return;
+          // Reasoning is a turn in flight on exactly the terms a content
+          // delta is (TD-1714), and it is the only thing a reasoning model
+          // sends for whole minutes — so it ends the first-token wait too.
+          // Leaving that to content is what made a working local model
+          // look hung and trip the 25s stall copy (TD-1901).
+          state.turnState = "running";
+          wait.end();
+          const last = state.messages[state.messages.length - 1];
+          if (last !== undefined && last.role === "assistant" && !last.complete) {
+            last.reasoning = (last.reasoning ?? "") + event.delta;
+            last.reasoningStartedAt ??= Date.now();
+          } else {
+            nextId += 1;
+            state.messages.push({
+              id: `m${nextId}`,
+              role: "assistant",
+              text: "",
+              reasoning: event.delta,
+              reasoningStartedAt: Date.now(),
+              complete: false,
+              at: Date.now(),
+            });
+          }
+          return;
+        }
         case "assistant_delta": {
           if (event.session_id !== state.sessionId) return;
           // A delta is proof a turn is in flight (TD-1714) — the only honest
@@ -240,6 +282,11 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
             // Append in place: the message object keeps its identity so the
             // keyed list never re-mounts the row while streaming.
             last.text += event.delta;
+            // The first content token seals the thinking phase: stamp the
+            // elapsed once, so the disclosure can stop counting (TD-1902).
+            if (last.reasoningStartedAt !== undefined && last.reasoningMs === undefined) {
+              last.reasoningMs = Date.now() - last.reasoningStartedAt;
+            }
           } else {
             nextId += 1;
             state.messages.push({
@@ -371,6 +418,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       state.sessionId = null;
       state.turnState = null;
       state.messages = [];
+      resetDisclosures();
       queue.clear();
       wait.end();
       state.lastTurnDuration = null;

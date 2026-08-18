@@ -726,3 +726,68 @@ class TestRequestBuilding:
         assert isinstance(result, ChatCompletionResponse)
         assert result.message.content == "Hello, world!"
         await c.close()
+
+
+# ── Tests: Reasoning deltas (TD-1901) ──────────────────────────────────
+
+
+class TestReasoningDeltas:
+    """A reasoning model's thinking arrives in a field of its own.
+
+    Captured 2026-08-17 from Ollama serving ``qwen3.8:27b``: every
+    reasoning chunk carries ``"content": ""`` alongside ``"reasoning"``.
+    An empty string is falsy, so a parser that reads only ``content``
+    yields nothing at all for the whole thinking phase.
+    """
+
+    @staticmethod
+    def _chunk(client: ProviderClient, delta: dict[str, Any]) -> StreamChunk:
+        parsed = client._parse_stream_chunk(
+            json.dumps({"id": "c1", "choices": [{"index": 0, "delta": delta}]})
+        )
+        assert parsed is not None
+        return parsed
+
+    def test_ollama_reasoning_field(self, client: ProviderClient) -> None:
+        """``reasoning`` is parsed and does not become content."""
+        chunk = self._chunk(client, {"content": "", "reasoning": "The user"})
+        assert chunk.delta.reasoning == "The user"
+        # "" must not survive as content: a falsy-but-present value is what
+        # the loop's emission gate trips over.
+        assert not chunk.delta.content
+
+    def test_deepseek_reasoning_content_field(self, client: ProviderClient) -> None:
+        """The other spelling in the wild parses to the same place."""
+        chunk = self._chunk(client, {"reasoning_content": "Let me think"})
+        assert chunk.delta.reasoning == "Let me think"
+
+    def test_content_chunk_carries_no_reasoning(self, client: ProviderClient) -> None:
+        """An ordinary content delta is unchanged by this story."""
+        chunk = self._chunk(client, {"content": "Hello"})
+        assert chunk.delta.content == "Hello"
+        assert chunk.delta.reasoning is None
+
+    def test_interleaved_reasoning_and_content(self, client: ProviderClient) -> None:
+        """A stream that thinks, answers, then thinks again keeps them apart."""
+        script: list[dict[str, Any]] = [
+            {"content": "", "reasoning": "Think"},
+            {"content": "", "reasoning": " harder"},
+            {"content": "Answer", "reasoning": None},
+            {"content": " here"},
+        ]
+        chunks = [self._chunk(client, d) for d in script]
+        reasoning = "".join(c.delta.reasoning or "" for c in chunks)
+        content = "".join(c.delta.content or "" for c in chunks)
+        assert reasoning == "Think harder"
+        assert content == "Answer here"
+
+    def test_neither_field_present(self, client: ProviderClient) -> None:
+        """A role-only opening chunk parses without inventing either."""
+        chunk = self._chunk(client, {"role": "assistant"})
+        assert chunk.delta.content is None
+        assert chunk.delta.reasoning is None
+
+    def test_empty_reasoning_string_is_not_a_reasoning_chunk(self, client: ProviderClient) -> None:
+        """``reasoning: ""`` normalises to None rather than an empty event."""
+        chunk = self._chunk(client, {"content": "x", "reasoning": ""})
+        assert chunk.delta.reasoning is None

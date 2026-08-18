@@ -21,6 +21,7 @@ from tstd.protocol import (
     Approve,
     ArchiveSession,
     AssistantDelta,
+    AssistantReasoning,
     Attach,
     Attachment,
     BoundaryUpdate,
@@ -132,6 +133,7 @@ FIXTURES = {
         seq=2,
     ),
     "assistant_delta": AssistantDelta(session_id="sess-1", delta="Hello ", seq=3),
+    "assistant_reasoning": AssistantReasoning(session_id="sess-1", delta="Let me think", seq=3),
     "tool_call": ToolCall(
         session_id="sess-1",
         tool_call_id="tc-1",

@@ -40,6 +40,10 @@ export interface BindContext {
   queue: Pick<MessageQueue, "clear">;
   wait: Pick<FirstTokenWait, "end">;
   deps: Pick<ChatDeps, "attach" | "detach" | "onBind">;
+  /** Side effects that belong to the session that just left (TD-1902
+   *  clears reasoning-disclosure toggles here — message ids restart at
+   *  m1, so a stale toggle would fold an unrelated row). */
+  onUnbind?: () => void;
 }
 
 /** The whole auto-bind policy, in one place and free of effects. */
@@ -90,6 +94,7 @@ export function applyBind(
   // re-derives it through the store's reducer.
   state.turnState = turnState === "running" ? null : turnState;
   state.messages = [];
+  ctx.onUnbind?.();
   // Queued text belongs to the session it was composed against; carrying it
   // across would deliver it to a conversation that never asked for it.
   ctx.queue.clear();

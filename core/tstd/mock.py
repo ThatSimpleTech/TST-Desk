@@ -57,12 +57,18 @@ class Script:
         cached_tokens: cached-prompt-token figure to report, or ``None``
             to script a provider that reports no cache figure at all —
             what Ollama's OpenAI-compatible endpoint does (TD-1811).
+        reasoning: Thinking emitted before ``content`` on the ``stream``
+            kind, word by word, each chunk carrying ``content=""`` beside
+            it — the shape Ollama actually sends for a reasoning model
+            (TD-1901).  Empty by default, so every existing script is a
+            non-reasoning provider and stays byte-identical.
     """
 
     kind: Literal[
         "text", "stream", "tool_call", "malformed", "error", "rate_limit", "stream_interrupted"
     ]
     content: str = ""
+    reasoning: str = ""
     tool_name: str = ""
     tool_arguments: str = ""
     status_code: int = 0
@@ -352,6 +358,22 @@ class MockProvider:
                 usage=script.usage,
             )
             return
+
+        # Reasoning first, and with content="" on every chunk (TD-1901):
+        # a mock that left content None would not reproduce the defect,
+        # since the falsy check the loop performs treats both alike but
+        # only the empty string is what the real provider sends.
+        reasoning_words = script.reasoning.split(" ") if script.reasoning else []
+        for i, word in enumerate(reasoning_words):
+            await _maybe_delay()
+            yield StreamChunk(
+                id=chunk_id,
+                # Separators ride on the following chunk, as they do for
+                # content below, so concatenating the deltas reproduces the
+                # script exactly rather than running the words together.
+                delta=Delta(content="", reasoning=word if i == 0 else f" {word}"),
+                finish_reason=None,
+            )
 
         # Plain text: split content into word-sized deltas so consumers must
         # accumulate deltas rather than assume one chunk per response.

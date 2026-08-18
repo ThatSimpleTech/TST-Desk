@@ -272,6 +272,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
 | `session_state` | session | A session state transition, with an optional reason. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
+| `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. |
 | `tool_call` | session | A tool call about to execute, with its decision class. |
 | `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
