@@ -1664,12 +1664,12 @@ received. Report the truth and let the number be zero.
 **Size:** 2 · **Depends on:** TD-1811
 
 **Acceptance criteria:**
-- [ ] `cache_ratio` and `cache_reported` in the turn log describe the same window, so the pair
+- [x] `cache_ratio` and `cache_reported` in the turn log describe the same window, so the pair
       can never contradict itself
-- [ ] Neither field carries a previous turn's answer into a turn whose calls reported nothing
-- [ ] A test drives two turns where the first reports cached tokens and the second reports none,
+- [x] Neither field carries a previous turn's answer into a turn whose calls reported nothing
+- [x] A test drives two turns where the first reports cached tokens and the second reports none,
       and asserts the second turn's log says the provider reported nothing
-- [ ] `billable_cached_tokens` is not called from any path that reports cache state to the user,
+- [x] `billable_cached_tokens` is not called from any path that reports cache state to the user,
       matching the guardrail its own docstring states
 
 TD-1811 shipped the right idea with a scope bug. `core/tstd/loop.py:1002` reads
@@ -1687,6 +1687,10 @@ Also flagged by verification and grouped here because it is the same surface:
 `cost.billable_cached_tokens` is called from `audit_writer.py:334`, while its docstring states it
 is "a pricing fallback only. Nothing that reports cache state to the user routes through it."
 Either the call site or the docstring is wrong; decide which.
+
+**Completed (2026-08-18):** `turn_cache_reported()` reads `_turn_calls`. The audit writer
+keeps the fallback: the column is billed reuse, silence stores as `0`. The docstring now
+names that as ledger storage, not user-facing cache state.
 
 ---
 

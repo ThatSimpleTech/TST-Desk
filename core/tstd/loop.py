@@ -1019,8 +1019,10 @@ async def agent_loop(
                         # Without this, a 0.0 ratio reads the same whether
                         # the provider reported a miss or reported nothing
                         # — and only the first is a fact about the cache
-                        # (TD-1811).
-                        "cache_reported": tracker.last_cached_prompt_tokens is not None,
+                        # (TD-1811).  Turn-scoped like the ratio (TD-1814):
+                        # last_cached_prompt_tokens is the last session
+                        # call and would carry a previous turn's answer.
+                        "cache_reported": tracker.turn_cache_reported(),
                     }
                 },
             )

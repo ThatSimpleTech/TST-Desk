@@ -5865,3 +5865,20 @@ invalid — skip-all is a separate bit so existing rules keep their meaning.
 
 **Turning it on** approves every currently parked non-C call so a card that is up
 does not stay up under a setting that says it should not.
+
+---
+
+## 2026-08-18 — TD-1814: `cache_reported` is turn-scoped (Class B)
+
+**Decision:** The turn log's `cache_reported` reads `CostTracker.turn_cache_reported()`,
+which looks at `_turn_calls`. It does not read `last_cached_prompt_tokens`.
+
+**Rationale:** `turn_cache_ratio()` already sums this turn. `last_cached_prompt_tokens`
+is the last *session* call and survives `begin_turn`, because the stack badge is
+"currently cached." Pairing a turn-scoped ratio with a session-scoped reported bit
+lets a silent turn inherit `true` from the one before it.
+
+**`billable_cached_tokens` in the audit writer stays.** The column is an integer
+ledger of billed reuse; silence stores as `0` so `SUM` is a sum of claims. That is
+pricing/storage, not cache *state*. The docstring now says so. The turn log and
+the stack badge do not call it.

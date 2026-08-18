@@ -193,10 +193,14 @@ class TestTrackerNeverInvents:
             config.tier("brain"),
         )
         assert tracker.turn_cache_ratio() == pytest.approx(0.8)
+        assert tracker.turn_cache_reported() is True
 
         tracker.begin_turn()
         tracker.record("brain", Usage.from_api_dict(OLLAMA_USAGE), config.tier("brain"))
         assert tracker.turn_cache_ratio() == 0.0
+        # The last session call still remembers the hit; the turn does not.
+        assert tracker.last_cached_prompt_tokens is None
+        assert tracker.turn_cache_reported() is False
 
     def test_ratio_is_zero_not_blank_when_a_turn_spent_nothing(self) -> None:
         tracker = CostTracker(make_config())
@@ -241,6 +245,41 @@ class TestIdenticalPrefixStaysZero:
         assert logs[0]["cache_prefix_hash"] == logs[1]["cache_prefix_hash"]
         assert [entry["cache_ratio"] for entry in logs] == [0.0, 0.0]
         assert [entry["cache_reported"] for entry in logs] == [False, False]
+
+    async def test_a_silent_turn_after_a_hit_does_not_inherit_reported(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """TD-1814: the pair describes one window. A hit then silence
+        must not log ``cache_reported: true`` on the silent turn."""
+        (tmp_path / "AGENTS.md").write_text("Stay in the workspace. Use absolute paths.\n")
+        session = Session(str(tmp_path))
+        mock = MockProvider(
+            sequences={
+                "test-brain": [
+                    Script(kind="stream", content="ok", cached_tokens=800),
+                    Script(kind="stream", content="ok", cached_tokens=None),
+                ]
+            }
+        )
+
+        with caplog.at_level(logging.INFO, logger="tstd.loop"):
+            runner = await start_loop(session, TierRouter(lead_turns=99), mock, make_config())
+            await session.add_user_message("message 1")
+            await wait_for_turn(session, 1)
+            await session.add_user_message("message 2")
+            await wait_for_turn(session, 2)
+            await runner.cancel()
+
+        logs = [
+            dict(r.extra_fields)
+            for r in caplog.records
+            if r.name == "tstd.loop" and r.getMessage() == "turn complete"
+        ]
+        assert len(logs) == 2
+        assert logs[0]["cache_reported"] is True
+        assert logs[0]["cache_ratio"] == 0.6667
+        assert logs[1]["cache_reported"] is False
+        assert logs[1]["cache_ratio"] == 0.0
 
 
 # ── AC-3: free is tracked ───────────────────────────────────────────────
@@ -309,6 +348,18 @@ class TestCostOfSilence:
         assert billable_cached_tokens(None) == 0
         assert billable_cached_tokens(0) == 0
         assert billable_cached_tokens(1_200) == 1_200
+
+    def test_not_used_on_paths_that_report_cache_state(self) -> None:
+        """TD-1814: pricing/ledger only. The turn log and the stack badge
+        must not go through the fallback that turns silence into zero."""
+        root = Path(__file__).resolve().parent.parent / "tstd"
+        user_facing = (
+            (root / "loop.py").read_text(encoding="utf-8"),
+            (root / "daemon.py").read_text(encoding="utf-8"),
+            (root / "context" / "stack.py").read_text(encoding="utf-8"),
+        )
+        for source in user_facing:
+            assert "billable_cached_tokens" not in source
 
 
 # ── The surfaced figure keeps the distinction ───────────────────────────

@@ -52,9 +52,11 @@ def billable_cached_tokens(cached: int | None) -> int:
     prompt at the input rate.  That is the conservative direction: a
     provider that stays silent about reuse is one whose invoice we cannot
     assume was discounted, so the meter must not quietly under-state spend.
-    It is a *pricing* fallback only.  Nothing that reports cache state to
-    the user may route through here — see
-    :attr:`CostTracker.last_cached_prompt_tokens`.
+    It is a *pricing and ledger-storage* fallback only.  The audit column
+    is an integer sum of billed reuse, so silence stores as ``0``.
+    Nothing that reports cache *state* to the user (the turn log's
+    ``cache_reported``, the stack badge,
+    :attr:`CostTracker.last_cached_prompt_tokens`) may route through here.
     """
     return cached if cached is not None else 0
 
@@ -284,6 +286,16 @@ class CostTracker:
         total = sum(c.prompt_tokens for c in self._turn_calls)
         cached = self.turn_cached_tokens()
         return cached / total if total > 0 else 0.0
+
+    def turn_cache_reported(self) -> bool:
+        """Whether any call *this turn* carried a cache figure (TD-1814).
+
+        Pair of :meth:`turn_cache_ratio`.  ``last_cached_prompt_tokens``
+        is the last *session* call and is not reset by ``begin_turn``, so
+        it cannot stand next to a turn-scoped ratio — a silent turn after
+        a reporting one would otherwise log ``cache_reported: true``.
+        """
+        return any(c.cached_prompt_tokens is not None for c in self._turn_calls)
 
     def session_cost(self) -> float:
         """Total cost of this session (dollars)."""
