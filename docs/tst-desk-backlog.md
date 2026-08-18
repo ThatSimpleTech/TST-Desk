@@ -2184,6 +2184,13 @@ in the shell refreshes when the Stack tab is visible and when the bound
 session changes under it — palette and tab button both go through
 `showRightPane`. The store test names the subscribe-then-apply order.
 
+Packaged-app retest the same day found a second, larger drop: the
+on-demand reply is stamped `seq=1` and is not in the session log, so
+the client's gap/dup gate discarded it after attach replay had advanced
+`lastSeq`. `instruction_stack` now reaches the sink even when its seq
+is behind the cursor; a live TD-509 push that *is* the next log event
+still advances the cursor. `client.test.ts` pins both.
+
 `StackPanel` is only in the DOM on the Stack tab. `initStack` (the
 `onDaemonEvent` subscribe) lives in that panel's `onMount`, and
 `refreshStack` lives in a sibling `$effect`. Two things follow.

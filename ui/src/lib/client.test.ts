@@ -242,6 +242,52 @@ describe("from_seq replay — no gaps, no duplicates", () => {
     h.client.stop();
   });
 
+  it("delivers an on-demand instruction_stack even when seq=1 is behind lastSeq (TD-1204)", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.attach("sess-1");
+    h.servers[0].push(JSON.stringify({ type: "session_state", session_id: "sess-1", state: "running", seq: 1 }));
+    expect(h.client.lastSeq("sess-1")).toBe(1);
+
+    const before = h.onEvent.mock.calls.length;
+    h.servers[0].push(
+      JSON.stringify({
+        type: "instruction_stack",
+        session_id: "sess-1",
+        seq: 1,
+        sources: [],
+        total_tokens: 0,
+        token_method: "exact",
+      }),
+    );
+    expect(h.onEvent).toHaveBeenCalledTimes(before + 1);
+    expect(h.onEvent.mock.calls[before][0].type).toBe("instruction_stack");
+    // Snapshot must not rewind or stall the log cursor.
+    expect(h.client.lastSeq("sess-1")).toBe(1);
+    h.client.stop();
+  });
+
+  it("still advances lastSeq when instruction_stack is the next logged event", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.attach("sess-1");
+    h.servers[0].push(JSON.stringify({ type: "session_state", session_id: "sess-1", state: "running", seq: 1 }));
+    h.servers[0].push(
+      JSON.stringify({
+        type: "instruction_stack",
+        session_id: "sess-1",
+        seq: 2,
+        sources: [],
+        total_tokens: 0,
+        token_method: "exact",
+      }),
+    );
+    expect(h.client.lastSeq("sess-1")).toBe(2);
+    h.client.stop();
+  });
+
   it("reconnects to fetch the gap when a seq jump beyond +1 is seen", async () => {
     const h = buildClient({ baseBackoffMs: 5, maxBackoffMs: 8 });
     await h.client.start();
