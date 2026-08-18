@@ -3687,6 +3687,23 @@ pass unchanged, which is what says the refactor moved code and not behavior.
 
 ---
 
+### TD-1815 — Extract the transcript reducer and fork map from `chat-store`
+**Size:** 2 · **Depends on:** TD-1708, TD-1813
+
+**Acceptance criteria:**
+- [x] The event switch moves to its own module: one function, a collaborator
+      context, no socket
+- [x] Sibling snapshots move to their own module; `conversation_reset` is
+      applied there, covered by a focused test
+- [x] `chat-store.ts` is under §6's ~400 lines
+- [x] Existing chat-store tests pass unchanged
+
+**Done (2026-08-18).** TD-1708 pushed the store to 590. `chat-events.ts`
+owns the reducer; `chat-fork.ts` owns the sibling map. The store keeps
+send, queue, wait, and bind.
+
+---
+
 
 ## Epic E19 — Reasoning visibility
 
@@ -3833,8 +3850,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M1 Headless core | E2–E9 | 52 | 156 |
 | M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 23 | 66 |
-| M3 Shippable | E13–E17, E19 | 47 | 137 |
-| **Total v0.1** | **19** | **141** | **404** |
+| M3 Shippable | E13–E17, E19 | 48 | 139 |
+| **Total v0.1** | **19** | **142** | **406** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
