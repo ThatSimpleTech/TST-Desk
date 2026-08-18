@@ -13,7 +13,8 @@
 		setPaletteQuery,
 		movePaletteSelection,
 		runPaletteSelection,
-		runPaletteEntry
+		runPaletteEntry,
+		closePalette,
 	} from '../palette-store.svelte.js';
 
 	let field = $state<HTMLInputElement | null>(null);
@@ -47,7 +48,13 @@
 </script>
 
 {#if palette.open}
-	<div class="overlay">
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div
+		class="overlay"
+		onclick={(e) => {
+			if (e.target === e.currentTarget) closePalette();
+		}}
+	>
 		<div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
 			<div class="field">
 				<span class="field-icon" aria-hidden="true"><Icon name="search" size={15} /></span>
@@ -98,7 +105,7 @@
 	.overlay {
 		position: fixed;
 		inset: 0;
-		z-index: 50;
+		z-index: var(--z-modal);
 		display: flex;
 		justify-content: center;
 		/* Sits high, the way a palette is expected to — not centered. */

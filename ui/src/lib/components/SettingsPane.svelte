@@ -60,7 +60,17 @@
 </script>
 
 {#if settings.open}
-	<div class="overlay" role="dialog" aria-modal="true" aria-label="Settings">
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<div
+		class="overlay"
+		role="dialog"
+		tabindex="-1"
+		aria-modal="true"
+		aria-label="Settings"
+		onclick={(e) => {
+			if (e.target === e.currentTarget) closeSettings();
+		}}
+	>
 		<div class="pane">
 			<nav class="nav" aria-label="Settings sections">
 				{#each SETTINGS_SECTIONS as name (name)}
@@ -95,7 +105,15 @@
 							>
 						{/each}
 					</div>
-					<p class="hint">System follows your OS appearance and changes with it.</p>
+					<p class="hint">
+						{#if settings.theme === 'system'}
+							System follows your OS appearance and changes with it.
+						{:else if settings.theme === 'light'}
+							Light uses the warm-paper palette regardless of the OS.
+						{:else}
+							Dark uses the warm-charcoal palette regardless of the OS.
+						{/if}
+					</p>
 				{:else if settings.section === 'model'}
 					<p class="hint">
 						Preset <strong>{settings.activePreset ?? '—'}</strong>. Edits are saved to your
@@ -172,7 +190,7 @@
 	.overlay {
 		position: fixed;
 		inset: 0;
-		z-index: 40;
+		z-index: var(--z-modal);
 		display: grid;
 		place-items: center;
 		background: rgb(0 0 0 / 0.28);
@@ -240,11 +258,16 @@
 	}
 
 	.close {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 24px;
+		min-height: 24px;
 		background: transparent;
 		border: 0;
 		color: var(--color-ink-muted);
 		cursor: pointer;
-		padding: var(--space-1);
+		padding: var(--space-2);
 		border-radius: var(--radius-sm);
 	}
 

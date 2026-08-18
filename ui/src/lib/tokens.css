@@ -79,6 +79,10 @@
 	--space-12:  48px;
 	--space-16:  64px;
 
+	/* One stacking context for every full-window dialog (TD-1013). Later
+	   siblings paint on top; Escape peels in that same order. */
+	--z-modal: 80;
+
 	/* ---- Type roles (TD-1602) ----
 	   Display: Source Serif 4 (vendored, ui/static/fonts) carries greetings and
 	   headings at 400–500 with tight tracking; the voice stays light.

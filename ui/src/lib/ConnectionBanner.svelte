@@ -1,28 +1,12 @@
 <script lang="ts">
 	import { ws, daemon } from './connection-status.svelte.js';
+	import { bannerLabel, bannerTone } from './connection-banner';
 
 	// Presentational only: both values come straight from the store, which
 	// reads them from the host event and the real socket (AGENTS §6 — the UI
-	// never derives truth it wasn't given).
-	let label = $derived(bannerLabel());
-	let tone = $derived(bannerTone());
-
-	function bannerLabel(): string {
-		if (ws.state === 'connecting' || ws.state === 'reconnecting') return 'Connecting…';
-		if (ws.state === 'disconnected') {
-			if (daemon.state === 'crashed') return 'Daemon crashed — reconnecting';
-			if (daemon.state === 'stopping' || daemon.state === 'stopped') return 'Daemon stopped';
-			return 'Not connected';
-		}
-		if (ws.state === 'connected') return 'Connected';
-		return 'Stopped';
-	}
-
-	function bannerTone(): string {
-		if (ws.state === 'connected') return 'success';
-		if (ws.state === 'connecting' || ws.state === 'reconnecting') return 'info';
-		return 'warning';
-	}
+	// never derives truth it wasn't given). Copy lives in connection-banner.ts.
+	let label = $derived(bannerLabel(ws.state, daemon.state));
+	let tone = $derived(bannerTone(ws.state, daemon.state));
 </script>
 
 <button
@@ -30,7 +14,9 @@
 	type="button"
 	title={daemon.state === 'crashed' && daemon.restart > 0
 		? `restarted ${daemon.restart}×`
-		: undefined}
+		: label === 'Couldn’t start the daemon'
+			? 'The daemon started but the window never attached. Quit and reopen the app.'
+			: undefined}
 >
 	<span class="dot" aria-hidden="true"></span>
 	<span>{label}</span>

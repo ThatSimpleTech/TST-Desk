@@ -26,8 +26,9 @@ describe("resolveShortcut — Escape", () => {
 		expect(resolveShortcut(esc(), { ...LIVE, workspaceMenuOpen: true })).toBe("close-menu");
 	});
 
-	it("does nothing when a modal is open — Escape never reaches through it", () => {
-		expect(resolveShortcut(esc(), { ...LIVE, modalOpen: true })).toBeNull();
+	it("closes the top modal rather than the turn behind it (TD-1013)", () => {
+		expect(resolveShortcut(esc(), { ...LIVE, modalOpen: true })).toBe("close-modal");
+		expect(resolveShortcut(esc(), { ...IDLE, modalOpen: true })).toBe("close-modal");
 	});
 
 	it("dismisses the palette without reaching the turn behind it (TD-1707)", () => {

@@ -31,10 +31,10 @@
 	import SettingsPane from './SettingsPane.svelte';
 	import CommandPalette from './CommandPalette.svelte';
 	import Icon from './Icon.svelte';
-	import { start as startOnboarding, onboarding } from '../onboarding.svelte.js';
-	import { startSettings, openSettings, settings } from '../settings.svelte.js';
-	import { startDoctor, runDoctor, doctor } from '../doctor.svelte.js';
-	import { startDecisions, openDecisions, decisions } from '../decisions.svelte.js';
+	import { start as startOnboarding, onboarding, closeWizard } from '../onboarding.svelte.js';
+	import { startSettings, openSettings, closeSettings, settings } from '../settings.svelte.js';
+	import { startDoctor, runDoctor, closeDoctor, doctor } from '../doctor.svelte.js';
+	import { startDecisions, openDecisions, closeDecisions, decisions } from '../decisions.svelte.js';
 	import { palette, openPalette, closePalette } from '../palette-store.svelte.js';
 	import { rightPane, showRightPane } from '../right-pane.svelte.js';
 	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
@@ -59,9 +59,19 @@
 		event.preventDefault();
 		if (action === 'close-menu') closeWorkspaceMenu();
 		else if (action === 'close-palette') closePalette();
+		else if (action === 'close-modal') closeTopModal();
 		else if (action === 'cancel-turn') cancelTurn();
 		else if (action === 'open-palette') openPalette();
 		else openSettings();
+	}
+
+	// Top-most first, matching DOM order at the same --z-modal (settings is
+	// last among the panes, so it paints above decisions/doctor/wizard).
+	function closeTopModal(): void {
+		if (settings.open) closeSettings();
+		else if (decisions.open) closeDecisions();
+		else if (doctor.open) closeDoctor();
+		else if (onboarding.open) closeWizard();
 	}
 
 	// Feed every daemon event into the timeline for the lifetime of the shell,

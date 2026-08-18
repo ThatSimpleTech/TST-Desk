@@ -11,6 +11,12 @@
 //!
 //! The daemon is a single real guarantee for force-quit orphan prevention,
 //! but the host also tries a best-effort kill from `RunEvent::Exit`.
+//!
+//! PyInstaller's `--onefile` sidecar (TD-1301) is a bootloader that spawns
+//! the real daemon as a child. Port-file matching and group-kill live in
+//! [`daemon_pid`] (TD-1304).
+
+mod daemon_pid;
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -24,6 +30,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{watch, Notify};
 use tokio_tungstenite::tungstenite::Message;
 
+pub use daemon_pid::{kill_spawned_group, port_file_belongs_to_spawn};
+
 /// Protocol version advertised in the `hello` handshake.
 pub const PROTOCOL_VERSION: u32 = 1;
 /// Hard cap on automatic restarts after crashes before giving up.
@@ -35,9 +43,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the host waits after sending `shutdown` before sending SIGKILL.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
-type ClientWs = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type ClientWs =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Live connection details the rest of the app can read (TD-1003).
 #[derive(Debug, Clone)]
@@ -103,8 +110,11 @@ impl DaemonHandle {
     }
 
     /// Ask the supervision loop to shut the daemon down cleanly.
+    ///
+    /// Does not clear [`Self::child_pid`]: `RunEvent::Exit` may fire
+    /// immediately after this and still needs the group leader for
+    /// [`best_effort_kill`].
     pub fn request_shutdown(&self) {
-        self.child_pid.store(-1, Ordering::Relaxed);
         self.shutdown.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         self.set_status(DaemonStatus::Stopping);
@@ -195,8 +205,7 @@ async fn run_supervision(h: DaemonHandle) {
             Ok(pf) => pf,
             Err(e) => {
                 log::error!("daemon started but never wrote a port file: {e}");
-                let _ = child.kill().await;
-                let _ = child.wait().await;
+                reap_tree(&mut child, pid).await;
                 if !bump_restart(&h, &mut restart).await {
                     break;
                 }
@@ -208,8 +217,7 @@ async fn run_supervision(h: DaemonHandle) {
             Ok(ws) => ws,
             Err(e) => {
                 log::error!("daemon up but handshake failed: {e}");
-                let _ = child.kill().await;
-                let _ = child.wait().await;
+                reap_tree(&mut child, pid).await;
                 if !bump_restart(&h, &mut restart).await {
                     break;
                 }
@@ -223,7 +231,9 @@ async fn run_supervision(h: DaemonHandle) {
             port: port_file.port,
             token: port_file.token,
         }));
-        h.set_status(DaemonStatus::Connected { port: port_file.port });
+        h.set_status(DaemonStatus::Connected {
+            port: port_file.port,
+        });
         emit(&h, "connected", Some(port_file.port), 0);
 
         // Supervise: exit the child, or a shutdown request from the host.
@@ -237,12 +247,16 @@ async fn run_supervision(h: DaemonHandle) {
         tokio::select! {
             res = child.wait() => {
                 log::info!("daemon exited under supervision: {res:?}");
+                // Bootloader may have exited while the grandchild still
+                // listens — reap the group before we spawn another.
+                daemon_pid::kill_spawned_group(pid);
             }
             _ = &mut shutdown_wait => {
                 h.set_status(DaemonStatus::Stopping);
                 emit(&h, "stopping", None, 0);
-                graceful_shutdown(&h, &mut ws, &mut child).await;
+                graceful_shutdown(&h, &mut ws, &mut child, pid).await;
                 h.set_conn(None);
+                h.child_pid.store(-1, Ordering::Relaxed);
                 h.set_status(DaemonStatus::Stopped);
                 emit(&h, "stopped", None, 0);
                 h.done.notify_waiters();
@@ -258,6 +272,7 @@ async fn run_supervision(h: DaemonHandle) {
     }
 
     h.set_conn(None);
+    h.child_pid.store(-1, Ordering::Relaxed);
     h.set_status(DaemonStatus::Stopped);
     h.done.notify_waiters();
 }
@@ -319,10 +334,9 @@ fn resolve_with(
     }
     #[cfg(debug_assertions)]
     {
-        // Dev fallback: the core workspace's own venv. We spawn the script
-        // directly (a shebang exec) so the daemon pid is our direct child —
-        // `uv run` inserts a wrapper process, which would break the port
-        // file's pid match.
+        // Dev fallback: the core workspace's own venv. Prefer the shebang
+        // script over `uv run` so we skip a wrapper, but TD-1304 accepts a
+        // descendant either way (the packaged onefile sidecar is one).
         let core = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -357,28 +371,34 @@ pub fn spawn_daemon(data_dir: &Path) -> Result<tokio::process::Child, String> {
         .arg("INFO")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    daemon_pid::apply_process_group(&mut cmd);
     cmd.spawn().map_err(|e| format!("spawn failed: {e}"))
 }
 
-/// Wait for a port file whose embedded pid is exactly the spawned child.
+/// Wait for a port file whose pid is the spawned child *or a descendant*.
 ///
-/// Keying on pid matters after a crash: the previous daemon's file lingers
-/// (SIGKILL leaves no clean removal), so mere existence may point at a dead
-/// daemon. This mirrors `test_daemon_restart_integration.py`.
-pub async fn wait_for_port_file(dir: &Path, pid: u32, timeout: Duration) -> Result<PortFile, String> {
+/// Keying on the process tree matters after a crash: the previous daemon's
+/// file lingers (SIGKILL leaves no clean removal), so mere existence may
+/// point at a dead daemon. Exact equality is not enough — the packaged
+/// onefile sidecar writes the grandchild's pid (TD-1304).
+pub async fn wait_for_port_file(
+    dir: &Path,
+    pid: u32,
+    timeout: Duration,
+) -> Result<PortFile, String> {
     let path = dir.join("port.json");
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         if let Ok(raw) = tokio::fs::read_to_string(&path).await {
             if let Ok(pf) = serde_json::from_str::<PortFile>(&raw) {
-                if pf.pid == pid {
+                if port_file_belongs_to_spawn(pid, pf.pid) {
                     return Ok(pf);
                 }
             }
         }
         if tokio::time::Instant::now() >= deadline {
             return Err(format!(
-                "timed out waiting for a port file belonging to pid {pid} at {}",
+                "timed out waiting for a port file belonging to pid {pid} (or a descendant) at {}",
                 path.display()
             ));
         }
@@ -423,8 +443,13 @@ pub async fn connect_handshake(port: u16, token: &str) -> Result<ClientWs, Strin
     }
 }
 
-/// Send `shutdown` over WS, wait a short grace, then SIGKILL if needed.
-async fn graceful_shutdown(h: &DaemonHandle, ws: &mut ClientWs, child: &mut tokio::process::Child) {
+/// Send `shutdown` over WS, wait a short grace, then kill the process group.
+async fn graceful_shutdown(
+    h: &DaemonHandle,
+    ws: &mut ClientWs,
+    child: &mut tokio::process::Child,
+    spawned_pid: u32,
+) {
     h.set_status(DaemonStatus::Stopping);
     let _ = ws
         .send(Message::Text(r#"{"type":"shutdown"}"#.into()))
@@ -436,25 +461,26 @@ async fn graceful_shutdown(h: &DaemonHandle, ws: &mut ClientWs, child: &mut toki
         Ok(Ok(_status)) => log::info!("daemon exited cleanly after shutdown"),
         Ok(Err(e)) => log::warn!("daemon wait errored after shutdown: {e}"),
         Err(_elapsed) => {
-            log::warn!("daemon did not exit within grace; sending SIGKILL");
-            match child.kill().await {
-                Ok(()) => {
-                    let _ = child.wait().await;
-                }
-                Err(e) => log::error!("failed to SIGKILL daemon: {e}"),
-            }
+            log::warn!("daemon did not exit within grace; killing the process group");
         }
     }
+    // Backstop: a onefile bootloader may have exited while the grandchild
+    // is still listening. Group-kill is a no-op if the tree is already gone.
+    reap_tree(child, spawned_pid).await;
 }
 
-/// Synchronous, best-effort kill of the daemon by pid, for `RunEvent::Exit`.
+/// SIGKILL the spawned process group, then wait on the leader.
+async fn reap_tree(child: &mut tokio::process::Child, spawned_pid: u32) {
+    daemon_pid::kill_spawned_group(spawned_pid);
+    let _ = child.wait().await;
+}
+
+/// Synchronous, best-effort kill of the daemon tree, for `RunEvent::Exit`.
 /// The daemon's own parent-pid watchdog is the real backstop; this only
-/// closes the small window before the OS reaps us. Unix-only for now.
+/// closes the small window before the OS reaps us.
 pub fn best_effort_kill(handle: &DaemonHandle) {
     if let Some(pid) = handle.child_pid() {
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .output();
+        daemon_pid::kill_spawned_group(pid);
     }
 }
 

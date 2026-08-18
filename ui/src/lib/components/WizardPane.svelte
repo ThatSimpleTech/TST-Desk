@@ -30,7 +30,17 @@
 </script>
 
 {#if onboarding.open}
-	<div class="wizard-overlay" role="dialog" aria-modal="true" aria-label="First-run setup">
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<div
+		class="wizard-overlay"
+		role="dialog"
+		tabindex="-1"
+		aria-modal="true"
+		aria-label="First-run setup"
+		onclick={(e) => {
+			if (e.target === e.currentTarget) closeWizard();
+		}}
+	>
 		<div class="wizard">
 			<div class="dots" aria-hidden="true">
 				{#each WIZARD_STEPS as _s, i}
@@ -159,7 +169,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		z-index: 90;
+		z-index: var(--z-modal);
 	}
 
 	.wizard {
