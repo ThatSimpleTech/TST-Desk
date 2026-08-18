@@ -13,7 +13,9 @@ Run from anywhere; paths resolve from this file's location.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -72,6 +74,57 @@ def build(triple: str) -> Path:
         return target
 
 
+def _parent_pid(pid: int) -> int | None:
+    """Best-effort ppid via `ps`. None if the process is gone."""
+    proc = subprocess.run(
+        ["ps", "-o", "ppid=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    text = proc.stdout.strip()
+    if not text:
+        return None
+    try:
+        parsed = int(text)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _is_descendant(ancestor: int, pid: int) -> bool:
+    """True when `pid` is `ancestor` or a descendant of it."""
+    if ancestor <= 0 or pid <= 0:
+        return False
+    seen: set[int] = set()
+    cur = pid
+    while cur not in seen:
+        if cur == ancestor:
+            return True
+        seen.add(cur)
+        parent = _parent_pid(cur)
+        if parent is None or parent == cur:
+            return False
+        cur = parent
+    return False
+
+
+def _reap_group(proc: subprocess.Popen[bytes]) -> None:
+    """Kill the sidecar's process group so a onefile grandchild cannot linger."""
+    if proc.pid:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+    try:
+        proc.wait(timeout=10.0)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5.0)
+
+
 def smoke(binary: Path) -> float:
     """Launch the bundle like the shell does; return seconds to port.json."""
     with tempfile.TemporaryDirectory(prefix="tstd-smoke-") as data_dir:
@@ -80,6 +133,7 @@ def smoke(binary: Path) -> float:
             [str(binary), "--data-dir", data_dir, "--log-level", "INFO"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         try:
             port_file = Path(data_dir) / "port.json"
@@ -94,10 +148,15 @@ def smoke(binary: Path) -> float:
             info = json.loads(port_file.read_text(encoding="utf-8"))
             if not info.get("port"):
                 raise RuntimeError(f"port.json missing port: {info!r}")
+            written = int(info.get("pid") or 0)
+            if written != proc.pid and not _is_descendant(proc.pid, written):
+                raise RuntimeError(
+                    f"port.json pid {written} is neither the sidecar ({proc.pid}) "
+                    "nor a descendant — the host would refuse to attach (TD-1304)"
+                )
             return elapsed
         finally:
-            proc.terminate()
-            proc.wait(timeout=10.0)
+            _reap_group(proc)
 
 
 def main() -> int:

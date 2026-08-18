@@ -25,6 +25,7 @@ export interface ShortcutContext {
 export type ShortcutAction =
 	| "close-menu"
 	| "close-palette"
+	| "close-modal"
 	| "cancel-turn"
 	| "open-settings"
 	| "open-palette";
@@ -39,9 +40,9 @@ export function resolveShortcut(
 		// The palette dismisses itself (TD-1707) — it is a modal layer, so it
 		// eats the key rather than letting it reach the turn behind it.
 		if (context.paletteOpen) return "close-palette";
-		// Other modals keep today's close-button behavior; Escape never reaches
-		// through one to cancel the turn behind it.
-		if (context.modalOpen) return null;
+		// A pane (wizard / doctor / decisions / settings) closes next, so
+		// Escape never reaches a running turn behind it (TD-1013).
+		if (context.modalOpen) return "close-modal";
 		return context.turnLive ? "cancel-turn" : null;
 	}
 	// ⌘, on macOS, Ctrl+, elsewhere — opens settings (TD-1703). It used to

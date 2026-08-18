@@ -1889,6 +1889,25 @@ entries again. A fourth test pins that the gate still refuses unknown frames.
 ---
 
 
+### TD-1013 — One modal stack: Escape, click-outside, shared z-index
+**Size:** 3 · **Depends on:** TD-1008, TD-1703
+
+Found 2026-08-18 on the packaged app: Decisions is `z-index: 90` and covers the
+chrome that opened it; Settings is 40; the palette is 50. Cmd+K over Decisions
+opens the palette behind the dialog. Escape is swallowed (`modalOpen` returns
+null) and the overlay has no click-outside, so the only exit is a 14px X.
+
+**Acceptance criteria:**
+- [x] Wizard, doctor, decisions, settings, and the palette share one overlay
+      z-index (`--z-modal`)
+- [x] Escape closes the top layer: menu, then palette, then other modal, then
+      cancel turn
+- [x] Clicking the dimmed overlay dismisses the dialog
+- [x] Close buttons are at least 24px
+- [x] Appearance hint describes the selected theme, not always System
+
+---
+
 ## Epic E11 — Onboarding
 
 ---
@@ -2114,6 +2133,36 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 - [x] Version consistent across host, daemon, and UI, asserted by test
       (`core/tests/test_version_consistency.py`; release job re-asserts the
       tag equals all four. Caught ui/package.json at 0.0.1 → 0.1.0.)
+
+---
+
+### TD-1304 — Packaged sidecar PID must attach, and a failed start must not leak daemons
+**Size:** 5 · **Depends on:** TD-1301
+
+Found 2026-08-18 on the 0.1.0 `.app`: the UI stays on **Connecting…** forever.
+The host waits for `port.json.pid == spawned_child.pid`. PyInstaller's
+`--onefile` bootloader is that child; the process that writes the port file is
+its grandchild. After 30s the host kills the bootloader and respawns.
+`MAX_RESTARTS` is 3, so one launch left four `tstd` listeners
+(53347 / 53355 / 53369 / 53373) and zero `handshake ok`.
+
+The debug path hides this: it runs the venv `tstd` as a direct child. The
+sidecar smoke test only checked that `port.json` appeared, not that the pid
+matched.
+
+**Acceptance criteria:**
+- [x] `wait_for_port_file` accepts a port-file pid that is the spawned child
+      or a live descendant of it
+- [x] The sidecar is spawned in its own process group (Unix) / killed as a
+      tree (Windows `taskkill /T`)
+- [x] Timeout, handshake failure, crash, and quit all reap the group — no
+      leftover listener
+- [x] A wrapper-process test (the onefile shape) attaches and group-kill
+      reaps the grandchild
+- [x] After the host gives up, the pill says the daemon could not start —
+      never **Connecting…** forever
+- [ ] Packaged `.app` launches, the pill goes Connected, quit leaves no `tstd`
+      (manual — rebuild the sidecar + bundle and launch)
 
 ---
 
@@ -3474,9 +3523,9 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 51 | 153 |
 | M1.5 Local models | E18 | 12 | 30 |
-| M2 The window | E10–E12 | 19 | 57 |
-| M3 Shippable | E13–E17 | 44 | 126 |
-| **Total v0.1** | **18** | **133** | **381** |
+| M2 The window | E10–E12 | 20 | 60 |
+| M3 Shippable | E13–E17 | 45 | 131 |
+| **Total v0.1** | **18** | **135** | **389** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

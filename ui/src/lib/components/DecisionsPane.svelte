@@ -60,7 +60,17 @@
 </script>
 
 {#if decisions.open}
-	<div class="decisions-overlay" role="dialog" aria-modal="true" aria-label="Decisions">
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<div
+		class="decisions-overlay"
+		role="dialog"
+		tabindex="-1"
+		aria-modal="true"
+		aria-label="Decisions"
+		onclick={(e) => {
+			if (e.target === e.currentTarget) closeDecisions();
+		}}
+	>
 		<div class="decisions">
 			<div class="head">
 				<h1 class="title">Decisions</h1>
@@ -134,7 +144,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		z-index: 90;
+		z-index: var(--z-modal);
 	}
 
 	.decisions {
@@ -189,12 +199,16 @@
 
 	.close {
 		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 24px;
+		min-height: 24px;
 		border: none;
 		background: none;
 		color: var(--color-text-secondary);
 		cursor: pointer;
 		font-size: var(--text-sm);
-		padding: var(--space-1);
+		padding: var(--space-2);
 	}
 
 	.empty {

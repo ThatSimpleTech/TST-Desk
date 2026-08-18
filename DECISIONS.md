@@ -5471,3 +5471,31 @@ justifies is still right — relative inputs exercise identical semantics on
 every platform — so the comments were corrected in place and the tests left
 alone. A test-writing convention that outlives its stated reason is the same
 failure as a stale skip, one degree quieter.
+
+---
+
+## 2026-08-18 — TD-1304: port-file pid is the listener, host accepts a descendant
+
+**Decision:** `port.json.pid` remains `os.getpid()` of the process that bound the
+socket. The host accepts that pid when it is the child it spawned **or a live
+descendant of it**. The sidecar is spawned in its own process group; timeout,
+handshake failure, crash, and quit kill the group (Unix `kill -KILL -pgid`,
+Windows `taskkill /T`).
+
+**Rationale:** PyInstaller's `--onefile` bootloader is the spawned child; the
+real daemon is its grandchild and is what writes the port file. Exact equality
+— the TD-1002 rule — never matches, so the packaged app never attaches and
+each retry leaves a leftover listener. Switching off `--onefile` would rewrite
+TD-1301. Writing the bootloader pid into the port file would lie about who is
+listening. Descendant matching is what debug already does (direct child) and
+what onefile actually is.
+
+`request_shutdown` no longer clears the stored leader pid: `RunEvent::Exit`
+can fire in the same tick and still needs it for the group kill.
+
+**Alternative rejected:** infer the pid from whoever is listening on the port.
+That would accept a stale daemon from a previous crash that still held the
+port — the case the pid key exists to refuse.
+
+**Windows:** parent walk uses `wmic`; tree kill uses `taskkill /T`. Job-object
+process-group kill stays TD-1406.
