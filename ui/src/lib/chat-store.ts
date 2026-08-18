@@ -50,6 +50,22 @@ export interface ChatMessage {
    *  keeping them would hold the whole session's attachments in memory for
    *  a transcript that only ever shows the label. */
   attachments?: AttachmentChip[];
+  /** Tool calls that ran during this assistant turn (TD-1902). Folded
+   *  like reasoning so a tool-heavy turn does not grow the transcript
+   *  without bound. Absent when the turn used no tools. */
+  tools?: ToolBlock[];
+}
+
+/** One tool call on an assistant row (TD-1902). `status` is unset while
+ *  the call is still running — that is what keeps the disclosure open. */
+export interface ToolBlock {
+  toolCallId: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  decisionClass?: "A" | "B" | "C" | null;
+  status?: "success" | "error";
+  output?: string;
+  errorCode?: string | null;
 }
 
 export interface ChatState {
@@ -220,6 +236,33 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     return true;
   }
 
+  function currentAssistant(): ChatMessage {
+    const last = state.messages[state.messages.length - 1];
+    if (last !== undefined && last.role === "assistant" && !last.complete) {
+      return last;
+    }
+    nextId += 1;
+    const row: ChatMessage = {
+      id: `m${nextId}`,
+      role: "assistant",
+      text: "",
+      complete: false,
+      at: Date.now(),
+    };
+    state.messages.push(row);
+    return row;
+  }
+
+  function findTool(toolCallId: string): ToolBlock | null {
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      const tools = state.messages[i].tools;
+      if (tools === undefined) continue;
+      const found = tools.find((t) => t.toolCallId === toolCallId);
+      if (found !== undefined) return found;
+    }
+    return null;
+  }
+
   function sealInFlightAssistant(): void {
     const last = state.messages[state.messages.length - 1];
     if (last !== undefined && last.role === "assistant" && !last.complete) {
@@ -359,9 +402,34 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           wait.end();
           return;
         }
+        case "tool_call": {
+          if (event.session_id !== state.sessionId) return;
+          // A tool call is a turn in flight, same as a delta (TD-1902).
+          state.turnState = "running";
+          wait.end();
+          const row = currentAssistant();
+          const tools = row.tools ?? (row.tools = []);
+          if (tools.some((t) => t.toolCallId === event.tool_call_id)) return;
+          tools.push({
+            toolCallId: event.tool_call_id,
+            name: event.name,
+            arguments: event.arguments,
+            decisionClass: event.decision_class,
+          });
+          return;
+        }
+        case "tool_result": {
+          if (event.session_id !== state.sessionId) return;
+          const block = findTool(event.tool_call_id);
+          if (block === null) return;
+          block.status = event.status;
+          block.output = event.output;
+          block.errorCode = event.error_code ?? null;
+          return;
+        }
         default:
-          // Tool activity, cost, approvals: the activity timeline's domain
-          // (TD-1005/TD-1007), not the conversation's.
+          // Cost, approvals, and the rest stay the activity timeline's
+          // domain (TD-1005/TD-1007).
           return;
       }
     },

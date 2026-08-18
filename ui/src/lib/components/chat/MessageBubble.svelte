@@ -16,6 +16,7 @@
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import Markdown from "./Markdown.svelte";
 	import ReasoningBlock from "./ReasoningBlock.svelte";
+	import ToolFold from "./ToolFold.svelte";
 
 	let {
 		message,
@@ -67,6 +68,11 @@
 		<div class="assistant-msg">
 			<!-- TD-1902: thinking above the answer, folded. -->
 			{#if hasReasoning(message)}<ReasoningBlock {message} />{/if}
+			{#if message.tools}
+				{#each message.tools as block (block.toolCallId)}
+					<ToolFold messageId={message.id} {block} />
+				{/each}
+			{/if}
 			<Markdown text={message.text} />
 			<!-- The caret marks the answer being written. Over an empty body during
 			     a reasoning phase it would be a lie: that text streams into the

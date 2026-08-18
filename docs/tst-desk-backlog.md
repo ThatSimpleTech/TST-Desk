@@ -3759,23 +3759,19 @@ bubble with a blinking caret for the minute the model spends thinking.
       63s"), expandable in place
 - [x] While it is the live thing the block is expanded and streaming; it collapses on its own
       once content begins
-- [ ] Tool calls and their results fold into the same disclosure treatment instead of growing
+- [x] Tool calls and their results fold into the same disclosure treatment instead of growing
       the transcript without bound
 - [x] Collapsed state is per-block and survives scrolling away and back
 - [x] Expanded reasoning is selectable and copyable
 - [x] `prefers-reduced-motion` suppresses the expand and collapse animation
 
-**Partial (2026-08-18):** `ReasoningBlock` renders above the answer —
+**Completed (2026-08-18):** `ReasoningBlock` renders above the answer —
 open and shimmering while thinking is live, collapsing to "Thought for
-1m 3s" when content starts. An explicit toggle wins permanently.
-Disclosure state is module-level and keyed by message id, so a
-virtualized row scrolled away and back keeps its fold. Bind/dispose
-clears the map (`onUnbind`) because ids restart at m1. The caret no
-longer blinks over an empty body during a reasoning phase.
-
-Tool-call folding is the remaining criterion and is not this pass. The
-silent-Whittling bug is the thinking half; folding tool rows is a
-density follow-up, not what made the window look hung.
+1m 3s" when content starts. Tool calls land on the same assistant row
+and fold through the same `Disclosure` chrome: open while the result is
+outstanding, closed once it arrives. An explicit toggle wins permanently
+and is keyed per block, so a virtualized row keeps its fold. Bind/dispose
+clears the map (`onUnbind`) because ids restart at m1.
 
 **Notes:** the disclosure is the resting state, not a setting to find. At the brain tier's
 measured throughput a 27B thinker will out-produce its own answer several times over, so

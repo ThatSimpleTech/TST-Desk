@@ -1168,3 +1168,92 @@ describe("reasoning deltas (TD-1901)", () => {
     expect(state.messages[0].complete).toBe(true);
   });
 });
+
+// ── Tool folds (TD-1902) ───────────────────────────────────────────────
+
+function toolCall(
+  sessionId: string,
+  id: string,
+  name = "fs_read",
+): DaemonEventUnion {
+  return {
+    type: "tool_call",
+    session_id: sessionId,
+    tool_call_id: id,
+    name,
+    arguments: { path: "README.md" },
+    decision_class: "B",
+    seq: 5,
+  } as DaemonEventUnion;
+}
+
+function toolResult(
+  sessionId: string,
+  id: string,
+  status: "success" | "error" = "success",
+): DaemonEventUnion {
+  return {
+    type: "tool_result",
+    session_id: sessionId,
+    tool_call_id: id,
+    status,
+    output: status === "success" ? "ok" : "denied",
+    truncated: false,
+    error_code: status === "error" ? "approval_denied" : null,
+    seq: 6,
+  } as DaemonEventUnion;
+}
+
+describe("tool folds (TD-1902)", () => {
+  it("opens a message on a tool call with no prior delta", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(toolCall("s1", "tc-1"));
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].role).toBe("assistant");
+    expect(state.messages[0].tools).toHaveLength(1);
+    expect(state.messages[0].tools![0].name).toBe("fs_read");
+    expect(state.messages[0].tools![0].status).toBeUndefined();
+  });
+
+  it("lands a tool on the same in-flight assistant row as the text", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(delta("s1", "Looking"));
+    store.applyEvent(toolCall("s1", "tc-1"));
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].text).toBe("Looking");
+    expect(state.messages[0].tools![0].toolCallId).toBe("tc-1");
+  });
+
+  it("resolves the matching call and leaves others live", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(toolCall("s1", "tc-1"));
+    store.applyEvent(toolCall("s1", "tc-2", "fs_write"));
+    store.applyEvent(toolResult("s1", "tc-1"));
+    expect(state.messages[0].tools![0].status).toBe("success");
+    expect(state.messages[0].tools![0].output).toBe("ok");
+    expect(state.messages[0].tools![1].status).toBeUndefined();
+  });
+
+  it("does not duplicate a replayed tool_call", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(toolCall("s1", "tc-1"));
+    store.applyEvent(toolCall("s1", "tc-1"));
+    expect(state.messages[0].tools).toHaveLength(1);
+  });
+
+  it("ends the first-token wait", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("hi");
+    expect(state.awaitingFirstToken).toBe(true);
+    store.applyEvent(toolCall("s1", "tc-1"));
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
+  it("ignores a result for a session the pane is not bound to", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(toolCall("s1", "tc-1"));
+    store.applyEvent(toolResult("s2", "tc-1", "error"));
+    expect(state.messages[0].tools![0].status).toBeUndefined();
+  });
+});
+
