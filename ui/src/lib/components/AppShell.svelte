@@ -38,6 +38,8 @@
 	import { palette, openPalette, closePalette } from '../palette-store.svelte.js';
 	import { rightPane, showRightPane } from '../right-pane.svelte.js';
 	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
+	import { startStack, refreshStack } from '../stack-store.svelte.js';
+	import { session } from '../session-status.svelte.js';
 	import { resolveShortcut } from '../shortcuts';
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
@@ -86,6 +88,10 @@
 		const offDecisions = startDecisions();
 		const offSettings = startSettings();
 		const offUsage = startUsage();
+		// TD-1204: subscribe for the window's life, not the tab's. The
+		// panel is only mounted on Stack; a reply with no subscriber is
+		// dropped and the pane stays on "No instruction stack yet."
+		const offStack = startStack();
 		return () => {
 			offTimeline();
 			offWizard();
@@ -93,7 +99,17 @@
 			offDecisions();
 			offSettings();
 			offUsage();
+			offStack();
 		};
+	});
+
+	// Refresh when Stack is the visible tab and when the bound session
+	// changes under it. Palette "Stack" and the tab button both go
+	// through `showRightPane`, so one effect covers both.
+	$effect(() => {
+		if (rightPane.tab !== 'stack') return;
+		void session.sessionId;
+		refreshStack();
 	});
 
 	// The usage pane (TD-1706) reads the audit store, which the live event

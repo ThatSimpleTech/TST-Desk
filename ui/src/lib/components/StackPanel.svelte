@@ -8,29 +8,18 @@
 	// reports no cache figure" are both real answers, and neither is a
 	// miss).
 	// The loop pushes a fresh stack when steering changes at a turn
-	// boundary (TD-509), and this view re-queries on mount and session
-	// switch. Clicking a file opens it in the system editor via
-	// tauri-plugin-opener.
-	import { onMount } from 'svelte';
-	import { session } from '../session-status.svelte.js';
-	import { initStack, refreshStack, stack, teardownStack } from '../stack-store.svelte.js';
+	// boundary (TD-509). Subscribe and refresh live in AppShell
+	// (TD-1204) — this panel is only in the DOM on the Stack tab, so
+	// owning the subscriber here dropped every reply that arrived
+	// while the user was on Activity, and raced refresh ahead of
+	// subscribe on first open. Clicking a file opens it in the system
+	// editor via tauri-plugin-opener.
+	import { stack } from '../stack-store.svelte.js';
 	import { cacheBadge, cacheLabel, formatTokens } from '../stack-store';
 	import { openInEditor } from '../open-file';
 	import Icon from './Icon.svelte';
 
 	const badge = $derived(cacheBadge(stack.lastCachedTokens, stack.cacheObserved));
-
-	onMount(() => {
-		initStack();
-		return teardownStack;
-	});
-
-	$effect(() => {
-		// Track the attached session: re-ask the daemon when it changes
-		// (and once on mount).
-		void session.sessionId;
-		refreshStack();
-	});
 
 	function open(path: string): void {
 		void openInEditor(path);

@@ -79,7 +79,11 @@ export function createStackStore(deps: StackStoreDeps, state: StackState) {
 
 		/** Ask the daemon for the attached session's stack (panel open,
 		 *  session switch). A stale view from another session is dropped
-		 *  first — an empty panel is honest, a stale one lies. */
+		 *  first — an empty panel is honest, a stale one lies.
+		 *
+		 *  TD-1204: this only helps if a subscriber is already applying
+		 *  `instruction_stack` events. The wrapper's `startStack` must
+		 *  run before this, or the reply is dropped. */
 		refresh(currentSessionId: string | null): boolean {
 			if (currentSessionId === null) {
 				clearStack(state);
