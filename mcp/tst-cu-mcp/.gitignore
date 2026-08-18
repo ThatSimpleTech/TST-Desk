@@ -1,0 +1,13 @@
+# Virtual environment and build artifacts for this MCP area.
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# Scratch output from local verification runs.
+_out.txt
