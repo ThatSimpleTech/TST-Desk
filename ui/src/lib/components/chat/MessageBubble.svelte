@@ -11,9 +11,11 @@
 	//
 	// A user row that carried attachments shows them as chips (TD-1709).
 	import type { ChatMessage } from "../../chat-store";
+	import { hasReasoning } from "../../reasoning-disclosure.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import Markdown from "./Markdown.svelte";
+	import ReasoningBlock from "./ReasoningBlock.svelte";
 
 	let {
 		message,
@@ -63,8 +65,16 @@
 >
 	{#if message.role === "assistant"}
 		<div class="assistant-msg">
+			<!-- TD-1902: thinking above the answer, folded. -->
+			{#if hasReasoning(message)}<ReasoningBlock {message} />{/if}
 			<Markdown text={message.text} />
-			{#if !message.complete}<span class="cursor" aria-hidden="true">▍</span>{/if}
+			<!-- The caret marks the answer being written. Over an empty body during
+			     a reasoning phase it would be a lie: that text streams into the
+			     block above, not into `text` (TD-1901). -->
+			{#if !message.complete && message.text !== ""}<span
+					class="cursor"
+					aria-hidden="true">▍</span
+				>{/if}
 			{#if message.complete}
 				<div class="actions">
 					<button
