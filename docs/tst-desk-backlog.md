@@ -2172,9 +2172,9 @@ matching touch, active after.
 **Size:** 1 · **Depends on:** TD-1202
 
 **Acceptance criteria:**
-- [ ] Switching away from a session and back shows each decision once, not twice
-- [ ] The panel scopes to the bound session — it already does; the fix must not lose that
-- [ ] A test drives A → B → A through a real client and asserts no row repeats
+- [x] Switching away from a session and back shows each decision once, not twice
+- [x] The panel scopes to the bound session — it already does; the fix must not lose that
+- [x] A test drives A → B → A through a real client and asserts no row repeats
 
 `decisions.svelte.ts`'s reducer appends unconditionally: `decisions.rows.push({ id:
 `${event.session_id}:${event.seq}`, ... })`. The id is documented as "stable identity" and
@@ -2192,6 +2192,12 @@ confirmed by reading the reducer: the append has no guard and the stable id has 
 The timeline's answer is next door and probably transfers: bind-and-clear plus idempotence keyed
 on the log position, in `timeline.ts` (TD-1009). Worth checking whether the two stores should
 share it rather than growing a second copy.
+
+**Completed (2026-08-18):** The two stores share the *contract*, not a type. Timeline folds
+every event; this list only folds `decision_logged`. A shared helper would be a third
+abstraction over two call sites. `bindDecisions` rides the chat store's `onBind` (same
+moment as the timeline), and `reduce` drops a seq already folded. Re-binding the same
+session is a no-op so a gap-only replay cannot empty the pane.
 
 ---
 

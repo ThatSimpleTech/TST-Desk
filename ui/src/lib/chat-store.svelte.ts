@@ -14,6 +14,7 @@ import {
 } from "./connection-status.svelte.js";
 import type { NewAttachment } from "./attachments";
 import { createChatState, createChatStore, type ChatState } from "./chat-store";
+import { bindDecisions } from "./decisions.svelte.js";
 import { bindSession } from "./timeline-store.svelte.js";
 import type { SessionState } from "./protocol";
 
@@ -24,9 +25,13 @@ const store = createChatStore(
     send: sendToDaemon,
     attach: attachToSession,
     detach: detachFromSession,
-    // The activity timeline and the Files pane show one session (TD-1009);
-    // the pane's binding is this store's to declare.
-    onBind: bindSession,
+    // The activity timeline, Files pane, and decisions list show one
+    // session (TD-1009 / TD-1203). The pane's binding is this store's
+    // to declare; both views clear-and-rebuild from the attach replay.
+    onBind: (sessionId) => {
+      bindSession(sessionId);
+      bindDecisions(sessionId);
+    },
   },
   chat,
 );
