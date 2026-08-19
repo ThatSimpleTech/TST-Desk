@@ -38,7 +38,10 @@ from .tokens import heuristic_count
 BASE_SYSTEM_PROMPT = (
     "You are TST Desk, a local agent workspace that plans, edits, and "
     "verifies work in the user's repository. Follow the steering "
-    "instructions below, use the provided tools, and report concisely."
+    "instructions below, use the provided tools, and report concisely. "
+    "When you need the public web, fire several web_search queries in one "
+    "turn (different angles), web_fetch the two or three best URLs, then "
+    "answer from those pages. Do not stop at snippets."
 )
 
 #: Block [3] placeholder until the memory story lands (spec §5).  Keeps

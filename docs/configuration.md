@@ -66,8 +66,9 @@ this key.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `base_url` | string | *shipped* | The search endpoint. Empty string disables `web_search`. |
-| `timeout_seconds` | float > 0 | `15` | How long a search request may run. |
+| `timeout_seconds` | float > 0 | `15` | How long a search or fetch request may run. |
 | `max_results` | int 1–20 | `8` | Default hit count when the tool call omits `max_results`. |
+| `fetch_max_bytes` | int ≥ 1 | `200000` | Cap on a `web_fetch` body. |
 
 <!-- verify: model -->
 ```yaml
@@ -102,6 +103,7 @@ search:
   base_url: http://127.0.0.1:8888/search
   timeout_seconds: 15
   max_results: 8
+  fetch_max_bytes: 200000
 ```
 
 ### A preset

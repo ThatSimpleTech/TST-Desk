@@ -271,9 +271,11 @@ def _register_builtins(registry: ToolRegistry) -> None:
         Tool(
             name="web_search",
             description=(
-                "Search the public web. Use when the workspace does not contain "
-                "the fact. Returns titles, URLs, and snippets. The destination "
-                "is the configured search.base_url, not a host you pass."
+                "Search the public web. Returns titles, URLs, and snippets — not "
+                "the page. For a real answer: emit several web_search calls in "
+                "the same turn with different angles, then web_fetch the two or "
+                "three best URLs, then compile. Do not stop at snippets. The "
+                "search host is search.base_url, not an argument you pass."
             ),
             parameters={
                 "type": "object",
@@ -289,6 +291,29 @@ def _register_builtins(registry: ToolRegistry) -> None:
                     },
                 },
                 "required": ["query"],
+            },
+            side_effect_class="ask",
+            parallel_safe=True,
+        )
+    )
+
+    registry.register(
+        Tool(
+            name="web_fetch",
+            description=(
+                "Fetch one http(s) URL and return readable text. Use after "
+                "web_search on the best hits. Loopback and metadata addresses "
+                "are refused. Prefer two or three fetches over one long guess."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The http or https URL to read",
+                    },
+                },
+                "required": ["url"],
             },
             side_effect_class="ask",
             parallel_safe=True,

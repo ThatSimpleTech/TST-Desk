@@ -896,6 +896,28 @@ The shipped `search.base_url` lives only in `config.yaml`.
 
 ---
 
+### TD-610 — `web_fetch` and a search-then-read loop
+**Size:** 2 · **Depends on:** TD-609
+
+Search snippets are not a research loop. The model needs to open the
+best hits, and it needs to be told to fire several searches at once
+then compile.
+
+**Acceptance criteria:**
+- [x] `web_fetch` takes one http(s) URL and returns readable text
+- [x] Loopback, link-local, metadata, and non-http schemes are refused
+- [x] A redirect onto a blocked address is refused before the body is read
+- [x] Script/style are stripped from HTML
+- [x] `web_search` description and the base system prompt tell the model
+      to fan out, fetch, then compile — not to stop at snippets
+- [x] Calls are Class B (ask); no `host_fields` for the model to spoof
+
+**Completed (2026-08-19):** Fetch lives in the same module as search so
+there is still one outbound-capable file. The wall is SSRF, not an
+internet allowlist — the user sees each URL on the card.
+
+---
+
 ### TD-607 — `dispatch_many` returns results out of order when a batch is mixed
 **Size:** 2 · **Depends on:** TD-601
 
@@ -3975,11 +3997,11 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 54 | 160 |
+| M1 Headless core | E2–E9 | 55 | 162 |
 | M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 24 | 68 |
 | M3 Shippable | E13–E17, E19 | 50 | 142 |
-| **Total v0.1** | **19** | **147** | **415** |
+| **Total v0.1** | **19** | **148** | **417** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
