@@ -52,6 +52,7 @@ from tstd.config import (
     ConfigError,
     ModelConfig,
     Preset,
+    SearchConfig,
     TierConfig,
     default_config_yaml,
     load_config,
@@ -189,6 +190,7 @@ def test_invalid_examples_are_rejected(example: Example) -> None:
 
 _TIER_FIELDS = frozenset(TierConfig.model_fields)
 _MODEL_FIELDS = frozenset(ModelConfig.model_fields)
+_SEARCH_FIELDS = frozenset(SearchConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
 _SECTION_FIELDS = frozenset(BoundarySection.model_fields)
 _CAPS_FIELDS = frozenset(CapsSection.model_fields)
@@ -233,6 +235,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
         _check_keys(data, _TIER_FIELDS, where)
     elif example.kind == "model":
         _check_keys(data, _MODEL_FIELDS, where)
+        if "search" in data:
+            _check_keys(data["search"], _SEARCH_FIELDS, f"{where} search")
         for name, preset in data.get("presets", {}).items():
             _check_keys(preset, _PRESET_FIELDS, f"{where} presets.{name}")
             for tier, body in preset.items():
@@ -250,6 +254,7 @@ def test_every_config_key_is_documented() -> None:
     text = _doc_text()
     keys = (
         _MODEL_FIELDS
+        | _SEARCH_FIELDS
         | _PRESET_FIELDS
         | _TIER_FIELDS
         | WORKSPACE_SECTIONS

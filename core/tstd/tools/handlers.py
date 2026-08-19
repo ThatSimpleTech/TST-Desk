@@ -25,6 +25,7 @@ from pathlib import Path
 from ..context.manifest import _FALLBACK_IGNORE
 from .dispatch import ToolDispatcher
 from .shell import ShellPolicy, run_shell
+from .web_search import web_search
 from .write import fs_edit, fs_write
 
 # Handler-level cap on formatted lines.  Dispatch additionally caps the
@@ -72,16 +73,27 @@ def _read_file(target: Path, limit: int, offset: int) -> str:
     lines = content.splitlines()
     total = len(lines)
     start = offset - 1 if offset > 0 else 0
-    window = limit if limit and limit > 0 else _MAX_READ_LINES
+    explicit = bool(limit and limit > 0)
+    window = limit if explicit else _MAX_READ_LINES
     end = min(start + window, total)
     if start >= total:
         return "(no lines in range)"
 
     rendered = "\n".join(f"{i}: {line}" for i, line in enumerate(lines[start:end], start=start + 1))
-    # The truncation marker states totals only when the cap cut the
-    # output — an explicit limit window is a window, not truncation.
-    if end < total and not (limit and limit > 0):
-        rendered += f"\n… [truncated: {total} lines, {target.stat().st_size} bytes total]"
+    # A partial window always names the next offset so the model can
+    # walk a long file instead of guessing (TD-608). The default cap
+    # is not "the whole file" — the schema used to claim it was.
+    if end < total:
+        nxt = end + 1
+        size = target.stat().st_size
+        if explicit:
+            rendered += (
+                f"\n… [window {start + 1}-{end} of {total} lines; continue with offset={nxt}]"
+            )
+        else:
+            rendered += (
+                f"\n… [truncated: {total} lines, {size} bytes total; continue with offset={nxt}]"
+            )
     return rendered
 
 
@@ -141,6 +153,7 @@ def register_builtin_handlers(
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
+    dispatcher.register_handler("web_search", web_search)
     dispatcher.register_handler("fs_write", fs_write)
     dispatcher.register_handler("fs_edit", fs_edit)
     dispatcher.register_handler(

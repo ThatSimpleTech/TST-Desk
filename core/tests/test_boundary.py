@@ -55,6 +55,16 @@ def canonical(rel: str) -> Path:
 
 
 class TestCanonicalForm:
+    def test_relative_path_joins_workspace_not_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "docs" / "a.txt"
+        target.parent.mkdir()
+        target.write_text("x")
+        monkeypatch.chdir(tmp_path.parent)
+        g = guard(tmp_path)
+        assert g.check_read("docs/a.txt") == target.resolve()
+
     def test_relative_path_canonicalized(self, ws_cwd: Path) -> None:
         g = guard(ws_cwd)
         result = g.check_read("sub/../a.txt")

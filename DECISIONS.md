@@ -5942,6 +5942,37 @@ evolution.
 
 ---
 
+## 2026-08-19 — TD-608: relative tool paths join the workspace (Class B)
+
+**Decision:** `PathGuard.canonicalize` joins a relative path to
+`workspace_root` before resolving. Dispatch rewrites path arguments to
+that form before classification. The workspace-root prompt now says
+to pass either form.
+
+**Rationale:** TD-1810 told the model never to pass a relative path
+because the guard resolved against cwd. The packaged sidecar's cwd is
+`/`, so `docs/foo.md` became `/docs/foo.md` and a file inside the
+workspace was refused. Joining to the workspace is the rule the prompt
+already stated; the guard now does it. `../` still canonicalises
+outside and is still Class C.
+
+---
+
+## 2026-08-19 — TD-609: web_search destination is config (Class B)
+
+**Decision:** `web_search` takes a query, not a URL. The only host it
+reaches is `search.base_url` from `config.yaml`. The module is named
+in `_OUTBOUND_CAPABLE`. No remote host appears in Python source. Calls
+are Class B (ask).
+
+**Rationale:** A second HTTP client is the failure mode TD-1410 exists
+to catch. Putting the URL in the shipped YAML (and filling it in when
+an older user copy omits `search`) keeps the destination in
+configuration. Empty `base_url` disables the tool. The model cannot
+point it at an arbitrary host because there is no host argument.
+
+---
+
 ## 2026-08-18 — TD-1014: approval cards bind like the other panes (Class B)
 
 **Decision:** The approval footer is scoped to the bound session and
@@ -5954,3 +5985,34 @@ defect. The daemon is right — that id is gone. A process-global list
 plus a full-log replay after detach is how a resolved request becomes a
 ghost. Optimistic dismiss is safe because a refused send keeps the card,
 and a successful send is exactly the moment the daemon pops the future.
+
+---
+
+## 2026-08-19 — TD-608: relative tool paths join the workspace (Class B)
+
+**Decision:** `PathGuard.canonicalize` joins a relative path to
+`workspace_root` before resolving. Dispatch rewrites path arguments to
+that form before classification. The workspace-root prompt now says
+to pass either form.
+
+**Rationale:** TD-1810 told the model never to pass a relative path
+because the guard resolved against cwd. The packaged sidecar's cwd is
+`/`, so `docs/foo.md` became `/docs/foo.md` and a file inside the
+workspace was refused. Joining to the workspace is the rule the prompt
+already stated; the guard now does it. `../` still canonicalises
+outside and is still Class C.
+
+---
+
+## 2026-08-19 — TD-609: web_search destination is config (Class B)
+
+**Decision:** `web_search` takes a query, not a URL. The only host it
+reaches is `search.base_url` from `config.yaml`. The module is named
+in `_OUTBOUND_CAPABLE`. No remote host appears in Python source. Calls
+are Class B (ask).
+
+**Rationale:** A second HTTP client is the failure mode TD-1410 exists
+to catch. Putting the URL in the shipped YAML (and filling it in when
+an older user copy omits `search`) keeps the destination in
+configuration. Empty `base_url` disables the tool. The model cannot
+point it at an arbitrary host because there is no host argument.

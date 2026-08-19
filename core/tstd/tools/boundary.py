@@ -172,8 +172,18 @@ class PathGuard:
         self.boundary = boundary
 
     def canonicalize(self, raw: str | Path) -> Path:
-        """Resolve *raw* to absolute canonical form (symlinks resolved)."""
-        return canonical_path(Path(raw))
+        """Resolve *raw* to absolute canonical form (symlinks resolved).
+
+        A relative path is joined to the workspace root first, not to the
+        process cwd. The packaged sidecar's cwd is ``/``, so joining there
+        turned ``docs/foo.md`` into ``/docs/foo.md`` and refused a file
+        that was inside the workspace (TD-608).
+        """
+        path = Path(raw)
+        root = self.boundary.workspace_root
+        if not path.is_absolute() and root is not None:
+            path = root / path
+        return canonical_path(path)
 
     def check_read(self, raw: str | Path) -> Path:
         """Check a read target; returns its canonical path.
