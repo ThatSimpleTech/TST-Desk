@@ -6049,6 +6049,20 @@ first when the capacity meter is full.
 
 ---
 
+## 2026-08-19 — TD-2104: memory commits on HEAD; notices reuse the checkpoint rail (Class B)
+
+**Decision:** A `MemoryCommitter` runs after a successful memory write and
+commits only those paths on HEAD as `tst: memory update`. It is not
+`Checkpointer`. Non-git workspaces still get the write; a one-time
+`memory_no_git` notice rides the existing `checkpoint_notice` event.
+
+**Rationale:** Spec §5 wants `git revert` from the user's own history.
+The session branch is an undo stack the user never checks out. Mixing
+the two would make revert fight checkpoint. A second event type for
+"there is no commit" would duplicate the one-time notice rail.
+
+---
+
 ## 2026-08-19 — TD-2103: memory line cap is config, distill is the replace path (Class B)
 
 **Decision:** `memory.max_lines` lives in `.tst/config.yaml` (default 200).

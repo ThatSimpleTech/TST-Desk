@@ -4063,13 +4063,13 @@ config, never in a handler literal.
 **Size:** 3 · **Depends on:** TD-705, TD-2102
 
 **Acceptance criteria:**
-- [ ] An accepted memory write commits on the workspace repo as
+- [x] An accepted memory write commits on the workspace repo as
       `tst: memory update` — working tree and HEAD, not the
       `tst/session/<id>` checkpoint branch
-- [ ] A non-git workspace degrades: the write still lands, a one-time notice
+- [x] A non-git workspace degrades: the write still lands, a one-time notice
       says there is no commit
-- [ ] `git revert` of that commit restores the previous memory bytes
-- [ ] Checkpoint commits (TD-705) are unchanged
+- [x] `git revert` of that commit restores the previous memory bytes
+- [x] Checkpoint commits (TD-705) are unchanged
 
 **Notes:** checkpoint plumbing never touches HEAD. Memory commits are the
 opposite on purpose — the user asked to be able to revert from their own

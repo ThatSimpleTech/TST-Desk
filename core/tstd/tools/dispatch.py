@@ -25,6 +25,7 @@ from ..autonomy import (
     LedgerEntry,
 )
 from ..logging import get_logger
+from ..memory_commit import MemoryCommitter
 from ..policy import ApprovalOutcome, PolicyConfig, format_summary, resolve_explained
 from ..protocol import DecisionLogged as DecisionLoggedEvent
 from .boundary import PathGuard, RefusalError
@@ -112,6 +113,7 @@ class ToolDispatcher:
         classifier: AmbiguousClassifier | None = None,
         path_guard: PathGuard | None = None,
         checkpointer: Checkpointer | None = None,
+        memory_committer: MemoryCommitter | None = None,
         ledger: DecisionLedger | None = None,
         policy: PolicyConfig | None = None,
         approval_handler: ApprovalHandler | None = None,
@@ -132,6 +134,10 @@ class ToolDispatcher:
         # missing checkpointer silently skips checkpointing (tests wire
         # one explicitly, agent_loop wires one by default).
         self.checkpointer = checkpointer
+        # Memory HEAD commits (TD-2104). Not the checkpointer: that
+        # module never touches HEAD. Missing means tests that do not
+        # care about memory commits skip this step.
+        self.memory_committer = memory_committer
         # The decisions ledger (TD-704).  Class A/B decisions that
         # execute append to .tst/autonomy/DECISIONS.md.
         self.ledger = ledger
@@ -427,6 +433,17 @@ class ToolDispatcher:
                     extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
                 )
 
+        memory_notice = None
+        if tool.mutates and canonical_writes and self.memory_committer is not None:
+            try:
+                memory_outcome = await self.memory_committer.commit(list(canonical_writes.values()))
+                memory_notice = memory_outcome.notice
+            except Exception:
+                log.exception(
+                    "memory commit raised unexpectedly",
+                    extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
+                )
+
         # 3.4 Diff of the write (TD-604), for display on the tool_result.
         diff_text: str | None = None
         if tool.mutates and canonical_writes:
@@ -504,6 +521,7 @@ class ToolDispatcher:
             decision_class=decision_class,
             checkpoint_commit=checkpoint_commit,
             checkpoint_notice=checkpoint_notice,
+            memory_notice=memory_notice,
             diff=diff_text,
         )
 

@@ -31,6 +31,8 @@ class ToolResult:
             (TD-705); ``None`` for reads and non-checkpointed writes.
         checkpoint_notice: One-time degradation notice from the
             checkpointer, surfaced to the user as an event (TD-705).
+        memory_notice: One-time notice that a memory write has no
+            commit (non-git workspace, TD-2104).
         diff: Unified diff of what the write changed (TD-604), for
             display; ``None`` for reads and non-diffable writes.
     """
@@ -45,6 +47,7 @@ class ToolResult:
     decision_class: DecisionClass | None = None
     checkpoint_commit: str | None = None
     checkpoint_notice: Notice | None = None
+    memory_notice: Notice | None = None
     diff: str | None = None
 
 
