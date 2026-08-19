@@ -6,15 +6,17 @@
 	// milestone. The store's dispatcher refuses both, so neither the markup
 	// nor a future caller can produce a click that goes nowhere.
 	import Icon from './Icon.svelte';
-	import { RAIL_FUNCTIONS, entryHint } from '../rail';
+	import { railFunctions, entryHint } from '../rail';
 	import { activateRailFunction } from '../sessions.svelte.js';
+	import { projects } from '../projects.svelte.js';
 
 	// `compact` is the rail's collapsed 48px strip: icon only, no labels.
 	let { compact = false }: { compact?: boolean } = $props();
+	let entries = $derived(railFunctions(projects.surface));
 </script>
 
 <nav class="fns" class:fns-compact={compact} aria-label="Surfaces">
-	{#each RAIL_FUNCTIONS as entry (entry.id)}
+	{#each entries as entry (entry.id)}
 		<button
 			class="fn"
 			class:fn-compact={compact}

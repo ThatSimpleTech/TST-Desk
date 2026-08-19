@@ -1,0 +1,299 @@
+<script lang="ts">
+	// Project list and project home (TD-2801).
+	//
+	// Rail Projects lands here instead of the title-bar recents menu.
+	// Selecting a row shows a home: folder name, New chat (`new_session`
+	// in that workspace), and recents filtered to that path. Columns
+	// for Instructions / Memory / Context are later stories.
+	import Icon from './Icon.svelte';
+	import { workspaceName } from '../session-status.svelte.js';
+	import { workspaces } from '../workspaces.svelte.js';
+	import {
+		projects,
+		selectProject,
+		showHome,
+		showProjects,
+	} from '../projects.svelte.js';
+	import {
+		projectListEmptyCopy,
+		projectRecentsEmptyCopy,
+		projectSessions,
+	} from '../projects';
+	import {
+		ROW_STATE_LABELS,
+		newSessionInWorkspace,
+		recencyLabel,
+		rowTitle,
+		selectRow,
+		sessions,
+		stateTone,
+	} from '../sessions.svelte.js';
+
+	let known = $derived(workspaces.entries);
+	let selected = $derived(projects.selectedPath);
+	let recents = $derived(
+		selected === null ? [] : projectSessions(sessions.rows, selected),
+	);
+
+	function openRecent(sessionId: string): void {
+		selectRow(sessionId);
+		showHome();
+	}
+</script>
+
+<div class="pane">
+	<div class="column">
+		{#if selected === null}
+			<h1 class="title">Projects</h1>
+			<p class="lede">Workspaces this window has opened. The folder is the project.</p>
+			{#if known.length === 0}
+				<p class="empty">{projectListEmptyCopy()}</p>
+			{:else}
+				<ul class="list">
+					{#each known as entry (entry.path)}
+						<li>
+							<button
+								class="card"
+								type="button"
+								onclick={() => selectProject(entry.path)}
+							>
+								<span class="card-icon" aria-hidden="true"><Icon name="folder" size={16} /></span>
+								<span class="card-text">
+									<span class="card-name">{workspaceName(entry.path)}</span>
+									<span class="card-path">{entry.path}</span>
+								</span>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		{:else}
+			<button class="back" type="button" onclick={() => showProjects()}>
+				<Icon name="chevron-left" size={14} />
+				All projects
+			</button>
+			<div class="home-head">
+				<div class="home-id">
+					<h1 class="title">{workspaceName(selected)}</h1>
+					<p class="path">{selected}</p>
+				</div>
+				<button
+					class="new-chat"
+					type="button"
+					onclick={() => {
+						if (selected !== null) newSessionInWorkspace(selected);
+					}}
+				>
+					<Icon name="plus" size={14} />
+					New chat
+				</button>
+			</div>
+			<h2 class="section">Recents</h2>
+			{#if recents.length === 0}
+				<p class="empty">{projectRecentsEmptyCopy()}</p>
+			{:else}
+				<ul class="list">
+					{#each recents as row (row.sessionId)}
+						<li>
+							<button class="card" type="button" onclick={() => openRecent(row.sessionId)}>
+								<span class="dot dot-{stateTone(row.state)}" aria-hidden="true"></span>
+								<span class="card-text">
+									<span class="card-name">{rowTitle(row)}</span>
+									<span class="card-path"
+										>{ROW_STATE_LABELS[row.state]} · {recencyLabel(row.updatedAt)}</span
+									>
+								</span>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		{/if}
+	</div>
+</div>
+
+<style>
+	.pane {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		min-height: 0;
+		background: var(--color-ground);
+	}
+
+	.column {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
+		width: min(760px, 100%);
+		margin-inline: auto;
+		padding: var(--space-8) var(--space-6) var(--space-10);
+	}
+
+	.title {
+		margin: 0;
+		font-family: var(--font-display);
+		font-size: var(--text-3xl);
+		font-weight: var(--weight-normal);
+		letter-spacing: var(--tracking-display);
+		line-height: var(--leading-tight);
+		color: var(--color-ink);
+	}
+
+	.lede {
+		margin: var(--space-3) 0 0;
+		font-size: var(--text-sm);
+		color: var(--color-ink-secondary);
+	}
+
+	.empty {
+		margin: var(--space-8) 0 0;
+		font-size: var(--text-sm);
+		color: var(--color-ink-muted);
+	}
+
+	.list {
+		list-style: none;
+		margin: var(--space-6) 0 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
+	.card {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		width: 100%;
+		text-align: left;
+		border: var(--border-width) solid var(--color-hairline);
+		background: var(--color-lifted);
+		border-radius: var(--radius-md);
+		padding: var(--space-3) var(--space-4);
+		cursor: pointer;
+		color: var(--color-ink);
+	}
+
+	.card:hover {
+		background: var(--color-sunken);
+	}
+
+	.card-icon {
+		display: inline-flex;
+		color: var(--color-ink-secondary);
+		flex-shrink: 0;
+	}
+
+	.card-text {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		min-width: 0;
+	}
+
+	.card-name {
+		font-size: var(--text-sm);
+		font-weight: var(--weight-medium);
+	}
+
+	.card-path {
+		font-size: var(--text-xs);
+		font-family: var(--font-mono);
+		color: var(--color-ink-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.back {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		margin: 0 0 var(--space-4);
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: var(--color-ink-secondary);
+		font-family: var(--font-sans);
+		font-size: var(--text-sm);
+		cursor: pointer;
+	}
+
+	.back:hover {
+		color: var(--color-ink);
+	}
+
+	.home-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: var(--space-4);
+	}
+
+	.home-id {
+		min-width: 0;
+	}
+
+	.path {
+		margin: var(--space-2) 0 0;
+		font-size: var(--text-xs);
+		font-family: var(--font-mono);
+		color: var(--color-ink-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.new-chat {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		flex-shrink: 0;
+		border: none;
+		background: var(--color-accent);
+		color: var(--color-on-accent);
+		border-radius: var(--radius-md);
+		padding: var(--space-2) var(--space-3);
+		font-family: var(--font-sans);
+		font-size: var(--text-sm);
+		cursor: pointer;
+	}
+
+	.new-chat:hover {
+		background: var(--color-accent-hover);
+	}
+
+	.section {
+		margin: var(--space-8) 0 0;
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		font-weight: var(--weight-semibold);
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--color-ink-muted);
+	}
+
+	.dot {
+		width: var(--space-2);
+		height: var(--space-2);
+		border-radius: var(--radius-full);
+		flex-shrink: 0;
+	}
+
+	.dot-info {
+		background: var(--color-accent);
+	}
+	.dot-warning {
+		background: var(--color-warn);
+	}
+	.dot-danger {
+		background: var(--color-err);
+	}
+	.dot-success {
+		background: var(--color-ok);
+	}
+	.dot-muted {
+		background: var(--color-ink-muted);
+	}
+</style>

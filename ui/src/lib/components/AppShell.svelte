@@ -22,6 +22,8 @@
 	import { onEvent } from '../connection-status.svelte.js';
 	import { push } from '../timeline-store.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
+	import ProjectPane from './ProjectPane.svelte';
+	import { projects } from '../projects.svelte.js';
 	import TitleBar from './TitleBar.svelte';
 	import NotificationBanner from '../NotificationBanner.svelte';
 	import ToastStack from '../ToastStack.svelte';
@@ -169,7 +171,23 @@
 	<SessionRail />
 	<SplitPane>
 		{#snippet left()}
-			<section class="pane-chat" aria-label="Chat pane"><ChatPane /></section>
+			<section
+				class="pane-chat"
+				aria-label={projects.surface === 'projects' ? 'Projects' : 'Chat pane'}
+			>
+				<!-- Chat stays mounted when Projects is showing so the store
+				     subscription is not torn down (TD-2801). -->
+				<div
+					class="pane-layer"
+					class:pane-hidden={projects.surface !== 'home'}
+					aria-hidden={projects.surface !== 'home'}
+				>
+					<ChatPane />
+				</div>
+				{#if projects.surface === 'projects'}
+					<div class="pane-layer"><ProjectPane /></div>
+				{/if}
+			</section>
 		{/snippet}
 		{#snippet right()}
 			<section class="pane-activity" aria-label="Activity, files, stack, and usage pane">
@@ -297,6 +315,15 @@
 		height: 100%;
 		background: var(--color-bg);
 		color: var(--color-text);
+	}
+
+	.pane-layer {
+		height: 100%;
+		min-height: 0;
+	}
+
+	.pane-hidden {
+		display: none;
 	}
 
 	/* Subtle tonal separation so the two-pane split reads at a glance. */

@@ -6049,6 +6049,21 @@ first when the capacity meter is full.
 
 ---
 
+## 2026-08-19 — TD-2801: Projects is a surface, not a recents alias (Class B)
+
+**Decision:** Rail Projects swaps the main pane to a project list / home.
+It no longer toggles the title-bar recents menu. Pin persistence stays
+TD-2806; the list is the known workspaces from `session_list`. New chat
+is `new_session` on a session in that folder, or `open_workspace` when
+the folder has none.
+
+**Rationale:** The title-bar menu is a quick switch. A project home
+needs a named folder, recents for that path, and room for the three
+columns. Reusing the menu would hide that IA. Chat stays mounted
+under the project pane so attach/replay is not torn down.
+
+---
+
 ## 2026-08-19 — TD-2101: memory scaffold on every session start (Class B)
 
 **Decision:** Plant `.tst/memory/` templates from `_start_session`, not
