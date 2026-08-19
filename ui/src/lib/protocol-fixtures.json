@@ -103,6 +103,15 @@
     "type": "get_instruction_stack",
     "session_id": "sess-1"
   },
+  "list_instructions": {
+    "type": "list_instructions",
+    "workspace_path": "/home/user/project"
+  },
+  "create_rule": {
+    "type": "create_rule",
+    "workspace_path": "/home/user/project",
+    "name": "api"
+  },
   "shutdown": {
     "type": "shutdown"
   },
@@ -446,6 +455,24 @@
     "token_method": "cl100k_base",
     "last_cached_tokens": null,
     "cache_observed": false
+  },
+  "instruction_files": {
+    "type": "instruction_files",
+    "seq": 1,
+    "workspace_path": "/home/user/project",
+    "files": [
+      {
+        "path": "/home/user/project/AGENTS.md",
+        "name": "AGENTS.md",
+        "kind": "agents"
+      },
+      {
+        "path": "/home/user/project/.tst/rules/api.md",
+        "name": "api.md",
+        "kind": "rule"
+      }
+    ],
+    "created": null
   },
   "context_compacted": {
     "type": "context_compacted",

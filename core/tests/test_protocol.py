@@ -188,6 +188,22 @@ class TestClientMessages:
         back = _roundtrip(msg)
         assert isinstance(back, GetInstructionStack)
 
+    def test_list_instructions(self) -> None:
+        from tstd.protocol import ListInstructions
+
+        msg = ListInstructions(workspace_path="/home/user/project")
+        back = _roundtrip(msg)
+        assert isinstance(back, ListInstructions)
+        assert back.workspace_path == "/home/user/project"
+
+    def test_create_rule(self) -> None:
+        from tstd.protocol import CreateRule
+
+        msg = CreateRule(workspace_path="/home/user/project", name="api")
+        back = _roundtrip(msg)
+        assert isinstance(back, CreateRule)
+        assert back.name == "api"
+
     def test_new_session(self) -> None:
         msg = NewSession(session_id="sess-1")
         back = _roundtrip(msg)

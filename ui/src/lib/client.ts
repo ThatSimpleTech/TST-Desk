@@ -41,6 +41,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "rule_activated",
   "tier_switched",
   "instruction_stack",
+  "instruction_files",
   "session_list",
   "policy_rules", // TD-803: was missing; settings events arrived as unknown
   "setup_state", // TD-1101 first-run wizard

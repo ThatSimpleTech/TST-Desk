@@ -6049,6 +6049,20 @@ first when the capacity meter is full.
 
 ---
 
+## 2026-08-19 — TD-2802: Instructions writes are a client verb, not a tool (Class B)
+
+**Decision:** `list_instructions` and `create_rule` are client messages.
+They write `.tst/rules/` on the human path. The model cannot send them.
+`+` never calls `fs_write`. Editing is the system editor; TD-509 reloads
+the stack on the next turn when the bytes change.
+
+**Rationale:** Prime §2.4 is "the agent never writes steering." A second
+write path that is a tool would be a bypass. The UI already opens stack
+files through `tauri-plugin-opener`; create plants a commented template
+the same way memory scaffold does.
+
+---
+
 ## 2026-08-19 — TD-2102: memory writes are Class A even under a tight wall (Class B)
 
 **Decision:** `.tst/memory/**` is a named Class A rule (`memory-file-write`).

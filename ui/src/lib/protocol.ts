@@ -139,6 +139,19 @@ export interface GetInstructionStack extends ClientMessage {
   session_id: string;
 }
 
+/** List a workspace's Instructions files (TD-2802). Human path. */
+export interface ListInstructions extends ClientMessage {
+  type: "list_instructions";
+  workspace_path: string;
+}
+
+/** Create a `.tst/rules/` file (TD-2802). Human path, never a tool. */
+export interface CreateRule extends ClientMessage {
+  type: "create_rule";
+  workspace_path: string;
+  name: string;
+}
+
 export interface Shutdown extends ClientMessage {
   type: "shutdown";
 }
@@ -259,6 +272,8 @@ export type ClientMessageUnion =
   | Detach
   | SetTier
   | GetInstructionStack
+  | ListInstructions
+  | CreateRule
   | Shutdown
   | ListSessions
   | NewSession
@@ -487,6 +502,19 @@ export interface InstructionStackEntry {
   imports?: ImportedFile[];
 }
 
+export interface InstructionFileEntry {
+  path: string;
+  name: string;
+  kind: "agents" | "claude" | "rule";
+}
+
+export interface InstructionFiles extends DaemonEvent {
+  type: "instruction_files";
+  workspace_path: string;
+  files: InstructionFileEntry[];
+  created?: string | null;
+}
+
 export interface InstructionStack extends DaemonEvent {
   type: "instruction_stack";
   session_id: string;
@@ -658,6 +686,7 @@ export type DaemonEventUnion =
   | RuleActivated
   | TierSwitched
   | InstructionStack
+  | InstructionFiles
   | SessionList
   | PolicyRules
   | SetupState

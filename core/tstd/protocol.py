@@ -274,6 +274,21 @@ class GetInstructionStack(ClientMessage):
     session_id: str
 
 
+class ListInstructions(ClientMessage):
+    """List a workspace's Instructions files (TD-2802). Human path."""
+
+    type: Literal["list_instructions"] = "list_instructions"
+    workspace_path: str
+
+
+class CreateRule(ClientMessage):
+    """Create a ``.tst/rules/`` file (TD-2802). Human path, never a tool."""
+
+    type: Literal["create_rule"] = "create_rule"
+    workspace_path: str
+    name: str = Field(min_length=1)
+
+
 class Shutdown(ClientMessage):
     """Ask the daemon to shut down cleanly (sent by the supervising host)."""
 
@@ -803,6 +818,25 @@ class InstructionStackEntry(BaseModel):
     imports: list[ImportedFile] = Field(default_factory=list)
 
 
+class InstructionFileEntry(BaseModel):
+    """One file on the project home's Instructions column (TD-2802)."""
+
+    path: str
+    name: str
+    kind: Literal["agents", "claude", "rule"]
+
+
+class InstructionFiles(DaemonEvent):
+    """Reply to ``list_instructions`` / ``create_rule``. Connection-scoped."""
+
+    type: Literal["instruction_files"] = "instruction_files"
+    seq: int = 1
+    workspace_path: str
+    files: list[InstructionFileEntry] = Field(default_factory=list)
+    # Path just created by create_rule, when this is that reply.
+    created: str | None = None
+
+
 class InstructionStack(DaemonEvent):
     """Response to ``get_instruction_stack``: the resolved stack with counts."""
 
@@ -1038,6 +1072,8 @@ ClientMessageT = Annotated[
     | Detach
     | SetTier
     | GetInstructionStack
+    | ListInstructions
+    | CreateRule
     | Shutdown
     | ListSessions
     | NewSession
@@ -1077,6 +1113,7 @@ DaemonEventT = Annotated[
     | RuleActivated
     | TierSwitched
     | InstructionStack
+    | InstructionFiles
     | SessionList
     | PolicyRules
     | SetupState
@@ -1112,6 +1149,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "detach",
         "set_tier",
         "get_instruction_stack",
+        "list_instructions",
+        "create_rule",
         "shutdown",
         "list_sessions",
         "new_session",
@@ -1151,6 +1190,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "rule_activated",
         "tier_switched",
         "instruction_stack",
+        "instruction_files",
         "session_list",
         "policy_rules",
         "setup_state",
