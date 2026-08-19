@@ -4081,10 +4081,10 @@ history. Do not reuse `Checkpointer` for this.
 **Size:** 2 · **Depends on:** TD-2101
 
 **Acceptance criteria:**
-- [ ] `.tst/memory/**` never appears in the instruction stack as a steering
+- [x] `.tst/memory/**` never appears in the instruction stack as a steering
       source
-- [ ] Frontmatter in a memory file is not an `appliesTo` rule
-- [ ] A golden-file test: a workspace with both `AGENTS.md` and `MEMORY.md`
+- [x] Frontmatter in a memory file is not an `appliesTo` rule
+- [x] A golden-file test: a workspace with both `AGENTS.md` and `MEMORY.md`
       assembles steering from the former only
 
 **Notes:** two markdown trees in `.tst/`. Mixing them is the quiet failure.

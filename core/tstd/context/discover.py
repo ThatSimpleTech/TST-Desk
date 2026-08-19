@@ -157,6 +157,8 @@ class SteeringFileResolver:
             )
 
         # 3. Rules dir — modular rules, sorted by name for determinism.
+        # ``.tst/memory/`` is a different tree (TD-2105) and is never
+        # listed here; nested walk also skips ``.tst``.
         rules_dir = workspace / ".tst" / "rules"
         sources.extend(
             SteeringSource(path=rule_path, precedence=Precedence.RULES)
