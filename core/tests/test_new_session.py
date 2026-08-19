@@ -3,7 +3,8 @@
 ``new_session`` anchors on an existing session: the daemon creates, wires,
 and starts a fresh session in the anchor's workspace — the same creation
 path as ``open_workspace``, minus path validation and config scaffolding,
-because the path comes from the registry rather than the client.
+because the path comes from the registry rather than the client. Memory
+templates (TD-2101) still plant from ``_start_session``.
 """
 
 from __future__ import annotations

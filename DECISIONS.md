@@ -6046,3 +6046,16 @@ alias and becomes this home (TD-2801).
 
 Pins ride the brain only, after memory, after the cache prefix, and drop
 first when the capacity meter is full.
+
+---
+
+## 2026-08-19 — TD-2101: memory scaffold on every session start (Class B)
+
+**Decision:** Plant `.tst/memory/` templates from `_start_session`, not
+only `open_workspace`. Config scaffold stays OpenWorkspace-only.
+
+**Rationale:** Config is a wall the user edits before the first turn;
+planting it twice would fight their YAML. Memory templates are empty
+HTML comments and must appear in workspaces that were opened before
+this story. `new_session` is the path those workspaces take. The write
+is still per-file and never overwrites.

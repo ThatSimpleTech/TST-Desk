@@ -1,8 +1,9 @@
 # Configuration reference
 
 Everything TST Desk reads from disk, what each key does, and what happens when you leave it
-out. Two files matter: `config.yaml` chooses your models, `.tst/config.yaml` draws the wall
-around a workspace.
+out. Two YAML files matter: `config.yaml` chooses your models, `.tst/config.yaml` draws the
+wall around a workspace. Memory is a third tree of markdown beside the wall, not a key in
+either YAML file — see §5.
 
 Every YAML example below is loaded through the real loaders by
 `core/tests/test_docs_config_reference.py`. An example that stopped validating would fail the
@@ -10,13 +11,14 @@ suite rather than quietly mislead you.
 
 ---
 
-## 1. The three files, and which one to edit
+## 1. The files, and which one to edit
 
 | File | Who owns it | Edit it? |
 |---|---|---|
 | `tstd/config.yaml` inside the installed package | The release | **No.** It is packaged in the wheel and replaced wholesale on upgrade. |
 | `config.yaml` in your user data directory | You | **Yes.** This is the one the daemon loads. |
 | `.tst/config.yaml` in a workspace | You, per project | **Yes.** Git-tracked if you want the team to share it. |
+| `.tst/memory/*.md` in a workspace | Distill writes; you correct | **Yes.** Git-tracked on purpose. Standing rules stay in `AGENTS.md`. |
 
 The packaged file is a seed, not a setting. On first load, if your user copy is missing, it is
 copied there verbatim — comments and all — and from then on nothing the daemon reads comes from
@@ -532,7 +534,31 @@ An empty list, `network: []`, is legal and means the same thing as `deny`.
 
 ---
 
-## 5. When a config is wrong
+## 5. `.tst/memory/` — what the agent remembers
+
+Lives at `<workspace>/.tst/memory/`. Opening a workspace (or starting a session in one that
+never had the directory) plants three commented templates. A second open does not overwrite
+files you already have.
+
+```
+<workspace>/.tst/memory/
+  MEMORY.md              ← the index; durable facts about this project
+  decisions.md           ← why things are the way they are
+  gotchas.md             ← things that bit us
+  <topic>.md             ← allowed; distill or you create these, the scaffold does not
+```
+
+These files are the product, not runtime state. They are git-tracked on purpose — a bad memory
+is one `git revert` away, once distill starts committing them. They are not steering: the
+instruction stack never reads this directory. Standing rules stay in `AGENTS.md` and
+`.tst/rules/`. See [`steering.md`](steering.md).
+
+The templates are HTML comments so a freshly opened workspace has no facts a later loader
+could treat as memory. Replace the comments with real notes, or leave them for distill.
+
+---
+
+## 6. When a config is wrong
 
 Every loader fails loudly and names the offending key. Nothing falls back to a "safe" default on
 a malformed file — a config error stops the load rather than running you on settings you did not
@@ -555,7 +581,7 @@ the previous caps are kept rather than dropping the wall.
 
 ---
 
-## 6. How this document is kept honest
+## 7. How this document is kept honest
 
 `core/tests/test_docs_config_reference.py` runs on every suite run and enforces four things:
 

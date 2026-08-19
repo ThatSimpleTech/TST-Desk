@@ -165,8 +165,8 @@ behavior against the acceptance criteria.
 - Commit body: what changed, why, and any Class A/B decisions worth recording.
 - Never commit to `main` directly.
 - Never commit secrets, `.env`, keychain material, or `.tst/` runtime state.
-- `.gitignore` covers `.tst/` runtime artifacts but **not** `.tst/rules/` or `AGENTS.md`,
-  which are meant to be shared.
+- `.gitignore` covers `.tst/` runtime artifacts but **not** `.tst/rules/`,
+  `.tst/memory/`, or `AGENTS.md`, which are meant to be shared.
 
 ---
 
@@ -237,5 +237,5 @@ tst-desk/
 │   └── src/
 ├── ui/                    ← SvelteKit frontend
 │   └── src/
-└── .tst/                  ← per-workspace runtime (gitignored except rules/)
+└── .tst/                  ← per-workspace runtime (gitignored except rules/ and memory/)
 ```

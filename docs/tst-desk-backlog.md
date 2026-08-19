@@ -4017,12 +4017,12 @@ Spec §5 layout and hard rules.
 **Size:** 2 · **Depends on:** TD-507
 
 **Acceptance criteria:**
-- [ ] Opening a workspace creates `.tst/memory/` with commented templates for
+- [x] Opening a workspace creates `.tst/memory/` with commented templates for
       `MEMORY.md`, `decisions.md`, and `gotchas.md` when the directory is missing
-- [ ] Topical files are allowed (`<topic>.md`); the store does not invent names
+- [x] Topical files are allowed (`<topic>.md`); the store does not invent names
       until distill or the user does
-- [ ] Layout is documented in `docs/configuration.md` and `docs/steering.md`
-- [ ] Scaffold is idempotent — a second open does not clobber existing files
+- [x] Layout is documented in `docs/configuration.md` and `docs/steering.md`
+- [x] Scaffold is idempotent — a second open does not clobber existing files
 
 **Notes:** same shape as the `.tst/config.yaml` scaffold. These files are the
 product, not runtime state — they are git-tracked on purpose.
