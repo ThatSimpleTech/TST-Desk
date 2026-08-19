@@ -847,6 +847,55 @@ it honest.
 
 ---
 
+### TD-608 — `fs_read` relative paths and continuation
+**Size:** 2 · **Depends on:** TD-603, TD-1810
+
+Found 2026-08-19 on a live turn: `fs_read path=docs/tst-desk-backlog.md`
+was refused as outside the workspace (sidecar cwd is `/`), then the
+same file as an absolute path succeeded. The backlog is 4071 lines; the
+default cap is 2000; the schema said `limit: 0 = all`; nothing told the
+model to continue with `offset`.
+
+**Acceptance criteria:**
+- [x] A workspace-relative path is joined to the workspace root, not the
+      process cwd — proven with cwd *outside* the workspace
+- [x] `../` still refuses as outside
+- [x] Tool description states the 2000-line cap and the continue-with-offset
+      protocol; `0` does not mean the whole file
+- [x] A truncated or windowed read names the next `offset`
+- [x] The workspace-root prompt block matches the join the guard performs
+
+**Completed (2026-08-19):** `PathGuard.canonicalize` joins relative inputs
+to `workspace_root`. Dispatch rewrites path arguments to that canonical
+form before classification so the classifier and the handler see the
+same target.
+
+---
+
+### TD-609 — `web_search` tool
+**Size:** 2 · **Depends on:** TD-601, TD-1410
+
+The agent had no way to look anything up outside the workspace. A second
+HTTP client is a §2.3 event: the destination must come from config, the
+module must be named in `_OUTBOUND_CAPABLE`, and there must be no remote
+host literal in Python source.
+
+**Acceptance criteria:**
+- [x] `web_search` is a registered tool: query in, titles/URLs/snippets out
+- [x] Destination is `search.base_url` from `config.yaml`; empty disables
+      the tool with copy that names the key
+- [x] No remote host appears as a string literal under `tstd/`
+- [x] `test_outbound_hosts.py` names `tools/web_search.py` as the new
+      outbound-capable module
+- [x] Calls are Class B (ask) — no `host_fields` for the model to spoof
+- [x] A user config from before this key existed still gets the shipped
+      search block at load
+
+**Completed (2026-08-19):** JSON and HTML responses are both parsed.
+The shipped `search.base_url` lives only in `config.yaml`.
+
+---
+
 ### TD-607 — `dispatch_many` returns results out of order when a batch is mixed
 **Size:** 2 · **Depends on:** TD-601
 
@@ -3926,11 +3975,11 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 52 | 156 |
+| M1 Headless core | E2–E9 | 54 | 160 |
 | M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 24 | 68 |
 | M3 Shippable | E13–E17, E19 | 50 | 142 |
-| **Total v0.1** | **19** | **145** | **411** |
+| **Total v0.1** | **19** | **147** | **415** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

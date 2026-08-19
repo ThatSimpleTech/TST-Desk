@@ -410,7 +410,7 @@ class TestRootBlockClaimsHoldOnEveryTier:
         block = workspace_root_block(ws)
         root = ws.resolve().as_posix()
         assert f'"{root}/src/app.py"' in block
-        assert "never pass a relative path to a tool" in block
+        assert "joined to it" in block
 
     def test_block_is_byte_identical_across_tiers(self, tmp_path: Path) -> None:
         """One shared head for all three tiers — the reason for one wording."""

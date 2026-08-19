@@ -231,6 +231,7 @@ _OUTBOUND_CAPABLE = {
     "e2e_harness.py": "the headless harness, a protocol client of our own loopback daemon",
     "benchmarks.py": "the benchmark client, likewise loopback",
     "e2e_live.py": "the opt-in live leg, pointed at an endpoint the developer names",
+    "tools/web_search.py": "web_search; destination is search.base_url from config",
 }
 
 

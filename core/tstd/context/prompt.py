@@ -53,13 +53,9 @@ MEMORY_PLACEHOLDER = "<!-- memory: none loaded for this session -->"
 #: question.  Label plus root is the statement; the label alone is not.
 WORKSPACE_ROOT_LABEL = "Workspace root:"
 
-#: Block [1b] — the workspace root (TD-1810).  Every ``fs_*`` tool
-#: advertises its ``path`` argument as absolute while the manifest lists
-#: entries workspace-relative, so without this block the model has to
-#: guess the prefix that joins the two.  The worked example is spelled
-#: out rather than implied: the failing behaviour is a small model
-#: emitting the relative path verbatim, and showing the join once costs
-#: less than a retry.
+#: Block [1b] — the workspace root (TD-1810).  ``fs_*`` tools accept a
+#: workspace-relative or absolute path; the guard joins the relative form
+#: to this root.  The worked example is spelled out rather than implied.
 #:
 #: The resolution rule is stated as a rule, not as a claim about what the
 #: rest of the prompt contains.  Only the brain tier is given the
@@ -70,10 +66,9 @@ WORKSPACE_ROOT_LABEL = "Workspace root:"
 #: sentence has to be true without knowing which blocks follow it.
 _WORKSPACE_ROOT_TEMPLATE = (
     "{label} {root}\n"
-    "That is an absolute path on this machine. Any path written relative to "
-    'the workspace resolves against it: the relative path "src/app.py" means '
-    '"{root}/src/app.py". Tool arguments that ask for an absolute path must be '
-    "written that way — never pass a relative path to a tool."
+    "That is an absolute path on this machine. A path written relative to "
+    'the workspace is joined to it: "src/app.py" means "{root}/src/app.py". '
+    "Pass either form to tools. A path that walks above this root is refused."
 )
 
 #: Characters that may not appear in a stated root.  ``\n`` ends the label

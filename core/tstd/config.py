@@ -136,11 +136,24 @@ class Preset(BaseModel):
     validator: TierConfig
 
 
+class SearchConfig(BaseModel):
+    """The agent's web_search destination (TD-609).
+
+    ``base_url`` is the only host this tool may reach. Empty disables it.
+    The URL lives here, never in Python source (TD-1410).
+    """
+
+    base_url: str = ""
+    timeout_seconds: float = Field(default=15.0, gt=0)
+    max_results: int = Field(default=8, ge=1, le=20)
+
+
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
     presets: dict[str, Preset]
     active_preset: str = DEFAULT_PRESET
+    search: SearchConfig = Field(default_factory=SearchConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -219,6 +232,12 @@ def load_config(path: Path | None = None) -> ModelConfig:
     """
     config_path = ensure_user_config(path)
     data = _load_yaml(config_path)
+    # A user copy from before search existed has no key. Fill from the
+    # shipped file so the tool has a destination without rewriting theirs.
+    if "search" not in data:
+        shipped = yaml.safe_load(default_config_yaml())
+        if isinstance(shipped, dict) and isinstance(shipped.get("search"), dict):
+            data["search"] = shipped["search"]
 
     try:
         config = ModelConfig.model_validate(data)

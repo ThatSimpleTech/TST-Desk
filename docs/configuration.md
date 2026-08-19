@@ -54,6 +54,55 @@ no effect.
 |---|---|---|---|
 | `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, and `local`. |
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
+| `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
+
+### `search`
+
+The agent's `web_search` tool. The query is sent to `base_url` as `?q=...`. The
+host is configuration, never a literal in Python (the no-telemetry test
+enumerates those). An empty `base_url` disables the tool with copy that names
+this key.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `base_url` | string | *shipped* | The search endpoint. Empty string disables `web_search`. |
+| `timeout_seconds` | float > 0 | `15` | How long a search request may run. |
+| `max_results` | int 1–20 | `8` | Default hit count when the tool call omits `max_results`. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  demo:
+    brain:
+      slug: demo/brain
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    worker:
+      slug: demo/worker
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    validator:
+      slug: demo/validator
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+active_preset: demo
+search:
+  base_url: http://127.0.0.1:8888/search
+  timeout_seconds: 15
+  max_results: 8
+```
 
 ### A preset
 

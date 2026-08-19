@@ -64,13 +64,13 @@ class TestFsRead:
         f = tmp_path / "a.txt"
         f.write_text("a\nb\nc\nd\n")
         out = await fs_read(None, str(f), limit=2)
-        assert out == "1: a\n2: b"
+        assert out.splitlines()[:2] == ["1: a", "2: b"]
 
     async def test_offset_and_limit_window(self, tmp_path: Path) -> None:
         f = tmp_path / "a.txt"
         f.write_text("a\nb\nc\nd\ne\n")
         out = await fs_read(None, str(f), limit=2, offset=3)
-        assert out == "3: c\n4: d"
+        assert out.splitlines()[:2] == ["3: c", "4: d"]
 
     async def test_offset_beyond_end_returns_nothing(self, tmp_path: Path) -> None:
         f = tmp_path / "a.txt"
@@ -106,7 +106,16 @@ class TestFsRead:
         body, _, marker = out.rpartition("\n… [")
         assert marker.startswith("truncated: 2499 lines,")
         assert "bytes total" in marker
+        assert "continue with offset=2001" in marker
         assert len(body.splitlines()) == 2000  # the _MAX_READ_LINES cap
+
+    async def test_explicit_window_names_the_next_offset(self, tmp_path: Path) -> None:
+        f = tmp_path / "a.txt"
+        f.write_text("a\nb\nc\nd\n")
+        out = await fs_read(None, str(f), limit=2)
+        assert out.startswith("1: a\n2: b")
+        assert "window 1-2 of 4 lines" in out
+        assert "continue with offset=3" in out
 
 
 # ── fs_list: glob, ignore rules, recursion ──────────────────────────────
@@ -178,6 +187,19 @@ class TestDispatchIntegration:
         result = await dispatcher.dispatch("c1", "fs_read", {"path": "a.txt"})
         assert result.status == "success"
         assert result.output == "1: hello"
+
+    async def test_relative_read_does_not_depend_on_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sidecar cwd is not the workspace. Relative must still join."""
+        f = tmp_path / "docs" / "note.md"
+        f.parent.mkdir()
+        f.write_text("inside")
+        dispatcher = make_dispatcher(tmp_path)
+        monkeypatch.chdir(tmp_path.parent)
+        result = await dispatcher.dispatch("c1", "fs_read", {"path": "docs/note.md"})
+        assert result.status == "success", result.output
+        assert result.output == "1: inside"
 
     async def test_out_of_workspace_read_refused_by_guard(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

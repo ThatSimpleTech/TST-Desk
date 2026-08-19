@@ -130,3 +130,10 @@ presets:
       cache_read_price: 0.0
       context_window: 32768
       max_output_tokens: 4096
+
+# Web search. The agent's web_search tool sends the query to this URL as
+# ?q=... — never a host written into Python. Empty base_url disables it.
+search:
+  base_url: https://html.duckduckgo.com/html/
+  timeout_seconds: 15
+  max_results: 8

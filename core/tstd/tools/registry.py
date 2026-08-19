@@ -198,23 +198,31 @@ def _register_builtins(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             name="fs_read",
-            description="Read the contents of a file at the given path. "
-            "Returns the file content, optionally limited to a number of lines.",
+            description=(
+                "Read a text file as numbered lines. path may be workspace-relative "
+                "(docs/foo.md) or absolute. Default window is 2000 lines — that is a "
+                "cap, not the whole file. If the result ends with "
+                "'continue with offset=N', call again with that offset to read the next "
+                "window. Repeat until there is no continuation marker."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Absolute path to the file to read",
+                        "description": "Workspace-relative or absolute path of the file",
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of lines to return (0 = all)",
+                        "description": (
+                            "Max lines to return. 0 uses the 2000-line default cap; "
+                            "it does not mean the whole file."
+                        ),
                         "default": 0,
                     },
                     "offset": {
                         "type": "integer",
-                        "description": "Starting line number (1-based, 0 = start)",
+                        "description": "1-based start line. 0 means the first line.",
                         "default": 0,
                     },
                 },
@@ -238,7 +246,7 @@ def _register_builtins(registry: ToolRegistry) -> None:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Absolute path of the directory to list",
+                        "description": "Workspace-relative or absolute path of the directory",
                     },
                     "pattern": {
                         "type": "string",
@@ -261,6 +269,34 @@ def _register_builtins(registry: ToolRegistry) -> None:
 
     registry.register(
         Tool(
+            name="web_search",
+            description=(
+                "Search the public web. Use when the workspace does not contain "
+                "the fact. Returns titles, URLs, and snippets. The destination "
+                "is the configured search.base_url, not a host you pass."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "How many hits to return (default from config)",
+                        "default": 0,
+                    },
+                },
+                "required": ["query"],
+            },
+            side_effect_class="ask",
+            parallel_safe=True,
+        )
+    )
+
+    registry.register(
+        Tool(
             name="fs_write",
             description="Write content to a file at the given path. "
             "Creates parent directories if they do not exist. "
@@ -270,7 +306,7 @@ def _register_builtins(registry: ToolRegistry) -> None:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Absolute path to the file to write",
+                        "description": "Workspace-relative or absolute path of the file",
                     },
                     "content": {
                         "type": "string",
@@ -303,7 +339,7 @@ def _register_builtins(registry: ToolRegistry) -> None:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Absolute path to the file to edit",
+                        "description": "Workspace-relative or absolute path of the file",
                     },
                     "old_string": {
                         "type": "string",

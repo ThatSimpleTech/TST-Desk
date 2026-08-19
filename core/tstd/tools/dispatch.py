@@ -228,6 +228,16 @@ class ToolDispatcher:
         # point without a classifier attached is a bypass and raises.
         if self.classifier is None:
             raise UnclassifiedToolCall(name)
+        # Copy then join workspace-relative paths before classification.
+        # The classifier and the handler must see the same target the
+        # guard will judge — not a cwd-relative Path that only works when
+        # the process happens to be sitting in the workspace (TD-608).
+        arguments = dict(arguments)
+        if tool.path_fields and self.path_guard is not None:
+            for field in tool.path_fields:
+                raw = arguments.get(field)
+                if isinstance(raw, str):
+                    arguments[field] = str(self.path_guard.canonicalize(raw))
         request = build_decision_request(tool, arguments)
         classification = await self.classifier.classify(request)
         decision_class = classification.decision_class
