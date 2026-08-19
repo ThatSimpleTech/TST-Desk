@@ -223,6 +223,28 @@ async def test_decision_logged_is_recorded(store: AuditStore) -> None:
     await writer.close()
 
 
+async def test_class_b_without_a_commit_is_recorded(store: AuditStore) -> None:
+    """The live toast: Class B writes commit=None into a NOT NULL column."""
+    session = Session("/tmp/ws")
+    writer = AuditWriter(store)
+    writer.start()
+    writer.attach_session(session)
+    await session.event_log.add(
+        DecisionLogged(
+            session_id=session.id,
+            decision_class="B",
+            what="read README.md",
+            why="decision class B requires approval",
+            commit=None,
+            seq=1,
+        )
+    )
+    await writer._queue.join()
+    row = store._conn.execute("SELECT decision_class, commit_sha FROM decisions").fetchone()
+    assert row == ("B", None)
+    await writer.close()
+
+
 async def test_orphan_result_is_recorded_not_dropped(store: AuditStore) -> None:
     session = Session("/tmp/ws")
     writer = AuditWriter(store)
