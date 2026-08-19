@@ -6004,3 +6004,22 @@ not a web read — that is the wall.
 The base system prompt now tells the model to fire several searches,
 fetch the best pages, and compile. That is the orchestration; it is
 not a silent mega-tool.
+
+---
+
+## 2026-08-19 — v0.2 plan: three calls that would be expensive to reopen
+
+Filed with M4 (E21–E27). Spec §5/§9 already named the product. These are
+the sequencing choices.
+
+**1. Memory writes are Class A.** Inside `.tst/memory/`, reversible with
+`git revert`, not a wall. Steering writes stay Class C. The carve-out is
+a classifier rule (TD-2102), not a handler special case.
+
+**2. Distill runs on graceful quit and End session.** v0.1 still kills
+the daemon on close; that close is graceful (TD-1002). Crash writes
+nothing. v0.3 detached sessions are not a dependency.
+
+**3. Heading-match is the M4 floor; embeddings are in-milestone but not
+the exit.** TD-2701 must pass without a sidecar. Ollama `/api/embed` is
+already rejected (2026-08-17 measurement).
