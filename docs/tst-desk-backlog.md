@@ -4401,12 +4401,12 @@ the layout against the 2026-08-19 reference shot before building.
 **Size:** 3 · **Depends on:** TD-2801, TD-1502
 
 **Acceptance criteria:**
-- [ ] The column lists the workspace's steering files (`AGENTS.md` or
+- [x] The column lists the workspace's steering files (`AGENTS.md` or
       `CLAUDE.md` fallback, then `.tst/rules/*`)
-- [ ] `+` creates a new `.tst/rules/` file or opens the existing
+- [x] `+` creates a new `.tst/rules/` file or opens the existing
       `AGENTS.md` — it never writes through the agent tools
-- [ ] Editing is a human file write; the instruction stack reloads (TD-509)
-- [ ] Empty state copy points at `docs/steering.md`
+- [x] Editing is a human file write; the instruction stack reloads (TD-509)
+- [x] Empty state copy points at `docs/steering.md`
 
 **Notes:** this is a viewer/editor on spec §4, not a new instruction
 format. The agent still cannot write these paths (TD-2102).

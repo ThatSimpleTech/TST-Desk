@@ -30,6 +30,7 @@ from tstd.protocol import (
     ContextCompacted,
     ConversationReset,
     CostUpdate,
+    CreateRule,
     DecisionLogged,
     DeleteApiKey,
     DeleteSession,
@@ -44,7 +45,10 @@ from tstd.protocol import (
     GetSetupState,
     GetUsage,
     Hello,
+    InstructionFileEntry,
+    InstructionFiles,
     InstructionStack,
+    ListInstructions,
     ListPolicyRules,
     ListSessions,
     MoveSession,
@@ -112,6 +116,8 @@ FIXTURES = {
     "detach": Detach(session_id="sess-1"),
     "set_tier": SetTier(session_id="sess-1", tier="brain"),
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
+    "list_instructions": ListInstructions(workspace_path="/home/user/project"),
+    "create_rule": CreateRule(workspace_path="/home/user/project", name="api"),
     "shutdown": Shutdown(),
     "list_sessions": ListSessions(),
     # Session lifecycle (TD-1715): archive/restore, delete, move to project.
@@ -321,6 +327,18 @@ FIXTURES = {
         total_tokens=500,
         token_method="cl100k_base",
         seq=17,
+    ),
+    "instruction_files": InstructionFiles(
+        workspace_path="/home/user/project",
+        files=[
+            InstructionFileEntry(
+                path="/home/user/project/AGENTS.md", name="AGENTS.md", kind="agents"
+            ),
+            InstructionFileEntry(
+                path="/home/user/project/.tst/rules/api.md", name="api.md", kind="rule"
+            ),
+        ],
+        created=None,
     ),
     "context_compacted": ContextCompacted(
         session_id="sess-1",

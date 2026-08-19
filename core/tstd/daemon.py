@@ -42,6 +42,11 @@ from .config import (
 )
 from .config_write import save_active_preset, save_tier_slug
 from .context.assembler import ContextAssembler
+from .context.instructions import (
+    InstructionNameError,
+    create_rule_file,
+    list_workspace_instructions,
+)
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
 from .discovery import resolve_tier_slugs
@@ -73,6 +78,7 @@ from .protocol import (
     Attach,
     Cancel,
     ClientMessageT,
+    CreateRule,
     DaemonEvent,
     DeleteApiKey,
     DeleteSession,
@@ -86,6 +92,9 @@ from .protocol import (
     GetSetupState,
     GetUsage,
     HandshakeError,
+    InstructionFileEntry,
+    InstructionFiles,
+    ListInstructions,
     ListPolicyRules,
     ListSessions,
     MoveSession,
@@ -1205,6 +1214,12 @@ class Daemon:
         if isinstance(msg, GetInstructionStack):
             return await self._handle_get_instruction_stack(msg)
 
+        if isinstance(msg, ListInstructions):
+            return await self._handle_list_instructions(msg)
+
+        if isinstance(msg, CreateRule):
+            return await self._handle_create_rule(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -1523,6 +1538,42 @@ class Daemon:
             # No tracker means no call has been made, which is the same
             # "nothing observed yet" the tracker itself reports (TD-1811).
             cache_observed=(tracker.cache_observed if tracker is not None else False),
+        ).model_dump_json()
+
+    async def _handle_list_instructions(self, msg: ListInstructions) -> str:
+        """List a workspace's Instructions files (TD-2802). Not a tool."""
+        return await self._instruction_files_reply(msg.workspace_path)
+
+    async def _handle_create_rule(self, msg: CreateRule) -> str:
+        """Create a ``.tst/rules/`` file on the human path (TD-2802)."""
+        workspace = Path(msg.workspace_path)
+        if not await asyncio.to_thread(workspace.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        try:
+            created = await asyncio.to_thread(create_rule_file, workspace, msg.name)
+        except InstructionNameError as e:
+            return build_error("invalid_rule_name", str(e))
+        return await self._instruction_files_reply(workspace, created=created)
+
+    async def _instruction_files_reply(
+        self, workspace: str | Path, created: Path | None = None
+    ) -> str:
+        root = Path(workspace)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {root}",
+            )
+        listed = await asyncio.to_thread(list_workspace_instructions, root)
+        return InstructionFiles(
+            workspace_path=str(root),
+            files=[
+                InstructionFileEntry(path=str(f.path), name=f.name, kind=f.kind) for f in listed
+            ],
+            created=str(created) if created is not None else None,
         ).model_dump_json()
 
     async def _handle_detach(self, msg: Detach, connection: Any) -> str | None:

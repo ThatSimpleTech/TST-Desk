@@ -28,6 +28,7 @@
 		sessions,
 		stateTone,
 	} from '../sessions.svelte.js';
+	import InstructionsColumn from './InstructionsColumn.svelte';
 
 	let known = $derived(workspaces.entries);
 	let selected = $derived(projects.selectedPath);
@@ -88,26 +89,31 @@
 					New chat
 				</button>
 			</div>
-			<h2 class="section">Recents</h2>
-			{#if recents.length === 0}
-				<p class="empty">{projectRecentsEmptyCopy()}</p>
-			{:else}
-				<ul class="list">
-					{#each recents as row (row.sessionId)}
-						<li>
-							<button class="card" type="button" onclick={() => openRecent(row.sessionId)}>
-								<span class="dot dot-{stateTone(row.state)}" aria-hidden="true"></span>
-								<span class="card-text">
-									<span class="card-name">{rowTitle(row)}</span>
-									<span class="card-path"
-										>{ROW_STATE_LABELS[row.state]} · {recencyLabel(row.updatedAt)}</span
-									>
-								</span>
-							</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
+			<div class="home-cols">
+				<InstructionsColumn workspacePath={selected} />
+				<section class="col" aria-label="Recents">
+					<h2 class="section">Recents</h2>
+					{#if recents.length === 0}
+						<p class="empty">{projectRecentsEmptyCopy()}</p>
+					{:else}
+						<ul class="list">
+							{#each recents as row (row.sessionId)}
+								<li>
+									<button class="card" type="button" onclick={() => openRecent(row.sessionId)}>
+										<span class="dot dot-{stateTone(row.state)}" aria-hidden="true"></span>
+										<span class="card-text">
+											<span class="card-name">{rowTitle(row)}</span>
+											<span class="card-path"
+												>{ROW_STATE_LABELS[row.state]} · {recencyLabel(row.updatedAt)}</span
+											>
+										</span>
+									</button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</section>
+			</div>
 		{/if}
 	</div>
 </div>
@@ -264,8 +270,20 @@
 		background: var(--color-accent-hover);
 	}
 
+	.home-cols {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-8);
+		margin-top: var(--space-8);
+	}
+
+	.col {
+		flex: 1 1 16rem;
+		min-width: 0;
+	}
+
 	.section {
-		margin: var(--space-8) 0 0;
+		margin: 0;
 		font-family: var(--font-sans);
 		font-size: var(--text-xs);
 		font-weight: var(--weight-semibold);
