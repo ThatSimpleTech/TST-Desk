@@ -43,6 +43,7 @@ from .cost import CallRecord, CostTracker
 from .discovery import resolve_tier_slugs
 from .keychain import KeychainError
 from .logging import get_logger
+from .memory_commit import MemoryCommitter
 from .policy import load_approved_imports, save_approved_imports
 from .protocol import (
     AssistantDelta,
@@ -437,6 +438,17 @@ async def _dispatch_and_append_results(
                     seq=1,
                 )
             )
+        # Same one-time notice rail as checkpoints (TD-2104). The
+        # message names memory; the event type is the existing rail.
+        if r.memory_notice is not None:
+            await session.event_log.add(
+                CheckpointNoticeEvent(
+                    session_id=session.id,
+                    code=r.memory_notice.code,
+                    message=r.memory_notice.message,
+                    seq=1,
+                )
+            )
 
         messages.append(
             ChatMessage(
@@ -577,6 +589,12 @@ async def agent_loop(
         # checkpointer.
         if tool_dispatcher.checkpointer is None:
             tool_dispatcher.checkpointer = Checkpointer(Path(session.workspace_path), session.id)
+
+        # Memory HEAD commits (TD-2104): accepted memory writes land on
+        # the workspace repo as ``tst: memory update``. Not the
+        # checkpointer — that never touches HEAD.
+        if tool_dispatcher.memory_committer is None:
+            tool_dispatcher.memory_committer = MemoryCommitter(Path(session.workspace_path))
 
         # Decisions ledger (TD-704): Class A/B decisions that execute
         # append to .tst/autonomy/DECISIONS.md and emit decision_logged.
