@@ -45,7 +45,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M1.5 — Local models** | E18 | A scripted request runs end-to-end against a local OpenAI-compatible endpoint with no API key and no spend |
 | **M2 — The window** | E10, E11, E12 | A human does the same thing through the app, never touching a terminal |
 | **M3 — Shippable** | E13, E14, E15, E16, E17, E19 | A stranger can install and use it from a fresh machine |
-| **M4 — Memory** | E21–E27 | The brain prompt carries a relevant memory subset; a session end proposes a diff the user accepts; accepted writes are git commits in `.tst/memory/` |
+| **M4 — Memory** | E21–E28 | The brain prompt carries a relevant memory subset; a session end proposes a diff the user accepts; a project home shows Instructions / Memory / Context for the workspace |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -3965,11 +3965,13 @@ story exists to avoid, not a smaller version of the one TD-1901 fixes.
 ---
 
 
-# MILESTONE M4 — Memory (v0.2)
+# MILESTONE M4 — Memory and project home (v0.2)
 
-Spec §5 and §9. **This is the whole of v0.2.** Computer-use (TD-1710, E20), packaging
-clean-VM boxes (TD-1301–1303), and Windows process-group verify (TD-1406) stay where they
-are — they do not block M4 and they are not pulled into it.
+Spec §5 and §9 named Memory. The project home (E28) was added 2026-08-19 from
+the Claude Projects reference: a workspace you open, with Instructions /
+Memory / Context on the right and recents in the middle. Computer-use
+(TD-1710, E20), packaging clean-VM boxes (TD-1301–1303), and Windows
+process-group verify (TD-1406) stay where they are — they do not block M4.
 
 **v0.1 leftover that is not M4:** the window still kills the daemon on close. Distill
 therefore runs on **graceful quit** and on an explicit End session, not on crash, and
@@ -3991,11 +3993,12 @@ prompt only, proposes a distill diff, accepts it, and sees a `tst: memory update
 commit.
 
 ```
-E21 Store ─> E22 Relevance ─┬─> E25 Prompt ─> E26 UI
+E21 Store ─> E22 Relevance ─┬─> E25 Prompt ─> E26 UI ─> E28 Project home
        │                    │
-       └─> E23 Distill ─> E24 Diff-before-write ─┘
-                                    │
-                                    └─> E27 Harness (exit)
+       └─> E23 Distill ─> E24 Diff-before-write ─┘         │
+                                    │                      │
+                                    └─> E27 Harness (memory exit)
+                                    └──────────────────────> TD-2808 (home)
 ```
 
 Heading-match loading (TD-2201) is the floor. Embeddings (TD-2202–2204) are in
@@ -4355,6 +4358,137 @@ workspace file.
 - [ ] Dropped files are listed separately
 - [ ] A live session with no memory shows the placeholder honestly
 
+**Notes:** the Memory column of the project home (TD-2803) is this pane
+hosted there, not a second store.
+
+---
+
+## Epic E28 — Project home
+
+**Goal:** opening a workspace feels like opening a Claude Project: a named
+home, recents for that folder, and three human-facing columns —
+Instructions, Memory, Context. The folder is still the project. There is
+no account and no uploaded cloud knowledge base.
+
+The three columns map onto files we already named, and they stay split:
+
+| Column | On disk | Who writes |
+|---|---|---|
+| Instructions | `AGENTS.md` / `CLAUDE.md` / `.tst/rules/**` | The human only |
+| Memory | `.tst/memory/**` | The agent (distill) and the human (correct) |
+| Context | `.tst/context/pins.yaml` plus the pinned workspace paths | The human pins; the assembler reads |
+
+---
+
+### TD-2801 — Project home surface
+**Size:** 5 · **Depends on:** TD-1712, TD-1103
+
+**Acceptance criteria:**
+- [ ] Rail **Projects** opens a project list (known workspaces, pin-able),
+      not only the title-bar recents menu
+- [ ] Selecting a project shows a home: project name (folder name), New
+      chat, and recents filtered to that `workspace_path`
+- [ ] New chat is `new_session` in that workspace
+- [ ] Home / Projects selection is honest in the rail (`current` vs `ready`)
+
+**Notes:** size 5 — the rail's Projects row is already `ready` and today
+only toggles the recents menu. Changing that is a real IA change. Propose
+the layout against the 2026-08-19 reference shot before building.
+
+---
+
+### TD-2802 — Instructions column
+**Size:** 3 · **Depends on:** TD-2801, TD-1502
+
+**Acceptance criteria:**
+- [ ] The column lists the workspace's steering files (`AGENTS.md` or
+      `CLAUDE.md` fallback, then `.tst/rules/*`)
+- [ ] `+` creates a new `.tst/rules/` file or opens the existing
+      `AGENTS.md` — it never writes through the agent tools
+- [ ] Editing is a human file write; the instruction stack reloads (TD-509)
+- [ ] Empty state copy points at `docs/steering.md`
+
+**Notes:** this is a viewer/editor on spec §4, not a new instruction
+format. The agent still cannot write these paths (TD-2102).
+
+---
+
+### TD-2803 — Memory column
+**Size:** 2 · **Depends on:** TD-2801, TD-2601
+
+**Acceptance criteria:**
+- [ ] The column shows `.tst/memory/**` for this workspace (E26's pane)
+- [ ] Copy says it is local to this machine / this folder — no "sync"
+- [ ] Distill proposals (E24) can open against this column
+- [ ] Empty state points at the first End session / quit distill
+
+---
+
+### TD-2804 — Context pins
+**Size:** 5 · **Depends on:** TD-2801, TD-2501
+
+**Acceptance criteria:**
+- [ ] The human pins workspace files or folders onto the project
+      (stored as `.tst/context/pins.yaml`, git-tracked)
+- [ ] Pinned paths render as cards (name, kind, line count)
+- [ ] `+` is a file picker inside the workspace wall; outside is refused
+- [ ] Unpin removes the pin, not the file
+- [ ] Search-in-pins filters the cards; it does not fetch the web
+
+**Notes:** this is Claude's "Context" column, not the whole repo and not
+an upload-to-cloud knowledge base. The repo stays on disk. Size 5 because
+the pin file is a new schema.
+
+---
+
+### TD-2805 — Context rides the brain
+**Size:** 3 · **Depends on:** TD-2804, TD-2502
+
+**Acceptance criteria:**
+- [ ] Pinned files load as a brain-only `project_context` block, after
+      memory, still after the cache prefix
+- [ ] A capacity meter shows tokens for instructions + memory + pins
+      against a config cap (the "12% of project capacity" read)
+- [ ] Over cap, pins drop last-in-first-out; the meter says so
+- [ ] Worker/validator do not receive the pin block
+
+---
+
+### TD-2806 — Pin list on the rail
+**Size:** 2 · **Depends on:** TD-2801
+
+**Acceptance criteria:**
+- [ ] A workspace can be pinned to the Projects list
+- [ ] Pins persist in the user data dir (machine-wide), not in the
+      workspace (so a clone does not inherit another person's pins)
+- [ ] Unpinned known workspaces still appear under Recents
+
+---
+
+### TD-2807 — Project recents are sessions
+**Size:** 2 · **Depends on:** TD-2801, TD-1701
+
+**Acceptance criteria:**
+- [ ] The home recents list is `session_list` filtered to this
+      `workspace_path`, newest first
+- [ ] Clicking a row attaches that session (same as the rail history)
+- [ ] Archived sessions do not appear unless the Archived filter is on
+
+---
+
+### TD-2808 — Project home is wired, not a mock
+**Size:** 2 · **Depends on:** TD-2802, TD-2803, TD-2804, TD-2807
+
+**Acceptance criteria:**
+- [ ] A store-level test: bind a workspace with steering, memory, and
+      pins → the three columns expose those paths
+- [ ] Rail Projects → home → New chat creates a session in that workspace
+- [ ] An invariant test: every `ready` rail entry still activates
+      (TD-1712)
+
+**Notes:** not the M4 memory exit (that stays TD-2701). This is the
+product-shape pin so the home cannot ship as three empty cards.
+
 ---
 
 ## Epic E27 — M4 exit
@@ -4421,8 +4555,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M2 The window | E10–E12 | 24 | 68 |
 | M3 Shippable | E13–E17, E19 | 50 | 142 |
 | **Total v0.1** | **19** | **148** | **417** |
-| M4 Memory (v0.2) | E21–E27 | 24 | 66 |
-| **Total v0.1 + v0.2** | **26** | **172** | **483** |
+| M4 Memory (v0.2) | E21–E28 | 32 | 90 |
+| **Total v0.1 + v0.2** | **27** | **180** | **507** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

@@ -6023,3 +6023,26 @@ nothing. v0.3 detached sessions are not a dependency.
 **3. Heading-match is the M4 floor; embeddings are in-milestone but not
 the exit.** TD-2701 must pass without a sidecar. Ollama `/api/embed` is
 already rejected (2026-08-17 measurement).
+
+---
+
+## 2026-08-19 — Project home is a workspace, not a cloud Project (Class B)
+
+**Decision:** Claude's project screen is the IA we copy. The unit is still
+a folder. Instructions / Memory / Context are three columns over three
+on-disk trees that do not mix (spec §4).
+
+| Column | Files | Writer |
+|---|---|---|
+| Instructions | `AGENTS.md`, `.tst/rules/**` | Human only |
+| Memory | `.tst/memory/**` | Distill + human correct |
+| Context | pins in `.tst/context/pins.yaml` | Human pins; assembler reads |
+
+**Rationale:** A second instruction box the agent could write would
+collapse §4. Uploading files into a hosted project knowledge base would
+need an account and a server. Pins are workspace paths, git-tracked,
+behind the same wall as `fs_read`. Rail Projects stops being a recents
+alias and becomes this home (TD-2801).
+
+Pins ride the brain only, after memory, after the cache prefix, and drop
+first when the capacity meter is full.
