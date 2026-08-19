@@ -13,6 +13,7 @@
 //
 // TD-1712 added the dispatcher for the rail's function entries. The entries
 // themselves — and which of them can be clicked — live in the pure rail.ts.
+// TD-2801 made Home / Projects a real surface swap, not a recents-menu alias.
 //
 // TD-1715 added the archived shelf and the open/confirm state the row
 // affordances need. The commands those affordances send live in
@@ -30,12 +31,13 @@ import {
 import { chat, selectSession as selectChatSession } from "./chat-store.svelte.js";
 import {
 	focusSession,
+	openWorkspace,
 	retargetWorkspace,
 	session,
 	workspaceName,
 } from "./session-status.svelte.js";
-import { toggleWorkspaceMenu } from "./workspaces.svelte.js";
-import { RAIL_FUNCTIONS, type RailSurface } from "./rail";
+import { showHome, showProjects, projects } from "./projects.svelte.js";
+import { railFunctions, type RailSurface } from "./rail";
 import type { DaemonEventUnion, SessionSummary } from "./protocol";
 
 /** localStorage key for the rail's collapsed flag. */
@@ -255,22 +257,43 @@ export function toggleCollapsed(): void {
 	saveCollapsed(sessions.collapsed);
 }
 
-/** Activate a rail function entry (TD-1712). Returns false — having done
- *  nothing — for any entry the registry doesn't call `ready`.
- *
- *  The guard lives here and not only in the markup, so a rail that forgets to
- *  disable a row still can't produce a click that goes nowhere. Projects
- *  raises TD-1103's recents menu rather than growing a second picker. */
+/** Activate a rail function entry (TD-1712 / TD-2801). Returns false —
+ *  having done nothing — for any entry the live registry doesn't call
+ *  `ready`. Home and Projects swap current/ready with the surface. */
 export function activateRailFunction(id: RailSurface): boolean {
-	const entry = RAIL_FUNCTIONS.find((e) => e.id === id);
+	const entry = railFunctions(projects.surface).find((e) => e.id === id);
 	if (entry === undefined || entry.state !== "ready") return false;
 	if (id === "projects") {
-		toggleWorkspaceMenu();
+		showProjects();
+		return true;
+	}
+	if (id === "home") {
+		showHome();
 		return true;
 	}
 	// Marking an entry ready without wiring it here lands back here;
 	// sessions.test.ts asserts every ready entry activates.
 	return false;
+}
+
+/** New chat on a project home: `new_session` in that workspace.
+ *
+ *  The daemon only grows a session from an anchor it already has, so a
+ *  folder with no session yet opens the workspace instead (that verb
+ *  creates one). Either way the window returns to Home so the chat is
+ *  what you see. */
+export function newSessionInWorkspace(workspacePath: string): boolean {
+	const anchor = sessions.rows.find((r) => r.workspacePath === workspacePath);
+	if (anchor === undefined) {
+		openWorkspace(workspacePath);
+		showHome();
+		return true;
+	}
+	if (pendingNewAnchor !== null) return false;
+	if (!sendToDaemon({ type: "new_session", session_id: anchor.sessionId })) return false;
+	pendingNewAnchor = anchor.sessionId;
+	showHome();
+	return true;
 }
 
 // ── Row presentation (pure; the component renders, these decide) ────────

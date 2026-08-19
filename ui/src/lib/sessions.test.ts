@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => {
     // Recorded calls into the single-session stores.
     chatSelects: [] as Array<[id: string, turnState: string | null]>,
     focuses: [] as Array<{ id: string; state: string; workspacePath: string | undefined }>,
+    // Recorded open_workspace calls from newSessionInWorkspace (TD-2801).
+    opened: [] as string[],
     // Recorded calls the rail's function entries make (TD-1712).
     surfaceCalls: [] as string[],
     // Recorded re-points of the title bar after a move (TD-1715).
@@ -72,6 +74,9 @@ vi.mock("./session-status.svelte.js", () => ({
   retargetWorkspace: (id: string, workspacePath: string) => {
     mocks.retargets.push({ id, workspacePath });
   },
+  openWorkspace: (path: string) => {
+    mocks.opened.push(path);
+  },
   session: mocks.statusState,
   workspaceName: (p: string) => p.split(/[\\/]/).filter((s) => s.length > 0).pop() ?? p,
 }));
@@ -96,6 +101,7 @@ import {
   closeRowMenus,
   selectRow,
   newSession,
+  newSessionInWorkspace,
   activateRailFunction,
   stateTone,
   recencyLabel,
@@ -113,7 +119,8 @@ import {
   toggleArchivedView,
   toggleRowMenu,
 } from "./session-actions.svelte.js";
-import { RAIL_FUNCTIONS } from "./rail";
+import { railFunctions } from "./rail";
+import { projects, resetProjects, showProjects } from "./projects.svelte.js";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -178,7 +185,9 @@ beforeEach(() => {
   mocks.focuses.length = 0;
   mocks.surfaceCalls.length = 0;
   mocks.retargets.length = 0;
+  mocks.opened.length = 0;
   mocks.workspacesState.entries = [];
+  resetProjects();
   mocks.chatState.sessionId = null;
   mocks.statusState.workspacePath = null;
   mocks.sendResult = true;
@@ -421,15 +430,63 @@ describe("rail function entries", () => {
 
   it("activates every entry the registry calls ready", () => {
     // Marking an entry ready without wiring it fails here rather than
-    // shipping a button that does nothing.
-    for (const entry of RAIL_FUNCTIONS) {
-      if (entry.state === "ready") expect(activateRailFunction(entry.id)).toBe(true);
+    // shipping a button that does nothing. Ready depends on the surface.
+    for (const surface of ["home", "projects"] as const) {
+      for (const entry of railFunctions(surface)) {
+        if (entry.state !== "ready") continue;
+        resetProjects();
+        if (surface === "projects") showProjects();
+        expect(activateRailFunction(entry.id)).toBe(true);
+      }
     }
   });
 
-  it("Projects raises TD-1103's recents menu instead of a second picker", () => {
+  it("Projects opens the project list, not the title-bar recents menu", () => {
     expect(activateRailFunction("projects")).toBe(true);
-    expect(mocks.surfaceCalls).toEqual(["toggleWorkspaceMenu"]);
+    expect(projects.surface).toBe("projects");
+    expect(projects.selectedPath).toBeNull();
+    expect(mocks.surfaceCalls).toEqual([]);
+  });
+
+  it("Home is ready once Projects is showing, and takes you back", () => {
+    showProjects();
+    expect(activateRailFunction("home")).toBe(true);
+    expect(projects.surface).toBe("home");
+    expect(activateRailFunction("home")).toBe(false);
+    expect(activateRailFunction("projects")).toBe(true);
+  });
+});
+
+// ── New chat on a project home (TD-2801) ──────────────────────────────────
+
+describe("newSessionInWorkspace", () => {
+  beforeEach(() => {
+    emit(
+      sessionList([
+        ["s1", "2026-08-14T09:00:00Z", "complete", "/ws/proj"],
+        ["s2", "2026-08-14T10:00:00Z", "idle", "/ws/other"],
+      ]),
+    );
+    mocks.sent.length = 0;
+  });
+
+  it("sends new_session anchored on a session in that workspace", () => {
+    expect(newSessionInWorkspace("/ws/other")).toBe(true);
+    expect(mocks.sent).toEqual([{ type: "new_session", session_id: "s2" }]);
+    expect(projects.surface).toBe("home");
+  });
+
+  it("opens the workspace when it has no session to anchor", () => {
+    expect(newSessionInWorkspace("/ws/fresh")).toBe(true);
+    expect(mocks.opened).toEqual(["/ws/fresh"]);
+    expect(sentTypes()).toEqual([]);
+    expect(projects.surface).toBe("home");
+  });
+
+  it("refuses a second new_session while one is in flight", () => {
+    expect(newSessionInWorkspace("/ws/proj")).toBe(true);
+    expect(newSessionInWorkspace("/ws/proj")).toBe(false);
+    expect(sentTypes()).toEqual(["new_session"]);
   });
 });
 

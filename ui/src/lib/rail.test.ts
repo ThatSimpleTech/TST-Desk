@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import { ICONS } from "./icons";
 import {
 	RAIL_FUNCTIONS,
+	railFunctions,
 	railSections,
 	historyBadge,
 	entryHint,
@@ -100,6 +101,15 @@ describe("surfaces that can't be clicked", () => {
 	it("hints a ready entry with its plain label", () => {
 		const projects = entry("projects");
 		expect(projects && entryHint(projects)).toBe("Projects");
+	});
+
+	it("swaps current and ready when the window is on Projects (TD-2801)", () => {
+		const entries = railFunctions("projects");
+		expect(entries.find((e) => e.id === "projects")?.state).toBe("current");
+		expect(entries.find((e) => e.id === "home")?.state).toBe("ready");
+		expect(entries.find((e) => e.id === "scheduled")?.state).toBe("planned");
+		expect(entryHint(entries.find((e) => e.id === "projects")!)).toBe("Projects — you are here");
+		expect(entryHint(entries.find((e) => e.id === "home")!)).toBe("Home");
 	});
 
 	it("names an icon the shared map actually has", () => {

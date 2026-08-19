@@ -4384,12 +4384,12 @@ The three columns map onto files we already named, and they stay split:
 **Size:** 5 · **Depends on:** TD-1712, TD-1103
 
 **Acceptance criteria:**
-- [ ] Rail **Projects** opens a project list (known workspaces, pin-able),
+- [x] Rail **Projects** opens a project list (known workspaces, pin-able),
       not only the title-bar recents menu
-- [ ] Selecting a project shows a home: project name (folder name), New
+- [x] Selecting a project shows a home: project name (folder name), New
       chat, and recents filtered to that `workspace_path`
-- [ ] New chat is `new_session` in that workspace
-- [ ] Home / Projects selection is honest in the rail (`current` vs `ready`)
+- [x] New chat is `new_session` in that workspace
+- [x] Home / Projects selection is honest in the rail (`current` vs `ready`)
 
 **Notes:** size 5 — the rail's Projects row is already `ready` and today
 only toggles the recents menu. Changing that is a real IA change. Propose

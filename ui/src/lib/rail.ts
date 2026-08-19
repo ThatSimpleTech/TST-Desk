@@ -33,19 +33,35 @@ export interface RailEntry {
 	note: string | null;
 }
 
-/** The function entries, in rail order.
+/** The function entries for a given current surface, in rail order.
  *
- * Home is `current`: the window has one main surface and the chat pane is it,
- * so Home is where you already are, not somewhere to navigate — it renders
- * selected rather than as a button that would do nothing. Projects is
- * TD-1103's recents quick-switch. Scheduled belongs to v0.5 and renders
- * disabled with its milestone: hiding it would hide the shape of the app.
+ * Home and Projects trade `current` / `ready` so the rail is honest about
+ * which pane the window is showing (TD-2801). Scheduled belongs to v0.5
+ * and stays `planned`: hiding it would hide the shape of the app.
  */
-export const RAIL_FUNCTIONS: readonly RailEntry[] = [
-	{ id: "home", label: "Home", icon: "home", state: "current", note: null },
-	{ id: "projects", label: "Projects", icon: "folder", state: "ready", note: null },
-	{ id: "scheduled", label: "Scheduled", icon: "clock", state: "planned", note: "v0.5" },
-] as const;
+export function railFunctions(current: RailSurface = "home"): RailEntry[] {
+	return [
+		{
+			id: "home",
+			label: "Home",
+			icon: "home",
+			state: current === "home" ? "current" : "ready",
+			note: null,
+		},
+		{
+			id: "projects",
+			label: "Projects",
+			icon: "folder",
+			state: current === "projects" ? "current" : "ready",
+			note: null,
+		},
+		{ id: "scheduled", label: "Scheduled", icon: "clock", state: "planned", note: "v0.5" },
+	];
+}
+
+/** Snapshot of the home-surface registry. Prefer `railFunctions(current)`
+ *  when the window's surface can move. */
+export const RAIL_FUNCTIONS: readonly RailEntry[] = railFunctions("home");
 
 export type RailSectionId = "functions" | "history";
 
@@ -81,14 +97,18 @@ export function historyBadge(count: number): string | null {
  *  elsewhere, and two live lists in a 260px column would compete for the same
  *  scroll. The heading is the only thing that tells you which you are in, so
  *  it has to change (TD-1715). */
-export function railSections(historyCount: number, archivedView = false): RailSection[] {
+export function railSections(
+	historyCount: number,
+	archivedView = false,
+	current: RailSurface = "home",
+): RailSection[] {
 	return [
 		{
 			id: "functions",
 			label: "Surfaces",
 			heading: false,
 			badge: null,
-			entries: RAIL_FUNCTIONS,
+			entries: railFunctions(current),
 		},
 		{
 			id: "history",
