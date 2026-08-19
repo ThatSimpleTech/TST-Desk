@@ -880,7 +880,28 @@ serving both tools indefinitely.
 
 ---
 
-## 10. Sharp edges
+## 10. Memory is not steering
+
+`.tst/memory/` is a different tree. The agent writes it (distill) and you correct it; the
+instruction stack never reads it. Mixing the two is how last month's decisions get treated as
+this month's rules.
+
+A freshly opened workspace gets three commented templates and nothing else:
+
+```
+<workspace>/.tst/memory/
+  MEMORY.md              ← the index
+  decisions.md           ← why things are the way they are
+  gotchas.md             ← things that bit us
+```
+
+You (or distill) may add `<topic>.md` files beside those. The scaffold never invents topic
+names. Frontmatter in a memory file is not an `appliesTo` rule. Layout and git tracking are
+in [`configuration.md` §5](configuration.md).
+
+---
+
+## 11. Sharp edges
 
 Writing this guide against the running assembler surfaced three places where the behaviour is
 not what an author would predict. Two have since been fixed and the examples above now
@@ -901,7 +922,7 @@ worked around here, and is demonstrated by a live example above rather than asse
 
 ---
 
-## 11. How this guide is kept honest
+## 12. How this guide is kept honest
 
 `core/tests/test_docs_steering_guide.py` runs on every suite run:
 

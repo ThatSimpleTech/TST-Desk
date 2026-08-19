@@ -54,6 +54,7 @@ from .keychain import (
 )
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
+from .memory_store import scaffold_workspace_memory
 from .policy import (
     add_rule,
     load_approved_imports,
@@ -871,7 +872,8 @@ class Daemon:
         if isinstance(msg, NewSession):
             # Anchor on an existing session: its workspace becomes the new
             # session's workspace (TD-1701). The path comes from the
-            # registry, not the client — no re-validation, no scaffolding.
+            # registry, not the client — no re-validation, no config
+            # scaffold. Memory templates are planted in _start_session.
             anchor = self.session_registry.get(msg.session_id)
             if anchor is None:
                 return build_error(
@@ -1307,6 +1309,10 @@ class Daemon:
         (``session_state``, running) as the wire reply, mirroring
         ``open_workspace``'s response.
         """
+        # Memory templates (TD-2101): plant .tst/memory/ on every session
+        # start so an already-opened workspace still gets the files. Never
+        # overwrites; config scaffold stays OpenWorkspace-only.
+        await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
         sess = await self.session_registry.create(workspace_path)
         # Persist the new session and keep its state durable going forward.
         await self._session_store.upsert(sess.id, workspace_path, sess.state)

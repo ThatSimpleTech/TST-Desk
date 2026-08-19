@@ -1,8 +1,11 @@
 # --- Runtime state ---
-# Exclude .tst/ runtime state, but never .tst/rules/ (meant to be shared, per AGENTS.md §8)
+# Exclude .tst/ runtime state, but never .tst/rules/ or .tst/memory/
+# (meant to be shared, per AGENTS.md §8).
 .tst/*
 !.tst/rules/
 !.tst/rules/**
+!.tst/memory/
+!.tst/memory/**
 
 # --- Build artifacts ---
 target/
