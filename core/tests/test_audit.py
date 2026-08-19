@@ -279,6 +279,79 @@ def test_tool_call_without_result_has_null_hash(store: AuditStore) -> None:
     assert row == (None, "C", "refused")
 
 
+def test_class_b_decision_stores_a_null_commit(store: AuditStore) -> None:
+    """Class B has no checkpoint; a NOT NULL column is the 2026-08-18 toast."""
+    store.append_decision(
+        session_id="s1",
+        decision_class="B",
+        what="read README.md",
+        why="decision class B requires approval",
+        commit_sha=None,
+        ts=2500.0,
+    )
+    row = store._conn.execute("SELECT decision_class, commit_sha FROM decisions").fetchone()
+    assert row == ("B", None)
+
+
+def test_v1_not_null_commit_sha_is_migrated(tmp_path: Path) -> None:
+    """A database that ran the original v1 still has TEXT NOT NULL.
+
+    Opening it must rebuild the table (v2) so a Class B NULL insert
+    succeeds — the live failure on 2026-08-18.
+    """
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_migrations (
+            version INTEGER PRIMARY KEY, applied_at REAL NOT NULL
+        );
+        INSERT INTO schema_migrations (version, applied_at) VALUES (1, 0);
+        CREATE TABLE sessions (
+            session_id TEXT PRIMARY KEY,
+            workspace_path TEXT NOT NULL,
+            started_at REAL NOT NULL
+        );
+        INSERT INTO sessions VALUES ('s1', '/tmp/ws', 1.0);
+        CREATE TABLE decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL REFERENCES sessions(session_id),
+            decision_class TEXT NOT NULL CHECK(decision_class IN ('A', 'B', 'C')),
+            what TEXT NOT NULL,
+            why TEXT NOT NULL,
+            commit_sha TEXT NOT NULL,
+            ts REAL NOT NULL
+        );
+        INSERT INTO decisions (session_id, decision_class, what, why, commit_sha, ts)
+            VALUES ('s1', 'A', 'edited app.py', 'writable_paths', 'abc123', 2.0);
+        CREATE INDEX idx_decisions_session ON decisions(session_id, ts);
+        """
+    )
+    conn.close()
+
+    store = AuditStore(path)
+    try:
+        assert store.schema_version == len(MIGRATIONS)
+        notnull = store._conn.execute("PRAGMA table_info(decisions)").fetchall()
+        commit_col = next(row for row in notnull if row[1] == "commit_sha")
+        assert commit_col[3] == 0, "commit_sha must be nullable after v2"
+        kept = store._conn.execute("SELECT decision_class, commit_sha FROM decisions").fetchone()
+        assert kept == ("A", "abc123")
+        store.append_decision(
+            session_id="s1",
+            decision_class="B",
+            what="read README.md",
+            why="judgment",
+            commit_sha=None,
+        )
+        rows = store._conn.execute(
+            "SELECT decision_class, commit_sha FROM decisions ORDER BY id"
+        ).fetchall()
+        assert rows == [("A", "abc123"), ("B", None)]
+    finally:
+        store.close()
+
+
 def test_decision_round_trip(store: AuditStore) -> None:
     store.append_decision(
         session_id="s1",

@@ -2666,6 +2666,34 @@ unstubbed in `afterEach`. Policy and key sections never touch it.
 
 ---
 
+### TD-1412 — `decisions.commit_sha` is NOT NULL on existing audit databases
+**Size:** 2 · **Depends on:** TD-901
+
+Found 2026-08-18 on a live turn: every Class B decision toasted
+`audit_write_failed` (`NOT NULL constraint failed: decisions.commit_sha`).
+The session continued; the trail stopped.
+
+TD-704 records Class B without a checkpoint, so `DecisionLogged.commit`
+is `None` and `append_decision` writes NULL. `_SCHEMA_V1` in source was
+later edited to `TEXT NULL`, but a database already at version 1 never
+re-runs v1. The machine that hit this still had the original
+`TEXT NOT NULL`.
+
+**Acceptance criteria:**
+- [x] A version-2 migration rebuilds `decisions` so `commit_sha` is nullable
+- [x] A fixture that matches the original v1 (NOT NULL, one Class A row)
+      opens, keeps the row, and accepts a Class B NULL
+- [x] Fresh databases still land at `len(MIGRATIONS)` and store Class B
+      as NULL
+- [x] The writer path (`DecisionLogged` with `commit=None`) no longer
+      emits `audit_write_failed`
+
+**Completed (2026-08-18):** `_SCHEMA_V2` copies `decisions` into a
+nullable table. v1 is left as it sits in source — editing it again would
+not reach any database already stamped version 1.
+
+---
+
 ## Epic E15 — Documentation
 
 ---
@@ -3871,8 +3899,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M1 Headless core | E2–E9 | 52 | 156 |
 | M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 23 | 66 |
-| M3 Shippable | E13–E17, E19 | 49 | 140 |
-| **Total v0.1** | **19** | **143** | **407** |
+| M3 Shippable | E13–E17, E19 | 50 | 142 |
+| **Total v0.1** | **19** | **144** | **409** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

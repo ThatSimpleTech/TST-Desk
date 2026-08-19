@@ -118,9 +118,32 @@ FROM model_calls
 GROUP BY session_id, turn_id, tier, day;
 """
 
+# v2 rebuilds `decisions` so commit_sha is nullable. The first machines
+# that ran TD-901 got TEXT NOT NULL; later the source of _SCHEMA_V1 was
+# edited in place to TEXT NULL without a new step, so those databases
+# stayed NOT NULL and every Class B insert (commit is None) toasted
+# audit_write_failed. Editing v1 does not migrate a database already at
+# version 1 — this step does. (TD-1412)
+_SCHEMA_V2 = """
+CREATE TABLE decisions_v2 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    decision_class TEXT NOT NULL CHECK(decision_class IN ('A', 'B', 'C')),
+    what TEXT NOT NULL,
+    why TEXT NOT NULL,
+    commit_sha TEXT NULL,
+    ts REAL NOT NULL
+);
+INSERT INTO decisions_v2 (id, session_id, decision_class, what, why, commit_sha, ts)
+    SELECT id, session_id, decision_class, what, why, commit_sha, ts FROM decisions;
+DROP TABLE decisions;
+ALTER TABLE decisions_v2 RENAME TO decisions;
+CREATE INDEX idx_decisions_session ON decisions(session_id, ts);
+"""
+
 # Ordered migration steps; index + 1 is the schema version that step
 # produces. Every release that changes the schema appends one entry.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1,)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2)
 
 
 # ── Scrubbing ──────────────────────────────────────────────────────────

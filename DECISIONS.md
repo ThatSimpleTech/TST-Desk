@@ -5925,3 +5925,17 @@ lets a silent turn inherit `true` from the one before it.
 ledger of billed reuse; silence stores as `0` so `SUM` is a sum of claims. That is
 pricing/storage, not cache *state*. The docstring now says so. The turn log and
 the stack badge do not call it.
+
+---
+
+## 2026-08-18 — TD-1412: rebuild `decisions` rather than edit v1 (Class B)
+
+**Decision:** Nullability of `decisions.commit_sha` is a new migration
+step that copies the table. `_SCHEMA_V1` is not rewritten again.
+
+**Rationale:** The live `audit.db` was created when v1 said `TEXT NOT
+NULL`. Editing the v1 string later made new databases honest and left
+every existing one broken. SQLite cannot `ALTER COLUMN` to drop NOT
+NULL, so the step rebuilds the table. Row data is copied, not updated —
+the store's INSERT-only rule is about runtime writes, not schema
+evolution.
