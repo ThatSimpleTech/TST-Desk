@@ -293,8 +293,8 @@ template whose values are the defaults, so a scaffolded file changes nothing unt
 file is read when a workspace opens and again when a paused session resumes, which is what lets
 you raise a cap and continue without restarting.
 
-Five top-level sections live here, each read by a different part of the daemon: `boundary`,
-`caps`, `attachments`, `policy`, and `approved_external_imports`.
+Six top-level sections live here, each read by a different part of the daemon: `boundary`,
+`caps`, `attachments`, `policy`, `approved_external_imports`, and `memory`.
 
 ### 4.1 `boundary` — where the agent may act
 
@@ -374,6 +374,20 @@ bad file refuses the send rather than quietly delivering the rest.
 1 MiB, and base64 adds a third to whatever you attach — so a `max_total_bytes` much above
 `700000` gives you a message the transport drops before the daemon can refuse it politely.
 Keep the total under that and the failure modes stay legible.
+
+### 4.8 `memory` — how long a memory file may grow
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_lines` | int ≥ 1 | `200` | A `fs_write` / `fs_edit` that would make a `.tst/memory/` file longer than this, or that would replace a file already at this cap, is refused. The copy says to distill, not to append. Distill is the path that may replace a file at cap. |
+
+This is a write refusal, not an autonomy pause. Raising the number does not resume anything; it only lets the next tool write land. The number lives here, never as a literal in the write handler.
+
+<!-- verify: workspace -->
+```yaml
+memory:
+  max_lines: 80
+```
 
 ### 4.4 `policy` — what needs your approval
 
@@ -556,6 +570,9 @@ instruction stack never reads this directory. Standing rules stay in `AGENTS.md`
 
 The templates are HTML comments so a freshly opened workspace has no facts a later loader
 could treat as memory. Replace the comments with real notes, or leave them for distill.
+
+A file at `memory.max_lines` (default 200, see §4.8) is distilled, not appended forever. The
+agent tools refuse a write that would go over, or that would replace a file already at the cap.
 
 ---
 

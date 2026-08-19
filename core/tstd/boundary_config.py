@@ -25,6 +25,7 @@ DEFAULT_WRITABLE_PATHS: tuple[str, ...] = ("**",)
 DEFAULT_SPEND_USD = 25.0
 DEFAULT_WALL_CLOCK_HOURS = 8.0
 DEFAULT_MAX_ITERATIONS = 200
+DEFAULT_MEMORY_MAX_LINES = 200
 
 
 class BoundarySection(BaseModel):
@@ -88,6 +89,12 @@ class CapsSection(BaseModel):
     max_iterations: int = Field(default=DEFAULT_MAX_ITERATIONS, ge=1)
 
 
+class MemorySection(BaseModel):
+    """Memory-file line cap (spec §5, TD-2103). Not an autonomy pause."""
+
+    max_lines: int = Field(default=DEFAULT_MEMORY_MAX_LINES, ge=1)
+
+
 class BoundaryConfig(BaseModel):
     """Top-level workspace boundary configuration."""
 
@@ -99,6 +106,9 @@ class BoundaryConfig(BaseModel):
     # anything.  Filing them together would break the one sentence that makes
     # ``caps`` legible.
     attachments: AttachmentLimits = Field(default_factory=AttachmentLimits)
+    # Line cap on ``.tst/memory/**`` (TD-2103). Its own section: this refuses
+    # a write, it does not pause a running agent the way ``caps`` does.
+    memory: MemorySection = Field(default_factory=MemorySection)
 
     @property
     def allowed_hosts(self) -> frozenset[str]:
@@ -144,6 +154,9 @@ DEFAULT_CONFIG_TEMPLATE = """\
 #   max_file_bytes: 256000   # per text file attached to a message
 #   max_total_bytes: 512000  # per message, across all its attachments
 #   max_count: 10            # files per message
+
+# memory:
+#   max_lines: 200   # a memory file at this cap is distilled, not appended
 """
 
 

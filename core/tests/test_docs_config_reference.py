@@ -45,6 +45,7 @@ from tstd.boundary_config import (
     BoundaryConfig,
     BoundarySection,
     CapsSection,
+    MemorySection,
     load_workspace_boundary,
 )
 from tstd.config import (
@@ -194,6 +195,7 @@ _SEARCH_FIELDS = frozenset(SearchConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
 _SECTION_FIELDS = frozenset(BoundarySection.model_fields)
 _CAPS_FIELDS = frozenset(CapsSection.model_fields)
+_MEMORY_FIELDS = frozenset(MemorySection.model_fields)
 _ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
@@ -213,6 +215,8 @@ def _check_workspace(data: dict[str, Any], where: str) -> None:
         _check_keys(data["caps"], _CAPS_FIELDS, f"{where} caps")
     if "attachments" in data:
         _check_keys(data["attachments"], _ATTACHMENT_FIELDS, f"{where} attachments")
+    if "memory" in data:
+        _check_keys(data["memory"], _MEMORY_FIELDS, f"{where} memory")
     if "policy" in data:
         _check_keys(data["policy"], _POLICY_FIELDS, f"{where} policy")
         for i, rule in enumerate(data["policy"].get("rules", [])):
@@ -260,6 +264,7 @@ def test_every_config_key_is_documented() -> None:
         | WORKSPACE_SECTIONS
         | _SECTION_FIELDS
         | _CAPS_FIELDS
+        | _MEMORY_FIELDS
         | _ATTACHMENT_FIELDS
         | _POLICY_FIELDS
         | _RULE_FIELDS
