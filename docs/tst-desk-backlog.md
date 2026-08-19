@@ -2036,6 +2036,36 @@ null) and the overlay has no click-outside, so the only exit is a 14px X.
 
 ---
 
+### TD-1014 — Approval cards survive their call
+**Size:** 2 · **Depends on:** TD-1007, TD-1203
+
+Found 2026-08-18 on a live turn: Approve on a visible card returned
+`no_pending_approval` for `call_tlqom3pz`. Same shape as the 2026-08-18
+failure that prompted skip-all — skip-all does not clear a leftover card.
+
+The footer is a process-global list. Timeline and the decisions pane
+bind-and-clear on session switch; approvals just `push`. Detach also
+wipes `lastSeq`, so the next attach replays every `approval_request`.
+A resolved pair nets out one of two cards and leaves a ghost. The card
+also stayed up until `tool_result`, so a second click on a live card
+hit the daemon after `resolve_approval` had already finished.
+
+**Acceptance criteria:**
+- [x] Binding a session drops leftover cards; attach replay rebuilds
+      anything still pending
+- [x] Re-binding the session already shown is a no-op
+- [x] A replayed `approval_request` for a tool call already on screen
+      does not add a second card
+- [x] Approve / Deny / Always allow dismiss the card when the send
+      lands; a second click sends nothing
+- [x] A refused send (socket down) leaves the card
+
+**Completed (2026-08-18):** `bindApprovals` rides the chat store's
+`onBind` next to the timeline and the decisions pane. The send is
+refused if the id is no longer in `pending`.
+
+---
+
 ## Epic E11 — Onboarding
 
 ---
@@ -3898,9 +3928,9 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 52 | 156 |
 | M1.5 Local models | E18 | 12 | 30 |
-| M2 The window | E10–E12 | 23 | 66 |
+| M2 The window | E10–E12 | 24 | 68 |
 | M3 Shippable | E13–E17, E19 | 50 | 142 |
-| **Total v0.1** | **19** | **144** | **409** |
+| **Total v0.1** | **19** | **145** | **411** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

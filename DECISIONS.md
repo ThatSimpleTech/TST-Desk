@@ -5939,3 +5939,18 @@ every existing one broken. SQLite cannot `ALTER COLUMN` to drop NOT
 NULL, so the step rebuilds the table. Row data is copied, not updated —
 the store's INSERT-only rule is about runtime writes, not schema
 evolution.
+
+---
+
+## 2026-08-18 — TD-1014: approval cards bind like the other panes (Class B)
+
+**Decision:** The approval footer is scoped to the bound session and
+clears on switch, the same contract as the timeline (TD-1009) and the
+decisions pane (TD-1203). Approve dismisses the card when the send
+lands, not when `tool_result` arrives.
+
+**Rationale:** `no_pending_approval` on a visible card is a viewer
+defect. The daemon is right — that id is gone. A process-global list
+plus a full-log replay after detach is how a resolved request becomes a
+ghost. Optimistic dismiss is safe because a refused send keeps the card,
+and a successful send is exactly the moment the daemon pops the future.

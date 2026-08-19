@@ -28,7 +28,7 @@ vi.mock("./connection-status.svelte.js", () => ({
   sendToDaemon: connection.send,
 }));
 
-import { alwaysAllow, approve, deny, pending } from "./approval-store.svelte.js";
+import { alwaysAllow, approve, bindApprovals, deny, pending } from "./approval-store.svelte.js";
 
 function request(toolCallId: string, overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   return {
@@ -63,8 +63,11 @@ function emit(event: ApprovalRequest | ToolResult): void {
 }
 
 beforeEach(() => {
+  bindApprovals(null);
   pending.splice(0, pending.length);
   connection.send.mockClear();
+  connection.send.mockReturnValue(true);
+  bindApprovals("s1");
 });
 
 describe("event stream", () => {
@@ -112,56 +115,109 @@ describe("event stream", () => {
     emit(request("tc-1"));
     expect(pending.map((p) => p.toolCallId)).toEqual(["tc-1"]);
   });
+
+  it("does not duplicate a replayed request for the same tool call", () => {
+    emit(request("tc-1"));
+    emit(request("tc-1"));
+    expect(pending).toHaveLength(1);
+  });
+
+  it("ignores an approval for a session that is not bound", () => {
+    emit(request("tc-other", { session_id: "s-other" }));
+    expect(pending).toHaveLength(0);
+  });
+});
+
+describe("session bind (TD-1014)", () => {
+  it("binding another session drops leftover cards", () => {
+    emit(request("tc-1"));
+    bindApprovals("s2");
+    expect(pending).toHaveLength(0);
+    emit(request("tc-2", { session_id: "s2" }));
+    expect(pending.map((p) => p.toolCallId)).toEqual(["tc-2"]);
+  });
+
+  it("re-binding the session already shown keeps the cards", () => {
+    emit(request("tc-1"));
+    bindApprovals("s1");
+    expect(pending).toHaveLength(1);
+  });
+
+  it("binding null unbinds and empties", () => {
+    emit(request("tc-1"));
+    bindApprovals(null);
+    emit(request("tc-2"));
+    expect(pending).toHaveLength(0);
+  });
+
+  it("a resolved replay after bind does not leave a ghost card", () => {
+    emit(request("tc-old"));
+    bindApprovals("s2");
+    bindApprovals("s1");
+    emit(request("tc-old"));
+    emit(result("tc-old"));
+    expect(pending).toHaveLength(0);
+  });
 });
 
 describe("decision actions", () => {
-  it("approve sends the approve client message", () => {
-    approve(approvalShim("tc-1"));
+  it("approve sends the approve client message and drops the card", () => {
+    emit(request("tc-1"));
+    approve(pending[0]!);
     expect(connection.send).toHaveBeenCalledWith({
       type: "approve",
       session_id: "s1",
       tool_call_id: "tc-1",
     });
+    expect(pending).toHaveLength(0);
+  });
+
+  it("a second approve is not sent after the card has left", () => {
+    emit(request("tc-1"));
+    const card = pending[0]!;
+    approve(card);
+    connection.send.mockClear();
+    approve(card);
+    expect(connection.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps the card when the socket refuses the send", () => {
+    connection.send.mockReturnValue(false);
+    emit(request("tc-1"));
+    approve(pending[0]!);
+    expect(pending).toHaveLength(1);
   });
 
   it("deny sends the note back to the model, null when blank", () => {
-    deny(approvalShim("tc-1"), "not safe");
+    emit(request("tc-1"));
+    deny(pending[0]!, "not safe");
     expect(connection.send).toHaveBeenCalledWith({
       type: "deny",
       session_id: "s1",
       tool_call_id: "tc-1",
       reason: "not safe",
     });
+    expect(pending).toHaveLength(0);
+
+    emit(request("tc-2"));
     connection.send.mockClear();
-    deny(approvalShim("tc-1"), "   ");
+    deny(pending[0]!, "   ");
     expect(connection.send).toHaveBeenCalledWith({
       type: "deny",
       session_id: "s1",
-      tool_call_id: "tc-1",
+      tool_call_id: "tc-2",
       reason: null,
     });
   });
 
   it("always allow sends the always_allow client message", () => {
-    alwaysAllow(approvalShim("tc-1"));
+    emit(request("tc-1"));
+    alwaysAllow(pending[0]!);
     expect(connection.send).toHaveBeenCalledWith({
       type: "always_allow",
       session_id: "s1",
       tool_call_id: "tc-1",
     });
+    expect(pending).toHaveLength(0);
   });
 });
-
-/** A store-level PendingApproval without going through the event stream. */
-function approvalShim(toolCallId: string) {
-  return {
-    sessionId: "s1",
-    toolCallId,
-    toolName: "fs_write",
-    arguments: { path: "src/app.py" },
-    decisionClass: "B" as const,
-    summary: "Write src/app.py",
-    reason: "decision class B requires approval",
-    proposedAlwaysAllow: null,
-  };
-}
