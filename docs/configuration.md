@@ -551,7 +551,8 @@ files you already have.
 These files are the product, not runtime state. They are git-tracked on purpose — a bad memory
 is one `git revert` away, once distill starts committing them. They are not steering: the
 instruction stack never reads this directory. Standing rules stay in `AGENTS.md` and
-`.tst/rules/`. See [`steering.md`](steering.md).
+`.tst/rules/`. The agent may write `.tst/memory/**` (Class A); it may never write
+`AGENTS.md`, `CLAUDE.md`, or `.tst/rules/**`. See [`steering.md`](steering.md).
 
 The templates are HTML comments so a freshly opened workspace has no facts a later loader
 could treat as memory. Replace the comments with real notes, or leave them for distill.

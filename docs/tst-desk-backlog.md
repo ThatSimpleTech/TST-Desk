@@ -4033,11 +4033,11 @@ product, not runtime state — they are git-tracked on purpose.
 **Size:** 3 · **Depends on:** TD-602, TD-2101
 
 **Acceptance criteria:**
-- [ ] `fs_write` / `fs_edit` of a path under `.tst/memory/` is allowed
-- [ ] `AGENTS.md`, `CLAUDE.md`, and `.tst/rules/**` remain refused — a test
+- [x] `fs_write` / `fs_edit` of a path under `.tst/memory/` is allowed
+- [x] `AGENTS.md`, `CLAUDE.md`, and `.tst/rules/**` remain refused — a test
       writes a memory file then fails a steering write in the same session
-- [ ] Memory writes classify as Class A (in-workspace, reversible, git)
-- [ ] The classifier rule is data in the table, not a special case in the handler
+- [x] Memory writes classify as Class A (in-workspace, reversible, git)
+- [x] The classifier rule is data in the table, not a special case in the handler
 
 **Notes:** today steering refusal is path-based and would catch `.tst/memory`
 if someone naively used `.tst/**`. Pin the carve-out at the classifier and

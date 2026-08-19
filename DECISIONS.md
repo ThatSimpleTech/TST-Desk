@@ -6049,6 +6049,20 @@ first when the capacity meter is full.
 
 ---
 
+## 2026-08-19 — TD-2102: memory writes are Class A even under a tight wall (Class B)
+
+**Decision:** `.tst/memory/**` is a named Class A rule (`memory-file-write`).
+The guard skips `writable_paths` for those paths. `AGENTS.md` / `CLAUDE.md`
+as a basename stay Class C even if dropped under `.tst/memory/`.
+
+**Rationale:** Spec §5 says the agent may write memory. A workspace that
+narrowed `writable_paths` to `src/**` would otherwise refuse the tree
+the product just scaffolded. Folding memory into `.tst/**` as steering
+would refuse it the other way. The carve-out is the table plus the
+guard, not a handler `if`.
+
+---
+
 ## 2026-08-19 — TD-2801: Projects is a surface, not a recents alias (Class B)
 
 **Decision:** Rail Projects swaps the main pane to a project list / home.

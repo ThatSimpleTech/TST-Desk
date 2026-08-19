@@ -265,6 +265,8 @@ STEERING_NEGATIVE = [
     "notes.md",
     ".tst/config.yaml",
     ".tst/rules.md",  # a file named rules.md is not the rules dir
+    ".tst/memory/MEMORY.md",  # memory is the carve-out (TD-2102)
+    ".tst/memory/gotchas.md",
 ]
 
 

@@ -216,6 +216,19 @@ class TestSteeringFileWrite:
         )
         assert not fired_as(decision, "steering-file-write")
 
+    def test_memory_write_is_not_this_rule(self) -> None:
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "memory" / "MEMORY.md",),
+                is_mutation=True,
+            ),
+        )
+        assert not fired_as(decision, "steering-file-write")
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "memory-file-write")
+
 
 # ── Rule: cap exceeded → C ─────────────────────────────────────────────
 
@@ -395,6 +408,18 @@ class TestPriority:
         )
         assert decision.decision_class is DecisionClass.C
         assert fired_as(decision, "steering-file-write")
+
+    def test_cap_beats_memory_write(self) -> None:
+        decision = classify(
+            boundary(cap_exceeded=True),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "memory" / "gotchas.md",),
+                is_mutation=True,
+            ),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "cap-exceeded")
 
     def test_cap_beats_in_workspace_edit(self) -> None:
         decision = classify(

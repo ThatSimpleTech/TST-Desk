@@ -22,6 +22,7 @@ from ..autonomy.classifier import (
     Boundary,
     canonical_path,
     is_in_workspace,
+    is_memory_write,
     is_steering_write,
     path_matches,
     relative_parts,
@@ -234,7 +235,11 @@ class PathGuard:
                 f"path outside the workspace: {target}",
             )
         rel = relative_parts(target, root)
-        if not any(path_matches(pattern, rel) for pattern in self.boundary.writable_patterns):
+        # Spec §5 / TD-2102: memory writes are allowed even when the
+        # workspace wall's writable_paths would otherwise exclude them.
+        if not is_memory_write(self.boundary, target) and not any(
+            path_matches(pattern, rel) for pattern in self.boundary.writable_patterns
+        ):
             raise RefusalError(
                 "outside_writable_paths",
                 target,
