@@ -1,8 +1,8 @@
 # TST Desk — Work Plan & Backlog
 
-**Scope of this document:** everything that must be built for **v0.1**, broken into epics and
-stories with acceptance criteria, dependencies, and sequencing. Post-v0.1 phases are outlined
-at the end but not decomposed.
+**Scope of this document:** everything that must be built for **v0.1** and **v0.2**, broken
+into epics and stories with acceptance criteria, dependencies, and sequencing. Later phases
+are outlined at the end but not decomposed.
 
 Companion documents:
 - `tst-desk-spec.md` — behavior and architecture. Source of truth for *what it does*.
@@ -45,6 +45,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M1.5 — Local models** | E18 | A scripted request runs end-to-end against a local OpenAI-compatible endpoint with no API key and no spend |
 | **M2 — The window** | E10, E11, E12 | A human does the same thing through the app, never touching a terminal |
 | **M3 — Shippable** | E13, E14, E15, E16, E17, E19 | A stranger can install and use it from a fresh machine |
+| **M4 — Memory** | E21–E27 | The brain prompt carries a relevant memory subset; a session end proposes a diff the user accepts; accepted writes are git commits in `.tst/memory/` |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -71,6 +72,10 @@ model plane run without a key or a bill.
 E19 Reasoning visibility hangs off E18 (the local preset's brain is a reasoning model)
 and E10 (the chat pane has to show what the loop now emits). It is a bugfix epic:
 a shipped preset that thinks in silence fails M3's exit condition.
+
+M4 Memory hangs off E5 (the assembler already has a brain-only memory slot) and E7
+(checkpoints and the classifier). Embeddings hang off E13 only for optional sidecar
+supervision — heading-match loading is the floor if the sidecar is not running.
 
 E14 is not a phase at the end. Tests are written with each story. The E14 stories cover
 cross-cutting suites and CI gates that don't belong to a single feature.
@@ -3960,20 +3965,433 @@ story exists to avoid, not a smaller version of the one TD-1901 fixes.
 ---
 
 
-# Post-v0.1 backlog
+# MILESTONE M4 — Memory (v0.2)
+
+Spec §5 and §9. **This is the whole of v0.2.** Computer-use (TD-1710, E20), packaging
+clean-VM boxes (TD-1301–1303), and Windows process-group verify (TD-1406) stay where they
+are — they do not block M4 and they are not pulled into it.
+
+**v0.1 leftover that is not M4:** the window still kills the daemon on close. Distill
+therefore runs on **graceful quit** and on an explicit End session, not on crash, and
+does not wait for v0.3 detached sessions.
+
+**Already decided (do not reopen):** local embeddings are a **sidecar**
+(`llama-server --embeddings` or any OpenAI `/v1/embeddings` endpoint), never an
+Ollama `/api/embed` on the same scheduler as the chat model. Measured 2026-08-17: an
+Ollama embed evicts a resident 17 GB chat model and pays a 20–48s reload; a separate
+embeddings process stays at ~0.8 GB alongside it.
+
+**Already wired:** the brain prompt has a memory slot
+(`MEMORY_PLACEHOLDER`). Worker and validator never get that slot (spec §4.6). The
+cache prefix is base + workspace root + steering — memory is *after* the prefix so a
+new memory set does not bust steering cache (pin this in TD-2503).
+
+**M4 exit:** TD-2701 — a headless harness loads a matching memory file into the brain
+prompt only, proposes a distill diff, accepts it, and sees a `tst: memory update`
+commit.
+
+```
+E21 Store ─> E22 Relevance ─┬─> E25 Prompt ─> E26 UI
+       │                    │
+       └─> E23 Distill ─> E24 Diff-before-write ─┘
+                                    │
+                                    └─> E27 Harness (exit)
+```
+
+Heading-match loading (TD-2201) is the floor. Embeddings (TD-2202–2204) are in
+milestone but a missing sidecar must not kill a session.
+
+---
+
+## Epic E21 — Memory store
+
+**Goal:** markdown under `.tst/memory/`, writable by the agent, capped, committed.
+Spec §5 layout and hard rules.
+
+---
+
+### TD-2101 — Memory layout and scaffold
+**Size:** 2 · **Depends on:** TD-507
+
+**Acceptance criteria:**
+- [ ] Opening a workspace creates `.tst/memory/` with commented templates for
+      `MEMORY.md`, `decisions.md`, and `gotchas.md` when the directory is missing
+- [ ] Topical files are allowed (`<topic>.md`); the store does not invent names
+      until distill or the user does
+- [ ] Layout is documented in `docs/configuration.md` and `docs/steering.md`
+- [ ] Scaffold is idempotent — a second open does not clobber existing files
+
+**Notes:** same shape as the `.tst/config.yaml` scaffold. These files are the
+product, not runtime state — they are git-tracked on purpose.
+
+---
+
+### TD-2102 — Memory write permission
+**Size:** 3 · **Depends on:** TD-602, TD-2101
+
+**Acceptance criteria:**
+- [ ] `fs_write` / `fs_edit` of a path under `.tst/memory/` is allowed
+- [ ] `AGENTS.md`, `CLAUDE.md`, and `.tst/rules/**` remain refused — a test
+      writes a memory file then fails a steering write in the same session
+- [ ] Memory writes classify as Class A (in-workspace, reversible, git)
+- [ ] The classifier rule is data in the table, not a special case in the handler
+
+**Notes:** today steering refusal is path-based and would catch `.tst/memory`
+if someone naively used `.tst/**`. Pin the carve-out at the classifier and
+the guard together.
+
+---
+
+### TD-2103 — Line cap
+**Size:** 2 · **Depends on:** TD-2101
+
+**Acceptance criteria:**
+- [ ] A memory file is capped at ~200 lines (exact number in config, tested)
+- [ ] A write that would exceed the cap is refused with copy that says to
+      distill, not to append
+- [ ] Distill (E23) is the only path that may replace a file that is at cap
+
+**Notes:** spec §5 — distilled, not appended forever. The number lives in
+config, never in a handler literal.
+
+---
+
+### TD-2104 — Memory git commit
+**Size:** 3 · **Depends on:** TD-705, TD-2102
+
+**Acceptance criteria:**
+- [ ] An accepted memory write commits on the workspace repo as
+      `tst: memory update` — working tree and HEAD, not the
+      `tst/session/<id>` checkpoint branch
+- [ ] A non-git workspace degrades: the write still lands, a one-time notice
+      says there is no commit
+- [ ] `git revert` of that commit restores the previous memory bytes
+- [ ] Checkpoint commits (TD-705) are unchanged
+
+**Notes:** checkpoint plumbing never touches HEAD. Memory commits are the
+opposite on purpose — the user asked to be able to revert from their own
+history. Do not reuse `Checkpointer` for this.
+
+---
+
+### TD-2105 — Memory is not steering
+**Size:** 2 · **Depends on:** TD-2101
+
+**Acceptance criteria:**
+- [ ] `.tst/memory/**` never appears in the instruction stack as a steering
+      source
+- [ ] Frontmatter in a memory file is not an `appliesTo` rule
+- [ ] A golden-file test: a workspace with both `AGENTS.md` and `MEMORY.md`
+      assembles steering from the former only
+
+**Notes:** two markdown trees in `.tst/`. Mixing them is the quiet failure.
+
+---
+
+## Epic E22 — Relevance
+
+**Goal:** load a subset. Not everything, every time. Spec §5 mechanic 1.
+
+---
+
+### TD-2201 — Heading-match loader
+**Size:** 3 · **Depends on:** TD-2101
+
+**Acceptance criteria:**
+- [ ] Session start (or first brain turn) loads `MEMORY.md` plus any topic
+      file whose heading tokens overlap the user task
+- [ ] No embeddings required — this path is the floor
+- [ ] Empty memory directory loads nothing; the placeholder stays
+- [ ] Deterministic for identical files + task (property test)
+
+**Notes:** ship this before the sidecar. A session with no embedder still
+remembers.
+
+---
+
+### TD-2202 — Embeddings client
+**Size:** 3 · **Depends on:** TD-2201
+
+**Acceptance criteria:**
+- [ ] An embeddings caller speaks OpenAI `POST /v1/embeddings`
+- [ ] Endpoint and model slug come from `config.yaml` (`search`-shaped:
+      no host in Python)
+- [ ] A missing or loopback-down endpoint is a fallback to TD-2201, not a
+      failed turn
+- [ ] `test_outbound_hosts.py` names the new module; destination traces to
+      config
+
+**Notes:** do **not** call Ollama `/api/embed`. The 2026-08-17 measurement
+is the reason. Default the config at a loopback embeddings port; empty
+disables.
+
+---
+
+### TD-2203 — Rank and budget
+**Size:** 5 · **Depends on:** TD-2202
+
+**Acceptance criteria:**
+- [ ] Topic files are ranked by embedding similarity to the task
+- [ ] Loader takes top-k that fit a stated token budget (config)
+- [ ] `MEMORY.md` is always included if it exists, then topics fill the rest
+- [ ] Heading-match is the tie-break and the fallback
+- [ ] Identical inputs → identical selected set
+
+**Notes:** size 5 because the budget interaction with TD-506 counters is
+easy to get slightly wrong. Propose the ranker shape before building.
+
+---
+
+### TD-2204 — Embeddings sidecar supervision
+**Size:** 5 · **Depends on:** TD-2202, TD-1002
+
+**Acceptance criteria:**
+- [ ] The host can spawn a configured embeddings binary the way it spawns
+      `tstd`, or attach to an already-running loopback endpoint
+- [ ] A dead sidecar does not take down the daemon; TD-2201 runs instead
+- [ ] Quit reaps the embeddings child
+- [ ] Optional — a workspace with no embeddings config never tries to spawn
+
+**Notes:** size 5 is the host work. If this slips, M4 still exits on
+heading-match + distill. Do not block TD-2701 on this story.
+
+---
+
+## Epic E23 — Distill
+
+**Goal:** session end proposes memory writes. Worker tier. Cheap. Spec §5
+mechanic 2.
+
+---
+
+### TD-2301 — Distill on the worker
+**Size:** 3 · **Depends on:** TD-2201, TD-1802
+
+**Acceptance criteria:**
+- [ ] A worker-tier call, given the session's user/assistant turns and the
+      current memory files, returns a structured proposal: create / replace /
+      delete paths under `.tst/memory/`
+- [ ] The proposal is a diff against the files on disk, not a free-form essay
+- [ ] Cost is recorded as a worker call; it is not a user turn
+- [ ] Mock-provider test: scripted distill output becomes a typed proposal
+
+**Notes:** this is not `fs_write`. The model that distilled must not be the
+path that writes.
+
+---
+
+### TD-2302 — Distill trigger
+**Size:** 3 · **Depends on:** TD-2301
+
+**Acceptance criteria:**
+- [ ] Graceful app quit runs distill for every live session that had at
+      least one completed turn
+- [ ] An explicit End session action runs the same path
+- [ ] A crash, a killed sidecar, or a force-quit writes nothing
+- [ ] Distill is skipped when memory is unchanged (no proposal event)
+
+**Notes:** v0.1 quit is graceful (TD-1002). Do not wait for detached
+sessions (v0.3). End session can be a rail action; if the rail is too
+small, a command-palette entry is enough.
+
+---
+
+### TD-2303 — Distill is not a tool write
+**Size:** 2 · **Depends on:** TD-2301
+
+**Acceptance criteria:**
+- [ ] A distill proposal never enters `fs_write` / the dispatcher
+- [ ] The classifier is not asked to approve a steering write
+- [ ] A test that the only writers of `.tst/memory/` after distill-accept
+      are the memory store (TD-2104), not the tool handlers
+
+---
+
+## Epic E24 — Diff-before-write
+
+**Goal:** the user sees the memory diff and accepts, edits, or rejects.
+Spec §5 mechanics 3–4.
+
+---
+
+### TD-2401 — `memory_proposal` protocol
+**Size:** 3 · **Depends on:** TD-2301, TD-204
+
+**Acceptance criteria:**
+- [ ] Daemon event `memory_proposal` carries session id, file diffs, and a
+      proposal id
+- [ ] Client messages `memory_accept` / `memory_edit` / `memory_reject`
+- [ ] Architecture tables and protocol fixtures updated
+- [ ] Unknown-event gate still lists the new type
+
+**Notes:** same fixture discipline as every other protocol story.
+
+---
+
+### TD-2402 — Proposal card
+**Size:** 3 · **Depends on:** TD-2401, TD-1007
+
+**Acceptance criteria:**
+- [ ] A card (or modal) shows the unified diff per file
+- [ ] Accept writes via TD-2104 and dismisses
+- [ ] Reject writes nothing and dismisses
+- [ ] Bind-and-clear on session switch (TD-1014 contract)
+
+---
+
+### TD-2403 — Edit before accept
+**Size:** 2 · **Depends on:** TD-2402
+
+**Acceptance criteria:**
+- [ ] The user can edit the proposed markdown in the card
+- [ ] Accept commits the edited bytes, not the original proposal
+- [ ] Emptying a file in the editor is a delete, matching the proposal
+      vocabulary
+
+---
+
+### TD-2404 — Unanswered proposal is a reject
+**Size:** 2 · **Depends on:** TD-2401
+
+**Acceptance criteria:**
+- [ ] Shutdown with a live unanswered proposal writes nothing
+- [ ] It is not silently accepted
+- [ ] The next session does not resurrect a stale proposal
+
+---
+
+## Epic E25 — Prompt integration
+
+**Goal:** the brain sees the subset. The worker does not. Spec §4.6 / §5.
+
+---
+
+### TD-2501 — Replace the placeholder
+**Size:** 3 · **Depends on:** TD-2201
+
+**Acceptance criteria:**
+- [ ] Brain prompt contains the loaded memory bytes instead of
+      `MEMORY_PLACEHOLDER` when any file loaded
+- [ ] Worker and validator prompts contain no memory slot
+- [ ] Empty load keeps the placeholder (prefix-stable "none")
+- [ ] Existing prompt tests updated, not deleted
+
+---
+
+### TD-2502 — Memory block budget
+**Size:** 2 · **Depends on:** TD-2501, TD-506
+
+**Acceptance criteria:**
+- [ ] Loaded memory is token-counted with the same counter as steering
+- [ ] Lowest-ranked topic files drop until under a config cap
+- [ ] `MEMORY.md` is the last file dropped
+- [ ] The inspector (TD-2604) can name what was dropped and why
+
+---
+
+### TD-2503 — Memory is after the cache prefix
+**Size:** 2 · **Depends on:** TD-2501, TD-1811
+
+**Acceptance criteria:**
+- [ ] Changing memory files does not change the prefix hash
+      (base + root + steering)
+- [ ] The memory bytes are present in the full prompt
+- [ ] A regression test swaps `MEMORY.md` between two assembles and
+      asserts prefix hash equality, full-text inequality
+
+**Notes:** already the assembler's shape. This story is the pin, so a
+later "put memory in the prefix" cannot land quietly.
+
+---
+
+## Epic E26 — Memory UI and global opt-in
+
+**Goal:** the user can read and correct memory without waiting for distill.
+Spec §5: "open, correct, diff, grep, and revert."
+
+---
+
+### TD-2601 — Memory pane
+**Size:** 3 · **Depends on:** TD-2501, TD-1705
+
+**Acceptance criteria:**
+- [ ] A Memory surface lists `.tst/memory/**` for the bound workspace
+- [ ] Opening a file shows the markdown
+- [ ] Empty directory has copy that points at the first distill
+- [ ] Planned rail entry (`state: planned`) becomes `ready`
+
+---
+
+### TD-2602 — Manual edit
+**Size:** 2 · **Depends on:** TD-2601, TD-2104
+
+**Acceptance criteria:**
+- [ ] The user can save an edit from the pane
+- [ ] Save goes through the memory commit path
+- [ ] The agent cannot use this path to write steering files
+
+---
+
+### TD-2603 — Global memory opt-in
+**Size:** 3 · **Depends on:** TD-2501
+
+**Acceptance criteria:**
+- [ ] Settings has an off-by-default "load global memory" toggle
+- [ ] When on, `~/.tstdesk/memory/` is loaded after workspace memory
+- [ ] Global files are never committed into the workspace repo
+- [ ] Off means zero reads of that directory (test)
+
+**Notes:** spec §5. The toggle is machine-wide, like skip-all — not a
+workspace file.
+
+---
+
+### TD-2604 — Inspector names memory sources
+**Size:** 2 · **Depends on:** TD-2501, TD-1201
+
+**Acceptance criteria:**
+- [ ] The stack pane lists each loaded memory file, its token count, and
+      why it was chosen (always-index / heading / embedding)
+- [ ] Dropped files are listed separately
+- [ ] A live session with no memory shows the placeholder honestly
+
+---
+
+## Epic E27 — M4 exit
+
+**Goal:** the same job as TD-1401, for memory.
+
+---
+
+### TD-2701 — Memory headless harness
+**Size:** 3 · **Depends on:** TD-2501, TD-2401, TD-1401
+
+**Acceptance criteria:**
+- [ ] A scripted session: seed `MEMORY.md` and a topic file, send a
+      matching task, assert the brain prompt contains the topic and the
+      worker prompt does not
+- [ ] Distill produces a proposal; accept writes the file and creates a
+      `tst: memory update` commit
+- [ ] Reject leaves the tree identical
+- [ ] **This harness is the M4 exit criterion**
+- [ ] Runs in CI without an embeddings sidecar
+
+---
+
+
+# Post-v0.2 backlog
 
 Named, sequenced, and deliberately not decomposed. Do not build these.
 
 | Version | Epic | Summary |
 |---|---|---|
-| **v0.2** | Memory | `.tst/memory/`, relevance-based loading, worker-tier distillation, diff-before-write, git commits per accepted memory. Local embeddings run as a **sidecar**, not through Ollama: measured 2026-08-17, an `/api/embed` call evicts the resident 17 GB chat model and pays a 20–48s reload, while `llama-server --embeddings` on its own port stays resident at 0.8 GB alongside it and serves the same OpenAI `/v1/embeddings` shape. Ollama's scheduler only evicts models Ollama loaded |
 | **v0.3** | Cowork parity | Durable session event log, detached sessions surviving window close, session list pane, artifact delivery, file-diff work view |
 | **v0.4** | Computer use | Screen pane, `tst-cua` drivers, OS permission onboarding, grounding model evaluation |
 | **v0.5** | Remote & notify | Tailscale interface binding, phone attach, Slack notifier (Hermes pattern), lightweight scheduler |
 | **v0.6** | Local models | vLLM/EZER routing, UI-TARS grounding, local worker tier |
 | **v0.7** | Autonomy engine | Charter editor, autonomous runner, validator drift checks, circuit breakers, container isolation, wake-up summary |
 | **v0.8** | Extensibility | MCP extension loading, custom tool packages, plugin surface |
-| **Later** | Flourishes & platform furniture | Unversioned on purpose (familiarity ladder Tier 3): voice/dictation, macOS quick-entry overlay, tray + multi-window + auto-updater, web-search/research tool |
+| **Later** | Flourishes & platform furniture | Unversioned on purpose: voice/dictation, macOS quick-entry overlay, tray + multi-window + auto-updater. Web-search primitives shipped early (TD-609/TD-610) and are not this row |
 
 ---
 
@@ -3989,6 +4407,7 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | R6 | **Classifier misclassifies a Class C as A** | Security incident | Static rules decide the dangerous cases without a model; ambiguity defaults to B; TD-1402 is a release blocker |
 | R7 | **Prefix caching doesn't behave as expected on a given provider** | Cost overrun | TD-305 asserts prefix stability; cache hit rate is observable; degrades to correct-but-costlier |
 | R8 | **Scope creep toward later phases** | Never ships | `AGENTS.md` §3; the kickoff prompt forbids scaffolding; ask before building anything off-milestone |
+| R9 | **Ollama embed evicts the chat model** | 20–48s stalls, "memory is broken"** | Embeddings are a sidecar (`/v1/embeddings`). Heading-match is the M4 floor. TD-2701 does not require the sidecar |
 
 ---
 
@@ -4002,6 +4421,8 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | M2 The window | E10–E12 | 24 | 68 |
 | M3 Shippable | E13–E17, E19 | 50 | 142 |
 | **Total v0.1** | **19** | **148** | **417** |
+| M4 Memory (v0.2) | E21–E27 | 24 | 66 |
+| **Total v0.1 + v0.2** | **26** | **172** | **483** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
