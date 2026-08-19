@@ -6049,6 +6049,22 @@ first when the capacity meter is full.
 
 ---
 
+## 2026-08-19 — TD-2103: memory line cap is config, distill is the replace path (Class B)
+
+**Decision:** `memory.max_lines` lives in `.tst/config.yaml` (default 200).
+`fs_write` / `fs_edit` of `.tst/memory/**` refuse a result over the cap,
+and refuse any write to a file already at the cap. Distill calls
+`replace_memory_file`, which may replace an at-cap file and still cannot
+exceed the cap.
+
+**Rationale:** Spec §5 is distilled, not appended forever. Putting the
+number in the write handler would freeze 200 across workspaces. Putting
+it under `caps` would pause the agent; this is a write refusal. Shrinking
+an at-cap file through the tools would let the agent keep rewriting
+instead of distilling, so at-cap replace is distill-only.
+
+---
+
 ## 2026-08-19 — TD-2802: Instructions writes are a client verb, not a tool (Class B)
 
 **Decision:** `list_instructions` and `create_rule` are client messages.

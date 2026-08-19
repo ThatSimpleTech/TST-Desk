@@ -56,7 +56,7 @@ class TestScaffold:
         text = written.read_text(encoding="utf-8")
         assert text.startswith("#")
         # The template documents every default knob.
-        for knob in ("writable_paths", "allowed_commands", "network", "spend_usd"):
+        for knob in ("writable_paths", "allowed_commands", "network", "spend_usd", "max_lines"):
             assert knob in text
 
     def test_scaffolded_template_round_trips_to_defaults(self, tmp_path: Path) -> None:
@@ -117,6 +117,7 @@ class TestLoad:
         assert cfg.caps.spend_usd == 5.0
         assert cfg.boundary.writable_paths == ["**"]  # default applied
         assert cfg.boundary.network == "deny"
+        assert cfg.memory.max_lines == 200  # memory section default
 
     def test_invalid_network_value_names_the_key(self, tmp_path: Path) -> None:
         self._write(tmp_path, "boundary:\n  network: maybe\n")
