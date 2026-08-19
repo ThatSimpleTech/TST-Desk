@@ -13,6 +13,7 @@ the *obvious* cases — the ones that must never reach the model:
 - a network call to a host outside the allowlist → C
 - a write to a steering file (``AGENTS.md`` / ``CLAUDE.md`` /
   ``.tst/rules/**``) → C, even inside the workspace
+- a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
 - an in-workspace edit inside ``writable_paths`` → A
 
@@ -54,6 +55,7 @@ class DecisionClass(StrEnum):
 
 _STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
 _STEERING_RULES_DIR_PARTS = (".tst", "rules")
+_MEMORY_DIR_PARTS = (".tst", "memory")
 
 
 @dataclass(frozen=True)
@@ -204,11 +206,26 @@ def match_segments(pat_parts: list[str], path_parts: list[str]) -> bool:
     return False
 
 
+def is_memory_write(boundary: Boundary, path: Path) -> bool:
+    """Whether *path* is under ``.tst/memory/`` (spec §5).
+
+    Memory is git-tracked and reversible. It is not steering: the two
+    trees share ``.tst/`` and must not share a glob. ``AGENTS.md`` /
+    ``CLAUDE.md`` as a basename stay steering even if dropped here.
+    """
+    relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
+    if len(relative) < 2 or tuple(relative[:2]) != _MEMORY_DIR_PARTS:
+        return False
+    return relative[-1].upper() not in {s.upper() for s in _STEERING_BASENAMES}
+
+
 def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
     Steering files — ``AGENTS.md``, ``CLAUDE.md``, and anything under
     ``.tst/rules/`` — are read-only to the filesystem tool, unconditionally.
+    ``.tst/memory/`` is the carve-out (TD-2102); never fold it into
+    ``.tst/**``.
     """
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
     if not relative:
@@ -216,6 +233,8 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     basename = relative[-1].upper()
     if basename in {s.upper() for s in _STEERING_BASENAMES}:
         return True
+    if is_memory_write(boundary, path):
+        return False
     return tuple(relative[:2]) == _STEERING_RULES_DIR_PARTS
 
 
@@ -228,6 +247,9 @@ def writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:
         if not rel_parts:
             # Write resolves outside the workspace — handled as C by another rule.
             return False
+        # Spec §5: the agent may write memory even when writable_paths is tight.
+        if is_memory_write(boundary, write):
+            continue
         if not any(path_matches(p, rel_parts) for p in boundary.writable_patterns):
             return False
     return True
@@ -267,6 +289,15 @@ def _rule_network_new_host(req: DecisionRequest, boundary: Boundary) -> bool:
 def _rule_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
     """The call writes a steering file, regardless of writable_paths."""
     return req.is_mutation and any(is_steering_write(boundary, p) for p in req.writes)
+
+
+def _rule_memory_write(req: DecisionRequest, boundary: Boundary) -> bool:
+    """The call writes only under ``.tst/memory/`` (Class A, TD-2102)."""
+    return (
+        req.is_mutation
+        and bool(req.writes)
+        and all(is_memory_write(boundary, p) for p in req.writes)
+    )
 
 
 def _rule_cap_exceeded(req: DecisionRequest, boundary: Boundary) -> bool:
@@ -336,6 +367,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="action writes in-workspace but outside writable_paths",
         decision_class=DecisionClass.C,
         match=_rule_outside_writable,
+    ),
+    Rule(
+        id="memory-file-write",
+        description="action writes a memory file (.tst/memory)",
+        decision_class=DecisionClass.A,
+        match=_rule_memory_write,
     ),
     Rule(
         id="in-workspace-edit",
