@@ -25,7 +25,7 @@ from pathlib import Path
 from ..context.manifest import _FALLBACK_IGNORE
 from .dispatch import ToolDispatcher
 from .shell import ShellPolicy, run_shell
-from .web_search import web_search
+from .web_search import web_fetch, web_search
 from .write import fs_edit, fs_write
 
 # Handler-level cap on formatted lines.  Dispatch additionally caps the
@@ -154,6 +154,7 @@ def register_builtin_handlers(
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
     dispatcher.register_handler("web_search", web_search)
+    dispatcher.register_handler("web_fetch", web_fetch)
     dispatcher.register_handler("fs_write", fs_write)
     dispatcher.register_handler("fs_edit", fs_edit)
     dispatcher.register_handler(

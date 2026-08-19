@@ -206,7 +206,7 @@ class TestBuiltins:
     def test_created_with_builtin_tools(self) -> None:
         registry = create_registry()
         names = {t.name for t in registry.list_tools()}
-        assert {"fs_read", "fs_write", "shell", "web_search"} <= names
+        assert {"fs_read", "fs_write", "shell", "web_search", "web_fetch"} <= names
 
     def test_parallel_safety_flags(self) -> None:
         registry = create_registry()
@@ -220,3 +220,5 @@ class TestBuiltins:
         assert registry.get("fs_write").side_effect_class == "ask"
         assert registry.get("shell").side_effect_class == "ask"
         assert registry.get("web_search").side_effect_class == "ask"
+        assert registry.get("web_fetch").side_effect_class == "ask"
+        assert registry.get("web_fetch").parallel_safe is True
