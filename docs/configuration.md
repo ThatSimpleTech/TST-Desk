@@ -86,6 +86,8 @@ Ollama `/api/embed`.
 | `base_url` | string | *shipped* | Embeddings endpoint, including the `/v1` suffix. Empty string disables. |
 | `model` | string | *shipped* | Embeddings model slug. Empty disables even when `base_url` is set. |
 | `timeout_seconds` | float > 0 | `2` | How long a probe may run before heading-match takes over. |
+| `top_k` | int ≥ 1 | `4` | Maximum topic files kept after `MEMORY.md` when the sidecar answers. |
+| `token_budget` | int ≥ 1 | `2000` | Cap on loaded memory tokens (TD-506 heuristic, file bytes). `MEMORY.md` is kept even if it alone exceeds this; topics that do not fit are skipped. |
 
 <!-- verify: model -->
 ```yaml
@@ -125,6 +127,8 @@ embeddings:
   base_url: http://127.0.0.1:8080/v1
   model: nomic-embed-text
   timeout_seconds: 2
+  top_k: 4
+  token_budget: 2000
 ```
 
 ### A preset
@@ -592,9 +596,10 @@ could treat as memory. Replace the comments with real notes, or leave them for d
 
 At the first brain turn the heading-match loader includes `MEMORY.md` (when that file
 exists) and any other `.tst/memory/*.md` whose heading tokens overlap the user task.
-No embeddings. An empty or missing directory loads nothing and the prompt keeps the
-memory placeholder. Distill and embeddings may refine this later; they do not replace
-this floor.
+No embeddings required. When the embeddings sidecar answers, topic files are ranked
+by similarity, `MEMORY.md` stays, and heading-match is the tie-break and the
+fallback. An empty or missing directory loads nothing and the prompt keeps the
+memory placeholder.
 
 A file at `memory.max_lines` (default 200, see §4.8) is distilled, not appended forever. The
 agent tools refuse a write that would go over, or that would replace a file already at the cap.

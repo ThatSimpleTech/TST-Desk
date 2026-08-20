@@ -6194,3 +6194,21 @@ only when both files exist is the honest cut.
 rejected: marking `interrupted` resumable without the conversation —
 the model would start from nothing under a transcript the user can
 still see.
+
+---
+
+## 2026-08-20 — TD-2203: cosine rank, top-k, heading-match tie-break (Class B)
+
+**Decision:** When the sidecar returns vectors, every topic file (not
+just heading-matches) is scored by cosine similarity to the task.
+`MEMORY.md` is always first. Topics sort by `(-score, heading?, name)`.
+The loader keeps at most `embeddings.top_k` topics whose TD-506
+heuristic counts fit `embeddings.token_budget` after the index.
+A topic that does not fit is skipped so a smaller later file can still
+land. Embed failure or a disabled client is unchanged TD-2201.
+
+**Rationale:** Spec §5 is a subset, not everything. Ranking all topics
+is how a file with no heading overlap can still be relevant. Heading-
+match as tie-break keeps the floor visible in the inspector reason.
+The 4-chars/token heuristic is the same counter as steering (TD-506),
+so a later budget story cannot invent a second ruler.
