@@ -1,7 +1,6 @@
 <script lang="ts">
-	// Memory proposal card (TD-2402): unified diff per file, Accept writes
-	// via the parked proposal (TD-2303 / TD-2104), Reject writes nothing.
-	// Presentational — the store owns bind-and-clear and the wire verbs.
+	// Memory proposal card (TD-2402 / TD-2403): unified diff per file,
+	// editable markdown, Accept writes via the store, Reject writes nothing.
 	import { onMount } from 'svelte';
 	import { classifyDiffLine, diffLines } from '../entry-view';
 	import { accept, reject } from '../memory-proposal-store.svelte.js';
@@ -14,6 +13,9 @@
 	let { proposal }: Props = $props();
 
 	let cardEl: HTMLElement | null = null;
+	let drafts = $state<Record<string, string>>(
+		Object.fromEntries(proposal.files.map((file) => [file.path, file.after ?? ''])),
+	);
 
 	onMount(() => cardEl?.focus());
 
@@ -21,6 +23,13 @@
 		if (action === 'create') return 'Create';
 		if (action === 'delete') return 'Delete';
 		return 'Replace';
+	}
+
+	function acceptDrafts(): void {
+		accept(
+			proposal,
+			proposal.files.map((file) => ({ path: file.path, content: drafts[file.path] ?? '' })),
+		);
 	}
 </script>
 
@@ -43,12 +52,22 @@
 					<span class="file-path">{file.path}</span>
 				</header>
 				<pre class="code diff" aria-label={`Diff for ${file.path}`}>{#each diffLines(file.diff) as line}<span class="diff-line diff-line--{classifyDiffLine(line)}">{line}</span>{'\n'}{/each}</pre>
+				<label class="editor-label" for="memory-edit-{file.path}">
+					Edit {file.path}
+					<span class="editor-hint">Empty deletes the file</span>
+				</label>
+				<textarea
+					id="memory-edit-{file.path}"
+					class="editor"
+					aria-label={`Edit ${file.path}`}
+					bind:value={drafts[file.path]}
+				></textarea>
 			</section>
 		{/each}
 	</div>
 
 	<footer class="card-actions">
-		<button class="btn btn--accept" type="button" onclick={() => accept(proposal)}>Accept</button>
+		<button class="btn btn--accept" type="button" onclick={acceptDrafts}>Accept</button>
 		<button class="btn btn--reject" type="button" onclick={() => reject(proposal)}>Reject</button>
 	</footer>
 </article>
@@ -148,6 +167,39 @@
 	.diff-line--hunk { color: var(--color-info); }
 	.diff-line--meta { color: var(--color-text-muted); font-weight: var(--weight-semibold); }
 	.diff-line--context { color: var(--color-text-secondary); }
+
+	.editor-label {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: var(--space-2);
+		font-size: var(--text-xs);
+		font-weight: var(--weight-semibold);
+		color: var(--color-text-secondary);
+	}
+
+	.editor-hint {
+		font-weight: var(--weight-medium);
+		color: var(--color-text-muted);
+	}
+
+	.editor {
+		min-height: var(--space-16);
+		padding: var(--space-2) var(--space-3);
+		border: var(--border-width) solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-bg);
+		color: var(--color-text);
+		font-family: var(--font-mono);
+		font-size: var(--text-xs);
+		line-height: var(--leading-normal);
+		resize: vertical;
+	}
+
+	.editor:focus {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 1px;
+	}
 
 	.card-actions {
 		display: flex;

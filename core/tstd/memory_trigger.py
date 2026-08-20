@@ -8,13 +8,20 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import ModelConfig
-from .memory_distill import DistillProposal, DistillProvider, DistillTurn, distill_session
+from .memory_distill import (
+    DistillProposal,
+    DistillProvider,
+    DistillTurn,
+    distill_session,
+    memory_basename,
+)
 from .memory_store import memory_dir, memory_max_lines, replace_memory_file
-from .protocol import MemoryFileDiff, MemoryProposal, TurnComplete
+from .protocol import MemoryFileDiff, MemoryFileEdit, MemoryProposal, TurnComplete
 from .session import Session
 
 
@@ -108,5 +115,37 @@ async def apply_proposal(
                 written.append(path)
             continue
         await asyncio.to_thread(replace_memory_file, path, change.after or "", max_lines)
+        written.append(path)
+    return written
+
+
+async def apply_edits(
+    workspace: str | Path,
+    proposal: DistillProposal,
+    files: Sequence[MemoryFileEdit],
+    session: object,
+) -> list[Path]:
+    """Write the edited bytes, not the original proposal (TD-2403).
+
+    Empty content is a delete. Paths that were not in the parked
+    proposal, or that fail the memory-basename rules, are dropped.
+    """
+    allowed = {change.name for change in proposal.changes}
+    root = memory_dir(workspace)
+    max_lines = memory_max_lines(session)
+    written: list[Path] = []
+    seen: set[str] = set()
+    for edit in files:
+        name = memory_basename(edit.path)
+        if name is None or name not in allowed or name in seen:
+            continue
+        seen.add(name)
+        path = root / name
+        if edit.content == "":
+            if await asyncio.to_thread(path.is_file):
+                await asyncio.to_thread(path.unlink)
+            written.append(path)
+            continue
+        await asyncio.to_thread(replace_memory_file, path, edit.content, max_lines)
         written.append(path)
     return written

@@ -6318,3 +6318,16 @@ disk would invent truth the daemon did not send.
 
 **Alternative rejected:** Adding `memory_proposal_resolved`. That is a
 six-place protocol change for a card that already dismisses on send.
+
+---
+
+## 2026-08-20 — TD-2403: edit list is the write set (Class B)
+
+**Decision:** `memory_edit` writes through the same store path as
+accept. Empty content deletes. Only paths that were in the parked
+proposal are applied; extra paths are dropped. The card sends
+`memory_edit` when drafts differ and `memory_accept` when they do not.
+
+**Rationale:** The protocol already defined empty-as-delete. Restricting
+to the parked paths keeps a stale or hostile client from creating
+memory files the distill step never proposed.

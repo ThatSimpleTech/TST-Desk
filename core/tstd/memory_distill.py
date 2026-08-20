@@ -258,6 +258,11 @@ def _against_disk(
     return changes
 
 
+def memory_basename(raw: str) -> str | None:
+    """Return a ``.tst/memory/`` basename, or ``None`` if the path is refused."""
+    return _memory_name(raw)
+
+
 def _memory_name(raw: str) -> str | None:
     cleaned = raw.replace("\\", "/").strip()
     parts = Path(cleaned).parts

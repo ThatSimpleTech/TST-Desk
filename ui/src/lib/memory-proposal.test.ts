@@ -1,7 +1,7 @@
 // Memory-proposal model tests (TD-2402).
 
 import { describe, it, expect } from "vitest";
-import { acceptMessage, proposalFromEvent, rejectMessage } from "./memory-proposal";
+import { acceptMessage, draftsDiffer, editMessage, proposalFromEvent, rejectMessage } from "./memory-proposal";
 import type { MemoryProposal } from "./protocol";
 
 function event(overrides: Partial<MemoryProposal> = {}): MemoryProposal {
@@ -51,5 +51,29 @@ describe("acceptMessage / rejectMessage", () => {
       session_id: "s1",
       proposal_id: "mp-1",
     });
+  });
+
+  it("builds a memory_edit client message", () => {
+    expect(editMessage(p, [{ path: ".tst/memory/MEMORY.md", content: "hand\n" }])).toEqual({
+      type: "memory_edit",
+      session_id: "s1",
+      proposal_id: "mp-1",
+      files: [{ path: ".tst/memory/MEMORY.md", content: "hand\n" }],
+    });
+  });
+});
+
+describe("draftsDiffer", () => {
+  const p = proposalFromEvent(event());
+
+  it("is false when drafts match the proposed after-bytes", () => {
+    expect(draftsDiffer(p, [{ path: ".tst/memory/MEMORY.md", content: "durable: ruff\n" }])).toBe(
+      false,
+    );
+  });
+
+  it("is true when a draft changes or is emptied", () => {
+    expect(draftsDiffer(p, [{ path: ".tst/memory/MEMORY.md", content: "hand\n" }])).toBe(true);
+    expect(draftsDiffer(p, [{ path: ".tst/memory/MEMORY.md", content: "" }])).toBe(true);
   });
 });
