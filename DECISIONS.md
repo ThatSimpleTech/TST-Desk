@@ -6233,3 +6233,24 @@ inspector (TD-2604) needs names and both whys without a second API.
 **Alternative rejected:** Leaving an oversize `MEMORY.md` in the prompt
 and only dropping topics. That matches a literal reading of TD-2203
 and blows the cap the user configured.
+
+---
+
+## 2026-08-20 — TD-2301: distill is JSON-in, diff-out, off-turn (Class B)
+
+**Decision:** Distill is a single-shot worker completion with a
+dedicated system prompt and no tools. The model returns
+`{"changes":[{"action":"create"|"replace"|"delete","path":"...","content":"..."}]}`
+(full file body). This module resolves each path under `.tst/memory/`,
+normalizes create/replace against disk, and builds the unified diff
+locally. Steering basenames, `..`, and nested paths are dropped.
+`CostTracker.record_off_turn` bills the worker without moving
+`turn_cost`. The function never writes.
+
+**Rationale:** Spec §5 is a cheap worker step that proposes a diff, not
+a tool loop. Asking the model for a unified diff is hard to apply
+safely. `fs_write` is the path TD-2303 must never take. A second cost
+ledger (like the classifier) would hide spend from `cost_by_tier`.
+
+**Alternative rejected:** Reusing `PromptAssembler` + the tool registry
+on the worker. That invites a write and is a user-shaped turn.

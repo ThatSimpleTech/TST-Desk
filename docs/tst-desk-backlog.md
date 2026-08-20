@@ -4171,12 +4171,12 @@ mechanic 2.
 **Size:** 3 · **Depends on:** TD-2201, TD-1802
 
 **Acceptance criteria:**
-- [ ] A worker-tier call, given the session's user/assistant turns and the
+- [x] A worker-tier call, given the session's user/assistant turns and the
       current memory files, returns a structured proposal: create / replace /
       delete paths under `.tst/memory/`
-- [ ] The proposal is a diff against the files on disk, not a free-form essay
-- [ ] Cost is recorded as a worker call; it is not a user turn
-- [ ] Mock-provider test: scripted distill output becomes a typed proposal
+- [x] The proposal is a diff against the files on disk, not a free-form essay
+- [x] Cost is recorded as a worker call; it is not a user turn
+- [x] Mock-provider test: scripted distill output becomes a typed proposal
 
 **Notes:** this is not `fs_write`. The model that distilled must not be the
 path that writes.

@@ -176,6 +176,22 @@ class CostTracker:
         self._notify(record, is_classifier=False)
         return cost
 
+    def record_off_turn(
+        self,
+        tier: TierName,
+        usage: Usage,
+        cfg: TierConfig | None = None,
+    ) -> float:
+        """Record a worker (or other) call that is not a user turn.
+
+        Distill (TD-2301) is a session-end completion: it uses worker
+        pricing and the session ledger, and must not move ``turn_cost``.
+        """
+        record, cost = self._build_record(tier, usage, cfg)
+        self._calls.append(record)
+        self._notify(record, is_classifier=False)
+        return cost
+
     def record_classifier(
         self,
         tier: TierName,
