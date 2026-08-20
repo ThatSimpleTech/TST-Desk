@@ -4203,9 +4203,9 @@ small, a command-palette entry is enough.
 **Size:** 2 · **Depends on:** TD-2301
 
 **Acceptance criteria:**
-- [ ] A distill proposal never enters `fs_write` / the dispatcher
-- [ ] The classifier is not asked to approve a steering write
-- [ ] A test that the only writers of `.tst/memory/` after distill-accept
+- [x] A distill proposal never enters `fs_write` / the dispatcher
+- [x] The classifier is not asked to approve a steering write
+- [x] A test that the only writers of `.tst/memory/` after distill-accept
       are the memory store (TD-2104), not the tool handlers
 
 ---

@@ -59,8 +59,9 @@ from .keychain import (
 )
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
+from .memory_commit import MemoryCommitter
 from .memory_store import scaffold_workspace_memory
-from .memory_trigger import DistillEmit, completed_turn_count, distill_if_due
+from .memory_trigger import DistillEmit, apply_proposal, completed_turn_count, distill_if_due
 from .policy import (
     add_rule,
     load_approved_imports,
@@ -1360,11 +1361,26 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
-            return build_error(
-                "no_memory_proposal",
-                "No live memory proposal to accept, edit, or reject.",
-                session_id=msg.session_id,
-            )
+            pending = self._pending_memory.get(msg.session_id)
+            if pending is None or pending.proposal_id != msg.proposal_id:
+                return build_error(
+                    "no_memory_proposal",
+                    "No live memory proposal to accept, edit, or reject.",
+                    session_id=msg.session_id,
+                )
+            if isinstance(msg, MemoryReject):
+                del self._pending_memory[msg.session_id]
+                return None
+            if isinstance(msg, MemoryEdit):
+                return build_error(
+                    "bad_request",
+                    "memory_edit is not applied until the proposal card lands.",
+                    session_id=msg.session_id,
+                )
+            paths = await apply_proposal(found.workspace_path, pending.proposal, found)
+            await MemoryCommitter(Path(found.workspace_path)).commit(paths)
+            del self._pending_memory[msg.session_id]
+            return None
 
         if isinstance(msg, Shutdown):
             log.info("shutdown requested via websocket")

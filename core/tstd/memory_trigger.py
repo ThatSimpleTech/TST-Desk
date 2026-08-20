@@ -6,11 +6,14 @@ it, so they write nothing. Unchanged memory yields no event.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import ModelConfig
 from .memory_distill import DistillProposal, DistillProvider, DistillTurn, distill_session
+from .memory_store import memory_dir, memory_max_lines, replace_memory_file
 from .protocol import MemoryFileDiff, MemoryProposal, TurnComplete
 from .session import Session
 
@@ -86,3 +89,24 @@ async def distill_if_due(
         proposal=result,
         event=proposal_event(session.id, proposal_id, result),
     )
+
+
+async def apply_proposal(
+    workspace: str | Path,
+    proposal: DistillProposal,
+    session: object,
+) -> list[Path]:
+    """Write accepted changes through the memory store, not ``fs_write``."""
+    root = memory_dir(workspace)
+    max_lines = memory_max_lines(session)
+    written: list[Path] = []
+    for change in proposal.changes:
+        path = root / change.name
+        if change.action == "delete":
+            if await asyncio.to_thread(path.is_file):
+                await asyncio.to_thread(path.unlink)
+                written.append(path)
+            continue
+        await asyncio.to_thread(replace_memory_file, path, change.after or "", max_lines)
+        written.append(path)
+    return written
