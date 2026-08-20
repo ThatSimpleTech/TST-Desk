@@ -6361,3 +6361,51 @@ list. TD-2803 said this pane is hosted on the project home. Adding
 
 **Alternative rejected:** Opening only in the OS editor. The AC is
 "shows the markdown"; the column renders it. Edit/save is TD-2602.
+
+---
+
+## 2026-08-20 — TD-2602: pane save is a human verb, not memory_edit (Class B)
+
+**Decision:** `save_memory` is a connection-scoped client message
+(`workspace_path`, `path`, `content`). `path` is a basename or
+`.tst/memory/<name>.md` via `memory_basename`. The write goes through
+`replace_memory_file` then `MemoryCommitter`. The reply is a refreshed
+`memory_files`. The file must already exist. Steering basenames, `..`,
+rules paths, and missing files return `not_a_memory_file` and write
+nothing. This verb is not a tool.
+
+**Rationale:** `memory_edit` is session+proposal scoped. The pane lives
+on project home without a bound session. Reusing the distill verb would
+require a fake proposal and would drop paths that were not in it.
+
+**Alternative rejected:** Opening the OS editor and hoping the user
+saves. The AC is "save an edit from the pane" and "through the memory
+commit path."
+
+---
+
+## 2026-08-20 — Decompose v0.3–Later (Class B)
+
+**Decision:** Replace the undecomposed post-v0.2 table with M5–M10 and
+E47 (TD-2901–TD-4707, plus E20 under M6). Building them is still
+forbidden until the previous milestone exits. Planning them is not.
+
+**Already true, so not re-invented:**
+- Event log on disk + quit/reopen revive (not window-close detach)
+- Session list rail
+- Browser CU is TD-1710 (M3), not a new M6 story
+- Local models floor is M1.5
+- Autonomy *hooks* are v0.1
+
+**M5 is the real coworker cut:** close ≠ quit (TD-2902), explicit Quit
+(TD-2903), bounded durable log (TD-2901), CLI (E31), artifacts (E32).
+
+**Cuts held:** never `0.0.0.0`; Slack not a 20-platform gateway; one-level
+subagent not Hermes; Design mode is point-and-prompt; glow is not a
+second hardware cursor; no unsandboxed autonomy; tray/voice/updater
+stay Later.
+
+**Rationale:** The user asked to plan every future part. A name-only
+table was how those parts stayed vapor and how they also stayed safe
+from R8. Naming stories with exit harnesses is the middle path. R10
+is the reminder that a written story is not a start order.

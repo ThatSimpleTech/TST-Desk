@@ -123,6 +123,36 @@ def replace_memory_file(path: Path, content: str, max_lines: int) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+class MemorySaveError(Exception):
+    """The pane refused a path that is not an existing memory file."""
+
+
+_PANE_SAVE_REFUSED = "Only an existing .tst/memory/*.md file can be saved from this pane."
+
+
+def save_workspace_memory(
+    workspace: str | Path,
+    raw_path: str,
+    content: str,
+    max_lines: int,
+) -> Path:
+    """Write one Memory-pane edit. Steering and escapes never land.
+
+    ``raw_path`` is a basename or ``.tst/memory/<name>.md`` — the same
+    rules distill uses. The file must already exist; this path corrects
+    memory, it does not invent topic files.
+    """
+    from .memory_distill import memory_basename
+
+    name = memory_basename(raw_path)
+    root = Path(workspace)
+    path = memory_dir(root) / name if name is not None else memory_dir(root)
+    if name is None or not path_is_memory_file(path, root) or not path.is_file():
+        raise MemorySaveError(_PANE_SAVE_REFUSED)
+    replace_memory_file(path, content, max_lines)
+    return path
+
+
 def scaffold_workspace_memory(workspace: str | Path) -> list[Path]:
     """Plant commented templates when missing. Never overwrites.
 

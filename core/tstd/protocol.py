@@ -288,6 +288,15 @@ class ListMemory(ClientMessage):
     workspace_path: str
 
 
+class SaveMemory(ClientMessage):
+    """Save an edit from the Memory pane (TD-2602). Human path, never a tool."""
+
+    type: Literal["save_memory"] = "save_memory"
+    workspace_path: str
+    path: str = Field(min_length=1)
+    content: str
+
+
 class CreateRule(ClientMessage):
     """Create a ``.tst/rules/`` file (TD-2802). Human path, never a tool."""
 
@@ -1171,6 +1180,7 @@ ClientMessageT = Annotated[
     | GetInstructionStack
     | ListInstructions
     | ListMemory
+    | SaveMemory
     | CreateRule
     | MemoryAccept
     | MemoryEdit
@@ -1256,6 +1266,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "get_instruction_stack",
         "list_instructions",
         "list_memory",
+        "save_memory",
         "create_rule",
         "memory_accept",
         "memory_edit",

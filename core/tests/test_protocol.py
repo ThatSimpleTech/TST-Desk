@@ -210,6 +210,19 @@ class TestClientMessages:
         assert isinstance(back, ListMemory)
         assert back.workspace_path == "/home/user/project"
 
+    def test_save_memory(self) -> None:
+        from tstd.protocol import SaveMemory
+
+        msg = SaveMemory(
+            workspace_path="/home/user/project",
+            path="MEMORY.md",
+            content="durable: ruff\n",
+        )
+        back = _roundtrip(msg)
+        assert isinstance(back, SaveMemory)
+        assert back.path == "MEMORY.md"
+        assert back.content == "durable: ruff\n"
+
     def test_create_rule(self) -> None:
         from tstd.protocol import CreateRule
 

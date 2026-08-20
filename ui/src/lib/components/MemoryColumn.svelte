@@ -1,15 +1,19 @@
 <script lang="ts">
-	// Memory column on the project home (TD-2601).
+	// Memory column on the project home (TD-2601 / TD-2602).
 	//
-	// Lists .tst/memory/*.md. Click shows the markdown. Writes stay on
-	// distill-accept / TD-2602 — this column is read-only.
+	// Lists .tst/memory/*.md. Click shows the markdown. Edit/save is a
+	// human-path client message — never a tool, never a steering write.
 	import Markdown from './chat/Markdown.svelte';
 	import { memoryEmptyCopy } from '../memory-files';
 	import {
+		beginEdit,
+		cancelEdit,
 		loadMemoryFiles,
 		memoryFiles,
+		saveMemoryFile,
 		selectMemoryFile,
 		selectedMemoryFile,
+		setMemoryDraft,
 		startMemoryFiles,
 	} from '../memory-files.svelte.js';
 
@@ -23,6 +27,7 @@
 
 	let empty = $derived(memoryFiles.files.length === 0);
 	let selected = $derived(selectedMemoryFile());
+	let dirty = $derived(selected !== null && memoryFiles.draft !== selected.content);
 </script>
 
 <section class="col" aria-label="Memory">
@@ -46,7 +51,31 @@
 		</ul>
 		{#if selected !== null}
 			<div class="preview" aria-label={`Markdown for ${selected.name}`}>
-				<Markdown text={selected.content} />
+				{#if memoryFiles.editing}
+					<textarea
+						class="editor"
+						aria-label={`Edit ${selected.name}`}
+						value={memoryFiles.draft}
+						oninput={(e) => setMemoryDraft(e.currentTarget.value)}
+					></textarea>
+					<div class="actions">
+						<button
+							class="text-btn"
+							type="button"
+							disabled={!dirty || memoryFiles.saving}
+							onclick={() => saveMemoryFile()}
+						>Save</button>
+						<button class="text-btn" type="button" onclick={() => cancelEdit()}>Cancel</button>
+					</div>
+					{#if memoryFiles.error !== null}
+						<p class="err">{memoryFiles.error}</p>
+					{/if}
+				{:else}
+					<Markdown text={selected.content} />
+					<div class="actions">
+						<button class="text-btn" type="button" onclick={() => beginEdit()}>Edit</button>
+					</div>
+				{/if}
 			</div>
 		{/if}
 	{/if}
@@ -113,5 +142,47 @@
 		border-radius: var(--radius-md);
 		max-height: 20rem;
 		overflow-y: auto;
+	}
+
+	.editor {
+		display: block;
+		width: 100%;
+		box-sizing: border-box;
+		min-height: 10rem;
+		padding: var(--space-2) var(--space-3);
+		border: var(--border-width) solid var(--color-hairline);
+		border-radius: var(--radius-md);
+		background: var(--color-sunken);
+		color: var(--color-ink);
+		font-family: var(--font-mono);
+		font-size: var(--text-sm);
+		resize: vertical;
+	}
+
+	.actions {
+		display: flex;
+		gap: var(--space-2);
+		margin-top: var(--space-2);
+	}
+
+	.text-btn {
+		border: none;
+		background: transparent;
+		color: var(--color-accent);
+		font-family: var(--font-sans);
+		font-size: var(--text-sm);
+		cursor: pointer;
+		padding: var(--space-1);
+	}
+
+	.text-btn:disabled {
+		color: var(--color-ink-muted);
+		cursor: default;
+	}
+
+	.err {
+		margin: var(--space-2) 0 0;
+		font-size: var(--text-xs);
+		color: var(--color-err);
 	}
 </style>

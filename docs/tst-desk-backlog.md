@@ -1,8 +1,8 @@
 # TST Desk — Work Plan & Backlog
 
-**Scope of this document:** everything that must be built for **v0.1** and **v0.2**, broken
-into epics and stories with acceptance criteria, dependencies, and sequencing. Later phases
-are outlined at the end but not decomposed.
+**Scope of this document:** everything that must be built for **v0.1** and **v0.2**, plus
+a full decomposition of **v0.3–Later** (M5–M10 and E47). Later phases may be planned;
+they may not be started until the previous milestone exits (`AGENTS.md` §3).
 
 Companion documents:
 - `tst-desk-spec.md` — behavior and architecture. Source of truth for *what it does*.
@@ -46,6 +46,13 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M2 — The window** | E10, E11, E12 | A human does the same thing through the app, never touching a terminal |
 | **M3 — Shippable** | E13, E14, E15, E16, E17, E19 | A stranger can install and use it from a fresh machine |
 | **M4 — Memory** | E21–E28 | The brain prompt carries a relevant memory subset; a session end proposes a diff the user accepts; a project home shows Instructions / Memory / Context for the workspace |
+| **M5 — Cowork (v0.3)** | E29–E32 | Close the window; the session keeps running. CLI attach. Artifacts. Named sessions |
+| **M6 — Computer use (v0.4)** | E20, E33–E34 | Screen pane watches a real desktop or browser; glow/cursor; Design mode; OS permission onboarding |
+| **M7 — Remote (v0.5)** | E36–E38 | Tailscale bind (never `0.0.0.0`). Phone attach. Slack. Scheduler rail goes live |
+| **M8 — Local remainder (v0.6)** | E39 | EZER/vLLM path. UI-TARS grounding. Floor already shipped as M1.5 |
+| **M9 — Autonomy (v0.7)** | E40–E43 | Charter, unattended runner, drift checks, circuit breakers, hard-required container, wake-up |
+| **M10 — Extensibility (v0.8)** | E44–E46 | MCP through the classifier. Slash + `SKILL.md`. One-level subagent. Plan lock |
+| **Later** | E47 | Voice, tray, multi-window, updater, vision. Unversioned; do not pull forward |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -76,6 +83,12 @@ a shipped preset that thinks in silence fails M3's exit condition.
 M4 Memory hangs off E5 (the assembler already has a brain-only memory slot) and E7
 (checkpoints and the classifier). Embeddings hang off E13 only for optional sidecar
 supervision — heading-match loading is the floor if the sidecar is not running.
+
+M5 Cowork hangs off TD-205 / TD-1002: the session already outlives the socket; the
+window still kills the daemon. Persist revive (events.jsonl) landed early — TD-2901
+pins and bounds it. M6 hangs off TD-1710 (browser Screen) and E20 (`tst-cu-mcp`).
+M7 hangs off M5 (something must be alive to attach to). M9 hangs off M5 and M7
+(spec §9). M10 hangs off E6 (every MCP tool is still a classified tool).
 
 E14 is not a phase at the end. Tests are written with each story. The E14 stories cover
 cross-cutting suites and CI gates that don't belong to a single feature.
@@ -1799,7 +1812,7 @@ steps. Budget generously — **this is the largest single body of work in v0.1.*
 - [x] Daemon crash is detected, reported in the UI, and recovered by restart with the session
       list intact
 - [x] Closing the window shuts the daemon down cleanly in v0.1 — with a `TODO(v0.3)` marking
-      where detached-session behavior will diverge
+      where detached-session behavior will diverge (TD-2902)
 - [x] No orphaned `tstd` processes after quit under any exit path, including force-quit —
       verified manually on each platform and documented
 
@@ -4331,9 +4344,9 @@ Spec §5: "open, correct, diff, grep, and revert."
 **Size:** 2 · **Depends on:** TD-2601, TD-2104
 
 **Acceptance criteria:**
-- [ ] The user can save an edit from the pane
-- [ ] Save goes through the memory commit path
-- [ ] The agent cannot use this path to write steering files
+- [x] The user can save an edit from the pane
+- [x] Save goes through the memory commit path
+- [x] The agent cannot use this path to write steering files
 
 ---
 
@@ -4515,19 +4528,1016 @@ product-shape pin so the home cannot ship as three empty cards.
 ---
 
 
-# Post-v0.2 backlog
+# MILESTONE M5 — Cowork parity (v0.3)
 
-Named, sequenced, and deliberately not decomposed. Do not build these.
+Spec §8 and §9. The session already outlives the socket (TD-205). The window
+still kills the daemon (TD-1002). Session list is shipped (TD-1701). Event
+logs already land on disk (`events.jsonl` / `conversation.json`) — that was
+pulled forward as "open last chat," not as coworker. M5 is **close the
+window, it keeps working**, plus the CLI door and artifacts.
 
-| Version | Epic | Summary |
-|---|---|---|
-| **v0.3** | Cowork parity | Durable session event log, detached sessions surviving window close, session list pane, artifact delivery, file-diff work view |
-| **v0.4** | Computer use | Screen pane, `tst-cua` drivers, OS permission onboarding, grounding model evaluation |
-| **v0.5** | Remote & notify | Tailscale interface binding, phone attach, Slack notifier (Hermes pattern), lightweight scheduler |
-| **v0.6** | Local models | vLLM/EZER routing, UI-TARS grounding, local worker tier |
-| **v0.7** | Autonomy engine | Charter editor, autonomous runner, validator drift checks, circuit breakers, container isolation, wake-up summary |
-| **v0.8** | Extensibility | MCP extension loading, custom tool packages, plugin surface |
-| **Later** | Flourishes & platform furniture | Unversioned on purpose: voice/dictation, macOS quick-entry overlay, tray + multi-window + auto-updater. Web-search primitives shipped early (TD-609/TD-610) and are not this row |
+**Do not start until M4 exits (TD-2701).** Persist-revive is not M5 done.
+
+**M5 exit:** TD-3204.
+
+```
+E29 Host detach ─> E31 CLI
+       │
+       └─> E30 Names ─> E32 Artifacts ─> TD-3204
+```
+
+---
+
+## Epic E29 — Detached host
+
+**Goal:** Close window ≠ quit. The dock (or a leftover process) owns `tstd`.
+A full tray icon is Later (TD-4703).
+
+---
+
+### TD-2901 — Durable log is the source of truth, and it is bounded
+**Size:** 5 · **Depends on:** TD-205
+
+`events.jsonl` already exists. This story makes it the attach source after
+a daemon restart *and* after a window-close detach, and stops an unbounded
+file from becoming the next outage.
+
+**Acceptance criteria:**
+- [ ] Attach after a clean daemon restart replays from disk at `from_seq`
+      with the same gap/dup rules as the in-memory log
+- [ ] A session with no snapshot is still an `interrupted` tombstone
+      (DECISIONS 2026-08-20 revive cut is unchanged)
+- [ ] The on-disk log is rotated or windowed at a config cap (events or
+      bytes); attach from a seq that was rotated returns a typed
+      `log_trimmed` and replays from the earliest kept seq
+- [ ] Secrets stay redacted on the way to disk (TD-1405)
+- [ ] A test kills the daemon mid-session, restarts, attaches, and sees
+      every event that was `seq`-committed before the kill
+
+---
+
+### TD-2902 — Closing the window does not stop the daemon
+**Size:** 5 · **Depends on:** TD-1002, TD-2901
+
+**Acceptance criteria:**
+- [ ] Window close hides the window and leaves `tstd` running; in-flight
+      turns and parked approvals continue
+- [ ] Reopening the app attaches with `from_seq` and does not spawn a
+      second daemon
+- [ ] OS notifications for approval and turn-complete still fire
+      (TD-1702) while the window is gone
+- [ ] `--parent-pid` does not kill `tstd` when the window process exits
+      if coworker mode is on
+- [ ] Documented per platform: close vs quit
+
+**Notes:** The v0.1 AC on TD-1002 stays true for "Quit." This story is
+the divergence the TODO named.
+
+---
+
+### TD-2903 — Quit is explicit
+**Size:** 3 · **Depends on:** TD-2902
+
+**Acceptance criteria:**
+- [ ] Menu / palette **Quit TST Desk** sends `shutdown`, reaps the
+      process group, and leaves no listener (TD-1304 contract)
+- [ ] Close window is not Quit. Copy in the first-run of this behavior
+      says so once
+- [ ] Force-quit / SIGKILL still has no orphan (watchdog or host)
+
+---
+
+### TD-2904 — Coworker indicator
+**Size:** 2 · **Depends on:** TD-2902
+
+**Acceptance criteria:**
+- [ ] While the window is hidden and a session is running or
+      `awaiting_approval`, the dock/taskbar badge or tooltip says so
+- [ ] Clicking the app icon shows the window and focuses the parked
+      approval if there is one
+- [ ] No tray icon required (TD-4703)
+
+---
+
+### TD-2905 — Settings: coworker on
+**Size:** 2 · **Depends on:** TD-2902
+
+**Acceptance criteria:**
+- [ ] Settings toggle **Keep running when the window closes**, default
+      on once M5 ships, persisted in the user data dir
+- [ ] Off restores TD-1002 v0.1 behavior (close = shutdown)
+
+---
+
+## Epic E30 — Session names
+
+**Goal:** the rail stops showing `session_id[:8]`. TD-1701 deferred this
+to v0.3.
+
+---
+
+### TD-3001 — Auto-title from the first user message
+**Size:** 2 · **Depends on:** TD-1701
+
+**Acceptance criteria:**
+- [ ] After the first user message the record stores a one-line title
+      (trimmed, length-capped)
+- [ ] `session_list` carries it; rail and palette show it
+- [ ] Later messages do not retitle
+- [ ] Empty / attachment-only first messages keep the short id
+
+---
+
+### TD-3002 — Rename
+**Size:** 2 · **Depends on:** TD-3001
+
+**Acceptance criteria:**
+- [ ] Rail row can rename; the daemon persists the title
+- [ ] Empty rename restores the auto-title or the short id
+- [ ] Rename of a busy session is allowed (metadata only)
+
+---
+
+### TD-3003 — Star
+**Size:** 2 · **Depends on:** TD-1701
+
+**Acceptance criteria:**
+- [ ] A session can be starred; stars persist in the user data dir
+      (machine-wide, not the workspace — same cut as TD-2806)
+- [ ] Starred rows sort above the rest in the rail, then newest
+- [ ] Filter can show starred only
+
+---
+
+## Epic E31 — CLI door
+
+Spec §2: same daemon, different door.
+
+---
+
+### TD-3101 — `tst run`
+**Size:** 5 · **Depends on:** TD-2901, TD-1401
+
+**Acceptance criteria:**
+- [ ] `tst run --workspace <path> --message <text>` uses a running
+      daemon or starts one, prints assistant text, exits non-zero on a
+      failed turn
+- [ ] Same port-file + hello token as the window
+- [ ] No bind except the daemon's existing interface
+- [ ] Headless harness (TD-1401) stays the mock path
+
+---
+
+### TD-3102 — `tst attach`
+**Size:** 3 · **Depends on:** TD-3101, TD-206
+
+**Acceptance criteria:**
+- [ ] `tst attach <session_id>` replays from `from_seq` and streams
+      live events as text
+- [ ] Unknown id is a typed error
+- [ ] Ctrl+C detaches; it does not cancel the session
+
+---
+
+### TD-3103 — TTY approvals
+**Size:** 2 · **Depends on:** TD-3102, TD-802
+
+**Acceptance criteria:**
+- [ ] A TTY prints the card and accepts `y` / `n` / `always`
+- [ ] Non-TTY refuses with copy to use the window
+- [ ] Class C never accepts `always`
+
+---
+
+## Epic E32 — Artifacts and the work view
+
+Spec §3 / §9. The Files pane (TD-1705) is writes-this-session. Artifacts
+are things the model *made for you* (a doc, a preview) that persist with
+the session. The work view is the right-pane surface that is not chat.
+
+---
+
+### TD-3201 — Artifact record
+**Size:** 5 · **Depends on:** TD-2901, TD-1709
+
+**Acceptance criteria:**
+- [ ] Daemon can store an artifact (id, session, mime, path under the
+      workspace or the session data dir, title)
+- [ ] Protocol: `artifact_ready` event; list/open messages
+- [ ] Workspace-wall applies; no write outside it
+- [ ] Gate and fixtures updated (TD-1010 contract)
+
+---
+
+### TD-3202 — Artifacts rail and preview
+**Size:** 5 · **Depends on:** TD-3201, TD-1712
+
+**Acceptance criteria:**
+- [ ] Rail **Artifacts** becomes `ready` (today it is absent or planned)
+- [ ] List for the bound session; click opens a preview (markdown /
+      highlighted code / sandboxed HTML — no network in the preview)
+- [ ] Copy source; open-in-OS-editor if it is a workspace path
+- [ ] Not a file tree. Not Monaco. Not apply/reject
+
+---
+
+### TD-3203 — Work view: session diffs as a first-class pane
+**Size:** 5 · **Depends on:** TD-1705, TD-3202
+
+**Acceptance criteria:**
+- [ ] A Work / Diffs surface shows the session's writes as a reviewable
+      stack (path, +/- , expand), not only the Files tab fold
+- [ ] Click opens the file; the OS editor remains the editor
+- [ ] Empty state explains it fills as the agent writes
+
+**Notes:** This is spec §3's "file diffs" work view. It is aggregation,
+not an in-app editor.
+
+---
+
+### TD-3204 — M5 exit harness
+**Size:** 3 · **Depends on:** TD-2902, TD-3101, TD-3201
+
+**Acceptance criteria:**
+- [ ] Scripted: start a session, close the viewer, assert the loop
+      still accepts a turn, reopen, attach, replay is complete
+- [ ] `tst run` against the mock provider is green in CI
+- [ ] **This harness is the M5 exit criterion**
+
+---
+
+# MILESTONE M6 — Computer use (v0.4)
+
+Spec §9. Browser slice is already TD-1710 (E17). This milestone is
+**desktop** drive + the chrome that makes it watchable and pointable.
+Linux MCP backends stay E20 (already filed; counted here).
+
+**Do not start until M5 exits**, except TD-1710 which is already on M3.
+
+**M6 exit:** TD-3405.
+
+```
+TD-1710 (browser) ─> E34 Screen chrome
+E33 Desktop drivers ─> E34
+E20 Linux MCP (parallel; needs a Linux box)
+```
+
+---
+
+## Epic E33 — Desktop drivers in the product
+
+**Goal:** the loop can move the real pointer, through the same
+classifier and approval gate as every other tool. Prefer wrapping
+`mcp/tst-cu-mcp` over a third copy of the backends.
+
+---
+
+### TD-3301 — Register desktop computer-use tools in `tstd`
+**Size:** 8 · **Depends on:** TD-601, TD-1710
+
+**Acceptance criteria:**
+- [ ] Screenshot / move / click / type / scroll are tools on the
+      session dispatcher, Class B (ask) except screenshot which may be
+      A if it cannot actuate
+- [ ] Path/host rules do not apply; a **focus guard** (`expect_window`)
+      does — mismatch refuses without actuating
+- [ ] Kill-switch stops actuation; capture still works
+- [ ] macOS and Windows each have a live path; Linux is E20
+- [ ] Mock driver for CI (the tst-cua mock, TD-102)
+
+**Notes:** Size 8. Split if the MCP-bridge and the product tools
+diverge. Do not bind a socket; stdio to the sidecar is enough.
+
+---
+
+### TD-3302 — macOS permission onboarding
+**Size:** 5 · **Depends on:** TD-3301, TD-1101
+
+**Acceptance criteria:**
+- [ ] First desktop CU attempt explains Screen Recording +
+      Accessibility, links to System Settings, and retries
+- [ ] Denied is a typed error, not a hang
+- [ ] Wizard/settings can reopen the explanation
+
+---
+
+### TD-3303 — Windows permission / integrity onboarding
+**Size:** 5 · **Depends on:** TD-3301
+
+**Acceptance criteria:**
+- [ ] First desktop CU attempt names what Windows will prompt for and
+      what fails if refused
+- [ ] Denied is a typed error
+- [ ] Documented in `docs/windows.md`
+
+---
+
+### TD-3304 — Grounding honesty
+**Size:** 3 · **Depends on:** TD-3301
+
+**Acceptance criteria:**
+- [ ] A recorded evaluation: click target vs landing, on one fixture
+      page per supported OS, written in `DECISIONS.md`
+- [ ] Misses over a stated tolerance fail the eval; they do not ship
+      as "it works"
+- [ ] UI-TARS as a grounding *model* is TD-3902, not this story
+
+---
+
+## Epic E34 — Screen, indicators, Design mode
+
+---
+
+### TD-3401 — Screen pane for desktop
+**Size:** 5 · **Depends on:** TD-1710, TD-3301
+
+**Acceptance criteria:**
+- [ ] Screen tab streams desktop (or the driven display) the way TD-1710
+      streams the browser
+- [ ] Failure modes are timeline entries
+- [ ] No Screen tab until a CU tool has run this session — empty copy
+      points at the first computer-use turn
+
+---
+
+### TD-3402 — Glow and agent cursor
+**Size:** 5 · **Depends on:** TD-3401
+
+**Acceptance criteria:**
+- [ ] Settings: **Computer-use glow** and **Agent cursor**, default on,
+      user-data-dir
+- [ ] Screen pane shows both while a CU turn is live
+- [ ] **Show indicators on the real display** is a third toggle,
+      default off; if on, hidden during every `screenshot`
+- [ ] Not a second hardware pointer (OS has one)
+- [ ] `prefers-reduced-motion`: static border, no trail
+- [ ] Clears on turn end, cancel, and kill-switch
+
+---
+
+### TD-3403 — Design mode
+**Size:** 8 · **Depends on:** TD-3401, TD-1704, TD-1709
+
+Point at the running UI instead of describing it. Browser first
+(TD-1710). Desktop picking is a follow-up inside this story only if
+the AX hit-test is cheap; otherwise file a split.
+
+**Acceptance criteria:**
+- [ ] ⌘⇧D toggles Design on the Screen pane. On: clicks select. Off:
+      watch surface
+- [ ] Click / shift-click / shift-drag on a frozen frame
+- [ ] Chip on the composer: xpath or AX role, attributes, computed
+      box/styles, cropped screenshot
+- [ ] Travels with `user_message` under attachment caps
+- [ ] Cannot run while the agent is actuating that surface
+- [ ] Voice is TD-4701. React fiber is out. Source maps are a follow-up
+
+---
+
+### TD-3404 — In-window kill-switch
+**Size:** 3 · **Depends on:** TD-3301
+
+**Acceptance criteria:**
+- [ ] A visible control stops all actuation immediately (same as the
+      MCP kill-switch)
+- [ ] Capture and the Screen pane keep working
+- [ ] Keyboard reachable; discoverable from the palette
+
+---
+
+### TD-3405 — M6 exit
+**Size:** 5 · **Depends on:** TD-1710, TD-3301, TD-3401
+
+**Acceptance criteria:**
+- [ ] Headless: mock driver, one screenshot + one refused click
+      (focus mismatch) + one approved click, all through the classifier
+- [ ] Live: TD-1710 browser path green on one OS
+- [ ] **This harness is the M6 exit criterion**
+
+---
+
+# MILESTONE M7 — Remote and notify (v0.5)
+
+Spec §8. Slack first. Never `0.0.0.0`. Scheduler is small: wake, run
+one instruction, deliver.
+
+**Do not start until M5 exits.** Remote attach to a dead daemon is a lie.
+
+**M7 exit:** TD-3806.
+
+---
+
+## Epic E36 — Tailscale bind
+
+---
+
+### TD-3601 — Bind the existing socket to a Tailscale interface
+**Size:** 5 · **Depends on:** TD-202, TD-2902
+
+**Acceptance criteria:**
+- [ ] Config names an interface or a Tailscale IPv4; the server binds
+      that address and loopback, never `0.0.0.0` / `::`
+- [ ] A bind to a non-Tailscale non-loopback address is refused
+- [ ] `test_outbound_hosts` / bind tests name the new path
+- [ ] Off by default
+
+---
+
+### TD-3602 — Non-loopback auth
+**Size:** 5 · **Depends on:** TD-3601, TD-203
+
+**Acceptance criteria:**
+- [ ] Loopback keeps the port-file token
+- [ ] A non-loopback hello requires a user-data-dir token with
+      rotation; a leaked port file is not enough
+- [ ] Failed auth is a typed close, not a session
+
+---
+
+### TD-3603 — Settings: allow remote attach
+**Size:** 2 · **Depends on:** TD-3602
+
+**Acceptance criteria:**
+- [ ] Toggle + the bound address shown (not a secret)
+- [ ] Off unbinds the Tailscale iface and leaves loopback
+
+---
+
+## Epic E37 — Phone and remote viewer
+
+---
+
+### TD-3701 — Attach from another device
+**Size:** 8 · **Depends on:** TD-3602, TD-1003
+
+**Acceptance criteria:**
+- [ ] The same protocol client works from a browser on the Tailscale
+      address (read transcript, send, approve)
+- [ ] No account. No hosted relay
+- [ ] Layout degrades to one pane on a narrow viewport (chat +
+      approval). Inspector is optional
+- [ ] Size 8 because a second client surface will sprawl — split if
+      the mobile layout becomes its own product
+
+---
+
+### TD-3702 — Remote approve
+**Size:** 3 · **Depends on:** TD-3701, TD-802
+
+**Acceptance criteria:**
+- [ ] Approve / deny / always-allow from the remote client resolve
+      the parked session
+- [ ] Two clients cannot double-resolve (TD-1014 contract)
+
+---
+
+## Epic E38 — Notify and the scheduler
+
+Hermes pattern: `send(config, message)`. Rebuild the cron. Do not lift
+the 20-platform gateway.
+
+---
+
+### TD-3801 — Slack incoming webhook
+**Size:** 3 · **Depends on:** TD-1702
+
+**Acceptance criteria:**
+- [ ] Config holds a webhook URL (user-data-dir, not the workspace,
+      not the audit log in plaintext — treat as a secret, keychain or
+      equivalent)
+- [ ] Approval-needed and turn-complete can deliver to Slack when
+      enabled
+- [ ] Destination is config-sourced (`test_outbound_hosts`)
+
+---
+
+### TD-3802 — ntfy (optional extra)
+**Size:** 2 · **Depends on:** TD-3801
+
+**Acceptance criteria:**
+- [ ] Same `send` shape; topic URL from config; off by default
+- [ ] Discord/Telegram are TD-4707, not this story
+
+---
+
+### TD-3803 — Scheduler store
+**Size:** 5 · **Depends on:** TD-2901
+
+**Acceptance criteria:**
+- [ ] Jobs persist in the user data dir: id, workspace, instruction,
+      cadence or next-run, deliver-to (window / Slack / ntfy)
+- [ ] Natural-language create is a *worker* parse into that schema,
+      shown for edit before save
+- [ ] No job runs until M7's runner (TD-3804) exists
+
+---
+
+### TD-3804 — Wake, run, deliver
+**Size:** 5 · **Depends on:** TD-3803, TD-3101
+
+**Acceptance criteria:**
+- [ ] Due jobs start a session (or `tst run`) in the named workspace,
+      then deliver a summary to the configured channel
+- [ ] Missed runs while the daemon was down fire once on revive, not
+      in a stampede
+- [ ] Caps and the classifier still apply
+
+---
+
+### TD-3805 — Scheduled rail is live
+**Size:** 2 · **Depends on:** TD-3804, TD-1712
+
+**Acceptance criteria:**
+- [ ] Rail **Scheduled** becomes `ready` and lists jobs
+- [ ] Create / pause / delete
+- [ ] The invariant test (every `ready` entry activates) stays green
+
+---
+
+### TD-3806 — M7 exit
+**Size:** 3 · **Depends on:** TD-3601, TD-3801, TD-3804
+
+**Acceptance criteria:**
+- [ ] Headless: bind refused on `0.0.0.0`; a loopback job runs and
+      a mock Slack `send` is invoked
+- [ ] **This harness is the M7 exit criterion**
+
+---
+
+# MILESTONE M8 — Local models remainder (v0.6)
+
+M1.5 already ships keyless loopback + the `local` preset. This milestone
+is EZER/vLLM as a first-class path and UI-TARS for computer-use grounding.
+
+**Do not start until M6 if the work is grounding; EZER routing can start
+after M1.5.** Prefer after M6 so CU has something to ground.
+
+**M8 exit:** TD-3904.
+
+---
+
+## Epic E39 — EZER, vLLM, UI-TARS
+
+---
+
+### TD-3901 — EZER / vLLM preset
+**Size:** 5 · **Depends on:** TD-1805
+
+**Acceptance criteria:**
+- [ ] A shipped preset points at a documented EZER or vLLM loopback
+      URL; slugs still optional on loopback
+- [ ] Docs: how to attach, what "unresolved" means
+- [ ] Doctor rows name the endpoint, not the developer's model list
+      (TD-1809)
+
+---
+
+### TD-3902 — UI-TARS grounding
+**Size:** 8 · **Depends on:** TD-3304, TD-3901
+
+**Acceptance criteria:**
+- [ ] Computer-use click targeting can use a configured local grounding
+      model instead of raw pixels + guess
+- [ ] Off / missing model falls back to TD-3304's path
+- [ ] Cost is zero on loopback; latency is measured and recorded
+- [ ] Size 8 — split if the grounding client and the driver glue
+      diverge
+
+---
+
+### TD-3903 — Local worker default for pixel loops
+**Size:** 3 · **Depends on:** TD-3902, TD-303
+
+**Acceptance criteria:**
+- [ ] A CU-heavy turn can pin the worker to the local slug without
+      changing the brain
+- [ ] Title bar shows that honestly
+- [ ] Remote worker remains the default for non-CU turns
+
+---
+
+### TD-3904 — M8 exit
+**Size:** 3 · **Depends on:** TD-3901
+
+**Acceptance criteria:**
+- [ ] Live harness against a loopback vLLM or EZER fixture (or skip
+      with copy if the binary is absent — heading-match style)
+- [ ] **This harness is the M8 exit criterion**
+
+---
+
+# MILESTONE M9 — Autonomy engine (v0.7)
+
+Spec §12. Hooks shipped in v0.1. This is the engine. **Hard-required
+container** (TD-101). Depends on M5 (it must run with the window closed)
+and M7 (it must notify).
+
+**Do not start until M5 and M7 exit.**
+
+**M9 exit:** TD-4304.
+
+```
+E40 Charter ─> E41 Runner ─┬─> E42 Supervisor
+                           └─> E43 Isolation ─> wake-up ─> TD-4304
+```
+
+---
+
+## Epic E40 — Charter
+
+---
+
+### TD-4001 — `CHARTER.md` schema
+**Size:** 3 · **Depends on:** TD-706
+
+**Acceptance criteria:**
+- [ ] `.tst/autonomy/CHARTER.md` validates the spec §12.4 shape
+      (objective, DoD, source_of_truth, boundary, caps, stop_conditions)
+- [ ] Invalid charter refuses start with field names
+- [ ] Git-tracked; the agent cannot write it (Class C, same as steering)
+
+---
+
+### TD-4002 — Charter editor
+**Size:** 5 · **Depends on:** TD-4001, TD-1001
+
+**Acceptance criteria:**
+- [ ] A pane edits the charter as structured fields, writes the file
+      as the human (not via tools)
+- [ ] `source_of_truth` paths are workspace-walled
+- [ ] Empty state points at spec §12.4
+
+---
+
+### TD-4003 — Sign and start
+**Size:** 3 · **Depends on:** TD-4002, TD-4301
+
+**Acceptance criteria:**
+- [ ] Start is an explicit human action: shows the wall, the caps, and
+      "this runs in a container"
+- [ ] Without a valid charter and a live sandbox, start is refused
+- [ ] Interactive sessions are unchanged
+
+---
+
+## Epic E41 — Autonomous runner
+
+---
+
+### TD-4101 — Unattended loop
+**Size:** 8 · **Depends on:** TD-4003, TD-401, TD-2902
+
+**Acceptance criteria:**
+- [ ] A run does not wait on a user message; it iterates against the
+      objective until a stop condition
+- [ ] Class A never prompts. Class B logs. Class C stops and notifies
+      (M7 channel)
+- [ ] Window may be closed (M5)
+- [ ] Size 8 — this is the engine. Split only at a real seam
+      (scheduler vs act)
+
+---
+
+### TD-4102 — Checkpoint branch `tst/auto/<slug>`
+**Size:** 5 · **Depends on:** TD-705, TD-4101
+
+**Acceptance criteria:**
+- [ ] Every iteration commits on `tst/auto/<charter-slug>`, never
+      `main` / default branch
+- [ ] Revert of a commit is the undo the ledger prints
+- [ ] Non-git workspace refuses the run with copy
+
+---
+
+### TD-4103 — Definition-of-done polling
+**Size:** 5 · **Depends on:** TD-4101
+
+**Acceptance criteria:**
+- [ ] DoD commands run on the worker (or shell through the gate)
+- [ ] All green is a stop condition: run completes, summary fires
+- [ ] A red DoD is not an instant stop (that's TD-4203's N-in-a-row)
+
+---
+
+## Epic E42 — Supervisor and breakers
+
+---
+
+### TD-4201 — Validator drift check
+**Size:** 5 · **Depends on:** TD-4101, TD-508
+
+**Acceptance criteria:**
+- [ ] Every N iterations (config, default 5) and on Class B, the
+      validator receives charter + source_of_truth + diff + ledger +
+      tests and answers spec §12.6's three questions
+- [ ] Cost is a validator call, not a user turn
+- [ ] `source_of_truth` is re-read from disk each check
+
+---
+
+### TD-4202 — Drift reverts
+**Size:** 5 · **Depends on:** TD-4201, TD-4102
+
+**Acceptance criteria:**
+- [ ] Drift → revert to last good checkpoint, log, re-plan on brain
+- [ ] Drift twice in a row → stop and notify
+- [ ] Interactive verify (TD-4204) does not auto-revert
+
+---
+
+### TD-4203 — Circuit breakers
+**Size:** 5 · **Depends on:** TD-4101, TD-707
+
+**Acceptance criteria:**
+- [ ] Spec §12.7: spend/time cap, tests red N times, same file
+      thrashed N times, no DoD progress N times, any Class C, identical
+      tool-call loop
+- [ ] Trip is a fault report + notify, not an approval card
+- [ ] Each breaker has a test that trips it
+
+---
+
+### TD-4204 — Interactive verify after writes
+**Size:** 5 · **Depends on:** TD-303, TD-508
+
+The unused validator call for *interactive* mode (spec §12.6 first
+sentence). Not the autonomy supervisor.
+
+**Acceptance criteria:**
+- [ ] Config `verify: off | after_write | ask` (default `after_write`)
+- [ ] A write turn may enqueue one validator call on the diff + tests
+- [ ] Timeline `verify_result`; not a second bubble unless asked
+- [ ] Write-less turns never verify
+- [ ] No charter, no auto-revert
+
+---
+
+## Epic E43 — Isolation and wake-up
+
+TD-101: hard-required container. No unsandboxed autonomy.
+
+---
+
+### TD-4301 — Rootless container
+**Size:** 8 · **Depends on:** TD-4001
+
+**Acceptance criteria:**
+- [ ] Autonomous runs exec in rootless Podman (or documented
+      equivalent) with only the workspace mounted
+- [ ] Missing runtime refuses start with install copy
+- [ ] Interactive mode does not require a container
+- [ ] Size 8 — Firecracker/EZER is a follow-up, not this story
+
+---
+
+### TD-4302 — No credentials in the mount
+**Size:** 3 · **Depends on:** TD-4301
+
+**Acceptance criteria:**
+- [ ] Host keychain, `~/.ssh`, cloud creds, and the user-data-dir key
+      are not visible in the container
+- [ ] A test that a well-known cred path is absent
+- [ ] Network inside the container follows the charter wall
+
+---
+
+### TD-4303 — Wake-up summary
+**Size:** 5 · **Depends on:** TD-4101, TD-3801
+
+**Acceptance criteria:**
+- [ ] On complete / stop / breaker: a summary (what changed, ledger
+      excerpt, refusals, branch name) lands in the window and the
+      notify channel
+- [ ] The user can open the branch and the ledger in one click
+
+---
+
+### TD-4304 — M9 exit
+**Size:** 3 · **Depends on:** TD-4101, TD-4203, TD-4301
+
+**Acceptance criteria:**
+- [ ] Headless: mock provider + fake container, a charter with a
+      two-step DoD, assert branch commits, one Class A ledger line,
+      a tripped breaker, and no `main` commit
+- [ ] **This harness is the M9 exit criterion**
+
+---
+
+# MILESTONE M10 — Extensibility (v0.8)
+
+MCP, skills, a plugin surface. Every new tool still goes through the
+classifier. No bypass.
+
+**Do not start until M6** if the first consumer is computer-use MCP;
+slash/skills can start after M4.
+
+**M10 exit:** TD-4604.
+
+---
+
+## Epic E44 — MCP loading
+
+---
+
+### TD-4401 — Load MCP servers from config
+**Size:** 8 · **Depends on:** TD-601
+
+**Acceptance criteria:**
+- [ ] User-data-dir config lists stdio (and loopback HTTP) servers
+- [ ] Tools appear in the registry with the server as provenance
+- [ ] A dead server is a doctor row, not a dead daemon
+- [ ] Destination traces to config (`test_outbound_hosts`)
+- [ ] Size 8 — split at client vs registry if needed
+
+---
+
+### TD-4402 — MCP tools hit the classifier
+**Size:** 3 · **Depends on:** TD-4401, TD-702
+
+**Acceptance criteria:**
+- [ ] No MCP tool bypasses TD-702
+- [ ] Missing `host_fields` / path fields fail toward B, never A
+- [ ] A test attempts a bypass and gets `UnclassifiedToolCall`
+
+---
+
+### TD-4403 — Settings: MCP servers
+**Size:** 3 · **Depends on:** TD-4401, TD-1703
+
+**Acceptance criteria:**
+- [ ] Add / disable / remove a server without editing YAML by hand
+- [ ] Command + args only; no free-form env that could smuggle a key
+      into a file (paste-a-token stays keychain)
+
+---
+
+## Epic E45 — Slash commands and skills
+
+Complement steering. Human-written. Agent cannot write them.
+
+---
+
+### TD-4501 — Slash commands
+**Size:** 5 · **Depends on:** TD-1004, TD-501
+
+**Acceptance criteria:**
+- [ ] `.tst/commands/*.md` and `~/.tstdesk/commands/*.md` (user-global
+      wins on name)
+- [ ] `/` in the composer lists them; insert or send (default insert)
+- [ ] Not steering — not in the cache prefix unless invoked
+- [ ] Agent writes to those trees are Class C
+- [ ] Fallback: `.claude/commands/` when ours is empty
+
+---
+
+### TD-4502 — `SKILL.md`
+**Size:** 5 · **Depends on:** TD-4501, TD-508
+
+**Acceptance criteria:**
+- [ ] `.tst/skills/<name>/SKILL.md` (+ user-global). Frontmatter:
+      `description`, `whenToUse` only
+- [ ] Brain gets a name+description catalog; bodies load on
+      `load_skill` or slash, after the cache prefix
+- [ ] Over-budget skill is refused, not truncated
+- [ ] Agent cannot write `**/SKILL.md`
+- [ ] Fallback: `.claude/skills/` when ours is empty
+- [ ] Inspector lists loaded skills separately from steering
+
+---
+
+## Epic E46 — Plugins, subagent, plan lock
+
+---
+
+### TD-4601 — Custom tool packages
+**Size:** 5 · **Depends on:** TD-4402
+
+**Acceptance criteria:**
+- [ ] A documented in-process plugin (Python entry point) can register
+      tools the same way builtins do
+- [ ] License must be permissive; a non-permissive plugin is a Class C
+      product decision, not a silent load
+- [ ] Architecture guide walkthrough updated (TD-1504)
+
+---
+
+### TD-4602 — One-level worker subagent
+**Size:** 8 · **Depends on:** TD-402, TD-702
+
+**Acceptance criteria:**
+- [ ] `delegate` runs a worker child with the parent's wall and cards
+- [ ] No grandchildren. Child finish is a capped summary
+- [ ] Cost rolls into the parent, tagged worker
+- [ ] Caps are the parent's
+- [ ] Spec §8 still stands: this is not Hermes delegation
+
+---
+
+### TD-4603 — Plan mode (brain lock)
+**Size:** 3 · **Depends on:** TD-303, TD-1006
+
+**Acceptance criteria:**
+- [ ] A Plan flag forces `brain` on every completion until cleared
+- [ ] `set_tier` to worker/validator is refused while on
+- [ ] Tools still dispatch; the meter is honest (this is expensive)
+- [ ] Not a plan document. Not accept-to-execute
+
+---
+
+### TD-4604 — M10 exit
+**Size:** 3 · **Depends on:** TD-4402, TD-4502
+
+**Acceptance criteria:**
+- [ ] Headless: a mock MCP server contributes one tool; a slash
+      command and a skill appear in the recorded prompt only when
+      invoked; the MCP tool cannot skip the classifier
+- [ ] **This harness is the M10 exit criterion**
+
+---
+
+# Later — Flourishes (E47)
+
+Unversioned on purpose. Do not pull these into a milestone to "finish
+the product." Web search is already TD-609/TD-610.
+
+---
+
+## Epic E47 — Platform furniture
+
+---
+
+### TD-4701 — Voice / dictation
+**Size:** 8 · **Depends on:** TD-1004
+
+**Acceptance criteria:**
+- [ ] A hold-to-talk control transcribes into the composer locally or
+      via a user-configured speech endpoint (config-sourced host)
+- [ ] No always-on mic. No cloud default
+- [ ] Off by default
+
+---
+
+### TD-4702 — macOS quick-entry overlay
+**Size:** 5 · **Depends on:** TD-2902
+
+**Acceptance criteria:**
+- [ ] A global shortcut opens a small composer bound to the last
+      workspace
+- [ ] Permission copy for Accessibility if the OS requires it
+- [ ] Linux/Windows are out unless cheap
+
+---
+
+### TD-4703 — Tray and multi-window
+**Size:** 5 · **Depends on:** TD-2902
+
+**Acceptance criteria:**
+- [ ] Tray icon with running-count; Quit lives here too
+- [ ] A second window can attach to a different session
+- [ ] One daemon
+
+---
+
+### TD-4704 — Auto-updater
+**Size:** 5 · **Depends on:** TD-1303
+
+**Acceptance criteria:**
+- [ ] Opt-in check against GitHub releases (user-initiated or a
+      stated interval)
+- [ ] No telemetry. Signature story recorded (may still be unsigned)
+- [ ] Off by default until signing exists
+
+---
+
+### TD-4705 — Image / vision attachments
+**Size:** 5 · **Depends on:** TD-1709
+
+**Acceptance criteria:**
+- [ ] Images attach when the active brain/worker advertises vision
+- [ ] Capability detected, not assumed; a text-only model refuses
+      with copy
+- [ ] Caps apply. No silent downscale that hides a secret
+
+---
+
+### TD-4706 — Mermaid, LaTeX, user-bubble markdown
+**Size:** 3 · **Depends on:** TD-1603, TD-3202
+
+**Acceptance criteria:**
+- [ ] Vendored mermaid + KaTeX; no CDN
+- [ ] Failed parse falls back to the fence
+- [ ] Bundle delta in `DECISIONS.md`
+- [ ] Images in markdown wait for TD-4705
+
+---
+
+### TD-4707 — Extra notify channels
+**Size:** 3 · **Depends on:** TD-3801
+
+**Acceptance criteria:**
+- [ ] Discord and/or Telegram as the same `send` module
+- [ ] Slack remains the default
+- [ ] 20-platform gateway stays refused (spec §8)
 
 ---
 
@@ -4544,6 +5554,7 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | R7 | **Prefix caching doesn't behave as expected on a given provider** | Cost overrun | TD-305 asserts prefix stability; cache hit rate is observable; degrades to correct-but-costlier |
 | R8 | **Scope creep toward later phases** | Never ships | `AGENTS.md` §3; the kickoff prompt forbids scaffolding; ask before building anything off-milestone |
 | R9 | **Ollama embed evicts the chat model** | 20–48s stalls, "memory is broken"** | Embeddings are a sidecar (`/v1/embeddings`). Heading-match is the M4 floor. TD-2701 does not require the sidecar |
+| R10 | **A decomposed later phase gets built mid-M4** | Never ships v0.2 | Stories exist so they can be sequenced, not started. `AGENTS.md` §3 still wins. Each later milestone has an exit harness |
 
 ---
 
@@ -4559,6 +5570,14 @@ Named, sequenced, and deliberately not decomposed. Do not build these.
 | **Total v0.1** | **19** | **148** | **417** |
 | M4 Memory (v0.2) | E21–E28 | 32 | 90 |
 | **Total v0.1 + v0.2** | **27** | **180** | **507** |
+| M5 Cowork (v0.3) | E29–E32 | 15 | 51 |
+| M6 Computer use (v0.4) | E20, E33–E34 | 11 | 58 |
+| M7 Remote (v0.5) | E36–E38 | 11 | 43 |
+| M8 Local remainder (v0.6) | E39 | 4 | 19 |
+| M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
+| M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
+| Later | E47 | 7 | 34 |
+| **Total planned** | **46** | **251** | **823** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -4575,6 +5594,8 @@ debugging problem.
 
 
 ## Epic E20 — Linux support for the computer-use MCP server
+
+**Milestone: M6.** Counted in the M6 totals. Still cannot be verified off a Linux box.
 
 **Goal:** `mcp/tst-cu-mcp` runs on Linux, or says clearly and early that it cannot.
 
