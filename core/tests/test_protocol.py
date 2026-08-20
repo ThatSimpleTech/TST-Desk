@@ -202,6 +202,14 @@ class TestClientMessages:
         assert isinstance(back, ListInstructions)
         assert back.workspace_path == "/home/user/project"
 
+    def test_list_memory(self) -> None:
+        from tstd.protocol import ListMemory
+
+        msg = ListMemory(workspace_path="/home/user/project")
+        back = _roundtrip(msg)
+        assert isinstance(back, ListMemory)
+        assert back.workspace_path == "/home/user/project"
+
     def test_create_rule(self) -> None:
         from tstd.protocol import CreateRule
 
@@ -484,6 +492,23 @@ class TestDaemonEvents:
         back = _roundtrip(evt)
         assert isinstance(back, PolicyRules)
         assert back.rules == [PolicyRuleSummary(tool="shell", args="npm test", effect="auto")]
+
+    def test_memory_files(self) -> None:
+        from tstd.protocol import MemoryFileEntry, MemoryFiles
+
+        evt = MemoryFiles(
+            workspace_path="/home/user/project",
+            files=[
+                MemoryFileEntry(
+                    path="/home/user/project/.tst/memory/MEMORY.md",
+                    name="MEMORY.md",
+                    content="durable: ruff\n",
+                )
+            ],
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, MemoryFiles)
+        assert back.files[0].name == "MEMORY.md"
 
     def test_memory_proposal(self) -> None:
         from tstd.protocol import MemoryFileDiff

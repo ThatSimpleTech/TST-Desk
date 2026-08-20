@@ -250,6 +250,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_tier` | yes | Pin the active model tier for the session. |
 | `get_instruction_stack` | yes | Ask for the resolved steering stack and its token counts. |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |
+| `list_memory` | — | List a workspace's Memory files (`.tst/memory/*.md`). Human path (TD-2601). |
 | `create_rule` | — | Create a `.tst/rules/` file on the human path. Never a tool call (TD-2802). |
 | `memory_accept` | yes | Accept a distill proposal as proposed (TD-2401). |
 | `memory_edit` | yes | Accept a distill proposal with edited file bytes (TD-2401). |
@@ -301,6 +302,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |
 | `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state. |
 | `instruction_files` | connection | The workspace's Instructions column: root steering plus `.tst/rules/*` (TD-2802). |
+| `memory_files` | connection | The workspace's Memory column: `.tst/memory/*.md` with contents (TD-2601). |
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |

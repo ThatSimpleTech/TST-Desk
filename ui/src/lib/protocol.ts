@@ -145,6 +145,12 @@ export interface ListInstructions extends ClientMessage {
   workspace_path: string;
 }
 
+/** List a workspace's Memory files (TD-2601). Human path. */
+export interface ListMemory extends ClientMessage {
+  type: "list_memory";
+  workspace_path: string;
+}
+
 /** Create a `.tst/rules/` file (TD-2802). Human path, never a tool. */
 export interface CreateRule extends ClientMessage {
   type: "create_rule";
@@ -306,6 +312,7 @@ export type ClientMessageUnion =
   | SetTier
   | GetInstructionStack
   | ListInstructions
+  | ListMemory
   | CreateRule
   | MemoryAccept
   | MemoryEdit
@@ -559,6 +566,18 @@ export interface InstructionFiles extends DaemonEvent {
   created?: string | null;
 }
 
+export interface MemoryFileEntry {
+  path: string;
+  name: string;
+  content: string;
+}
+
+export interface MemoryFiles extends DaemonEvent {
+  type: "memory_files";
+  workspace_path: string;
+  files: MemoryFileEntry[];
+}
+
 export interface MemoryFileDiff {
   action: "create" | "replace" | "delete";
   path: string;
@@ -748,6 +767,7 @@ export type DaemonEventUnion =
   | TierSwitched
   | InstructionStack
   | InstructionFiles
+  | MemoryFiles
   | MemoryProposal
   | SessionList
   | PolicyRules
