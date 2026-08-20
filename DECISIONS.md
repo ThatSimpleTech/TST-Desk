@@ -6331,3 +6331,16 @@ proposal are applied; extra paths are dropped. The card sends
 **Rationale:** The protocol already defined empty-as-delete. Restricting
 to the parked paths keeps a stale or hostile client from creating
 memory files the distill step never proposed.
+
+---
+
+## 2026-08-20 — TD-2404: unanswered is reject because parking is in-process (Class B)
+
+**Decision:** A live proposal that is not accepted before shutdown is a
+reject. `_pending_memory` is not written and not loaded on the next
+daemon. The event may still be in the session log (the card can ghost);
+accept then returns `no_memory_proposal` and writes nothing.
+
+**Rationale:** Spec mechanic 3 is accept-before-write. Auto-accept on
+quit would persist memory the user never saw. Resurrection would need
+durable parking, which TD-2302 already forbade.

@@ -4257,9 +4257,9 @@ Spec §5 mechanics 3–4.
 **Size:** 2 · **Depends on:** TD-2401
 
 **Acceptance criteria:**
-- [ ] Shutdown with a live unanswered proposal writes nothing
-- [ ] It is not silently accepted
-- [ ] The next session does not resurrect a stale proposal
+- [x] Shutdown with a live unanswered proposal writes nothing
+- [x] It is not silently accepted
+- [x] The next session does not resurrect a stale proposal
 
 ---
 
