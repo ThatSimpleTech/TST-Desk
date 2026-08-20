@@ -4273,11 +4273,11 @@ Spec §5 mechanics 3–4.
 **Size:** 3 · **Depends on:** TD-2201
 
 **Acceptance criteria:**
-- [ ] Brain prompt contains the loaded memory bytes instead of
+- [x] Brain prompt contains the loaded memory bytes instead of
       `MEMORY_PLACEHOLDER` when any file loaded
-- [ ] Worker and validator prompts contain no memory slot
-- [ ] Empty load keeps the placeholder (prefix-stable "none")
-- [ ] Existing prompt tests updated, not deleted
+- [x] Worker and validator prompts contain no memory slot
+- [x] Empty load keeps the placeholder (prefix-stable "none")
+- [x] Existing prompt tests updated, not deleted
 
 ---
 
