@@ -4285,10 +4285,10 @@ Spec §5 mechanics 3–4.
 **Size:** 2 · **Depends on:** TD-2501, TD-506
 
 **Acceptance criteria:**
-- [ ] Loaded memory is token-counted with the same counter as steering
-- [ ] Lowest-ranked topic files drop until under a config cap
-- [ ] `MEMORY.md` is the last file dropped
-- [ ] The inspector (TD-2604) can name what was dropped and why
+- [x] Loaded memory is token-counted with the same counter as steering
+- [x] Lowest-ranked topic files drop until under a config cap
+- [x] `MEMORY.md` is the last file dropped
+- [x] The inspector (TD-2604) can name what was dropped and why
 
 ---
 

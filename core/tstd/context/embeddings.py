@@ -6,9 +6,10 @@ the client. A missing or loopback-down endpoint returns ``None`` so the
 caller falls back to heading-match (TD-2201) instead of failing the turn.
 
 When the sidecar answers, topic files are ranked by cosine similarity
-to the task. ``MEMORY.md`` is always kept. Heading-match is the
-tie-break and the fallback. The selected set is the top-k topics that
-fit ``embeddings.token_budget`` (TD-506 heuristic).
+to the task. ``MEMORY.md`` is always tried first. Heading-match is the
+tie-break and the fallback. The selected set is then cut to
+``embeddings.token_budget`` (TD-506 heuristic); ``MEMORY.md`` is the
+last file dropped (TD-2502).
 
 Do not call Ollama's native embed route. A measured embed on that
 scheduler evicts a resident chat model (2026-08-17).
@@ -29,6 +30,7 @@ from .memory_loader import (
     MemoryLoad,
     MemoryReason,
     discover_memory_files,
+    enforce_memory_budget,
     headings_overlap_task,
     load_memory_for_task,
 )
@@ -164,6 +166,7 @@ def apply_rank(
         used += heuristic_count(chosen.text).count
 
     taken = 0
+    dropped: list[MemoryFile] = []
     for topic, _vec in ranked:
         if taken >= top_k:
             break
@@ -171,11 +174,12 @@ def apply_rank(
         chosen = _as_file(topic, reason)
         cost = heuristic_count(chosen.text).count
         if used + cost > token_budget:
+            dropped.append(chosen)
             continue
         selected.append(chosen)
         used += cost
         taken += 1
-    return MemoryLoad(tuple(selected))
+    return MemoryLoad(tuple(selected), dropped=tuple(dropped))
 
 
 def _as_file(candidate: MemoryCandidate, reason: MemoryReason) -> MemoryFile:
@@ -197,16 +201,17 @@ async def load_memory_for_turn(
     A down sidecar cannot fail the turn.
     """
     heading = load_memory_for_task(workspace, task)
+    budget = client.token_budget if client is not None else DEFAULT_TOKEN_BUDGET
     if client is None or not client.enabled:
-        return heading
+        return enforce_memory_budget(heading, budget)
     candidates = discover_memory_files(workspace)
     topics = [item for item in candidates if not item.is_index]
     if not topics:
-        return heading
+        return enforce_memory_budget(heading, budget)
     vectors = await client.embed_or_none([task, *[item.text for item in topics]])
     if vectors is None or len(vectors) != 1 + len(topics):
-        return heading
-    return apply_rank(
+        return enforce_memory_budget(heading, budget)
+    ranked = apply_rank(
         candidates,
         task,
         vectors[0],
@@ -214,6 +219,7 @@ async def load_memory_for_turn(
         top_k=client.top_k,
         token_budget=client.token_budget,
     )
+    return enforce_memory_budget(ranked, client.token_budget)
 
 
 def _vectors(payload: object) -> list[list[float]] | None:
