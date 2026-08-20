@@ -28,6 +28,7 @@ from .policy import load_policy
 from .protocol import BoundaryUpdate as BoundaryUpdateEvent
 from .protocol import build_error
 from .session import Session, SessionRegistry
+from .session_persist import SessionPersist
 from .session_store import SessionStore
 
 log = get_logger("tstd.session_lifecycle")
@@ -85,6 +86,7 @@ async def delete_session(
     store: SessionStore,
     session_id: str,
     release: Callable[[str], None],
+    persist: SessionPersist | None = None,
 ) -> str | None:
     """Destroy a session, its runner, and its event log.
 
@@ -110,6 +112,8 @@ async def delete_session(
     release(session_id)
     await registry.remove(session_id)
     await store.remove(session_id)
+    if persist is not None:
+        persist.remove(session_id)
     log.info("session deleted", extra={"extra_fields": {"session_id": session_id}})
     return None
 

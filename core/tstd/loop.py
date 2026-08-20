@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -54,6 +55,7 @@ from .protocol import (
     SteeringReloaded,
     TierState,
     TurnComplete,
+    UserTurn,
 )
 from .protocol import CheckpointNotice as CheckpointNoticeEvent
 from .protocol import ToolCall as ToolCallEvent
@@ -458,6 +460,7 @@ async def _dispatch_and_append_results(
                 tool_call_id=r.tool_call_id,
             )
         )
+    await session.conversation_changed()
 
 
 async def agent_loop(
@@ -664,6 +667,15 @@ async def agent_loop(
         )
 
         messages.append(ChatMessage(role="user", content=user_content))
+        await session.event_log.add(
+            UserTurn(
+                session_id=session.id,
+                turn_id=str(uuid.uuid4()),
+                content=user_content,
+                seq=1,
+            )
+        )
+        await session.conversation_changed()
 
         # 1a. Open the turn's accumulators (TD-1806).  Both live out here,
         #     at the turn boundary, because a turn is what they measure: a
@@ -686,6 +698,7 @@ async def agent_loop(
             await resolve_tier_slugs(config)
         except ModelDiscoveryError as e:
             messages.append(ChatMessage(role="assistant", content=f"I encountered an error: {e}"))
+            await session.conversation_changed()
             await _emit_turn_complete(
                 session,
                 router.active_tier,
@@ -921,6 +934,7 @@ async def agent_loop(
                             content=f"I encountered an error: {e}",
                         )
                     )
+                    await session.conversation_changed()
                     await _emit_turn_complete(
                         session,
                         tier,
@@ -983,6 +997,7 @@ async def agent_loop(
                         content=f"I encountered an error: {error_msg}",
                     )
                 )
+                await session.conversation_changed()
                 await _emit_turn_complete(
                     session, tier, turn_start, tracker, failed=True, error_code=error_code
                 )
@@ -999,6 +1014,42 @@ async def agent_loop(
                 )
                 break  # exit tool-call loop, wait for next user message
 
+            if not tool_calls and not (collected_content or "").strip():
+                router.record_failure()
+                empty_msg = (
+                    "The model finished without a reply — it spent the "
+                    "turn thinking, or hit the output limit mid-thought. "
+                    "Start a new session if the context is already full."
+                )
+                messages.append(ChatMessage(role="assistant", content=empty_msg))
+                await session.conversation_changed()
+                await session.event_log.add(
+                    AssistantDelta(
+                        session_id=session.id,
+                        delta=empty_msg,
+                        seq=1,
+                    )
+                )
+                await _emit_turn_complete(
+                    session,
+                    tier,
+                    turn_start,
+                    tracker,
+                    failed=True,
+                    error_code="empty_completion",
+                )
+                log.warning(
+                    "turn failed: empty completion",
+                    extra={
+                        "extra_fields": {
+                            "session_id": session.id,
+                            "tier": tier,
+                            "turn": router.turn_count,
+                        }
+                    },
+                )
+                break
+
             # 2e. Record success
             router.record_success()
 
@@ -1014,6 +1065,7 @@ async def agent_loop(
                         tool_calls=provider_tool_calls,
                     )
                 )
+                await session.conversation_changed()
 
                 # 2g. Execute tool calls via dispatcher (if available)
                 if tool_dispatcher is not None:
@@ -1032,6 +1084,7 @@ async def agent_loop(
                 # Without a dispatcher, fall through to emit turn_complete
             else:
                 messages.append(ChatMessage(role="assistant", content=collected_content or ""))
+                await session.conversation_changed()
 
             # 2h. No tool calls (or no dispatcher) — turn is complete
             await _emit_turn_complete(session, tier, turn_start, tracker)

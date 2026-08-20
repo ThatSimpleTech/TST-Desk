@@ -63,6 +63,36 @@ function sealInFlightAssistant(state: ChatState): void {
 export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): void {
   const { state, wait } = ctx;
   switch (event.type) {
+    case "user_turn": {
+      if (event.session_id !== state.sessionId) return;
+      const already = state.messages.find(
+        (m) => m.role === "user" && m.turnId === event.turn_id,
+      );
+      if (already !== undefined) return;
+      const last = state.messages[state.messages.length - 1];
+      if (
+        last !== undefined &&
+        last.role === "user" &&
+        last.turnId === undefined &&
+        last.text === event.content
+      ) {
+        last.turnId = event.turn_id;
+        return;
+      }
+      const userIndex = state.messages.filter((m) => m.role === "user").length;
+      state.messages.push({
+        id: ctx.allocateId(),
+        role: "user",
+        text: event.content,
+        complete: true,
+        at: Date.now(),
+        userIndex,
+        siblingIndex: 0,
+        siblingCount: 1,
+        turnId: event.turn_id,
+      });
+      return;
+    }
     case "assistant_reasoning": {
       if (event.session_id !== state.sessionId) return;
       // Reasoning is a turn in flight on exactly the terms a content

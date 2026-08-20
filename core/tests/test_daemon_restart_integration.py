@@ -2,13 +2,10 @@
 
 Spawns the real ``tstd`` daemon as a child process, opens a session over
 the WebSocket, SIGKILLs the daemon (no graceful shutdown — the port file is
-left stale), then starts a fresh daemon on the same data directory and
-asserts the session list comes back with the same session, marked
-``interrupted``.
+left stale), then starts a fresh daemon on the same data directory.
 
-This is the manual criterion "daemon crash is detected … recovered by
-restart with the session list intact", checked at the daemon+protocol level
-where a test can observe it without a real UI.
+A session that wrote a conversation snapshot comes back ``running`` — the
+same chat, same id. A session with no snapshot stays ``interrupted``.
 """
 
 from __future__ import annotations
@@ -16,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -97,6 +95,13 @@ async def _open_workspace(ws, path: str) -> str:
     return evt["session_id"]
 
 
+async def _new_session(ws, session_id: str) -> str:
+    await ws.send(json.dumps({"type": "new_session", "session_id": session_id}))
+    evt = json.loads(await ws.recv())
+    assert evt["type"] == "session_state"
+    return evt["session_id"]
+
+
 async def _list_sessions(ws) -> list[dict]:
     await ws.send(json.dumps({"type": "list_sessions"}))
     evt = json.loads(await ws.recv())
@@ -117,7 +122,9 @@ class TestDaemonRestartIntegration:
                 info = await _wait_for_port_file(create_port_file_path(data_dir), daemon.pid)
                 ws = await _connect(info)
                 (data_dir / "workspace").mkdir()
-                session_id = await _open_workspace(ws, str(data_dir / "workspace"))
+                live_id = await _open_workspace(ws, str(data_dir / "workspace"))
+                tomb_id = await _new_session(ws, live_id)
+                shutil.rmtree(data_dir / "sessions" / tomb_id)
                 await ws.close()
                 assert sessions_file.exists(), "session should be persisted before crash"
                 scenario_ran = True
@@ -173,11 +180,12 @@ class TestDaemonRestartIntegration:
                     else:
                         daemon2.wait(timeout=5)
 
-            # 3. The session survived the crash as an interrupted tombstone.
-            assert len(sessions) == 1
-            assert sessions[0]["session_id"] == session_id
-            assert sessions[0]["state"] == "interrupted"
-            assert sessions[0]["workspace_path"] == str(data_dir / "workspace")
+            # 3. Snapshot on disk → same chat, running. No snapshot → tombstone.
+            by_id = {row["session_id"]: row for row in sessions}
+            assert set(by_id) == {live_id, tomb_id}
+            assert by_id[live_id]["state"] == "running"
+            assert by_id[tomb_id]["state"] == "interrupted"
+            assert by_id[live_id]["workspace_path"] == str(data_dir / "workspace")
 
             # Clean shutdown (second daemon: SIGTERM on POSIX, the protocol
             # shutdown message on Windows) removes the port file.

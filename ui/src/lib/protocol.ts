@@ -339,6 +339,13 @@ export interface ConversationReset extends DaemonEvent {
   content: string;
 }
 
+export interface UserTurn extends DaemonEvent {
+  type: "user_turn";
+  session_id: string;
+  turn_id: string;
+  content: string;
+}
+
 export interface AssistantDelta extends DaemonEvent {
   type: "assistant_delta";
   session_id: string;
@@ -669,6 +676,7 @@ export type DaemonEventUnion =
   | Ready
   | SessionState
   | ConversationReset
+  | UserTurn
   | AssistantDelta
   | AssistantReasoning
   | ToolCall

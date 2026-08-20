@@ -60,6 +60,9 @@ export interface ChatMessage {
   userIndex?: number;
   siblingIndex?: number;
   siblingCount?: number;
+  /** Daemon-issued id for this user turn. Stamps a local echo so replay
+   *  of `user_turn` does not duplicate the row. */
+  turnId?: string;
 }
 
 /** One tool call on an assistant row (TD-1902). `status` is unset while
