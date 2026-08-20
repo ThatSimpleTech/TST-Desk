@@ -6287,3 +6287,16 @@ resurrected after restart. A turn in flight refuses End with
 proposal and then dying is why TD-2404 treats unanswered as reject.
 End session is the path that can wait for the card. Auto-accept on
 quit would silently persist memory.
+
+---
+
+## 2026-08-20 — TD-2303: accept writes through the memory store (Class B)
+
+**Decision:** `memory_accept` applies the parked proposal with
+`replace_memory_file` / unlink and `MemoryCommitter`. It does not
+enter the dispatcher, `fs_write`, or the classifier. `memory_edit`
+stays a `bad_request` until the card (TD-2403). Reject clears the
+parked proposal and writes nothing.
+
+**Rationale:** Spec §5 and the story both say the model that distilled
+is not the writer. The store already owns the cap and the HEAD commit.
