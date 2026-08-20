@@ -254,6 +254,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `memory_accept` | yes | Accept a distill proposal as proposed (TD-2401). |
 | `memory_edit` | yes | Accept a distill proposal with edited file bytes (TD-2401). |
 | `memory_reject` | yes | Reject a distill proposal. Writes nothing. |
+| `end_session` | yes | Run distill for this session (TD-2302). Not a kill. |
 | `shutdown` | — | Ask the daemon to shut down cleanly. Sent by the supervising host. |
 | `list_sessions` | — | Ask for the current session list. |
 | `new_session` | yes | Create a fresh session in an existing session's workspace. |

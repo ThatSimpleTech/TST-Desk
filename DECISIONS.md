@@ -6269,3 +6269,21 @@ bump.
 **Rationale:** The card (TD-2402) should render from the event, not a
 second read. Accept/edit/reject need a proposal id so a stale click
 cannot write the wrong bytes. Empty content as delete matches TD-2403.
+
+---
+
+## 2026-08-20 — TD-2302: distill on quit and End session; never auto-write (Class B)
+
+**Decision:** `end_session` is a client verb that runs the same
+`distill_if_due` path graceful `_shutdown` uses. The command palette
+exposes it. A session with no successful `turn_complete` is skipped.
+Unchanged memory emits no `memory_proposal`. The proposal is held in
+process (`Daemon._pending_memory`); it is not written and not
+resurrected after restart. A turn in flight refuses End with
+`session_busy` and is skipped on quit. Crash / force-quit never enter
+`_shutdown`, so they write nothing.
+
+**Rationale:** Spec mechanic 3 is accept-before-write. Quit generating a
+proposal and then dying is why TD-2404 treats unanswered as reject.
+End session is the path that can wait for the card. Auto-accept on
+quit would silently persist memory.

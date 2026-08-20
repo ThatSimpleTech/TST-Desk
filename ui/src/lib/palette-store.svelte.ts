@@ -16,6 +16,8 @@ import {
 	type PaletteCommand,
 	type PaletteEntry,
 } from "./palette";
+import { chat } from "./chat-store.svelte.js";
+import { endSession } from "./session-actions.svelte.js";
 import { openDecisions } from "./decisions.svelte.js";
 import { runDoctor } from "./doctor.svelte.js";
 import { openSettings, setTheme, settings } from "./settings.svelte.js";
@@ -112,6 +114,9 @@ function dispatch(command: PaletteCommand): void {
 			// "system" is a third state, not a third stop on the toggle: from
 			// there the deliberate choice is dark, and the next press is light.
 			setTheme(settings.theme === "dark" ? "light" : "dark");
+			return;
+		case "end-session":
+			if (chat.sessionId !== null) endSession(chat.sessionId);
 			return;
 	}
 }

@@ -29,6 +29,7 @@ from tstd.protocol import (
     DeleteSession,
     Deny,
     Detach,
+    EndSession,
     Error,
     ExportUsage,
     GetInstructionStack,
@@ -229,6 +230,11 @@ class TestClientMessages:
         back = _roundtrip(MemoryReject(session_id="sess-1", proposal_id="mp-1"))
         assert isinstance(back, MemoryReject)
         assert back.proposal_id == "mp-1"
+
+    def test_end_session(self) -> None:
+        back = _roundtrip(EndSession(session_id="sess-1"))
+        assert isinstance(back, EndSession)
+        assert back.session_id == "sess-1"
 
     def test_new_session(self) -> None:
         msg = NewSession(session_id="sess-1")

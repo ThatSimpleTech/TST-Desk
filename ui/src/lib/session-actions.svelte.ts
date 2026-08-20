@@ -39,6 +39,13 @@ export function toggleRowMenu(sessionId: string): void {
  *  Offered in every state, including mid-turn: the daemon honours it without
  *  cancelling the turn, which is exactly why Archive is the answer the
  *  Delete/Move refusal points at. */
+/** Run distill for a session (TD-2302). Not a kill. */
+export function endSession(sessionId: string): boolean {
+	const sent = sendToDaemon({ type: "end_session", session_id: sessionId });
+	if (sent) closeRowMenus();
+	return sent;
+}
+
 export function setArchived(sessionId: string, archived: boolean): boolean {
 	const sent = sendToDaemon({ type: "archive_session", session_id: sessionId, archived });
 	if (sent) closeRowMenus();

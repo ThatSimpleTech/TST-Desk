@@ -60,6 +60,7 @@ from .keychain import (
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .memory_store import scaffold_workspace_memory
+from .memory_trigger import DistillEmit, completed_turn_count, distill_if_due
 from .policy import (
     add_rule,
     load_approved_imports,
@@ -86,6 +87,7 @@ from .protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    EndSession,
     ExportUsage,
     ForkFrom,
     GetInstructionStack,
@@ -367,6 +369,7 @@ class Daemon:
         self.config = cached_config()
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
+        self._pending_memory: dict[str, DistillEmit] = {}
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
         self._audit_writer: AuditWriter | None = None
@@ -771,8 +774,9 @@ class Daemon:
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:
-        """Graceful shutdown: cancel tasks, close sockets, flush state."""
+        """Graceful shutdown: distill, cancel tasks, close sockets, flush."""
         log.info("shutting down")
+        await self._distill_live_sessions()
 
         # Stop the WebSocket server (closes clients and removes the port file)
         await self.ws_server.stop()
@@ -1333,6 +1337,22 @@ class Daemon:
         if isinstance(msg, ExportUsage):
             return await self._usage_export(msg.format)
 
+        if isinstance(msg, EndSession):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            if found.turn_in_flight:
+                return build_error(
+                    "session_busy",
+                    "End session waits until the current turn finishes.",
+                    session_id=msg.session_id,
+                )
+            await self._run_distill(found)
+            return None
+
         if isinstance(msg, MemoryAccept | MemoryEdit | MemoryReject):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -1378,6 +1398,32 @@ class Daemon:
                 }
             },
         )
+
+    async def _run_distill(self, session: Session) -> None:
+        """Park a proposal and emit ``memory_proposal`` when memory changed."""
+        if session.turn_in_flight or completed_turn_count(session) < 1:
+            return
+        try:
+            provider = await self._ensure_provider()
+        except Exception as exc:
+            log.warning(
+                "distill skipped; provider unavailable",
+                extra={"extra_fields": {"session_id": session.id, "error": str(exc)}},
+            )
+            return
+        emitted = await distill_if_due(session, provider, self.config)
+        if emitted is None:
+            return
+        self._pending_memory[session.id] = emitted
+        await session.event_log.add(emitted.event)
+
+    async def _distill_live_sessions(self) -> None:
+        """Graceful quit: distill every live idle session that had a turn."""
+        sessions = await self.session_registry.list_sessions()
+        for session in sessions:
+            if session.state in TERMINAL_STATES:
+                continue
+            await self._run_distill(session)
 
     async def _attach_session_runtime(self, sess: Session) -> None:
         """Boundary, tools, persist hooks, and a running loop for *sess*."""

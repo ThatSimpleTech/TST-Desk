@@ -38,6 +38,7 @@ from tstd.protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    EndSession,
     Error,
     ExportUsage,
     ForkFrom,
@@ -132,6 +133,7 @@ FIXTURES = {
         files=[MemoryFileEdit(path=".tst/memory/MEMORY.md", content="durable: ruff\n")],
     ),
     "memory_reject": MemoryReject(session_id="sess-1", proposal_id="mp-1"),
+    "end_session": EndSession(session_id="sess-1"),
     "shutdown": Shutdown(),
     "list_sessions": ListSessions(),
     # Session lifecycle (TD-1715): archive/restore, delete, move to project.

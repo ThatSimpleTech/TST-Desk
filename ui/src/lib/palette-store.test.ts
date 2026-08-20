@@ -149,6 +149,7 @@ describe("entries", () => {
 		expect(ids).toContain("action:show-stack");
 		expect(ids).toContain("action:open-settings");
 		expect(ids).toContain("action:toggle-theme");
+		expect(ids).toContain("action:end-session");
 		expect(ids).toContain("session:s-newest");
 	});
 
