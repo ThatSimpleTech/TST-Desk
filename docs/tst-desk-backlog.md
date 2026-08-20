@@ -4116,12 +4116,12 @@ remembers.
 **Size:** 3 · **Depends on:** TD-2201
 
 **Acceptance criteria:**
-- [ ] An embeddings caller speaks OpenAI `POST /v1/embeddings`
-- [ ] Endpoint and model slug come from `config.yaml` (`search`-shaped:
+- [x] An embeddings caller speaks OpenAI `POST /v1/embeddings`
+- [x] Endpoint and model slug come from `config.yaml` (`search`-shaped:
       no host in Python)
-- [ ] A missing or loopback-down endpoint is a fallback to TD-2201, not a
+- [x] A missing or loopback-down endpoint is a fallback to TD-2201, not a
       failed turn
-- [ ] `test_outbound_hosts.py` names the new module; destination traces to
+- [x] `test_outbound_hosts.py` names the new module; destination traces to
       config
 
 **Notes:** do **not** call Ollama `/api/embed`. The 2026-08-17 measurement

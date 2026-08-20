@@ -6155,3 +6155,18 @@ on purpose — this is the floor when the sidecar is down.
 **Alternative rejected:** Loading every `*.md` and splitting on H1/H2.
 That is "everything, every time" with extra steps.
 
+---
+
+## 2026-08-20 — TD-2202: embeddings are search-shaped; down is heading-match (Class B)
+
+**Decision:** `embeddings.base_url` / `model` / `timeout_seconds` live in
+`config.yaml` next to `search`. The client POSTs `{base_url}/embeddings`
+(OpenAI). Empty `base_url` or `model` disables. A connect/HTTP/parse
+failure returns `None`; the turn uses TD-2201. Default shipped URL is
+`http://127.0.0.1:8080/v1` with a 2s timeout. Ranking is TD-2203.
+
+**Rationale:** The 2026-08-17 measurement forbids sharing Ollama's
+scheduler. Putting the host in Python would fail TD-1410. Failing the
+turn when the sidecar is down would make memory worse than heading-match
+alone. A short timeout keeps a hung loopback from stalling the brain.
+

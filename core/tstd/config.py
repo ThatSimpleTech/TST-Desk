@@ -149,12 +149,26 @@ class SearchConfig(BaseModel):
     fetch_max_bytes: int = Field(default=200_000, ge=1)
 
 
+class EmbeddingsConfig(BaseModel):
+    """Local embeddings sidecar (TD-2202).
+
+    ``base_url`` is the only host the embeddings client may reach. Empty
+    disables. The client speaks OpenAI ``POST /v1/embeddings``, never
+    Ollama's native embed route.
+    """
+
+    base_url: str = ""
+    model: str = ""
+    timeout_seconds: float = Field(default=2.0, gt=0)
+
+
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
     presets: dict[str, Preset]
     active_preset: str = DEFAULT_PRESET
     search: SearchConfig = Field(default_factory=SearchConfig)
+    embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -233,12 +247,19 @@ def load_config(path: Path | None = None) -> ModelConfig:
     """
     config_path = ensure_user_config(path)
     data = _load_yaml(config_path)
-    # A user copy from before search existed has no key. Fill from the
-    # shipped file so the tool has a destination without rewriting theirs.
-    if "search" not in data:
-        shipped = yaml.safe_load(default_config_yaml())
-        if isinstance(shipped, dict) and isinstance(shipped.get("search"), dict):
-            data["search"] = shipped["search"]
+    # A user copy from before search / embeddings existed has no key.
+    # Fill from the shipped file so the destination exists without
+    # rewriting theirs.
+    shipped: dict[str, Any] | None = None
+    for key in ("search", "embeddings"):
+        if key in data:
+            continue
+        if shipped is None:
+            loaded = yaml.safe_load(default_config_yaml())
+            shipped = loaded if isinstance(loaded, dict) else {}
+        value = shipped.get(key)
+        if isinstance(value, dict):
+            data[key] = value
 
     try:
         config = ModelConfig.model_validate(data)

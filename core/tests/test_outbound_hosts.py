@@ -54,7 +54,14 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
-from tstd.config import ModelConfig, Preset, TierConfig, cached_config, is_loopback_url
+from tstd.config import (
+    ModelConfig,
+    Preset,
+    TierConfig,
+    cached_config,
+    is_loopback_url,
+)
+from tstd.context.embeddings import EmbeddingsClient
 from tstd.daemon import Daemon
 from tstd.discovery import resolve_tier_slugs
 from tstd.provider import ChatCompletionRequest, ChatMessage, ProviderClient, RetryConfig
@@ -232,6 +239,7 @@ _OUTBOUND_CAPABLE = {
     "benchmarks.py": "the benchmark client, likewise loopback",
     "e2e_live.py": "the opt-in live leg, pointed at an endpoint the developer names",
     "tools/web_search.py": "web_search; destination is search.base_url from config",
+    "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
 }
 
 
@@ -320,6 +328,12 @@ class TransportRecorder:
         path = request.url.path
         if path.endswith("/models"):
             return httpx.Response(200, json=_MODELS_BODY, request=request)
+        if path.endswith("/embeddings"):
+            return httpx.Response(
+                200,
+                json={"data": [{"embedding": [0.1, 0.2], "index": 0}]},
+                request=request,
+            )
         if request.headers.get("accept") == "text/event-stream":
             return httpx.Response(
                 200,
@@ -427,6 +441,21 @@ async def test_every_outbound_destination_traces_to_config(
         f"{REMOTE_ENDPOINT}/chat/completions",
         f"{LOCAL_ENDPOINT}/models",
     }
+
+
+async def test_embeddings_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """The embeddings client lands where embeddings.base_url points."""
+    client = EmbeddingsClient(
+        base_url="http://127.0.0.1:64111/v1",
+        model="nomic-embed-text",
+        timeout_seconds=1,
+    )
+    vectors = await client.embed_or_none(["hello"])
+    assert vectors == [[0.1, 0.2]]
+    assert recorder.origins() == {"http://127.0.0.1:64111"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64111/v1/embeddings"}
 
 
 async def test_moving_the_configured_endpoint_moves_every_destination(

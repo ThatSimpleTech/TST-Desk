@@ -37,7 +37,7 @@ from .autonomy import (
 from .compaction import maybe_compact
 from .config import ConfigError, ModelConfig, ModelDiscoveryError
 from .context import PromptAssembler
-from .context.memory_loader import load_memory_for_task
+from .context.embeddings import EmbeddingsClient, load_memory_for_turn
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
@@ -502,6 +502,7 @@ async def agent_loop(
     """
     # ── Conversation state ──────────────────────────────────────────
     assembler = prompt_assembler or PromptAssembler(session.workspace_path)
+    embeddings_client = EmbeddingsClient.from_config(config)
 
     # External-import approvals (TD-505): approved paths are durable per
     # workspace; denied paths are session-scoped and not re-prompted.  A
@@ -736,10 +737,10 @@ async def agent_loop(
             while True:
                 memory_block: str | None = None
                 if tier == "brain":
-                    loaded = await asyncio.to_thread(
-                        load_memory_for_task,
+                    loaded = await load_memory_for_turn(
                         session.workspace_path,
                         user_content,
+                        embeddings_client,
                     )
                     memory_block = loaded.block
                 assembled = await assembler.assemble(
