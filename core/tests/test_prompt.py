@@ -31,8 +31,10 @@ from tstd.context import (
     WorkspaceManifest,
     workspace_root_block,
 )
+from tstd.context.memory_loader import load_memory_for_task
 from tstd.context.prompt import AssembledPrompt
 from tstd.context.tokens import heuristic_count
+from tstd.memory_store import memory_dir
 
 # ── Fixture helpers ──────────────────────────────────────────────────────
 
@@ -158,6 +160,22 @@ class TestMemorySlot:
         assert MEMORY_PLACEHOLDER not in validator.text
         assert "durable: ruff" not in worker.text
         assert "durable: ruff" not in validator.text
+
+    def test_swapping_memory_md_keeps_prefix_hash(self, tmp_path: Path) -> None:
+        """TD-2503: memory sits after the cache prefix."""
+        home, ws = _build_workspace(tmp_path, root_file="root: steering")
+        mem = memory_dir(ws)
+        _write(mem / "MEMORY.md", "alpha-memory\n")
+        assembler = PromptAssembler(ws, home_dir=home)
+        first = assembler.assemble_sync("brain", memory=load_memory_for_task(ws, "x").block)
+        _write(mem / "MEMORY.md", "beta-memory\n")
+        second = assembler.assemble_sync("brain", memory=load_memory_for_task(ws, "x").block)
+        assert first.prefix_hash == second.prefix_hash
+        assert first.prefix == second.prefix
+        assert first.text != second.text
+        assert "alpha-memory" in first.text
+        assert "beta-memory" in second.text
+        assert "alpha-memory" not in second.text
 
 
 # ── Prefix stability ────────────────────────────────────────────────────

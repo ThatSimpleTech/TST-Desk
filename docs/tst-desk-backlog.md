@@ -4296,10 +4296,10 @@ Spec §5 mechanics 3–4.
 **Size:** 2 · **Depends on:** TD-2501, TD-1811
 
 **Acceptance criteria:**
-- [ ] Changing memory files does not change the prefix hash
+- [x] Changing memory files does not change the prefix hash
       (base + root + steering)
-- [ ] The memory bytes are present in the full prompt
-- [ ] A regression test swaps `MEMORY.md` between two assembles and
+- [x] The memory bytes are present in the full prompt
+- [x] A regression test swaps `MEMORY.md` between two assembles and
       asserts prefix hash equality, full-text inequality
 
 **Notes:** already the assembler's shape. This story is the pin, so a
