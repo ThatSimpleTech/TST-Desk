@@ -4187,11 +4187,11 @@ path that writes.
 **Size:** 3 · **Depends on:** TD-2301
 
 **Acceptance criteria:**
-- [ ] Graceful app quit runs distill for every live session that had at
+- [x] Graceful app quit runs distill for every live session that had at
       least one completed turn
-- [ ] An explicit End session action runs the same path
-- [ ] A crash, a killed sidecar, or a force-quit writes nothing
-- [ ] Distill is skipped when memory is unchanged (no proposal event)
+- [x] An explicit End session action runs the same path
+- [x] A crash, a killed sidecar, or a force-quit writes nothing
+- [x] Distill is skipped when memory is unchanged (no proposal event)
 
 **Notes:** v0.1 quit is graceful (TD-1002). Do not wait for detached
 sessions (v0.3). End session can be a rail action; if the rail is too

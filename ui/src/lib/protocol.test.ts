@@ -25,6 +25,7 @@ import type {
   GetInstructionStack,
   ListInstructions,
   CreateRule,
+  EndSession,
   InstructionFiles,
   MemoryAccept,
   MemoryEdit,
@@ -236,6 +237,12 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.memory_reject as MemoryReject;
     expect(m.type).toBe("memory_reject");
     expect(isString(m.proposal_id)).toBe(true);
+  });
+
+  it("end_session", () => {
+    const m = fixtures.end_session as EndSession;
+    expect(m.type).toBe("end_session");
+    expect(isString(m.session_id)).toBe(true);
   });
 
   it("shutdown", () => {
@@ -685,7 +692,7 @@ describe("All fixtures have required shape", () => {
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "list_instructions", "create_rule",
-      "memory_accept", "memory_edit", "memory_reject",
+      "memory_accept", "memory_edit", "memory_reject", "end_session",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
       "run_diagnostics",
       "get_usage", "export_usage",

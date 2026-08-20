@@ -133,6 +133,10 @@
     "session_id": "sess-1",
     "proposal_id": "mp-1"
   },
+  "end_session": {
+    "type": "end_session",
+    "session_id": "sess-1"
+  },
   "shutdown": {
     "type": "shutdown"
   },

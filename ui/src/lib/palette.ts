@@ -18,7 +18,8 @@ export type PaletteCommand =
 	| { kind: "run-doctor" }
 	| { kind: "show-stack" }
 	| { kind: "open-settings" }
-	| { kind: "toggle-theme" };
+	| { kind: "toggle-theme" }
+	| { kind: "end-session" };
 
 export interface PaletteEntry {
 	/** Stable key for the rendered list. */
@@ -82,6 +83,14 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 		icon: "moon",
 		keywords: "appearance dark light",
 		command: { kind: "toggle-theme" },
+	},
+	{
+		id: "action:end-session",
+		title: "End session",
+		subtitle: "Distill this session into memory",
+		icon: "check",
+		keywords: "distill quit memory close",
+		command: { kind: "end-session" },
 	},
 ];
 

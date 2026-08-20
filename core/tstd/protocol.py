@@ -321,6 +321,13 @@ class MemoryReject(ClientMessage):
     proposal_id: str
 
 
+class EndSession(ClientMessage):
+    """Run distill for one session (TD-2302). Not a kill."""
+
+    type: Literal["end_session"] = "end_session"
+    session_id: str
+
+
 class Shutdown(ClientMessage):
     """Ask the daemon to shut down cleanly (sent by the supervising host)."""
 
@@ -1143,6 +1150,7 @@ ClientMessageT = Annotated[
     | MemoryAccept
     | MemoryEdit
     | MemoryReject
+    | EndSession
     | Shutdown
     | ListSessions
     | NewSession
@@ -1225,6 +1233,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "memory_accept",
         "memory_edit",
         "memory_reject",
+        "end_session",
         "shutdown",
         "list_sessions",
         "new_session",

@@ -179,6 +179,12 @@ export interface MemoryReject extends ClientMessage {
   proposal_id: string;
 }
 
+/** Run distill for this session (TD-2302). Not a kill. */
+export interface EndSession extends ClientMessage {
+  type: "end_session";
+  session_id: string;
+}
+
 export interface Shutdown extends ClientMessage {
   type: "shutdown";
 }
@@ -304,6 +310,7 @@ export type ClientMessageUnion =
   | MemoryAccept
   | MemoryEdit
   | MemoryReject
+  | EndSession
   | Shutdown
   | ListSessions
   | NewSession
