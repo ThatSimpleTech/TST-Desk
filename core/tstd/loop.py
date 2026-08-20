@@ -37,6 +37,7 @@ from .autonomy import (
 from .compaction import maybe_compact
 from .config import ConfigError, ModelConfig, ModelDiscoveryError
 from .context import PromptAssembler
+from .context.memory_loader import load_memory_for_task
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
@@ -733,10 +734,19 @@ async def agent_loop(
             #     because approving one file can reveal nested external
             #     imports (bounded by TD-504's max depth 4).
             while True:
+                memory_block: str | None = None
+                if tier == "brain":
+                    loaded = await asyncio.to_thread(
+                        load_memory_for_task,
+                        session.workspace_path,
+                        user_content,
+                    )
+                    memory_block = loaded.block
                 assembled = await assembler.assemble(
                     tier,
                     task=user_content if tier == "worker" else None,
                     matched_paths=set(session.touched_paths),
+                    memory=memory_block,
                     approved_imports=frozenset(approved_imports),
                     denied_imports=frozenset(denied_imports),
                 )

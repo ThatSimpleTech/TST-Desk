@@ -6132,3 +6132,26 @@ planting it twice would fight their YAML. Memory templates are empty
 HTML comments and must appear in workspaces that were opened before
 this story. `new_session` is the path those workspaces take. The write
 is still per-file and never overwrites.
+
+---
+
+## 2026-08-20 — TD-2201: heading-match is file-level token overlap (Class B)
+
+**Decision:** The loader selects whole files, not heading chunks.
+`MEMORY.md` is always included when it exists. Every other
+`.tst/memory/*.md` is included only when the alphanumeric tokens of its
+ATX headings (fence-excluded, lowercased, length ≥ 3, minus a small
+stopword list) intersect the tokens of the user task. Missing or empty
+`.tst/memory/` returns nothing so the brain keeps `MEMORY_PLACEHOLDER`.
+Symlinks that resolve outside the memory directory are skipped.
+Selection is sorted: index first, then remaining names.
+
+**Rationale:** Spec §5 is "MEMORY.md plus any topic file whose heading
+matches the task," not a chunker. Chunking would teach later rankers
+(TD-2203) the wrong grain. Short tokens and stopwords are dropped so
+"the / a / to" cannot match every file. Embeddings stay off this path
+on purpose — this is the floor when the sidecar is down.
+
+**Alternative rejected:** Loading every `*.md` and splitting on H1/H2.
+That is "everything, every time" with extra steps.
+

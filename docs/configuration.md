@@ -571,6 +571,12 @@ instruction stack never reads this directory. Standing rules stay in `AGENTS.md`
 The templates are HTML comments so a freshly opened workspace has no facts a later loader
 could treat as memory. Replace the comments with real notes, or leave them for distill.
 
+At the first brain turn the heading-match loader includes `MEMORY.md` (when that file
+exists) and any other `.tst/memory/*.md` whose heading tokens overlap the user task.
+No embeddings. An empty or missing directory loads nothing and the prompt keeps the
+memory placeholder. Distill and embeddings may refine this later; they do not replace
+this floor.
+
 A file at `memory.max_lines` (default 200, see §4.8) is distilled, not appended forever. The
 agent tools refuse a write that would go over, or that would replace a file already at the cap.
 
