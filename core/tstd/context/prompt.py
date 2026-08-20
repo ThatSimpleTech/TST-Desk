@@ -240,8 +240,8 @@ class PromptAssembler:
         if tier == "brain":
             manifest_text = self._manifest.build(self._workspace).text
 
-        # Brain always occupies the memory slot — a placeholder until
-        # the memory module lands (spec §5).
+        # Brain always occupies the memory slot. Empty load keeps the
+        # placeholder (TD-2201); a selected set replaces it.
         memory_block: str | None
         if tier == "brain":
             memory_block = memory if memory is not None else MEMORY_PLACEHOLDER

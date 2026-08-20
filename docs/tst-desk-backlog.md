@@ -4101,11 +4101,11 @@ history. Do not reuse `Checkpointer` for this.
 **Size:** 3 · **Depends on:** TD-2101
 
 **Acceptance criteria:**
-- [ ] Session start (or first brain turn) loads `MEMORY.md` plus any topic
+- [x] Session start (or first brain turn) loads `MEMORY.md` plus any topic
       file whose heading tokens overlap the user task
-- [ ] No embeddings required — this path is the floor
-- [ ] Empty memory directory loads nothing; the placeholder stays
-- [ ] Deterministic for identical files + task (property test)
+- [x] No embeddings required — this path is the floor
+- [x] Empty memory directory loads nothing; the placeholder stays
+- [x] Deterministic for identical files + task (property test)
 
 **Notes:** ship this before the sidecar. A session with no embedder still
 remembers.

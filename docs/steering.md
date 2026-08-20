@@ -896,9 +896,11 @@ A freshly opened workspace gets three commented templates and nothing else:
 ```
 
 You (or distill) may add `<topic>.md` files beside those. The scaffold never invents topic
-names. Frontmatter in a memory file is not an `appliesTo` rule. The agent may write this
-tree (Class A); it is still refused on `AGENTS.md`, `CLAUDE.md`, and `.tst/rules/**`.
-Layout and git tracking are in [`configuration.md` §5](configuration.md).
+names. Frontmatter in a memory file is not an `appliesTo` rule. The first brain turn
+loads `MEMORY.md` plus topic files whose headings overlap the task — still not as
+steering. The agent may write this tree (Class A); it is still refused on `AGENTS.md`,
+`CLAUDE.md`, and `.tst/rules/**`. Layout and git tracking are in
+[`configuration.md` §5](configuration.md).
 
 ---
 
