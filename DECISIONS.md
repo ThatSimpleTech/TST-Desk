@@ -6300,3 +6300,21 @@ parked proposal and writes nothing.
 
 **Rationale:** Spec §5 and the story both say the model that distilled
 is not the writer. The store already owns the cap and the HEAD commit.
+
+---
+
+## 2026-08-20 — TD-2402: proposal card binds like approvals (Class B)
+
+**Decision:** One card, latest `memory_proposal` for the bound session.
+Bind-and-clear matches TD-1014. Accept/reject dismiss on send; the
+daemon already writes through the store (TD-2303). There is no
+resolving event in the log. A replayed proposal after accept is a
+ghost until the user clicks and the daemon answers
+`no_memory_proposal`, which clears the card.
+
+**Rationale:** Approvals leave via `tool_result`. Distill has no
+equivalent without a protocol bump. Inferring "already written" from
+disk would invent truth the daemon did not send.
+
+**Alternative rejected:** Adding `memory_proposal_resolved`. That is a
+six-place protocol change for a card that already dismisses on send.
