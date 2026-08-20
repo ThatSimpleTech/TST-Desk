@@ -512,6 +512,21 @@ class ConversationReset(DaemonEvent):
     content: str
 
 
+class UserTurn(DaemonEvent):
+    """A user message the loop has accepted (needed for honest replay).
+
+    The client echoes locally on send. This event exists so a restarted
+    daemon can replay the user's side of the transcript without inventing
+    it. ``turn_id`` lets a live echo and the replayed event be the same
+    row rather than a duplicate.
+    """
+
+    type: Literal["user_turn"] = "user_turn"
+    session_id: str
+    turn_id: str
+    content: str
+
+
 class AssistantDelta(DaemonEvent):
     """A streamed chunk of assistant output."""
 
@@ -1096,6 +1111,7 @@ DaemonEventT = Annotated[
     Ready
     | SessionState
     | ConversationReset
+    | UserTurn
     | AssistantDelta
     | AssistantReasoning
     | ToolCall
@@ -1173,6 +1189,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "ready",
         "session_state",
         "conversation_reset",
+        "user_turn",
         "assistant_delta",
         "assistant_reasoning",
         "tool_call",

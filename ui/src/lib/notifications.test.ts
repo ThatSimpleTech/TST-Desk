@@ -134,6 +134,8 @@ describe("error copy", () => {
   it("an interrupted session is a tombstone banner — it cannot resume", () => {
     const spec = sessionStateCopy("interrupted", null);
     expect(spec?.severity).toBe("banner");
+    expect(spec?.title).toMatch(/can.?t be continued/i);
+    expect(spec?.body).toMatch(/no saved model conversation/i);
     expect(spec?.body).toMatch(/new session/i);
   });
 });
@@ -234,7 +236,7 @@ describe("notification routing", () => {
   it("an interrupted session raises the tombstone banner", () => {
     notifyEvent(sessionState("interrupted"));
     expect(banners).toHaveLength(1);
-    expect(banners[0].title).toBe("Session can’t be resumed");
+    expect(banners[0].title).toBe("Session can’t be continued");
   });
 
   it("dismiss removes a banner immediately", () => {

@@ -146,8 +146,8 @@ export function sessionStateCopy(state: string, reason: string | null): NoticeSp
 		// banner must say so rather than go quiet.
 		return {
 			severity: "banner",
-			title: "Session can’t be resumed",
-			body: "The daemon stopped while this session was running. The session is a tombstone — start a new session to keep working.",
+			title: "Session can’t be continued",
+			body: "This session has no saved model conversation, so it cannot continue honestly. If messages appear they are whatever was last written to disk. Start a new session to keep working.",
 		};
 	}
 	if (state === "failed") {

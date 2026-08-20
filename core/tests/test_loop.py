@@ -19,7 +19,7 @@ from tstd.autonomy import Boundary
 from tstd.config import ModelConfig, Preset, TierConfig
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
-from tstd.protocol import AssistantDelta, AssistantReasoning, RuleActivated, TurnComplete
+from tstd.protocol import AssistantDelta, AssistantReasoning, RuleActivated, TurnComplete, UserTurn
 from tstd.protocol import ToolCall as ToolCallEvent
 from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
@@ -183,6 +183,30 @@ class TestMultiTurn:
         assert text == "Hello brave world"
         assert tc.tokens > 0  # usage recorded
 
+        await runner.cancel()
+
+    async def test_user_turn_is_logged_for_replay(self) -> None:
+        """The user's side of the transcript is on the log, not client-only."""
+        session = Session("/tmp/ws")
+        router = TierRouter()
+        config = make_config()
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="ok")})
+        snaps: list[int] = []
+
+        async def _snap() -> None:
+            snaps.append(1)
+
+        session._conversation_hook = _snap
+
+        runner = await start_loop(session, router, mock, config)
+        await session.add_user_message("Please fix it")
+        await wait_for_turn(session, 1)
+
+        turns = [e for e in session.event_log.all_events if isinstance(e, UserTurn)]
+        assert len(turns) == 1
+        assert turns[0].content == "Please fix it"
+        assert turns[0].turn_id
+        assert snaps, "conversation snapshot must run after the user row lands"
         await runner.cancel()
 
     async def test_turn_complete_carries_cost_and_duration(self) -> None:

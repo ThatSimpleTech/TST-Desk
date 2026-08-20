@@ -32,6 +32,7 @@ import type {
   SessionState,
   AssistantDelta,
   AssistantReasoning,
+  UserTurn,
   BoundaryUpdate,
   ToolCall,
   ToolResult,
@@ -305,6 +306,15 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const m = fixtures.resume as Resume;
     expect(m.type).toBe("resume");
     expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("user_turn", () => {
+    const m = fixtures.user_turn as UserTurn;
+    expect(m.type).toBe("user_turn");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.turn_id)).toBe(true);
+    expect(isString(m.content)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
   });
 
   it("assistant_delta", () => {
@@ -663,7 +673,7 @@ describe("All fixtures have required shape", () => {
 
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
-      "ready", "session_state", "conversation_reset", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
+      "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_denied",
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",

@@ -169,6 +169,14 @@ class SessionEventLog:
     def all_events(self) -> list[DaemonEvent]:
         return list(self._events)
 
+    def replace(self, events: list[DaemonEvent]) -> None:
+        """Install a persisted log. Does not notify subscribers or re-seq.
+
+        Used on revive. Re-adding would mint new seqs and rewrite disk.
+        """
+        self._events = list(events)
+        self._seq = events[-1].seq if events else 0
+
 
 # ── Session ────────────────────────────────────────────────────────────
 
@@ -190,8 +198,9 @@ class Session:
         "complete": set(),
         "failed": set(),
         "cancelled": set(),
-        # `interrupted` is a terminal tombstone: the daemon died while the
-        # session was alive. No event log survived, so it can never resume.
+        # `interrupted` is a tombstone only when nothing durable survived.
+        # A session with a persisted log and conversation is revived as
+        # idle and started again — not marked interrupted and left dead.
         "interrupted": set(),
     }
 
@@ -238,6 +247,9 @@ class Session:
         # is tracked here, off the one event that proves a turn ended.
         self._open_turns = 0
         self.event_log.subscribe(self._observe_turn_end)  # type: ignore[arg-type]
+        # Set by the daemon when a persist backend is attached. The loop
+        # calls conversation_changed after it mutates ``conversation``.
+        self._conversation_hook: Callable[[], Awaitable[None]] | None = None
 
     async def _observe_turn_end(self, event: DaemonEvent, _log: SessionEventLog) -> None:
         """Lower the open-turn count when the loop reports a turn complete."""
@@ -289,6 +301,11 @@ class Session:
                     continue
             self.touched_paths.add(p.as_posix())
 
+    async def conversation_changed(self) -> None:
+        """Snapshot the model conversation after the loop mutates it."""
+        if self._conversation_hook is not None:
+            await self._conversation_hook()
+
     @classmethod
     def restore(
         cls,
@@ -296,12 +313,11 @@ class Session:
         workspace_path: str,
         state: str = "interrupted",
     ) -> Session:
-        """Recreate a session tombstone after a daemon restart (TD-1002).
+        """Re-insert a session after a daemon restart (TD-1002).
 
-        The persisted registry knows the session existed and its workspace,
-        but the in-memory event log did not survive, so the loop can never
-        resume. A session that was terminal before the crash keeps its
-        terminal ``state``; anything still alive comes back ``interrupted``.
+        ``state`` is whatever the caller decided is honest: ``interrupted``
+        when no transcript survived, ``idle`` when a persist snapshot is
+        about to be loaded and the loop will start again.
         """
         session = cls(workspace_path)
         session.id = session_id
@@ -812,10 +828,11 @@ class SessionRegistry:
         workspace_path: str,
         state: str = "interrupted",
     ) -> Session:
-        """Re-insert a persisted session tombstone after a restart (TD-1002).
+        """Re-insert a persisted session after a restart (TD-1002).
 
-        The session gets no runner — there is no event log to resume and
-        nothing to supervise.
+        ``state`` is the honest starting point. A tombstone stays
+        ``interrupted`` with no runner. A revive restores as ``idle``
+        and the daemon attaches a runner afterwards.
         """
         session = Session.restore(session_id, workspace_path, state)
         async with self._lock:

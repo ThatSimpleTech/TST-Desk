@@ -195,6 +195,13 @@
     "state": "paused",
     "reason": "spend cap exceeded: $0.0205 >= $0.01"
   },
+  "user_turn": {
+    "type": "user_turn",
+    "seq": 3,
+    "session_id": "sess-1",
+    "turn_id": "turn-1",
+    "content": "Fix the tests"
+  },
   "assistant_delta": {
     "type": "assistant_delta",
     "seq": 3,

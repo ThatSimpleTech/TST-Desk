@@ -149,6 +149,7 @@ from .session import (
     SessionRunner,
 )
 from .session_lifecycle import archive_session, delete_session, move_session
+from .session_persist import LoadedSession, SessionPersist
 from .session_store import SessionStore
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .ws import WebSocketServer
@@ -359,6 +360,7 @@ class Daemon:
         self._tasks: list[asyncio.Task[Any]] = []
         self.session_registry = SessionRegistry()
         self._session_store = SessionStore(self.data_dir)
+        self._session_persist = SessionPersist(self.data_dir)
         self.config = cached_config()
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
@@ -721,9 +723,13 @@ class Daemon:
         # Ensure data directory exists
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        # Rehydrate the session list from the durable snapshot before we
-        # start serving, so a client connecting after a crash sees the
-        # same sessions it had (marked interrupted where they were live).
+        # Audit writer before revive so restored loops can record calls.
+        self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
+        self._audit_writer.start()
+
+        # Rehydrate sessions from the registry plus any persisted
+        # transcript. A session with a conversation snapshot is revived
+        # for real; one without is an interrupted tombstone.
         await self._restore_sessions()
 
         # Register signal handlers.  asyncio's add_signal_handler is
@@ -755,8 +761,9 @@ class Daemon:
 
     async def _serve(self) -> None:
         """Main serving loop — start subsystems and wait for shutdown."""
-        self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
-        self._audit_writer.start()
+        if self._audit_writer is None:
+            self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
+            self._audit_writer.start()
         await self.ws_server.start()
         await self._shutdown_event.wait()
 
@@ -802,18 +809,29 @@ class Daemon:
         self._shutdown_event.set()
 
     async def _restore_sessions(self) -> None:
-        """Rehydrate the registry from the durable session snapshot.
+        """Rehydrate the registry. Revive only when a conversation snapshot exists.
 
-        Sessions that were terminal when the daemon last ran keep their
-        terminal state; anything still alive is marked ``interrupted`` (its
-        event log did not survive, so it can never resume).
+        Events without a conversation are loaded for replay so the window
+        can show what was saved — the session stays ``interrupted`` and
+        will not accept a new message. That is the honest reading: we
+        have a transcript, not a model context.
         """
-        terminal = {"complete", "failed", "cancelled"}
         for record in self._session_store.records():
-            final_state = record.state if record.state in terminal else "interrupted"
-            await self.session_registry.restore(
+            loaded = self._session_persist.load(record.session_id)
+            if loaded is not None and loaded.conversation is not None:
+                await self._revive_session(record.session_id, record.workspace_path, loaded)
+                continue
+            final_state = "interrupted"
+            if record.state in {"complete", "failed", "cancelled"} and (
+                loaded is None or loaded.conversation is None
+            ):
+                # Terminal with no snapshot stays terminal. Same as before.
+                final_state = record.state
+            sess = await self.session_registry.restore(
                 record.session_id, record.workspace_path, final_state
             )
+            if loaded is not None and loaded.events:
+                sess.event_log.replace(loaded.events)
             if final_state != record.state:
                 await self._session_store.update_state(record.session_id, final_state)
             log.info(
@@ -822,6 +840,7 @@ class Daemon:
                     "extra_fields": {
                         "session_id": record.session_id,
                         "state": final_state,
+                        "revived": False,
                     }
                 },
             )
@@ -841,7 +860,10 @@ class Daemon:
             await asyncio.sleep(self._parent_poll_interval)
 
     async def _on_session_event(self, event: DaemonEvent, _log: SessionEventLog) -> None:
-        """Persist session state transitions so the list survives restart."""
+        """Write the event to disk and refresh the registry row."""
+        session_id = getattr(event, "session_id", None)
+        if isinstance(session_id, str) and session_id:
+            await asyncio.to_thread(self._session_persist.append_event, session_id, event)
         if isinstance(event, SessionStateEvent):
             await self._session_store.update_state(event.session_id, event.state)
 
@@ -1199,6 +1221,7 @@ class Daemon:
                 self._session_store,
                 msg.session_id,
                 self._release_session,
+                persist=self._session_persist,
             )
             return refusal if refusal is not None else await self._handle_list_sessions()
 
@@ -1314,63 +1337,66 @@ class Daemon:
 
         return None
 
-    async def _start_session(self, workspace_path: str) -> str | None:
-        """Create, wire, and start a session in ``workspace_path``.
+    async def _revive_session(
+        self, session_id: str, workspace_path: str, loaded: LoadedSession
+    ) -> None:
+        """Start a loop on a persisted conversation. Does not invent messages."""
+        sess = await self.session_registry.restore(session_id, workspace_path, "idle")
+        if loaded.events:
+            sess.event_log.replace(loaded.events)
+        if loaded.conversation is not None:
+            sess.conversation[:] = loaded.conversation
+        await self._attach_session_runtime(sess)
+        try:
+            source = boundary_source(workspace_path)
+        except ConfigError as e:
+            source = f"defaults — invalid config ({e})"
+        await self._emit_working_context(sess, source)
+        log.info(
+            "revived session",
+            extra={
+                "extra_fields": {
+                    "session_id": session_id,
+                    "events": sess.event_log.last_seq,
+                    "messages": len(sess.conversation),
+                }
+            },
+        )
 
-        Shared by ``open_workspace`` and ``new_session`` (TD-1701): both grow
-        a session with the same router/boundary/policy/tool wiring; only the
-        path's provenance differs (client-supplied and validated vs anchored
-        on an existing live session).  Returns the session's first event
-        (``session_state``, running) as the wire reply, mirroring
-        ``open_workspace``'s response.
-        """
-        # Memory templates (TD-2101): plant .tst/memory/ on every session
-        # start so an already-opened workspace still gets the files. Never
-        # overwrites; config scaffold stays OpenWorkspace-only.
-        await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
-        sess = await self.session_registry.create(workspace_path)
-        # Persist the new session and keep its state durable going forward.
-        await self._session_store.upsert(sess.id, workspace_path, sess.state)
-        # Bound method vs the ``__call__``-shaped EventSubscriber protocol:
-        # mypy can't confirm the shapes line up, though they are identical.
+    async def _attach_session_runtime(self, sess: Session) -> None:
+        """Boundary, tools, persist hooks, and a running loop for *sess*."""
         sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
-        router = TierRouter()
-        # So a later set_tier reaches the loop's router (TD-1006).
+
+        async def _snap() -> None:
+            await asyncio.to_thread(
+                self._session_persist.save_conversation,
+                sess.id,
+                list(sess.conversation),
+            )
+
+        sess._conversation_hook = _snap
+        router = sess.router if sess.router is not None else TierRouter()
         sess.router = router
 
-        # Workspace boundary (TD-706): resolve `.tst/config.yaml` or
-        # defaults; a bad config falls back to defaults with the
-        # actionable error logged and surfaced in the event source.
         try:
-            sess.boundary_config = load_workspace_boundary(workspace_path)
-            source = boundary_source(workspace_path)
+            sess.boundary_config = load_workspace_boundary(sess.workspace_path)
         except ConfigError as e:
             log.warning(
                 "workspace boundary config invalid; using defaults",
-                extra={"extra_fields": {"workspace_path": workspace_path, "error": str(e)}},
+                extra={"extra_fields": {"workspace_path": sess.workspace_path, "error": str(e)}},
             )
-            source = f"defaults — invalid config ({e})"
 
-        # Approval policy (TD-801/802): same file, policy: section;
-        # an invalid section falls back to rule-free defaults.
         try:
-            sess.policy = load_policy(workspace_path)
+            sess.policy = load_policy(sess.workspace_path)
         except ConfigError as e:
             log.warning(
                 "workspace policy config invalid; using defaults",
-                extra={"extra_fields": {"workspace_path": workspace_path, "error": str(e)}},
+                extra={"extra_fields": {"workspace_path": sess.workspace_path, "error": str(e)}},
             )
 
-        # Provider is created lazily via a factory closure so that
-        # sessions can be opened and attached without requiring a key
-        # to be present.  The provider is only needed when the loop
-        # processes its first user message.
         async def get_provider() -> ProviderLike:
             return await self._ensure_provider()
 
-        # Tool stack (TD-604/605, TD-1401): the daemon hands every
-        # session the builtin registry + dispatcher; the loop attaches
-        # the classifier, path guard, and checkpointer on first turn.
         tool_registry = create_registry()
         tool_dispatcher = ToolDispatcher(tool_registry)
         tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals
@@ -1397,18 +1423,13 @@ class Daemon:
             self._audit_writer.attach_session(sess)
         await self.session_registry.register_runner(sess.id, runner)
         self.state.active_sessions += 1
-        log.info(
-            "session opened",
-            extra={
-                "extra_fields": {
-                    "session_id": sess.id,
-                    "workspace_path": workspace_path,
-                }
-            },
-        )
 
-        # Emit the resolved boundary after session_state (seq 1) so
-        # the client sees the wall it opened under (TD-706).
+    async def _emit_working_context(self, sess: Session, source: str) -> None:
+        """Log the wall and slugs this loop is actually using.
+
+        Open and revive both call this so the title bar is not left
+        showing a previous life's boundary after a restart.
+        """
         cfg = sess.boundary_config
         await sess.event_log.add(
             BoundaryUpdateEvent(
@@ -1424,11 +1445,41 @@ class Daemon:
                 seq=1,
             )
         )
+        assert sess.router is not None
+        await sess.event_log.add(_tier_state_event(sess.id, sess.router, self.config))
 
-        # Emit the initial tier state (TD-1006) so the title bar can
-        # render its chips with the configured slugs before the first
-        # turn runs.
-        await sess.event_log.add(_tier_state_event(sess.id, router, self.config))
+    async def _start_session(self, workspace_path: str) -> str | None:
+        """Create, wire, and start a session in ``workspace_path``.
+
+        Shared by ``open_workspace`` and ``new_session`` (TD-1701): both grow
+        a session with the same router/boundary/policy/tool wiring; only the
+        path's provenance differs (client-supplied and validated vs anchored
+        on an existing live session).  Returns the session's first event
+        (``session_state``, running) as the wire reply, mirroring
+        ``open_workspace``'s response.
+        """
+        # Memory templates (TD-2101): plant .tst/memory/ on every session
+        # start so an already-opened workspace still gets the files. Never
+        # overwrites; config scaffold stays OpenWorkspace-only.
+        await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
+        sess = await self.session_registry.create(workspace_path)
+        await self._session_store.upsert(sess.id, workspace_path, sess.state)
+        self._session_persist.prepare(sess.id)
+        try:
+            source = boundary_source(workspace_path)
+        except ConfigError as e:
+            source = f"defaults — invalid config ({e})"
+        await self._attach_session_runtime(sess)
+        log.info(
+            "session opened",
+            extra={
+                "extra_fields": {
+                    "session_id": sess.id,
+                    "workspace_path": workspace_path,
+                }
+            },
+        )
+        await self._emit_working_context(sess, source)
 
         # Return the session_state event (seq=1, "running")
         events = sess.event_log.events_from(1)

@@ -41,6 +41,10 @@ function delta(sessionId: string, text: string): DaemonEventUnion {
   return { type: "assistant_delta", session_id: sessionId, delta: text, seq: 1 };
 }
 
+function userTurn(sessionId: string, turnId: string, content: string): DaemonEventUnion {
+  return { type: "user_turn", session_id: sessionId, turn_id: turnId, content, seq: 1 };
+}
+
 function turnComplete(sessionId: string, duration = 0): DaemonEventUnion {
   return { type: "turn_complete", session_id: sessionId, tokens: 1, cost: 0, tier: "worker", duration, failed: false, error_code: null, seq: 2 };
 }
@@ -197,17 +201,48 @@ describe("streaming assistant output", () => {
     const { store, state } = boundStore();
     // What the daemon replays on attach: the whole event log in order.
     const replay: DaemonEventUnion[] = [
+      userTurn("s1", "t1", "First question"),
       delta("s1", "Answer one."),
       turnComplete("s1"),
+      userTurn("s1", "t2", "Second question"),
       delta("s1", "Answer"),
       delta("s1", " two."),
       turnComplete("s1"),
       sessionState("s1", "idle"),
     ];
     for (const event of replay) store.applyEvent(event);
-    expect(state.messages.map((m) => m.text)).toEqual(["Answer one.", "Answer two."]);
+    expect(state.messages.map((m) => m.text)).toEqual([
+      "First question",
+      "Answer one.",
+      "Second question",
+      "Answer two.",
+    ]);
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.turnId)).toEqual([
+      "t1",
+      "t2",
+    ]);
     expect(state.messages.every((m) => m.complete)).toBe(true);
     expect(state.turnState).toBe("idle");
+  });
+
+  it("stamps a live echo with user_turn instead of duplicating the row", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("fix the tests");
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0].turnId).toBeUndefined();
+    store.applyEvent(userTurn("s1", "t-live", "fix the tests"));
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]).toMatchObject({
+      role: "user",
+      text: "fix the tests",
+      turnId: "t-live",
+    });
+  });
+
+  it("does not invent a user row from a different session's user_turn", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(userTurn("elsewhere", "t9", "nope"));
+    expect(state.messages).toEqual([]);
   });
 
   it("seals an in-flight message on terminal session states", () => {

@@ -152,10 +152,12 @@ drift.
 | `cancelled` | *(terminal)* |
 | `interrupted` | *(terminal)* |
 
-`interrupted` is the one that needs explaining. It is a tombstone: the daemon died while the
-session was alive, so the persisted registry knows the session existed and which workspace it
-belonged to, but the in-memory event log did not survive. There is nothing to resume, so the
-state has no exits at all.
+`interrupted` is a tombstone for a session whose **model conversation was not
+saved**. The registry still knows the id and workspace. Events that reached
+disk can be replayed so the window shows what we actually have. The loop does
+not start, and a new message is refused — continuing without the conversation
+would be inventing context. A session that has both `events.jsonl` and
+`conversation.json` is revived as `running` instead.
 
 Note that `running` spans the session's whole life, not one turn. "Is a turn in flight" is a
 separate question answered by `Session.turn_in_flight`, counted off `turn_complete` events —

@@ -1,10 +1,9 @@
 """JSON durability for the session registry.
 
-Sessions themselves are in-memory — their durable event logs land in v0.3.
-But the registry list (session id, workspace path, state, timestamps) is
-written here so a supervising host can restore the session list after a
-daemon restart with it "intact" (TD-1002). This is the list, not the
-history: rehydrated sessions are tombstones, never replayed loops.
+The registry list (session id, workspace path, state, timestamps) lives
+here. The transcript and model conversation live in ``session_persist``.
+Together they are what a restart uses: a row without a conversation
+snapshot is still a tombstone; a row with one is revived.
 """
 
 from __future__ import annotations

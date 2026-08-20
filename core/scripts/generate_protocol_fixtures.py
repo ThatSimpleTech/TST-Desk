@@ -81,6 +81,7 @@ from tstd.protocol import (
     UsageReport,
     UsageRollup,
     UserMessage,
+    UserTurn,
     ValidateApiKey,
 )
 
@@ -152,6 +153,12 @@ FIXTURES = {
         state="paused",
         reason="spend cap exceeded: $0.0205 >= $0.01",
         seq=2,
+    ),
+    "user_turn": UserTurn(
+        session_id="sess-1",
+        turn_id="turn-1",
+        content="Fix the tests",
+        seq=3,
     ),
     "assistant_delta": AssistantDelta(session_id="sess-1", delta="Hello ", seq=3),
     "assistant_reasoning": AssistantReasoning(session_id="sess-1", delta="Let me think", seq=3),

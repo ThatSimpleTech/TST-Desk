@@ -6170,3 +6170,27 @@ scheduler. Putting the host in Python would fail TD-1410. Failing the
 turn when the sidecar is down would make memory worse than heading-match
 alone. A short timeout keeps a hung loopback from stalling the brain.
 
+---
+
+## 2026-08-20 — Honest session revive (Class B)
+
+**Decision:** Persist each session's event log (`events.jsonl`) and the
+loop's conversation (`conversation.json`) under the data dir. On daemon
+start, a session with a conversation snapshot is revived — same id, same
+messages, new loop. A session without a snapshot stays `interrupted`.
+The UI may replay whatever events were saved; it will not accept a new
+message on a tombstone.
+
+This is the Claude-Desktop "open last chat and keep typing" slice, not
+v0.3 detached-while-the-window-is-closed. The window may still kill the
+daemon. Quit and reopen is enough if the files landed.
+
+**Rationale:** The rail already looked like Claude history. Without a
+durable transcript that was a lie: click a row, get a tombstone. The
+user asked for Claude's learning curve and forbade faking. Reviving
+only when both files exist is the honest cut.
+
+**Alternative rejected:** Show an empty thread under the old id. Also
+rejected: marking `interrupted` resumable without the conversation —
+the model would start from nothing under a transcript the user can
+still see.
