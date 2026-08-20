@@ -1,9 +1,14 @@
-"""OpenAI-compatible embeddings client (TD-2202).
+"""OpenAI-compatible embeddings client and memory ranker (TD-2202, TD-2203).
 
 Speaks ``POST /v1/embeddings`` against ``embeddings.base_url`` from
 config. The host is never a Python literal. Empty ``base_url`` disables
 the client. A missing or loopback-down endpoint returns ``None`` so the
 caller falls back to heading-match (TD-2201) instead of failing the turn.
+
+When the sidecar answers, topic files are ranked by cosine similarity
+to the task. ``MEMORY.md`` is always kept. Heading-match is the
+tie-break and the fallback. The selected set is the top-k topics that
+fit ``embeddings.token_budget`` (TD-506 heuristic).
 
 Do not call Ollama's native embed route. A measured embed on that
 scheduler evicts a resident chat model (2026-08-17).
@@ -11,32 +16,60 @@ scheduler evicts a resident chat model (2026-08-17).
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
 
 from ..logging import get_logger
-from .memory_loader import MemoryLoad, load_memory_for_task
+from .memory_loader import (
+    MemoryCandidate,
+    MemoryFile,
+    MemoryLoad,
+    MemoryReason,
+    discover_memory_files,
+    headings_overlap_task,
+    load_memory_for_task,
+)
+from .tokens import heuristic_count
 
 if TYPE_CHECKING:
     from ..config import ModelConfig
 
 log = get_logger("tstd.embeddings")
 
+DEFAULT_TOP_K = 4
+DEFAULT_TOKEN_BUDGET = 2000
+
 
 class EmbeddingsClient:
     """POST ``{base_url}/embeddings``. Never raises for a down sidecar."""
 
-    def __init__(self, base_url: str, model: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: float,
+        top_k: int = DEFAULT_TOP_K,
+        token_budget: int = DEFAULT_TOKEN_BUDGET,
+    ) -> None:
         self.base_url = base_url.strip().rstrip("/")
         self.model = model.strip()
         self.timeout_seconds = timeout_seconds
+        self.top_k = top_k
+        self.token_budget = token_budget
 
     @classmethod
     def from_config(cls, config: ModelConfig) -> EmbeddingsClient:
         cfg = config.embeddings
-        return cls(cfg.base_url, cfg.model, cfg.timeout_seconds)
+        return cls(
+            cfg.base_url,
+            cfg.model,
+            cfg.timeout_seconds,
+            top_k=cfg.top_k,
+            token_budget=cfg.token_budget,
+        )
 
     @property
     def enabled(self) -> bool:
@@ -74,23 +107,84 @@ class EmbeddingsClient:
         return _vectors(payload)
 
 
-def _vectors(payload: object) -> list[list[float]] | None:
-    if not isinstance(payload, dict):
-        return None
-    rows = payload.get("data")
-    if not isinstance(rows, list):
-        return None
-    out: list[list[float]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            return None
-        embedding = row.get("embedding")
-        if not isinstance(embedding, list) or not all(
-            isinstance(value, int | float) for value in embedding
-        ):
-            return None
-        out.append([float(value) for value in embedding])
-    return out
+def cosine_similarity(left: list[float], right: list[float]) -> float:
+    """Cosine similarity. Zero vectors and length mismatch score 0."""
+    if len(left) != len(right) or not left:
+        return 0.0
+    dot = 0.0
+    left_norm = 0.0
+    right_norm = 0.0
+    for a, b in zip(left, right, strict=True):
+        dot += a * b
+        left_norm += a * a
+        right_norm += b * b
+    if left_norm <= 0.0 or right_norm <= 0.0:
+        return 0.0
+    return dot / math.sqrt(left_norm * right_norm)
+
+
+def apply_rank(
+    candidates: tuple[MemoryCandidate, ...],
+    task: str,
+    task_vec: list[float],
+    topic_vecs: list[list[float]],
+    *,
+    top_k: int,
+    token_budget: int,
+) -> MemoryLoad:
+    """Select ``MEMORY.md`` plus the top-k topics that fit *token_budget*.
+
+    Topics are ordered by cosine to *task_vec*, then heading-match, then
+    name. Token counts use the TD-506 heuristic on file bytes.
+    """
+    index: MemoryCandidate | None = None
+    topics: list[MemoryCandidate] = []
+    for item in candidates:
+        if item.is_index:
+            index = item
+        else:
+            topics.append(item)
+    if len(topic_vecs) != len(topics):
+        raise ValueError("topic vector count must match topic files")
+
+    ranked = sorted(
+        zip(topics, topic_vecs, strict=True),
+        key=lambda pair: (
+            -cosine_similarity(task_vec, pair[1]),
+            0 if headings_overlap_task(pair[0].text, task) else 1,
+            pair[0].path.name,
+        ),
+    )
+
+    selected: list[MemoryFile] = []
+    used = 0
+    if index is not None:
+        chosen = _as_file(index, "always-index")
+        selected.append(chosen)
+        used += heuristic_count(chosen.text).count
+
+    taken = 0
+    for topic, _vec in ranked:
+        if taken >= top_k:
+            break
+        reason: MemoryReason = "heading" if headings_overlap_task(topic.text, task) else "embedding"
+        chosen = _as_file(topic, reason)
+        cost = heuristic_count(chosen.text).count
+        if used + cost > token_budget:
+            continue
+        selected.append(chosen)
+        used += cost
+        taken += 1
+    return MemoryLoad(tuple(selected))
+
+
+def _as_file(candidate: MemoryCandidate, reason: MemoryReason) -> MemoryFile:
+    return MemoryFile(
+        path=candidate.path,
+        relative=candidate.relative,
+        reason=reason,
+        text=candidate.text,
+    )
 
 
 async def load_memory_for_turn(
@@ -98,13 +192,48 @@ async def load_memory_for_turn(
     task: str,
     client: EmbeddingsClient | None = None,
 ) -> MemoryLoad:
-    """Heading-match load; a down sidecar cannot fail the turn.
+    """Rank when the sidecar answers; otherwise heading-match.
 
-    Ranking on a live sidecar is TD-2203. This story only probes so a
-    configured-but-dead endpoint is a fallback, not an exception.
+    A down sidecar cannot fail the turn.
     """
     heading = load_memory_for_task(workspace, task)
     if client is None or not client.enabled:
         return heading
-    await client.embed_or_none([task])
-    return heading
+    candidates = discover_memory_files(workspace)
+    topics = [item for item in candidates if not item.is_index]
+    if not topics:
+        return heading
+    vectors = await client.embed_or_none([task, *[item.text for item in topics]])
+    if vectors is None or len(vectors) != 1 + len(topics):
+        return heading
+    return apply_rank(
+        candidates,
+        task,
+        vectors[0],
+        vectors[1:],
+        top_k=client.top_k,
+        token_budget=client.token_budget,
+    )
+
+
+def _vectors(payload: object) -> list[list[float]] | None:
+    if not isinstance(payload, dict):
+        return None
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        return None
+    parsed: list[tuple[int, list[float]]] = []
+    for offset, row in enumerate(rows):
+        if not isinstance(row, dict):
+            return None
+        embedding = row.get("embedding")
+        if not isinstance(embedding, list) or not all(
+            isinstance(value, int | float) for value in embedding
+        ):
+            return None
+        raw_index = row.get("index", offset)
+        if not isinstance(raw_index, int):
+            return None
+        parsed.append((raw_index, [float(value) for value in embedding]))
+    parsed.sort(key=lambda item: item[0])
+    return [vector for _, vector in parsed]

@@ -160,6 +160,8 @@ class EmbeddingsConfig(BaseModel):
     base_url: str = ""
     model: str = ""
     timeout_seconds: float = Field(default=2.0, gt=0)
+    top_k: int = Field(default=4, ge=1)
+    token_budget: int = Field(default=2000, ge=1)
 
 
 class ModelConfig(BaseModel):

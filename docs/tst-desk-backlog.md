@@ -4134,11 +4134,11 @@ disables.
 **Size:** 5 · **Depends on:** TD-2202
 
 **Acceptance criteria:**
-- [ ] Topic files are ranked by embedding similarity to the task
-- [ ] Loader takes top-k that fit a stated token budget (config)
-- [ ] `MEMORY.md` is always included if it exists, then topics fill the rest
-- [ ] Heading-match is the tie-break and the fallback
-- [ ] Identical inputs → identical selected set
+- [x] Topic files are ranked by embedding similarity to the task
+- [x] Loader takes top-k that fit a stated token budget (config)
+- [x] `MEMORY.md` is always included if it exists, then topics fill the rest
+- [x] Heading-match is the tie-break and the fallback
+- [x] Identical inputs → identical selected set
 
 **Notes:** size 5 because the budget interaction with TD-506 counters is
 easy to get slightly wrong. Propose the ranker shape before building.

@@ -69,7 +69,7 @@ _STOPWORDS = frozenset(
 )
 _ATX_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 
-MemoryReason = Literal["always-index", "heading"]
+MemoryReason = Literal["always-index", "heading", "embedding"]
 
 
 @dataclass(frozen=True)
@@ -134,6 +134,51 @@ def headings_overlap_task(markdown: str, task: str) -> bool:
     return bool(heading_tokens(markdown) & tokenize(task))
 
 
+@dataclass(frozen=True)
+class MemoryCandidate:
+    """A readable memory file before ranking or heading-match."""
+
+    path: Path
+    relative: Path
+    text: str
+    is_index: bool
+
+
+def discover_memory_files(workspace: str | Path) -> tuple[MemoryCandidate, ...]:
+    """Every readable ``.tst/memory/*.md``, index first, then sorted names.
+
+    Does not filter by heading. Ranking (TD-2203) and heading-match
+    (TD-2201) both start from this list. Escapes and unreadable files
+    are skipped the same way as :func:`load_memory_for_task`.
+    """
+    workspace_root = Path(workspace).resolve()
+    root = memory_dir(workspace_root)
+    try:
+        if not root.is_dir():
+            return ()
+        root = root.resolve()
+    except OSError as exc:
+        log.warning(
+            "memory directory unreadable, skipped",
+            extra={"extra_fields": {"path": str(root), "error": str(exc)}},
+        )
+        return ()
+
+    index: MemoryCandidate | None = None
+    topics: list[MemoryCandidate] = []
+    for path in sorted(root.glob("*.md")):
+        found = _read_candidate(path, root, workspace_root)
+        if found is None:
+            continue
+        if found.is_index:
+            index = found
+        else:
+            topics.append(found)
+    if index is None:
+        return tuple(topics)
+    return (index, *topics)
+
+
 def load_memory_for_task(workspace: str | Path, task: str) -> MemoryLoad:
     """Select ``MEMORY.md`` plus topic files whose headings overlap *task*.
 
@@ -141,43 +186,21 @@ def load_memory_for_task(workspace: str | Path, task: str) -> MemoryLoad:
     files and paths that escape the memory directory are skipped. The
     result is ordered: index first, then remaining names sorted.
     """
-    workspace_root = Path(workspace).resolve()
-    root = memory_dir(workspace_root)
-    try:
-        if not root.is_dir():
-            return MemoryLoad(())
-        root = root.resolve()
-    except OSError as exc:
-        log.warning(
-            "memory directory unreadable, skipped",
-            extra={"extra_fields": {"path": str(root), "error": str(exc)}},
-        )
-        return MemoryLoad(())
-
-    index: MemoryFile | None = None
-    topics: list[MemoryFile] = []
-    for path in sorted(root.glob("*.md")):
-        selected = _consider(path, root, workspace_root, task)
-        if selected is None:
+    selected: list[MemoryFile] = []
+    for candidate in discover_memory_files(workspace):
+        if candidate.is_index:
+            selected.append(_to_file(candidate, "always-index"))
             continue
-        if selected.reason == "always-index":
-            index = selected
-        else:
-            topics.append(selected)
-
-    files: list[MemoryFile] = []
-    if index is not None:
-        files.append(index)
-    files.extend(topics)
-    return MemoryLoad(tuple(files))
+        if headings_overlap_task(candidate.text, task):
+            selected.append(_to_file(candidate, "heading"))
+    return MemoryLoad(tuple(selected))
 
 
-def _consider(
+def _read_candidate(
     path: Path,
     memory_root: Path,
     workspace_root: Path,
-    task: str,
-) -> MemoryFile | None:
+) -> MemoryCandidate | None:
     key = path.name.upper()
     if key in _STEERING_BASENAMES:
         return None
@@ -209,20 +232,25 @@ def _consider(
             extra={"extra_fields": {"path": str(path)}},
         )
         return None
-
-    reason: MemoryReason
-    if key == _INDEX_KEY:
-        reason = "always-index"
-    elif headings_overlap_task(text, task):
-        reason = "heading"
-    else:
-        return None
-
     try:
         relative = resolved.relative_to(workspace_root)
     except ValueError:
         relative = Path(".tst") / "memory" / path.name
-    return MemoryFile(path=resolved, relative=relative, reason=reason, text=text)
+    return MemoryCandidate(
+        path=resolved,
+        relative=relative,
+        text=text,
+        is_index=key == _INDEX_KEY,
+    )
+
+
+def _to_file(candidate: MemoryCandidate, reason: MemoryReason) -> MemoryFile:
+    return MemoryFile(
+        path=candidate.path,
+        relative=candidate.relative,
+        reason=reason,
+        text=candidate.text,
+    )
 
 
 def _is_under(path: Path, root: Path) -> bool:
