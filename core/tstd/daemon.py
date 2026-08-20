@@ -97,6 +97,9 @@ from .protocol import (
     ListInstructions,
     ListPolicyRules,
     ListSessions,
+    MemoryAccept,
+    MemoryEdit,
+    MemoryReject,
     MoveSession,
     NewSession,
     OpenWorkspace,
@@ -1329,6 +1332,19 @@ class Daemon:
 
         if isinstance(msg, ExportUsage):
             return await self._usage_export(msg.format)
+
+        if isinstance(msg, MemoryAccept | MemoryEdit | MemoryReject):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            return build_error(
+                "no_memory_proposal",
+                "No live memory proposal to accept, edit, or reject.",
+                session_id=msg.session_id,
+            )
 
         if isinstance(msg, Shutdown):
             log.info("shutdown requested via websocket")

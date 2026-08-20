@@ -4221,11 +4221,11 @@ Spec §5 mechanics 3–4.
 **Size:** 3 · **Depends on:** TD-2301, TD-204
 
 **Acceptance criteria:**
-- [ ] Daemon event `memory_proposal` carries session id, file diffs, and a
+- [x] Daemon event `memory_proposal` carries session id, file diffs, and a
       proposal id
-- [ ] Client messages `memory_accept` / `memory_edit` / `memory_reject`
-- [ ] Architecture tables and protocol fixtures updated
-- [ ] Unknown-event gate still lists the new type
+- [x] Client messages `memory_accept` / `memory_edit` / `memory_reject`
+- [x] Architecture tables and protocol fixtures updated
+- [x] Unknown-event gate still lists the new type
 
 **Notes:** same fixture discipline as every other protocol story.
 

@@ -112,6 +112,27 @@
     "workspace_path": "/home/user/project",
     "name": "api"
   },
+  "memory_accept": {
+    "type": "memory_accept",
+    "session_id": "sess-1",
+    "proposal_id": "mp-1"
+  },
+  "memory_edit": {
+    "type": "memory_edit",
+    "session_id": "sess-1",
+    "proposal_id": "mp-1",
+    "files": [
+      {
+        "path": ".tst/memory/MEMORY.md",
+        "content": "durable: ruff\n"
+      }
+    ]
+  },
+  "memory_reject": {
+    "type": "memory_reject",
+    "session_id": "sess-1",
+    "proposal_id": "mp-1"
+  },
   "shutdown": {
     "type": "shutdown"
   },
@@ -632,6 +653,21 @@
         "completion_tokens": 200,
         "cost": 0.0031,
         "classifier_cost": 0.0
+      }
+    ]
+  },
+  "memory_proposal": {
+    "type": "memory_proposal",
+    "seq": 21,
+    "session_id": "sess-1",
+    "proposal_id": "mp-1",
+    "files": [
+      {
+        "action": "replace",
+        "path": ".tst/memory/MEMORY.md",
+        "diff": "--- a/.tst/memory/MEMORY.md\n+++ b/.tst/memory/MEMORY.md\n@@ -1 +1 @@\n-old\n+durable: ruff\n",
+        "before": "old\n",
+        "after": "durable: ruff\n"
       }
     ]
   },
