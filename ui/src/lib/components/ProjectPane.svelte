@@ -4,7 +4,7 @@
 	// Rail Projects lands here instead of the title-bar recents menu.
 	// Selecting a row shows a home: folder name, New chat (`new_session`
 	// in that workspace), and recents filtered to that path. Columns
-	// for Instructions / Memory / Context are later stories.
+	// Context is a later story. Memory is TD-2601.
 	import Icon from './Icon.svelte';
 	import { workspaceName } from '../session-status.svelte.js';
 	import { workspaces } from '../workspaces.svelte.js';
@@ -29,6 +29,7 @@
 		stateTone,
 	} from '../sessions.svelte.js';
 	import InstructionsColumn from './InstructionsColumn.svelte';
+	import MemoryColumn from './MemoryColumn.svelte';
 
 	let known = $derived(workspaces.entries);
 	let selected = $derived(projects.selectedPath);
@@ -91,6 +92,7 @@
 			</div>
 			<div class="home-cols">
 				<InstructionsColumn workspacePath={selected} />
+				<MemoryColumn workspacePath={selected} />
 				<section class="col" aria-label="Recents">
 					<h2 class="section">Recents</h2>
 					{#if recents.length === 0}

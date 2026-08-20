@@ -6344,3 +6344,20 @@ accept then returns `no_memory_proposal` and writes nothing.
 **Rationale:** Spec mechanic 3 is accept-before-write. Auto-accept on
 quit would persist memory the user never saw. Resurrection would need
 durable parking, which TD-2302 already forbade.
+
+---
+
+## 2026-08-20 — TD-2601: Memory is a project-home column, not a rail row (Class B)
+
+**Decision:** `list_memory` / `memory_files` are connection-scoped like
+Instructions. The event carries file contents so the column can render
+markdown. Discovery is `discover_memory_files` (one-level `*.md`). The
+column hosts on project home. There is no Memory rail function —
+Scheduled stays the only `planned` row.
+
+**Rationale:** TD-1705's Files pane is session write-diffs, the wrong
+list. TD-2803 said this pane is hosted on the project home. Adding
+`memory` to `RailSurface` would fight Home / Projects / Scheduled.
+
+**Alternative rejected:** Opening only in the OS editor. The AC is
+"shows the markdown"; the column renders it. Edit/save is TD-2602.

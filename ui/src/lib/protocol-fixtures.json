@@ -107,6 +107,10 @@
     "type": "list_instructions",
     "workspace_path": "/home/user/project"
   },
+  "list_memory": {
+    "type": "list_memory",
+    "workspace_path": "/home/user/project"
+  },
   "create_rule": {
     "type": "create_rule",
     "workspace_path": "/home/user/project",
@@ -487,6 +491,18 @@
     "token_method": "cl100k_base",
     "last_cached_tokens": null,
     "cache_observed": false
+  },
+  "memory_files": {
+    "type": "memory_files",
+    "seq": 1,
+    "workspace_path": "/home/user/project",
+    "files": [
+      {
+        "path": "/home/user/project/.tst/memory/MEMORY.md",
+        "name": "MEMORY.md",
+        "content": "durable: ruff\n"
+      }
+    ]
   },
   "instruction_files": {
     "type": "instruction_files",

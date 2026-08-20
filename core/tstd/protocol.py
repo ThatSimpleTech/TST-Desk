@@ -281,6 +281,13 @@ class ListInstructions(ClientMessage):
     workspace_path: str
 
 
+class ListMemory(ClientMessage):
+    """List a workspace's Memory files (TD-2601). Human path."""
+
+    type: Literal["list_memory"] = "list_memory"
+    workspace_path: str
+
+
 class CreateRule(ClientMessage):
     """Create a ``.tst/rules/`` file (TD-2802). Human path, never a tool."""
 
@@ -899,6 +906,23 @@ class MemoryProposal(DaemonEvent):
     files: list[MemoryFileDiff]
 
 
+class MemoryFileEntry(BaseModel):
+    """One ``.tst/memory/`` file the Memory pane lists (TD-2601)."""
+
+    path: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    content: str
+
+
+class MemoryFiles(DaemonEvent):
+    """Reply to ``list_memory``. Connection-scoped."""
+
+    type: Literal["memory_files"] = "memory_files"
+    seq: int = 1
+    workspace_path: str
+    files: list[MemoryFileEntry] = Field(default_factory=list)
+
+
 class InstructionFiles(DaemonEvent):
     """Reply to ``list_instructions`` / ``create_rule``. Connection-scoped."""
 
@@ -1146,6 +1170,7 @@ ClientMessageT = Annotated[
     | SetTier
     | GetInstructionStack
     | ListInstructions
+    | ListMemory
     | CreateRule
     | MemoryAccept
     | MemoryEdit
@@ -1192,6 +1217,7 @@ DaemonEventT = Annotated[
     | TierSwitched
     | InstructionStack
     | InstructionFiles
+    | MemoryFiles
     | MemoryProposal
     | SessionList
     | PolicyRules
@@ -1229,6 +1255,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_tier",
         "get_instruction_stack",
         "list_instructions",
+        "list_memory",
         "create_rule",
         "memory_accept",
         "memory_edit",
@@ -1275,6 +1302,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tier_switched",
         "instruction_stack",
         "instruction_files",
+        "memory_files",
         "memory_proposal",
         "session_list",
         "policy_rules",

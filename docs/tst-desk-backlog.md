@@ -4318,10 +4318,12 @@ Spec §5: "open, correct, diff, grep, and revert."
 **Size:** 3 · **Depends on:** TD-2501, TD-1705
 
 **Acceptance criteria:**
-- [ ] A Memory surface lists `.tst/memory/**` for the bound workspace
-- [ ] Opening a file shows the markdown
-- [ ] Empty directory has copy that points at the first distill
-- [ ] Planned rail entry (`state: planned`) becomes `ready`
+- [x] A Memory surface lists `.tst/memory/**` for the bound workspace
+- [x] Opening a file shows the markdown
+- [x] Empty directory has copy that points at the first distill
+- [ ] Planned rail entry (`state: planned`) becomes `ready` — no Memory
+      rail row exists; Scheduled is the only `planned` entry. The pane
+      landed as the project-home Memory column instead. See DECISIONS.md.
 
 ---
 

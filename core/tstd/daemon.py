@@ -47,6 +47,7 @@ from .context.instructions import (
     create_rule_file,
     list_workspace_instructions,
 )
+from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
 from .discovery import resolve_tier_slugs
@@ -104,10 +105,13 @@ from .protocol import (
     InstructionFileEntry,
     InstructionFiles,
     ListInstructions,
+    ListMemory,
     ListPolicyRules,
     ListSessions,
     MemoryAccept,
     MemoryEdit,
+    MemoryFileEntry,
+    MemoryFiles,
     MemoryReject,
     MoveSession,
     NewSession,
@@ -1254,6 +1258,9 @@ class Daemon:
         if isinstance(msg, ListInstructions):
             return await self._handle_list_instructions(msg)
 
+        if isinstance(msg, ListMemory):
+            return await self._handle_list_memory(msg)
+
         if isinstance(msg, CreateRule):
             return await self._handle_create_rule(msg)
 
@@ -1675,6 +1682,22 @@ class Daemon:
     async def _handle_list_instructions(self, msg: ListInstructions) -> str:
         """List a workspace's Instructions files (TD-2802). Not a tool."""
         return await self._instruction_files_reply(msg.workspace_path)
+
+    async def _handle_list_memory(self, msg: ListMemory) -> str:
+        """List a workspace's Memory files (TD-2601). Not a tool."""
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        listed = await asyncio.to_thread(list_workspace_memory, root)
+        return MemoryFiles(
+            workspace_path=str(root),
+            files=[
+                MemoryFileEntry(path=str(f.path), name=f.name, content=f.content) for f in listed
+            ],
+        ).model_dump_json()
 
     async def _handle_create_rule(self, msg: CreateRule) -> str:
         """Create a ``.tst/rules/`` file on the human path (TD-2802)."""

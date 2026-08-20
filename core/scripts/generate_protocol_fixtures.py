@@ -50,12 +50,15 @@ from tstd.protocol import (
     InstructionFiles,
     InstructionStack,
     ListInstructions,
+    ListMemory,
     ListPolicyRules,
     ListSessions,
     MemoryAccept,
     MemoryEdit,
     MemoryFileDiff,
     MemoryFileEdit,
+    MemoryFileEntry,
+    MemoryFiles,
     MemoryProposal,
     MemoryReject,
     MoveSession,
@@ -125,6 +128,7 @@ FIXTURES = {
     "set_tier": SetTier(session_id="sess-1", tier="brain"),
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
     "list_instructions": ListInstructions(workspace_path="/home/user/project"),
+    "list_memory": ListMemory(workspace_path="/home/user/project"),
     "create_rule": CreateRule(workspace_path="/home/user/project", name="api"),
     "memory_accept": MemoryAccept(session_id="sess-1", proposal_id="mp-1"),
     "memory_edit": MemoryEdit(
@@ -349,6 +353,16 @@ FIXTURES = {
         total_tokens=500,
         token_method="cl100k_base",
         seq=17,
+    ),
+    "memory_files": MemoryFiles(
+        workspace_path="/home/user/project",
+        files=[
+            MemoryFileEntry(
+                path="/home/user/project/.tst/memory/MEMORY.md",
+                name="MEMORY.md",
+                content="durable: ruff\n",
+            )
+        ],
     ),
     "instruction_files": InstructionFiles(
         workspace_path="/home/user/project",

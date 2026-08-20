@@ -24,9 +24,11 @@ import type {
   SetTier,
   GetInstructionStack,
   ListInstructions,
+  ListMemory,
   CreateRule,
   EndSession,
   InstructionFiles,
+  MemoryFiles,
   MemoryAccept,
   MemoryEdit,
   MemoryProposal,
@@ -210,6 +212,12 @@ describe("Client message fixtures match TypeScript types", () => {
   it("list_instructions", () => {
     const m = fixtures.list_instructions as ListInstructions;
     expect(m.type).toBe("list_instructions");
+    expect(isString(m.workspace_path)).toBe(true);
+  });
+
+  it("list_memory", () => {
+    const m = fixtures.list_memory as ListMemory;
+    expect(m.type).toBe("list_memory");
     expect(isString(m.workspace_path)).toBe(true);
   });
 
@@ -691,7 +699,7 @@ describe("All fixtures have required shape", () => {
       "set_skip_all_approvals",
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
-      "list_instructions", "create_rule",
+      "list_instructions", "list_memory", "create_rule",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
       "run_diagnostics",
@@ -710,7 +718,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "memory_proposal", "session_list", "policy_rules", "error",
+      "instruction_stack", "instruction_files", "memory_files", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported",
     ];
@@ -755,6 +763,12 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(m.type).toBe("move_session");
     expect(isString(m.session_id)).toBe(true);
     expect(isString(m.workspace_path)).toBe(true);
+  });
+
+  it("memory_files", () => {
+    const m = fixtures.memory_files as MemoryFiles;
+    expect(m.type).toBe("memory_files");
+    expect(Array.isArray(m.files)).toBe(true);
   });
 
   it("instruction_files", () => {

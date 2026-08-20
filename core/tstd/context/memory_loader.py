@@ -182,6 +182,23 @@ class MemoryCandidate:
     is_index: bool
 
 
+@dataclass(frozen=True)
+class MemoryPaneFile:
+    """One file the Memory pane lists (TD-2601)."""
+
+    path: Path
+    name: str
+    content: str
+
+
+def list_workspace_memory(workspace: str | Path) -> tuple[MemoryPaneFile, ...]:
+    """``.tst/memory/*.md`` for the human pane. Same discovery as the loader."""
+    return tuple(
+        MemoryPaneFile(path=c.path, name=c.path.name, content=c.text)
+        for c in discover_memory_files(workspace)
+    )
+
+
 def discover_memory_files(workspace: str | Path) -> tuple[MemoryCandidate, ...]:
     """Every readable ``.tst/memory/*.md``, index first, then sorted names.
 
