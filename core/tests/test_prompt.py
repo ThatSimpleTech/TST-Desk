@@ -6,7 +6,8 @@ Covers:
 - Prefix change when steering sources change
 - Worker: no manifest, no memory placeholder
 - Validator: subset only + diff + test output
-- Memory placeholder for brain (spec §5 placeholder)
+- Memory placeholder for brain when nothing loaded; loaded bytes replace it
+  (TD-2501). Worker and validator never carry the memory slot.
 - Async entry point and prefix token count
 - The absolute workspace root, stated once, inside the cache prefix, with
   the manifest's relative listing left intact (TD-1810)
@@ -124,6 +125,39 @@ class TestStablePrefixOrder:
         assembler = PromptAssembler(ws, home_dir=home)
         result = assembler.assemble_sync("brain")
         assert MEMORY_PLACEHOLDER in result.text
+
+
+class TestMemorySlot:
+    """TD-2501: loaded bytes replace the placeholder; other tiers have no slot."""
+
+    def test_loaded_bytes_replace_placeholder(self, tmp_path: Path) -> None:
+        home, ws = _build_workspace(tmp_path, root_file="root: steering")
+        assembler = PromptAssembler(ws, home_dir=home)
+        loaded = "<!-- memory: .tst/memory/MEMORY.md (always-index) -->\ndurable: ruff\n"
+        result = assembler.assemble_sync("brain", memory=loaded)
+        assert MEMORY_PLACEHOLDER not in result.text
+        assert "durable: ruff" in result.text
+        assert result.text.index("root: steering") < result.text.index("durable: ruff")
+
+    def test_empty_load_keeps_placeholder(self, tmp_path: Path) -> None:
+        home, ws = _build_workspace(tmp_path, root_file="root: steering")
+        assembler = PromptAssembler(ws, home_dir=home)
+        none = assembler.assemble_sync("brain", memory=None)
+        omitted = assembler.assemble_sync("brain")
+        assert MEMORY_PLACEHOLDER in none.text
+        assert none.prefix_hash == omitted.prefix_hash
+        assert none.prefix == omitted.prefix
+
+    def test_worker_and_validator_have_no_memory_slot(self, tmp_path: Path) -> None:
+        home, ws = _build_workspace(tmp_path, root_file="root: steering")
+        assembler = PromptAssembler(ws, home_dir=home)
+        loaded = "<!-- memory: .tst/memory/MEMORY.md (always-index) -->\ndurable: ruff\n"
+        worker = assembler.assemble_sync("worker", task="fix auth", memory=loaded)
+        validator = assembler.assemble_sync("validator", diff="+x", memory=loaded)
+        assert MEMORY_PLACEHOLDER not in worker.text
+        assert MEMORY_PLACEHOLDER not in validator.text
+        assert "durable: ruff" not in worker.text
+        assert "durable: ruff" not in validator.text
 
 
 # ── Prefix stability ────────────────────────────────────────────────────
