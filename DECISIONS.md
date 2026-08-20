@@ -6254,3 +6254,18 @@ ledger (like the classifier) would hide spend from `cost_by_tier`.
 
 **Alternative rejected:** Reusing `PromptAssembler` + the tool registry
 on the worker. That invites a write and is a user-shaped turn.
+
+---
+
+## 2026-08-20 — TD-2401: memory proposal is session-scoped diffs (Class B)
+
+**Decision:** `memory_proposal` is a session event: `proposal_id`, and
+per-file `action` / `path` / `diff` / `before` / `after`. The three
+client verbs are `memory_accept`, `memory_edit` (list of path+content;
+empty content is a delete), and `memory_reject`. Until a proposal is
+live, those verbs return `no_memory_proposal`. No `PROTOCOL_VERSION`
+bump.
+
+**Rationale:** The card (TD-2402) should render from the event, not a
+second read. Accept/edit/reject need a proposal id so a stale click
+cannot write the wrong bytes. Empty content as delete matches TD-2403.

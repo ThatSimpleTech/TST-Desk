@@ -251,6 +251,9 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `get_instruction_stack` | yes | Ask for the resolved steering stack and its token counts. |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |
 | `create_rule` | — | Create a `.tst/rules/` file on the human path. Never a tool call (TD-2802). |
+| `memory_accept` | yes | Accept a distill proposal as proposed (TD-2401). |
+| `memory_edit` | yes | Accept a distill proposal with edited file bytes (TD-2401). |
+| `memory_reject` | yes | Reject a distill proposal. Writes nothing. |
 | `shutdown` | — | Ask the daemon to shut down cleanly. Sent by the supervising host. |
 | `list_sessions` | — | Ask for the current session list. |
 | `new_session` | yes | Create a fresh session in an existing session's workspace. |
@@ -297,6 +300,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |
 | `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state. |
 | `instruction_files` | connection | The workspace's Instructions column: root steering plus `.tst/rules/*` (TD-2802). |
+| `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |
 | `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals`. |

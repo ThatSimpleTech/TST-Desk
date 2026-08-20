@@ -152,6 +152,33 @@ export interface CreateRule extends ClientMessage {
   name: string;
 }
 
+/** Accept a distill proposal as proposed (TD-2401). */
+export interface MemoryAccept extends ClientMessage {
+  type: "memory_accept";
+  session_id: string;
+  proposal_id: string;
+}
+
+export interface MemoryFileEdit {
+  path: string;
+  content: string;
+}
+
+/** Accept a distill proposal with edited bytes (TD-2401). */
+export interface MemoryEdit extends ClientMessage {
+  type: "memory_edit";
+  session_id: string;
+  proposal_id: string;
+  files: MemoryFileEdit[];
+}
+
+/** Reject a distill proposal. Writes nothing. */
+export interface MemoryReject extends ClientMessage {
+  type: "memory_reject";
+  session_id: string;
+  proposal_id: string;
+}
+
 export interface Shutdown extends ClientMessage {
   type: "shutdown";
 }
@@ -274,6 +301,9 @@ export type ClientMessageUnion =
   | GetInstructionStack
   | ListInstructions
   | CreateRule
+  | MemoryAccept
+  | MemoryEdit
+  | MemoryReject
   | Shutdown
   | ListSessions
   | NewSession
@@ -522,6 +552,22 @@ export interface InstructionFiles extends DaemonEvent {
   created?: string | null;
 }
 
+export interface MemoryFileDiff {
+  action: "create" | "replace" | "delete";
+  path: string;
+  diff: string;
+  before?: string | null;
+  after?: string | null;
+}
+
+/** Distill produced diffs the user must accept, edit, or reject (TD-2401). */
+export interface MemoryProposal extends DaemonEvent {
+  type: "memory_proposal";
+  session_id: string;
+  proposal_id: string;
+  files: MemoryFileDiff[];
+}
+
 export interface InstructionStack extends DaemonEvent {
   type: "instruction_stack";
   session_id: string;
@@ -695,6 +741,7 @@ export type DaemonEventUnion =
   | TierSwitched
   | InstructionStack
   | InstructionFiles
+  | MemoryProposal
   | SessionList
   | PolicyRules
   | SetupState

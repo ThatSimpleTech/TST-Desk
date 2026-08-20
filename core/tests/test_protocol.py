@@ -36,6 +36,11 @@ from tstd.protocol import (
     HandshakeError,
     Hello,
     ListPolicyRules,
+    MemoryAccept,
+    MemoryEdit,
+    MemoryFileEdit,
+    MemoryProposal,
+    MemoryReject,
     MoveSession,
     NewSession,
     OpenWorkspace,
@@ -203,6 +208,27 @@ class TestClientMessages:
         back = _roundtrip(msg)
         assert isinstance(back, CreateRule)
         assert back.name == "api"
+
+    def test_memory_accept(self) -> None:
+        back = _roundtrip(MemoryAccept(session_id="sess-1", proposal_id="mp-1"))
+        assert isinstance(back, MemoryAccept)
+        assert back.proposal_id == "mp-1"
+
+    def test_memory_edit(self) -> None:
+        back = _roundtrip(
+            MemoryEdit(
+                session_id="sess-1",
+                proposal_id="mp-1",
+                files=[MemoryFileEdit(path=".tst/memory/MEMORY.md", content="x\n")],
+            )
+        )
+        assert isinstance(back, MemoryEdit)
+        assert back.files[0].content == "x\n"
+
+    def test_memory_reject(self) -> None:
+        back = _roundtrip(MemoryReject(session_id="sess-1", proposal_id="mp-1"))
+        assert isinstance(back, MemoryReject)
+        assert back.proposal_id == "mp-1"
 
     def test_new_session(self) -> None:
         msg = NewSession(session_id="sess-1")
@@ -452,6 +478,28 @@ class TestDaemonEvents:
         back = _roundtrip(evt)
         assert isinstance(back, PolicyRules)
         assert back.rules == [PolicyRuleSummary(tool="shell", args="npm test", effect="auto")]
+
+    def test_memory_proposal(self) -> None:
+        from tstd.protocol import MemoryFileDiff
+
+        evt = MemoryProposal(
+            session_id="sess-1",
+            proposal_id="mp-1",
+            files=[
+                MemoryFileDiff(
+                    action="replace",
+                    path=".tst/memory/MEMORY.md",
+                    diff="--- a\n+++ b\n",
+                    before="old\n",
+                    after="new\n",
+                )
+            ],
+            seq=21,
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, MemoryProposal)
+        assert back.proposal_id == "mp-1"
+        assert back.files[0].action == "replace"
 
     def test_decision_logged(self) -> None:
         evt = DecisionLogged(

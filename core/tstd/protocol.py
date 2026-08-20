@@ -289,6 +289,38 @@ class CreateRule(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class MemoryAccept(ClientMessage):
+    """Accept a distill proposal as-is (TD-2401). Write is TD-2402."""
+
+    type: Literal["memory_accept"] = "memory_accept"
+    session_id: str
+    proposal_id: str
+
+
+class MemoryFileEdit(BaseModel):
+    """One edited file in a ``memory_edit`` (empty content is a delete)."""
+
+    path: str = Field(min_length=1)
+    content: str
+
+
+class MemoryEdit(ClientMessage):
+    """Accept a distill proposal with edited bytes (TD-2401 / TD-2403)."""
+
+    type: Literal["memory_edit"] = "memory_edit"
+    session_id: str
+    proposal_id: str
+    files: list[MemoryFileEdit]
+
+
+class MemoryReject(ClientMessage):
+    """Reject a distill proposal. Writes nothing (TD-2401)."""
+
+    type: Literal["memory_reject"] = "memory_reject"
+    session_id: str
+    proposal_id: str
+
+
 class Shutdown(ClientMessage):
     """Ask the daemon to shut down cleanly (sent by the supervising host)."""
 
@@ -841,6 +873,25 @@ class InstructionFileEntry(BaseModel):
     kind: Literal["agents", "claude", "rule"]
 
 
+class MemoryFileDiff(BaseModel):
+    """One file in a ``memory_proposal`` (TD-2401)."""
+
+    action: Literal["create", "replace", "delete"]
+    path: str
+    diff: str
+    before: str | None = None
+    after: str | None = None
+
+
+class MemoryProposal(DaemonEvent):
+    """Distill produced a diff the user must accept, edit, or reject."""
+
+    type: Literal["memory_proposal"] = "memory_proposal"
+    session_id: str
+    proposal_id: str
+    files: list[MemoryFileDiff]
+
+
 class InstructionFiles(DaemonEvent):
     """Reply to ``list_instructions`` / ``create_rule``. Connection-scoped."""
 
@@ -1089,6 +1140,9 @@ ClientMessageT = Annotated[
     | GetInstructionStack
     | ListInstructions
     | CreateRule
+    | MemoryAccept
+    | MemoryEdit
+    | MemoryReject
     | Shutdown
     | ListSessions
     | NewSession
@@ -1130,6 +1184,7 @@ DaemonEventT = Annotated[
     | TierSwitched
     | InstructionStack
     | InstructionFiles
+    | MemoryProposal
     | SessionList
     | PolicyRules
     | SetupState
@@ -1167,6 +1222,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "get_instruction_stack",
         "list_instructions",
         "create_rule",
+        "memory_accept",
+        "memory_edit",
+        "memory_reject",
         "shutdown",
         "list_sessions",
         "new_session",
@@ -1208,6 +1266,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tier_switched",
         "instruction_stack",
         "instruction_files",
+        "memory_proposal",
         "session_list",
         "policy_rules",
         "setup_state",

@@ -51,6 +51,12 @@ from tstd.protocol import (
     ListInstructions,
     ListPolicyRules,
     ListSessions,
+    MemoryAccept,
+    MemoryEdit,
+    MemoryFileDiff,
+    MemoryFileEdit,
+    MemoryProposal,
+    MemoryReject,
     MoveSession,
     OpenWorkspace,
     Ping,
@@ -119,6 +125,13 @@ FIXTURES = {
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
     "list_instructions": ListInstructions(workspace_path="/home/user/project"),
     "create_rule": CreateRule(workspace_path="/home/user/project", name="api"),
+    "memory_accept": MemoryAccept(session_id="sess-1", proposal_id="mp-1"),
+    "memory_edit": MemoryEdit(
+        session_id="sess-1",
+        proposal_id="mp-1",
+        files=[MemoryFileEdit(path=".tst/memory/MEMORY.md", content="durable: ruff\n")],
+    ),
+    "memory_reject": MemoryReject(session_id="sess-1", proposal_id="mp-1"),
     "shutdown": Shutdown(),
     "list_sessions": ListSessions(),
     # Session lifecycle (TD-1715): archive/restore, delete, move to project.
@@ -447,6 +460,26 @@ FIXTURES = {
                 cost=0.0031,
             ),
         ]
+    ),
+    "memory_proposal": MemoryProposal(
+        session_id="sess-1",
+        proposal_id="mp-1",
+        files=[
+            MemoryFileDiff(
+                action="replace",
+                path=".tst/memory/MEMORY.md",
+                diff=(
+                    "--- a/.tst/memory/MEMORY.md\n"
+                    "+++ b/.tst/memory/MEMORY.md\n"
+                    "@@ -1 +1 @@\n"
+                    "-old\n"
+                    "+durable: ruff\n"
+                ),
+                before="old\n",
+                after="durable: ruff\n",
+            )
+        ],
+        seq=21,
     ),
     "usage_exported": UsageExported(
         format="csv",
