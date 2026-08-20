@@ -57,6 +57,7 @@ no effect.
 | `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, and `local`. |
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
+| `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables. |
 
 ### `search`
 
@@ -71,6 +72,20 @@ this key.
 | `timeout_seconds` | float > 0 | `15` | How long a search or fetch request may run. |
 | `max_results` | int 1–20 | `8` | Default hit count when the tool call omits `max_results`. |
 | `fetch_max_bytes` | int ≥ 1 | `200000` | Cap on a `web_fetch` body. |
+
+### `embeddings`
+
+Memory ranking (TD-2202). The client sends OpenAI `POST /v1/embeddings` to
+`base_url`. The host is configuration, never a Python literal. Empty
+`base_url` disables the sidecar; a down loopback endpoint falls back to
+heading-match (TD-2201) and does not fail the turn. Do not point this at
+Ollama `/api/embed`.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `base_url` | string | *shipped* | Embeddings endpoint, including the `/v1` suffix. Empty string disables. |
+| `model` | string | *shipped* | Embeddings model slug. Empty disables even when `base_url` is set. |
+| `timeout_seconds` | float > 0 | `2` | How long a probe may run before heading-match takes over. |
 
 <!-- verify: model -->
 ```yaml
@@ -106,6 +121,10 @@ search:
   timeout_seconds: 15
   max_results: 8
   fetch_max_bytes: 200000
+embeddings:
+  base_url: http://127.0.0.1:8080/v1
+  model: nomic-embed-text
+  timeout_seconds: 2
 ```
 
 ### A preset
