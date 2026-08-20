@@ -19,6 +19,7 @@ from typing import Literal
 from ..logging import get_logger
 from ..memory_store import memory_dir
 from .imports import _iter_lines
+from .tokens import heuristic_count
 
 log = get_logger("tstd.memory_loader")
 
@@ -87,10 +88,13 @@ class MemoryLoad:
     """The heading-match selection for one task.
 
     ``block`` is ``None`` when nothing loaded so the assembler keeps
-    ``MEMORY_PLACEHOLDER``.
+    ``MEMORY_PLACEHOLDER``. ``dropped`` is what the budget cut, so the
+    inspector (TD-2604) can name the file and why it was chosen before
+    it was dropped.
     """
 
     files: tuple[MemoryFile, ...]
+    dropped: tuple[MemoryFile, ...] = ()
 
     @property
     def block(self) -> str | None:
@@ -105,6 +109,40 @@ class MemoryLoad:
     @property
     def names(self) -> tuple[str, ...]:
         return tuple(item.path.name for item in self.files)
+
+    @property
+    def dropped_names(self) -> tuple[str, ...]:
+        return tuple(item.path.name for item in self.dropped)
+
+
+def memory_tokens(text: str) -> int:
+    """Token count for a memory file — the same heuristic as steering."""
+    return heuristic_count(text).count
+
+
+def enforce_memory_budget(load: MemoryLoad, token_budget: int) -> MemoryLoad:
+    """Drop lowest-ranked topics until under *token_budget*.
+
+    ``MEMORY.md`` (``always-index``) is the last file dropped. Dropped
+    files keep their original reason so the inspector can say why they
+    were chosen and that the budget cut them.
+    """
+    kept = list(load.files)
+    dropped = list(load.dropped)
+
+    def _total(items: list[MemoryFile]) -> int:
+        return sum(memory_tokens(item.text) for item in items)
+
+    while kept and _total(kept) > token_budget:
+        drop_at: int | None = None
+        for i in range(len(kept) - 1, -1, -1):
+            if kept[i].reason != "always-index":
+                drop_at = i
+                break
+        if drop_at is None:
+            drop_at = 0
+        dropped.append(kept.pop(drop_at))
+    return MemoryLoad(tuple(kept), dropped=tuple(dropped))
 
 
 def tokenize(text: str) -> frozenset[str]:

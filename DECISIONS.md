@@ -6212,3 +6212,24 @@ is how a file with no heading overlap can still be relevant. Heading-
 match as tie-break keeps the floor visible in the inspector reason.
 The 4-chars/token heuristic is the same counter as steering (TD-506),
 so a later budget story cannot invent a second ruler.
+
+---
+
+## 2026-08-20 — TD-2502: drop list is token-budget; MEMORY.md last (Class B)
+
+**Decision:** After ranking or heading-match, `enforce_memory_budget`
+drops files until the TD-506 total is `<= embeddings.token_budget`.
+Topics drop from the tail (lowest rank / last name). `MEMORY.md` is
+last. Membership in `MemoryLoad.dropped` means the file was selected
+and then cut for budget; the file's `reason` is still why it was
+chosen (`always-index` / `heading` / `embedding`). An index that
+alone exceeds the cap yields an empty load (placeholder), not an
+over-budget block.
+
+**Rationale:** TD-2203 always *tries* `MEMORY.md` first. TD-2502 is the
+cap the assembler must honor, including when the index is huge. The
+inspector (TD-2604) needs names and both whys without a second API.
+
+**Alternative rejected:** Leaving an oversize `MEMORY.md` in the prompt
+and only dropping topics. That matches a literal reading of TD-2203
+and blows the cap the user configured.

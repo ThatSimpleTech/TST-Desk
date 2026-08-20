@@ -87,7 +87,7 @@ Ollama `/api/embed`.
 | `model` | string | *shipped* | Embeddings model slug. Empty disables even when `base_url` is set. |
 | `timeout_seconds` | float > 0 | `2` | How long a probe may run before heading-match takes over. |
 | `top_k` | int ≥ 1 | `4` | Maximum topic files kept after `MEMORY.md` when the sidecar answers. |
-| `token_budget` | int ≥ 1 | `2000` | Cap on loaded memory tokens (TD-506 heuristic, file bytes). `MEMORY.md` is kept even if it alone exceeds this; topics that do not fit are skipped. |
+| `token_budget` | int ≥ 1 | `2000` | Cap on loaded memory tokens (TD-506 heuristic, file bytes). Lowest-ranked topics drop until under the cap; `MEMORY.md` is the last file dropped. |
 
 <!-- verify: model -->
 ```yaml
