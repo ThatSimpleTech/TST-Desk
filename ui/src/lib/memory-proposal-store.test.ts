@@ -147,6 +147,28 @@ describe("decision actions", () => {
     expect(pending).toHaveLength(1);
   });
 
+  it("accept with edited drafts sends memory_edit", () => {
+    emit(proposal());
+    accept(pending[0]!, [{ path: ".tst/memory/MEMORY.md", content: "hand\n" }]);
+    expect(connection.send).toHaveBeenCalledWith({
+      type: "memory_edit",
+      session_id: "s1",
+      proposal_id: "mp-1",
+      files: [{ path: ".tst/memory/MEMORY.md", content: "hand\n" }],
+    });
+    expect(pending).toHaveLength(0);
+  });
+
+  it("accept with unchanged drafts still sends memory_accept", () => {
+    emit(proposal());
+    accept(pending[0]!, [{ path: ".tst/memory/MEMORY.md", content: "new\n" }]);
+    expect(connection.send).toHaveBeenCalledWith({
+      type: "memory_accept",
+      session_id: "s1",
+      proposal_id: "mp-1",
+    });
+  });
+
   it("reject sends memory_reject and drops the card", () => {
     emit(proposal());
     reject(pending[0]!);

@@ -5,7 +5,14 @@
 // of runes so it unit-tests under vitest's node environment. The runes
 // layer lives in memory-proposal-store.svelte.ts.
 
-import type { MemoryAccept, MemoryFileDiff, MemoryProposal, MemoryReject } from "./protocol";
+import type {
+  MemoryAccept,
+  MemoryEdit,
+  MemoryFileDiff,
+  MemoryFileEdit,
+  MemoryProposal,
+  MemoryReject,
+} from "./protocol";
 
 /** A pending distill proposal, reduced to what the card shows. */
 export interface PendingMemoryProposal {
@@ -39,4 +46,24 @@ export function rejectMessage(proposal: PendingMemoryProposal): MemoryReject {
     session_id: proposal.sessionId,
     proposal_id: proposal.proposalId,
   };
+}
+
+/** The client message that accepts with edited bytes (empty content = delete). */
+export function editMessage(
+  proposal: PendingMemoryProposal,
+  files: MemoryFileEdit[],
+): MemoryEdit {
+  return {
+    type: "memory_edit",
+    session_id: proposal.sessionId,
+    proposal_id: proposal.proposalId,
+    files,
+  };
+}
+
+/** Whether the drafts differ from the proposed file bodies. */
+export function draftsDiffer(proposal: PendingMemoryProposal, files: MemoryFileEdit[]): boolean {
+  const original = new Map(proposal.files.map((file) => [file.path, file.after ?? ""]));
+  if (files.length !== proposal.files.length) return true;
+  return files.some((file) => (original.get(file.path) ?? "") !== file.content);
 }

@@ -4246,9 +4246,9 @@ Spec §5 mechanics 3–4.
 **Size:** 2 · **Depends on:** TD-2402
 
 **Acceptance criteria:**
-- [ ] The user can edit the proposed markdown in the card
-- [ ] Accept commits the edited bytes, not the original proposal
-- [ ] Emptying a file in the editor is a delete, matching the proposal
+- [x] The user can edit the proposed markdown in the card
+- [x] Accept commits the edited bytes, not the original proposal
+- [x] Emptying a file in the editor is a delete, matching the proposal
       vocabulary
 
 ---

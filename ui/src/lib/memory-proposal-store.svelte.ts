@@ -6,7 +6,15 @@
 // session, so a newer event replaces the card. Accept/reject dismiss
 // on send — there is no resolving event in the log.
 
-import { acceptMessage, proposalFromEvent, rejectMessage, type PendingMemoryProposal } from "./memory-proposal";
+import {
+  acceptMessage,
+  draftsDiffer,
+  editMessage,
+  proposalFromEvent,
+  rejectMessage,
+  type PendingMemoryProposal,
+} from "./memory-proposal";
+import type { MemoryFileEdit } from "./protocol";
 import { onDaemonEvent, sendToDaemon } from "./connection-status.svelte.js";
 
 export const pending = $state<PendingMemoryProposal[]>([]);
@@ -50,10 +58,16 @@ function dismiss(proposalId: string): void {
 }
 
 /** Accept the parked proposal. The card leaves when the send lands;
- *  the daemon writes through the memory store (TD-2303 / TD-2104). */
-export function accept(proposal: PendingMemoryProposal): void {
+ *  the daemon writes through the memory store (TD-2303 / TD-2104).
+ *  Edited drafts go out as ``memory_edit`` so the store writes those
+ *  bytes, not the original proposal (TD-2403). */
+export function accept(proposal: PendingMemoryProposal, drafts?: MemoryFileEdit[]): void {
   if (!isPending(proposal.proposalId)) return;
-  if (sendToDaemon(acceptMessage(proposal))) dismiss(proposal.proposalId);
+  const msg =
+    drafts !== undefined && draftsDiffer(proposal, drafts)
+      ? editMessage(proposal, drafts)
+      : acceptMessage(proposal);
+  if (sendToDaemon(msg)) dismiss(proposal.proposalId);
 }
 
 /** Reject the parked proposal. Writes nothing. */

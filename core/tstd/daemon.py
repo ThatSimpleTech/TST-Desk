@@ -61,7 +61,13 @@ from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .memory_commit import MemoryCommitter
 from .memory_store import scaffold_workspace_memory
-from .memory_trigger import DistillEmit, apply_proposal, completed_turn_count, distill_if_due
+from .memory_trigger import (
+    DistillEmit,
+    apply_edits,
+    apply_proposal,
+    completed_turn_count,
+    distill_if_due,
+)
 from .policy import (
     add_rule,
     load_approved_imports,
@@ -1372,12 +1378,9 @@ class Daemon:
                 del self._pending_memory[msg.session_id]
                 return None
             if isinstance(msg, MemoryEdit):
-                return build_error(
-                    "bad_request",
-                    "memory_edit is not applied until the proposal card lands.",
-                    session_id=msg.session_id,
-                )
-            paths = await apply_proposal(found.workspace_path, pending.proposal, found)
+                paths = await apply_edits(found.workspace_path, pending.proposal, msg.files, found)
+            else:
+                paths = await apply_proposal(found.workspace_path, pending.proposal, found)
             await MemoryCommitter(Path(found.workspace_path)).commit(paths)
             del self._pending_memory[msg.session_id]
             return None
