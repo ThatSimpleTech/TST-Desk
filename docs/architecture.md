@@ -251,6 +251,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `get_instruction_stack` | yes | Ask for the resolved steering stack and its token counts. |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |
 | `list_memory` | — | List a workspace's Memory files (`.tst/memory/*.md`). Human path (TD-2601). |
+| `save_memory` | — | Save an edit from the Memory pane through the memory commit path. Never a tool (TD-2602). |
 | `create_rule` | — | Create a `.tst/rules/` file on the human path. Never a tool call (TD-2802). |
 | `memory_accept` | yes | Accept a distill proposal as proposed (TD-2401). |
 | `memory_edit` | yes | Accept a distill proposal with edited file bytes (TD-2401). |

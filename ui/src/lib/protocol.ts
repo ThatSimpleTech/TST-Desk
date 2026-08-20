@@ -151,6 +151,14 @@ export interface ListMemory extends ClientMessage {
   workspace_path: string;
 }
 
+/** Save an edit from the Memory pane (TD-2602). Human path, never a tool. */
+export interface SaveMemory extends ClientMessage {
+  type: "save_memory";
+  workspace_path: string;
+  path: string;
+  content: string;
+}
+
 /** Create a `.tst/rules/` file (TD-2802). Human path, never a tool. */
 export interface CreateRule extends ClientMessage {
   type: "create_rule";
@@ -313,6 +321,7 @@ export type ClientMessageUnion =
   | GetInstructionStack
   | ListInstructions
   | ListMemory
+  | SaveMemory
   | CreateRule
   | MemoryAccept
   | MemoryEdit

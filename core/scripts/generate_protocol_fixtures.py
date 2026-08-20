@@ -71,6 +71,7 @@ from tstd.protocol import (
     RevokePolicyRule,
     RuleActivated,
     RunDiagnostics,
+    SaveMemory,
     SessionList,
     SessionState,
     SetApiKey,
@@ -129,6 +130,11 @@ FIXTURES = {
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
     "list_instructions": ListInstructions(workspace_path="/home/user/project"),
     "list_memory": ListMemory(workspace_path="/home/user/project"),
+    "save_memory": SaveMemory(
+        workspace_path="/home/user/project",
+        path="MEMORY.md",
+        content="durable: ruff\n",
+    ),
     "create_rule": CreateRule(workspace_path="/home/user/project", name="api"),
     "memory_accept": MemoryAccept(session_id="sess-1", proposal_id="mp-1"),
     "memory_edit": MemoryEdit(

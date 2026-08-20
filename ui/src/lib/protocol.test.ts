@@ -25,6 +25,7 @@ import type {
   GetInstructionStack,
   ListInstructions,
   ListMemory,
+  SaveMemory,
   CreateRule,
   EndSession,
   InstructionFiles,
@@ -219,6 +220,14 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.list_memory as ListMemory;
     expect(m.type).toBe("list_memory");
     expect(isString(m.workspace_path)).toBe(true);
+  });
+
+  it("save_memory", () => {
+    const m = fixtures.save_memory as SaveMemory;
+    expect(m.type).toBe("save_memory");
+    expect(isString(m.workspace_path)).toBe(true);
+    expect(isString(m.path)).toBe(true);
+    expect(isString(m.content)).toBe(true);
   });
 
   it("create_rule", () => {
@@ -699,7 +708,7 @@ describe("All fixtures have required shape", () => {
       "set_skip_all_approvals",
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
-      "list_instructions", "list_memory", "create_rule",
+      "list_instructions", "list_memory", "save_memory", "create_rule",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
       "run_diagnostics",

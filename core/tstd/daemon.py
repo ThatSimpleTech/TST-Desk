@@ -61,7 +61,12 @@ from .keychain import (
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .memory_commit import MemoryCommitter
-from .memory_store import scaffold_workspace_memory
+from .memory_store import (
+    MemoryCapError,
+    MemorySaveError,
+    save_workspace_memory,
+    scaffold_workspace_memory,
+)
 from .memory_trigger import (
     DistillEmit,
     apply_edits,
@@ -121,6 +126,7 @@ from .protocol import (
     Resume,
     RevokePolicyRule,
     RunDiagnostics,
+    SaveMemory,
     SessionList,
     SessionSummary,
     SetApiKey,
@@ -1261,6 +1267,9 @@ class Daemon:
         if isinstance(msg, ListMemory):
             return await self._handle_list_memory(msg)
 
+        if isinstance(msg, SaveMemory):
+            return await self._handle_save_memory(msg)
+
         if isinstance(msg, CreateRule):
             return await self._handle_create_rule(msg)
 
@@ -1685,11 +1694,38 @@ class Daemon:
 
     async def _handle_list_memory(self, msg: ListMemory) -> str:
         """List a workspace's Memory files (TD-2601). Not a tool."""
+        return await self._memory_files_reply(msg.workspace_path)
+
+    async def _handle_save_memory(self, msg: SaveMemory) -> str:
+        """Write a Memory-pane edit through the store and commit it (TD-2602)."""
         root = Path(msg.workspace_path)
         if not await asyncio.to_thread(root.is_dir):
             return build_error(
                 "workspace_not_found",
                 f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        try:
+            cfg = await asyncio.to_thread(load_workspace_boundary, root)
+            path = await asyncio.to_thread(
+                save_workspace_memory,
+                root,
+                msg.path,
+                msg.content,
+                cfg.memory.max_lines,
+            )
+        except MemorySaveError as e:
+            return build_error("not_a_memory_file", str(e))
+        except MemoryCapError as e:
+            return build_error("memory_cap", str(e))
+        await MemoryCommitter(root).commit([path])
+        return await self._memory_files_reply(root)
+
+    async def _memory_files_reply(self, workspace: str | Path) -> str:
+        root = Path(workspace)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {root}",
             )
         listed = await asyncio.to_thread(list_workspace_memory, root)
         return MemoryFiles(

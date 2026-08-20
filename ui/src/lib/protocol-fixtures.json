@@ -111,6 +111,12 @@
     "type": "list_memory",
     "workspace_path": "/home/user/project"
   },
+  "save_memory": {
+    "type": "save_memory",
+    "workspace_path": "/home/user/project",
+    "path": "MEMORY.md",
+    "content": "durable: ruff\n"
+  },
   "create_rule": {
     "type": "create_rule",
     "workspace_path": "/home/user/project",
