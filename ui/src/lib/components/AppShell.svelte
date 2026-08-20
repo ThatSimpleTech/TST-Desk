@@ -9,7 +9,7 @@
 	// strip.
 	// Failure notices (TD-1008) render as banners under the header (blocking)
 	// or toasts bottom-right (transient); the footer hosts pending approval
-	// cards (TD-1007).
+	// cards (TD-1007) and memory proposals (TD-2402).
 	import { onMount } from 'svelte';
 	import SplitPane from './SplitPane.svelte';
 	import SessionRail from './SessionRail.svelte';
@@ -19,6 +19,7 @@
 	import StackPanel from './StackPanel.svelte';
 	import UsagePanel from './UsagePanel.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
+	import MemoryProposalBar from './MemoryProposalBar.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
 	import { push } from '../timeline-store.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
@@ -246,6 +247,7 @@
 </div>
 
 <ApprovalBar />
+<MemoryProposalBar />
 <ToastStack />
 <WizardPane />
 <DoctorPane />

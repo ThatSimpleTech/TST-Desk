@@ -4235,10 +4235,10 @@ Spec §5 mechanics 3–4.
 **Size:** 3 · **Depends on:** TD-2401, TD-1007
 
 **Acceptance criteria:**
-- [ ] A card (or modal) shows the unified diff per file
-- [ ] Accept writes via TD-2104 and dismisses
-- [ ] Reject writes nothing and dismisses
-- [ ] Bind-and-clear on session switch (TD-1014 contract)
+- [x] A card (or modal) shows the unified diff per file
+- [x] Accept writes via TD-2104 and dismisses
+- [x] Reject writes nothing and dismisses
+- [x] Bind-and-clear on session switch (TD-1014 contract)
 
 ---
 
