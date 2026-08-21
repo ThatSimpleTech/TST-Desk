@@ -4934,10 +4934,13 @@ the AX hit-test is cheap; otherwise file a split.
 **Size:** 3 · **Depends on:** TD-3301
 
 **Acceptance criteria:**
-- [ ] A visible control stops all actuation immediately (same as the
+- [x] A visible control stops all actuation immediately (same as the
       MCP kill-switch)
-- [ ] Capture and the Screen pane keep working
-- [ ] Keyboard reachable; discoverable from the palette
+- [x] Capture and the Screen pane keep working
+- [x] Keyboard reachable; discoverable from the palette
+
+Done (2026-08-21): title bar + palette + ⌘. send `set_cu_kill`;
+connection-scoped `cu_kill_state`; screenshot still runs.
 
 ---
 
