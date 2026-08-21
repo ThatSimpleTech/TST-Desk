@@ -99,6 +99,12 @@ missing or the pid is dead it spawns `python -m tstd.daemon --data-dir <dir>` �
 `assistant_delta` text → exit 1 if `turn_complete.failed`. The headless harness (TD-1401)
 stays the mock path; `tst run` is not a second harness.
 
+**`tst attach` (TD-3102)** is the same door in follow mode. Same port file and
+`hello`. It sends `attach{session_id, from_seq}` (default 1), prints assistant
+text the way `tst run` does, and prints one-line text for approvals,
+`turn_complete`, and errors — not JSON dumps. Ctrl+C sends `detach`, not
+`cancel`. An unknown id is the daemon's existing `session_not_found` error.
+
 ---
 
 ## 2. Why the session owns the loop

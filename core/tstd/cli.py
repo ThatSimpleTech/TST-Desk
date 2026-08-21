@@ -1,16 +1,20 @@
-"""`tst` — a second door to the same daemon (TD-3101).
+"""`tst` — a second door to the same daemon (TD-3101, TD-3102).
 
 The window and this CLI share one rendezvous (``port.json``) and one
 handshake (``hello`` + the port-file token). This process never binds a
 socket. If no live daemon is at the data dir it starts ``tstd`` and
 leaves it running; it is not the host, so it does not pass
 ``--parent-pid``.
+
+``run`` opens a workspace and prints one turn. ``attach`` follows a
+session the daemon already owns: replay + live text, detach on SIGINT.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import subprocess
@@ -20,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
 from .logging import user_data_dir
 from .protocol import PROTOCOL_VERSION
@@ -36,8 +41,17 @@ class CliError(Exception):
     """User-visible failure. The message is printed to stderr."""
 
 
+def _add_data_dir(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="daemon data directory (default: the same as tstd / the host)",
+    )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse ``tst`` argv. Only ``run`` is registered this story."""
+    """Parse ``tst`` argv. ``run`` and ``attach`` are registered."""
     parser = argparse.ArgumentParser(
         prog="tst",
         description="TST Desk CLI — same daemon as the window, different door.",
@@ -58,12 +72,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="user message for this turn",
     )
-    run_p.add_argument(
-        "--data-dir",
-        type=Path,
-        default=None,
-        help="daemon data directory (default: the same as tstd / the host)",
+    _add_data_dir(run_p)
+    attach_p = sub.add_parser(
+        "attach",
+        help="replay a session from from_seq and stream live events as text",
     )
+    attach_p.add_argument("session_id", help="session to follow")
+    attach_p.add_argument(
+        "--from-seq",
+        type=int,
+        default=1,
+        metavar="N",
+        help="replay from this event seq (default: 1)",
+    )
+    _add_data_dir(attach_p)
     return parser.parse_args(argv)
 
 
@@ -152,12 +174,15 @@ async def _send(ws: Any, message: dict[str, Any]) -> None:
     await ws.send(json.dumps(message))
 
 
-async def _recv_event(ws: Any, timeout_secs: float) -> dict[str, Any]:
+async def _recv_event(ws: Any, timeout_secs: float | None) -> dict[str, Any]:
     """Next JSON object, skipping application pings (TD-1716)."""
-    deadline = time.monotonic() + timeout_secs
+    deadline = None if timeout_secs is None else time.monotonic() + timeout_secs
     while True:
-        remaining = max(0.1, deadline - time.monotonic())
-        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        if deadline is None:
+            raw = await ws.recv()
+        else:
+            remaining = max(0.1, deadline - time.monotonic())
+            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
         if isinstance(raw, bytes):
             raw = raw.decode()
         if not isinstance(raw, str):
@@ -169,15 +194,45 @@ async def _recv_event(ws: Any, timeout_secs: float) -> dict[str, Any]:
         if not isinstance(event, dict):
             raise CliError("daemon sent a non-object frame")
         if event.get("type") == "ping":
-            if time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError
             continue
         return event
 
 
 def _print_error(event: dict[str, Any]) -> None:
-    message = event.get("message") or event.get("code") or "error"
-    print(str(message), file=sys.stderr)
+    """Print a daemon ``error`` to stderr, including its typed ``code``."""
+    code = event.get("code")
+    message = event.get("message")
+    if isinstance(code, str) and code:
+        if isinstance(message, str) and message and message != code:
+            print(f"{code}: {message}", file=sys.stderr)
+        else:
+            print(code, file=sys.stderr)
+        return
+    print(str(message or "error"), file=sys.stderr)
+
+
+def _visible_event_line(event: dict[str, Any]) -> str | None:
+    """One-line TTY form of a user-visible event. Not a JSON dump."""
+    typ = event.get("type")
+    if typ == "approval_request":
+        summary = str(event.get("summary") or event.get("tool_name") or "approval")
+        reason = event.get("reason")
+        if isinstance(reason, str) and reason:
+            return f"approval: {summary} ({reason})"
+        return f"approval: {summary}"
+    if typ == "turn_complete":
+        if event.get("failed"):
+            return f"turn failed: {event.get('error_code') or 'turn_failed'}"
+        return "turn complete"
+    return None
+
+
+def _finish_assistant_line(printed: bool) -> None:
+    if printed:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 
 async def _run_session(ws: Any, workspace: Path, message: str) -> int:
@@ -218,9 +273,7 @@ async def _stream_turn(ws: Any, session_id: str) -> int:
             break
         typ = event.get("type")
         if typ == "error":
-            if printed:
-                sys.stdout.write("\n")
-                sys.stdout.flush()
+            _finish_assistant_line(printed)
             _print_error(event)
             return 1
         if event.get("session_id") != session_id:
@@ -230,9 +283,7 @@ async def _stream_turn(ws: Any, session_id: str) -> int:
             sys.stdout.flush()
             printed = True
         if typ == "turn_complete":
-            if printed:
-                sys.stdout.write("\n")
-                sys.stdout.flush()
+            _finish_assistant_line(printed)
             if event.get("failed"):
                 print(str(event.get("error_code") or "turn_failed"), file=sys.stderr)
                 return 1
@@ -254,18 +305,96 @@ async def run_turn(workspace: Path, message: str, data_dir: Path) -> int:
         raise CliError("timed out talking to the daemon") from e
 
 
+def _is_fatal_attach_error(event: dict[str, Any], session_id: str) -> bool:
+    """Unknown-session and other connection-scoped errors end the command."""
+    if event.get("code") == "session_not_found":
+        return True
+    sid = event.get("session_id")
+    return sid is None or sid != session_id
+
+
+async def _stream_attached(ws: Any, session_id: str) -> int:
+    """Replay + live. Stays on the socket until detach or the daemon drops."""
+    printed = False
+    try:
+        while True:
+            event = await _recv_event(ws, None)
+            typ = event.get("type")
+            if typ == "error":
+                if _is_fatal_attach_error(event, session_id):
+                    _finish_assistant_line(printed)
+                    _print_error(event)
+                    return 1
+                _print_error(event)
+                continue
+            if event.get("session_id") != session_id:
+                continue
+            if typ == "assistant_delta":
+                sys.stdout.write(str(event.get("delta") or ""))
+                sys.stdout.flush()
+                printed = True
+                continue
+            line = _visible_event_line(event)
+            if line is None:
+                continue
+            _finish_assistant_line(printed)
+            printed = False
+            print(line)
+    except ConnectionClosed:
+        _finish_assistant_line(printed)
+        return 0
+
+
+async def _follow_session(ws: Any, session_id: str, from_seq: int) -> int:
+    ack = await _recv_event(ws, 10.0)
+    if ack.get("type") != "hello_ack":
+        if ack.get("type") == "error":
+            _print_error(ack)
+            return 1
+        print("handshake failed", file=sys.stderr)
+        return 1
+
+    await _send(ws, {"type": "attach", "session_id": session_id, "from_seq": from_seq})
+    try:
+        return await _stream_attached(ws, session_id)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        # Detach is a viewer unsubscribe (TD-206). Never send cancel.
+        with contextlib.suppress(OSError, ConnectionClosed):
+            await asyncio.shield(_send(ws, {"type": "detach", "session_id": session_id}))
+        raise
+
+
+async def attach_session(session_id: str, data_dir: Path, from_seq: int = 1) -> int:
+    """Connect, attach, replay from ``from_seq``, stream until detach."""
+    info = await resolve_daemon(data_dir)
+    try:
+        async with connect(f"ws://127.0.0.1:{info['port']}") as ws:
+            await _send(ws, hello_message(str(info["token"])))
+            return await _follow_session(ws, session_id, from_seq)
+    except OSError as e:
+        raise CliError(f"could not connect to daemon: {e}") from e
+    except TimeoutError as e:
+        raise CliError("timed out talking to the daemon") from e
+
+
+def _resolved_data_dir(args: argparse.Namespace) -> Path:
+    if args.data_dir is not None:
+        return Path(args.data_dir).expanduser().resolve()
+    return user_data_dir()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry point. Returns a process exit code."""
     args = parse_args(argv)
-    if args.command != "run":
+    data_dir = _resolved_data_dir(args)
+    try:
+        if args.command == "run":
+            workspace = args.workspace.expanduser().resolve()
+            return asyncio.run(run_turn(workspace, args.message, data_dir))
+        if args.command == "attach":
+            return asyncio.run(attach_session(args.session_id, data_dir, args.from_seq))
         print(f"unknown command: {args.command}", file=sys.stderr)
         return 2
-    workspace = args.workspace.expanduser().resolve()
-    data_dir = (
-        args.data_dir.expanduser().resolve() if args.data_dir is not None else user_data_dir()
-    )
-    try:
-        return asyncio.run(run_turn(workspace, args.message, data_dir))
     except CliError as e:
         print(str(e), file=sys.stderr)
         return 1
