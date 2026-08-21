@@ -7266,3 +7266,31 @@ web tools with no approval floor at all.
 — the classifier cannot see inside a command string; `allowed_commands`
 and the approval gate govern that path. Documented in configuration.md
 §4.6.
+---
+
+## 2026-08-21 — TD-4818: skip-all exempts the shell floor, scoped by tool name
+
+**Class:** B (structural — changes TD-804's promotion semantics for one tool)
+
+**Decision:** `resolve_explained` no longer promotes ask→auto under skip-all when
+the tool is `shell`. The exemption keys on the tool, not the `shell-floor` rule id:
+every shell B *is* the floor (the rule is static and total for that tool), and the
+tool name survives rule renames. An explicit workspace `shell: auto` rule still
+wins — policy rules resolve before the skip-all block, so a deliberate opt-in is
+untouched; only the floor default and explicit `ask` rules stop promoting.
+
+**Rationale:** The B floor exists because the classifier cannot see inside a
+command string. Promoting it under skip-all auto-ran every write form the parser
+misses (`eval`, `sh -c`, `cp`, command substitution) — the ox-alpha review
+reproduced silent steering writes this way, falsifying TD-4805's "the B floor
+already asks in every case the parser misses" rationale. CU actuation keeps its
+promotion (autonomous CU runs are the designed TD-804 use case), and allowlisted
+web fetches keep theirs (two explicit opt-ins: the allowlist entry and skip-all).
+
+**Alternative rejected:** Parsing more write forms (`cp`, `mv`, `sed -i`, `eval`)
+into the static table. The set is unbounded — interpreters, `find -exec`, editors.
+The floor's honesty is precisely that it does not pretend to see inside the string.
+
+**Follow-up:** TD-4822/TD-4823 (tst-cu-mcp findings from the same review) are
+filed, not yet staffed.
+
