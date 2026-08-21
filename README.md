@@ -192,9 +192,26 @@ inspector, filesystem and shell tools behind a decision classifier and approval 
 boundaries and spend/time/iteration caps, the live cost meter and usage export, the append-only
 audit log, the session rail, settings, diagnostics, and keyless local-model support.
 
-What is not built yet, and is not claimed anywhere above: computer-use, detached "coworker"
-sessions that outlive the window, agent memory, the autonomous runner, and remote attach. Those
-are v0.2 and later — see [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) §9 for the phasing.
+What is not built yet, and is not claimed anywhere above: computer-use, agent memory as a
+finished product surface, the autonomous runner, and remote attach. Those are later
+milestones — see [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) §9 for the phasing.
+
+### Close vs Quit
+
+Closing the window is not quitting the app. The daemon keeps working after the window is gone.
+
+- **macOS** — the red traffic-light **closes** (hides) the window; the Dock icon stays.
+  Click the Dock icon to show the window again. **⌘Q** or **Quit TST Desk** from the menu
+  or Dock is Quit: the daemon shuts down and is reaped.
+- **Windows** — the title-bar **X** or Alt+F4 hides the window. `tstd` keeps running.
+  Opening the app again shows the window, or a new host process attaches to the live
+  daemon instead of starting a second one. **Quit** / File → Exit shuts the daemon down.
+- **Linux** — the window close button hides the window the same way. Quit from the app
+  menu (or a desktop Quit action) is what stops `tstd`.
+
+The first time you close the window: that hides TST Desk. **Quit** is what stops it.
+
+OS notifications for an approval or a finished turn still fire while the window is hidden.
 
 See [`docs/tst-desk-backlog.md`](docs/tst-desk-backlog.md) for the current milestone and
 [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) for the full architecture spec. How the pieces

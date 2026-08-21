@@ -6754,3 +6754,34 @@ rename, or treating empty rename as "short id forever." Both lose
 information the rail already had.
 
 ---
+
+## 2026-08-20 — TD-2902: close hides; coworker omits `--parent-pid` (Class B)
+
+**Decision:** `CloseRequested` hides the window and does not shut down
+`tstd` or the embeddings sidecar and does not `app.exit`. The host
+process stays alive so clicking the Dock / app icon shows the same
+window and the existing WS client re-attaches with `from_seq`. Quit
+(`RunEvent::Exit` — Cmd+Q, dock Quit) still best-effort-kills.
+
+When coworker mode is on, the host **omits `--parent-pid`** at spawn so
+the daemon watchdog is never armed. The acceptance criterion is that
+`--parent-pid` does not kill `tstd` when the window process exits; the
+honest implementation is not to pass the flag. When coworker is off,
+today's spawn + watchdog stay (TD-1002 / TD-2905 off path). Close with
+coworker off still shuts down.
+
+Coworker is `{user_data_dir}/coworker.yaml` `{enabled: true}`, default
+**on** when the file is absent, loaded like skip-all. The host reads
+the same file before spawn. Settings UI is TD-2905.
+
+If `port.json` names a live pid, the host attaches and does not spawn a
+second daemon.
+
+**Rationale:** Close ≠ quit is the M5 coworker cut. Leaving the host
+alive is how reopen avoids a second host. Arming the watchdog and then
+trying to ignore it would still kill `tstd` on host death.
+
+**Alternative rejected:** Keep `--parent-pid` and special-case the
+watchdog. Also rejected: exiting the host on close and hoping attach
+covers reopen.
+

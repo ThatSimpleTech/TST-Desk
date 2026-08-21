@@ -1,6 +1,7 @@
 pub mod daemon;
 mod read_text;
 
+use daemon::coworker::{window_close_action, CloseAction, LifecycleEvent};
 use daemon::embeddings::EmbeddingsHandle;
 use daemon::DaemonHandle;
 use read_text::read_text_file;
@@ -41,6 +42,32 @@ fn open_path(path: String) -> Result<(), String> {
         .map_err(|e| format!("no opener available: {e}"))
 }
 
+fn show_main_window(app: &tauri::AppHandle) {
+    let window = app
+        .get_webview_window("main")
+        .or_else(|| app.webview_windows().into_values().next());
+    if let Some(window) = window {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn quit_app(app: &tauri::AppHandle) {
+    let handle = app.state::<DaemonHandle>().inner().clone();
+    let embeddings = app.state::<EmbeddingsHandle>().inner().clone();
+    handle.request_shutdown();
+    embeddings.request_shutdown();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(handle.wait_for_done(), embeddings.wait_for_done());
+        })
+        .await;
+        app.exit(0);
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -76,37 +103,31 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let app = window.app_handle().clone();
-                let handle = window.app_handle().state::<DaemonHandle>().inner().clone();
-                let embeddings = window
-                    .app_handle()
-                    .state::<EmbeddingsHandle>()
-                    .inner()
-                    .clone();
-                // TODO(v0.3): detached-session behavior will keep the daemon
-                // alive here instead of shutting it down, so sessions survive
-                // the window closing.
-                handle.request_shutdown();
-                embeddings.request_shutdown();
-                tauri::async_runtime::spawn(async move {
-                    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                        tokio::join!(handle.wait_for_done(), embeddings.wait_for_done());
-                    })
-                    .await;
-                    app.exit(0);
-                });
+                let coworker_on = daemon::load_coworker(&daemon::data_dir());
+                match window_close_action(LifecycleEvent::CloseRequested, coworker_on) {
+                    CloseAction::Hide => {
+                        // Close ≠ quit. The host stays up so reopen does
+                        // not spawn a second process; tstd keeps running.
+                        let _ = window.hide();
+                    }
+                    CloseAction::Shutdown => quit_app(window.app_handle()),
+                }
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
-            // Catch-all for quit paths that never raise CloseRequested on
-            // macOS (Cmd+Q, dock quit — tauri#13778). Best-effort kill: the
-            // daemon's own --parent-pid watchdog is the real no-orphan
-            // guarantee; this just closes the window before the OS reaps us.
-            if let tauri::RunEvent::Exit = event {
-                daemon::best_effort_kill(&app_handle.state::<DaemonHandle>());
-                daemon::embeddings::best_effort_kill(&app_handle.state::<EmbeddingsHandle>());
+            match event {
+                // Cmd+Q / dock Quit — still reap. Close is hide, not this.
+                tauri::RunEvent::Exit => {
+                    daemon::best_effort_kill(&app_handle.state::<DaemonHandle>());
+                    daemon::embeddings::best_effort_kill(
+                        &app_handle.state::<EmbeddingsHandle>(),
+                    );
+                }
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => show_main_window(app_handle),
+                _ => {}
             }
         });
 }

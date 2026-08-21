@@ -99,6 +99,46 @@ pub fn port_file_belongs_to_spawn(spawned_pid: u32, file_pid: u32) -> bool {
     pid_is_spawned_or_descendant(spawned_pid, file_pid, parent_pid)
 }
 
+/// True when `pid` is a live process. Used to attach to a leftover
+/// `tstd` instead of spawning a second one (TD-2902).
+pub fn pid_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    pid_is_alive_impl(pid)
+}
+
+#[cfg(unix)]
+fn pid_is_alive_impl(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn pid_is_alive_impl(pid: u32) -> bool {
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let pid_s = pid.to_string();
+    text.split_whitespace().any(|tok| tok == pid_s)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn pid_is_alive_impl(_pid: u32) -> bool {
+    false
+}
+
 /// Put the child in its own process group so a later group-kill reaps
 /// bootloader and grandchild together. No-op on Windows — [`kill_spawned_group`]
 /// uses `taskkill /T` there instead.
@@ -200,5 +240,7 @@ mod tests {
         assert!(!pid_is_spawned_or_descendant(me, parent, parent_pid));
         assert!(port_file_belongs_to_spawn(me, me));
         assert!(port_file_belongs_to_spawn(parent, me));
+        assert!(pid_is_alive(me));
+        assert!(!pid_is_alive(0));
     }
 }

@@ -33,7 +33,9 @@ export function noticeFor(event: DaemonEventUnion): OsNotice | null {
 	return null;
 }
 
-/** OS notifications fire only when the window is not the front one. */
+/** OS notifications fire only when the window is not the front one.
+ *  A hidden window is unfocused, so approval and turn-complete still
+ *  notify while the window is gone (TD-2902). */
 export function shouldNotify(focused: boolean): boolean {
 	return !focused;
 }
