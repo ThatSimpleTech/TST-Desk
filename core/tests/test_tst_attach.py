@@ -22,6 +22,15 @@ from tstd.mock import Script
 from tstd.protocol import ApprovalRequest, AssistantDelta
 
 
+# Replay of an approval_request must not block pytest's stdin (TD-3103).
+class _NonTtyStdin:
+    def isatty(self) -> bool:
+        return False
+
+    def readline(self) -> str:
+        raise AssertionError("non-TTY must not read stdin")
+
+
 async def _wait_attached(daemon: Daemon, session_id: str) -> None:
     for _ in range(100):
         if daemon._attached_clients.get(session_id):
@@ -106,8 +115,12 @@ class TestParser:
 
 class TestAttachAgainstMockDaemon:
     async def test_replays_and_streams_text(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(cli.sys, "stdin", _NonTtyStdin())
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         workspace = _workspace(tmp_path)
@@ -142,7 +155,9 @@ class TestAttachAgainstMockDaemon:
                     seq=1,
                 )
             )
-            live = await _wait_stdout(capsys, "approval: Run `ls` (class B)")
+            live = await _wait_stdout(capsys, "approval: Run `ls`")
+            assert "tool: shell" in live
+            assert "class: B" in live
             assert "live chunk" in live
 
             follower.cancel()
