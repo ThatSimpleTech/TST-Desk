@@ -183,6 +183,14 @@ class TestTiers:
         assert cfg.computer_use.command == ""
         assert ComputerUseConfig().command == ""
 
+    def test_shipped_local_worker_preset_is_vllm(self, tmp_path: Path) -> None:
+        """TD-3903: CU-heavy worker remaps to the vllm preset unless emptied."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.computer_use.local_worker_preset == "vllm"
+        assert ComputerUseConfig().local_worker_preset == "vllm"
+        assert ComputerUseConfig(local_worker_preset="").local_worker_preset == ""
+        assert ComputerUseConfig(local_worker_preset="  local  ").local_worker_preset == "local"
+
     def test_shipped_grounding_is_off(self, tmp_path: Path) -> None:
         """TD-3902: packaged config leaves click targeting on the intended point."""
         cfg = _load_shipped(tmp_path)

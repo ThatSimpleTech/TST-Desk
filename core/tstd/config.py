@@ -276,11 +276,26 @@ class ComputerUseConfig(BaseModel):
 
     ``grounding`` is an optional local vision model for click targeting
     (TD-3902). Empty ``grounding.base_url`` leaves the TD-3304 path.
+
+    ``local_worker_preset`` names the preset whose *worker* tier is used
+    for the worker client after a session has used a desktop_ or
+    browser_ tool (TD-3903). Default ``vllm``. Empty never remaps.
+    Brain stays on the active preset.
     """
 
     command: str | list[str] = ""
     browser: Literal["mock", "playwright"] = "mock"
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
+    local_worker_preset: str = "vllm"
+
+    @field_validator("local_worker_preset", mode="before")
+    @classmethod
+    def _strip_local_worker_preset(cls, value: object) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("local_worker_preset must be a string")
+        return value.strip()
 
     @field_validator("command", mode="before")
     @classmethod

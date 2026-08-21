@@ -7584,3 +7584,31 @@ calls a model. Also rejected: failing the click when grounding misses.
 Also rejected: price keys on the grounding block — billed cost cannot
 be non-zero while the only legal destination is loopback.
 
+## 2026-08-21 — TD-3903: remap the worker client, not the router (Class B)
+
+**Decision:** CU-heavy pixel loops pin the *worker ProviderClient* to
+`computer_use.local_worker_preset` (default `vllm`) without touching
+TD-303. Lead-turns, `set_tier`, and escalation still pick the tier
+name. Only when that name is `worker` and the session has already
+emitted a `desktop_` / `browser_` `tool_call` (same signal as the
+Screen tab) does the loop build the client from the named preset's
+worker tier instead of `config.tier("worker")`. Brain always comes
+from the active preset. Empty preset name, or a name that is not a
+preset, never remaps. The classifier worker call stays on the active
+preset — it is not a pixel loop.
+
+`tier_state.model_slugs.worker` is the slug actually used after remap.
+If that slug is still unresolved, it is omitted (TD-1805). Title-bar
+chips already tooltip the slug they were given; no extra chip.
+
+The provider factory now receives the effective `TierConfig` so a
+remapped worker can land on a different URL than the brain. Zero-arg
+factories still work. The daemon caches clients by `base_url`.
+
+**Rationale:** Changing `active_tier` would lie about who is thinking
+and who is typing. A second client is the smallest honest split: same
+router, different endpoint, slugs still from yaml.
+
+**Alternative rejected:** A new router rule or `set_tier` side-effect.
+Also rejected: inventing a worker tag when the local slug is unset.
+

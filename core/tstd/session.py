@@ -273,6 +273,9 @@ class Session:
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False
+        # TD-3903: this session has used a desktop_ / browser_ tool.
+        # Live flag; revive also scans the event log (same signal as Screen).
+        self.used_cu = False
 
     async def _observe_turn_end(self, event: DaemonEvent, _log: SessionEventLog) -> None:
         """Lower the open-turn count when the loop reports a turn complete."""
