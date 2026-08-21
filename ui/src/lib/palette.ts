@@ -17,6 +17,7 @@ export type PaletteCommand =
 	| { kind: "open-decisions" }
 	| { kind: "run-doctor" }
 	| { kind: "show-stack" }
+	| { kind: "show-work" }
 	| { kind: "open-settings" }
 	| { kind: "toggle-theme" }
 	| { kind: "end-session" };
@@ -67,6 +68,14 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 		icon: "layers",
 		keywords: "steering context rules panel",
 		command: { kind: "show-stack" },
+	},
+	{
+		id: "action:show-work",
+		title: "Open work",
+		subtitle: "Session diffs as a reviewable stack",
+		icon: "file",
+		keywords: "diffs writes files review pane",
+		command: { kind: "show-work" },
 	},
 	{
 		id: "action:open-settings",
