@@ -21,6 +21,7 @@ import type {
   Cancel,
   Attach,
   Detach,
+  SetPlanMode,
   SetTier,
   GetInstructionStack,
   ListInstructions,
@@ -254,6 +255,12 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.set_tier as SetTier;
     expect(m.type).toBe("set_tier");
     expect(m.tier).toBe("brain");
+  });
+
+  it("set_plan_mode", () => {
+    const m = fixtures.set_plan_mode as SetPlanMode;
+    expect(m.type).toBe("set_plan_mode");
+    expect(m.enabled).toBe(true);
   });
 
   it("get_instruction_stack", () => {

@@ -51,6 +51,8 @@ export const session = $state({
   attachmentLimits: { ...DEFAULT_ATTACHMENT_LIMITS } as AttachmentLimits,
   tier: "brain" as "brain" | "worker" | "validator",
   tierOverride: null as "brain" | "worker" | "validator" | null,
+  /** Plan lock (TD-4603): brain forced on every completion until cleared. */
+  planLock: false,
   modelSlugs: {} as Record<string, string>,
 });
 
@@ -74,6 +76,7 @@ export function resetSession(): void {
   session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;
+  session.planLock = false;
   session.modelSlugs = {};
   pendingPath = null;
 }
@@ -120,6 +123,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
     case "tier_state":
       session.tier = event.tier;
       session.tierOverride = event.override ?? null;
+      session.planLock = event.plan_lock ?? false;
       session.modelSlugs = event.model_slugs;
       break;
     case "cost_update":
@@ -164,6 +168,7 @@ export function focusSession(
   session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;
+  session.planLock = false;
   session.modelSlugs = {};
   pendingPath = null;
 }
@@ -182,6 +187,12 @@ export function retargetWorkspace(sessionId: string, workspacePath: string): voi
 export function setTier(tier: "brain" | "worker" | "validator"): void {
   if (session.sessionId === null) return;
   client?.setTier(session.sessionId, tier);
+}
+
+/** Toggle the plan lock on the active session (TD-4603). */
+export function setPlanMode(enabled: boolean): void {
+  if (session.sessionId === null) return;
+  client?.setPlanMode(session.sessionId, enabled);
 }
 
 /** Display name for the workspace row: basename of the path. */

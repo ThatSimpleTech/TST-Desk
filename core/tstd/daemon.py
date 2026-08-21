@@ -174,6 +174,7 @@ from .protocol import (
     SetCuIndicators,
     SetCuKill,
     SetLoadGlobalMemory,
+    SetPlanMode,
     SetPreset,
     SetSessionStar,
     SetSkipAllApprovals,
@@ -409,6 +410,7 @@ def _tier_state_event(session_id: str, router: TierRouter, config: ModelConfig) 
         session_id=session_id,
         tier=router.active_tier,
         override=router.override,
+        plan_lock=router.plan_lock,
         model_slugs={
             name: slug for name in TIER_NAMES if (slug := config.tier(name).slug) is not None
         },
@@ -1245,6 +1247,36 @@ class Daemon:
                     "extra_fields": {
                         "session_id": found.id,
                         "tier": msg.tier,
+                    }
+                },
+            )
+            return None
+
+        if isinstance(msg, SetPlanMode):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            if found.router is None:
+                return build_error(
+                    "session_not_live",
+                    f"Session {msg.session_id!r} has no live agent loop "
+                    "(restored after restart); plan mode cannot be changed",
+                )
+            # The lock lives on the router, so every completion's tier
+            # resolution (lead turns, escalation, overrides) reads it.
+            # Acked with tier_state — the title bar shows the forced
+            # brain without a timeline entry, since nothing switched.
+            found.router.set_plan_lock(msg.enabled)
+            await found.event_log.add(_tier_state_event(found.id, found.router, self.config))
+            log.info(
+                "plan mode %s",
+                "enabled" if msg.enabled else "cleared",
+                extra={
+                    "extra_fields": {
+                        "session_id": found.id,
                     }
                 },
             )

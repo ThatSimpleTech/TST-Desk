@@ -118,6 +118,11 @@
     "session_id": "sess-1",
     "tier": "brain"
   },
+  "set_plan_mode": {
+    "type": "set_plan_mode",
+    "session_id": "sess-1",
+    "enabled": true
+  },
   "get_instruction_stack": {
     "type": "get_instruction_stack",
     "session_id": "sess-1"
@@ -491,6 +496,7 @@
     "session_id": "sess-1",
     "tier": "brain",
     "override": null,
+    "plan_lock": false,
     "model_slugs": {
       "brain": "test-brain-slug",
       "worker": "test-worker-slug",
@@ -503,6 +509,7 @@
     "session_id": "sess-1",
     "tier": "validator",
     "override": "validator",
+    "plan_lock": false,
     "model_slugs": {
       "brain": "test-brain-slug",
       "worker": "test-worker-slug",
