@@ -20,7 +20,8 @@ export type PaletteCommand =
 	| { kind: "show-work" }
 	| { kind: "open-settings" }
 	| { kind: "toggle-theme" }
-	| { kind: "end-session" };
+	| { kind: "end-session" }
+	| { kind: "quit-app" };
 
 export interface PaletteEntry {
 	/** Stable key for the rendered list. */
@@ -98,8 +99,16 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 		title: "End session",
 		subtitle: "Distill this session into memory",
 		icon: "check",
-		keywords: "distill quit memory close",
+		keywords: "distill memory close",
 		command: { kind: "end-session" },
+	},
+	{
+		id: "action:quit-app",
+		title: "Quit TST Desk",
+		subtitle: "Shut down the daemon and leave no listener",
+		icon: "power",
+		keywords: "exit shutdown stop quit",
+		command: { kind: "quit-app" },
 	},
 ];
 

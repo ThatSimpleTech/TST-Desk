@@ -70,16 +70,17 @@ class TestWatchdog:
             daemon._shutdown_event.set()
             await asyncio.wait_for(runner, timeout=5.0)
 
-    async def test_coworker_on_survives_fake_parent_death(self) -> None:
-        # Host omits --parent-pid when coworker.yaml is on. A dying
-        # window process must not take tstd with it.
+    async def test_coworker_on_still_trips_watchdog_when_parent_dies(self) -> None:
+        # Close keeps the host alive, so --parent-pid stays armed even
+        # when coworker.yaml is on. Fake parent death must still shut
+        # tstd down (TD-2903: no orphan after SIGKILL of the host).
         sleeper = await asyncio.create_subprocess_exec(
             sys.executable, "-c", "import time; time.sleep(60)"
         )
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 save_coworker(tmp, True)
-                daemon = Daemon(data_dir=Path(tmp))
+                daemon = Daemon(data_dir=Path(tmp), parent_pid=sleeper.pid)
                 daemon._parent_poll_interval = 0.05
                 runner = asyncio.create_task(daemon.run())
                 await asyncio.sleep(0.2)
@@ -88,11 +89,8 @@ class TestWatchdog:
                 except PermissionError:
                     pytest.skip("the OS vetoed the test's own kill (TD-605)")
                 await asyncio.wait_for(sleeper.wait(), timeout=5)
-                await asyncio.sleep(0.3)
-                assert not daemon._shutdown_event.is_set()
-                assert not runner.done()
-                daemon._shutdown_event.set()
                 await asyncio.wait_for(runner, timeout=5.0)
+                assert daemon._shutdown_event.is_set()
         finally:
             if sleeper.returncode is None:
                 with contextlib.suppress(PermissionError):

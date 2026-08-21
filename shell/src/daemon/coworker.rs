@@ -1,4 +1,5 @@
 //! Coworker mode (TD-2902): close hides the window; quit still shuts down.
+//! `--parent-pid` is always passed (TD-2903); close keeps the host alive.
 //!
 //! The bit lives at `{user_data_dir}/coworker.yaml` as `{enabled: true}`,
 //! the same shape as skip-all. Default on when the file is missing.
@@ -29,14 +30,13 @@ pub fn window_close_action(event: LifecycleEvent, coworker_on: bool) -> CloseAct
     }
 }
 
-/// `--parent-pid` argv fragment. Empty when coworker is on so the
-/// watchdog is never armed.
-pub fn parent_pid_argv(coworker_on: bool, host_pid: u32) -> Vec<String> {
-    if coworker_on {
-        Vec::new()
-    } else {
-        vec!["--parent-pid".into(), host_pid.to_string()]
-    }
+/// `--parent-pid` argv fragment. Always armed (TD-2903).
+///
+/// Close hides the window and leaves the host process alive, so the
+/// watchdog stays quiet. Force-quit / SIGKILL of the host is what
+/// trips it — omitting the flag would leave an orphan listener.
+pub fn parent_pid_argv(host_pid: u32) -> Vec<String> {
+    vec!["--parent-pid".into(), host_pid.to_string()]
 }
 
 /// True when `port.json` names a live listener — attach; do not spawn.
@@ -117,10 +117,13 @@ mod tests {
     }
 
     #[test]
-    fn parent_pid_omitted_when_coworker_on() {
-        assert!(parent_pid_argv(true, 99).is_empty());
+    fn parent_pid_always_passed() {
         assert_eq!(
-            parent_pid_argv(false, 42),
+            parent_pid_argv(99),
+            vec!["--parent-pid".to_string(), "99".to_string()]
+        );
+        assert_eq!(
+            parent_pid_argv(42),
             vec!["--parent-pid".to_string(), "42".to_string()]
         );
     }

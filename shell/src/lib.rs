@@ -1,11 +1,30 @@
 pub mod daemon;
 mod read_text;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use daemon::close_hint::{
+    take_first_close_hint, CLOSE_HINT_BODY, CLOSE_HINT_EVENT, CLOSE_HINT_TITLE,
+};
 use daemon::coworker::{window_close_action, CloseAction, LifecycleEvent};
 use daemon::embeddings::EmbeddingsHandle;
 use daemon::DaemonHandle;
 use read_text::read_text_file;
-use tauri::Manager;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::{Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
+
+/// Set at the start of [`request_quit`] so CloseRequested during Quit
+/// does not hide, and a second ExitRequested is allowed to finish.
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+fn begin_quit() -> bool {
+    !QUITTING.swap(true, Ordering::SeqCst)
+}
+
+fn is_quitting() -> bool {
+    QUITTING.load(Ordering::SeqCst)
+}
 
 /// Expose the daemon's live connection info to the frontend (TD-1003 will
 /// use the token for an authenticated session link; the port lets the UI
@@ -42,6 +61,12 @@ fn open_path(path: String) -> Result<(), String> {
         .map_err(|e| format!("no opener available: {e}"))
 }
 
+/// Palette / menu **Quit TST Desk** (TD-2903). Same path as Cmd+Q.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    request_quit(&app);
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     let window = app
         .get_webview_window("main")
@@ -53,7 +78,10 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
-fn quit_app(app: &tauri::AppHandle) {
+fn request_quit(app: &tauri::AppHandle) {
+    if !begin_quit() {
+        return;
+    }
     let handle = app.state::<DaemonHandle>().inner().clone();
     let embeddings = app.state::<EmbeddingsHandle>().inner().clone();
     handle.request_shutdown();
@@ -66,6 +94,82 @@ fn quit_app(app: &tauri::AppHandle) {
         .await;
         app.exit(0);
     });
+}
+
+/// First hide only: stamp the user-data flag and say close is not quit.
+fn maybe_notice_close_is_not_quit(app: &tauri::AppHandle) {
+    if !take_first_close_hint(&daemon::data_dir()) {
+        return;
+    }
+    let payload = serde_json::json!({
+        "title": CLOSE_HINT_TITLE,
+        "body": CLOSE_HINT_BODY,
+    });
+    let _ = app.emit(CLOSE_HINT_EVENT, payload);
+    let _ = app
+        .notification()
+        .builder()
+        .title(CLOSE_HINT_TITLE)
+        .body(CLOSE_HINT_BODY)
+        .show();
+}
+
+fn build_app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
+    let h = app.handle();
+    let quit = MenuItem::with_id(
+        h,
+        "quit-tst-desk",
+        "Quit TST Desk",
+        true,
+        Some("CmdOrCtrl+Q"),
+    )?;
+    let edit = Submenu::with_items(
+        h,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(h, None)?,
+            &PredefinedMenuItem::redo(h, None)?,
+            &PredefinedMenuItem::separator(h)?,
+            &PredefinedMenuItem::cut(h, None)?,
+            &PredefinedMenuItem::copy(h, None)?,
+            &PredefinedMenuItem::paste(h, None)?,
+            &PredefinedMenuItem::select_all(h, None)?,
+        ],
+    )?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let app_menu = Submenu::with_items(
+            h,
+            "TST Desk",
+            true,
+            &[
+                &PredefinedMenuItem::about(h, None, None)?,
+                &PredefinedMenuItem::separator(h)?,
+                &PredefinedMenuItem::hide(h, None)?,
+                &PredefinedMenuItem::hide_others(h, None)?,
+                &PredefinedMenuItem::separator(h)?,
+                &quit,
+            ],
+        )?;
+        let window = Submenu::with_items(
+            h,
+            "Window",
+            true,
+            &[
+                &PredefinedMenuItem::minimize(h, None)?,
+                &PredefinedMenuItem::close_window(h, None)?,
+            ],
+        )?;
+        Menu::with_items(h, &[&app_menu, &edit, &window])
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let file = Submenu::with_items(h, "File", true, &[&quit])?;
+        Menu::with_items(h, &[&file, &edit])
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -85,6 +189,7 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            app.set_menu(build_app_menu(app)?)?;
             // Spawn and supervise the daemon for the life of the app.
             // Embeddings is a parallel supervisor (TD-2204): its death
             // never shares tstd's restart budget.
@@ -98,10 +203,19 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_daemon_info,
             open_path,
-            read_text_file
+            read_text_file,
+            quit_app
         ])
+        .on_menu_event(|app, event| {
+            if event.id() == "quit-tst-desk" {
+                request_quit(app);
+            }
+        })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if is_quitting() {
+                    return;
+                }
                 api.prevent_close();
                 let coworker_on = daemon::load_coworker(&daemon::data_dir());
                 match window_close_action(LifecycleEvent::CloseRequested, coworker_on) {
@@ -109,8 +223,9 @@ pub fn run() {
                         // Close ≠ quit. The host stays up so reopen does
                         // not spawn a second process; tstd keeps running.
                         let _ = window.hide();
+                        maybe_notice_close_is_not_quit(window.app_handle());
                     }
-                    CloseAction::Shutdown => quit_app(window.app_handle()),
+                    CloseAction::Shutdown => request_quit(window.app_handle()),
                 }
             }
         })
@@ -118,12 +233,17 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
             match event {
-                // Cmd+Q / dock Quit — still reap. Close is hide, not this.
+                // Cmd+Q / dock Quit / menu Quit TST Desk — shutdown + reap.
+                // Close is hide, not this.
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    if !is_quitting() {
+                        api.prevent_exit();
+                        request_quit(app_handle);
+                    }
+                }
                 tauri::RunEvent::Exit => {
                     daemon::best_effort_kill(&app_handle.state::<DaemonHandle>());
-                    daemon::embeddings::best_effort_kill(
-                        &app_handle.state::<EmbeddingsHandle>(),
-                    );
+                    daemon::embeddings::best_effort_kill(&app_handle.state::<EmbeddingsHandle>());
                 }
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => show_main_window(app_handle),

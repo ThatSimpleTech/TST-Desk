@@ -93,6 +93,7 @@ describe("rankEntries", () => {
 		expect(titles(ACTION_ENTRIES, "new")[0]).toBe("New session");
 		expect(titles(ACTION_ENTRIES, "sett")[0]).toBe("Open settings");
 		expect(titles(ACTION_ENTRIES, "dec")[0]).toBe("Open decisions");
+		expect(titles(ACTION_ENTRIES, "quit")[0]).toBe("Quit TST Desk");
 	});
 
 	it("finds an entry by a word only its keywords carry", () => {
@@ -146,6 +147,7 @@ describe("icons", () => {
 			"new-session",
 			"open-decisions",
 			"open-settings",
+			"quit-app",
 			"run-doctor",
 			"show-stack",
 			"show-work",

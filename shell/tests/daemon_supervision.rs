@@ -88,7 +88,10 @@ async fn attaches_to_live_port_file_without_second_spawn() {
     let live = live_port_file(&dir).expect("port.json must name a live listener");
     assert_eq!(live.port, pf.port);
     assert!(!should_spawn_new_daemon(live.pid, true));
-    assert!(parent_pid_argv(true, 1).is_empty());
+    assert_eq!(
+        parent_pid_argv(1),
+        vec!["--parent-pid".to_string(), "1".to_string()]
+    );
 
     let mut ws = connect_handshake(live.port, &live.token)
         .await

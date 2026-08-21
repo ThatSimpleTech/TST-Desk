@@ -7,17 +7,20 @@
 //!
 //! - port file: `core/tstd/ws.py` (`create_port_file_path`, `write_port_file`)
 //! - handshake + shutdown messages: `core/tstd/protocol.py`
-//! - orphan watchdog: `core/tstd/daemon.py` (`--parent-pid`, coworker off)
+//! - orphan watchdog: `core/tstd/daemon.py` (`--parent-pid`)
 //! - coworker flag: `{data_dir}/coworker.yaml` (TD-2902)
 //!
-//! Quit still best-effort-kills from `RunEvent::Exit`. Close hides the
-//! window and leaves `tstd` running when coworker mode is on; spawn then
-//! omits `--parent-pid` so a dead window process does not reap the daemon.
+//! Quit sends `shutdown` and best-effort-kills from `RunEvent::Exit`.
+//! Close hides the window and leaves the host (and `tstd`) running when
+//! coworker mode is on. Spawn always passes `--parent-pid`: close does
+//! not kill the host, so the watchdog stays quiet; SIGKILL of the host
+//! is what reaps an orphan.
 //!
 //! PyInstaller's `--onefile` sidecar (TD-1301) is a bootloader that spawns
 //! the real daemon as a child. Port-file matching and group-kill live in
 //! [`daemon_pid`] (TD-1304).
 
+pub mod close_hint;
 pub mod coworker;
 mod daemon_pid;
 pub mod embeddings;
@@ -34,6 +37,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{watch, Notify};
 use tokio_tungstenite::tungstenite::Message;
 
+pub use close_hint::{take_first_close_hint, CLOSE_HINT_BODY, CLOSE_HINT_EVENT, CLOSE_HINT_TITLE};
 pub use coworker::{
     load_coworker, parent_pid_argv, should_spawn_new_daemon, window_close_action, CloseAction,
     LifecycleEvent,
@@ -355,9 +359,7 @@ impl ChildWatch {
 }
 
 /// Attach when `port.json` names a live listener; otherwise spawn.
-async fn acquire_daemon(
-    data_dir: &Path,
-) -> Result<(ChildWatch, ClientWs, PortFile, u32), String> {
+async fn acquire_daemon(data_dir: &Path) -> Result<(ChildWatch, ClientWs, PortFile, u32), String> {
     if let Some(pf) = live_port_file(data_dir) {
         log::info!(
             "tstd already running at port {} (pid {}); attaching",
@@ -413,16 +415,16 @@ async fn wait_pid_gone(pid: u32) {
     }
 }
 
-/// Spawn the daemon child. `--parent-pid` is passed only when coworker
-/// mode is off (TD-1002 / TD-2905 off path).
+/// Spawn the daemon child. `--parent-pid` is always the host pid
+/// (TD-2903): close keeps this process alive; force-quit is the orphan
+/// backstop.
 pub fn spawn_daemon(data_dir: &Path) -> Result<tokio::process::Child, String> {
     let argv = resolve_command()?;
-    let coworker_on = load_coworker(data_dir);
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..])
         .arg("--data-dir")
         .arg(data_dir)
-        .args(parent_pid_argv(coworker_on, std::process::id()))
+        .args(parent_pid_argv(std::process::id()))
         .arg("--log-level")
         .arg("INFO")
         .stdout(Stdio::null())

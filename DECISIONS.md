@@ -6785,3 +6785,30 @@ trying to ignore it would still kill `tstd` on host death.
 watchdog. Also rejected: exiting the host on close and hoping attach
 covers reopen.
 
+**Superseded in part by TD-2903 (same day):** omitting `--parent-pid`
+left an orphan on host SIGKILL. Close already keeps the host alive, so
+the flag is safe again. The hide-on-close decision stands.
+
+---
+
+## 2026-08-20 — TD-2903: `--parent-pid` always; Quit is named (Class B)
+
+**Decision:** Restore `--parent-pid` on every spawn. Close hides and
+leaves the host process running, so the watchdog does not fire. Quit
+(menu / palette **Quit TST Desk**, Cmd+Q, dock Quit) sends WS
+`shutdown`, reaps embeddings, then `app.exit`; `RunEvent::Exit` still
+best-effort-kills the group. Force-quit / SIGKILL of the host trips
+the parent watchdog — no orphan listener.
+
+First hide shows the close-is-not-quit copy once and writes
+`{user_data_dir}/close-is-not-quit.yaml` `{shown: true}`. Later hides
+are silent.
+
+**Rationale:** TD-2902 omitted the flag so a dead host would not kill
+`tstd`. That assumed close killed the host. It does not. The omitted
+flag failed this story's no-orphan AC. Arming the watchdog is the
+TD-1002 / TD-1304 backstop again.
+
+**Alternative rejected:** Keep the omit and add a second host-side
+watchdog. Also rejected: nagging on every close.
+

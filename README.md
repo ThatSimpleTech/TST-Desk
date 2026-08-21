@@ -205,11 +205,12 @@ Closing the window is not quitting the app. The daemon keeps working after the w
   or Dock is Quit: the daemon shuts down and is reaped.
 - **Windows** — the title-bar **X** or Alt+F4 hides the window. `tstd` keeps running.
   Opening the app again shows the window, or a new host process attaches to the live
-  daemon instead of starting a second one. **Quit** / File → Exit shuts the daemon down.
-- **Linux** — the window close button hides the window the same way. Quit from the app
-  menu (or a desktop Quit action) is what stops `tstd`.
+  daemon instead of starting a second one. **Quit TST Desk** (File menu or ⌘K palette)
+  shuts the daemon down.
+- **Linux** — the window close button hides the window the same way. **Quit TST Desk**
+  from the app menu or the command palette is what stops `tstd`.
 
-The first time you close the window: that hides TST Desk. **Quit** is what stops it.
+The first time you close the window: that hides TST Desk. **Quit TST Desk** is what stops it.
 
 OS notifications for an approval or a finished turn still fire while the window is hidden.
 

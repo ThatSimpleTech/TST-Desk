@@ -47,7 +47,7 @@ enforced in code rather than by convention.
 
 **The host (`shell/`)** manages the window and the daemon process lifecycle: it resolves the
 `tstd` binary, attaches when `port.json` names a live listener, and otherwise spawns with
-`--data-dir` (and `--parent-pid` only when coworker mode is off). It probes the handshake and
+`--data-dir` and `--parent-pid`. It probes the handshake and
 supervises with a bounded restart budget. Closing the window hides it and leaves `tstd`
 running; Quit still shuts the daemon down and reaps the process group. It also exposes the
 daemon's port and token to the webview through a Tauri command, so the window never reads the
