@@ -6851,3 +6851,20 @@ already file-driven.
 **Alternative rejected:** Host invoke that writes `coworker.yaml`. Also
 rejected: a new Settings "App" section.
 
+---
+
+## 2026-08-20 — M5 integration on `td/m5` (Class B)
+
+**Decision:** One branch from the user's `td/2901-bounded-log` (`d64bf38`).
+E31 and E32 merged. E30 cherry-picked `TD-3001` + `TD-3002` only — the
+checkout already had `TD-3003` as `set_session_star` / `session_stars.yaml`,
+so the worktree's `star_session` / `stars.yaml` was dropped. E29
+cherry-picked `TD-2902`–`TD-2905` and skipped our duplicate `TD-2901`.
+
+**Rationale:** Four stacks, two 2901 parents, two 3003 verbs. A merge of
+`td/3002-session-rename` would have duplicated stars. Linearizing onto the
+checkout's 2901 is the line the user was already on.
+
+**Alternative rejected:** Merging every epic tip and keeping both star
+verbs. Also rejected: rewriting history on the live checkout.
+
