@@ -21,9 +21,27 @@ log = get_logger("tstd.session_store")
 
 _STORE_FILE = "sessions.json"
 
+# First-line auto-title cap (TD-3001). Not a model call — deterministic
+# so a clone and a restart agree. Documented in DECISIONS.md.
+SESSION_TITLE_MAX_LEN = 60
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def title_from_user_message(content: str) -> str | None:
+    """One-line title from a user message, or None if there is no text.
+
+    First line only, whitespace collapsed, then length-capped. Empty,
+    whitespace-only, and attachment-only (no text) stay untitled so the
+    rail keeps the short id.
+    """
+    first = content.splitlines()[0] if content else ""
+    collapsed = " ".join(first.split())
+    if not collapsed:
+        return None
+    return collapsed[:SESSION_TITLE_MAX_LEN]
 
 
 @dataclass
@@ -40,6 +58,9 @@ class SessionRecord:
     # written before this field loads unchanged instead of being dropped
     # as malformed.
     archived: bool = False
+    # Auto-title from the first non-empty user message (TD-3001).
+    # Defaulted so a store written before this field loads unchanged.
+    title: str | None = None
 
 
 class SessionStore:
@@ -77,6 +98,7 @@ class SessionStore:
             state=state,
             created_at=existing.created_at if existing else (created_at or _now_iso()),
             archived=existing.archived if existing else False,
+            title=existing.title if existing else None,
         )
         self._records[session_id] = record
         await self._persist()
@@ -100,6 +122,24 @@ class SessionStore:
         if record is None:
             return False
         record.archived = archived
+        record.updated_at = _now_iso()
+        await self._persist()
+        return True
+
+    async def maybe_set_title(self, session_id: str, content: str) -> bool:
+        """Title from the first non-empty user message. Never overwrites.
+
+        Returns True when a title was written. False when the id is
+        unknown, the record is already titled, or ``content`` is empty
+        after trim (attachment-only / whitespace).
+        """
+        record = self._records.get(session_id)
+        if record is None or record.title is not None:
+            return False
+        title = title_from_user_message(content)
+        if title is None:
+            return False
+        record.title = title
         record.updated_at = _now_iso()
         await self._persist()
         return True

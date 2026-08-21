@@ -724,6 +724,9 @@ export interface SessionSummary {
   archived: boolean;
   /** Pinned to the top of the rail (TD-3003). Machine-wide. */
   starred: boolean;
+  /** Auto-title from the first non-empty user message (TD-3001). Null
+   *  until then — the rail falls back to the short id. Additive. */
+  title?: string | null;
 }
 
 export interface SessionList extends DaemonEvent {

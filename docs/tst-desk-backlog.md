@@ -4640,11 +4640,11 @@ to v0.3.
 **Size:** 2 · **Depends on:** TD-1701
 
 **Acceptance criteria:**
-- [ ] After the first user message the record stores a one-line title
+- [x] After the first user message the record stores a one-line title
       (trimmed, length-capped)
-- [ ] `session_list` carries it; rail and palette show it
-- [ ] Later messages do not retitle
-- [ ] Empty / attachment-only first messages keep the short id
+- [x] `session_list` carries it; rail and palette show it
+- [x] Later messages do not retitle
+- [x] Empty / attachment-only first messages keep the short id
 
 ---
 

@@ -1008,6 +1008,9 @@ class Daemon:
                 return build_error(e.code, e.message, session_id=msg.session_id)
 
             await found.add_user_message(render_user_content(msg.content, decoded))
+            # Title from the user's text, not the rendered body — an
+            # attachment-only message must stay untitled (TD-3001).
+            await self._session_store.maybe_set_title(msg.session_id, msg.content)
             log.info(
                 "user message enqueued",
                 extra={
@@ -1731,6 +1734,7 @@ class Daemon:
                     event_count=sess.event_log.last_seq if sess else 0,
                     archived=record.archived,
                     starred=record.session_id in starred,
+                    title=record.title,
                 )
             )
         summaries.sort(key=lambda s: (s.starred, s.updated_at), reverse=True)

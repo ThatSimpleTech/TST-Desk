@@ -54,6 +54,9 @@ export interface SessionRow {
 	archived: boolean;
 	/** Pinned above newer unstarred rows (TD-3003). Daemon truth. */
 	starred: boolean;
+	/** Auto-title from the first non-empty user message (TD-3001). Null
+	 *  until then — rowTitle falls back to the short id. */
+	title: string | null;
 }
 
 export const sessions = $state({
@@ -140,6 +143,7 @@ function reduce(event: DaemonEventUnion): void {
 				updatedAt: s.updated_at,
 				archived: s.archived,
 				starred: s.starred,
+				title: s.title ?? null,
 			}))
 			.sort((a, b) => {
 				if (a.starred !== b.starred) return a.starred ? -1 : 1;
@@ -213,7 +217,8 @@ export function visibleRows(): SessionRow[] {
 			(!sessions.showStarredOnly || r.starred) &&
 			(needle === "" ||
 				r.sessionId.toLowerCase().includes(needle) ||
-				r.workspacePath.toLowerCase().includes(needle)),
+				r.workspacePath.toLowerCase().includes(needle) ||
+				(r.title !== null && r.title.toLowerCase().includes(needle))),
 	);
 }
 
@@ -352,9 +357,11 @@ export function recencyLabel(iso: string, nowMs: number = Date.now()): string {
 	return new Date(then).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Row title: no session names exist yet (v0.3), so a short id it is. */
+/** Row title: the first-message title when the daemon has one, else the
+ *  short id (TD-3001). */
 export function rowTitle(row: SessionRow): string {
-	return row.sessionId.slice(0, 8);
+	const titled = row.title?.trim();
+	return titled ? titled : row.sessionId.slice(0, 8);
 }
 
 /** Row subtitle: workspace name, recency — the "where and when" under the id. */
