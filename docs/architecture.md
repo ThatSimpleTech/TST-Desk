@@ -274,6 +274,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `attach` | yes | Subscribe to a session, replaying from `from_seq`. |
 | `detach` | yes | Unsubscribe from a session; the session is unaffected. |
 | `set_tier` | yes | Pin the active model tier for the session. |
+| `set_plan_mode` | yes | Force the brain tier on every completion until cleared (TD-4603). Refuses nothing itself; while on, the session's router pins brain and `set_tier` to worker/validator errors. Acked with `tier_state`. |
 | `get_instruction_stack` | yes | Ask for the resolved steering stack and its token counts. |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |
 | `list_memory` | — | List a workspace's Memory files (`.tst/memory/*.md`). Human path (TD-2601). |
@@ -333,7 +334,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. |
-| `tier_state` | session | The active tier, any pinned override, and the configured slugs. |
+| `tier_state` | session | The active tier, any pinned override, the plan lock (TD-4603), and the configured slugs. |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |

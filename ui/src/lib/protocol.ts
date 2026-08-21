@@ -161,6 +161,13 @@ export interface SetTier extends ClientMessage {
   tier: "brain" | "worker" | "validator";
 }
 
+/** Force the brain tier on every completion until cleared (TD-4603). */
+export interface SetPlanMode extends ClientMessage {
+  type: "set_plan_mode";
+  session_id: string;
+  enabled: boolean;
+}
+
 export interface GetInstructionStack extends ClientMessage {
   type: "get_instruction_stack";
   session_id: string;
@@ -415,6 +422,7 @@ export type ClientMessageUnion =
   | Attach
   | Detach
   | SetTier
+  | SetPlanMode
   | GetInstructionStack
   | ListInstructions
   | ListMemory
@@ -600,6 +608,8 @@ export interface TierState extends DaemonEvent {
   session_id: string;
   tier: "brain" | "worker" | "validator";
   override: "brain" | "worker" | "validator" | null;
+  /** Plan lock (TD-4603); an older daemon omits it. */
+  plan_lock?: boolean;
   model_slugs: Record<string, string>;
 }
 

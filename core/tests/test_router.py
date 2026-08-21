@@ -274,3 +274,59 @@ class TestSummary:
         # After 2 turns, active_tier is worker (lead_turns=2, 2 < 2 is False)
         assert s["active_tier"] == "worker"
         assert s["consecutive_failures"] == 1
+
+
+# ── Plan lock (TD-4603) ───────────────────────────────────────────────────
+
+
+class TestPlanLock:
+    def test_lock_off_by_default(self, router: TierRouter) -> None:
+        assert router.plan_lock is False
+
+    def test_lock_forces_brain_past_lead_turns(self, router: TierRouter) -> None:
+        """With the lock on, brain serves turns that would route to worker."""
+        router.record_turn_start()
+        router.record_turn_start()  # lead turns exhausted; next would be worker
+        router.set_plan_lock(True)
+        assert router.active_tier == "brain"
+        assert router.record_turn_start() == "brain"
+
+    def test_lock_beats_override(self, router: TierRouter) -> None:
+        """The lock wins even over a pinned worker override."""
+        router.set_tier("worker")
+        router.set_plan_lock(True)
+        assert router.active_tier == "brain"
+
+    def test_set_tier_to_worker_refused_while_locked(self, router: TierRouter) -> None:
+        router.set_plan_lock(True)
+        with pytest.raises(ValueError, match="plan lock"):
+            router.set_tier("worker")
+
+    def test_set_tier_to_validator_refused_while_locked(self, router: TierRouter) -> None:
+        router.set_plan_lock(True)
+        with pytest.raises(ValueError, match="plan lock"):
+            router.set_tier("validator")
+
+    def test_set_tier_to_brain_allowed_while_locked(self, router: TierRouter) -> None:
+        router.set_plan_lock(True)
+        router.set_tier("brain")
+        assert router.override == "brain"
+        assert router.active_tier == "brain"
+
+    def test_clearing_restores_prior_routing(self, router: TierRouter) -> None:
+        """A pinned override held underneath the lock resumes on clear."""
+        router.set_tier("worker")
+        router.set_plan_lock(True)
+        assert router.active_tier == "brain"
+        router.set_plan_lock(False)
+        assert router.plan_lock is False
+        assert router.active_tier == "worker"
+
+    def test_reset_clears_lock(self, router: TierRouter) -> None:
+        router.set_plan_lock(True)
+        router.reset()
+        assert router.plan_lock is False
+
+    def test_summary_reports_lock(self, router: TierRouter) -> None:
+        router.set_plan_lock(True)
+        assert router.summary()["plan_lock"] is True
