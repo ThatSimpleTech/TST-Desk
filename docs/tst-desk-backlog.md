@@ -4760,10 +4760,10 @@ TD-3202.
 **Size:** 5 · **Depends on:** TD-1705, TD-3202
 
 **Acceptance criteria:**
-- [ ] A Work / Diffs surface shows the session's writes as a reviewable
+- [x] A Work / Diffs surface shows the session's writes as a reviewable
       stack (path, +/- , expand), not only the Files tab fold
-- [ ] Click opens the file; the OS editor remains the editor
-- [ ] Empty state explains it fills as the agent writes
+- [x] Click opens the file; the OS editor remains the editor
+- [x] Empty state explains it fills as the agent writes
 
 **Notes:** This is spec §3's "file diffs" work view. It is aggregation,
 not an in-app editor.
