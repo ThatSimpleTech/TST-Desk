@@ -38,3 +38,26 @@ export function projectListEmptyCopy(): string {
 export function projectRecentsEmptyCopy(archived = false): string {
 	return archived ? "No archived chats in this project." : "No chats in this project yet.";
 }
+
+export interface ProjectEntry {
+	path: string;
+	lastSeen?: string;
+}
+
+/** Pinned workspaces first. Paths not in recents still appear. */
+export function pinnedProjects<T extends ProjectEntry>(
+	entries: readonly T[],
+	pinnedPaths: readonly string[],
+): ProjectEntry[] {
+	const byPath = new Map(entries.map((e) => [e.path, e]));
+	return pinnedPaths.map((path) => byPath.get(path) ?? { path });
+}
+
+/** Known workspaces that are not pinned — Recents. */
+export function unpinnedRecents<T extends ProjectEntry>(
+	entries: readonly T[],
+	pinnedPaths: readonly string[],
+): T[] {
+	const pinned = new Set(pinnedPaths);
+	return entries.filter((e) => !pinned.has(e.path));
+}

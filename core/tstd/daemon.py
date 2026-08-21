@@ -138,6 +138,7 @@ from .protocol import (
     SetTier,
     SetTierSlug,
     SetupState,
+    SetWorkspacePin,
     Shutdown,
     TierState,
     UsageExported,
@@ -176,6 +177,7 @@ from .session_lifecycle import archive_session, delete_session, move_session
 from .session_persist import LoadedSession, SessionPersist
 from .session_store import SessionStore
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
+from .workspace_pins import load_workspace_pins, save_workspace_pins
 from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
@@ -403,6 +405,7 @@ class Daemon:
         # a workspace file cannot carry it into someone else's clone.
         self.skip_all_approvals = load_skip_all(self.data_dir)
         self.load_global_memory = load_global_memory(self.data_dir)
+        self.workspace_pins = load_workspace_pins(self.data_dir)
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
@@ -455,6 +458,7 @@ class Daemon:
             tier_slugs=dict(self._slug_snapshot.get(self.config.active_preset, {})),
             skip_all_approvals=self.skip_all_approvals,
             load_global_memory=self.load_global_memory,
+            pinned_workspaces=list(self.workspace_pins),
         )
 
     async def _provider_probe(self, api_key: str | None = None) -> ProviderError | None:
@@ -1225,6 +1229,14 @@ class Daemon:
             save_global_memory(self.data_dir, msg.enabled)
             for session in await self.session_registry.list_sessions():
                 session.load_global_memory = msg.enabled
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetWorkspacePin):
+            pins = [p for p in self.workspace_pins if p != msg.path]
+            if msg.pinned:
+                pins.append(msg.path)
+            self.workspace_pins = pins
+            save_workspace_pins(self.data_dir, pins)
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, Attach):

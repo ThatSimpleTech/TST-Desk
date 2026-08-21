@@ -113,6 +113,13 @@ export interface SetLoadGlobalMemory extends ClientMessage {
   enabled: boolean;
 }
 
+/** Pin or unpin a workspace on the Projects list (TD-2806). */
+export interface SetWorkspacePin extends ClientMessage {
+  type: "set_workspace_pin";
+  path: string;
+  pinned: boolean;
+}
+
 export interface Resume extends ClientMessage {
   type: "resume";
   session_id: string;
@@ -320,6 +327,7 @@ export type ClientMessageUnion =
   | RevokePolicyRule
   | SetSkipAllApprovals
   | SetLoadGlobalMemory
+  | SetWorkspacePin
   | Resume
   | Cancel
   | Attach
@@ -689,6 +697,7 @@ export interface SetupState extends DaemonEvent {
   skip_all_approvals?: boolean;
   // TD-2603: load ~/.tstdesk/memory/ after workspace memory. Additive, default off.
   load_global_memory?: boolean;
+  pinned_workspaces?: string[];
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the

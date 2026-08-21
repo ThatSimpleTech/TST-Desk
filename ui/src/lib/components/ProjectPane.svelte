@@ -15,10 +15,13 @@
 		showProjects,
 	} from '../projects.svelte.js';
 	import {
+		pinnedProjects,
 		projectListEmptyCopy,
 		projectRecentsEmptyCopy,
 		projectSessions,
+		unpinnedRecents,
 	} from '../projects';
+	import { setWorkspacePin } from '../workspaces.svelte.js';
 	import {
 		ROW_STATE_LABELS,
 		newSessionInWorkspace,
@@ -34,6 +37,8 @@
 	import MemoryColumn from './MemoryColumn.svelte';
 
 	let known = $derived(workspaces.entries);
+	let pinned = $derived(pinnedProjects(workspaces.entries, workspaces.pinned));
+	let recentsList = $derived(unpinnedRecents(workspaces.entries, workspaces.pinned));
 	let selected = $derived(projects.selectedPath);
 	let recents = $derived(
 		selected === null
@@ -53,26 +58,61 @@
 		{#if selected === null}
 			<h1 class="title">Projects</h1>
 			<p class="lede">Workspaces this window has opened. The folder is the project.</p>
-			{#if known.length === 0}
+			{#if known.length === 0 && pinned.length === 0}
 				<p class="empty">{projectListEmptyCopy()}</p>
 			{:else}
-				<ul class="list">
-					{#each known as entry (entry.path)}
-						<li>
-							<button
-								class="card"
-								type="button"
-								onclick={() => selectProject(entry.path)}
-							>
-								<span class="card-icon" aria-hidden="true"><Icon name="folder" size={16} /></span>
-								<span class="card-text">
-									<span class="card-name">{workspaceName(entry.path)}</span>
-									<span class="card-path">{entry.path}</span>
-								</span>
-							</button>
-						</li>
-					{/each}
-				</ul>
+				{#if pinned.length > 0}
+					<h2 class="section">Pinned</h2>
+					<ul class="list">
+						{#each pinned as entry (entry.path)}
+							<li class="row">
+								<button
+									class="card"
+									type="button"
+									onclick={() => selectProject(entry.path)}
+								>
+									<span class="card-icon" aria-hidden="true"><Icon name="folder" size={16} /></span>
+									<span class="card-text">
+										<span class="card-name">{workspaceName(entry.path)}</span>
+										<span class="card-path">{entry.path}</span>
+									</span>
+								</button>
+								<button
+									class="pin pin--on"
+									type="button"
+									aria-label="Unpin project"
+									onclick={() => setWorkspacePin(entry.path, false)}
+								>Unpin</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<h2 class="section recents-label">Recents</h2>
+				{#if recentsList.length > 0}
+					<ul class="list">
+						{#each recentsList as entry (entry.path)}
+							<li class="row">
+								<button
+									class="card"
+									type="button"
+									onclick={() => selectProject(entry.path)}
+								>
+									<span class="card-icon" aria-hidden="true"><Icon name="folder" size={16} /></span>
+									<span class="card-text">
+										<span class="card-name">{workspaceName(entry.path)}</span>
+										<span class="card-path">{entry.path}</span>
+									</span>
+								</button>
+								<button
+									class="pin"
+									type="button"
+									aria-label="Pin project"
+									onclick={() => setWorkspacePin(entry.path, true)}
+								>Pin</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			{/if}
 		{:else}
 			<button class="back" type="button" onclick={() => showProjects()}>
@@ -179,11 +219,32 @@
 
 	.list {
 		list-style: none;
-		margin: var(--space-6) 0 0;
+		margin: var(--space-3) 0 0;
 		padding: 0;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
+	}
+
+	.row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+	}
+
+	.pin {
+		flex-shrink: 0;
+		border: none;
+		background: transparent;
+		color: var(--color-accent);
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		cursor: pointer;
+		padding: var(--space-1);
+	}
+
+	.recents-label {
+		margin-top: var(--space-6);
 	}
 
 	.card {

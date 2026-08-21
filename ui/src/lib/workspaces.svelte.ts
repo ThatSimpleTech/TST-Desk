@@ -10,7 +10,7 @@
 // Wiring mirrors the doctor/decisions stores: connection fan-out in, no
 // client reference, no import cycle.
 
-import { onEvent } from "./connection-status.svelte.js";
+import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { openWorkspace } from "./session-status.svelte.js";
 import type { DaemonEventUnion } from "./protocol";
 
@@ -30,6 +30,8 @@ export const workspaces = $state({
 	entries: [] as RecentWorkspace[],
 	/** Paths the user removed; persisted to localStorage. */
 	hidden: [] as string[],
+	/** Machine-wide pins (TD-2806). From setup_state, not localStorage. */
+	pinned: [] as string[],
 });
 
 let started = false;
@@ -52,9 +54,14 @@ export function resetWorkspaces(): void {
 	workspaces.menuOpen = false;
 	workspaces.entries = [];
 	workspaces.hidden = [];
+	workspaces.pinned = [];
 }
 
 function reduce(event: DaemonEventUnion): void {
+	if (event.type === "setup_state") {
+		workspaces.pinned = event.pinned_workspaces ?? [];
+		return;
+	}
 	if (event.type !== "session_list") return;
 	// Dedupe sessions by workspace path, keeping the newest update per path.
 	const byPath = new Map<string, string>();
@@ -80,6 +87,11 @@ export function openRecent(path: string): void {
 }
 
 /** Remove a path from the menu (UI-only; daemon history is untouched). */
+/** Pin or unpin a workspace. The daemon acks with setup_state. */
+export function setWorkspacePin(path: string, pinned: boolean): void {
+	sendToDaemon({ type: "set_workspace_pin", path, pinned });
+}
+
 export function hideRecent(path: string): void {
 	if (workspaces.hidden.includes(path)) return;
 	workspaces.hidden = [...workspaces.hidden, path];
