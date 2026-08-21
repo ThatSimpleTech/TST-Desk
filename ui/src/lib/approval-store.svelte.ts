@@ -1,9 +1,10 @@
-// Reactive approval-card store (TD-1007, TD-1014).
+// Reactive approval-card store (TD-1007, TD-1014, TD-3702).
 //
 // The runes layer over the approval model. Subscribes to the daemon event
 // stream: an `approval_request` adds a card, and the `tool_result` that
 // resolves the call removes it (the timeline records the choice separately).
 // `approve`/`deny` send the client messages through the connection.
+// A browser attach uses this same store — there is no second remote list.
 //
 // Cards are scoped to the bound session the same way the timeline and the
 // decisions pane are (TD-1009 / TD-1203). A leftover card from a previous
