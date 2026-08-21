@@ -278,6 +278,15 @@ export interface MoveSession extends ClientMessage {
   workspace_path: string;
 }
 
+/** Rename a session, or restore its auto-title (TD-3002). Empty or
+ *  whitespace-only title means restore. Metadata only; allowed mid-turn.
+ *  The daemon answers with a refreshed session_list. */
+export interface RenameSession extends ClientMessage {
+  type: "rename_session";
+  session_id: string;
+  title: string;
+}
+
 // ── Onboarding (TD-1101 first-run wizard) ────────────────────────────
 
 export interface GetSetupState extends ClientMessage {
@@ -390,6 +399,7 @@ export type ClientMessageUnion =
   | SetSessionStar
   | DeleteSession
   | MoveSession
+  | RenameSession
   | GetSetupState
   | SetApiKey
   | DeleteApiKey

@@ -80,6 +80,10 @@ export const ICONS = {
 	clock: '<circle cx="12" cy="12" r="9"/>' + '<path d="M12 7v5l3 2"/>',
 	/** Account anchor avatar fallback (rail footer, TD-1712). */
 	user: '<circle cx="12" cy="8" r="4"/>' + '<path d="M4 21a8 8 0 0 1 16 0"/>',
+	/** Rename a session (rail row actions, TD-3002). */
+	pencil:
+		'<path d="M21.2 2.8a2.8 2.8 0 0 0-4 0L4 16l-1.2 5.2L8 20 20.2 7.8a2.8 2.8 0 0 0 0-4Z"/>' +
+		'<path d="m15.5 5.3 3.2 3.2"/>',
 	/** Star / unstar a session (rail row actions, TD-3003). */
 	star:
 		'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',

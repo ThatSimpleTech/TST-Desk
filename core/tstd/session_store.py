@@ -58,9 +58,13 @@ class SessionRecord:
     # written before this field loads unchanged instead of being dropped
     # as malformed.
     archived: bool = False
-    # Auto-title from the first non-empty user message (TD-3001).
-    # Defaulted so a store written before this field loads unchanged.
+    # Display title (TD-3001 / TD-3002). A user rename, or a copy of
+    # auto_title until then. Null → the rail falls back to the short id.
     title: str | None = None
+    # First-message title, set once by maybe_set_title. Rename writes
+    # `title` only; empty rename restores this (TD-3002). Defaulted so a
+    # store written before this field loads unchanged.
+    auto_title: str | None = None
 
 
 class SessionStore:
@@ -99,6 +103,7 @@ class SessionStore:
             created_at=existing.created_at if existing else (created_at or _now_iso()),
             archived=existing.archived if existing else False,
             title=existing.title if existing else None,
+            auto_title=existing.auto_title if existing else None,
         )
         self._records[session_id] = record
         await self._persist()
@@ -129,17 +134,39 @@ class SessionStore:
     async def maybe_set_title(self, session_id: str, content: str) -> bool:
         """Title from the first non-empty user message. Never overwrites.
 
-        Returns True when a title was written. False when the id is
-        unknown, the record is already titled, or ``content`` is empty
-        after trim (attachment-only / whitespace).
+        Sets ``auto_title`` once. Also fills ``title`` when the display
+        title is still empty, so a rename that landed first is kept.
+        Returns True when ``auto_title`` was written. False when the id
+        is unknown, ``auto_title`` is already set, or ``content`` is
+        empty after trim (attachment-only / whitespace).
         """
         record = self._records.get(session_id)
-        if record is None or record.title is not None:
+        if record is None or record.auto_title is not None:
             return False
         title = title_from_user_message(content)
         if title is None:
             return False
-        record.title = title
+        record.auto_title = title
+        if record.title is None:
+            record.title = title
+        record.updated_at = _now_iso()
+        await self._persist()
+        return True
+
+    async def set_title(self, session_id: str, title: str | None) -> bool:
+        """Set the display title, or restore auto_title when empty (TD-3002).
+
+        A non-empty value is trimmed, first-lined, and capped the same way
+        as the first-message title. Empty, whitespace-only, or ``None``
+        restores ``auto_title`` (itself ``None`` when there was never a
+        first-message title — the rail then falls back to the short id).
+        Does not touch ``auto_title``. Returns False when the id is unknown.
+        """
+        record = self._records.get(session_id)
+        if record is None:
+            return False
+        normalized = title_from_user_message(title) if title is not None else None
+        record.title = normalized if normalized is not None else record.auto_title
         record.updated_at = _now_iso()
         await self._persist()
         return True
@@ -200,6 +227,10 @@ class SessionStore:
                     extra={"extra_fields": {"entry": entry}},
                 )
                 continue
+            # Stores written before auto_title treated title as the
+            # first-message title. Copy it so empty-rename still restores.
+            if isinstance(entry, dict) and "auto_title" not in entry and record.title is not None:
+                record.auto_title = record.title
             self._records[record.session_id] = record
         log.info(
             "session store loaded",

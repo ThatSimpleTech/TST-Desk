@@ -23,11 +23,14 @@
 		type SessionRow
 	} from '../sessions.svelte.js';
 	import {
+		cancelRename,
 		confirmDelete,
 		moveRow,
 		moveTargets,
+		renameSession,
 		requestDelete,
 		requestMove,
+		requestRename,
 		setArchived,
 		setStarred,
 		toggleRowMenu
@@ -39,19 +42,56 @@
 	let menuOpen = $derived(sessions.menuFor === row.sessionId);
 	let confirming = $derived(sessions.confirmDeleteFor === row.sessionId);
 	let moving = $derived(sessions.moveFor === row.sessionId);
+	let renaming = $derived(sessions.renameFor === row.sessionId);
 	let targets = $derived(moving ? moveTargets(row.sessionId) : []);
+	let draft = $state('');
+	let inputEl = $state<HTMLInputElement | undefined>(undefined);
+	let renameSeed = $state<string | null>(null);
+
+	$effect(() => {
+		if (!renaming) {
+			renameSeed = null;
+			return;
+		}
+		if (renameSeed === row.sessionId) return;
+		draft = rowTitle(row);
+		renameSeed = row.sessionId;
+	});
+
+	$effect(() => {
+		if (renaming && inputEl !== undefined) {
+			inputEl.focus();
+			inputEl.select();
+		}
+	});
 
 	function run(id: RailRowActionId): void {
 		if (id === 'star') setStarred(row.sessionId, true);
 		else if (id === 'unstar') setStarred(row.sessionId, false);
+		else if (id === 'rename') requestRename(row.sessionId);
 		else if (id === 'archive') setArchived(row.sessionId, true);
 		else if (id === 'unarchive') setArchived(row.sessionId, false);
 		else if (id === 'move') requestMove(row.sessionId);
 		else if (id === 'delete') requestDelete(row.sessionId);
 	}
+
+	function commitRename(): void {
+		if (sessions.renameFor !== row.sessionId) return;
+		renameSession(row.sessionId, draft);
+	}
+
+	function onRenameKey(event: KeyboardEvent): void {
+		if (event.key === 'Enter') {
+			event.preventDefault();
+			commitRename();
+		} else if (event.key === 'Escape') {
+			event.preventDefault();
+			cancelRename();
+		}
+	}
 </script>
 
-<div class="wrap" class:wrap-open={menuOpen || confirming || moving}>
+<div class="wrap" class:wrap-open={menuOpen || confirming || moving || renaming}>
 	<div class="row" class:row-active={active}>
 		<button
 			class="open"
@@ -102,6 +142,19 @@
 				</button>
 				<button class="btn" type="button" onclick={closeRowMenus}>Cancel</button>
 			</div>
+		</div>
+	{/if}
+
+	{#if renaming}
+		<div class="commit" role="group" aria-label="Rename session">
+			<input
+				class="rename"
+				bind:this={inputEl}
+				bind:value={draft}
+				aria-label="Session name"
+				onkeydown={onRenameKey}
+				onblur={commitRename}
+			/>
 		</div>
 	{/if}
 
@@ -260,6 +313,23 @@
 		flex-direction: column;
 		gap: var(--space-1);
 		padding: var(--space-1) var(--space-2) var(--space-2);
+	}
+
+	.rename {
+		width: 100%;
+		box-sizing: border-box;
+		border: var(--border-width) solid var(--color-hairline);
+		background: var(--color-ground);
+		border-radius: var(--radius-sm);
+		padding: var(--space-1) var(--space-2);
+		font-family: var(--font-mono);
+		font-size: var(--text-sm);
+		color: var(--color-ink);
+	}
+
+	.rename:focus {
+		outline: none;
+		border-color: var(--color-accent);
 	}
 
 	.commit-copy {

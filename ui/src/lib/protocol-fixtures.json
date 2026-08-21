@@ -205,6 +205,16 @@
     "session_id": "sess-1",
     "workspace_path": "/home/user/other"
   },
+  "rename_session": {
+    "type": "rename_session",
+    "session_id": "sess-1",
+    "title": "My name"
+  },
+  "rename_session_restore": {
+    "type": "rename_session",
+    "session_id": "sess-1",
+    "title": ""
+  },
   "get_setup_state": {
     "type": "get_setup_state"
   },

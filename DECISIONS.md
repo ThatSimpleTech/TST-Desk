@@ -6731,3 +6731,26 @@ title would spend, race the first turn, and disagree across restarts.
 would orphan titles when the workspace's session list is the record.
 
 ---
+## 2026-08-20 — TD-3002: `auto_title` vs `title` (Class B)
+
+**Decision:** `SessionRecord` keeps two fields. `auto_title` is the
+first-message title, set once by `maybe_set_title` and never changed by
+rename. `title` is the display title the rail and `session_list` show.
+`rename_session` writes `title` (same first-line / 60-char collapse as
+auto-title). An empty or whitespace-only title restores
+`title = auto_title` (`None` when there was never a first message, so
+the rail falls back to the short id). Stores written before `auto_title`
+treat the existing `title` as `auto_title` on load.
+
+**Rationale:** Empty-rename has to restore the original one-liner, not
+invent a new one and not forget a user rename when the first message
+arrives later. One field cannot do both. The split stays on
+`sessions.json` with the rest of the session's own metadata — a
+user-data-dir file would orphan titles the same way a star file would
+not (stars are a machine preference; a name is the session's).
+
+**Alternative rejected:** Overwriting `title` on first message after a
+rename, or treating empty rename as "short id forever." Both lose
+information the rail already had.
+
+---

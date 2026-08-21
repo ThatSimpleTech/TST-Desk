@@ -4652,9 +4652,9 @@ to v0.3.
 **Size:** 2 · **Depends on:** TD-3001
 
 **Acceptance criteria:**
-- [ ] Rail row can rename; the daemon persists the title
-- [ ] Empty rename restores the auto-title or the short id
-- [ ] Rename of a busy session is allowed (metadata only)
+- [x] Rail row can rename; the daemon persists the title
+- [x] Empty rename restores the auto-title or the short id
+- [x] Rename of a busy session is allowed (metadata only)
 
 ---
 

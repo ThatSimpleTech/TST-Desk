@@ -178,17 +178,18 @@ describe("accountRow", () => {
 
 describe("rowActions", () => {
 	it("offers archive, move and delete on a live row", () => {
-		expect(rowActions(false).map((a) => a.id)).toEqual(["star", "archive", "move", "delete"]);
+		expect(rowActions(false).map((a) => a.id)).toEqual(["star", "rename", "archive", "move", "delete"]);
 	});
 
 	it("swaps archive for unarchive on a filed row, never both", () => {
 		const ids = rowActions(true).map((a) => a.id);
-		expect(ids).toEqual(["star", "unarchive", "move", "delete"]);
+		expect(ids).toEqual(["star", "rename", "unarchive", "move", "delete"]);
 		expect(ids).not.toContain("archive");
 	});
 
 	it("swaps star for unstar on a starred row, never both", () => {
-		expect(rowActions(false, true).map((a) => a.id)).toEqual(["unstar", "archive", "move", "delete"]);
+		expect(rowActions(false, true).map((a) => a.id)).toEqual(["unstar", "rename", "archive", "move", "delete"]);
+		expect(rowActions(false, false).map((a) => a.id)).not.toContain("unstar");
 	});
 
 	it("marks only delete destructive", () => {

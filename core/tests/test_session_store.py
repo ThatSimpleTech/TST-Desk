@@ -184,10 +184,12 @@ class TestSessionTitle:
             rec = store.get("s1")
             assert rec is not None
             assert rec.title == "Fix the rail titles"
+            assert rec.auto_title == "Fix the rail titles"
 
             assert await store.maybe_set_title("s1", "a later message") is False
             assert store.get("s1") is not None
             assert store.get("s1").title == "Fix the rail titles"  # type: ignore[union-attr]
+            assert store.get("s1").auto_title == "Fix the rail titles"  # type: ignore[union-attr]
 
     async def test_empty_and_whitespace_stay_untitled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -198,6 +200,7 @@ class TestSessionTitle:
             rec = store.get("s1")
             assert rec is not None
             assert rec.title is None
+            assert rec.auto_title is None
 
     async def test_title_is_first_line_collapsed_and_capped(self) -> None:
         from tstd.session_store import SESSION_TITLE_MAX_LEN, title_from_user_message
@@ -218,6 +221,7 @@ class TestSessionTitle:
             rec = SessionStore(Path(tmp)).get("s1")
             assert rec is not None
             assert rec.title == "Keep this title"
+            assert rec.auto_title == "Keep this title"
 
     async def test_a_store_written_before_title_still_loads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -238,3 +242,109 @@ class TestSessionTitle:
             rec = SessionStore(Path(tmp)).get("s1")
             assert rec is not None
             assert rec.title is None
+            assert rec.auto_title is None
+
+
+class TestSessionRename:
+    """Display title vs auto_title (TD-3002)."""
+
+    async def test_set_title_writes_display_without_touching_auto_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            await store.maybe_set_title("s1", "First message title")
+            assert await store.set_title("s1", "  My custom name  ") is True
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.title == "My custom name"
+            assert rec.auto_title == "First message title"
+
+    async def test_empty_set_title_restores_auto_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            await store.maybe_set_title("s1", "First message title")
+            await store.set_title("s1", "Custom")
+            assert await store.set_title("s1", "") is True
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.title == "First message title"
+            assert rec.auto_title == "First message title"
+            await store.set_title("s1", "   \n\t  ")
+            assert store.get("s1").title == "First message title"  # type: ignore[union-attr]
+            await store.set_title("s1", None)
+            assert store.get("s1").title == "First message title"  # type: ignore[union-attr]
+
+    async def test_empty_set_title_without_auto_title_clears_display(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            await store.set_title("s1", "Custom")
+            await store.set_title("s1", "")
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.title is None
+            assert rec.auto_title is None
+
+    async def test_rename_then_first_message_keeps_custom_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            await store.set_title("s1", "Custom")
+            assert await store.maybe_set_title("s1", "First message") is True
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.title == "Custom"
+            assert rec.auto_title == "First message"
+
+    async def test_set_title_is_first_line_collapsed_and_capped(self) -> None:
+        from tstd.session_store import SESSION_TITLE_MAX_LEN
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            await store.set_title("s1", "hello\nworld")
+            assert store.get("s1").title == "hello"  # type: ignore[union-attr]
+            long = "x" * (SESSION_TITLE_MAX_LEN + 20)
+            await store.set_title("s1", long)
+            assert store.get("s1").title == "x" * SESSION_TITLE_MAX_LEN  # type: ignore[union-attr]
+
+    async def test_rename_survives_upsert_and_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            await store.maybe_set_title("s1", "Auto")
+            await store.set_title("s1", "Custom")
+            await store.update_state("s1", "running")
+            await store.upsert("s1", "/ws", "complete")
+            rec = SessionStore(Path(tmp)).get("s1")
+            assert rec is not None
+            assert rec.title == "Custom"
+            assert rec.auto_title == "Auto"
+
+    async def test_a_store_written_before_auto_title_treats_title_as_auto(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "sessions.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "session_id": "s1",
+                            "workspace_path": "/ws",
+                            "state": "idle",
+                            "created_at": "2026-08-13T10:00:00Z",
+                            "updated_at": "2026-08-13T10:00:00Z",
+                            "archived": False,
+                            "title": "Old title",
+                        }
+                    ]
+                )
+            )
+            rec = SessionStore(Path(tmp)).get("s1")
+            assert rec is not None
+            assert rec.title == "Old title"
+            assert rec.auto_title == "Old title"
+
+    async def test_unknown_id_reports_rather_than_pretending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            assert await store.set_title("nope", "x") is False
