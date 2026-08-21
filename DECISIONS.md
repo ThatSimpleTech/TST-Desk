@@ -7139,3 +7139,21 @@ steal the next `recv` in every existing socket test.
 piggybacking on `setup_state` (would rewrite an existing message). Also
 rejected: a `get_cu_kill` verb — the story named only set + event.
 
+---
+
+## 2026-08-21 — M6: how the stacks became one branch (Class A)
+
+**Decision:** `td/m6` is the Screen/glow spine (`70d8c58`) plus merges of
+Design (`td/3403-design-mode`), the exit harness (`td/3405-m6-exit`),
+grounding (`td/3304-grounding`), permissions (`td/3303-windows-perms`,
+which already has 3302), and the kill-switch (`td/3404-kill-switch`).
+Protocol unions keep every new verb and event. Desktop AX Design picks
+stay TD-3406.
+
+**Rationale:** The stories were built in parallel from `f6d5504` /
+`b426ee1`. One merge branch is how M5 shipped. Conflicts were keep-both
+on `protocol.py`, AppShell, ScreenPane, and DECISIONS.
+
+**Alternative rejected:** Cherry-picking only the exit harness onto main
+and leaving chrome on side branches.
+
