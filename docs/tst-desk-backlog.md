@@ -5263,9 +5263,9 @@ after M1.5.** Prefer after M6 so CU has something to ground.
 **Size:** 3 · **Depends on:** TD-3901
 
 **Acceptance criteria:**
-- [ ] Live harness against a loopback vLLM or EZER fixture (or skip
+- [x] Live harness against a loopback vLLM or EZER fixture (or skip
       with copy if the binary is absent — heading-match style)
-- [ ] **This harness is the M8 exit criterion**
+- [x] **This harness is the M8 exit criterion**
 
 ---
 

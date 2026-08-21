@@ -7561,3 +7561,24 @@ keeps both attach paths honest. Slugs stay omitted; discovery and
 preset that duplicates `vllm`. The first silently moves every Ollama user.
 The second is two names for one URL.
 
+## 2026-08-21 — TD-3904: M8 exit is a live vLLM probe, skip not fail (Class B)
+
+**Decision:** `tstd.e2e_m8.run_m8` is a new module, not a branch of
+`e2e_harness.run`. It targets the shipped `vllm` preset's `base_url`
+(from yaml, never a Python literal). `GET /v1/models` is the probe;
+off-box is refused before send. Nothing listening — or a model list
+that is not exactly one id — skips with a fixed heading-match copy
+rather than failing. A live pass is one keyless `LiveProvider`
+completion, cost 0. Default CI is the skip path; `@pytest.mark.live`
+is the opt-in turn.
+
+**Rationale:** Folding this into `e2e_harness.run` would change a
+frozen signature (TD-1401) and require a tool-calling model. An
+absent vLLM/EZER is a fact about the machine, the same as a down
+embeddings sidecar. "Binary absent" is that failed probe: a
+docker-hosted server has no `vllm` on PATH and must still count.
+
+**Alternative rejected:** Requiring `vllm`/`ezer` on PATH before
+probing (false-skips a listening container). Also rejected: treating
+skip as a failed check.
+
