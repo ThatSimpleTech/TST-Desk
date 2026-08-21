@@ -5256,10 +5256,17 @@ Done (2026-08-21): `computer_use.grounding` (empty `base_url` = off);
 **Size:** 3 · **Depends on:** TD-3902, TD-303
 
 **Acceptance criteria:**
-- [ ] A CU-heavy turn can pin the worker to the local slug without
+- [x] A CU-heavy turn can pin the worker to the local slug without
       changing the brain
-- [ ] Title bar shows that honestly
-- [ ] Remote worker remains the default for non-CU turns
+- [x] Title bar shows that honestly
+- [x] Remote worker remains the default for non-CU turns
+
+Done (2026-08-21): `computer_use.local_worker_preset` (default `vllm`)
+remaps the worker *client* after a `desktop_` / `browser_` tool. Brain,
+lead-turns, `set_tier`, and escalation stay TD-303. `tier_state` carries
+the remapped worker slug or omits it if unresolved (TD-1805).
+
+
 
 ---
 

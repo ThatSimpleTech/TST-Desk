@@ -220,12 +220,17 @@ session:
 # Empty base_url is off — clicks use the intended (x, y). A filled URL
 # must be loopback (the vllm preset's :8000/v1, or a dedicated sidecar).
 # Optional slug is discovered from /v1/models when omitted.
+# local_worker_preset (TD-3903): after this session has used a desktop_
+# or browser_ tool, the worker *client* uses that named preset's worker
+# tier (loopback URL + optional slug). Brain is unchanged. Empty = never
+# remap. The name is a preset key, not a model slug.
 computer_use:
   command: ""
   browser: mock
   grounding:
     base_url: ""
     timeout_seconds: 8
+  local_worker_preset: vllm
 
 # Opt-in Tailscale bind (TD-3601). Empty is off: 127.0.0.1 only.
 # Settings → Allow remote attach (TD-3603) turns this on. The documented

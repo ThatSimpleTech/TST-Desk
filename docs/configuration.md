@@ -111,6 +111,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
+| `local_worker_preset` | string | `vllm` | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
 
 #### `computer_use.grounding`
 
@@ -250,6 +251,7 @@ computer_use:
   grounding:
     base_url: ""
     timeout_seconds: 8
+  local_worker_preset: vllm
 remote:
   bind: ""
 notify:
