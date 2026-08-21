@@ -54,8 +54,8 @@ export interface SessionRow {
 	archived: boolean;
 	/** Pinned above newer unstarred rows (TD-3003). Daemon truth. */
 	starred: boolean;
-	/** Auto-title from the first non-empty user message (TD-3001). Null
-	 *  until then — rowTitle falls back to the short id. */
+	/** Display title (TD-3001 / TD-3002). Null — rowTitle falls back to
+	 *  the short id. */
 	title: string | null;
 }
 
@@ -74,6 +74,9 @@ export const sessions = $state({
 	confirmDeleteFor: null as string | null,
 	/** Row whose move-to-project picker is open. */
 	moveFor: null as string | null,
+	/** Row whose title is being edited (TD-3002). Kept across list
+	 *  refreshes so a running turn doesn't abort the rename. */
+	renameFor: null as string | null,
 	/** The daemon's refusal copy for the last lifecycle action, or null.
 	 *  Rendered in the rail so the answer lands where the click did. */
 	refusal: null as string | null,
@@ -155,8 +158,12 @@ function reduce(event: DaemonEventUnion): void {
 		const bound = sessions.rows.find((r) => r.sessionId === chat.sessionId);
 		if (bound !== undefined) retargetWorkspace(bound.sessionId, bound.workspacePath);
 		// Any list is an answer to something; a stale refusal outlives its click.
+		// Leave renameFor: a running turn refreshes the list constantly, and
+		// aborting an in-progress rename would make busy-session rename a lie.
 		sessions.refusal = null;
-		closeRowMenus();
+		sessions.menuFor = null;
+		sessions.confirmDeleteFor = null;
+		sessions.moveFor = null;
 		return;
 	}
 	// A refused lifecycle action (TD-1715): the daemon owns "is a turn in
@@ -266,6 +273,7 @@ export function closeRowMenus(): void {
 	sessions.menuFor = null;
 	sessions.confirmDeleteFor = null;
 	sessions.moveFor = null;
+	sessions.renameFor = null;
 	sessions.refusal = null;
 }
 
@@ -357,8 +365,8 @@ export function recencyLabel(iso: string, nowMs: number = Date.now()): string {
 	return new Date(then).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Row title: the first-message title when the daemon has one, else the
- *  short id (TD-3001). */
+/** Row title: the daemon's display title when it has one, else the
+ *  short id (TD-3001 / TD-3002). */
 export function rowTitle(row: SessionRow): string {
 	const titled = row.title?.trim();
 	return titled ? titled : row.sessionId.slice(0, 8);

@@ -466,6 +466,20 @@ class MoveSession(ClientMessage):
     workspace_path: str = Field(min_length=1)
 
 
+class RenameSession(ClientMessage):
+    """Rename a session, or restore its auto-title (TD-3002).
+
+    Metadata only: allowed while a turn is in flight. An empty or
+    whitespace-only title restores the first-message auto-title (or
+    leaves the row untitled so the rail falls back to the short id).
+    The daemon answers with a refreshed ``session_list``.
+    """
+
+    type: Literal["rename_session"] = "rename_session"
+    session_id: str
+    title: str
+
+
 class GetSetupState(ClientMessage):
     """Request the onboarding setup state (TD-1101 first-run wizard).
 
@@ -1386,6 +1400,7 @@ ClientMessageT = Annotated[
     | SetSessionStar
     | DeleteSession
     | MoveSession
+    | RenameSession
     | GetSetupState
     | SetApiKey
     | ValidateApiKey
@@ -1485,6 +1500,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_session_star",
         "delete_session",
         "move_session",
+        "rename_session",
         "get_setup_state",
         "set_api_key",
         "validate_api_key",

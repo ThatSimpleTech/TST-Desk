@@ -48,6 +48,7 @@ from tstd.protocol import (
     PolicyRules,
     PolicyRuleSummary,
     Ready,
+    RenameSession,
     Resume,
     RevokePolicyRule,
     SessionState,
@@ -342,6 +343,17 @@ class TestClientMessages:
     def test_move_session_rejects_an_empty_target(self) -> None:
         with pytest.raises(ValidationError):
             MoveSession(session_id="sess-1", workspace_path="")
+
+    def test_rename_session(self) -> None:
+        back = _roundtrip(RenameSession(session_id="sess-1", title="My name"))
+        assert isinstance(back, RenameSession)
+        assert back.session_id == "sess-1"
+        assert back.title == "My name"
+
+    def test_rename_session_empty_means_restore(self) -> None:
+        back = _roundtrip(RenameSession(session_id="sess-1", title=""))
+        assert isinstance(back, RenameSession)
+        assert back.title == ""
 
     # ── Usage and cost (TD-1706) ────────────────────────────────────
     #

@@ -66,6 +66,7 @@ import type {
   SetSessionStar,
   DeleteSession,
   MoveSession,
+  RenameSession,
   PolicyRules,
   PolicyRuleSummary,
   GetSetupState,
@@ -760,6 +761,7 @@ describe("All fixtures have required shape", () => {
       "set_load_global_memory",
       "set_workspace_pin",
       "set_session_star",
+      "rename_session",
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",
@@ -822,6 +824,19 @@ describe("Session lifecycle messages match TypeScript types", () => {
     const m = fixtures.delete_session as DeleteSession;
     expect(m.type).toBe("delete_session");
     expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("rename_session", () => {
+    const m = fixtures.rename_session as RenameSession;
+    expect(m.type).toBe("rename_session");
+    expect(isString(m.session_id)).toBe(true);
+    expect(m.title).toBe("My name");
+  });
+
+  it("rename_session empty title means restore", () => {
+    const m = fixtures.rename_session_restore as RenameSession;
+    expect(m.type).toBe("rename_session");
+    expect(m.title).toBe("");
   });
 
   it("move_session", () => {

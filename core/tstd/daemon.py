@@ -137,6 +137,7 @@ from .protocol import (
     PolicyRules,
     PolicyRuleSummary,
     RemovePin,
+    RenameSession,
     Resume,
     RevokePolicyRule,
     RunDiagnostics,
@@ -187,7 +188,7 @@ from .session import (
     SessionRegistry,
     SessionRunner,
 )
-from .session_lifecycle import archive_session, delete_session, move_session
+from .session_lifecycle import archive_session, delete_session, move_session, rename_session
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
@@ -1321,6 +1322,10 @@ class Daemon:
                 msg.session_id,
                 msg.workspace_path,
             )
+            return refusal if refusal is not None else await self._handle_list_sessions()
+
+        if isinstance(msg, RenameSession):
+            refusal = await rename_session(self._session_store, msg.session_id, msg.title)
             return refusal if refusal is not None else await self._handle_list_sessions()
 
         if isinstance(msg, GetInstructionStack):

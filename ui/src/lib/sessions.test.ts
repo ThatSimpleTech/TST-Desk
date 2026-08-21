@@ -117,6 +117,9 @@ import {
   requestMove,
   setArchived,
   setStarred,
+  requestRename,
+  renameSession,
+  cancelRename,
   toggleArchivedView,
   toggleStarredOnly,
   toggleRowMenu,
@@ -571,6 +574,13 @@ describe("presentation helpers", () => {
     };
     expect(rowTitle(row)).toBe("Fix the rail titles");
   });
+
+  it("row title follows a rename and falls back after restore (TD-3002)", () => {
+    emit(sessionList([["abc12345-xxxx", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, "Custom"]]));
+    expect(rowTitle(sessions.rows[0])).toBe("Custom");
+    emit(sessionList([["abc12345-xxxx", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, null]]));
+    expect(rowTitle(sessions.rows[0])).toBe("abc12345");
+  });
 });
 
 // ── Archive, delete, move (TD-1715) ───────────────────────────────────────
@@ -663,6 +673,44 @@ describe("starred rows (TD-3003)", () => {
     expect(mocks.sent).toEqual([
       { type: "set_session_star", session_id: "s-live", starred: true },
     ]);
+  });
+});
+
+describe("rename (TD-3002)", () => {
+  beforeEach(() => {
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z", "running"]]));
+    mocks.sent.length = 0;
+  });
+
+  it("sends rename_session with the typed title", () => {
+    renameSession("s-live", "Custom name");
+    expect(mocks.sent).toEqual([{ type: "rename_session", session_id: "s-live", title: "Custom name" }]);
+  });
+
+  it("sends an empty title to restore the auto-title", () => {
+    renameSession("s-live", "");
+    expect(mocks.sent).toEqual([{ type: "rename_session", session_id: "s-live", title: "" }]);
+  });
+
+  it("is allowed while the session is running", () => {
+    expect(sessions.rows[0].state).toBe("running");
+    requestRename("s-live");
+    expect(sessions.renameFor).toBe("s-live");
+    renameSession("s-live", "While busy");
+    expect(mocks.sent).toEqual([{ type: "rename_session", session_id: "s-live", title: "While busy" }]);
+  });
+
+  it("keeps the editor open across a list refresh", () => {
+    requestRename("s-live");
+    emit(sessionList([["s-live", "2026-08-14T09:01:00Z", "running"]]));
+    expect(sessions.renameFor).toBe("s-live");
+  });
+
+  it("cancels without sending", () => {
+    requestRename("s-live");
+    cancelRename();
+    expect(sessions.renameFor).toBeNull();
+    expect(mocks.sent).toEqual([]);
   });
 });
 

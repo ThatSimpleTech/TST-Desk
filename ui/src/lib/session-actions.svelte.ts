@@ -64,6 +64,23 @@ export function setStarred(sessionId: string, starred: boolean): boolean {
 	return sent;
 }
 
+/** Start an in-place rename. Offered in every state, including mid-turn. */
+export function requestRename(sessionId: string): void {
+	closeRowMenus();
+	sessions.renameFor = sessionId;
+}
+
+/** Send the new title. Empty or whitespace-only restores the auto-title. */
+export function renameSession(sessionId: string, title: string): boolean {
+	const sent = sendToDaemon({ type: "rename_session", session_id: sessionId, title });
+	if (sent) sessions.renameFor = null;
+	return sent;
+}
+
+export function cancelRename(): void {
+	sessions.renameFor = null;
+}
+
 /** First click on Delete: arm the confirm. Nothing has been sent yet. */
 export function requestDelete(sessionId: string): void {
 	closeRowMenus();

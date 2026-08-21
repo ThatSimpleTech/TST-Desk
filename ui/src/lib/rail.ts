@@ -130,7 +130,14 @@ export function railSections(
 
 // ── Row lifecycle actions (TD-1715) ────────────────────────────────────
 
-export type RailRowActionId = "star" | "unstar" | "archive" | "unarchive" | "move" | "delete";
+export type RailRowActionId =
+	| "star"
+	| "unstar"
+	| "rename"
+	| "archive"
+	| "unarchive"
+	| "move"
+	| "delete";
 
 export interface RailRowAction {
 	id: RailRowActionId;
@@ -182,6 +189,13 @@ export function rowActions(archived: boolean, starred = false): RailRowAction[] 
 					danger: false,
 					hint: "Keep this session at the top of the list.",
 				},
+		{
+			id: "rename",
+			label: "Rename",
+			icon: "pencil",
+			danger: false,
+			hint: "Change the name in the list. Empty restores the automatic title.",
+		},
 		archived
 			? {
 					id: "unarchive",

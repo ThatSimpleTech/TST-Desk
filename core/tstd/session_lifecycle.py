@@ -1,6 +1,6 @@
-"""Archive, delete, and move-to-project for sessions (TD-1715).
+"""Archive, delete, move, and rename for sessions (TD-1715, TD-3002).
 
-The three verbs the rail's row actions send. They live here rather than in
+The verbs the rail's row actions send. They live here rather than in
 ``daemon.py`` because each is a small, self-contained rule about the durable
 registry plus its in-memory twin, and ``daemon.py`` is already the largest
 file in the package (AGENTS §6).
@@ -78,6 +78,22 @@ async def archive_session(
         "session archived" if archived else "session restored",
         extra={"extra_fields": {"session_id": session_id}},
     )
+    return None
+
+
+async def rename_session(
+    store: SessionStore,
+    session_id: str,
+    title: str,
+) -> str | None:
+    """Set or restore a session's display title (TD-3002).
+
+    Allowed in every state, including mid-turn: the title is metadata,
+    it touches neither the loop nor the log.
+    """
+    if not await store.set_title(session_id, title):
+        return _not_found(session_id)
+    log.info("session renamed", extra={"extra_fields": {"session_id": session_id}})
     return None
 
 

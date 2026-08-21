@@ -79,6 +79,7 @@ from tstd.protocol import (
     PolicyRuleSummary,
     Ready,
     RemovePin,
+    RenameSession,
     Resume,
     RevokePolicyRule,
     RuleActivated,
@@ -173,6 +174,8 @@ FIXTURES = {
     "unstar_session": SetSessionStar(session_id="sess-1", starred=False),
     "delete_session": DeleteSession(session_id="sess-1"),
     "move_session": MoveSession(session_id="sess-1", workspace_path="/home/user/other"),
+    "rename_session": RenameSession(session_id="sess-1", title="My name"),
+    "rename_session_restore": RenameSession(session_id="sess-1", title=""),
     # Onboarding (TD-1101 first-run wizard)
     "get_setup_state": GetSetupState(),
     "set_api_key": SetApiKey(api_key="sk-or-test-key"),
