@@ -4692,10 +4692,10 @@ Spec §2: same daemon, different door.
 **Size:** 3 · **Depends on:** TD-3101, TD-206
 
 **Acceptance criteria:**
-- [ ] `tst attach <session_id>` replays from `from_seq` and streams
+- [x] `tst attach <session_id>` replays from `from_seq` and streams
       live events as text
-- [ ] Unknown id is a typed error
-- [ ] Ctrl+C detaches; it does not cancel the session
+- [x] Unknown id is a typed error
+- [x] Ctrl+C detaches; it does not cancel the session
 
 ---
 
