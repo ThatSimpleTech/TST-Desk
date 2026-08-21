@@ -1,7 +1,9 @@
 """Local WebSocket server for the TST Desk daemon.
 
-Binds 127.0.0.1 only, writes a port file with a random auth token,
-and supports multiple simultaneous client connections.
+Binds 127.0.0.1 by default, writes a port file with a random auth token,
+and supports multiple simultaneous client connections. An opt-in
+``remote.bind`` may add a Tailscale address on the same port — never
+``0.0.0.0`` / ``::``. The port file still describes loopback.
 
 Post-handshake messages are routed to a message handler provided by the
 daemon. The handler receives parsed messages and returns responses to
@@ -32,6 +34,7 @@ from .protocol import (
     validate_hello,
     validate_token,
 )
+from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 
 log = get_logger("tstd.ws")
 
@@ -101,23 +104,44 @@ def remove_port_file(data_dir: Path) -> None:
     port_file.unlink(missing_ok=True)
 
 
-def validate_interface(host: str) -> None:
-    """Assert that the server binds only to a loopback interface.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_UNSPECIFIED_HOSTS = frozenset({"0.0.0.0", "::", "", "*"})
+
+
+def validate_interface(host: str, *, extra_allowed: str | None = None) -> None:
+    """Assert that *host* is a legal bind target.
+
+    Loopback is always allowed. ``0.0.0.0`` and ``::`` are never allowed.
+    A non-loopback host is allowed only when it is exactly *extra_allowed*
+    — the address ``resolve_remote_bind`` already classified as Tailscale.
+    Default callers (no extra) stay loopback-only.
 
     Raises:
-        ValueError: If host is not a loopback address.
+        ValueError: If host is not a permitted bind address.
     """
-    loopback = {"127.0.0.1", "::1", "localhost"}
-    if host not in loopback:
+    if host in _UNSPECIFIED_HOSTS:
         raise ValueError(
             f"Refusing to bind to {host!r}: prime directive §2.1 requires "
             f"loopback only (127.0.0.1, ::1, or localhost). "
             f"This is enforced by the server, not by convention."
         )
+    if host in _LOOPBACK_HOSTS:
+        return
+    if (
+        extra_allowed is not None
+        and extra_allowed not in _UNSPECIFIED_HOSTS
+        and host == extra_allowed
+    ):
+        return
+    raise ValueError(
+        f"Refusing to bind to {host!r}: prime directive §2.1 requires "
+        f"loopback only (127.0.0.1, ::1, or localhost). "
+        f"This is enforced by the server, not by convention."
+    )
 
 
 class WebSocketServer:
-    """Async WebSocket server bound to loopback with an auth token.
+    """Async WebSocket server bound to loopback, plus optional Tailscale.
 
     Usage:
         server = WebSocketServer(data_dir=...)
@@ -133,9 +157,12 @@ class WebSocketServer:
         message_handler: Callable[[str, ServerConnection], Awaitable[str | None]] | None = None,
         on_disconnect: Callable[[ServerConnection], Awaitable[None]] | None = None,
         ping_interval: float = PING_INTERVAL_SECONDS,
+        bind: str = "",
+        interfaces: InterfaceEnumerator | None = None,
     ) -> None:
         self.data_dir = data_dir
         self._server: Server | None = None
+        self._extra_server: Server | None = None
         self._token: str = ""
         self._port: int = 0
         self._connections: set[ServerConnection] = set()
@@ -147,6 +174,9 @@ class WebSocketServer:
         self._on_disconnect = on_disconnect
         self._ping_interval = ping_interval
         self._ping_task: asyncio.Task[None] | None = None
+        self._bind = bind
+        self._interfaces = interfaces
+        self._extra_host: str | None = None
 
     @property
     def port(self) -> int:
@@ -156,18 +186,51 @@ class WebSocketServer:
     def token(self) -> str:
         return self._token
 
-    async def start(self) -> None:
-        """Start the WebSocket server on an ephemeral loopback port."""
-        self._token = generate_token()
-        validate_interface("127.0.0.1")
+    @property
+    def extra_host(self) -> str | None:
+        return self._extra_host
 
-        self._server = await serve(
+    @property
+    def bound_hosts(self) -> tuple[str, ...]:
+        hosts: list[str] = []
+        for server in (self._server, self._extra_server):
+            if server is None:
+                continue
+            for sock in server.sockets:
+                hosts.append(sock.getsockname()[0])
+        return tuple(hosts)
+
+    async def start(self) -> None:
+        """Start the WebSocket server on loopback, and Tailscale if configured."""
+        self._token = generate_token()
+        extra = resolve_remote_bind(self._bind, self._interfaces)
+        validate_interface("127.0.0.1")
+        if extra is not None:
+            validate_interface(extra, extra_allowed=extra)
+
+        loopback = await serve(
             self._on_connect,
             "127.0.0.1",
             0,  # ephemeral port
             process_request=self._auth_middleware,
         )
-        self._port = self._server.sockets[0].getsockname()[1]
+        self._server = loopback
+        self._port = loopback.sockets[0].getsockname()[1]
+
+        if extra is not None:
+            try:
+                self._extra_server = await serve(
+                    self._on_connect,
+                    extra,
+                    self._port,
+                    process_request=self._auth_middleware,
+                )
+            except OSError:
+                loopback.close()
+                await loopback.wait_closed()
+                self._server = None
+                raise
+            self._extra_host = extra
 
         write_port_file(self.data_dir, self._port, self._token)
 
@@ -176,7 +239,7 @@ class WebSocketServer:
 
         log.info(
             "ws server started",
-            extra={"extra_fields": {"port": self._port}},
+            extra={"extra_fields": {"port": self._port, "extra_host": self._extra_host}},
         )
 
     async def _ping_loop(self) -> None:
@@ -216,10 +279,13 @@ class WebSocketServer:
         self._connections.clear()
         self._handshaken.clear()
 
-        # Close the server
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
+        for server in (self._extra_server, self._server):
+            if server is not None:
+                server.close()
+                await server.wait_closed()
+        self._extra_server = None
+        self._server = None
+        self._extra_host = None
 
         # Clean shutdown removes the port file so the host can tell a live
         # daemon from a defunct one.

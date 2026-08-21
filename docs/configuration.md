@@ -60,6 +60,7 @@ no effect.
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
+| `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 
 ### `search`
 
@@ -123,6 +124,20 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 |---|---|---|---|
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
 
+### `remote`
+
+Opt-in bind on a Tailscale address (TD-3601). Empty is off: the daemon
+listens on `127.0.0.1` only. Set `bind` to a Tailscale IPv4
+(`100.64.0.0/10`), Tailscale IPv6 (`fd7a:115c:a1e0::/48`), or an
+interface name (`tailscale0`). The server then listens on that address
+**and** loopback, never `0.0.0.0` or `::`. A non-Tailscale LAN address
+is refused. Live Tailscale is not required to ship or test; the daemon
+reads local interface addresses, not `tailscale status`.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `bind` | string | *empty* | Interface name or Tailscale IP. Empty / omitted is loopback only. |
+
 <!-- verify: model -->
 ```yaml
 presets:
@@ -170,6 +185,8 @@ session:
 computer_use:
   command: ""
   browser: mock
+remote:
+  bind: ""
 ```
 
 ### A preset

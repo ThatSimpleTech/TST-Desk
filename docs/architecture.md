@@ -41,9 +41,9 @@ installer.
 
 **The daemon (`core/tstd/`)** holds every piece of state that matters: the session registry, each
 session's append-only event log, the conversation, the boundary, the policy, the cost ledger, the
-audit database. It binds a WebSocket server to loopback and nothing else — a non-loopback bind is
-refused outright by `validate_interface` in `core/tstd/ws.py`, which is prime directive §2.1
-enforced in code rather than by convention.
+audit database. It binds a WebSocket server to loopback by default. A non-loopback bind is
+refused by `validate_interface` in `core/tstd/ws.py` unless `remote.bind` names a Tailscale
+address (never `0.0.0.0` / `::`) — prime directive §2.1, with the spec §8 opt-in.
 
 **The host (`shell/`)** manages the window and the daemon process lifecycle: it resolves the
 `tstd` binary, attaches when `port.json` names a live listener, and otherwise spawns with

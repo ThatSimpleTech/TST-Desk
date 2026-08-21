@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from websockets.asyncio.client import connect
@@ -42,6 +43,13 @@ class TestAuth:
             validate_interface("192.168.1.1")
         with pytest.raises(ValueError, match="prime directive"):
             validate_interface("10.0.0.1")
+
+    def test_validate_interface_allows_exact_tailscale_extra(self) -> None:
+        validate_interface("100.64.1.5", extra_allowed="100.64.1.5")
+        with pytest.raises(ValueError, match="prime directive"):
+            validate_interface("192.168.1.1", extra_allowed="100.64.1.5")
+        with pytest.raises(ValueError, match="prime directive"):
+            validate_interface("0.0.0.0", extra_allowed="100.64.1.5")
 
 
 class TestPortFile:
@@ -231,15 +239,86 @@ class TestWebSocketServer:
 
     @pytest.mark.asyncio
     async def test_refuses_non_loopback_bind(self) -> None:
+        """Default start is loopback-only. A LAN bind is the new refuse path."""
         with tempfile.TemporaryDirectory() as tmp:
             server = WebSocketServer(Path(tmp))
-            # Override to test non-loopback — the validate_interface check
-            # runs during start(), so we can't start with a non-loopback host.
-            # The validate_interface() function is tested separately.
-            # This test confirms the server starts only on 127.0.0.1 internally.
             await server.start()
             assert server.port > 0
+            assert server.extra_host is None
+            assert "0.0.0.0" not in server.bound_hosts
+            assert "::" not in server.bound_hosts
+            assert all(host in {"127.0.0.1", "::1"} for host in server.bound_hosts)
             await server.stop()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            refused = WebSocketServer(
+                Path(tmp),
+                bind="192.168.1.1",
+                interfaces=lambda: {"eth0": ("192.168.1.1",)},
+            )
+            with pytest.raises(ValueError, match="not a Tailscale"):
+                await refused.start()
+            assert refused.extra_host is None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            unspecified = WebSocketServer(Path(tmp), bind="0.0.0.0")
+            with pytest.raises(ValueError, match=r"never 0\.0\.0\.0"):
+                await unspecified.start()
+
+    @pytest.mark.asyncio
+    async def test_opt_in_bind_listens_on_loopback_and_tailscale(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """remote.bind names an iface; both loopback and that address listen.
+
+        serve is faked so a live Tailscale address is not required. The
+        recorded hosts are the contract: loopback + Tailscale, never 0.0.0.0.
+        """
+        recorded: list[tuple[str, int]] = []
+
+        class _FakeSock:
+            def __init__(self, host: str, port: int) -> None:
+                self._host = host
+                self._port = port
+
+            def getsockname(self) -> tuple[str, int]:
+                return (self._host, self._port)
+
+        class _FakeServer:
+            def __init__(self, host: str, port: int) -> None:
+                self.sockets = [_FakeSock(host, port)]
+
+            def close(self) -> None:
+                return None
+
+            async def wait_closed(self) -> None:
+                return None
+
+        async def fake_serve(_handler: object, host: str, port: int, **_kwargs: Any) -> _FakeServer:
+            bound = 54321 if port == 0 else port
+            recorded.append((host, bound))
+            return _FakeServer(host, bound)
+
+        monkeypatch.setattr("tstd.ws.serve", fake_serve)
+        extra = "100.64.1.5"
+        with tempfile.TemporaryDirectory() as tmp:
+            server = WebSocketServer(
+                Path(tmp),
+                bind="tailscale0",
+                interfaces=lambda: {"tailscale0": (extra,)},
+                ping_interval=0,
+            )
+            await server.start()
+            try:
+                assert recorded == [("127.0.0.1", 54321), (extra, 54321)]
+                assert "0.0.0.0" not in {host for host, _ in recorded}
+                assert "::" not in {host for host, _ in recorded}
+                assert server.extra_host == extra
+                info = read_port_file(Path(tmp))
+                assert info is not None
+                assert info["port"] == server.port == 54321
+            finally:
+                await server.stop()
 
     @pytest.mark.asyncio
     async def test_health_fields_in_daemon(self) -> None:
