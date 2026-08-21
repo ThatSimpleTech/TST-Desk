@@ -4759,10 +4759,15 @@ not an in-app editor.
 **Size:** 3 · **Depends on:** TD-2902, TD-3101, TD-3201
 
 **Acceptance criteria:**
-- [ ] Scripted: start a session, close the viewer, assert the loop
+- [x] Scripted: start a session, close the viewer, assert the loop
       still accepts a turn, reopen, attach, replay is complete
-- [ ] `tst run` against the mock provider is green in CI
-- [ ] **This harness is the M5 exit criterion**
+- [x] `tst run` against the mock provider is green in CI
+- [x] **This harness is the M5 exit criterion**
+
+Done (2026-08-20): `tstd.e2e_m5` + `core/scripts/e2e_m5.py`, pinned in
+CI as `tests/test_e2e_m5.py`. Protocol client: drop the socket, second
+turn on a new attach, `from_seq=1` replay, `cli.run_turn` on the mock
+daemon. Not marked `live`.
 
 ---
 
