@@ -98,6 +98,9 @@ class DecisionRequest:
         hosts: Hosts the call would reach over the network.
         is_mutation: ``True`` when the call mutates state (writes) rather
             than only reading.
+        actuates: Desktop computer-use only (TD-3301). ``None`` means the
+            existing path/host table applies. ``False`` is capture-only
+            (Class A). ``True`` is actuation (Class B).
     """
 
     tool_name: str
@@ -106,6 +109,7 @@ class DecisionRequest:
     writes: tuple[Path, ...] = ()
     hosts: frozenset[str] = frozenset()
     is_mutation: bool = False
+    actuates: bool | None = None
 
 
 # ── Rule table ─────────────────────────────────────────────────────────
@@ -305,6 +309,16 @@ def _rule_cap_exceeded(req: DecisionRequest, boundary: Boundary) -> bool:
     return boundary.cap_exceeded
 
 
+def _rule_desktop_capture(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """A desktop capture tool cannot actuate (TD-3301)."""
+    return req.actuates is False
+
+
+def _rule_desktop_actuation(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """Desktop pointer/keyboard actuation is Class B (TD-3301)."""
+    return req.actuates is True
+
+
 def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
     """An in-workspace write inside writable_paths is a reversible Class A edit."""
     if not req.is_mutation or not req.writes:
@@ -379,6 +393,18 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="in-workspace source edit within writable_paths",
         decision_class=DecisionClass.A,
         match=_rule_in_workspace_edit,
+    ),
+    Rule(
+        id="desktop-capture",
+        description="desktop capture cannot actuate",
+        decision_class=DecisionClass.A,
+        match=_rule_desktop_capture,
+    ),
+    Rule(
+        id="desktop-actuation",
+        description="desktop actuation requires approval",
+        decision_class=DecisionClass.B,
+        match=_rule_desktop_actuation,
     ),
 )
 

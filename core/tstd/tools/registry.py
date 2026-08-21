@@ -45,6 +45,9 @@ class Tool:
         host_fields: Argument keys holding network hosts the tool reaches.
         mutates: True when the tool changes state (a write), so its
             ``path_fields`` are treated as write targets.
+        actuates: Desktop computer-use only (TD-3301). ``None`` means this
+            is not a CU tool. ``False`` is capture-only (Class A).
+            ``True`` is pointer/keyboard actuation (Class B, ask).
     """
 
     name: str
@@ -59,6 +62,11 @@ class Tool:
     path_fields: tuple[str, ...] = ()
     host_fields: tuple[str, ...] = ()
     mutates: bool = False
+    # None = not a desktop CU tool (existing path/host table). False =
+    # capture-only → Class A. True = actuation → Class B. Empty
+    # path_fields would otherwise fall through to the worker as B for
+    # screenshot too.
+    actuates: bool | None = None
 
     def __post_init__(self) -> None:
         """Validate basic invariants."""
@@ -415,6 +423,9 @@ def _register_builtins(registry: ToolRegistry) -> None:
 
 def create_registry() -> ToolRegistry:
     """Create a new ToolRegistry with all built-in tools pre-registered."""
+    from .desktop import register_desktop_tools
+
     registry = ToolRegistry()
     _register_builtins(registry)
+    register_desktop_tools(registry)
     return registry

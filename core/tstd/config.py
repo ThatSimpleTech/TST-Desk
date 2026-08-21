@@ -200,6 +200,28 @@ class EmbeddingsConfig(BaseModel):
         raise ValueError("command must be a string or a list of arguments")
 
 
+class ComputerUseConfig(BaseModel):
+    """Desktop computer-use sidecar (TD-3301).
+
+    Empty ``command`` is mock-only: no child, no real pointer. A non-empty
+    value is argv for ``mcp/tst-cu-mcp`` over stdio. The daemon owns the
+    child. No socket.
+    """
+
+    command: str | list[str] = ""
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _coerce_command(cls, value: Any) -> str | list[str]:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        raise ValueError("command must be a string or a list of arguments")
+
+
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
@@ -209,6 +231,7 @@ class ModelConfig(BaseModel):
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
+    computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -291,7 +314,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
     # Fill from the shipped file so the destination exists without
     # rewriting theirs.
     shipped: dict[str, Any] | None = None
-    for key in ("search", "embeddings", "project_context", "session"):
+    for key in ("search", "embeddings", "project_context", "session", "computer_use"):
         if key in data:
             continue
         if shipped is None:

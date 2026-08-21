@@ -50,6 +50,7 @@ from tstd.boundary_config import (
 )
 from tstd.config import (
     TIER_NAMES,
+    ComputerUseConfig,
     ConfigError,
     EmbeddingsConfig,
     ModelConfig,
@@ -198,6 +199,7 @@ _SEARCH_FIELDS = frozenset(SearchConfig.model_fields)
 _EMBEDDINGS_FIELDS = frozenset(EmbeddingsConfig.model_fields)
 _PROJECT_CONTEXT_FIELDS = frozenset(ProjectContextConfig.model_fields)
 _SESSION_FIELDS = frozenset(SessionConfig.model_fields)
+_COMPUTER_USE_FIELDS = frozenset(ComputerUseConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
 _SECTION_FIELDS = frozenset(BoundarySection.model_fields)
 _CAPS_FIELDS = frozenset(CapsSection.model_fields)
@@ -255,6 +257,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             )
         if "session" in data:
             _check_keys(data["session"], _SESSION_FIELDS, f"{where} session")
+        if "computer_use" in data:
+            _check_keys(data["computer_use"], _COMPUTER_USE_FIELDS, f"{where} computer_use")
         for name, preset in data.get("presets", {}).items():
             _check_keys(preset, _PRESET_FIELDS, f"{where} presets.{name}")
             for tier, body in preset.items():
@@ -276,6 +280,7 @@ def test_every_config_key_is_documented() -> None:
         | _EMBEDDINGS_FIELDS
         | _PROJECT_CONTEXT_FIELDS
         | _SESSION_FIELDS
+        | _COMPUTER_USE_FIELDS
         | _PRESET_FIELDS
         | _TIER_FIELDS
         | WORKSPACE_SECTIONS

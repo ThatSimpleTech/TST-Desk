@@ -24,6 +24,7 @@ from ..autonomy import (
     DecisionRequest,
     LedgerEntry,
 )
+from ..desktop.protocol import DesktopError
 from ..logging import get_logger
 from ..memory_commit import MemoryCommitter
 from ..policy import ApprovalOutcome, PolicyConfig, format_summary, resolve_explained
@@ -31,7 +32,7 @@ from ..protocol import DecisionLogged as DecisionLoggedEvent
 from .boundary import PathGuard, RefusalError
 from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry
-from .results import ToolResult, ValidationError, truncate_output
+from .results import HandlerRefusal, ToolResult, ValidationError, truncate_output
 
 __all__ = [
     "ToolDispatcher",
@@ -70,10 +71,12 @@ ApprovalHandler = Callable[
 def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionRequest:
     """Reduce a tool call to the signals the decision classifier needs.
 
-    Uses the tool's declared ``path_fields`` / ``host_fields`` / ``mutates``
-    metadata (TD-702) — never heuristics over raw argument text.  Read
-    tools expose their ``path_fields`` as reads; mutating tools expose them
-    as write targets.
+    Uses the tool's declared ``path_fields`` / ``host_fields`` /
+    ``mutates`` / ``actuates`` metadata (TD-702, TD-3301) — never
+    heuristics over raw argument text.  Read tools expose their
+    ``path_fields`` as reads; mutating tools expose them as write
+    targets.  Desktop CU tools keep those fields empty so PathGuard
+    does not run; ``actuates`` is what the table classifies.
     """
     paths = tuple(Path(arguments[f]) for f in tool.path_fields if isinstance(arguments.get(f), str))
     hosts = frozenset(arguments[f] for f in tool.host_fields if isinstance(arguments.get(f), str))
@@ -90,6 +93,7 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
         reads=reads,
         hosts=hosts,
         is_mutation=tool.mutates,
+        actuates=tool.actuates,
     )
 
 
@@ -373,6 +377,25 @@ class ToolDispatcher:
 
         try:
             output = await handler(session=session, tool_call_id=tool_call_id, **arguments)
+        except (HandlerRefusal, DesktopError) as e:
+            log.info(
+                "tool handler refused",
+                extra={
+                    "extra_fields": {
+                        "tool_call_id": tool_call_id,
+                        "tool": name,
+                        "code": e.code,
+                    }
+                },
+            )
+            return ToolResult(
+                tool_call_id=tool_call_id,
+                name=name,
+                status="error",
+                output=e.message,
+                error_code=e.code,
+                decision_class=decision_class,
+            )
         except Exception as e:
             log.exception(
                 "tool handler failed",

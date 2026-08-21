@@ -160,3 +160,9 @@ project_context:
 # is an event count so from_seq stays honest; 0 is invalid, not unbounded.
 session:
   log_max_events: 10000
+
+# Desktop computer-use (TD-3301). Empty command is mock-only — no sidecar,
+# no pointer motion. A non-empty command is argv for mcp/tst-cu-mcp over
+# stdio (no socket). The daemon owns the child.
+computer_use:
+  command: ""
