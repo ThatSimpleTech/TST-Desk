@@ -4516,14 +4516,14 @@ product-shape pin so the home cannot ship as three empty cards.
 **Size:** 3 · **Depends on:** TD-2501, TD-2401, TD-1401
 
 **Acceptance criteria:**
-- [ ] A scripted session: seed `MEMORY.md` and a topic file, send a
+- [x] A scripted session: seed `MEMORY.md` and a topic file, send a
       matching task, assert the brain prompt contains the topic and the
       worker prompt does not
-- [ ] Distill produces a proposal; accept writes the file and creates a
+- [x] Distill produces a proposal; accept writes the file and creates a
       `tst: memory update` commit
-- [ ] Reject leaves the tree identical
-- [ ] **This harness is the M4 exit criterion**
-- [ ] Runs in CI without an embeddings sidecar
+- [x] Reject leaves the tree identical
+- [x] **This harness is the M4 exit criterion**
+- [x] Runs in CI without an embeddings sidecar
 
 ---
 
