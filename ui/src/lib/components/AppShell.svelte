@@ -27,8 +27,10 @@
 	import ChatPane from './chat/ChatPane.svelte';
 	import ProjectPane from './ProjectPane.svelte';
 	import ArtifactPane from './ArtifactPane.svelte';
+	import ScheduledPane from './ScheduledPane.svelte';
 	import { projects } from '../projects.svelte.js';
 	import { startArtifacts, bindArtifacts } from '../artifacts.svelte.js';
+	import { startScheduled, refreshJobs } from '../scheduled.svelte.js';
 	import TitleBar from './TitleBar.svelte';
 	import NotificationBanner from '../NotificationBanner.svelte';
 	import ToastStack from '../ToastStack.svelte';
@@ -134,6 +136,7 @@
 		const offStack = startStack();
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
 		const offArtifacts = startArtifacts();
+		const offScheduled = startScheduled();
 		const offScreen = startScreen();
 		const offCuIndicators = startCuIndicators();
 		const offDesign = startDesign();
@@ -154,6 +157,7 @@
 			offStack();
 			offOsNotify();
 			offArtifacts();
+			offScheduled();
 			offScreen();
 			offCuIndicators();
 			offDesign();
@@ -175,6 +179,11 @@
 	$effect(() => {
 		if (projects.surface !== 'artifacts') return;
 		bindArtifacts(session.sessionId, session.workspacePath);
+	});
+
+	$effect(() => {
+		if (projects.surface !== 'scheduled') return;
+		refreshJobs(session.workspacePath);
 	});
 
 	// The usage pane (TD-1706) reads the audit store, which the live event
@@ -245,7 +254,9 @@
 					? 'Projects'
 					: projects.surface === 'artifacts'
 						? 'Artifacts'
-						: 'Chat pane'}
+						: projects.surface === 'scheduled'
+							? 'Scheduled'
+							: 'Chat pane'}
 			>
 				<!-- Chat stays mounted when another surface is showing so the
 				     store subscription is not torn down (TD-2801). -->
@@ -260,6 +271,8 @@
 					<div class="pane-layer"><ProjectPane /></div>
 				{:else if projects.surface === 'artifacts'}
 					<div class="pane-layer"><ArtifactPane /></div>
+				{:else if projects.surface === 'scheduled'}
+					<div class="pane-layer"><ScheduledPane /></div>
 				{/if}
 			</section>
 		{/snippet}

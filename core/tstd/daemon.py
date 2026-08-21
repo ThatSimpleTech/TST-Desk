@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import websockets.exceptions
+from pydantic import ValidationError
 
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, to_entry
 from .attachments import AttachmentError, decode_attachments, render_user_content
@@ -125,6 +126,7 @@ from .protocol import (
     CuPermissions,
     DaemonEvent,
     DeleteApiKey,
+    DeleteJob,
     DeleteSession,
     Deny,
     DesignHit,
@@ -142,8 +144,11 @@ from .protocol import (
     HandshakeError,
     InstructionFileEntry,
     InstructionFiles,
+    JobEntry,
+    JobList,
     ListArtifacts,
     ListInstructions,
+    ListJobs,
     ListMemory,
     ListPins,
     ListPolicyRules,
@@ -165,6 +170,7 @@ from .protocol import (
     Resume,
     RevokePolicyRule,
     RunDiagnostics,
+    SaveJob,
     SaveMemory,
     SessionList,
     SessionSummary,
@@ -214,8 +220,10 @@ from .provider import (
     auth_failure_message,
 )
 from .router import TIER_NAMES, TierRouter
+from .scheduler.models import Job, JobDraft, JobValidationError
 from .scheduler.runner import RecordingDeliver, run_due_jobs, run_turn_on_daemon
 from .scheduler.runner import SendFn as NotifySendFn
+from .scheduler.store import delete_job, get_job, list_jobs, save_job
 from .session import (
     TERMINAL_STATES,
     Session,
@@ -414,6 +422,19 @@ def _tier_state_event(session_id: str, router: TierRouter, config: ModelConfig) 
             name: slug for name in TIER_NAMES if (slug := config.tier(name).slug) is not None
         },
         seq=1,  # overwritten by the event log
+    )
+
+
+def _job_entry(job: Job) -> JobEntry:
+    """Wire shape for a persisted job. The rail lists these; it does not run them."""
+    return JobEntry(
+        id=job.id,
+        workspace=job.workspace,
+        instruction=job.instruction,
+        cadence=job.cadence,
+        next_run=job.next_run,
+        deliver_to=job.deliver_to,
+        paused=job.paused,
     )
 
 
@@ -1506,6 +1527,15 @@ class Daemon:
         if isinstance(msg, DesignHitTest):
             return await self._handle_design_hit_test(msg)
 
+        if isinstance(msg, ListJobs):
+            return await self._handle_list_jobs()
+
+        if isinstance(msg, SaveJob):
+            return await self._handle_save_job(msg)
+
+        if isinstance(msg, DeleteJob):
+            return await self._handle_delete_job(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -2086,6 +2116,56 @@ class Daemon:
             mime=entry.mime,
             path=entry.path,
         ).model_dump_json()
+
+    async def _handle_list_jobs(self) -> str:
+        return await self._job_list_event()
+
+    async def _handle_save_job(self, msg: SaveJob) -> str:
+        try:
+            await asyncio.to_thread(self._save_job_record, msg)
+        except JobValidationError as exc:
+            return build_error("job_invalid", str(exc))
+        return await self._job_list_event()
+
+    async def _handle_delete_job(self, msg: DeleteJob) -> str:
+        removed = await asyncio.to_thread(delete_job, self.data_dir, msg.job_id)
+        if not removed:
+            return build_error("job_not_found", f"Job {msg.job_id!r} not found")
+        return await self._job_list_event()
+
+    async def _job_list_event(self) -> str:
+        jobs = await asyncio.to_thread(list_jobs, self.data_dir)
+        return JobList(jobs=[_job_entry(job) for job in jobs]).model_dump_json()
+
+    def _save_job_record(self, msg: SaveJob) -> Job:
+        """Persist a draft or an update. Does not run the job."""
+        existing = get_job(self.data_dir, msg.id) if msg.id else None
+        if existing is not None:
+            try:
+                updated = Job(
+                    id=existing.id,
+                    workspace=msg.workspace or existing.workspace,
+                    instruction=msg.instruction or existing.instruction,
+                    cadence=existing.cadence if msg.cadence is None else msg.cadence,
+                    next_run=existing.next_run if msg.next_run is None else msg.next_run,
+                    deliver_to=msg.deliver_to or existing.deliver_to,
+                    paused=msg.paused,
+                )
+            except (ValidationError, JobValidationError) as exc:
+                raise JobValidationError(str(exc)) from exc
+            return save_job(self.data_dir, updated)
+        return save_job(
+            self.data_dir,
+            JobDraft(
+                id=msg.id,
+                workspace=msg.workspace,
+                instruction=msg.instruction,
+                cadence=msg.cadence,
+                next_run=msg.next_run,
+                deliver_to=msg.deliver_to,
+                paused=msg.paused,
+            ),
+        )
 
     async def _handle_design_hit_test(self, msg: DesignHitTest) -> str:
         """Observe the session browser at a CSS-pixel point (TD-3403)."""

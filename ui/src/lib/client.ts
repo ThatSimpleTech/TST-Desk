@@ -62,6 +62,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "cu_kill_state", // TD-3402 / TD-3404
   "design_hit", // TD-3403
   "cu_permissions", // TD-3302
+  "job_list", // TD-3805
 ]);
 
 /**

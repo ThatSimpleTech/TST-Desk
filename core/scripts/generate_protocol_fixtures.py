@@ -43,6 +43,7 @@ from tstd.protocol import (
     CuPermissions,
     DecisionLogged,
     DeleteApiKey,
+    DeleteJob,
     DeleteSession,
     Deny,
     DesignHit,
@@ -62,8 +63,11 @@ from tstd.protocol import (
     InstructionFileEntry,
     InstructionFiles,
     InstructionStack,
+    JobEntry,
+    JobList,
     ListArtifacts,
     ListInstructions,
+    ListJobs,
     ListMemory,
     ListPins,
     ListPolicyRules,
@@ -90,6 +94,7 @@ from tstd.protocol import (
     RevokePolicyRule,
     RuleActivated,
     RunDiagnostics,
+    SaveJob,
     SaveMemory,
     ScreenFrame,
     SessionList,
@@ -628,6 +633,26 @@ FIXTURES = {
             "x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility"
         ),
         first_run=True,
+    ),
+    "list_jobs": ListJobs(),
+    "save_job": SaveJob(
+        workspace="/home/user/project",
+        instruction="summarize the inbox",
+        cadence="every 1 hour",
+        deliver_to="window",
+    ),
+    "delete_job": DeleteJob(job_id="job-1"),
+    "job_list": JobList(
+        jobs=[
+            JobEntry(
+                id="job-1",
+                workspace="/home/user/project",
+                instruction="summarize the inbox",
+                cadence="every 1 hour",
+                deliver_to="window",
+                paused=False,
+            )
+        ],
     ),
 }
 
