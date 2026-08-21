@@ -50,6 +50,7 @@ from .context.instructions import (
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
+from .context_pins import PinOutsideError, add_pin, list_pin_cards, remove_pin
 from .discovery import resolve_tier_slugs
 from .keychain import (
     KeychainError,
@@ -86,6 +87,7 @@ from .policy import (
     save_skip_all,
 )
 from .protocol import (
+    AddPin,
     AlwaysAllow,
     ApiKeyValidated,
     Approve,
@@ -93,6 +95,8 @@ from .protocol import (
     Attach,
     Cancel,
     ClientMessageT,
+    ContextPinEntry,
+    ContextPins,
     CreateRule,
     DaemonEvent,
     DeleteApiKey,
@@ -112,6 +116,7 @@ from .protocol import (
     InstructionFiles,
     ListInstructions,
     ListMemory,
+    ListPins,
     ListPolicyRules,
     ListSessions,
     MemoryAccept,
@@ -124,6 +129,7 @@ from .protocol import (
     OpenWorkspace,
     PolicyRules,
     PolicyRuleSummary,
+    RemovePin,
     Resume,
     RevokePolicyRule,
     RunDiagnostics,
@@ -1296,6 +1302,15 @@ class Daemon:
         if isinstance(msg, CreateRule):
             return await self._handle_create_rule(msg)
 
+        if isinstance(msg, ListPins):
+            return await self._handle_list_pins(msg)
+
+        if isinstance(msg, AddPin):
+            return await self._handle_add_pin(msg)
+
+        if isinstance(msg, RemovePin):
+            return await self._handle_remove_pin(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -1716,6 +1731,47 @@ class Daemon:
     async def _handle_list_instructions(self, msg: ListInstructions) -> str:
         """List a workspace's Instructions files (TD-2802). Not a tool."""
         return await self._instruction_files_reply(msg.workspace_path)
+
+    async def _context_pins_reply(self, workspace: str | Path) -> str:
+        root = Path(workspace)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {root}",
+            )
+        cards = await asyncio.to_thread(list_pin_cards, root)
+        return ContextPins(
+            workspace_path=str(root),
+            pins=[
+                ContextPinEntry(path=c.path, name=c.name, kind=c.kind, lines=c.lines) for c in cards
+            ],
+        ).model_dump_json()
+
+    async def _handle_list_pins(self, msg: ListPins) -> str:
+        return await self._context_pins_reply(msg.workspace_path)
+
+    async def _handle_add_pin(self, msg: AddPin) -> str:
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        try:
+            await asyncio.to_thread(add_pin, root, msg.path)
+        except PinOutsideError as e:
+            return build_error("outside_workspace", str(e))
+        return await self._context_pins_reply(root)
+
+    async def _handle_remove_pin(self, msg: RemovePin) -> str:
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        await asyncio.to_thread(remove_pin, root, msg.path)
+        return await self._context_pins_reply(root)
 
     async def _handle_list_memory(self, msg: ListMemory) -> str:
         """List a workspace's Memory files (TD-2601). Not a tool."""

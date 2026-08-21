@@ -131,6 +131,20 @@
     "workspace_path": "/home/user/project",
     "name": "api"
   },
+  "list_pins": {
+    "type": "list_pins",
+    "workspace_path": "/home/user/project"
+  },
+  "add_pin": {
+    "type": "add_pin",
+    "workspace_path": "/home/user/project",
+    "path": "src/app.ts"
+  },
+  "remove_pin": {
+    "type": "remove_pin",
+    "workspace_path": "/home/user/project",
+    "path": "src/app.ts"
+  },
   "memory_accept": {
     "type": "memory_accept",
     "session_id": "sess-1",
@@ -539,6 +553,19 @@
       }
     ],
     "created": null
+  },
+  "context_pins": {
+    "type": "context_pins",
+    "seq": 1,
+    "workspace_path": "/home/user/project",
+    "pins": [
+      {
+        "path": "src/app.ts",
+        "name": "app.ts",
+        "kind": "file",
+        "lines": 12
+      }
+    ]
   },
   "context_compacted": {
     "type": "context_compacted",

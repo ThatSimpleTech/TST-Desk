@@ -43,6 +43,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "tier_switched",
   "instruction_stack",
   "instruction_files",
+  "context_pins",
   "memory_files",
   "memory_proposal",
   "session_list",

@@ -6,6 +6,8 @@
 !.tst/rules/**
 !.tst/memory/
 !.tst/memory/**
+!.tst/context/
+!.tst/context/**
 
 # --- Build artifacts ---
 target/

@@ -324,6 +324,29 @@ class CreateRule(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class ListPins(ClientMessage):
+    """List a workspace's context pins (TD-2804). Human path."""
+
+    type: Literal["list_pins"] = "list_pins"
+    workspace_path: str
+
+
+class AddPin(ClientMessage):
+    """Pin a workspace file or folder (TD-2804). Human path."""
+
+    type: Literal["add_pin"] = "add_pin"
+    workspace_path: str
+    path: str = Field(min_length=1)
+
+
+class RemovePin(ClientMessage):
+    """Unpin a path without deleting the file (TD-2804)."""
+
+    type: Literal["remove_pin"] = "remove_pin"
+    workspace_path: str
+    path: str = Field(min_length=1)
+
+
 class MemoryAccept(ClientMessage):
     """Accept a distill proposal as-is (TD-2401). Write is TD-2402."""
 
@@ -951,6 +974,24 @@ class MemoryFiles(DaemonEvent):
     files: list[MemoryFileEntry] = Field(default_factory=list)
 
 
+class ContextPinEntry(BaseModel):
+    """One pinned path on the Context column (TD-2804)."""
+
+    path: str
+    name: str
+    kind: Literal["file", "dir"]
+    lines: int = Field(ge=0)
+
+
+class ContextPins(DaemonEvent):
+    """Reply to ``list_pins`` / ``add_pin`` / ``remove_pin``."""
+
+    type: Literal["context_pins"] = "context_pins"
+    seq: int = 1
+    workspace_path: str
+    pins: list[ContextPinEntry] = Field(default_factory=list)
+
+
 class InstructionFiles(DaemonEvent):
     """Reply to ``list_instructions`` / ``create_rule``. Connection-scoped."""
 
@@ -1221,6 +1262,9 @@ ClientMessageT = Annotated[
     | ListMemory
     | SaveMemory
     | CreateRule
+    | ListPins
+    | AddPin
+    | RemovePin
     | MemoryAccept
     | MemoryEdit
     | MemoryReject
@@ -1266,6 +1310,7 @@ DaemonEventT = Annotated[
     | TierSwitched
     | InstructionStack
     | InstructionFiles
+    | ContextPins
     | MemoryFiles
     | MemoryProposal
     | SessionList
@@ -1309,6 +1354,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_memory",
         "save_memory",
         "create_rule",
+        "list_pins",
+        "add_pin",
+        "remove_pin",
         "memory_accept",
         "memory_edit",
         "memory_reject",
@@ -1354,6 +1402,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tier_switched",
         "instruction_stack",
         "instruction_files",
+        "context_pins",
         "memory_files",
         "memory_proposal",
         "session_list",
