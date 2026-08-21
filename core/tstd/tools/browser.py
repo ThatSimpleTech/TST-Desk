@@ -12,7 +12,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from ..browser import BrowserDriver, BrowserError
-from ..browser.frames import persist_screen_frame
+from ..screen.frames import persist_screen_frame
 from .registry import Tool, ToolRegistry
 from .results import HandlerRefusal
 

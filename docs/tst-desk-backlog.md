@@ -4896,11 +4896,17 @@ stdio MCP sidecar; mock when `computer_use.command` is empty.
 **Size:** 5 · **Depends on:** TD-1710, TD-3301
 
 **Acceptance criteria:**
-- [ ] Screen tab streams desktop (or the driven display) the way TD-1710
+- [x] Screen tab streams desktop (or the driven display) the way TD-1710
       streams the browser
-- [ ] Failure modes are timeline entries
-- [ ] No Screen tab until a CU tool has run this session — empty copy
+- [x] Failure modes are timeline entries
+- [x] No Screen tab until a CU tool has run this session — empty copy
       points at the first computer-use turn
+
+**Completed (2026-08-21):** `persist_screen_frame` lives in `tstd.screen.frames`
+so desktop and browser share one write. A successful `desktop_screenshot`
+emits `screen_frame` (path, not bytes). The Screen tab gates on `hasCuTool`
+(any `browser_*` or `desktop_*` this session). Failed desktop clicks stay
+`tool_result` timeline rows.
 
 ---
 

@@ -1,18 +1,19 @@
-// Screen pane store (TD-1710).
+// Screen pane store (TD-1710, TD-3401).
 //
 // Latest `screen_frame` path for the bound session. Preview bytes stay
 // off the wire: the host reads a text data-URL sidecar under the session
-// persist dir, same wall as artifacts.
+// persist dir, same wall as artifacts. The tab appears after any
+// computer-use tool (browser_* or desktop_*) this session.
 
 import { onEvent } from "./connection-status.svelte.js";
 import { isTauri } from "./open-file";
 import type { DaemonEventUnion, ToolCall } from "./protocol";
-import { isBrowserTool, screenPreviewSidecar } from "./screen";
+import { isCuTool, screenPreviewSidecar } from "./screen";
 
 export const screen = $state({
 	boundSessionId: null as string | null,
 	hasFrame: false,
-	hasBrowserTool: false,
+	hasCuTool: false,
 	path: null as string | null,
 	preview: null as string | null,
 	error: null as string | null,
@@ -56,7 +57,7 @@ export function resetScreen(): void {
 	toolNames.clear();
 	screen.boundSessionId = null;
 	screen.hasFrame = false;
-	screen.hasBrowserTool = false;
+	screen.hasCuTool = false;
 	screen.path = null;
 	screen.preview = null;
 	screen.error = null;
@@ -70,9 +71,9 @@ function reduce(event: DaemonEventUnion): void {
 	}
 	if (event.type === "tool_result") {
 		const name = toolNames.get(event.tool_call_id);
-		if (name !== undefined && isBrowserTool(name)) {
+		if (name !== undefined && isCuTool(name)) {
 			screen.boundSessionId = event.session_id;
-			screen.hasBrowserTool = true;
+			screen.hasCuTool = true;
 		}
 		return;
 	}
@@ -88,9 +89,9 @@ function reduce(event: DaemonEventUnion): void {
 
 function rememberTool(event: ToolCall): void {
 	toolNames.set(event.tool_call_id, event.name);
-	if (isBrowserTool(event.name)) {
+	if (isCuTool(event.name)) {
 		screen.boundSessionId = event.session_id;
-		screen.hasBrowserTool = true;
+		screen.hasCuTool = true;
 	}
 }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Screen pane (TD-1710): watch the session browser.
+	// Screen pane (TD-1710, TD-3401): watch the session browser or desktop.
 	//
 	// Frames arrive as `screen_frame` with a session-dir path. Preview
 	// is a data-URL the host read under the same wall as artifacts.
@@ -12,7 +12,7 @@
 			boundSessionId: screen.boundSessionId,
 			sessionId: session.sessionId,
 			hasFrame: screen.hasFrame,
-			hasBrowserTool: screen.hasBrowserTool,
+			hasCuTool: screen.hasCuTool,
 		}),
 	);
 	let empty = $derived(screen.preview === null);
@@ -25,7 +25,7 @@
 			<p class="error">{screen.error}</p>
 		{/if}
 	{:else}
-		<img class="frame" src={screen.preview} alt="Browser screen" />
+		<img class="frame" src={screen.preview} alt="Computer-use screen" />
 	{/if}
 </div>
 

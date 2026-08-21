@@ -352,7 +352,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
 | `error` | session | A typed error, usually in response to a bad message. |
-| `screen_frame` | session | A browser screenshot was written to the session dir (TD-1710). Path, not bytes. |
+| `screen_frame` | session | A computer-use screenshot (browser or desktop) was written to the session dir (TD-1710, TD-3401). Path, not bytes. |
 
 ### Adding a message
 

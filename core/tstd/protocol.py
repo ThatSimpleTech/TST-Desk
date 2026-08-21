@@ -1375,11 +1375,12 @@ class Error(DaemonEvent):
 
 
 class ScreenFrame(DaemonEvent):
-    """A browser screenshot written to the session dir (TD-1710).
+    """A computer-use screenshot written to the session dir (TD-1710, TD-3401).
 
-    Path, not bytes. The PNG lives under ``sessions/<id>/`` — the same
-    wall as artifacts. A text data-URL sidecar lets the Screen pane
-    preview through the existing host reader.
+    Path, not bytes. Browser and desktop share this event. The PNG lives
+    under ``sessions/<id>/`` — the same wall as artifacts. A text
+    data-URL sidecar lets the Screen pane preview through the existing
+    host reader.
     """
 
     type: Literal["screen_frame"] = "screen_frame"

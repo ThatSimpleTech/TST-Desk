@@ -28,9 +28,11 @@ from tstd.desktop import (
 )
 from tstd.desktop.protocol import TINY_PNG_B64
 from tstd.policy import ApprovalOutcome, PolicyConfig
+from tstd.protocol import ScreenFrame
 from tstd.tools import ToolDispatcher, UnclassifiedToolCall, create_registry
 from tstd.tools.boundary import PathGuard
 from tstd.tools.handlers import register_builtin_handlers
+from tstd.tools.results import ToolResult
 
 _FAKE_MCP = f"""
 import json, sys
@@ -87,6 +89,22 @@ for line in sys.stdin:
 """
 
 
+class _Log:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    async def add(self, event: object) -> object:
+        self.events.append(event)
+        return event
+
+
+class _Session:
+    def __init__(self, persist: Path) -> None:
+        self.id = "sess-desktop"
+        self.persist_dir = persist
+        self.event_log = _Log()
+
+
 class SpyGuard(PathGuard):
     def __init__(self, boundary: Boundary) -> None:
         super().__init__(boundary)
@@ -133,6 +151,46 @@ def _dispatcher(
     if approve:
         attach_auto_approver(dispatcher)
     return dispatcher, guard
+
+
+class TestScreenFrame:
+    async def test_screenshot_emits_screen_frame_path(self, tmp_path: Path) -> None:
+        driver = MockDesktopDriver()
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        session = _Session(tmp_path / "sess")
+        session.persist_dir.mkdir(parents=True, exist_ok=True)
+        result = await dispatcher.dispatch("c1", "desktop_screenshot", {}, session=session)
+        assert result.status == "success"
+        body = json.loads(result.output)
+        assert body["png_base64"]
+        frames = [e for e in session.event_log.events if isinstance(e, ScreenFrame)]
+        assert len(frames) == 1
+        assert frames[0].path.startswith("screens/")
+        assert frames[0].path.endswith(".png")
+        assert (session.persist_dir / frames[0].path).read_bytes().startswith(b"\x89PNG")
+        sidecar = session.persist_dir / frames[0].path.replace(".png", ".dataurl")
+        assert sidecar.read_text(encoding="utf-8").startswith("data:image/png;base64,")
+        dumped = json.loads(frames[0].model_dump_json())
+        assert "png_base64" not in dumped
+        assert "content" not in dumped
+
+    async def test_failed_click_is_tool_result_not_screen_frame(self, tmp_path: Path) -> None:
+        driver = MockDesktopDriver(foreground_title="Terminal", foreground_app="zsh")
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        session = _Session(tmp_path / "sess")
+        session.persist_dir.mkdir(parents=True, exist_ok=True)
+        result = await dispatcher.dispatch(
+            "c1",
+            "desktop_click",
+            {"x": 4, "y": 5, "expect_window": "Chrome"},
+            session=session,
+        )
+        assert isinstance(result, ToolResult)
+        assert result.status == "error"
+        assert result.error_code == "focus_mismatch"
+        assert result.name == "desktop_click"
+        assert driver.actuations == []
+        assert session.event_log.events == []
 
 
 class TestScreenshotClassA:
