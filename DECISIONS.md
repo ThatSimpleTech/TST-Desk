@@ -6588,3 +6588,34 @@ ruler for a protocol that addresses events by seq. A session event for
 
 **Alternative rejected:** Byte-cap rotation. Also rejected: making
 tombstones resumable without a conversation snapshot.
+
+---
+
+## 2026-08-20 — TD-3101: `tst run` is a protocol client, not a second server (Class B)
+
+**Decision:** Console script `tst` → `tstd.cli:main`. Subcommand `run`
+only. The CLI reads `{data_dir}/port.json` (same file the host uses),
+handshakes with `hello` plus the port-file token at `PROTOCOL_VERSION`,
+then `open_workspace` → `attach` → `user_message`. It prints
+`assistant_delta` text, not JSON. `turn_complete.failed` is exit 1.
+
+If the port file is missing or its pid is dead, spawn
+`sys.executable -m tstd.daemon --data-dir <dir>` and wait. No
+`--parent-pid`: leaving a started daemon up is correct (`tst attach`
+is TD-3102). Spawn uses `-m tstd.daemon` so the port-file pid is the
+real interpreter (TD-1406: console-script trampolines lie about pid).
+
+The CLI never binds. Mock turns in tests attach to an in-process
+`Daemon(provider=MockProvider)` the same way TD-1401 does.
+`e2e_harness.run` is unchanged. Always `open_workspace` (a new session
+in the given workspace) even if the daemon already has another session.
+
+**Rationale:** Spec §2: the CLI is another door to the same daemon. New
+protocol messages would collide with the artifact branch. A second
+listen socket would violate prime directive §2.1. `--parent-pid` would
+kill the daemon when `tst` exits, which is the opposite of coworker
+mode.
+
+**Alternative rejected:** `TSTD_PROVIDER=mock` in the production
+daemon. Tests inject the mock on `Daemon(...)`. An env backdoor is a
+footgun. Also rejected: reusing an existing session in the workspace.

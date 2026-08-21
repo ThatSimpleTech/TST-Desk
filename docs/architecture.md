@@ -92,6 +92,13 @@ no discovery protocol and no broadcast; the file on disk is the rendezvous, and 
 own permissions are what keep the token private. (`core/tstd/discovery.py`, despite the name, is
 not this — it discovers model slugs from a local OpenAI-compatible endpoint.)
 
+**`tst run` (TD-3101)** is a second client of that same file. It checks the pid is live,
+presents the token in `hello` at `PROTOCOL_VERSION`, and never binds a socket. If the file is
+missing or the pid is dead it spawns `python -m tstd.daemon --data-dir <dir>` — not
+`--parent-pid` — and leaves the daemon up. A turn is `open_workspace` → `user_message` → print
+`assistant_delta` text → exit 1 if `turn_complete.failed`. The headless harness (TD-1401)
+stays the mock path; `tst run` is not a second harness.
+
 ---
 
 ## 2. Why the session owns the loop

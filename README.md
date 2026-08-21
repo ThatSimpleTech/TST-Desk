@@ -231,6 +231,9 @@ npm install
 ```bash
 # From ui/ — builds the Rust host, starts the daemon as a sidecar, opens the window
 npm run tauri:dev
+
+# Optional: one headless turn against the same daemon (starts tstd if needed)
+cd core && uv run tst run --workspace /path/to/folder --message "say hi"
 ```
 
 ### Tests

@@ -16,6 +16,7 @@ from tstd.ws import (
     WebSocketServer,
     create_port_file_path,
     generate_token,
+    read_port_file,
     validate_interface,
     write_port_file,
 )
@@ -86,6 +87,26 @@ class TestPortFile:
     def test_create_port_file_path(self) -> None:
         p = create_port_file_path(Path("/tmp/test"))
         assert p == Path("/tmp/test") / "port.json"
+
+    def test_read_port_file_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            write_port_file(data_dir, 4321, "abc123")
+            info = read_port_file(data_dir)
+            assert info is not None
+            assert info["port"] == 4321
+            assert info["token"] == "abc123"
+            assert "pid" in info
+
+    def test_read_port_file_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            assert read_port_file(Path(tmp)) is None
+
+    def test_read_port_file_corrupt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            (data_dir / "port.json").write_text("not-json", encoding="utf-8")
+            assert read_port_file(data_dir) is None
 
 
 async def _do_handshake(uri: str, token: str) -> None:

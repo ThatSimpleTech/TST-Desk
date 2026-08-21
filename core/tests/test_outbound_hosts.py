@@ -239,6 +239,7 @@ _OUTBOUND_CAPABLE = {
     "benchmarks.py": "the benchmark client, likewise loopback",
     "e2e_live.py": "the opt-in live leg, pointed at an endpoint the developer names",
     "e2e_memory.py": "the M4 memory harness, a protocol client of our own loopback daemon",
+    "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
     "tools/web_search.py": "web_search; destination is search.base_url from config",
     "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
 }
