@@ -12,8 +12,8 @@
 	// session's writes in step for no gain.
 	import { entries } from '../timeline-store.svelte.js';
 	import { baseName, dirName, foldFileWrites } from '../files';
-	import { classifyDiffLine, diffLines } from '../entry-view';
 	import { openInEditor } from '../open-file';
+	import DiffPreview from './DiffPreview.svelte';
 
 	let summary = $derived(foldFileWrites(entries));
 	let expanded = $state<string | null>(null);
@@ -77,7 +77,7 @@
 							{#each file.writes as write}
 								<section class="write">
 									<h4 class="write-title">{write.tool ?? 'write'} · +{write.added} -{write.removed}</h4>
-									<pre class="code diff">{#each diffLines(write.diff) as line}<span class="diff-line diff-line--{classifyDiffLine(line)}">{line}</span>{'\n'}{/each}</pre>
+									<DiffPreview diff={write.diff} />
 								</section>
 							{/each}
 						</div>
@@ -224,43 +224,6 @@
 		margin: 0;
 		font-size: var(--text-xs);
 		font-weight: var(--weight-semibold);
-		color: var(--color-text-secondary);
-	}
-
-	.code {
-		margin: 0;
-		padding: var(--space-2) var(--space-3);
-		background: var(--color-bg);
-		border: var(--border-width) solid var(--color-border);
-		border-radius: var(--radius-sm);
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		line-height: var(--leading-normal);
-		overflow-x: auto;
-	}
-
-	/* Same treatment as the timeline's expanded write (TD-1005 AC #3). */
-	.diff {
-		white-space: pre;
-	}
-
-	.diff-line {
-		display: inline;
-	}
-	.diff-line--add {
-		color: var(--color-success);
-	}
-	.diff-line--del {
-		color: var(--color-danger);
-	}
-	.diff-line--hunk {
-		color: var(--color-info);
-	}
-	.diff-line--meta {
-		color: var(--color-text-muted);
-		font-weight: var(--weight-semibold);
-	}
-	.diff-line--context {
 		color: var(--color-text-secondary);
 	}
 

@@ -4,9 +4,9 @@
 	// connection banner (TD-1003) sit in the shell header so daemon/socket
 	// state is visible at all times. The activity pane hosts the activity
 	// timeline (TD-1005), fed live from the daemon event stream, the files
-	// pane (TD-1705), the resolved-stack panel (TD-1201), and the usage and
-	// cost pane (TD-1706) behind an Activity | Files | Stack | Usage tab
-	// strip.
+	// pane (TD-1705), the work diffs stack (TD-3203), the resolved-stack
+	// panel (TD-1201), and the usage and cost pane (TD-1706) behind an
+	// Activity | Files | Work | Stack | Usage tab strip.
 	// Failure notices (TD-1008) render as banners under the header (blocking)
 	// or toasts bottom-right (transient); the footer hosts pending approval
 	// cards (TD-1007) and memory proposals (TD-2402).
@@ -16,6 +16,7 @@
 	import ConnectionBanner from '../ConnectionBanner.svelte';
 	import ActivityTimeline from './ActivityTimeline.svelte';
 	import FilesPanel from './FilesPanel.svelte';
+	import WorkPanel from './WorkPanel.svelte';
 	import StackPanel from './StackPanel.svelte';
 	import UsagePanel from './UsagePanel.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
@@ -206,7 +207,7 @@
 			</section>
 		{/snippet}
 		{#snippet right()}
-			<section class="pane-activity" aria-label="Activity, files, stack, and usage pane">
+			<section class="pane-activity" aria-label="Activity, files, work, stack, and usage pane">
 				<div class="pane-tabs" role="tablist" aria-label="Right pane views">
 					<button
 						role="tab"
@@ -226,6 +227,15 @@
 						onclick={() => showRightPane('files')}
 					>
 						Files
+					</button>
+					<button
+						role="tab"
+						aria-selected={rightPane.tab === 'work'}
+						class="tab"
+						class:tab-active={rightPane.tab === 'work'}
+						onclick={() => showRightPane('work')}
+					>
+						Work
 					</button>
 					<button
 						role="tab"
@@ -251,6 +261,8 @@
 					<ActivityTimeline />
 				{:else if rightPane.tab === 'files'}
 					<FilesPanel />
+				{:else if rightPane.tab === 'work'}
+					<WorkPanel />
 				{:else if rightPane.tab === 'usage'}
 					<UsagePanel />
 				{:else}
@@ -382,6 +394,7 @@
 
 	.pane-activity > :global(.timeline),
 	.pane-activity > :global(.files-panel),
+	.pane-activity > :global(.work-panel),
 	.pane-activity > :global(.stack-panel) {
 		flex: 1;
 		min-height: 0;
