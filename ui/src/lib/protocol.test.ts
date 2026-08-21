@@ -26,7 +26,11 @@ import type {
   ListInstructions,
   ListMemory,
   SaveMemory,
+  AddPin,
+  ContextPins,
   CreateRule,
+  ListPins,
+  RemovePin,
   EndSession,
   InstructionFiles,
   MemoryFiles,
@@ -249,6 +253,22 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.create_rule as CreateRule;
     expect(m.type).toBe("create_rule");
     expect(isString(m.name)).toBe(true);
+  });
+
+  it("list_pins", () => {
+    const m = fixtures.list_pins as ListPins;
+    expect(m.type).toBe("list_pins");
+  });
+
+  it("add_pin", () => {
+    const m = fixtures.add_pin as AddPin;
+    expect(m.type).toBe("add_pin");
+    expect(isString(m.path)).toBe(true);
+  });
+
+  it("remove_pin", () => {
+    const m = fixtures.remove_pin as RemovePin;
+    expect(m.type).toBe("remove_pin");
   });
 
   it("memory_accept", () => {
@@ -726,6 +746,7 @@ describe("All fixtures have required shape", () => {
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",
+      "list_pins", "add_pin", "remove_pin",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
       "run_diagnostics",
@@ -744,7 +765,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "memory_files", "memory_proposal", "session_list", "policy_rules", "error",
+      "instruction_stack", "instruction_files", "context_pins", "memory_files", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported",
     ];
@@ -802,6 +823,12 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(m.type).toBe("instruction_files");
     expect(isString(m.workspace_path)).toBe(true);
     expect(Array.isArray(m.files)).toBe(true);
+  });
+
+  it("context_pins", () => {
+    const m = fixtures.context_pins as ContextPins;
+    expect(m.type).toBe("context_pins");
+    expect(m.pins[0]?.kind).toBe("file");
   });
 
   it("memory_proposal", () => {

@@ -179,6 +179,23 @@ export interface CreateRule extends ClientMessage {
   name: string;
 }
 
+export interface ListPins extends ClientMessage {
+  type: "list_pins";
+  workspace_path: string;
+}
+
+export interface AddPin extends ClientMessage {
+  type: "add_pin";
+  workspace_path: string;
+  path: string;
+}
+
+export interface RemovePin extends ClientMessage {
+  type: "remove_pin";
+  workspace_path: string;
+  path: string;
+}
+
 /** Accept a distill proposal as proposed (TD-2401). */
 export interface MemoryAccept extends ClientMessage {
   type: "memory_accept";
@@ -338,6 +355,9 @@ export type ClientMessageUnion =
   | ListMemory
   | SaveMemory
   | CreateRule
+  | ListPins
+  | AddPin
+  | RemovePin
   | MemoryAccept
   | MemoryEdit
   | MemoryReject
@@ -583,6 +603,19 @@ export interface InstructionFileEntry {
   kind: "agents" | "claude" | "rule";
 }
 
+export interface ContextPinEntry {
+  path: string;
+  name: string;
+  kind: "file" | "dir";
+  lines: number;
+}
+
+export interface ContextPins extends DaemonEvent {
+  type: "context_pins";
+  workspace_path: string;
+  pins: ContextPinEntry[];
+}
+
 export interface InstructionFiles extends DaemonEvent {
   type: "instruction_files";
   workspace_path: string;
@@ -803,6 +836,7 @@ export type DaemonEventUnion =
   | TierSwitched
   | InstructionStack
   | InstructionFiles
+  | ContextPins
   | MemoryFiles
   | MemoryProposal
   | SessionList

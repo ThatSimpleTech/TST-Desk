@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tstd.protocol import (
     PROTOCOL_VERSION,
+    AddPin,
     AlwaysAllow,
     ApiKeyValidated,
     ApprovalRequest,
@@ -28,6 +29,8 @@ from tstd.protocol import (
     Cancel,
     CheckpointNotice,
     ContextCompacted,
+    ContextPinEntry,
+    ContextPins,
     ConversationReset,
     CostUpdate,
     CreateRule,
@@ -51,6 +54,7 @@ from tstd.protocol import (
     InstructionStack,
     ListInstructions,
     ListMemory,
+    ListPins,
     ListPolicyRules,
     ListSessions,
     MemoryAccept,
@@ -67,6 +71,7 @@ from tstd.protocol import (
     PolicyRules,
     PolicyRuleSummary,
     Ready,
+    RemovePin,
     Resume,
     RevokePolicyRule,
     RuleActivated,
@@ -140,6 +145,9 @@ FIXTURES = {
         content="durable: ruff\n",
     ),
     "create_rule": CreateRule(workspace_path="/home/user/project", name="api"),
+    "list_pins": ListPins(workspace_path="/home/user/project"),
+    "add_pin": AddPin(workspace_path="/home/user/project", path="src/app.ts"),
+    "remove_pin": RemovePin(workspace_path="/home/user/project", path="src/app.ts"),
     "memory_accept": MemoryAccept(session_id="sess-1", proposal_id="mp-1"),
     "memory_edit": MemoryEdit(
         session_id="sess-1",
@@ -385,6 +393,12 @@ FIXTURES = {
             ),
         ],
         created=None,
+    ),
+    "context_pins": ContextPins(
+        workspace_path="/home/user/project",
+        pins=[
+            ContextPinEntry(path="src/app.ts", name="app.ts", kind="file", lines=12),
+        ],
     ),
     "context_compacted": ContextCompacted(
         session_id="sess-1",

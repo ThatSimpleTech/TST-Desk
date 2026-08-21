@@ -247,6 +247,25 @@ class TestClientMessages:
         assert isinstance(back, CreateRule)
         assert back.name == "api"
 
+    def test_list_pins(self) -> None:
+        from tstd.protocol import ListPins
+
+        back = _roundtrip(ListPins(workspace_path="/home/user/project"))
+        assert isinstance(back, ListPins)
+
+    def test_add_pin(self) -> None:
+        from tstd.protocol import AddPin
+
+        back = _roundtrip(AddPin(workspace_path="/home/user/project", path="src/app.ts"))
+        assert isinstance(back, AddPin)
+        assert back.path == "src/app.ts"
+
+    def test_remove_pin(self) -> None:
+        from tstd.protocol import RemovePin
+
+        back = _roundtrip(RemovePin(workspace_path="/home/user/project", path="src/app.ts"))
+        assert isinstance(back, RemovePin)
+
     def test_memory_accept(self) -> None:
         back = _roundtrip(MemoryAccept(session_id="sess-1", proposal_id="mp-1"))
         assert isinstance(back, MemoryAccept)

@@ -4443,12 +4443,12 @@ format. The agent still cannot write these paths (TD-2102).
 **Size:** 5 · **Depends on:** TD-2801, TD-2501
 
 **Acceptance criteria:**
-- [ ] The human pins workspace files or folders onto the project
+- [x] The human pins workspace files or folders onto the project
       (stored as `.tst/context/pins.yaml`, git-tracked)
-- [ ] Pinned paths render as cards (name, kind, line count)
-- [ ] `+` is a file picker inside the workspace wall; outside is refused
-- [ ] Unpin removes the pin, not the file
-- [ ] Search-in-pins filters the cards; it does not fetch the web
+- [x] Pinned paths render as cards (name, kind, line count)
+- [x] `+` is a file picker inside the workspace wall; outside is refused
+- [x] Unpin removes the pin, not the file
+- [x] Search-in-pins filters the cards; it does not fetch the web
 
 **Notes:** this is Claude's "Context" column, not the whole repo and not
 an upload-to-cloud knowledge base. The repo stays on disk. Size 5 because

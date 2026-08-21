@@ -255,6 +255,9 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `list_memory` | — | List a workspace's Memory files (`.tst/memory/*.md`). Human path (TD-2601). |
 | `save_memory` | — | Save an edit from the Memory pane through the memory commit path. Never a tool (TD-2602). |
 | `create_rule` | — | Create a `.tst/rules/` file on the human path. Never a tool call (TD-2802). |
+| `list_pins` | — | List `.tst/context/pins.yaml` for the project home Context column (TD-2804). |
+| `add_pin` | — | Pin a workspace file or folder. Outside the wall is refused. |
+| `remove_pin` | — | Unpin a path. The file stays. |
 | `memory_accept` | yes | Accept a distill proposal as proposed (TD-2401). |
 | `memory_edit` | yes | Accept a distill proposal with edited file bytes (TD-2401). |
 | `memory_reject` | yes | Reject a distill proposal. Writes nothing. |
@@ -305,6 +308,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |
 | `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state. |
 | `instruction_files` | connection | The workspace's Instructions column: root steering plus `.tst/rules/*` (TD-2802). |
+| `context_pins` | connection | The workspace's Context column: pinned files and folders (TD-2804). |
 | `memory_files` | connection | The workspace's Memory column: `.tst/memory/*.md` with contents (TD-2601). |
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |

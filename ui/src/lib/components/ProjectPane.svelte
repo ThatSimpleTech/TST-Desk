@@ -35,6 +35,7 @@
 	import { archivedToggle } from '../rail';
 	import InstructionsColumn from './InstructionsColumn.svelte';
 	import MemoryColumn from './MemoryColumn.svelte';
+	import ContextColumn from './ContextColumn.svelte';
 
 	let known = $derived(workspaces.entries);
 	let pinned = $derived(pinnedProjects(workspaces.entries, workspaces.pinned));
@@ -138,6 +139,7 @@
 			<div class="home-cols">
 				<InstructionsColumn workspacePath={selected} />
 				<MemoryColumn workspacePath={selected} />
+				<ContextColumn workspacePath={selected} />
 				<section class="col" aria-label="Recents">
 					<div class="recents-head">
 						<h2 class="section">{sessions.showArchived ? 'Archived' : 'Recents'}</h2>

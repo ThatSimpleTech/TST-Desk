@@ -6435,6 +6435,18 @@ would die with the window profile.
 
 ---
 
+## 2026-08-20 — TD-2804: context pins are a human-path store (Class B)
+
+**Decision:** `.tst/context/pins.yaml` is git-tracked (gitignore
+exception). `list_pins` / `add_pin` / `remove_pin` are client messages,
+not tools. The wall check is `resolve` + parent-of-root. Search is
+client-side. Pins are not auto-committed; the file is shareable.
+
+**Rationale:** This is Claude's Context column, not an upload. The
+human pins; the assembler (TD-2805) reads.
+
+---
+
 ## 2026-08-20 — Decompose v0.3–Later (Class B)
 
 **Decision:** Replace the undecomposed post-v0.2 table with M5–M10 and
