@@ -398,8 +398,13 @@ resolved is refused fail-closed. This is a policy rail, not a sandbox.
 
 **Shell commands always ask.** Every shell call is at least Class B: the static classifier
 cannot see inside a command string, so shell never auto-runs on the classifier's say-so
-(TD-4805). Commands that redirect or `tee` into a steering path are Class C outright.
-Automation trust belongs to your saved "always allow" rules, which still apply.
+(TD-4805) — and skip-all approvals does not promote it either (TD-4818); the floor is the
+only gate on an opaque string. The common scripted write forms — redirection (`>`, `>>`,
+`&>`, `&>>`, `>&`, `>|`, zsh `>!`) and `tee` — into a steering path are Class C. Write
+forms the parser does not model (`cp`, `mv`, `sed -i`, `eval`, command substitution) are
+not statically visible: they ask, every time. Automation trust belongs to your saved
+"always allow" rules, which still apply — including an explicit `shell: auto` rule, which
+is your deliberate opt-in, not the floor's default.
 
 ### 4.2 `caps` — when the agent stops and asks
 
