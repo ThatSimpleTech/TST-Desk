@@ -762,6 +762,13 @@
     "path": "/home/user/.local/share/tst-desk/exports/usage-20260817T120000Z.csv",
     "rows": 42
   },
+  "log_trimmed": {
+    "type": "log_trimmed",
+    "seq": 1,
+    "session_id": "sess-1",
+    "requested_from_seq": 1,
+    "earliest_seq": 8
+  },
   "hello_ack": {
     "type": "hello_ack",
     "version": 1

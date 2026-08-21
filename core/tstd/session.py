@@ -27,6 +27,7 @@ from .protocol import (
     ShellOutput,
     ToolCall,
     ToolResult,
+    UserTurn,
 )
 from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
@@ -76,6 +77,8 @@ def _redact_event(event: DaemonEvent) -> DaemonEvent:
         if event.diff is not None:
             update["diff"] = redact_secrets(event.diff)
         return event.model_copy(update=update)
+    if isinstance(event, UserTurn):
+        return event.model_copy(update={"content": redact_secrets(event.content)})
     if isinstance(event, ShellOutput):
         return event.model_copy(update={"chunk": redact_secrets(event.chunk)})
     if isinstance(event, Error):
@@ -95,10 +98,12 @@ class EventSubscriber(Protocol):
 
 
 class SessionEventLog:
-    """Append-only event log with monotonic seq per session.
+    """Monotonic event log with a seq per session.
 
     Every event is stamped with the next seq number on insertion.
-    The log is append-only — no mutations, no deletions.
+    Seq numbers never rewind. The durable window may drop a prefix
+    (``drop_before``) so memory matches the on-disk cap; ``last_seq``
+    stays the highest seq ever assigned.
 
     Subscribers are notified of every new event after it is appended.
     A subscriber is a callable that receives the event and the log.
@@ -167,8 +172,18 @@ class SessionEventLog:
         return self._seq
 
     @property
+    def earliest_seq(self) -> int:
+        """Smallest seq still in the window. ``1`` when the log is empty."""
+        return self._events[0].seq if self._events else 1
+
+    @property
     def all_events(self) -> list[DaemonEvent]:
         return list(self._events)
+
+    async def drop_before(self, earliest_seq: int) -> None:
+        """Drop events older than the on-disk window. Does not rewind last_seq."""
+        async with self._lock:
+            self._events = [event for event in self._events if event.seq >= earliest_seq]
 
     def replace(self, events: list[DaemonEvent]) -> None:
         """Install a persisted log. Does not notify subscribers or re-seq.

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tstd.config import DEFAULT_LOG_MAX_EVENTS
 from tstd.protocol import AssistantDelta, UserTurn, parse_daemon_event
 from tstd.provider import ChatMessage, FunctionCall, ToolCall
 from tstd.session_persist import SessionPersist, chat_message_from_dict, chat_message_to_dict
@@ -140,6 +141,53 @@ class TestChatMessageCodec:
     def test_to_dict_then_from_dict(self) -> None:
         msg = ChatMessage(role="user", content="hi")
         assert chat_message_from_dict(chat_message_to_dict(msg)).content == "hi"
+
+
+class TestSessionLogWindow:
+    def test_zero_or_missing_cap_is_the_default(self, tmp_path: Path) -> None:
+        assert SessionPersist(tmp_path, log_max_events=0)._log_max_events == DEFAULT_LOG_MAX_EVENTS
+        assert SessionPersist(tmp_path)._log_max_events == DEFAULT_LOG_MAX_EVENTS
+
+    def test_window_keeps_the_newest_events_and_rewrites_atomically(self, tmp_path: Path) -> None:
+        persist = SessionPersist(tmp_path, log_max_events=3)
+        persist.prepare("s1")
+        result = persist.append_event(
+            "s1",
+            AssistantDelta(session_id="s1", delta="e1", seq=1),
+        )
+        for seq in range(2, 11):
+            result = persist.append_event(
+                "s1",
+                AssistantDelta(session_id="s1", delta=f"e{seq}", seq=seq),
+            )
+        assert result.trimmed
+        assert result.earliest_seq == 8
+        loaded = persist.load("s1")
+        assert loaded is not None
+        assert [e.seq for e in loaded.events] == [8, 9, 10]
+        assert [e.delta for e in loaded.events if isinstance(e, AssistantDelta)] == [
+            "e8",
+            "e9",
+            "e10",
+        ]
+        events_path = persist.dir_for("s1") / "events.jsonl"
+        assert oct(events_path.stat().st_mode)[-3:] == "600"
+        assert events_path.read_text(encoding="utf-8").count("\n") == 3
+
+    def test_load_windows_an_already_oversized_file(self, tmp_path: Path) -> None:
+        writer = SessionPersist(tmp_path, log_max_events=100)
+        writer.prepare("s1")
+        for seq in range(1, 11):
+            writer.append_event(
+                "s1",
+                AssistantDelta(session_id="s1", delta=f"e{seq}", seq=seq),
+            )
+        reader = SessionPersist(tmp_path, log_max_events=3)
+        loaded = reader.load("s1")
+        assert loaded is not None
+        assert [e.seq for e in loaded.events] == [8, 9, 10]
+        events_path = reader.dir_for("s1") / "events.jsonl"
+        assert events_path.read_text(encoding="utf-8").count("\n") == 3
 
 
 class TestParseUserTurn:

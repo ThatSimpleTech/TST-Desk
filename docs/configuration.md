@@ -58,6 +58,7 @@ no effect.
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
+| `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 
 ### `search`
 
@@ -93,6 +94,17 @@ is set (TD-2204). A filled `base_url` with no `command` is attach-only.
 
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
+
+### `session`
+
+The durable event log each session writes under the data dir (TD-2901).
+Attach replays this file. The cap is an event count — a byte cap would
+drop a different prefix than `from_seq`. Zero is a load error, not
+"keep forever"; omit the section and the shipped default applies.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
 
 <!-- verify: model -->
 ```yaml
@@ -136,6 +148,8 @@ embeddings:
   token_budget: 2000
 project_context:
   token_budget: 2000
+session:
+  log_max_events: 10000
 ```
 
 ### A preset

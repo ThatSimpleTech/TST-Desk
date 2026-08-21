@@ -806,6 +806,17 @@ export interface UsageExported extends DaemonEvent {
   rows: number;
 }
 
+/** Attach asked for a seq the on-disk window dropped (TD-2901).
+ *  Connection-scoped: seq is fixed at 1 and does not belong to the
+ *  session log. The client jumps lastSeq to earliest_seq-1 so replay
+ *  from the kept window is not a false gap. */
+export interface LogTrimmed extends DaemonEvent {
+  type: "log_trimmed";
+  session_id: string;
+  requested_from_seq: number;
+  earliest_seq: number;
+}
+
 export interface Error extends DaemonEvent {
   type: "error";
   session_id?: string | null;
@@ -862,4 +873,5 @@ export type DaemonEventUnion =
   | DiagnosticsReport
   | UsageReport
   | UsageExported
+  | LogTrimmed
   | Error;

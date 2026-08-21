@@ -6553,3 +6553,38 @@ first, then newest. `showStarredOnly` is a client filter on the same
 **Rationale:** Same cut as TD-2806. A separate file keeps this off the
 session-store work TD-3001 is doing in parallel. PROTOCOL_VERSION stays
 1 because the field is additive with a default.
+
+---
+
+## 2026-08-20 — TD-2901: bounded durable log and `log_trimmed` (Class B)
+
+**Decision:** The attach source after a daemon restart is the on-disk
+session log (`events.jsonl`), windowed at `session.log_max_events`
+(default 10000, `ge=1`). The cap is an event count so `from_seq` stays
+honest; a byte cap would drop a different prefix than the seq cursor.
+Zero or a missing key is not unbounded — the default applies. After a
+write that exceeds the cap — and on load if the file is already over —
+oldest events drop and the file is rewritten atomically (temp + replace,
+mode 0o600). The in-memory `SessionEventLog` drops the same prefix;
+`last_seq` does not rewind.
+
+Attach `{session_id, from_seq}` with `from_seq < earliest_seq` sends a
+connection-scoped
+
+```
+{type: "log_trimmed", session_id, requested_from_seq, earliest_seq, seq: 1}
+```
+
+then replays from `earliest_seq` with the same gap/dup rules as the
+in-memory log. The notice is not written to the session log and does
+not consume a seq. The client jumps `lastSeq` to `earliest_seq - 1` so
+the kept window is not a false gap. The 2026-08-20 revive cut is
+unchanged: no `conversation.json` snapshot remains an `interrupted`
+tombstone and will not accept a new user message.
+
+**Rationale:** An unbounded jsonl is the next outage. Bytes are a worse
+ruler for a protocol that addresses events by seq. A session event for
+`log_trimmed` would mint a seq that is not on disk and break replay.
+
+**Alternative rejected:** Byte-cap rotation. Also rejected: making
+tombstones resumable without a conversation snapshot.

@@ -4563,15 +4563,15 @@ a daemon restart *and* after a window-close detach, and stops an unbounded
 file from becoming the next outage.
 
 **Acceptance criteria:**
-- [ ] Attach after a clean daemon restart replays from disk at `from_seq`
+- [x] Attach after a clean daemon restart replays from disk at `from_seq`
       with the same gap/dup rules as the in-memory log
-- [ ] A session with no snapshot is still an `interrupted` tombstone
+- [x] A session with no snapshot is still an `interrupted` tombstone
       (DECISIONS 2026-08-20 revive cut is unchanged)
-- [ ] The on-disk log is rotated or windowed at a config cap (events or
+- [x] The on-disk log is rotated or windowed at a config cap (events or
       bytes); attach from a seq that was rotated returns a typed
       `log_trimmed` and replays from the earliest kept seq
-- [ ] Secrets stay redacted on the way to disk (TD-1405)
-- [ ] A test kills the daemon mid-session, restarts, attaches, and sees
+- [x] Secrets stay redacted on the way to disk (TD-1405)
+- [x] A test kills the daemon mid-session, restarts, attaches, and sees
       every event that was `seq`-committed before the kill
 
 ---

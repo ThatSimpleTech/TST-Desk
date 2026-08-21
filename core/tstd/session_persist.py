@@ -12,10 +12,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from .config import DEFAULT_LOG_MAX_EVENTS
 from .logging import get_logger
 from .protocol import DaemonEvent, HandshakeError, parse_daemon_event
 from .provider import ChatMessage, FunctionCall, ToolCall
@@ -24,6 +26,14 @@ log = get_logger("tstd.session_persist")
 
 _EVENTS = "events.jsonl"
 _CONVERSATION = "conversation.json"
+
+
+@dataclass(frozen=True)
+class AppendResult:
+    """What the on-disk window looks like after one append."""
+
+    earliest_seq: int
+    trimmed: bool
 
 
 @dataclass(frozen=True)
@@ -86,8 +96,18 @@ def chat_message_from_dict(data: dict[str, Any]) -> ChatMessage:
 class SessionPersist:
     """One directory per session under ``data_dir/sessions/<id>/``."""
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        *,
+        log_max_events: int | None = None,
+    ) -> None:
         self._root = data_dir / "sessions"
+        # Zero/None is a missing cap, not "keep forever".
+        if log_max_events is None or log_max_events < 1:
+            log_max_events = DEFAULT_LOG_MAX_EVENTS
+        self._log_max_events = log_max_events
+        self._write_lock = threading.Lock()
 
     def dir_for(self, session_id: str) -> Path:
         return self._root / session_id
@@ -105,15 +125,25 @@ class SessionPersist:
         if not convo.exists():
             self._write_json(convo, [])
 
-    def append_event(self, session_id: str, event: DaemonEvent) -> None:
-        """Append one already-redacted event. Sync: the caller is in to_thread."""
+    def append_event(self, session_id: str, event: DaemonEvent) -> AppendResult:
+        """Append one already-redacted event and keep the file inside the cap.
+
+        Sync: the caller is in ``to_thread``. The new line is written first
+        so a seq that reached this call is on disk before rotation. Over
+        cap, oldest lines drop and the file is rewritten atomically.
+        """
         path = self.dir_for(session_id)
         path.mkdir(parents=True, exist_ok=True)
+        events_path = path / _EVENTS
         line = event.model_dump_json() + "\n"
-        events = path / _EVENTS
-        with events.open("a", encoding="utf-8") as fh:
-            fh.write(line)
-        events.chmod(0o600)
+        with self._write_lock:
+            with events_path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+            events_path.chmod(0o600)
+            loaded = self._load_events(events_path)
+            kept = self._apply_window(events_path, loaded)
+            earliest = kept[0].seq if kept else event.seq
+            return AppendResult(earliest_seq=earliest, trimmed=len(kept) < len(loaded))
 
     def save_conversation(self, session_id: str, messages: list[ChatMessage]) -> None:
         payload = [chat_message_to_dict(m) for m in messages]
@@ -122,11 +152,17 @@ class SessionPersist:
         self._write_json(path / _CONVERSATION, payload)
 
     def load(self, session_id: str) -> LoadedSession | None:
-        """Read what is on disk. ``None`` if this session has no directory."""
+        """Read what is on disk. ``None`` if this session has no directory.
+
+        An already-oversized file is windowed here, not only on the next
+        append, so restore and attach see the same cap as a live write.
+        """
         path = self.dir_for(session_id)
         if not path.is_dir():
             return None
-        events = self._load_events(path / _EVENTS)
+        events_path = path / _EVENTS
+        with self._write_lock:
+            events = self._apply_window(events_path, self._load_events(events_path))
         conversation = self._load_conversation(path / _CONVERSATION)
         return LoadedSession(events=events, conversation=conversation)
 
@@ -159,6 +195,14 @@ class SessionPersist:
                 )
         return events
 
+    def _apply_window(self, path: Path, events: list[DaemonEvent]) -> list[DaemonEvent]:
+        """Keep the newest ``log_max_events``. Rewrites the file when over cap."""
+        if len(events) <= self._log_max_events:
+            return events
+        kept = events[-self._log_max_events :]
+        self._rewrite_events(path, kept)
+        return kept
+
     def _load_conversation(self, path: Path) -> list[ChatMessage] | None:
         if not path.is_file():
             return None
@@ -181,6 +225,26 @@ class SessionPersist:
                 extra={"extra_fields": {"path": str(path), "error": str(e)}},
             )
             return None
+
+    @staticmethod
+    def _rewrite_events(path: Path, events: list[DaemonEvent]) -> None:
+        """Replace ``events.jsonl`` with ``events``. Temp + replace, mode 0o600."""
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text(
+                "".join(event.model_dump_json() + "\n" for event in events),
+                encoding="utf-8",
+            )
+            tmp.chmod(0o600)
+            os.replace(tmp, path)
+            path.chmod(0o600)
+        except OSError as e:
+            log.warning(
+                "failed to rotate session events",
+                extra={"extra_fields": {"path": str(path), "error": str(e)}},
+            )
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
 
     @staticmethod
     def _write_json(path: Path, payload: object) -> None:

@@ -1230,6 +1230,22 @@ class UsageExported(DaemonEvent):
     rows: int = Field(ge=0)
 
 
+class LogTrimmed(DaemonEvent):
+    """Attach asked for a seq the on-disk window has dropped (TD-2901).
+
+    Connection-scoped: sent on the attach socket only, never written to
+    the session log, so it does not consume a seq. ``seq`` is fixed at 1
+    like ``usage_report``. The client jumps its cursor to
+    ``earliest_seq - 1`` so replay from the kept window is not a false gap.
+    """
+
+    type: Literal["log_trimmed"] = "log_trimmed"
+    seq: int = 1
+    session_id: str
+    requested_from_seq: int = Field(ge=1)
+    earliest_seq: int = Field(ge=1)
+
+
 class Ping(BaseModel):
     """Application-level liveness frame (TD-1716).  No session, no seq.
 
@@ -1342,6 +1358,7 @@ DaemonEventT = Annotated[
     | DiagnosticsReport
     | UsageReport
     | UsageExported
+    | LogTrimmed
     | Ping
     | Error,
     Field(discriminator="type"),
@@ -1435,6 +1452,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "diagnostics_report",
         "usage_report",
         "usage_exported",
+        "log_trimmed",
         "ping",
         "error",
     }
