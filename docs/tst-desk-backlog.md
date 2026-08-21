@@ -4679,12 +4679,12 @@ Spec §2: same daemon, different door.
 **Size:** 5 · **Depends on:** TD-2901, TD-1401
 
 **Acceptance criteria:**
-- [ ] `tst run --workspace <path> --message <text>` uses a running
+- [x] `tst run --workspace <path> --message <text>` uses a running
       daemon or starts one, prints assistant text, exits non-zero on a
       failed turn
-- [ ] Same port-file + hello token as the window
-- [ ] No bind except the daemon's existing interface
-- [ ] Headless harness (TD-1401) stays the mock path
+- [x] Same port-file + hello token as the window
+- [x] No bind except the daemon's existing interface
+- [x] Headless harness (TD-1401) stays the mock path
 
 ---
 

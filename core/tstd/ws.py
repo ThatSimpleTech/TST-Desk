@@ -301,3 +301,22 @@ class WebSocketServer:
 def create_port_file_path(data_dir: Path) -> Path:
     """Return the path to the port file in the given data directory."""
     return data_dir / _PORT_FILE
+
+
+def read_port_file(data_dir: Path) -> dict[str, Any] | None:
+    """Read ``port.json`` if it exists and is a JSON object.
+
+    Returns None when the file is missing or unreadable. Field checks
+    (live pid, non-empty token) are the client's: this is the same
+    rendezvous the host reads, not a liveness verdict.
+    """
+    path = create_port_file_path(data_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
