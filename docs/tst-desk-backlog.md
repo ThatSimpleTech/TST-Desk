@@ -5077,13 +5077,17 @@ port-file token stays loopback-only; failed auth is `auth_failed`.
 **Size:** 8 · **Depends on:** TD-3602, TD-1003
 
 **Acceptance criteria:**
-- [ ] The same protocol client works from a browser on the Tailscale
+- [x] The same protocol client works from a browser on the Tailscale
       address (read transcript, send, approve)
-- [ ] No account. No hosted relay
-- [ ] Layout degrades to one pane on a narrow viewport (chat +
+- [x] No account. No hosted relay
+- [x] Layout degrades to one pane on a narrow viewport (chat +
       approval). Inspector is optional
-- [ ] Size 8 because a second client surface will sprawl — split if
+- [x] Size 8 because a second client surface will sprawl — split if
       the mobile layout becomes its own product
+
+Done (2026-08-21): same AppShell + ProtocolClient without Tauri; form or
+`ws`+`token` query/hash; remote hello uses the 3602 token; <640px is
+chat + approval.
 
 ---
 

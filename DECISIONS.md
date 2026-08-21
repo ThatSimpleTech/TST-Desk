@@ -7202,3 +7202,29 @@ hitting the extra host is still remote.
 **Alternative rejected:** Reusing the port-file token on both listeners.
 Also rejected: adding `hello.remote_token`.
 
+---
+
+## 2026-08-21 — TD-3701: one AppShell attaches from a browser (Class B)
+
+**Decision:** Do not ship a second mobile app. The existing Svelte
+`ProtocolClient` runs without Tauri. A browser supplies `ws://host:port` +
+the TD-3602 `remote-token` (connect form, query, or hash). `port.json` stays
+a host/loopback rendezvous. The daemon does not grow an HTTP file server in
+this story — the SPA is the same build the window already loads; the
+WebSocket target is the Tailscale address. `0.0.0.0` / `::` are refused as
+connect targets. The token is stripped from the URL after read and may live
+in `sessionStorage` for the tab only, never in a config file or the audit
+log.
+
+Narrow layout is CSS on the same `AppShell`: below 640px the rail and
+inspector hide (chat + approval remain). Either pane is optional via a
+header toggle. Split into a second product only if that chrome becomes its
+own surface.
+
+**Rationale:** Size 8 is the sprawl risk. A second client would fork
+transcript/send/approve. Serving the SPA from the daemon is a later bind
+question (and would still not be `0.0.0.0`).
+
+**Alternative rejected:** A dedicated phone viewer. Also rejected: binding
+Vite/`preview` to `0.0.0.0` so a phone can load the UI.
+

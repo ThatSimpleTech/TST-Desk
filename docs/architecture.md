@@ -113,6 +113,25 @@ to use the window and does not send `approve`. Class C never accepts `always`.
 Ctrl+C sends `detach`, not `cancel`. An unknown id is the daemon's existing
 `session_not_found` error.
 
+**Browser attach (TD-3701).** The same Svelte `ProtocolClient` — not a second
+app — works outside Tauri. A phone or laptop browser does not read `port.json`.
+It connects to `ws://<tailscale-ip>:<port>` (the extra listener from TD-3601)
+and presents the rotating `{user_data_dir}/remote-token` (TD-3602) in
+`hello.token`. The UI takes that pair from a connect form, or from
+`?ws=&token=` / `#ws=&token=` (hash preferred; the token is stripped from the
+address bar after read). Loopback in a browser still uses the port-file token.
+There is no account and no hosted relay. The daemon still does not bind
+`0.0.0.0` / `::`; the form refuses those as connect targets too.
+
+The window is still only a viewer. Read transcript, send, and approve are the
+same client messages they are on the desktop. Settings will copy address +
+token (TD-3603); until then, the port is the one in `port.json` and the token
+is the contents of `remote-token`.
+
+On a viewport narrower than 640px the same `AppShell` hides the session rail
+and the inspector so the phone is chat + approval. Either pane can be shown
+again; they are not a separate product.
+
 ---
 
 ## 2. Why the session owns the loop

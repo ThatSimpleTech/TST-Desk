@@ -138,6 +138,16 @@ reads local interface addresses, not `tailscale status`.
 |---|---|---|---|
 | `bind` | string | *empty* | Interface name or Tailscale IP. Empty / omitted is loopback only. |
 
+**Attach from another device (TD-3701).** Open the same TST Desk UI in a
+browser (the desktop window is Tauri; a phone is not). Connect with
+`ws://<bind>:<port>` plus the rotating token in `{user_data_dir}/remote-token`
+— not the token in `port.json`. Example:
+`ws://100.64.1.2:9xxx` and the file
+`~/Library/Application Support/com.thatsimpletech.tstdesk/remote-token` on
+macOS. A URL of the form `?ws=ws://…&token=…` (or the same pair in the hash)
+fills the form. No account, no relay. TD-3603 will copy address + token from
+Settings; this branch still types them.
+
 <!-- verify: model -->
 ```yaml
 presets:
