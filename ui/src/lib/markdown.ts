@@ -26,6 +26,24 @@ function ensureConfigured(): void {
       },
     },
   });
+  // Links in model output must never navigate the app webview (TD-4806).
+  // http(s) hrefs get target/rel as defense in depth for any click path
+  // that bypasses the delegated handler; every other scheme — and
+  // relative hrefs, which are meaningless inside the app — loses its
+  // href and renders as inert text. The click itself routes through the
+  // Tauri opener in Markdown.svelte.
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (!(node instanceof HTMLAnchorElement)) return;
+    const href = node.getAttribute("href") ?? "";
+    if (!/^https?:\/\//i.test(href.trim())) {
+      node.removeAttribute("href");
+      node.removeAttribute("target");
+      node.removeAttribute("rel");
+      return;
+    }
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noreferrer noopener");
+  });
   configured = true;
 }
 

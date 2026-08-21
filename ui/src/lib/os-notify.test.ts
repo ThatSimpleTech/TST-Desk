@@ -94,6 +94,13 @@ describe("noticeFor", () => {
 	it("ignores everything else", () => {
 		expect(noticeFor({ type: "assistant_delta", session_id: "s1", seq: 1, delta: "x" } as DaemonEventUnion)).toBeNull();
 	});
+
+	it("redacts key-shaped strings before they reach a banner (TD-4801)", () => {
+		const key = "sk-or-v1-" + "0".repeat(52); // tst-secret-ok
+		const n = noticeFor({ ...approval(), summary: `Run deploy with ${key}` } as DaemonEventUnion);
+		expect(n?.body).toContain("[REDACTED]");
+		expect(n?.body).not.toContain(key);
+	});
 });
 
 describe("shouldNotify", () => {

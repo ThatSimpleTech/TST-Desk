@@ -18,7 +18,10 @@ from typing import Any
 
 # Patterns that must be redacted in log output (from tst-cua policy.py).
 SECRET_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"(sk-[a-zA-Z0-9]{20,})"),  # OpenAI / OpenRouter key
+    # OpenAI / OpenRouter / Anthropic key. Dashed forms (sk-or-v1-…,
+    # sk-proj-…, sk-ant-…) are the shapes the shipped presets actually
+    # hold; the UI belt in ui/src/lib/redact.ts uses the same shape.
+    re.compile(r"(sk-[a-zA-Z0-9][a-zA-Z0-9_-]{15,})"),
     re.compile(r"(github_pat_[a-zA-Z0-9_]{36,})"),  # GitHub fine-grained PAT
     re.compile(r"(ghp_[a-zA-Z0-9]{36,})"),  # GitHub classic PAT
     re.compile(r"(AKIA[0-9A-Z]{16})"),  # AWS access key
@@ -103,10 +106,14 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         if record.exc_info and record.exc_info[0]:
-            obj["exception"] = self.formatException(record.exc_info)
-        # Merge extra fields passed via extra={}
+            # Tracebacks can carry secrets in exception messages and local
+            # variable reprs; the filter runs on msg/args before formatting,
+            # so the last mile scrubs here (TD-4802).
+            obj["exception"] = redact_secrets(self.formatException(record.exc_info))
+        # Merge extra fields passed via extra={} — scrubbed for the same
+        # reason: the filter never sees these values.
         for key, value in getattr(record, "extra_fields", {}).items():
-            obj[key] = value
+            obj[key] = redact_structure(value)
         return json.dumps(obj, default=str, ensure_ascii=False)
 
 

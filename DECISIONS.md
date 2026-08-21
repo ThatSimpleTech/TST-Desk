@@ -7157,3 +7157,56 @@ on `protocol.py`, AppShell, ScreenPane, and DECISIONS.
 **Alternative rejected:** Cherry-picking only the exit harness onto main
 and leaving chrome on side branches.
 
+---
+
+## 2026-08-21 — E48: review findings filed as one epic under M5 (Class B)
+
+**Decision:** The findings from the 2026-08-21 full-repo security and
+consistency review are filed as a single new epic, E48 (TD-4801–4816),
+counted in the M5 totals, rather than scattered across the epics whose
+code they touch. TD-4801 (the one-line defects) shipped with the filing;
+the rest await sequencing. The high-severity security stories
+(TD-4802–4806) should land before any v0.3 tag, but that gate is
+advisory — M5's exit condition is unchanged. The same recompute corrected
+two drifted summary rows (M1.5 12/30→15/36, M3 50/142→47/136); the v0.1
+subtotals were unaffected.
+
+**Rationale:** The findings share one provenance and read best with that
+context kept together — the E20 precedent (work with no backlog home)
+rather than TD-1409/1410-style scatter into thematic ranges. M5 placement
+follows the E19 precedent: defects in shipped behavior are bugfix work on
+the current milestone, not a new phase. Changing M5's exit condition
+would be a Class C call and was not made.
+
+**Alternative rejected:** Scattering the stories into the E6/E7/E9/E10/E14
+number ranges. It would have made the review's through-line — several
+README promises are enforced less strongly than stated — invisible in the
+document.
+
+
+---
+
+## 2026-08-21 — TD-4805: shell gets a static Class B floor (Class B)
+
+**Decision:** Every `shell` call classifies at least Class B from the
+static rule table; the worker tier is never consulted for shell. A new
+static C rule covers the one case the table *can* see — redirection or
+`tee` into a steering path (`echo … > AGENTS.md`, `tee .tst/rules/x`).
+Other write forms (`cp`, `sed -i`, editors) are deliberately not parsed;
+they hit the B floor and ask. Auto-run for shell remains available
+through the user's saved always-allow rules (TD-803) — that is where
+automation trust lives.
+
+**Rationale:** The static table cannot see a shell command's targets, so
+no static A is possible; the only path to A was a model's reading of an
+opaque string. A model's judgment should never be the sole gate on
+running an opaque command. In the default configuration (`class_c_default:
+ask`) a worker-C and the static B both land at "ask", so the floor loses
+nothing the default user had and removes the worker-A auto-run path. It
+also removes one worker call per shell command — less spend, less latency.
+
+**Alternative rejected:** Parsing more of the shell grammar statically
+(`cp`/`mv`/`rm` target extraction). The grammar is unbounded (quoting,
+substitutions, wrappers); every added form is a new false-negative
+surface, and the B floor already asks in every case the parser misses.
+

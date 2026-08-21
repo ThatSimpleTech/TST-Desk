@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import fnmatch
 import os
-from collections.abc import Callable
+import shlex
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -56,6 +57,24 @@ class DecisionClass(StrEnum):
 _STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
 _STEERING_RULES_DIR_PARTS = (".tst", "rules")
 _MEMORY_DIR_PARTS = (".tst", "memory")
+# The approval policy lives here (spec §6). Not a steering file by name,
+# but a write to it rewrites the guardrails — the self-escalation the
+# steering refusal exists to prevent (TD-4803).
+_POLICY_FILE_PARTS = (".tst", "config.yaml")
+
+
+def _fold(parts: Sequence[str]) -> tuple[str, ...]:
+    """Case-fold path parts for guard comparisons (TD-4804).
+
+    APFS and NTFS — the shipped-default filesystems — are case-insensitive,
+    so a verbatim tuple match lets ``.tst/RULES/…`` past the steering
+    check while the filesystem lands it in ``.tst/rules/``. Folding is
+    unconditional: on a case-sensitive filesystem a literal ``.tst/RULES/``
+    directory is over-refused as steering, and that is accepted — the
+    guard fails closed, and a case-variant of a reserved name is never
+    legitimate.
+    """
+    return tuple(p.casefold() for p in parts)
 
 
 @dataclass(frozen=True)
@@ -218,7 +237,7 @@ def is_memory_write(boundary: Boundary, path: Path) -> bool:
     ``CLAUDE.md`` as a basename stay steering even if dropped here.
     """
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
-    if len(relative) < 2 or tuple(relative[:2]) != _MEMORY_DIR_PARTS:
+    if len(relative) < 2 or _fold(relative[:2]) != _MEMORY_DIR_PARTS:
         return False
     return relative[-1].upper() not in {s.upper() for s in _STEERING_BASENAMES}
 
@@ -226,10 +245,11 @@ def is_memory_write(boundary: Boundary, path: Path) -> bool:
 def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
-    Steering files — ``AGENTS.md``, ``CLAUDE.md``, and anything under
-    ``.tst/rules/`` — are read-only to the filesystem tool, unconditionally.
+    Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
+    ``.tst/rules/``, and the approval policy at ``.tst/config.yaml``
+    (TD-4803) — are read-only to the filesystem tool, unconditionally.
     ``.tst/memory/`` is the carve-out (TD-2102); never fold it into
-    ``.tst/**``.
+    ``.tst/**``.  Directory comparisons case-fold (TD-4804): see ``_fold``.
     """
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
     if not relative:
@@ -239,7 +259,9 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
         return True
     if is_memory_write(boundary, path):
         return False
-    return tuple(relative[:2]) == _STEERING_RULES_DIR_PARTS
+    if _fold(relative) == _POLICY_FILE_PARTS:
+        return True
+    return _fold(relative[:2]) == _STEERING_RULES_DIR_PARTS
 
 
 def writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:
@@ -293,6 +315,88 @@ def _rule_network_new_host(req: DecisionRequest, boundary: Boundary) -> bool:
 def _rule_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
     """The call writes a steering file, regardless of writable_paths."""
     return req.is_mutation and any(is_steering_write(boundary, p) for p in req.writes)
+
+
+# ── Shell command targets (TD-4805) ────────────────────────────────────
+#
+# The fs tools declare their paths; the shell's targets live inside an
+# opaque command string.  The static table extracts the common scripted
+# write forms — redirection and ``tee`` — and judges them against the
+# steering set.  Everything else about a shell command stays invisible to
+# the table, which is why the shell also gets a Class B floor: a model's
+# reading of an opaque string is never the sole gate on running it.
+
+_REDIRECT_TOKENS = frozenset({">", ">>", "&>", "&>>"})
+_SEGMENT_SEPARATORS = frozenset({"|", "&", ";", "||", "&&"})
+
+
+def _shell_write_targets(command: str) -> list[str]:
+    """Best-effort write-target extraction from a shell command string.
+
+    Tokenizes with ``punctuation_chars`` so ``> file`` and ``>file`` both
+    split.  Covers redirection (``>``, ``>>``, ``&>``, ``&>>`` — but not
+    descriptor dups like ``2>&1``, which write no file) and ``tee``
+    arguments.  Quoted operators can still split on older Pythons, so a
+    mention of a steering name inside quotes may over-classify as C —
+    fail-safe, and rare next to the unquoted forms scripts actually use.
+
+    Other write forms (``cp``, ``mv``, ``sed -i``, editors) are not
+    parsed: the command falls through to the B floor and asks, which is
+    where an opaque string belongs.  An unparseable command yields no
+    targets here — it is not thereby judged safe, just not statically C.
+    """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=">|&;")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    targets: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in _REDIRECT_TOKENS and i + 1 < len(tokens):
+            targets.append(tokens[i + 1])
+            i += 2
+            continue
+        if token == "tee":
+            j = i + 1
+            while j < len(tokens) and tokens[j] not in _SEGMENT_SEPARATORS:
+                if not tokens[j].startswith("-"):
+                    targets.append(tokens[j])
+                j += 1
+            i = j
+            continue
+        i += 1
+    return targets
+
+
+def _rule_shell_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
+    """A shell command redirects or tees into a steering path (TD-4805)."""
+    if req.tool_name != "shell" or boundary.workspace_root is None:
+        return False
+    command = req.arguments.get("command")
+    if not isinstance(command, str):
+        return False
+    root = boundary.workspace_root
+    for token in _shell_write_targets(command):
+        target = Path(token)
+        if not target.is_absolute():
+            target = root / target
+        if is_steering_write(boundary, target):
+            return True
+    return False
+
+
+def _rule_shell_floor(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """Every shell command is at least Class B (TD-4805).
+
+    The static table cannot see a shell command's targets, so no static
+    A is possible; the only path to A was the worker tier's reading of an
+    opaque string.  Auto-run for shell belongs to the user's saved
+    always-allow rules (TD-803), not to model judgment.
+    """
+    return req.tool_name == "shell"
 
 
 def _rule_memory_write(req: DecisionRequest, boundary: Boundary) -> bool:
@@ -371,6 +475,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         match=_rule_steering_write,
     ),
     Rule(
+        id="shell-steering-write",
+        description="shell command redirects or tees into a steering path",
+        decision_class=DecisionClass.C,
+        match=_rule_shell_steering_write,
+    ),
+    Rule(
         id="cap-exceeded",
         description="a declared spend/wall-clock/iteration cap is exceeded",
         decision_class=DecisionClass.C,
@@ -381,6 +491,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="action writes in-workspace but outside writable_paths",
         decision_class=DecisionClass.C,
         match=_rule_outside_writable,
+    ),
+    Rule(
+        id="shell-floor",
+        description="shell commands always require approval (never model-granted A)",
+        decision_class=DecisionClass.B,
+        match=_rule_shell_floor,
     ),
     Rule(
         id="memory-file-write",
