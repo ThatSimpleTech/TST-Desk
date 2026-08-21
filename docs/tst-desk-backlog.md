@@ -4473,10 +4473,10 @@ the pin file is a new schema.
 **Size:** 2 · **Depends on:** TD-2801
 
 **Acceptance criteria:**
-- [ ] A workspace can be pinned to the Projects list
-- [ ] Pins persist in the user data dir (machine-wide), not in the
+- [x] A workspace can be pinned to the Projects list
+- [x] Pins persist in the user data dir (machine-wide), not in the
       workspace (so a clone does not inherit another person's pins)
-- [ ] Unpinned known workspaces still appear under Recents
+- [x] Unpinned known workspaces still appear under Recents
 
 ---
 

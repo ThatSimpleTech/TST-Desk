@@ -4,7 +4,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
 	projectListEmptyCopy,
 	projectRecentsEmptyCopy,
+	pinnedProjects,
 	projectSessions,
+	unpinnedRecents,
 } from "./projects";
 import {
 	projects,
@@ -34,6 +36,24 @@ describe("projectSessions", () => {
 
 	it("returns nothing for a folder with no live sessions", () => {
 		expect(projectSessions(rows, "/ws/none")).toEqual([]);
+	});
+});
+
+describe("workspace pins", () => {
+	const entries = [
+		{ path: "/ws/one", lastSeen: "2" },
+		{ path: "/ws/two", lastSeen: "1" },
+	];
+
+	it("keeps pinned paths even when they aged out of recents", () => {
+		expect(pinnedProjects(entries, ["/ws/old", "/ws/one"]).map((e) => e.path)).toEqual([
+			"/ws/old",
+			"/ws/one",
+		]);
+	});
+
+	it("leaves unpinned known workspaces under Recents", () => {
+		expect(unpinnedRecents(entries, ["/ws/one"]).map((e) => e.path)).toEqual(["/ws/two"]);
 	});
 });
 

@@ -54,6 +54,7 @@ from tstd.protocol import (
     SetLoadGlobalMemory,
     SetSkipAllApprovals,
     SetTier,
+    SetWorkspacePin,
     ShellOutput,
     ToolCall,
     ToolResult,
@@ -147,6 +148,13 @@ class TestClientMessages:
         assert isinstance(back, SetLoadGlobalMemory)
         assert back.enabled is True
         assert "session_id" not in SetLoadGlobalMemory.model_fields
+
+    def test_set_workspace_pin(self) -> None:
+        msg = SetWorkspacePin(path="/ws", pinned=True)
+        back = _roundtrip(msg)
+        assert isinstance(back, SetWorkspacePin)
+        assert back.pinned is True
+        assert "session_id" not in SetWorkspacePin.model_fields
 
     def test_resume(self) -> None:
         msg = Resume(session_id="sess-1")

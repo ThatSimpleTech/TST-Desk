@@ -225,6 +225,14 @@ class SetSkipAllApprovals(ClientMessage):
     enabled: bool
 
 
+class SetWorkspacePin(ClientMessage):
+    """Pin or unpin a workspace on the Projects list (TD-2806)."""
+
+    type: Literal["set_workspace_pin"] = "set_workspace_pin"
+    path: str = Field(min_length=1)
+    pinned: bool
+
+
 class SetLoadGlobalMemory(ClientMessage):
     """Turn global memory on or off (TD-2603).
 
@@ -1068,6 +1076,8 @@ class SetupState(DaemonEvent):
     # TD-2603: load ``~/.tstdesk/memory/`` after workspace memory.
     # Additive, default off — off means that directory is never read.
     load_global_memory: bool = False
+    # TD-2806: workspaces pinned on this machine. Not a workspace file.
+    pinned_workspaces: list[str] = Field(default_factory=list)
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1200,6 +1210,7 @@ ClientMessageT = Annotated[
     | SetBranch
     | SetSkipAllApprovals
     | SetLoadGlobalMemory
+    | SetWorkspacePin
     | Resume
     | Cancel
     | Attach
@@ -1287,6 +1298,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_branch",
         "set_skip_all_approvals",
         "set_load_global_memory",
+        "set_workspace_pin",
         "resume",
         "cancel",
         "attach",

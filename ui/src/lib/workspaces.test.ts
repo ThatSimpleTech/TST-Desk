@@ -11,6 +11,7 @@ import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 const mocks = vi.hoisted(() => ({
 	handler: null as ((e: DaemonEventUnion) => void) | null,
 	opened: [] as string[],
+	sent: [] as ClientMessageUnion[],
 }));
 
 vi.mock("./connection-status.svelte.js", () => ({
@@ -20,7 +21,10 @@ vi.mock("./connection-status.svelte.js", () => ({
 			mocks.handler = null;
 		};
 	},
-	sendToDaemon: (_msg: ClientMessageUnion) => true,
+	sendToDaemon: (msg: ClientMessageUnion) => {
+		mocks.sent.push(msg);
+		return true;
+	},
 }));
 
 vi.mock("./session-status.svelte.js", () => ({
@@ -39,6 +43,7 @@ import {
 	toggleWorkspaceMenu,
 	closeWorkspaceMenu,
 	HIDDEN_STORAGE_KEY,
+	setWorkspacePin,
 } from "./workspaces.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -78,6 +83,7 @@ beforeEach(() => {
 	vi.stubGlobal("localStorage", storageStub);
 	memory.clear();
 	mocks.opened.length = 0;
+	mocks.sent.length = 0;
 	resetWorkspaces();
 	startWorkspaces();
 });
@@ -163,6 +169,26 @@ describe("remove (AC: per-entry removal)", () => {
 		resetWorkspaces();
 		startWorkspaces();
 		expect(workspaces.hidden).toEqual([]);
+	});
+});
+
+describe("workspace pins", () => {
+	it("reads pinned paths from setup_state, not localStorage", () => {
+		emit({
+			type: "setup_state",
+			seq: 1,
+			has_api_key: true,
+			key_required: true,
+			presets: [],
+			active_preset: "tst-default",
+			pinned_workspaces: ["/ws/keep"],
+		} as DaemonEventUnion);
+		expect(workspaces.pinned).toEqual(["/ws/keep"]);
+	});
+
+	it("sends set_workspace_pin", () => {
+		setWorkspacePin("/ws/keep", true);
+		expect(mocks.sent).toEqual([{ type: "set_workspace_pin", path: "/ws/keep", pinned: true }]);
 	});
 });
 

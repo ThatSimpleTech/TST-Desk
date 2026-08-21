@@ -6424,6 +6424,17 @@ two knobs.
 
 ---
 
+## 2026-08-20 — TD-2806: project pins are machine-wide (Class B)
+
+**Decision:** `set_workspace_pin` / `SetupState.pinned_workspaces`,
+persisted in `{data_dir}/workspace_pins.yaml`. Pinned paths stay on
+the list even after they age out of the 12-path recents cap.
+
+**Rationale:** A clone must not inherit another person's pins. localStorage
+would die with the window profile.
+
+---
+
 ## 2026-08-20 — Decompose v0.3–Later (Class B)
 
 **Decision:** Replace the undecomposed post-v0.2 table with M5–M10 and

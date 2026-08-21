@@ -81,6 +81,11 @@
     "type": "set_load_global_memory",
     "enabled": true
   },
+  "set_workspace_pin": {
+    "type": "set_workspace_pin",
+    "path": "/home/user/project",
+    "pinned": true
+  },
   "resume": {
     "type": "resume",
     "session_id": "sess-1"
@@ -604,7 +609,8 @@
     "active_preset": "tst-default",
     "tier_slugs": {},
     "skip_all_approvals": false,
-    "load_global_memory": false
+    "load_global_memory": false,
+    "pinned_workspaces": []
   },
   "api_key_validated": {
     "type": "api_key_validated",

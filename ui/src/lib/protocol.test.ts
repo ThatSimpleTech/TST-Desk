@@ -69,6 +69,7 @@ import type {
   SetPreset,
   SetSkipAllApprovals,
   SetLoadGlobalMemory,
+  SetWorkspacePin,
   SetupState,
   ApiKeyValidated,
   RunDiagnostics,
@@ -178,6 +179,12 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(m.type).toBe("set_load_global_memory");
     expect(isBoolean(m.enabled)).toBe(true);
     expect("session_id" in m).toBe(false);
+  });
+
+  it("set_workspace_pin", () => {
+    const m = fixtures.set_workspace_pin as SetWorkspacePin;
+    expect(m.type).toBe("set_workspace_pin");
+    expect(m.pinned).toBe(true);
   });
 
   it("revoke_policy_rule", () => {
@@ -715,6 +722,7 @@ describe("All fixtures have required shape", () => {
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
       "set_skip_all_approvals",
       "set_load_global_memory",
+      "set_workspace_pin",
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",
