@@ -207,6 +207,14 @@ class TestBuiltins:
         registry = create_registry()
         names = {t.name for t in registry.list_tools()}
         assert {"fs_read", "fs_write", "shell", "web_search", "web_fetch"} <= names
+        desktop = {
+            "desktop_screenshot",
+            "desktop_move",
+            "desktop_click",
+            "desktop_type",
+            "desktop_scroll",
+        }
+        assert desktop <= names
 
     def test_parallel_safety_flags(self) -> None:
         registry = create_registry()
@@ -222,3 +230,14 @@ class TestBuiltins:
         assert registry.get("web_search").side_effect_class == "ask"
         assert registry.get("web_fetch").side_effect_class == "ask"
         assert registry.get("web_fetch").parallel_safe is True
+        shot = registry.get("desktop_screenshot")
+        click = registry.get("desktop_click")
+        assert shot is not None and click is not None
+        assert shot.side_effect_class == "auto"
+        assert shot.actuates is False
+        assert shot.path_fields == ()
+        assert click.side_effect_class == "ask"
+        assert click.actuates is True
+        assert click.mutates is True
+        assert click.path_fields == ()
+        assert click.host_fields == ()

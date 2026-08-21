@@ -14,6 +14,7 @@ import pytest
 from tstd.config import (
     DEFAULT_LOG_MAX_EVENTS,
     PRESETS,
+    ComputerUseConfig,
     ConfigError,
     EmbeddingsConfig,
     ModelConfig,
@@ -157,6 +158,18 @@ class TestTiers:
         cfg = _load_shipped(tmp_path)
         assert cfg.embeddings.command == ""
         assert EmbeddingsConfig().command == ""
+
+    def test_shipped_computer_use_command_is_empty(self, tmp_path: Path) -> None:
+        """TD-3301: packaged config is mock-only (no sidecar spawn)."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.computer_use.command == ""
+        assert ComputerUseConfig().command == ""
+
+    def test_computer_use_command_accepts_string_or_list(self) -> None:
+        assert ComputerUseConfig(command="python -m tst_cu_mcp").command == ("python -m tst_cu_mcp")
+        assert ComputerUseConfig.model_validate(
+            {"command": ["python", "-m", "tst_cu_mcp"]}
+        ).command == ["python", "-m", "tst_cu_mcp"]
 
     def test_embeddings_command_accepts_string_or_list(self) -> None:
         assert EmbeddingsConfig(command="llama-server --embeddings").command == (

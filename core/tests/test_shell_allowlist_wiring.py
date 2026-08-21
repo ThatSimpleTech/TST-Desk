@@ -145,9 +145,13 @@ class TestTheDaemonsOwnWiring:
         seen: list[tuple[str, ...] | None] = []
         real = daemon_mod.register_builtin_handlers
 
-        def _spy(dispatcher: object, allowed_commands: tuple[str, ...] | None = None) -> None:
+        def _spy(
+            dispatcher: object,
+            allowed_commands: tuple[str, ...] | None = None,
+            **kwargs: object,
+        ) -> None:
             seen.append(allowed_commands)
-            real(dispatcher, allowed_commands=allowed_commands)  # type: ignore[arg-type]
+            real(dispatcher, allowed_commands=allowed_commands, **kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(daemon_mod, "register_builtin_handlers", _spy)
 

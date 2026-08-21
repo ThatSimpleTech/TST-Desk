@@ -51,6 +51,20 @@ class ToolResult:
     diff: str | None = None
 
 
+class HandlerRefusal(Exception):
+    """The handler refused after classification, with a typed error code.
+
+    Used by desktop computer-use (focus mismatch, kill-switch, E20) so
+    dispatch can return ``error_code`` without treating the refusal as a
+    crashed handler.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 @dataclass
 class ValidationError:
     """Arguments failed validation against the tool's schema.

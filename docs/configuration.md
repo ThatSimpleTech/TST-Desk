@@ -58,6 +58,7 @@ no effect.
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
+| `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 
 ### `search`
@@ -91,6 +92,17 @@ is set (TD-2204). A filled `base_url` with no `command` is attach-only.
 | `top_k` | int ≥ 1 | `4` | Maximum topic files kept after `MEMORY.md` when the sidecar answers. |
 | `token_budget` | int ≥ 1 | `2000` | Cap on loaded memory tokens (TD-506 heuristic, file bytes). Lowest-ranked topics drop until under the cap; `MEMORY.md` is the last file dropped. |
 | `command` | string or list | *empty* | Host-only argv for the embeddings binary. A string is split on whitespace; a list is used as-is (numbers become strings). Empty or omitted means attach-only — the host never tries to spawn. Sidecar death is logged and does not restart `tstd`. |
+
+### `computer_use`
+
+Desktop screenshot / move / click / type / scroll (TD-3301). Empty
+`command` is the in-process mock (CI, no display). A non-empty value is
+the argv for `mcp/tst-cu-mcp` over stdio — the daemon owns the child and
+does not bind a socket. Linux has no live path (E20).
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
 
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
@@ -150,6 +162,8 @@ project_context:
   token_budget: 2000
 session:
   log_max_events: 10000
+computer_use:
+  command: ""
 ```
 
 ### A preset

@@ -53,6 +53,7 @@ from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .coworker import load_coworker, save_coworker
+from .desktop import DesktopDriver, desktop_driver_from_config
 from .discovery import resolve_tier_slugs
 from .keychain import (
     KeychainError,
@@ -435,6 +436,13 @@ class Daemon:
             message_handler=self._handle_message,
             on_disconnect=self._on_connection_closed,
         )
+        # Shared across sessions so the kill-switch is process-wide.
+        # Empty computer_use.command is the mock; a command is stdio MCP.
+        self.desktop_driver: DesktopDriver = desktop_driver_from_config(self.config)
+
+    def set_computer_use_killed(self, killed: bool) -> None:
+        """Stop or resume desktop actuation. Capture still works (TD-3301)."""
+        self.desktop_driver.set_killed(killed)
 
     async def _brain_client(self) -> ProviderClient:
         """Build a client for the active brain tier.
@@ -857,6 +865,8 @@ class Daemon:
         if self._audit_writer is not None:
             await self._audit_writer.close()
             self._audit_writer = None
+
+        await self.desktop_driver.aclose()
 
         log.info("shutdown complete")
 
@@ -1595,6 +1605,7 @@ class Daemon:
         register_builtin_handlers(
             tool_dispatcher,
             allowed_commands=sess.boundary_config.boundary.shell_allowlist(),
+            desktop_driver=self.desktop_driver,
         )
 
         sink = self._audit_writer

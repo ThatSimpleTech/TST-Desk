@@ -23,6 +23,8 @@ from functools import partial
 from pathlib import Path
 
 from ..context.manifest import _FALLBACK_IGNORE
+from ..desktop import DesktopDriver, MockDesktopDriver
+from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
 from .shell import ShellPolicy, run_shell
 from .web_search import web_fetch, web_search
@@ -145,11 +147,14 @@ async def fs_list(
 def register_builtin_handlers(
     dispatcher: ToolDispatcher,
     allowed_commands: tuple[str, ...] | None = None,
+    desktop_driver: DesktopDriver | None = None,
 ) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
     ``allowed_commands`` restricts the shell tool to the given binaries
-    when set (TD-605); ``None`` leaves it unrestricted.
+    when set (TD-605); ``None`` leaves it unrestricted.  ``desktop_driver``
+    is the process-wide computer-use backend (TD-3301); omitted means the
+    in-process mock so every builtin still has a handler.
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
@@ -159,4 +164,7 @@ def register_builtin_handlers(
     dispatcher.register_handler("fs_edit", fs_edit)
     dispatcher.register_handler(
         "shell", partial(run_shell, policy=ShellPolicy(allowed_commands=allowed_commands))
+    )
+    register_desktop_handlers(
+        dispatcher, desktop_driver if desktop_driver is not None else MockDesktopDriver()
     )

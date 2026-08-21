@@ -357,6 +357,35 @@ class TestPathOutsideWritable:
         assert fired_as(decision, "steering-file-write")
 
 
+# ── Desktop computer-use (TD-3301) ─────────────────────────────────────
+
+
+class TestDesktopComputerUse:
+    def test_capture_is_class_a(self) -> None:
+        decision = classify(
+            boundary(),
+            req(tool_name="desktop_screenshot", actuates=False),
+        )
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "desktop-capture")
+
+    def test_actuation_is_class_b(self) -> None:
+        decision = classify(
+            boundary(),
+            req(tool_name="desktop_click", is_mutation=True, actuates=True),
+        )
+        assert decision.decision_class is DecisionClass.B
+        assert fired_as(decision, "desktop-actuation")
+
+    def test_cap_still_outranks_capture(self) -> None:
+        decision = classify(
+            boundary(cap_exceeded=True),
+            req(tool_name="desktop_screenshot", actuates=False),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "cap-exceeded")
+
+
 # ── Ambiguous cases → unclassified ─────────────────────────────────────
 
 

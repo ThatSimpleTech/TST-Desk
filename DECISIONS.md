@@ -6868,3 +6868,43 @@ checkout's 2901 is the line the user was already on.
 **Alternative rejected:** Merging every epic tip and keeping both star
 verbs. Also rejected: rewriting history on the live checkout.
 
+---
+
+## 2026-08-21 — TD-3301: desktop computer-use tools (Class B)
+
+**Decision:** Five tools on the session dispatcher: `desktop_screenshot`,
+`desktop_move`, `desktop_click`, `desktop_type`, `desktop_scroll`.
+Classification uses a new `Tool.actuates` / `DecisionRequest.actuates`
+bit (`None` = not a CU tool), not name matching and not PathGuard.
+
+- screenshot: `actuates=False`, `mutates=False` → Class A (capture cannot
+  actuate)
+- move / click / type / scroll: `actuates=True`, `mutates=True` → Class B
+  (ask)
+- `path_fields` and `host_fields` stay empty, so today's path/host rules
+  and PathGuard never see these calls
+- Focus guard is `expect_window` on actuating tools; mismatch is
+  `focus_mismatch` and does not actuate
+- Kill-switch is `DesktopDriver.set_killed` / `Daemon.set_computer_use_killed`;
+  actuation refuses `cu_killed`, screenshot still runs. UI is TD-3404
+- Empty `computer_use.command` is the in-process mock (TD-102). A
+  non-empty command is argv for `mcp/tst-cu-mcp` over **stdio** (no
+  socket). The daemon owns the child
+- Live path is `McpDesktopDriver` wrapping the sidecar's existing tools
+  (`screenshot`, `move_mouse`, `click`, `type_text`, `scroll`) with
+  `coordinate_space=points`. macOS and Windows are live because the
+  sidecar has those backends. Linux live calls refuse `e20` before spawn;
+  the mock still works on any OS
+- Typed handler refusals (`HandlerRefusal`) carry `error_code` without
+  looking like a crashed handler
+
+**Rationale:** Empty path/host metadata would send screenshot through the
+worker as B. An explicit actuates bit is the same kind of metadata as
+`path_fields` — no heuristic over tool names. Wrapping the sidecar over
+stdio avoids a third copy of the backends and never binds `0.0.0.0`.
+
+**Alternative rejected:** Name-matching classifier rules. Also rejected:
+importing `tst_cu_mcp` backends into `tstd`. Also rejected: HTTP sidecar
+(embeddings-style) — the MCP server is already stdio and a socket would
+invite a bind.
+
