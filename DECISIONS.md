@@ -6908,3 +6908,33 @@ importing `tst_cu_mcp` backends into `tstd`. Also rejected: HTTP sidecar
 (embeddings-style) — the MCP server is already stdio and a socket would
 invite a bind.
 
+---
+
+## 2026-08-21 — TD-3304: click target vs landing (Class B)
+
+**Decision:** Click accuracy is intended (x, y) vs landed (x, y) in
+logical points (TD-3301 `coordinate_space=points`). Distance is
+Euclidean (`hypot`). Tolerance is **4.0 points**. A recorded sample
+strictly over that bound fails pytest; it does not ship as "it works".
+
+One mock fixture page per supported live OS. Linux is E20 — no live
+path, no Linux row. This machine did not drive a real display for this
+story. **Live pointer accuracy is not claimed.**
+
+| OS | fixture page | intended (pt) | landed (pt) | miss (pt) | source |
+| --- | --- | --- | --- | --- | --- |
+| darwin | fixture/macos-click-target.html | (240.0, 160.0) | (240.0, 160.0) | 0.000 | mock |
+| win32 | fixture/windows-click-target.html | (240.0, 160.0) | (240.0, 160.0) | 0.000 | mock |
+
+UI-TARS as a grounding model is TD-3902, not this story. This eval
+records whether a click landed where it was aimed.
+
+**Rationale:** A mock that cannot miss will always "work" unless the
+gate is a number. 4 pt sits inside a typical control (~20–30 pt) and
+still fails a clear miss. The table is the mock path only so we do not
+invent live accuracy.
+
+**Alternative rejected:** Treating the mock's exact landing as live OS
+accuracy. Also rejected: a Linux live row. Also rejected: a tolerance
+loose enough that any click passes.
+
