@@ -57,6 +57,7 @@ import pytest
 from tstd.config import (
     ModelConfig,
     NotifyConfig,
+    NtfyNotifyConfig,
     Preset,
     SlackNotifyConfig,
     TierConfig,
@@ -66,6 +67,7 @@ from tstd.config import (
 from tstd.context.embeddings import EmbeddingsClient
 from tstd.daemon import Daemon
 from tstd.discovery import resolve_tier_slugs
+from tstd.notify.ntfy import send as ntfy_send
 from tstd.notify.slack import send as slack_send
 from tstd.provider import ChatCompletionRequest, ChatMessage, ProviderClient, RetryConfig
 
@@ -248,6 +250,7 @@ _OUTBOUND_CAPABLE = {
     "tools/web_search.py": "web_search; destination is search.base_url from config",
     "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
     "notify/slack.py": "slack incoming webhook; destination host is notify.slack.host from config",
+    "notify/ntfy.py": "ntfy topic POST; destination host is notify.ntfy.host from config",
 }
 
 
@@ -497,6 +500,41 @@ async def test_moving_the_slack_host_moves_the_destination(
         config,
         "hello",
         webhook_url="https://somewhere-else.invalid/services/T/B/injected",
+    )
+    assert recorder.origins() == {"https://somewhere-else.invalid"}
+
+
+async def test_ntfy_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """ntfy notify lands where notify.ntfy.host points. The topic URL
+    is injected (keychain in production); the host allowlist is config."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        ntfy=NtfyNotifyConfig(enabled=True, host="127.0.0.1", timeout_seconds=1)
+    )
+    await ntfy_send(
+        config,
+        "hello",
+        topic_url="http://127.0.0.1:64112/desk-topic",
+    )
+    assert recorder.origins() == {"http://127.0.0.1:64112"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64112/desk-topic"}
+
+
+async def test_moving_the_ntfy_host_moves_the_destination(
+    recorder: TransportRecorder,
+) -> None:
+    """Change notify.ntfy.host (and the injected URL's host) and the
+    request follows. A hardcoded ntfy host would not."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        ntfy=NtfyNotifyConfig(enabled=True, host="somewhere-else.invalid", timeout_seconds=1)
+    )
+    await ntfy_send(
+        config,
+        "hello",
+        topic_url="https://somewhere-else.invalid/desk-topic",
     )
     assert recorder.origins() == {"https://somewhere-else.invalid"}
 

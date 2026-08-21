@@ -214,10 +214,25 @@ class SlackNotifyConfig(BaseModel):
     timeout_seconds: float = Field(default=5.0, gt=0)
 
 
+class NtfyNotifyConfig(BaseModel):
+    """ntfy topic POST (TD-3802). Off by default.
+
+    ``host`` is the only host ``tstd.notify.ntfy.send`` may reach. The
+    topic URL itself is a keychain secret (account ``tst-ntfy-topic``),
+    never this file, never a log, never the audit database. Empty ``host``
+    or ``enabled: false`` means no send. Discord/Telegram are TD-4707.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
 class NotifyConfig(BaseModel):
-    """Outbound notification channels. Slack first; no 20-platform gateway."""
+    """Outbound notification channels. Slack first, ntfy optional; no gateway."""
 
     slack: SlackNotifyConfig = Field(default_factory=SlackNotifyConfig)
+    ntfy: NtfyNotifyConfig = Field(default_factory=NtfyNotifyConfig)
 
 
 class ComputerUseConfig(BaseModel):
