@@ -394,6 +394,29 @@ export interface SetCuKill extends ClientMessage {
   killed: boolean;
 }
 
+/** List persisted scheduled jobs (TD-3805). Connection-scoped. */
+export interface ListJobs extends ClientMessage {
+  type: "list_jobs";
+}
+
+/** Create or replace a scheduled job from draft fields (TD-3805). Pause is this verb. */
+export interface SaveJob extends ClientMessage {
+  type: "save_job";
+  id?: string | null;
+  workspace?: string | null;
+  instruction?: string | null;
+  cadence?: string | null;
+  next_run?: string | null;
+  deliver_to?: "window" | "slack" | "ntfy" | null;
+  paused?: boolean;
+}
+
+/** Remove a scheduled job by id (TD-3805). */
+export interface DeleteJob extends ClientMessage {
+  type: "delete_job";
+  job_id: string;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -448,7 +471,10 @@ export type ClientMessageUnion =
   | OpenArtifact
   | DesignHitTest
   | CheckCuPermissions
-  | SetCuKill;
+  | SetCuKill
+  | ListJobs
+  | SaveJob
+  | DeleteJob;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -1004,6 +1030,23 @@ export interface TierSwitched extends DaemonEvent {
   previous?: "brain" | "worker" | "validator" | null;
 }
 
+/** One persisted job on job_list (TD-3805). */
+export interface JobEntry {
+  id: string;
+  workspace: string;
+  instruction: string;
+  cadence: string | null;
+  next_run: string | null;
+  deliver_to: "window" | "slack" | "ntfy";
+  paused: boolean;
+}
+
+/** Response to list_jobs / save_job / delete_job (TD-3805). Connection-scoped. */
+export interface JobList extends DaemonEvent {
+  type: "job_list";
+  jobs: JobEntry[];
+}
+
 export type DaemonEventUnion =
   | Ready
   | SessionState
@@ -1045,4 +1088,5 @@ export type DaemonEventUnion =
   | ScreenFrame
   | CuKillState
   | DesignHit
-  | CuPermissions;
+  | CuPermissions
+  | JobList;

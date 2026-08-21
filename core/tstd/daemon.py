@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import websockets.exceptions
+from pydantic import ValidationError
 
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, to_entry
 from .attachments import AttachmentError, decode_attachments, render_user_content
@@ -127,6 +128,7 @@ from .protocol import (
     CuPermissions,
     DaemonEvent,
     DeleteApiKey,
+    DeleteJob,
     DeleteSession,
     Deny,
     DesignHit,
@@ -144,8 +146,11 @@ from .protocol import (
     HandshakeError,
     InstructionFileEntry,
     InstructionFiles,
+    JobEntry,
+    JobList,
     ListArtifacts,
     ListInstructions,
+    ListJobs,
     ListMemory,
     ListPins,
     ListPolicyRules,
@@ -167,6 +172,7 @@ from .protocol import (
     Resume,
     RevokePolicyRule,
     RunDiagnostics,
+    SaveJob,
     SaveMemory,
     SessionList,
     SessionSummary,
@@ -216,6 +222,10 @@ from .provider import (
     auth_failure_message,
 )
 from .router import TIER_NAMES, TierRouter
+from .scheduler.models import Job, JobDraft, JobValidationError
+from .scheduler.runner import RecordingDeliver, run_due_jobs, run_turn_on_daemon
+from .scheduler.runner import SendFn as NotifySendFn
+from .scheduler.store import delete_job, get_job, list_jobs, save_job
 from .session import (
     TERMINAL_STATES,
     Session,
@@ -417,6 +427,19 @@ def _tier_state_event(session_id: str, router: TierRouter, config: ModelConfig) 
     )
 
 
+def _job_entry(job: Job) -> JobEntry:
+    """Wire shape for a persisted job. The rail lists these; it does not run them."""
+    return JobEntry(
+        id=job.id,
+        workspace=job.workspace,
+        instruction=job.instruction,
+        cadence=job.cadence,
+        next_run=job.next_run,
+        deliver_to=job.deliver_to,
+        paused=job.paused,
+    )
+
+
 class Daemon:
     """Async daemon process with clean startup and shutdown.
 
@@ -430,6 +453,8 @@ class Daemon:
         data_dir: Path | None = None,
         provider: ProviderLike | None = None,
         parent_pid: int | None = None,
+        notify_send: NotifySendFn | None = None,
+        scheduler_tick: float = 15.0,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
@@ -477,6 +502,9 @@ class Daemon:
         # Browser CU (TD-1710): mock unless computer_use.browser is playwright
         # and Playwright is importable. Profile lives under the data dir.
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
+        self._notify_send = notify_send
+        self._scheduler_tick = scheduler_tick
+        self._scheduler_deliver = RecordingDeliver(send=notify_send)
 
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
@@ -904,6 +932,7 @@ class Daemon:
             self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
             self._audit_writer.start()
         await self.ws_server.start()
+        self._tasks.append(asyncio.create_task(self._scheduler_loop()))
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:
@@ -987,6 +1016,35 @@ class Daemon:
                     }
                 },
             )
+
+    async def _scheduler_loop(self) -> None:
+        """On start (revive) and on a short tick, fire each due job once."""
+        while not self._shutdown_event.is_set():
+            try:
+                await self.run_due_jobs()
+            except Exception:
+                log.exception("scheduler tick failed")
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=self._scheduler_tick,
+                )
+            except TimeoutError:
+                continue
+
+    async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
+        """Wake due jobs against this daemon. Tests call this directly."""
+        when = now if now is not None else datetime.now(UTC)
+        return await run_due_jobs(
+            self.data_dir,
+            when,
+            run_turn=self._scheduled_run_turn,
+            deliver=self._scheduler_deliver,
+        )
+
+    async def _scheduled_run_turn(self, workspace: Path, message: str) -> str:
+        """In-process ``tst run``: one session, one message, no nested daemon."""
+        return await run_turn_on_daemon(self, workspace, message)
 
     async def _parent_watchdog(self, parent_pid: int) -> None:
         """Poll the host's liveness and shut down if it dies (TD-1002).
@@ -1477,6 +1535,15 @@ class Daemon:
 
         if isinstance(msg, DesignHitTest):
             return await self._handle_design_hit_test(msg)
+
+        if isinstance(msg, ListJobs):
+            return await self._handle_list_jobs()
+
+        if isinstance(msg, SaveJob):
+            return await self._handle_save_job(msg)
+
+        if isinstance(msg, DeleteJob):
+            return await self._handle_delete_job(msg)
 
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
@@ -2058,6 +2125,56 @@ class Daemon:
             mime=entry.mime,
             path=entry.path,
         ).model_dump_json()
+
+    async def _handle_list_jobs(self) -> str:
+        return await self._job_list_event()
+
+    async def _handle_save_job(self, msg: SaveJob) -> str:
+        try:
+            await asyncio.to_thread(self._save_job_record, msg)
+        except JobValidationError as exc:
+            return build_error("job_invalid", str(exc))
+        return await self._job_list_event()
+
+    async def _handle_delete_job(self, msg: DeleteJob) -> str:
+        removed = await asyncio.to_thread(delete_job, self.data_dir, msg.job_id)
+        if not removed:
+            return build_error("job_not_found", f"Job {msg.job_id!r} not found")
+        return await self._job_list_event()
+
+    async def _job_list_event(self) -> str:
+        jobs = await asyncio.to_thread(list_jobs, self.data_dir)
+        return JobList(jobs=[_job_entry(job) for job in jobs]).model_dump_json()
+
+    def _save_job_record(self, msg: SaveJob) -> Job:
+        """Persist a draft or an update. Does not run the job."""
+        existing = get_job(self.data_dir, msg.id) if msg.id else None
+        if existing is not None:
+            try:
+                updated = Job(
+                    id=existing.id,
+                    workspace=msg.workspace or existing.workspace,
+                    instruction=msg.instruction or existing.instruction,
+                    cadence=existing.cadence if msg.cadence is None else msg.cadence,
+                    next_run=existing.next_run if msg.next_run is None else msg.next_run,
+                    deliver_to=msg.deliver_to or existing.deliver_to,
+                    paused=msg.paused,
+                )
+            except (ValidationError, JobValidationError) as exc:
+                raise JobValidationError(str(exc)) from exc
+            return save_job(self.data_dir, updated)
+        return save_job(
+            self.data_dir,
+            JobDraft(
+                id=msg.id,
+                workspace=msg.workspace,
+                instruction=msg.instruction,
+                cadence=msg.cadence,
+                next_run=msg.next_run,
+                deliver_to=msg.deliver_to,
+                paused=msg.paused,
+            ),
+        )
 
     async def _handle_design_hit_test(self, msg: DesignHitTest) -> str:
         """Observe the session browser at a CSS-pixel point (TD-3403)."""

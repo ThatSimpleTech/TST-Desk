@@ -87,8 +87,8 @@ describe("historyBadge", () => {
 const entry = (id: string) => RAIL_FUNCTIONS.find((e) => e.id === id);
 
 describe("surfaces that can't be clicked", () => {
-	it("marks Scheduled planned, so the rail renders it disabled", () => {
-		expect(entry("scheduled")?.state).toBe("planned");
+	it("marks Scheduled ready so the rail can open it (TD-3805)", () => {
+		expect(entry("scheduled")?.state).toBe("ready");
 	});
 
 	it("marks Home current rather than a destination — the pane is already it", () => {
@@ -105,7 +105,7 @@ describe("surfaces that can't be clicked", () => {
 	it("hints why each row can't be clicked, instead of looking broken", () => {
 		const scheduled = entry("scheduled");
 		const home = entry("home");
-		expect(scheduled && entryHint(scheduled)).toBe("Scheduled — arrives in v0.5");
+		expect(scheduled && entryHint(scheduled)).toBe("Scheduled");
 		expect(home && entryHint(home)).toBe("Home — you are here");
 	});
 
@@ -122,7 +122,7 @@ describe("surfaces that can't be clicked", () => {
 		expect(entries.find((e) => e.id === "projects")?.state).toBe("current");
 		expect(entries.find((e) => e.id === "home")?.state).toBe("ready");
 		expect(entries.find((e) => e.id === "artifacts")?.state).toBe("ready");
-		expect(entries.find((e) => e.id === "scheduled")?.state).toBe("planned");
+		expect(entries.find((e) => e.id === "scheduled")?.state).toBe("ready");
 		expect(entryHint(entries.find((e) => e.id === "projects")!)).toBe("Projects — you are here");
 		expect(entryHint(entries.find((e) => e.id === "home")!)).toBe("Home");
 	});
@@ -132,9 +132,20 @@ describe("surfaces that can't be clicked", () => {
 		expect(entries.find((e) => e.id === "artifacts")?.state).toBe("current");
 		expect(entries.find((e) => e.id === "home")?.state).toBe("ready");
 		expect(entries.find((e) => e.id === "projects")?.state).toBe("ready");
-		expect(entries.find((e) => e.id === "scheduled")?.state).toBe("planned");
+		expect(entries.find((e) => e.id === "scheduled")?.state).toBe("ready");
 		expect(entryHint(entries.find((e) => e.id === "artifacts")!)).toBe(
 			"Artifacts — you are here",
+		);
+	});
+
+	it("marks Scheduled current when that surface is showing (TD-3805)", () => {
+		const entries = railFunctions("scheduled");
+		expect(entries.find((e) => e.id === "scheduled")?.state).toBe("current");
+		expect(entries.find((e) => e.id === "home")?.state).toBe("ready");
+		expect(entries.find((e) => e.id === "projects")?.state).toBe("ready");
+		expect(entries.find((e) => e.id === "artifacts")?.state).toBe("ready");
+		expect(entryHint(entries.find((e) => e.id === "scheduled")!)).toBe(
+			"Scheduled — you are here",
 		);
 	});
 
