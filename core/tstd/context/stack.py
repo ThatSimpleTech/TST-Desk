@@ -8,10 +8,11 @@ steering reloads mid-session (TD-509).
 
 from __future__ import annotations
 
-from tstd.protocol import ImportedFile, InstructionStack, InstructionStackEntry
+from tstd.protocol import ImportedFile, InstructionStack, InstructionStackEntry, MemoryStackEntry
 
 from .assembler import AssembledSteering
 from .imports import ImportDirective
+from .memory_loader import MemoryFile, MemoryLoad, memory_tokens
 
 
 def _flatten_imports(directives: tuple[ImportDirective, ...]) -> list[ImportedFile]:
@@ -29,6 +30,17 @@ def _flatten_imports(directives: tuple[ImportDirective, ...]) -> list[ImportedFi
     return flat
 
 
+def _memory_entries(files: tuple[MemoryFile, ...]) -> list[MemoryStackEntry]:
+    return [
+        MemoryStackEntry(
+            path=entry.relative.as_posix(),
+            tokens=memory_tokens(entry.text),
+            reason=entry.reason,
+        )
+        for entry in files
+    ]
+
+
 def build_instruction_stack(
     session_id: str,
     steering: AssembledSteering,
@@ -36,6 +48,7 @@ def build_instruction_stack(
     *,
     last_cached_tokens: int | None = None,
     cache_observed: bool = False,
+    memory: MemoryLoad | None = None,
 ) -> InstructionStack:
     """Build the ``instruction_stack`` event for *steering*.
 
@@ -74,4 +87,7 @@ def build_instruction_stack(
         token_method=steering.total_tokens.method,
         last_cached_tokens=last_cached_tokens,
         cache_observed=cache_observed,
+        memory=_memory_entries(memory.files) if memory is not None else [],
+        memory_dropped=_memory_entries(memory.dropped) if memory is not None else [],
+        memory_placeholder=memory is None or memory.block is None,
     )

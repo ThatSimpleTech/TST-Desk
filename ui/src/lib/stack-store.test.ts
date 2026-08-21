@@ -9,6 +9,7 @@ import {
 	createStackState,
 	createStackStore,
 	formatTokens,
+	memoryPlaceholderCopy,
 	type StackState,
 } from "./stack-store";
 
@@ -56,6 +57,21 @@ describe("applyEvent", () => {
 		expect(state.tokenMethod).toBe("exact");
 		expect(state.lastCachedTokens).toBe(512);
 		expect(state.loaded).toBe(true);
+	});
+
+	it("names loaded and dropped memory files", () => {
+		const { state, store } = harness();
+		store.applyEvent(
+			stackEvent({
+				memory: [{ path: ".tst/memory/MEMORY.md", tokens: 12, reason: "always-index" }],
+				memory_dropped: [{ path: ".tst/memory/auth.md", tokens: 8, reason: "heading" }],
+				memory_placeholder: false,
+			}),
+			"s1",
+		);
+		expect(state.memory.map((e) => e.path)).toEqual([".tst/memory/MEMORY.md"]);
+		expect(state.memoryDropped.map((e) => e.reason)).toEqual(["heading"]);
+		expect(state.memoryPlaceholder).toBe(false);
 	});
 
 	it("a second push replaces the first (hot reload live-update)", () => {
@@ -207,6 +223,10 @@ describe("labels", () => {
 
 	it("cacheLabel reports a hit with the token count", () => {
 		expect(cacheLabel(4200, true)).toBe("cached 4,200 tokens");
+	});
+
+	it("empty memory quotes the prompt placeholder", () => {
+		expect(memoryPlaceholderCopy()).toBe("<!-- memory: none loaded for this session -->");
 	});
 });
 

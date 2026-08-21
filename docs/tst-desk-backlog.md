@@ -4368,10 +4368,10 @@ workspace file.
 **Size:** 2 · **Depends on:** TD-2501, TD-1201
 
 **Acceptance criteria:**
-- [ ] The stack pane lists each loaded memory file, its token count, and
+- [x] The stack pane lists each loaded memory file, its token count, and
       why it was chosen (always-index / heading / embedding)
-- [ ] Dropped files are listed separately
-- [ ] A live session with no memory shows the placeholder honestly
+- [x] Dropped files are listed separately
+- [x] A live session with no memory shows the placeholder honestly
 
 **Notes:** the Memory column of the project home (TD-2803) is this pane
 hosted there, not a second store.

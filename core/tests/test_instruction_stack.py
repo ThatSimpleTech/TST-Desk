@@ -21,6 +21,7 @@ from websockets.asyncio.client import connect
 
 from tests.test_dispatch import make_config, start_loop, wait_for_turn
 from tstd.context import ContextAssembler, SteeringFileResolver
+from tstd.context.memory_loader import MemoryFile, MemoryLoad
 from tstd.context.stack import build_instruction_stack
 from tstd.cost import CostTracker
 from tstd.daemon import Daemon
@@ -210,6 +211,42 @@ class TestBuilderFields:
         assert (
             build_instruction_stack("s1", steering, last_cached_tokens=77).last_cached_tokens == 77
         )
+
+    def test_memory_sources_and_dropped(self, tmp_path: Path) -> None:
+        home, ws = tmp_path / "home", tmp_path / "ws"
+        _write(ws / "AGENTS.md", "root\n")
+        loaded = MemoryFile(
+            path=ws / ".tst" / "memory" / "MEMORY.md",
+            relative=Path(".tst/memory/MEMORY.md"),
+            reason="always-index",
+            text="durable facts\n",
+        )
+        dropped = MemoryFile(
+            path=ws / ".tst" / "memory" / "auth.md",
+            relative=Path(".tst/memory/auth.md"),
+            reason="heading",
+            text="# Auth\n",
+        )
+        stack = build_instruction_stack(
+            "s1",
+            _assemble(home, ws),
+            memory=MemoryLoad(files=(loaded,), dropped=(dropped,)),
+        )
+        assert [(e.path, e.reason, e.tokens > 0) for e in stack.memory] == [
+            (".tst/memory/MEMORY.md", "always-index", True)
+        ]
+        assert [(e.path, e.reason) for e in stack.memory_dropped] == [
+            (".tst/memory/auth.md", "heading")
+        ]
+        assert stack.memory_placeholder is False
+
+    def test_empty_memory_shows_the_placeholder(self, tmp_path: Path) -> None:
+        home, ws = tmp_path / "home", tmp_path / "ws"
+        _write(ws / "AGENTS.md", "root\n")
+        stack = build_instruction_stack("s1", _assemble(home, ws), memory=MemoryLoad(files=()))
+        assert stack.memory == []
+        assert stack.memory_dropped == []
+        assert stack.memory_placeholder is True
 
 
 # ── Daemon query handler ─────────────────────────────────────────────────

@@ -1686,6 +1686,7 @@ class Daemon:
             # No tracker means no call has been made, which is the same
             # "nothing observed yet" the tracker itself reports (TD-1811).
             cache_observed=(tracker.cache_observed if tracker is not None else False),
+            memory=found.last_memory,
         ).model_dump_json()
 
     async def _handle_list_instructions(self, msg: ListInstructions) -> str:

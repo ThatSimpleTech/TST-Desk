@@ -15,7 +15,7 @@
 	// subscribe on first open. Clicking a file opens it in the system
 	// editor via tauri-plugin-opener.
 	import { stack } from '../stack-store.svelte.js';
-	import { cacheBadge, cacheLabel, formatTokens } from '../stack-store';
+	import { cacheBadge, cacheLabel, formatTokens, memoryPlaceholderCopy, memoryReasonLabel } from '../stack-store';
 	import { openInEditor } from '../open-file';
 	import Icon from './Icon.svelte';
 
@@ -97,6 +97,43 @@
 				</li>
 			{/each}
 		</ul>
+		<section class="memory" aria-label="Memory">
+			<h2 class="memory-head">Memory</h2>
+			{#if stack.memoryPlaceholder && stack.memory.length === 0}
+				<p class="memory-empty">{memoryPlaceholderCopy()}</p>
+			{:else}
+				<ul class="sources">
+					{#each stack.memory as entry (entry.path)}
+						<li class="source">
+							<button class="file" onclick={() => open(entry.path)} title={entry.path}>
+								<span class="name">{baseName(entry.path)}</span>
+								<span class="tokens">{formatTokens(entry.tokens)} tok</span>
+							</button>
+							<div class="meta">
+								<span class="chip chip-note">{memoryReasonLabel(entry.reason)}</span>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if stack.memoryDropped.length > 0}
+				<h3 class="memory-head">Dropped</h3>
+				<ul class="sources">
+					{#each stack.memoryDropped as entry (entry.path)}
+						<li class="source inactive">
+							<button class="file" onclick={() => open(entry.path)} title={entry.path}>
+								<span class="name">{baseName(entry.path)}</span>
+								<span class="tokens">{formatTokens(entry.tokens)} tok</span>
+							</button>
+							<div class="meta">
+								<span class="chip chip-off">{memoryReasonLabel(entry.reason)}</span>
+								<span class="chip chip-off">budget</span>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
 		<footer class="totals">
 			<span class="total">{formatTokens(stack.totalTokens)} tokens ({stack.tokenMethod})</span>
 			<span
@@ -225,6 +262,29 @@
 		font-weight: var(--weight-normal);
 		color: var(--color-text-muted);
 		width: auto;
+	}
+
+	.memory {
+		border-top: var(--border-width) solid var(--color-border);
+	}
+
+	.memory-head {
+		margin: 0;
+		padding: var(--space-3) var(--space-4) 0;
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		font-weight: var(--weight-semibold);
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+	}
+
+	.memory-empty {
+		padding: var(--space-2) var(--space-4) var(--space-3);
+		margin: 0;
+		font-family: var(--font-mono);
+		font-size: var(--text-xs);
+		color: var(--color-text-muted);
 	}
 
 	.totals {

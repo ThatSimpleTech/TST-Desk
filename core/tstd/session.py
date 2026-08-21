@@ -32,6 +32,7 @@ from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
 
 if TYPE_CHECKING:
+    from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
     from .router import TierRouter
     from .tools.registry import Tool
@@ -250,6 +251,9 @@ class Session:
         # Set by the daemon when a persist backend is attached. The loop
         # calls conversation_changed after it mutates ``conversation``.
         self._conversation_hook: Callable[[], Awaitable[None]] | None = None
+        # Last brain-turn memory selection (TD-2604). None until a brain
+        # turn has run the loader.
+        self.last_memory: MemoryLoad | None = None
 
     async def _observe_turn_end(self, event: DaemonEvent, _log: SessionEventLog) -> None:
         """Lower the open-turn count when the loop reports a turn complete."""
