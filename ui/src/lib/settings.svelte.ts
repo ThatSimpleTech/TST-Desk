@@ -47,6 +47,8 @@ export const settings = $state({
 	skipAllApprovals: false,
 	/** Machine-wide global memory (TD-2603). From setup_state. */
 	loadGlobalMemory: false,
+	/** Machine-wide coworker (TD-2905). Default on; from setup_state. */
+	coworkerEnabled: true,
 });
 
 let started = false;
@@ -79,6 +81,7 @@ export function resetSettings(): void {
 	settings.rulesSessionId = null;
 	settings.skipAllApprovals = false;
 	settings.loadGlobalMemory = false;
+	settings.coworkerEnabled = true;
 	started = false;
 }
 
@@ -95,6 +98,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.savingTier = null;
 		settings.skipAllApprovals = event.skip_all_approvals ?? false;
 		settings.loadGlobalMemory = event.load_global_memory ?? false;
+		settings.coworkerEnabled = event.coworker_enabled ?? true;
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -199,4 +203,9 @@ export function setSkipAllApprovals(enabled: boolean): void {
 /** Turn global memory on or off (TD-2603). Acked with setup_state. */
 export function setLoadGlobalMemory(enabled: boolean): void {
 	sendToDaemon({ type: "set_load_global_memory", enabled });
+}
+
+/** Turn coworker mode on or off (TD-2905). Acked with setup_state. */
+export function setCoworker(enabled: boolean): void {
+	sendToDaemon({ type: "set_coworker", enabled });
 }

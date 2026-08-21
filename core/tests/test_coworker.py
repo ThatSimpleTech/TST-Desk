@@ -1,8 +1,14 @@
-"""Coworker-mode persistence (TD-2902). Default on; Settings toggle is TD-2905."""
+"""Coworker-mode persistence (TD-2902) and Settings toggle (TD-2905)."""
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import json
 from pathlib import Path
+from typing import Any
+
+from websockets.asyncio.client import connect
 
 from tstd.coworker import (
     coworker_path,
@@ -10,6 +16,8 @@ from tstd.coworker import (
     load_coworker,
     save_coworker,
 )
+from tstd.daemon import Daemon
+from tstd.protocol import PROTOCOL_VERSION
 
 
 class TestCoworkerPersist:
@@ -57,3 +65,91 @@ class TestCoworkerPersist:
         assert coworker_path(tmp_path).read_text(encoding="utf-8").find("enabled: true") >= 0
         save_coworker(tmp_path, False)
         assert ensure_coworker(tmp_path) is False
+
+
+async def _connect_and_handshake(uri: str, token: str) -> Any:
+    ws = await connect(uri)
+    await ws.send(json.dumps({"type": "hello", "token": token, "version": PROTOCOL_VERSION}))
+    ack = json.loads(await ws.recv())
+    assert ack["type"] == "hello_ack"
+    return ws
+
+
+async def _start_daemon(tmp: Path) -> tuple[Daemon, asyncio.Task[Any]]:
+    daemon = Daemon(data_dir=tmp)
+    task = asyncio.create_task(daemon.run())
+    for _ in range(50):
+        if daemon.ws_server.port:
+            break
+        await asyncio.sleep(0.05)
+    assert daemon.ws_server.port > 0
+    return daemon, task
+
+
+async def _stop_daemon(task: asyncio.Task[Any]) -> None:
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+async def _ask(ws: Any, msg: dict[str, Any]) -> dict[str, Any]:
+    await ws.send(json.dumps(msg))
+    return dict(json.loads(await ws.recv()))
+
+
+class TestCoworkerSettingsWire:
+    async def test_setup_state_defaults_on(self, tmp_path: Path) -> None:
+        daemon, task = await _start_daemon(tmp_path)
+        try:
+            assert daemon.coworker_enabled is True
+            ws = await _connect_and_handshake(
+                f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+            )
+            resp = await _ask(ws, {"type": "get_setup_state"})
+            assert resp["type"] == "setup_state"
+            assert resp["coworker_enabled"] is True
+            await ws.close()
+        finally:
+            await _stop_daemon(task)
+
+    async def test_set_coworker_writes_what_load_coworker_reads(self, tmp_path: Path) -> None:
+        daemon, task = await _start_daemon(tmp_path)
+        try:
+            ws = await _connect_and_handshake(
+                f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+            )
+            resp = await _ask(ws, {"type": "set_coworker", "enabled": False})
+            assert resp["type"] == "setup_state"
+            assert resp["coworker_enabled"] is False
+            assert load_coworker(tmp_path) is False
+            text = coworker_path(tmp_path).read_text(encoding="utf-8")
+            assert "enabled: false" in text
+            resp = await _ask(ws, {"type": "set_coworker", "enabled": True})
+            assert resp["coworker_enabled"] is True
+            assert load_coworker(tmp_path) is True
+            await ws.close()
+        finally:
+            await _stop_daemon(task)
+
+    async def test_off_survives_restart(self, tmp_path: Path) -> None:
+        daemon, task = await _start_daemon(tmp_path)
+        try:
+            ws = await _connect_and_handshake(
+                f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+            )
+            await _ask(ws, {"type": "set_coworker", "enabled": False})
+            await ws.close()
+        finally:
+            await _stop_daemon(task)
+
+        daemon2, task2 = await _start_daemon(tmp_path)
+        try:
+            assert daemon2.coworker_enabled is False
+            ws = await _connect_and_handshake(
+                f"ws://127.0.0.1:{daemon2.ws_server.port}", daemon2.ws_server.token
+            )
+            resp = await _ask(ws, {"type": "get_setup_state"})
+            assert resp["coworker_enabled"] is False
+            await ws.close()
+        finally:
+            await _stop_daemon(task2)

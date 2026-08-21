@@ -52,6 +52,7 @@ from tstd.protocol import (
     Resume,
     RevokePolicyRule,
     SessionState,
+    SetCoworker,
     SetLoadGlobalMemory,
     SetSessionStar,
     SetSkipAllApprovals,
@@ -150,6 +151,13 @@ class TestClientMessages:
         assert isinstance(back, SetLoadGlobalMemory)
         assert back.enabled is True
         assert "session_id" not in SetLoadGlobalMemory.model_fields
+
+    def test_set_coworker(self) -> None:
+        msg = SetCoworker(enabled=False)
+        back = _roundtrip(msg)
+        assert isinstance(back, SetCoworker)
+        assert back.enabled is False
+        assert "session_id" not in SetCoworker.model_fields
 
     def test_set_workspace_pin(self) -> None:
         msg = SetWorkspacePin(path="/ws", pinned=True)

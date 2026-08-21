@@ -10,6 +10,7 @@
 		closeSettings,
 		setSection,
 		setTheme,
+		setCoworker,
 		isDiscovered,
 		saveSlug,
 		loadRules,
@@ -114,6 +115,19 @@
 							Dark uses the warm-charcoal palette regardless of the OS.
 						{/if}
 					</p>
+					<div class="keep-running">
+						<p class="keep-title">Keep running when the window closes</p>
+						<button
+							class="choice"
+							class:choice--active={settings.coworkerEnabled}
+							type="button"
+							role="switch"
+							aria-checked={settings.coworkerEnabled}
+							onclick={() => setCoworker(!settings.coworkerEnabled)}
+							>{settings.coworkerEnabled ? 'On' : 'Off'}</button
+						>
+					</div>
+					<p class="hint">Off restores close = shutdown. Quit always shuts down.</p>
 				{:else if settings.section === 'model'}
 					<p class="hint">
 						Preset <strong>{settings.activePreset ?? '—'}</strong>. Edits are saved to your
@@ -302,6 +316,23 @@
 		font-size: var(--text-sm);
 		color: var(--color-ink-secondary);
 		margin: var(--space-3) 0 0;
+	}
+
+	.keep-running {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-3);
+		margin-top: var(--space-4);
+		padding-top: var(--space-4);
+		border-top: 1px solid var(--color-hairline);
+	}
+
+	.keep-title {
+		font-size: var(--text-sm);
+		font-weight: var(--weight-medium);
+		color: var(--color-ink);
+		margin: 0;
 	}
 
 	.field {

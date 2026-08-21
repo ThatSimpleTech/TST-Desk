@@ -52,6 +52,7 @@ from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
+from .coworker import load_coworker, save_coworker
 from .discovery import resolve_tier_slugs
 from .keychain import (
     KeychainError,
@@ -146,6 +147,7 @@ from .protocol import (
     SessionSummary,
     SetApiKey,
     SetBranch,
+    SetCoworker,
     SetLoadGlobalMemory,
     SetPreset,
     SetSessionStar,
@@ -425,6 +427,7 @@ class Daemon:
         # a workspace file cannot carry it into someone else's clone.
         self.skip_all_approvals = load_skip_all(self.data_dir)
         self.load_global_memory = load_global_memory(self.data_dir)
+        self.coworker_enabled = load_coworker(self.data_dir)
         self.workspace_pins = load_workspace_pins(self.data_dir)
         self.session_stars = load_session_stars(self.data_dir)
         self.ws_server = WebSocketServer(
@@ -479,6 +482,7 @@ class Daemon:
             tier_slugs=dict(self._slug_snapshot.get(self.config.active_preset, {})),
             skip_all_approvals=self.skip_all_approvals,
             load_global_memory=self.load_global_memory,
+            coworker_enabled=self.coworker_enabled,
             pinned_workspaces=list(self.workspace_pins),
         )
 
@@ -1255,6 +1259,11 @@ class Daemon:
             save_global_memory(self.data_dir, msg.enabled)
             for session in await self.session_registry.list_sessions():
                 session.load_global_memory = msg.enabled
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetCoworker):
+            self.coworker_enabled = msg.enabled
+            save_coworker(self.data_dir, msg.enabled)
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetWorkspacePin):

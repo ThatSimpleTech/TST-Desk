@@ -244,6 +244,17 @@ class SetLoadGlobalMemory(ClientMessage):
     enabled: bool
 
 
+class SetCoworker(ClientMessage):
+    """Turn coworker mode on or off (TD-2905).
+
+    Machine-wide, no session. Persists ``{user_data_dir}/coworker.yaml``.
+    The daemon answers with ``setup_state``. Default on.
+    """
+
+    type: Literal["set_coworker"] = "set_coworker"
+    enabled: bool
+
+
 class Resume(ClientMessage):
     """Resume a session paused at a declared cap (TD-707).
 
@@ -1177,6 +1188,9 @@ class SetupState(DaemonEvent):
     # TD-2603: load ``~/.tstdesk/memory/`` after workspace memory.
     # Additive, default off — off means that directory is never read.
     load_global_memory: bool = False
+    # TD-2905: keep running when the window closes. Additive, default on —
+    # a missing file and an older client that ignores the field stay on.
+    coworker_enabled: bool = True
     # TD-2806: workspaces pinned on this machine. Not a workspace file.
     pinned_workspaces: list[str] = Field(default_factory=list)
 
@@ -1375,6 +1389,7 @@ ClientMessageT = Annotated[
     | SetBranch
     | SetSkipAllApprovals
     | SetLoadGlobalMemory
+    | SetCoworker
     | SetWorkspacePin
     | Resume
     | Cancel
@@ -1475,6 +1490,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_branch",
         "set_skip_all_approvals",
         "set_load_global_memory",
+        "set_coworker",
         "set_workspace_pin",
         "resume",
         "cancel",

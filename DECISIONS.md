@@ -6833,3 +6833,21 @@ landing on the parked card.
 **Alternative rejected:** Host inferring session state. Also rejected: a
 tray icon.
 
+---
+
+## 2026-08-20 — TD-2905: Settings writes coworker.yaml via set_coworker (Class B)
+
+**Decision:** Appearance has a **Keep running when the window closes**
+toggle. It sends `set_coworker`; the daemon persists with the existing
+`save_coworker` to `{user_data_dir}/coworker.yaml`.
+`setup_state.coworker_enabled` reports it (default on when absent). The
+host still re-reads that file on CloseRequested — one file, Python is
+the Settings writer.
+
+**Rationale:** Same wire as skip-all / global memory. A Tauri invoke
+would add a second writer of the same YAML. Host close behavior is
+already file-driven.
+
+**Alternative rejected:** Host invoke that writes `coworker.yaml`. Also
+rejected: a new Settings "App" section.
+

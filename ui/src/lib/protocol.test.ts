@@ -75,6 +75,7 @@ import type {
   SetPreset,
   SetSkipAllApprovals,
   SetLoadGlobalMemory,
+  SetCoworker,
   SetWorkspacePin,
   SetupState,
   ApiKeyValidated,
@@ -189,6 +190,13 @@ describe("Client message fixtures match TypeScript types", () => {
   it("set_load_global_memory", () => {
     const m = fixtures.set_load_global_memory as SetLoadGlobalMemory;
     expect(m.type).toBe("set_load_global_memory");
+    expect(isBoolean(m.enabled)).toBe(true);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("set_coworker", () => {
+    const m = fixtures.set_coworker as SetCoworker;
+    expect(m.type).toBe("set_coworker");
     expect(isBoolean(m.enabled)).toBe(true);
     expect("session_id" in m).toBe(false);
   });
@@ -648,6 +656,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.presets.every(isString)).toBe(true);
     expect(isString(m.active_preset)).toBe(true);
     expect(isBoolean(m.skip_all_approvals)).toBe(true);
+    expect(isBoolean(m.coworker_enabled)).toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
   });
@@ -759,6 +768,7 @@ describe("All fixtures have required shape", () => {
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
       "set_skip_all_approvals",
       "set_load_global_memory",
+      "set_coworker",
       "set_workspace_pin",
       "set_session_star",
       "rename_session",
