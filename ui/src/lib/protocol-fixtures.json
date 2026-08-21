@@ -272,6 +272,10 @@
   "check_cu_permissions": {
     "type": "check_cu_permissions"
   },
+  "set_cu_kill": {
+    "type": "set_cu_kill",
+    "killed": true
+  },
   "ready": {
     "type": "ready",
     "seq": 1,

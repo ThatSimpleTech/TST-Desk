@@ -388,6 +388,12 @@ export interface CheckCuPermissions extends ClientMessage {
   type: "check_cu_permissions";
 }
 
+/** Engage or clear the process-wide computer-use kill-switch (TD-3404). */
+export interface SetCuKill extends ClientMessage {
+  type: "set_cu_kill";
+  killed: boolean;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -441,7 +447,8 @@ export type ClientMessageUnion =
   | ListArtifacts
   | OpenArtifact
   | DesignHitTest
-  | CheckCuPermissions;
+  | CheckCuPermissions
+  | SetCuKill;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -936,7 +943,8 @@ export interface ScreenFrame extends DaemonEvent {
   tool_call_id?: string | null;
 }
 
-/** Process-wide computer-use kill-switch visibility (TD-3402). */
+/** Process-wide computer-use kill-switch (TD-3404). Connection-scoped, seq=1.
+ *  `killed=true` also clears Screen-pane glow and cursor (TD-3402). */
 export interface CuKillState extends DaemonEvent {
   type: "cu_kill_state";
   killed: boolean;

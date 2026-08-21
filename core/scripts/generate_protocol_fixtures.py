@@ -98,6 +98,7 @@ from tstd.protocol import (
     SetBranch,
     SetCoworker,
     SetCuIndicators,
+    SetCuKill,
     SetLoadGlobalMemory,
     SetPreset,
     SetSessionStar,
@@ -203,6 +204,7 @@ FIXTURES = {
     "open_artifact": OpenArtifact(session_id="sess-1", artifact_id="art-1"),
     "design_hit_test": DesignHitTest(session_id="sess-1", x=12.0, y=34.0),
     "check_cu_permissions": CheckCuPermissions(),
+    "set_cu_kill": SetCuKill(killed=True),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
@@ -603,6 +605,7 @@ FIXTURES = {
         tool_call_id="c1",
         seq=23,
     ),
+    # TD-3404: process-wide kill-switch. Connection-scoped; no session_id.
     "cu_kill_state": CuKillState(killed=True),
     "design_hit": DesignHit(
         session_id="sess-1",

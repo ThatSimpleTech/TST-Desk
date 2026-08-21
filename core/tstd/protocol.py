@@ -660,6 +660,18 @@ class CheckCuPermissions(ClientMessage):
     type: Literal["check_cu_permissions"] = "check_cu_permissions"
 
 
+class SetCuKill(ClientMessage):
+    """Engage or clear the process-wide computer-use kill-switch (TD-3404).
+
+    Connection-scoped: the flag is shared across every session on this
+    daemon, so the message carries no ``session_id``. Capture
+    (screenshot) still runs. Acked with ``cu_kill_state``.
+    """
+
+    type: Literal["set_cu_kill"] = "set_cu_kill"
+    killed: bool
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -1437,10 +1449,13 @@ class ScreenFrame(DaemonEvent):
 
 
 class CuKillState(DaemonEvent):
-    """Process-wide computer-use kill-switch visibility (TD-3402).
+    """Current computer-use kill-switch (TD-3404).
 
-    Connection-scoped. ``killed=true`` clears Screen-pane glow and cursor.
-    The in-window control that emits this is TD-3404.
+    Connection-scoped with ``seq`` fixed at 1: the flag is process-wide,
+    not a fact in any session's event log. Replaying it from a session
+    log would desync every other viewer. Capture still runs when
+    ``killed`` is true. ``killed=true`` also clears Screen-pane glow
+    and cursor (TD-3402).
     """
 
     type: Literal["cu_kill_state"] = "cu_kill_state"
@@ -1561,7 +1576,8 @@ ClientMessageT = Annotated[
     | ListArtifacts
     | OpenArtifact
     | DesignHitTest
-    | CheckCuPermissions,
+    | CheckCuPermissions
+    | SetCuKill,
     Field(discriminator="type"),
 ]
 
@@ -1670,6 +1686,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "open_artifact",
         "design_hit_test",
         "check_cu_permissions",
+        "set_cu_kill",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(

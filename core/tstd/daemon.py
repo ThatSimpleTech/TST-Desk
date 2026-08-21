@@ -121,6 +121,7 @@ from .protocol import (
     ContextPinEntry,
     ContextPins,
     CreateRule,
+    CuKillState,
     CuPermissions,
     DaemonEvent,
     DeleteApiKey,
@@ -171,6 +172,7 @@ from .protocol import (
     SetBranch,
     SetCoworker,
     SetCuIndicators,
+    SetCuKill,
     SetLoadGlobalMemory,
     SetPreset,
     SetSessionStar,
@@ -1602,6 +1604,12 @@ class Daemon:
             log.info("shutdown requested via websocket")
             self._shutdown_event.set()
             return None
+
+        if isinstance(msg, SetCuKill):
+            self.set_computer_use_killed(msg.killed)
+            # Connection-scoped: the switch is process-wide, so this is
+            # not written to any session log (TD-3404).
+            return CuKillState(killed=msg.killed).model_dump_json()
 
         return None
 

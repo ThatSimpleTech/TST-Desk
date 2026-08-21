@@ -98,6 +98,7 @@ import type {
   DesignHitTest,
   DesignHit,
   CuPermissions,
+  SetCuKill,
   Ping,
   Error,
   Attachment,
@@ -803,6 +804,7 @@ describe("All fixtures have required shape", () => {
       "list_artifacts", "open_artifact",
       "design_hit_test",
       "check_cu_permissions",
+      "set_cu_kill",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -969,6 +971,21 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(Array.isArray(m.artifacts)).toBe(true);
     expect(isString(m.artifacts[0]?.artifact_id)).toBe(true);
     expect(isString(m.artifacts[0]?.path)).toBe(true);
+  });
+
+  it("set_cu_kill", () => {
+    const m = fixtures.set_cu_kill as SetCuKill;
+    expect(m.type).toBe("set_cu_kill");
+    expect(isBoolean(m.killed)).toBe(true);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("cu_kill_state", () => {
+    const m = fixtures.cu_kill_state as CuKillState;
+    expect(m.type).toBe("cu_kill_state");
+    expect(isBoolean(m.killed)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+    expect("session_id" in m).toBe(false);
   });
 
   it("artifact is metadata and path, not bytes", () => {

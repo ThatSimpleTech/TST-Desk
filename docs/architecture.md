@@ -307,6 +307,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `open_artifact` | yes | Open one artifact by id. Acked with `artifact` (metadata and path, not bytes). Unknown id is a typed error. |
 | `design_hit_test` | yes | Ask the session browser what is at a CSS-pixel point (TD-3403). Observe only. Acked with `design_hit`. |
 | `check_cu_permissions` | — | Re-probe computer-use OS permissions / integrity without raising a TCC prompt (TD-3302, TD-3303). Acked with `cu_permissions`. |
+| `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
 
 ### Daemon → client
 
@@ -356,7 +357,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
 | `error` | session | A typed error, usually in response to a bad message. |
 | `screen_frame` | session | A computer-use screenshot (browser or desktop) was written to the session dir (TD-1710, TD-3401). Path, not bytes. |
-| `cu_kill_state` | connection | Process-wide computer-use kill-switch visibility. `killed=true` clears Screen-pane glow and cursor (TD-3402). The in-window control is TD-3404. |
+| `cu_kill_state` | connection | Process-wide computer-use kill-switch. Seq is fixed at 1 and it is not written to a session log (TD-3404). `killed=true` clears Screen-pane glow and cursor (TD-3402). |
 | `design_hit` | connection | Reply to `design_hit_test`: xpath, role, attributes, box, styles (TD-3403). Not in the session log. |
 | `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), or Windows UIPI / secure-desktop integrity (TD-3303). |
 

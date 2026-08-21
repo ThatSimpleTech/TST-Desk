@@ -23,6 +23,7 @@ from tstd.protocol import (
     Cancel,
     ClientMessageT,
     CostUpdate,
+    CuKillState,
     DaemonEvent,
     DaemonEventT,
     DecisionLogged,
@@ -54,6 +55,7 @@ from tstd.protocol import (
     SessionState,
     SetCoworker,
     SetCuIndicators,
+    SetCuKill,
     SetLoadGlobalMemory,
     SetSessionStar,
     SetSkipAllApprovals,
@@ -175,6 +177,14 @@ class TestClientMessages:
         assert isinstance(back, SetWorkspacePin)
         assert back.pinned is True
         assert "session_id" not in SetWorkspacePin.model_fields
+
+    def test_set_cu_kill(self) -> None:
+        msg = SetCuKill(killed=True)
+        back = _roundtrip(msg)
+        assert isinstance(back, SetCuKill)
+        assert back.killed is True
+        # Process-wide: a session_id would make a per-session latch.
+        assert "session_id" not in SetCuKill.model_fields
 
     def test_resume(self) -> None:
         msg = Resume(session_id="sess-1")
@@ -724,6 +734,14 @@ class TestDaemonEvents:
         assert back.format == "csv"
         assert back.path == "/data/exports/usage.csv"
         assert back.rows == 42
+
+    def test_cu_kill_state(self) -> None:
+        evt = CuKillState(killed=True)
+        back = _roundtrip(evt)
+        assert isinstance(back, CuKillState)
+        assert back.killed is True
+        assert back.seq == 1
+        assert "session_id" not in CuKillState.model_fields
 
 
 # ── Discriminated union dispatch ───────────────────────────────────────

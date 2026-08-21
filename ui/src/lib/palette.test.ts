@@ -94,6 +94,8 @@ describe("rankEntries", () => {
 		expect(titles(ACTION_ENTRIES, "sett")[0]).toBe("Open settings");
 		expect(titles(ACTION_ENTRIES, "dec")[0]).toBe("Open decisions");
 		expect(titles(ACTION_ENTRIES, "quit")[0]).toBe("Quit TST Desk");
+		expect(titles(ACTION_ENTRIES, "stop cu")[0]).toBe("Stop computer use");
+		expect(titles(ACTION_ENTRIES, "resume")[0]).toBe("Resume computer use");
 	});
 
 	it("finds an entry by a word only its keywords carry", () => {
@@ -148,9 +150,11 @@ describe("icons", () => {
 			"open-decisions",
 			"open-settings",
 			"quit-app",
+			"resume-computer-use",
 			"run-doctor",
 			"show-stack",
 			"show-work",
+			"stop-computer-use",
 			"toggle-theme",
 		]);
 	});
