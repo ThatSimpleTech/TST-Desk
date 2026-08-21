@@ -122,3 +122,59 @@ class TestPolicyFileGuard:
         assert written is not None
         assert written.name == "config.yaml"
         assert written.exists()
+
+
+class TestTrailingCharAliases:
+    """Trailing dot/space components alias steering files on Windows
+    (Win32 strips them at open time); the guard refuses them on every
+    platform (TD-4820)."""
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            ".tst/config.yaml.",
+            "AGENTS.md.",
+            ".tst./config.yaml",
+            ".tst/rules./x.md",
+            "notes.md.",  # not steering — still an unsafe form
+            "dir /x.md",  # trailing space in a component
+        ],
+    )
+    def test_trailing_char_forms_refused(self, tmp_path: Path, raw: str) -> None:
+        g = PathGuard(_boundary(tmp_path))
+        with pytest.raises(RefusalError) as ei:
+            g.check_write(raw)
+        assert ei.value.code == "windows_unsafe"
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "notes.md",
+            "./src/x.py",  # leading ./ is navigation, not a component
+            "dir/../x.md",
+            ".tst/memory/MEMORY.md",
+        ],
+    )
+    def test_ordinary_dotted_and_navigated_paths_unaffected(self, tmp_path: Path, raw: str) -> None:
+        g = PathGuard(_boundary(tmp_path))
+        g.check_write(raw)  # no refusal
+
+    def test_bare_policy_file_still_refuses_as_steering_not_unsafe(self, tmp_path: Path) -> None:
+        # Unaffected by the new rule: the pre-existing steering refusal
+        # still fires, not a windows_unsafe one.
+        g = PathGuard(_boundary(tmp_path))
+        with pytest.raises(RefusalError) as ei:
+            g.check_write(".tst/config.yaml")
+        assert ei.value.code == "steering_file"
+
+    def test_classifier_marks_trailing_dot_steering_alias_c(self, tmp_path: Path) -> None:
+        decision = DecisionClassifier(_boundary(tmp_path)).classify(
+            DecisionRequest(
+                tool_name="fs_write",
+                writes=(tmp_path / "AGENTS.md.",),
+                is_mutation=True,
+            )
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert decision.rule is not None
+        assert decision.rule.id == "boundary-unsafe-path"
