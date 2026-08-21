@@ -5476,9 +5476,18 @@ landed whole.
 **Size:** 3 · **Depends on:** TD-4401, TD-702
 
 **Acceptance criteria:**
-- [ ] No MCP tool bypasses TD-702
-- [ ] Missing `host_fields` / path fields fail toward B, never A
-- [ ] A test attempts a bypass and gets `UnclassifiedToolCall`
+- [x] No MCP tool bypasses TD-702
+- [x] Missing `host_fields` / path fields fail toward B, never A
+- [x] A test attempts a bypass and gets `UnclassifiedToolCall`
+
+**Completed (2026-08-21):** the rule table gains `mcp-floor`, a static
+Class B floor keyed on tool provenance — `build_decision_request` now
+carries `source` (``mcp:<server>``) onto the request — placed under the
+C rules so an MCP call naming an undeclared host still classifies C.
+The worker tier is never consulted for an MCP call. Dispatch remains
+the only execution path (chokepoint scan unchanged); a contributed
+tool reaching it without a classifier raises `UnclassifiedToolCall`,
+and fully wired it dispatches as Class B through the approval gate.
 
 ---
 

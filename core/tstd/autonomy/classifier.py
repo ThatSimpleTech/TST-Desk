@@ -15,6 +15,8 @@ the *obvious* cases — the ones that must never reach the model:
   ``.tst/rules/**``) → C, even inside the workspace
 - a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
+- a call to a tool contributed by an MCP server → B, always (its targets
+  are invisible to the table)
 - an in-workspace edit inside ``writable_paths`` → A
 
 Anything the table cannot decide is left unclassified so the worker-tier
@@ -120,6 +122,9 @@ class DecisionRequest:
         actuates: Desktop computer-use only (TD-3301). ``None`` means the
             existing path/host table applies. ``False`` is capture-only
             (Class A). ``True`` is actuation (Class B).
+        source: Where the contributing tool came from (TD-4401). Empty for
+            built-ins; ``mcp:<server>`` for tools contributed by an MCP
+            server. Provenance feeds the B-floor, never an exemption.
     """
 
     tool_name: str
@@ -129,6 +134,7 @@ class DecisionRequest:
     hosts: frozenset[str] = frozenset()
     is_mutation: bool = False
     actuates: bool | None = None
+    source: str = ""
 
 
 # ── Rule table ─────────────────────────────────────────────────────────
@@ -399,6 +405,18 @@ def _rule_shell_floor(req: DecisionRequest, _boundary: Boundary) -> bool:
     return req.tool_name == "shell"
 
 
+def _rule_mcp_floor(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """A tool contributed by an MCP server is at least Class B (TD-4402).
+
+    An MCP tool declares no path or host fields, so its request reaches
+    the table with nothing to judge — and an MCP call is an external
+    contract by construction, the one thing Class A forbids.  Same
+    reasoning as the shell floor: a model's reading of an opaque call is
+    never the sole gate on running it.
+    """
+    return req.source.startswith("mcp:")
+
+
 def _rule_memory_write(req: DecisionRequest, boundary: Boundary) -> bool:
     """The call writes only under ``.tst/memory/`` (Class A, TD-2102)."""
     return (
@@ -497,6 +515,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="shell commands always require approval (never model-granted A)",
         decision_class=DecisionClass.B,
         match=_rule_shell_floor,
+    ),
+    Rule(
+        id="mcp-floor",
+        description="MCP-contributed tools always require approval (never model-granted A)",
+        decision_class=DecisionClass.B,
+        match=_rule_mcp_floor,
     ),
     Rule(
         id="memory-file-write",
