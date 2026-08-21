@@ -18,9 +18,11 @@ workspace as the working directory.  Three safety rails surround it:
   by basename.  Unresolvable binaries and unparseable commands are
   refused fail-closed.  Only the leading binary of each segment is
   checked: wrappers such as ``sh -c``, ``sudo``, or ``env`` match as
-  themselves, so list them deliberately.  The allowlist is a policy rail,
-  not a sandbox — real isolation for autonomous runs is the container
-  (spec §12.5).
+  themselves, so list them deliberately — and know that listed binaries
+  can re-exec others: ``find -exec``, ``xargs``, ``make``, and every
+  interpreter walk straight through a basename match.  The allowlist is
+  a policy rail, not a sandbox — real isolation for autonomous runs is
+  the container (spec §12.5).
 
 Output streams to the timeline as ``shell_output`` events while the
 command runs, and the final result carries the exit code plus capped
@@ -69,8 +71,20 @@ _log = logging.getLogger(__name__)
 
 # Env var names that look like secrets.  Matched case-insensitively as a
 # substring of the variable name, so OPENAI_API_KEY, GITHUB_TOKEN,
-# AWS_SECRET_ACCESS_KEY, DB_PASSWORD, etc. are all dropped.
-_SECRET_NAME_RE = re.compile(r"(KEY|SECRET|TOKEN|PASSW|CREDENTIAL|KEYCHAIN)", re.IGNORECASE)
+# AWS_SECRET_ACCESS_KEY, DB_PASSWORD, MYSQL_PWD, etc. are all dropped.
+# (PWD and OLDPWD go too — the child shell re-derives them from its cwd.)
+_SECRET_NAME_RE = re.compile(r"(KEY|SECRET|TOKEN|PASSW|PWD|CREDENTIAL|KEYCHAIN)", re.IGNORECASE)
+# AUTH as a word, not a substring: DOCKER_AUTH_CONFIG and SOME_AUTH drop,
+# but GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL must survive or the child cannot
+# commit as the user.
+_AUTH_NAME_RE = re.compile(r"(^|_)AUTH($|_)", re.IGNORECASE)
+# SSH_AUTH_SOCK names a capability (the agent socket), not a secret value;
+# dropping it would silently break every git-over-ssh command the user
+# approves.  The filter's job is secret values, not sandboxing.
+_AUTH_NAME_EXEMPT = frozenset({"SSH_AUTH_SOCK"})
+# A URL with embedded credentials (user:pass@ before the host) is a secret
+# regardless of the variable's name — DATABASE_URL, REDIS_URL, SMTP URLs.
+_CREDENTIAL_URL_VALUE_RE = re.compile(r"://[^/\s:]+:[^/\s@]+@")
 
 # Shell operators that separate top-level commands.  Newline is a command
 # separator too.
@@ -100,9 +114,21 @@ def sanitized_env() -> dict[str, str]:
 
     API keys, tokens, passwords, and keychain material are never passed
     to child processes (TD-605).  Ordinary variables (``PATH``, ``HOME``,
-    ``LANG``, ...) pass through unchanged.
+    ``LANG``, ...) pass through unchanged.  TD-4805 widened the net:
+    ``*_AUTH`` word forms (``DOCKER_AUTH_CONFIG``), ``PWD`` carriers
+    (``MYSQL_PWD``), and any variable whose *value* embeds credentials in
+    a URL (user:password@ before the host), regardless of name.
     """
-    return {name: value for name, value in os.environ.items() if not _SECRET_NAME_RE.search(name)}
+    env: dict[str, str] = {}
+    for name, value in os.environ.items():
+        if _SECRET_NAME_RE.search(name):
+            continue
+        if name not in _AUTH_NAME_EXEMPT and _AUTH_NAME_RE.search(name):
+            continue
+        if _CREDENTIAL_URL_VALUE_RE.search(value):
+            continue
+        env[name] = value
+    return env
 
 
 def _binaries(command: str) -> list[str]:
