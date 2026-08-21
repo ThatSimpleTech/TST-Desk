@@ -921,6 +921,32 @@ class TierState(DaemonEvent):
     model_slugs: dict[str, str] = Field(default_factory=dict)
 
 
+class McpServerStatus(BaseModel):
+    """One MCP server's load state inside a ``mcp_state`` event (TD-4401)."""
+
+    name: str
+    transport: Literal["stdio", "http"]
+    status: Literal["ready", "failed", "starting", "disabled"]
+    # Human-readable failure reason; present for failed servers.
+    detail: str = ""
+    tool_count: int = 0
+
+
+class McpState(DaemonEvent):
+    """Which MCP servers loaded and what they contributed (TD-4401).
+
+    Emitted when a session attaches its runtime — open and revive both
+    call it — and only when ``mcp.servers`` is non-empty, so sessions on
+    an unconfigured daemon replay exactly the seqs 1-3 they always did.
+    A failed server is reported here and as a doctor row; it never
+    blocks the session.
+    """
+
+    type: Literal["mcp_state"] = "mcp_state"
+    session_id: str
+    servers: list[McpServerStatus] = Field(default_factory=list)
+
+
 class BoundaryUpdate(DaemonEvent):
     """The workspace boundary, emitted when a session opens (TD-706).
 
@@ -1623,6 +1649,7 @@ DaemonEventT = Annotated[
     | BoundaryUpdate
     | TurnComplete
     | TierState
+    | McpState
     | ContextCompacted
     | SteeringReloaded
     | RuleActivated
@@ -1733,6 +1760,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "boundary_update",
         "turn_complete",
         "tier_state",
+        "mcp_state",
         "context_compacted",
         "steering_reloaded",
         "rule_activated",

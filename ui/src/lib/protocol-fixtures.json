@@ -516,6 +516,27 @@
       "validator": "test-validator-slug"
     }
   },
+  "mcp_state": {
+    "type": "mcp_state",
+    "seq": 4,
+    "session_id": "sess-1",
+    "servers": [
+      {
+        "name": "git",
+        "transport": "stdio",
+        "status": "ready",
+        "detail": "",
+        "tool_count": 3
+      },
+      {
+        "name": "dead",
+        "transport": "stdio",
+        "status": "failed",
+        "detail": "MCP server closed stdout",
+        "tool_count": 0
+      }
+    ]
+  },
   "ping": {
     "type": "ping"
   },

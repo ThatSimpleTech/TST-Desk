@@ -153,6 +153,7 @@ class TestWithoutWorkspace:
                 "git",
                 "workspace",
                 "steering",
+                "mcp",
             ]
             # Daemon alive by definition; git and probe-driven rows green.
             assert _row(checks, "daemon")["status"] == "ok"
@@ -162,6 +163,8 @@ class TestWithoutWorkspace:
             # No workspace opened: both workspace-scoped rows skip.
             assert _row(checks, "workspace")["status"] == "skip"
             assert _row(checks, "steering")["status"] == "skip"
+            # No MCP servers configured: the row skips, it does not alarm.
+            assert _row(checks, "mcp")["status"] == "skip"
 
     @pytest.mark.asyncio
     async def test_no_key_fails_with_fix(self, fakes: FakeKeychain) -> None:

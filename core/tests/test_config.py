@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import ClassVar
+from unittest import mock
 
 import pytest
+import yaml
 
 from tstd.config import (
     DEFAULT_LOG_MAX_EVENTS,
@@ -397,3 +399,54 @@ class TestNoSlugsInSource:
         for price in self._FORBIDDEN_PRICES:
             found = self._grep_for(price, src)
             assert found is None, f"Price '{price}' found in Python source (.py files):\n{found}"
+
+
+# ── MCP servers (TD-4401) ────────────────────────────────────────────────
+
+
+class TestMcpSection:
+    def test_shipped_default_has_no_servers(self, tmp_path: Path) -> None:
+        monkey_home = tmp_path / "home"
+        monkey_home.mkdir()
+        with mock.patch("tstd.config.user_data_dir", return_value=monkey_home):
+            config = load_config()
+        assert config.mcp.servers == {}
+
+    def test_legacy_user_copy_back_fills_mcp(self, tmp_path: Path) -> None:
+        """A user copy from before mcp existed gets the section filled in."""
+        home = tmp_path / "home"
+        home.mkdir(parents=True)
+        legacy = yaml.safe_load(default_config_yaml())
+        del legacy["mcp"]
+        (home / "config.yaml").write_text(yaml.safe_dump(legacy), encoding="utf-8")
+        with mock.patch("tstd.config.user_data_dir", return_value=home):
+            config = load_config()
+        assert config.mcp.servers == {}
+
+    def test_servers_round_trip_from_yaml(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        home.mkdir(parents=True)
+        data = yaml.safe_load(default_config_yaml())
+        data["mcp"] = {
+            "servers": {
+                "git": {"command": ["uvx", "mcp-server-git"]},
+                "local": {"url": "http://127.0.0.1:9000/mcp", "enabled": False},
+            }
+        }
+        (home / "config.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+        with mock.patch("tstd.config.user_data_dir", return_value=home):
+            config = load_config()
+        assert config.mcp.servers["git"].command == ["uvx", "mcp-server-git"]
+        assert config.mcp.servers["local"].enabled is False
+
+    def test_invalid_mcp_section_names_the_key(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        home.mkdir(parents=True)
+        data = yaml.safe_load(default_config_yaml())
+        data["mcp"] = {"servers": {"x": {"command": "a", "url": "http://127.0.0.1:1/mcp"}}}
+        (home / "config.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+        with (
+            mock.patch("tstd.config.user_data_dir", return_value=home),
+            pytest.raises(ConfigError, match="mcp"),
+        ):
+            load_config()

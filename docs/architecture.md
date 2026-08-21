@@ -335,6 +335,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. |
 | `tier_state` | session | The active tier, any pinned override, the plan lock (TD-4603), and the configured slugs. |
+| `mcp_state` | session | Which MCP servers loaded and what each contributed (TD-4401). Emitted on open and revive, and only when `mcp.servers` is non-empty; a failed server is reported here and as a doctor row, never blocking the session. |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
