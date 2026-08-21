@@ -6,9 +6,11 @@ Linux has no live path — that is E20. The mock still works on any OS.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
+from .permissions import parse_mcp_permissions_result
 from .protocol import DesktopError
 from .stdio_mcp import StdioMcpClient, map_mcp_error
 
@@ -63,6 +65,17 @@ class McpDesktopDriver:
     def _refuse_if_killed(self) -> None:
         if self.killed:
             raise DesktopError("cu_killed", "computer-use kill-switch is engaged")
+
+    async def check_permissions(self) -> dict[str, Any]:
+        """Probe the sidecar. ``request=False`` — never wait on a TCC dialog."""
+        try:
+            result = await asyncio.wait_for(
+                self._client.call_tool("check_permissions", {"request": False}),
+                timeout=3.0,
+            )
+        except TimeoutError:
+            return {"all_granted": False, "timed_out": True}
+        return parse_mcp_permissions_result(result)
 
     async def screenshot(self, display: int | None = None) -> str:
         # Capture is allowed on a live path even when the kill-switch is on.

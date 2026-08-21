@@ -88,9 +88,11 @@ import type {
   LogTrimmed,
   ListArtifacts,
   OpenArtifact,
+  CheckCuPermissions,
   ArtifactReady,
   ArtifactList,
   Artifact,
+  CuPermissions,
   Ping,
   Error,
   Attachment,
@@ -781,6 +783,7 @@ describe("All fixtures have required shape", () => {
       "run_diagnostics",
       "get_usage", "export_usage",
       "list_artifacts", "open_artifact",
+      "check_cu_permissions",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -799,6 +802,7 @@ describe("All fixtures have required shape", () => {
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",
+      "cu_permissions",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -952,6 +956,22 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isString(m.path)).toBe(true);
     expect(hasKeys(m, ["content"])).toBe(false);
     expect(hasKeys(m, ["content_b64"])).toBe(false);
+  });
+
+  it("check_cu_permissions", () => {
+    const m = fixtures.check_cu_permissions as CheckCuPermissions;
+    expect(m.type).toBe("check_cu_permissions");
+  });
+
+  it("cu_permissions names both TCC gates and settings URLs", () => {
+    const m = fixtures.cu_permissions as CuPermissions;
+    expect(m.type).toBe("cu_permissions");
+    expect(isBoolean(m.granted)).toBe(true);
+    expect(isBoolean(m.screen_recording)).toBe(true);
+    expect(isBoolean(m.accessibility)).toBe(true);
+    expect(isString(m.screen_recording_url)).toBe(true);
+    expect(isString(m.accessibility_url)).toBe(true);
+    expect(m.platform).toBe("macos");
   });
 
   it("session_list carries the auto-title field (TD-3001)", () => {

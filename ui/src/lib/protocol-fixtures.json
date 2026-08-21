@@ -257,6 +257,9 @@
     "session_id": "sess-1",
     "artifact_id": "art-1"
   },
+  "check_cu_permissions": {
+    "type": "check_cu_permissions"
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -825,6 +828,17 @@
     "title": "Notes",
     "mime": "text/markdown",
     "path": "notes.md"
+  },
+  "cu_permissions": {
+    "type": "cu_permissions",
+    "seq": 1,
+    "granted": false,
+    "screen_recording": false,
+    "accessibility": true,
+    "screen_recording_url": "x-apple.systemsettings:com.apple.preferences.privacy-security.ScreenCapture",
+    "accessibility_url": "x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility",
+    "first_run": true,
+    "platform": "macos"
   },
   "hello_ack": {
     "type": "hello_ack",

@@ -31,6 +31,7 @@ from tstd.protocol import (
     Attachment,
     BoundaryUpdate,
     Cancel,
+    CheckCuPermissions,
     CheckpointNotice,
     ContextCompacted,
     ContextPinEntry,
@@ -38,6 +39,7 @@ from tstd.protocol import (
     ConversationReset,
     CostUpdate,
     CreateRule,
+    CuPermissions,
     DecisionLogged,
     DeleteApiKey,
     DeleteSession,
@@ -192,6 +194,7 @@ FIXTURES = {
     # Artifacts (TD-3201): list/open on the wire; record is a daemon API.
     "list_artifacts": ListArtifacts(session_id="sess-1"),
     "open_artifact": OpenArtifact(session_id="sess-1", artifact_id="art-1"),
+    "check_cu_permissions": CheckCuPermissions(),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
@@ -579,6 +582,18 @@ FIXTURES = {
         title="Notes",
         mime="text/markdown",
         path="notes.md",
+    ),
+    "cu_permissions": CuPermissions(
+        granted=False,
+        screen_recording=False,
+        accessibility=True,
+        screen_recording_url=(
+            "x-apple.systemsettings:com.apple.preferences.privacy-security.ScreenCapture"
+        ),
+        accessibility_url=(
+            "x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility"
+        ),
+        first_run=True,
     ),
 }
 

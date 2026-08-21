@@ -622,6 +622,17 @@ class OpenArtifact(ClientMessage):
     artifact_id: str = Field(min_length=1)
 
 
+class CheckCuPermissions(ClientMessage):
+    """Re-probe computer-use OS permissions (TD-3302).
+
+    Connection-scoped.  The daemon answers with ``cu_permissions``.  The
+    probe never raises a TCC prompt — a hang waiting for the dialog is a
+    defect.
+    """
+
+    type: Literal["check_cu_permissions"] = "check_cu_permissions"
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -1374,6 +1385,27 @@ class Error(DaemonEvent):
     message: str
 
 
+class CuPermissions(DaemonEvent):
+    """Computer-use OS permission report (TD-3302).
+
+    Connection-scoped (seq is fixed at 1).  Carries granted/denied for
+    Screen Recording and Accessibility plus the current System Settings
+    deep links.  ``first_run`` is true when this is the first desktop CU
+    attempt on this machine.  Windows-specific copy is TD-3303 — this
+    event always names the macOS pair (darwin and the mock).
+    """
+
+    type: Literal["cu_permissions"] = "cu_permissions"
+    seq: int = 1
+    granted: bool
+    screen_recording: bool
+    accessibility: bool
+    screen_recording_url: str
+    accessibility_url: str
+    first_run: bool = False
+    platform: Literal["macos"] = "macos"
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -1426,7 +1458,8 @@ ClientMessageT = Annotated[
     | ExportUsage
     | DeleteApiKey
     | ListArtifacts
-    | OpenArtifact,
+    | OpenArtifact
+    | CheckCuPermissions,
     Field(discriminator="type"),
 ]
 
@@ -1468,7 +1501,8 @@ DaemonEventT = Annotated[
     | ArtifactList
     | Artifact
     | Ping
-    | Error,
+    | Error
+    | CuPermissions,
     Field(discriminator="type"),
 ]
 
@@ -1528,6 +1562,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "export_usage",
         "list_artifacts",
         "open_artifact",
+        "check_cu_permissions",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -1570,6 +1605,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "artifact",
         "ping",
         "error",
+        "cu_permissions",
     }
 )
 
