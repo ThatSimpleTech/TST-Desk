@@ -4740,11 +4740,19 @@ the session. The work view is the right-pane surface that is not chat.
 **Size:** 5 · **Depends on:** TD-3201, TD-1712
 
 **Acceptance criteria:**
-- [ ] Rail **Artifacts** becomes `ready` (today it is absent or planned)
-- [ ] List for the bound session; click opens a preview (markdown /
+- [x] Rail **Artifacts** becomes `ready` (today it is absent or planned)
+- [x] List for the bound session; click opens a preview (markdown /
       highlighted code / sandboxed HTML — no network in the preview)
-- [ ] Copy source; open-in-OS-editor if it is a workspace path
-- [ ] Not a file tree. Not Monaco. Not apply/reject
+- [x] Copy source; open-in-OS-editor if it is a workspace path
+- [x] Not a file tree. Not Monaco. Not apply/reject
+
+**Done (2026-08-20).** Artifacts is a ready rail surface. The pane lists
+the bound session from `artifact_list` / `artifact_ready`; a click
+sends `open_artifact` and previews through a wall-limited
+`read_text_file`. Markdown and highlighted code reuse the chat stack;
+HTML is `sandbox=""` plus `default-src 'none'`. Copy source always;
+Open in editor only for workspace paths. See DECISIONS.md 2026-08-20
+TD-3202.
 
 ---
 

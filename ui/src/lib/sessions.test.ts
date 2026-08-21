@@ -122,7 +122,7 @@ import {
   toggleRowMenu,
 } from "./session-actions.svelte.js";
 import { railFunctions } from "./rail";
-import { projects, resetProjects, showProjects } from "./projects.svelte.js";
+import { projects, resetProjects, showArtifacts, showProjects } from "./projects.svelte.js";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -434,11 +434,12 @@ describe("rail function entries", () => {
   it("activates every entry the registry calls ready", () => {
     // Marking an entry ready without wiring it fails here rather than
     // shipping a button that does nothing. Ready depends on the surface.
-    for (const surface of ["home", "projects"] as const) {
+    for (const surface of ["home", "projects", "artifacts"] as const) {
       for (const entry of railFunctions(surface)) {
         if (entry.state !== "ready") continue;
         resetProjects();
         if (surface === "projects") showProjects();
+        if (surface === "artifacts") showArtifacts();
         expect(activateRailFunction(entry.id)).toBe(true);
       }
     }
@@ -449,6 +450,14 @@ describe("rail function entries", () => {
     expect(projects.surface).toBe("projects");
     expect(projects.selectedPath).toBeNull();
     expect(mocks.surfaceCalls).toEqual([]);
+  });
+
+  it("Artifacts opens the artifacts surface", () => {
+    expect(activateRailFunction("artifacts")).toBe(true);
+    expect(projects.surface).toBe("artifacts");
+    expect(activateRailFunction("artifacts")).toBe(false);
+    expect(activateRailFunction("home")).toBe(true);
+    expect(projects.surface).toBe("home");
   });
 
   it("Home is ready once Projects is showing, and takes you back", () => {

@@ -32,10 +32,20 @@ describe("rail sections", () => {
 		expect(railSections(0)).toHaveLength(2);
 	});
 
-	it("puts Home, Projects and Scheduled in the function group, in rail order", () => {
+	it("puts Home, Projects, Artifacts and Scheduled in the function group, in rail order", () => {
 		const [functions] = railSections(3);
-		expect(functions.entries.map((e) => e.id)).toEqual(["home", "projects", "scheduled"]);
-		expect(functions.entries.map((e) => e.label)).toEqual(["Home", "Projects", "Scheduled"]);
+		expect(functions.entries.map((e) => e.id)).toEqual([
+			"home",
+			"projects",
+			"artifacts",
+			"scheduled",
+		]);
+		expect(functions.entries.map((e) => e.label)).toEqual([
+			"Home",
+			"Projects",
+			"Artifacts",
+			"Scheduled",
+		]);
 	});
 
 	it("heads the history section and leaves the function group unheaded", () => {
@@ -102,15 +112,30 @@ describe("surfaces that can't be clicked", () => {
 	it("hints a ready entry with its plain label", () => {
 		const projects = entry("projects");
 		expect(projects && entryHint(projects)).toBe("Projects");
+		const artifacts = entry("artifacts");
+		expect(artifacts?.state).toBe("ready");
+		expect(artifacts && entryHint(artifacts)).toBe("Artifacts");
 	});
 
 	it("swaps current and ready when the window is on Projects (TD-2801)", () => {
 		const entries = railFunctions("projects");
 		expect(entries.find((e) => e.id === "projects")?.state).toBe("current");
 		expect(entries.find((e) => e.id === "home")?.state).toBe("ready");
+		expect(entries.find((e) => e.id === "artifacts")?.state).toBe("ready");
 		expect(entries.find((e) => e.id === "scheduled")?.state).toBe("planned");
 		expect(entryHint(entries.find((e) => e.id === "projects")!)).toBe("Projects — you are here");
 		expect(entryHint(entries.find((e) => e.id === "home")!)).toBe("Home");
+	});
+
+	it("marks Artifacts current when that surface is showing (TD-3202)", () => {
+		const entries = railFunctions("artifacts");
+		expect(entries.find((e) => e.id === "artifacts")?.state).toBe("current");
+		expect(entries.find((e) => e.id === "home")?.state).toBe("ready");
+		expect(entries.find((e) => e.id === "projects")?.state).toBe("ready");
+		expect(entries.find((e) => e.id === "scheduled")?.state).toBe("planned");
+		expect(entryHint(entries.find((e) => e.id === "artifacts")!)).toBe(
+			"Artifacts — you are here",
+		);
 	});
 
 	it("names an icon the shared map actually has", () => {
