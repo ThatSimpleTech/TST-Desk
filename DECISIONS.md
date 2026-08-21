@@ -7234,3 +7234,60 @@ idempotent.
 override. That would destroy a user's pinned tier underneath them and conflate
 "pinned brain" (a routing preference) with "locked brain for planning" (a mode),
 making the title bar unable to tell the two apart once `tier_state` carried both.
+
+
+## 2026-08-21 — TD-4401: the generic MCP stack reuses the desktop stdio client (Class B)
+
+**Decision:** `tstd.mcp` does not carry its own wire client. `StdioMcpClient`
+gains an injectable error mapper and transport wording (`error_mapper`,
+`transport_code`, `transport_label`, defaulting to today's computer-use
+behavior), plus `list_tools()` and a best-effort `is_alive()`. The extension
+loader passes its own vocabulary, so a git server's "permission denied" is an
+`McpError` at the manager boundary — never a `DesktopError` the dispatcher
+would read as computer-use.
+
+**Rationale:** The client already solves the hard parts correctly — pipe spawn,
+16 MiB frames, stderr draining so a chatty child cannot stall, per-call timeout,
+terminate→kill teardown. Forking a second implementation would duplicate every
+one of those fixes forever; parameterizing the error vocabulary is the only part
+that was actually CU-specific. The desktop suite's existing tests pin the default
+behavior unchanged.
+
+**Alternative rejected:** A fresh `McpStdioClient` in `tstd.mcp`. Same wire code
+in two places with two bug-fix histories was the predictable outcome.
+
+
+## 2026-08-21 — TD-4401: mcp_state is session-scoped and only emitted when servers are configured (Class B)
+
+**Decision:** The MCP load-state event rides the session event log (replayed on
+attach and revive), and `_emit_working_context` emits it only when
+`mcp.servers` is non-empty. An unconfigured daemon's open sequence stays at
+seqs 1–3 exactly as before.
+
+**Rationale:** Session-scoping means a reconnecting client learns server states
+from replay rather than a separate connection-scoped push it has to special-case.
+The conditional emission keeps every existing `attach from_seq 4` consumer —
+tests included — byte-compatible; an always-emit would shift boundary_update and
+tier_state off seqs 2–3 and break the pinned open contract for zero information
+when there is nothing to report.
+
+**Alternative rejected:** A connection-scoped event at fixed seq 1. It needs the
+client.ts stale-seq bypass pattern, cannot be replayed to a late attach, and
+reports nothing more.
+
+
+## 2026-08-21 — TD-4401: loopback HTTP speaks JSON response mode only (Class B)
+
+**Decision:** The HTTP transport POSTs JSON-RPC and reads JSON responses,
+passing `Mcp-Session-Id` through when a server issues one. A server that answers
+`text/event-stream` fails with a clear error instead of being half-read.
+
+**Rationale:** JSON mode covers the servers v0.8 targets (local, simple, ours)
+and keeps the client honest — no partial SSE parser pretending to be a
+transport. SSE streaming exists for server-initiated requests and progress that
+tool loading does not need; widening later is additive, and the refusal message
+names the gap.
+
+**Alternative rejected:** Full streamable-HTTP with SSE parsing in this story.
+That is a separate transport project; TD-4401's criteria are about config-listed
+servers reaching the registry safely, which JSON mode satisfies end to end.

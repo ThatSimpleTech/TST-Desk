@@ -5443,11 +5443,32 @@ slash/skills can start after M4.
 **Size:** 8 · **Depends on:** TD-601
 
 **Acceptance criteria:**
-- [ ] User-data-dir config lists stdio (and loopback HTTP) servers
-- [ ] Tools appear in the registry with the server as provenance
-- [ ] A dead server is a doctor row, not a dead daemon
-- [ ] Destination traces to config (`test_outbound_hosts`)
-- [ ] Size 8 — split at client vs registry if needed
+- [x] User-data-dir config lists stdio (and loopback HTTP) servers
+- [x] Tools appear in the registry with the server as provenance
+- [x] A dead server is a doctor row, not a dead daemon
+- [x] Destination traces to config (`test_outbound_hosts`)
+- [x] Size 8 — split at client vs registry if needed
+
+**Completed (2026-08-21):** a new `mcp:` section on `ModelConfig` holds
+`mcp.servers.<name>` entries carrying `command` (stdio argv) xor `url`
+(loopback HTTP, enforced by `is_loopback_url` at load) plus `enabled`.
+The entry names the destination and nothing else — no env, no headers;
+tokens stay out until TD-4403's keychain flow. A daemon-owned
+`McpManager` starts every enabled server once, lazily at first session
+attach (or doctor run), and closes them at shutdown like the desktop
+drivers. Ready servers' tools register into each session's fresh
+registry as `mcp__<server>__<tool>` with conservative classifier
+metadata (`ask`, never parallel) and `source="mcp:<server>"` provenance;
+registration goes through the same `registry.register` path as builtins,
+so nothing about it bypasses the chokepoint. Failures are recorded per
+server: the session still opens, `mcp_state` reports ready/failed/
+starting/disabled (emitted only when servers are configured, keeping the
+unconfigured open sequence at seqs 1–3), and the doctor grows an `mcp`
+row after steering that fails with a fix when any server is down. The
+HTTP transport speaks streamable HTTP in JSON response mode only and
+joins `_OUTBOUND_CAPABLE` in `test_outbound_hosts`; stdio opens no
+socket. The split at "client vs registry" was not needed — one story,
+landed whole.
 
 ---
 

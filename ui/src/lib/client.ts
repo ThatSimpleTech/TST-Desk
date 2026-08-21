@@ -37,6 +37,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "boundary_update",
   "turn_complete",
   "tier_state",
+  "mcp_state", // TD-4401: which MCP servers loaded
   "context_compacted",
   "steering_reloaded",
   "rule_activated",

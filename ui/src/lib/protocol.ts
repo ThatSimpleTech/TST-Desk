@@ -613,6 +613,22 @@ export interface TierState extends DaemonEvent {
   model_slugs: Record<string, string>;
 }
 
+/** One MCP server's load state inside a mcp_state event (TD-4401). */
+export interface McpServerStatus {
+  name: string;
+  transport: "stdio" | "http";
+  status: "ready" | "failed" | "starting" | "disabled";
+  detail: string;
+  tool_count: number;
+}
+
+/** Which MCP servers loaded and what they contributed (TD-4401). */
+export interface McpState extends DaemonEvent {
+  type: "mcp_state";
+  session_id: string;
+  servers: McpServerStatus[];
+}
+
 export interface BoundaryUpdate extends DaemonEvent {
   type: "boundary_update";
   session_id: string;
@@ -1031,6 +1047,7 @@ export type DaemonEventUnion =
   | BoundaryUpdate
   | TurnComplete
   | TierState
+  | McpState
   | ContextCompacted
   | SteeringReloaded
   | RuleActivated

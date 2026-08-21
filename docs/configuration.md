@@ -60,6 +60,7 @@ no effect.
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
+| `mcp` | mapping | see below | MCP extension servers whose tools join the registry (TD-4401). Omitted in an older user copy is filled from the shipped file at load. Servers are read once — nothing is discovered or hot-reloaded. |
 
 ### `search`
 
@@ -108,6 +109,33 @@ under the user data dir. Playwright missing always falls back to mock.
 |---|---|---|---|
 | `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
+
+### `mcp`
+
+MCP extension servers (TD-4401). Each entry under `servers` names a
+server exactly one way: `command` (stdio argv) or `url` (a loopback
+HTTP endpoint — `127.0.0.0/8`, `::1`, `localhost`; anything else is a
+load error, because v0.8 loads on-box servers only). Naming both, or
+neither, is a load error.
+
+The entry carries the destination and nothing else: no environment and
+no headers, because a key could ride either into this file (§2.2). A
+server that needs a token will read it from the OS keychain, never
+from config. Server names may use letters, digits, `_` and `-`, and
+become part of every contributed tool's name: `mcp__<server>__<tool>`.
+
+Servers start once per daemon, lazily, and stay up until shutdown.
+Nothing is discovered dynamically and nothing hot-reloads — edit the
+file, then restart the daemon. A server that fails to start, or dies,
+is reported in the doctor's `mcp` row and in each session's
+`mcp_state` event; it never blocks a session from opening.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `servers` | mapping of name → server | `{}` | The configured servers. Keys are server names (`[A-Za-z0-9_-]+`). |
+| `command` | string or list | *empty* | Stdio argv for the server process. Mutually exclusive with `url`. |
+| `url` | string | *empty* | Loopback HTTP endpoint speaking MCP's streamable HTTP transport (JSON responses only). Mutually exclusive with `command`. |
+| `enabled` | bool | `true` | `false` disables a server without deleting its entry. Disabled servers start nothing and contribute no tools. |
 
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
