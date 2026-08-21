@@ -96,14 +96,20 @@ not this — it discovers model slugs from a local OpenAI-compatible endpoint.)
 presents the token in `hello` at `PROTOCOL_VERSION`, and never binds a socket. If the file is
 missing or the pid is dead it spawns `python -m tstd.daemon --data-dir <dir>` — not
 `--parent-pid` — and leaves the daemon up. A turn is `open_workspace` → `user_message` → print
-`assistant_delta` text → exit 1 if `turn_complete.failed`. The headless harness (TD-1401)
-stays the mock path; `tst run` is not a second harness.
+`assistant_delta` text → exit 1 if `turn_complete.failed`. An
+`approval_request` on a TTY is the same card as attach (TD-3103); without a
+TTY, `tst run` prints copy to use the window and exits rather than hanging
+on stdin. The headless harness (TD-1401) stays the mock path; `tst run` is
+not a second harness.
 
 **`tst attach` (TD-3102)** is the same door in follow mode. Same port file and
 `hello`. It sends `attach{session_id, from_seq}` (default 1), prints assistant
-text the way `tst run` does, and prints one-line text for approvals,
-`turn_complete`, and errors — not JSON dumps. Ctrl+C sends `detach`, not
-`cancel`. An unknown id is the daemon's existing `session_not_found` error.
+text the way `tst run` does, and prints one-line text for `turn_complete` and
+errors — not JSON dumps. On `approval_request` (TD-3103) a TTY prints a card
+(tool, summary, class) and reads `y` / `n` / `always`; a non-TTY prints copy
+to use the window and does not send `approve`. Class C never accepts `always`.
+Ctrl+C sends `detach`, not `cancel`. An unknown id is the daemon's existing
+`session_not_found` error.
 
 ---
 

@@ -1,4 +1,4 @@
-"""`tst` — a second door to the same daemon (TD-3101, TD-3102).
+"""`tst` — a second door to the same daemon (TD-3101, TD-3102, TD-3103).
 
 The window and this CLI share one rendezvous (``port.json``) and one
 handshake (``hello`` + the port-file token). This process never binds a
@@ -8,6 +8,7 @@ leaves it running; it is not the host, so it does not pass
 
 ``run`` opens a workspace and prints one turn. ``attach`` follows a
 session the daemon already owns: replay + live text, detach on SIGINT.
+A TTY can answer ``approval_request``; a non-TTY does not hang on stdin.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from typing import Any
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from .cli_approvals import prompt_approval
 from .logging import user_data_dir
 from .protocol import PROTOCOL_VERSION
 from .ws import read_port_file
@@ -216,12 +218,6 @@ def _print_error(event: dict[str, Any]) -> None:
 def _visible_event_line(event: dict[str, Any]) -> str | None:
     """One-line TTY form of a user-visible event. Not a JSON dump."""
     typ = event.get("type")
-    if typ == "approval_request":
-        summary = str(event.get("summary") or event.get("tool_name") or "approval")
-        reason = event.get("reason")
-        if isinstance(reason, str) and reason:
-            return f"approval: {summary} ({reason})"
-        return f"approval: {summary}"
     if typ == "turn_complete":
         if event.get("failed"):
             return f"turn failed: {event.get('error_code') or 'turn_failed'}"
@@ -278,6 +274,14 @@ async def _stream_turn(ws: Any, session_id: str) -> int:
             return 1
         if event.get("session_id") != session_id:
             continue
+        if typ == "approval_request":
+            _finish_assistant_line(printed)
+            printed = False
+            reply = await prompt_approval(event, session_id)
+            if reply is None:
+                return 1
+            await _send(ws, reply)
+            continue
         if typ == "assistant_delta":
             sys.stdout.write(str(event.get("delta") or ""))
             sys.stdout.flush()
@@ -328,6 +332,13 @@ async def _stream_attached(ws: Any, session_id: str) -> int:
                 _print_error(event)
                 continue
             if event.get("session_id") != session_id:
+                continue
+            if typ == "approval_request":
+                _finish_assistant_line(printed)
+                printed = False
+                reply = await prompt_approval(event, session_id)
+                if reply is not None:
+                    await _send(ws, reply)
                 continue
             if typ == "assistant_delta":
                 sys.stdout.write(str(event.get("delta") or ""))

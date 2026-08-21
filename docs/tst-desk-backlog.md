@@ -4703,9 +4703,9 @@ Spec §2: same daemon, different door.
 **Size:** 2 · **Depends on:** TD-3102, TD-802
 
 **Acceptance criteria:**
-- [ ] A TTY prints the card and accepts `y` / `n` / `always`
-- [ ] Non-TTY refuses with copy to use the window
-- [ ] Class C never accepts `always`
+- [x] A TTY prints the card and accepts `y` / `n` / `always`
+- [x] Non-TTY refuses with copy to use the window
+- [x] Class C never accepts `always`
 
 ---
 
