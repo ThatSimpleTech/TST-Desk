@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .protocol import TINY_PNG, BrowserError
+from .protocol import TINY_PNG, BrowserError, scripted_hit_node
 
 
 class MockBrowserDriver:
@@ -71,6 +71,13 @@ class MockBrowserDriver:
         self._guard(actuating=True)
         self._record("wait", True, timeout_ms=timeout_ms, selector=selector)
         return {"waited_ms": timeout_ms, "selector": selector}
+
+    async def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        # Observe only: a stalled page can still be inspected.
+        if self.crash:
+            raise BrowserError("driver_crash", "browser driver crashed")
+        self._record("hit_test", False, x=x, y=y)
+        return scripted_hit_node(x, y)
 
     async def aclose(self) -> None:
         return None

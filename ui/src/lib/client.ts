@@ -60,6 +60,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "error",
   "screen_frame", // TD-1710
   "cu_kill_state", // TD-3402
+  "design_hit", // TD-3403
 ]);
 
 /**
@@ -406,6 +407,14 @@ export class ProtocolClient {
       if (sessionId !== undefined && seq !== undefined && seq === this.lastSeq(sessionId) + 1) {
         this.lastSeqBySession.set(sessionId, seq);
       }
+      this.dispatch(msg as DaemonEventUnion);
+      return;
+    }
+
+    // TD-3403: design_hit is connection-scoped (seq=1, not in the log).
+    // acceptSequenced would drop it after attach the same way it dropped
+    // instruction_stack snapshots before TD-1204.
+    if (type === "design_hit") {
       this.dispatch(msg as DaemonEventUnion);
       return;
     }

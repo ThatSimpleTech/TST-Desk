@@ -117,6 +117,22 @@ describe("resolveShortcut — command palette (TD-1707)", () => {
 	});
 });
 
+describe("resolveShortcut — Design mode (TD-3403)", () => {
+	it("toggles on ⌘⇧D and Ctrl+Shift+D", () => {
+		expect(
+			resolveShortcut({ key: "d", metaKey: true, ctrlKey: false, shiftKey: true }, IDLE),
+		).toBe("toggle-design");
+		expect(
+			resolveShortcut({ key: "D", metaKey: false, ctrlKey: true, shiftKey: true }, IDLE),
+		).toBe("toggle-design");
+	});
+
+	it("leaves ⌘D without shift alone so typing and browser bookmarks work", () => {
+		expect(resolveShortcut({ key: "d", metaKey: true, ctrlKey: false }, IDLE)).toBeNull();
+		expect(resolveShortcut({ key: "d", metaKey: false, ctrlKey: false, shiftKey: true }, IDLE)).toBeNull();
+	});
+});
+
 describe("resolveShortcut — everything else", () => {
 	it("returns null for unrelated keys", () => {
 		expect(resolveShortcut({ key: "a", metaKey: false, ctrlKey: false }, LIVE)).toBeNull();

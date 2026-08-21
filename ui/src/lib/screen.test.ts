@@ -4,6 +4,7 @@ import {
 	DESKTOP_TOOLS,
 	SCREEN_EMPTY_COPY,
 	isBrowserTool,
+	isActuatingCuTool,
 	isCuTool,
 	screenPreviewSidecar,
 	screenTabVisible,
@@ -36,6 +37,14 @@ describe("screen helpers (TD-1710, TD-3401)", () => {
 		expect(isCuTool("desktop_screenshot")).toBe(true);
 		expect(isCuTool("desktop_click")).toBe(true);
 		expect(isCuTool("fs_read")).toBe(false);
+	});
+
+	it("treats screenshot as capture, not actuation", () => {
+		expect(isActuatingCuTool("browser_click")).toBe(true);
+		expect(isActuatingCuTool("desktop_click")).toBe(true);
+		expect(isActuatingCuTool("browser_screenshot")).toBe(false);
+		expect(isActuatingCuTool("desktop_screenshot")).toBe(false);
+		expect(isActuatingCuTool("fs_read")).toBe(false);
 	});
 
 	it("empty copy points at the first computer-use turn", () => {

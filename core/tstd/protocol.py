@@ -636,6 +636,19 @@ class OpenArtifact(ClientMessage):
     artifact_id: str = Field(min_length=1)
 
 
+class DesignHitTest(ClientMessage):
+    """Ask the session browser what is at a CSS-pixel point (TD-3403).
+
+    Observe only — never actuates. The reply is connection-scoped
+    ``design_hit``, not a session-log event.
+    """
+
+    type: Literal["design_hit_test"] = "design_hit_test"
+    session_id: str
+    x: float
+    y: float
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -1424,6 +1437,34 @@ class CuKillState(DaemonEvent):
     killed: bool
 
 
+class DesignHitBox(BaseModel):
+    """Computed box of a Design-mode hit, in frame CSS pixels."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class DesignHit(DaemonEvent):
+    """Reply to ``design_hit_test`` (TD-3403). Connection-scoped.
+
+    Not written to the session log — a pick is user inspection, not an
+    agent turn. ``seq`` is fixed at 1 so it cannot rewind attach.
+    """
+
+    type: Literal["design_hit"] = "design_hit"
+    seq: int = 1
+    session_id: str
+    x: float
+    y: float
+    xpath: str | None = None
+    role: str | None = None
+    attributes: dict[str, str] = Field(default_factory=dict)
+    box: DesignHitBox | None = None
+    styles: dict[str, str] = Field(default_factory=dict)
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -1477,7 +1518,8 @@ ClientMessageT = Annotated[
     | ExportUsage
     | DeleteApiKey
     | ListArtifacts
-    | OpenArtifact,
+    | OpenArtifact
+    | DesignHitTest,
     Field(discriminator="type"),
 ]
 
@@ -1521,7 +1563,8 @@ DaemonEventT = Annotated[
     | Ping
     | Error
     | ScreenFrame
-    | CuKillState,
+    | CuKillState
+    | DesignHit,
     Field(discriminator="type"),
 ]
 
@@ -1582,6 +1625,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "export_usage",
         "list_artifacts",
         "open_artifact",
+        "design_hit_test",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -1626,6 +1670,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "error",
         "screen_frame",
         "cu_kill_state",
+        "design_hit",
     }
 )
 

@@ -3,7 +3,15 @@
 from .factory import browser_driver_from_config
 from .mock import MockBrowserDriver
 from .playwright_driver import PlaywrightBrowserDriver, playwright_available
-from .protocol import TINY_PNG, TINY_PNG_B64, BrowserDriver, BrowserError, png_size
+from .protocol import (
+    TINY_PNG,
+    TINY_PNG_B64,
+    BrowserDriver,
+    BrowserError,
+    normalize_hit,
+    png_size,
+    scripted_hit_node,
+)
 
 __all__ = [
     "TINY_PNG",
@@ -13,6 +21,8 @@ __all__ = [
     "MockBrowserDriver",
     "PlaywrightBrowserDriver",
     "browser_driver_from_config",
+    "normalize_hit",
     "playwright_available",
     "png_size",
+    "scripted_hit_node",
 ]

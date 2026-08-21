@@ -43,6 +43,9 @@ from tstd.protocol import (
     DeleteApiKey,
     DeleteSession,
     Deny,
+    DesignHit,
+    DesignHitBox,
+    DesignHitTest,
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
@@ -196,6 +199,7 @@ FIXTURES = {
     # Artifacts (TD-3201): list/open on the wire; record is a daemon API.
     "list_artifacts": ListArtifacts(session_id="sess-1"),
     "open_artifact": OpenArtifact(session_id="sess-1", artifact_id="art-1"),
+    "design_hit_test": DesignHitTest(session_id="sess-1", x=12.0, y=34.0),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
@@ -597,6 +601,16 @@ FIXTURES = {
         seq=23,
     ),
     "cu_kill_state": CuKillState(killed=True),
+    "design_hit": DesignHit(
+        session_id="sess-1",
+        x=12.0,
+        y=34.0,
+        xpath="//*[@data-mock-point='12,34']",
+        role="button",
+        attributes={"id": "mock-target"},
+        box=DesignHitBox(x=0.0, y=24.0, width=80.0, height=24.0),
+        styles={"display": "inline-block"},
+    ),
 }
 
 

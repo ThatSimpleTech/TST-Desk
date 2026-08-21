@@ -263,6 +263,12 @@
     "session_id": "sess-1",
     "artifact_id": "art-1"
   },
+  "design_hit_test": {
+    "type": "design_hit_test",
+    "session_id": "sess-1",
+    "x": 12.0,
+    "y": 34.0
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -849,6 +855,27 @@
     "type": "cu_kill_state",
     "seq": 1,
     "killed": true
+  },
+  "design_hit": {
+    "type": "design_hit",
+    "seq": 1,
+    "session_id": "sess-1",
+    "x": 12.0,
+    "y": 34.0,
+    "xpath": "//*[@data-mock-point='12,34']",
+    "role": "button",
+    "attributes": {
+      "id": "mock-target"
+    },
+    "box": {
+      "x": 0.0,
+      "y": 24.0,
+      "width": 80.0,
+      "height": 24.0
+    },
+    "styles": {
+      "display": "inline-block"
+    }
   },
   "hello_ack": {
     "type": "hello_ack",
