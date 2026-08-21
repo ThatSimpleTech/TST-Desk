@@ -4959,10 +4959,17 @@ the AX hit-test is cheap; otherwise file a split.
 **Size:** 5 · **Depends on:** TD-1710, TD-3301, TD-3401
 
 **Acceptance criteria:**
-- [ ] Headless: mock driver, one screenshot + one refused click
+- [x] Headless: mock driver, one screenshot + one refused click
       (focus mismatch) + one approved click, all through the classifier
-- [ ] Live: TD-1710 browser path green on one OS
-- [ ] **This harness is the M6 exit criterion**
+- [x] Live: TD-1710 browser path green on one OS
+- [x] **This harness is the M6 exit criterion**
+
+**Completed (2026-08-21):** `tstd.e2e_m6` + `core/scripts/e2e_m6.py`,
+pinned in CI as `tests/test_e2e_m6.py`. Headless: mock desktop
+screenshot (A), `expect_window` refuse (`focus_mismatch`, no
+actuation), approved click (B). CI's TD-1710 path is the mock six
+verbs + `screen_frame`. Playwright is `@pytest.mark.live` and is not
+claimed unless Chromium launched. Not `e2e_harness.run`.
 
 ---
 
