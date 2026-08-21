@@ -65,10 +65,6 @@ class TestParser:
         with pytest.raises(SystemExit):
             cli.parse_args([])
 
-    def test_attach_is_not_registered(self) -> None:
-        with pytest.raises(SystemExit):
-            cli.parse_args(["attach", "sess-1"])
-
 
 class TestHelloAndSpawn:
     def test_hello_matches_the_window(self) -> None:

@@ -234,6 +234,9 @@ npm run tauri:dev
 
 # Optional: one headless turn against the same daemon (starts tstd if needed)
 cd core && uv run tst run --workspace /path/to/folder --message "say hi"
+
+# Follow a session already running on that daemon (Ctrl+C detaches)
+uv run tst attach <session_id>
 ```
 
 ### Tests
