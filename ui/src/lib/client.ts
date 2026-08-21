@@ -1,6 +1,7 @@
 // Typed WebSocket client for the TST Desk daemon (TD-1003).
 //
-// Talks the daemon protocol (mirrored in `protocol.ts`) over a local WebSocket.
+// Talks the daemon protocol (mirrored in `protocol.ts`) over WebSocket
+// (loopback, or a Tailscale address from a browser — TD-3701).
 // Responsibilities:
 //   - hello/hello_ack handshake, then forward sequenced daemon events
 //   - automatic reconnect with exponential backoff
@@ -13,6 +14,7 @@
 // the browser's WebSocket. No Tauri APIs are imported here.
 
 import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
+import { daemonWsUrl } from "./remote-connect";
 
 /**
  * The daemon event types this client version understands. Messages whose
@@ -99,13 +101,16 @@ export const ZOMBIE_SILENCE_MS = 30_000;
 /** A handler receiving a parsed, validated daemon event. */
 export type EventHandler = (event: DaemonEventUnion) => void;
 
-/** Gets the live daemon {port, token}. Injected so tests supply a stub. */
-export type DaemonInfoProvider = () => Promise<{ port: number; token: string } | null>;
+/** Live daemon address. `host` is set for a browser attach (TD-3701); omitted is loopback. */
+export type DaemonInfo = { port: number; token: string; host?: string };
+
+/** Gets the live daemon {port, token, host?}. Injected so tests supply a stub. */
+export type DaemonInfoProvider = () => Promise<DaemonInfo | null>;
 
 export interface ClientOptions {
   /** Resolves the daemon's port + auth token. */
   getDaemonInfo: DaemonInfoProvider;
-  /** Builds the ws:// URL. Defaults to 127.0.0.1:{port} (loopback-only). */
+  /** Builds the ws:// URL. Defaults to `host` or 127.0.0.1. */
   buildUrl?: (port: number) => string;
   /** Injectable WebSocket constructor (browser WebSocket in production). */
   socketFactory: SocketFactory;
@@ -308,7 +313,7 @@ export class ProtocolClient {
     if (this.stopped) return;
     this.setState(this.reconnectAttempt === 0 ? "connecting" : "reconnecting");
 
-    let info: { port: number; token: string } | null;
+    let info: DaemonInfo | null;
     try {
       info = await this.opts.getDaemonInfo();
     } catch {
@@ -319,7 +324,7 @@ export class ProtocolClient {
       return;
     }
 
-    const url = this.opts.buildUrl?.(info.port) ?? `ws://127.0.0.1:${info.port}`;
+    const url = this.opts.buildUrl?.(info.port) ?? daemonWsUrl(info.host ?? "127.0.0.1", info.port);
     const socket = this.opts.socketFactory(url);
     this.socket = socket;
 

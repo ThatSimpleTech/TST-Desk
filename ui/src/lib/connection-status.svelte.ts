@@ -10,14 +10,29 @@
 // The UI never infers daemon state on its own (AGENTS §6): "daemon" is read
 // only from the host event; "ws" is read only from the real socket. We expose
 // both so the banner can say, e.g., "daemon crashed — reconnecting".
+//
+// A browser attach (TD-3701) has no host supervisor. There we mirror `ws`
+// into `daemon` so the banner does not treat a missing Tauri event as
+// "Couldn't start the daemon".
 
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
-import { ProtocolClient, type ConnectionState, type SocketLike } from "./client";
+import { ProtocolClient, type ConnectionState, type DaemonInfo, type SocketLike } from "./client";
 import { bindClient, ingestEvent, resetSession } from "./session-status.svelte.js";
 import { clearNotifications, notifyEvent } from "./notifications.svelte.js";
 import { watchResume } from "./resume";
+import { isTauri } from "./open-file";
+import {
+  parseStoredAttach,
+  resolveBrowserTarget,
+  serializeAttach,
+  stripAttachFromUrl,
+  validateAttachTarget,
+  type AttachTarget,
+} from "./remote-connect";
+
+type UnlistenFn = () => void;
+
+const REMOTE_ATTACH_STORAGE = "tstdesk.remoteAttach";
 
 export interface DaemonStatus {
   state: "starting" | "connected" | "crashed" | "stopping" | "stopped";
@@ -32,6 +47,14 @@ export const ws = $state<{ state: ConnectionState }>({ state: "disconnected" });
 export const daemon = $state<DaemonStatus>({ state: "stopped", port: null, restart: 0 });
 // Latest validated daemon event, for subscribers that want the stream.
 export const lastEvent = $state<{ event: DaemonEventUnion | null }>({ event: null });
+
+/** Browser-only: the connect form is up because no ws+token is known yet. */
+export const remoteAttach = $state<{ needed: boolean; error: string | null }>({
+  needed: false,
+  error: null,
+});
+
+let remoteTarget: AttachTarget | null = null;
 
 // Synchronous event fan-out (TD-1004). Consumers that append to a log (chat,
 // timeline) cannot ride `lastEvent` — two events inside one effect flush
@@ -98,12 +121,78 @@ export function detachFromSession(sessionId: string): void {
   client?.detach(sessionId);
 }
 
+function targetToInfo(target: AttachTarget): DaemonInfo {
+  return { host: target.host, port: target.port, token: target.token };
+}
+
+function persistRemoteTarget(target: AttachTarget): void {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(REMOTE_ATTACH_STORAGE, serializeAttach(target));
+  } catch {
+    // Quota or private mode — reconnect this tab still works via remoteTarget.
+  }
+}
+
+function loadStoredTarget(): AttachTarget | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    return parseStoredAttach(sessionStorage.getItem(REMOTE_ATTACH_STORAGE));
+  } catch {
+    return null;
+  }
+}
+
+function applyBrowserTarget(): boolean {
+  if (typeof window === "undefined") return false;
+  const resolved = resolveBrowserTarget({
+    search: window.location.search,
+    hash: window.location.hash,
+    stored: loadStoredTarget(),
+  });
+  if (!resolved.ok) {
+    remoteTarget = null;
+    remoteAttach.needed = true;
+    remoteAttach.error = resolved.error;
+    // Not a host failure — the user has not attached yet.
+    daemon.state = "starting";
+    return false;
+  }
+  remoteTarget = resolved.target;
+  remoteAttach.needed = false;
+  remoteAttach.error = null;
+  persistRemoteTarget(resolved.target);
+  if (resolved.stripUrl) {
+    window.history.replaceState(null, "", stripAttachFromUrl(window.location.href));
+  }
+  daemon.state = "starting";
+  daemon.port = resolved.target.port;
+  return true;
+}
+
+function syncRemoteDaemonMirror(state: ConnectionState): void {
+  if (isTauri()) return;
+  if (state === "connected") {
+    daemon.state = "connected";
+    daemon.port = remoteTarget?.port ?? daemon.port;
+    return;
+  }
+  if (state === "stopped") {
+    daemon.state = "stopped";
+    return;
+  }
+  daemon.state = "starting";
+}
+
 function makeClient(): void {
   client = new ProtocolClient(
     {
       async getDaemonInfo() {
-        const info = await invoke<{ port: number; token: string } | null>("get_daemon_info");
-        return info;
+        if (isTauri()) {
+          const { invoke } = await import("@tauri-apps/api/core");
+          return invoke<DaemonInfo | null>("get_daemon_info");
+        }
+        return remoteTarget === null ? null : targetToInfo(remoteTarget);
       },
       socketFactory(url) {
         // The browser WebSocket's handlers are typed with `this: WebSocket`
@@ -122,6 +211,7 @@ function makeClient(): void {
       },
       onStateChange(state) {
         ws.state = state;
+        syncRemoteDaemonMirror(state);
         for (const sub of stateSubs) sub(state);
       },
     },
@@ -129,15 +219,38 @@ function makeClient(): void {
   bindClient(client);
 }
 
+/** Browser form submit (TD-3701). Starts the same ProtocolClient once a target is valid. */
+export function connectRemote(wsUrl: string, token: string): boolean {
+  const parsed = validateAttachTarget(wsUrl, token);
+  if (!parsed.ok) {
+    remoteAttach.needed = true;
+    remoteAttach.error = parsed.reason === "invalid" ? parsed.error : "Enter a WebSocket URL and token.";
+    return false;
+  }
+  remoteTarget = parsed.target;
+  remoteAttach.needed = false;
+  remoteAttach.error = null;
+  persistRemoteTarget(parsed.target);
+  daemon.state = "starting";
+  daemon.port = parsed.target.port;
+  void connect();
+  return true;
+}
+
 /** Bring the daemon connection up and start following host supervision events. */
 export async function connect(): Promise<void> {
-  if (unlistenDaemon === null) {
-    unlistenDaemon = await listen<DaemonStatus>("daemon-status", (ev) => {
-      const payload = ev.payload;
-      daemon.state = payload.state;
-      daemon.port = payload.port;
-      daemon.restart = payload.restart;
-    });
+  if (isTauri()) {
+    if (unlistenDaemon === null) {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlistenDaemon = await listen<DaemonStatus>("daemon-status", (ev) => {
+        const payload = ev.payload;
+        daemon.state = payload.state;
+        daemon.port = payload.port;
+        daemon.restart = payload.restart;
+      });
+    }
+  } else if (remoteTarget === null && !applyBrowserTarget()) {
+    return;
   }
   if (stopResumeWatch === null && typeof document !== "undefined" && typeof window !== "undefined") {
     stopResumeWatch = watchResume(document, window, handleResume);
@@ -157,5 +270,8 @@ export function disconnect(): void {
   unlistenDaemon = null;
   stopResumeWatch?.();
   stopResumeWatch = null;
+  remoteTarget = null;
+  remoteAttach.needed = false;
+  remoteAttach.error = null;
   ws.state = "stopped";
 }
