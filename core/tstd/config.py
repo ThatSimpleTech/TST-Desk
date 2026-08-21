@@ -235,6 +235,34 @@ class NotifyConfig(BaseModel):
     ntfy: NtfyNotifyConfig = Field(default_factory=NtfyNotifyConfig)
 
 
+class GroundingConfig(BaseModel):
+    """Local click-grounding model (TD-3902).
+
+    Empty ``base_url`` is off: desktop clicks use the intended (x, y)
+    (TD-3304). A filled URL must be loopback — off-box is a load error,
+    not a silent remote call. Optional ``slug`` is discovered from
+    ``/v1/models`` the same way a loopback tier is (TD-1805).
+    """
+
+    base_url: str = ""
+    slug: Annotated[str, Field(min_length=1)] | None = None
+    timeout_seconds: float = Field(default=8.0, gt=0)
+
+    @field_validator("base_url")
+    @classmethod
+    def _strip_base_url(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def _loopback_only(self) -> GroundingConfig:
+        if self.base_url and not is_loopback_url(self.base_url):
+            raise ValueError(
+                f"computer_use.grounding.base_url must be a loopback endpoint "
+                f"(got {self.base_url}); off-box grounding is not allowed"
+            )
+        return self
+
+
 class ComputerUseConfig(BaseModel):
     """Desktop computer-use sidecar (TD-3301) and browser (TD-1710).
 
@@ -245,10 +273,14 @@ class ComputerUseConfig(BaseModel):
     ``browser`` is ``mock`` (default, CI) or ``playwright``. Playwright
     missing always falls back to the mock. The live profile lives under
     the user data dir, not the workspace.
+
+    ``grounding`` is an optional local vision model for click targeting
+    (TD-3902). Empty ``grounding.base_url`` leaves the TD-3304 path.
     """
 
     command: str | list[str] = ""
     browser: Literal["mock", "playwright"] = "mock"
+    grounding: GroundingConfig = Field(default_factory=GroundingConfig)
 
     @field_validator("command", mode="before")
     @classmethod

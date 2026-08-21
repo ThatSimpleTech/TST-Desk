@@ -5239,12 +5239,16 @@ after M1.5.** Prefer after M6 so CU has something to ground.
 **Size:** 8 · **Depends on:** TD-3304, TD-3901
 
 **Acceptance criteria:**
-- [ ] Computer-use click targeting can use a configured local grounding
+- [x] Computer-use click targeting can use a configured local grounding
       model instead of raw pixels + guess
-- [ ] Off / missing model falls back to TD-3304's path
-- [ ] Cost is zero on loopback; latency is measured and recorded
-- [ ] Size 8 — split if the grounding client and the driver glue
+- [x] Off / missing model falls back to TD-3304's path
+- [x] Cost is zero on loopback; latency is measured and recorded
+- [x] Size 8 — split if the grounding client and the driver glue
       diverge
+
+Done (2026-08-21): `computer_use.grounding` (empty `base_url` = off);
+`tstd/desktop/grounding_client.py` + click-path glue in
+`tstd/tools/desktop.py`. TD-3304 eval unchanged.
 
 ---
 

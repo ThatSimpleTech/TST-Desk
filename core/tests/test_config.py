@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from pydantic import ValidationError
 
 from tstd.config import (
     DEFAULT_LOG_MAX_EVENTS,
@@ -17,6 +18,7 @@ from tstd.config import (
     ComputerUseConfig,
     ConfigError,
     EmbeddingsConfig,
+    GroundingConfig,
     ModelConfig,
     NtfyNotifyConfig,
     RemoteConfig,
@@ -180,6 +182,23 @@ class TestTiers:
         cfg = _load_shipped(tmp_path)
         assert cfg.computer_use.command == ""
         assert ComputerUseConfig().command == ""
+
+    def test_shipped_grounding_is_off(self, tmp_path: Path) -> None:
+        """TD-3902: packaged config leaves click targeting on the intended point."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.computer_use.grounding.base_url == ""
+        assert cfg.computer_use.grounding.slug is None
+        assert GroundingConfig().base_url == ""
+        assert GroundingConfig().slug is None
+
+    def test_grounding_rejects_off_box_url(self) -> None:
+        with pytest.raises(ValidationError, match="loopback"):
+            GroundingConfig(base_url="https://openrouter.ai/api/v1")
+
+    def test_grounding_accepts_loopback_url(self) -> None:
+        cfg = GroundingConfig(base_url="http://127.0.0.1:8000/v1")
+        assert cfg.base_url == "http://127.0.0.1:8000/v1"
+        assert cfg.slug is None
 
     def test_shipped_remote_bind_is_empty(self, tmp_path: Path) -> None:
         """TD-3601: packaged config is loopback-only."""

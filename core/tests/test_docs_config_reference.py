@@ -53,6 +53,7 @@ from tstd.config import (
     ComputerUseConfig,
     ConfigError,
     EmbeddingsConfig,
+    GroundingConfig,
     ModelConfig,
     NotifyConfig,
     NtfyNotifyConfig,
@@ -204,6 +205,7 @@ _EMBEDDINGS_FIELDS = frozenset(EmbeddingsConfig.model_fields)
 _PROJECT_CONTEXT_FIELDS = frozenset(ProjectContextConfig.model_fields)
 _SESSION_FIELDS = frozenset(SessionConfig.model_fields)
 _COMPUTER_USE_FIELDS = frozenset(ComputerUseConfig.model_fields)
+_GROUNDING_FIELDS = frozenset(GroundingConfig.model_fields)
 _REMOTE_FIELDS = frozenset(RemoteConfig.model_fields)
 _NOTIFY_FIELDS = frozenset(NotifyConfig.model_fields)
 _SLACK_NOTIFY_FIELDS = frozenset(SlackNotifyConfig.model_fields)
@@ -267,6 +269,12 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             _check_keys(data["session"], _SESSION_FIELDS, f"{where} session")
         if "computer_use" in data:
             _check_keys(data["computer_use"], _COMPUTER_USE_FIELDS, f"{where} computer_use")
+            if "grounding" in data["computer_use"]:
+                _check_keys(
+                    data["computer_use"]["grounding"],
+                    _GROUNDING_FIELDS,
+                    f"{where} computer_use.grounding",
+                )
         if "remote" in data:
             _check_keys(data["remote"], _REMOTE_FIELDS, f"{where} remote")
         if "notify" in data:
@@ -297,6 +305,7 @@ def test_every_config_key_is_documented() -> None:
         | _PROJECT_CONTEXT_FIELDS
         | _SESSION_FIELDS
         | _COMPUTER_USE_FIELDS
+        | _GROUNDING_FIELDS
         | _REMOTE_FIELDS
         | _NOTIFY_FIELDS
         | _SLACK_NOTIFY_FIELDS
