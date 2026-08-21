@@ -7384,3 +7384,24 @@ field. A `job_saved` / `job_deleted` pair — the pane only needs the
 list. NL create in the rail — 3803's parse is a worker draft, not this
 surface.
 
+---
+
+## 2026-08-21 — TD-3806: M7 exit is a protocol-client notify pass (Class B)
+
+**Decision:** `tstd.e2e_m7.run_m7` is a fifth protocol-client pass, not
+a branch of `e2e_harness.run`. The headless path asserts
+`validate_interface("0.0.0.0")` raises (no socket is opened), hellos
+the daemon on `127.0.0.1`, then fires one due `deliver_to: slack` job
+through `Daemon.run_due_jobs` against `MockProvider`. Delivery is an
+injected `notify_send` hook. CI's green is that mock send, not a Slack
+POST. Default `addopts` (`-m 'not live'`) keeps it in the default
+suite.
+
+**Rationale:** Folding remote/notify into `e2e_harness.run` would change
+a frozen signature (TD-1401). Binding `0.0.0.0` to prove a refuse would
+violate prime directive §2.1. A live webhook would write a secret into
+the fixture and leave the suite.
+
+**Alternative rejected:** Listening on `0.0.0.0` then closing. Also
+rejected: posting to a Slack incoming webhook from CI.
+

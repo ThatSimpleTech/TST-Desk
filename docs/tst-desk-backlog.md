@@ -5194,9 +5194,16 @@ not fire jobs.
 **Size:** 3 · **Depends on:** TD-3601, TD-3801, TD-3804
 
 **Acceptance criteria:**
-- [ ] Headless: bind refused on `0.0.0.0`; a loopback job runs and
+- [x] Headless: bind refused on `0.0.0.0`; a loopback job runs and
       a mock Slack `send` is invoked
-- [ ] **This harness is the M7 exit criterion**
+- [x] **This harness is the M7 exit criterion**
+
+Done (2026-08-21): `tstd.e2e_m7` + `core/scripts/e2e_m7.py`,
+pinned in CI as `tests/test_e2e_m7.py`. Headless: `validate_interface`
+refuses `0.0.0.0` (never listens); a due `deliver_to: slack` job fires
+once through `run_due_jobs` on the in-process daemon; injected
+`notify_send` is called. Not `e2e_harness.run`. Not a live webhook.
+
 
 ---
 
