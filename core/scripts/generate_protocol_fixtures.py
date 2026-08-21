@@ -69,6 +69,8 @@ from tstd.protocol import (
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    McpServerStatus,
+    McpState,
     MemoryAccept,
     MemoryEdit,
     MemoryFileDiff,
@@ -365,6 +367,21 @@ FIXTURES = {
             "validator": "test-validator-slug",
         },
         seq=19,
+    ),
+    # TD-4401: MCP server load states, emitted only when servers are
+    # configured. Fixture shows one ready and one failed.
+    "mcp_state": McpState(
+        session_id="sess-1",
+        servers=[
+            McpServerStatus(name="git", transport="stdio", status="ready", tool_count=3),
+            McpServerStatus(
+                name="dead",
+                transport="stdio",
+                status="failed",
+                detail="MCP server closed stdout",
+            ),
+        ],
+        seq=4,
     ),
     # TD-1716 liveness frame: no session, no seq — deliberately unlike
     # every other daemon→client frame, which is the point of the fixture.

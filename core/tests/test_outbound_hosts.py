@@ -244,6 +244,10 @@ _OUTBOUND_CAPABLE = {
     "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
     "tools/web_search.py": "web_search; destination is search.base_url from config",
     "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
+    # TD-4401: the MCP HTTP transport dials only mcp.servers.<name>.url,
+    # validated as loopback at config load. The stdio transport spawns a
+    # child and opens no socket at all.
+    "mcp/manager.py": "loopback-HTTP MCP transport; destination is mcp.servers url from config",
 }
 
 

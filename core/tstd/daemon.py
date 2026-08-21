@@ -80,6 +80,7 @@ from .keychain import (
 )
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
+from .mcp import McpManager, register_mcp_tools
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
 from .memory_store import (
@@ -149,6 +150,8 @@ from .protocol import (
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    McpServerStatus,
+    McpState,
     MemoryAccept,
     MemoryEdit,
     MemoryFileEntry,
@@ -477,6 +480,9 @@ class Daemon:
         # Browser CU (TD-1710): mock unless computer_use.browser is playwright
         # and Playwright is importable. Profile lives under the data dir.
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
+        # MCP extension servers (TD-4401): daemon-owned like the drivers,
+        # started lazily on first attach so __init__ spawns nothing.
+        self.mcp_manager = McpManager(self.config.mcp)
 
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
@@ -701,8 +707,8 @@ class Daemon:
         """Run the doctor checks (TD-1104) and return the report.
 
         Rows in display order: daemon → key → provider → git → workspace →
-        steering.  Blocking filesystem calls ride worker threads; the live
-        provider probe is the only slow row (one token, worst case the
+        steering → mcp.  Blocking filesystem calls ride worker threads; the
+        live provider probe is the only slow row (one token, worst case the
         provider timeout).
         """
         checks: list[DiagnosticCheck] = [
@@ -760,7 +766,41 @@ class Daemon:
             checks.append(await asyncio.to_thread(_check_writable, workspace))
             checks.append(await self._check_steering(workspace))
 
+        checks.append(await self._check_mcp())
+
         return DiagnosticsReport(seq=1, checks=checks)
+
+    async def _check_mcp(self) -> DiagnosticCheck:
+        """One row for the configured MCP servers (TD-4401).
+
+        Skip when nothing is configured — a skip is not a failure and
+        should not alarm. Otherwise start the servers (idempotent; the
+        doctor may be the first caller) and report each one; any failed
+        server fails the row, with the per-server detail carried in the
+        row's detail.
+        """
+        if not self.mcp_manager.has_servers():
+            return DiagnosticCheck(name="mcp", status="skip", detail="no MCP servers configured")
+        await self.mcp_manager.ensure_started()
+        statuses = self.mcp_manager.statuses()
+        parts = [
+            f"{s.name}: {s.status}"
+            + (f" ({s.tool_count} tools)" if s.status == "ready" else "")
+            + (f" — {s.detail}" if s.detail else "")
+            for s in statuses
+        ]
+        failed = [s for s in statuses if s.status == "failed"]
+        if failed:
+            return DiagnosticCheck(
+                name="mcp",
+                status="fail",
+                detail="; ".join(parts),
+                fix=(
+                    "Check the failing servers' command or url under mcp.servers in "
+                    "the config file, then restart the daemon."
+                ),
+            )
+        return DiagnosticCheck(name="mcp", status="ok", detail="; ".join(parts))
 
     # ── Usage and cost (TD-1706) ───────────────────────────────────────
     #
@@ -943,6 +983,7 @@ class Daemon:
 
         await self.desktop_driver.aclose()
         await self.browser_driver.aclose()
+        await self.mcp_manager.aclose()
 
         log.info("shutdown complete")
 
@@ -1758,6 +1799,17 @@ class Daemon:
             browser_driver=self.browser_driver,
         )
 
+        # MCP servers (TD-4401): start once per daemon (failures recorded,
+        # never raised), then contribute their tools to this session's
+        # fresh registry through the same registration path as builtins.
+        await self.mcp_manager.ensure_started()
+        mcp_count = register_mcp_tools(tool_registry, tool_dispatcher, self.mcp_manager)
+        if mcp_count:
+            log.info(
+                "MCP tools registered",
+                extra={"extra_fields": {"session_id": sess.id, "count": mcp_count}},
+            )
+
         sink = self._audit_writer
         runner = SessionRunner(
             sess,
@@ -1781,7 +1833,10 @@ class Daemon:
         """Log the wall and slugs this loop is actually using.
 
         Open and revive both call this so the title bar is not left
-        showing a previous life's boundary after a restart.
+        showing a previous life's boundary after a restart. The MCP
+        server states ride along (TD-4401) so a reconnecting client
+        sees them in replay — emitted only when servers are configured,
+        keeping the unconfigured open sequence at seqs 1-3.
         """
         cfg = sess.boundary_config
         await sess.event_log.add(
@@ -1800,6 +1855,23 @@ class Daemon:
         )
         assert sess.router is not None
         await sess.event_log.add(_tier_state_event(sess.id, sess.router, self.config))
+        if self.mcp_manager.has_servers():
+            await sess.event_log.add(
+                McpState(
+                    session_id=sess.id,
+                    seq=1,  # overwritten by the event log
+                    servers=[
+                        McpServerStatus(
+                            name=s.name,
+                            transport=s.transport,
+                            status=s.status,
+                            detail=s.detail,
+                            tool_count=s.tool_count,
+                        )
+                        for s in self.mcp_manager.statuses()
+                    ],
+                )
+            )
 
     async def _start_session(self, workspace_path: str) -> str | None:
         """Create, wire, and start a session in ``workspace_path``.

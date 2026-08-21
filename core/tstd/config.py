@@ -10,6 +10,7 @@ actionable error messages that name the offending key.
 
 from __future__ import annotations
 
+import re
 import shutil
 from functools import lru_cache
 from importlib import resources
@@ -227,6 +228,80 @@ class ComputerUseConfig(BaseModel):
         raise ValueError("command must be a string or a list of arguments")
 
 
+class McpServerConfig(BaseModel):
+    """One MCP server entry (TD-4401).
+
+    Exactly one of ``command`` (stdio argv) or ``url`` (loopback HTTP
+    endpoint) names the server. The entry carries the destination and
+    nothing else: no free-form environment or headers, because a key
+    could ride either into a config file, which §2.2 forbids. A server
+    that needs a token will read it from the keychain, never from here.
+
+    A remote ``url`` is refused at load: v0.8 loads stdio and loopback
+    HTTP only, and an endpoint we cannot classify as on-box keeps the
+    strict reading (``is_loopback_url``).
+    """
+
+    command: str | list[str] = ""
+    url: str = ""
+    enabled: bool = True
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _coerce_command(cls, value: Any) -> str | list[str]:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        raise ValueError("command must be a string or a list of arguments")
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _coerce_url(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        raise ValueError("url must be a string")
+
+    @model_validator(mode="after")
+    def _exactly_one_transport(self) -> McpServerConfig:
+        has_command = bool(self.command)
+        has_url = bool(self.url)
+        if has_command and has_url:
+            raise ValueError("set exactly one of command (stdio) or url (loopback HTTP)")
+        if not has_command and not has_url:
+            raise ValueError("one of command (stdio) or url (loopback HTTP) is required")
+        if has_url and not is_loopback_url(self.url):
+            raise ValueError(
+                f"url must be a loopback endpoint (127.0.0.0/8, ::1, localhost); got {self.url!r}"
+            )
+        return self
+
+
+class McpConfig(BaseModel):
+    """MCP servers whose tools join the registry (TD-4401).
+
+    Keys are server names and become part of every contributed tool's
+    name (``mcp__<server>__<tool>``), so they are restricted to the
+    characters a provider tool name allows. Loading is static: servers
+    are read from this file, started once per daemon, and are not
+    discovered or hot-reloaded (architecture guide: no dynamic
+    discovery).
+    """
+
+    servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_server_names(self) -> McpConfig:
+        for name in self.servers:
+            if not name or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                raise ValueError(f"server name {name!r} must use only letters, digits, '_' and '-'")
+        return self
+
+
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
@@ -237,6 +312,7 @@ class ModelConfig(BaseModel):
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -319,7 +395,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
     # Fill from the shipped file so the destination exists without
     # rewriting theirs.
     shipped: dict[str, Any] | None = None
-    for key in ("search", "embeddings", "project_context", "session", "computer_use"):
+    for key in ("search", "embeddings", "project_context", "session", "computer_use", "mcp"):
         if key in data:
             continue
         if shipped is None:
