@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use daemon::close_hint::{
     take_first_close_hint, CLOSE_HINT_BODY, CLOSE_HINT_EVENT, CLOSE_HINT_TITLE,
 };
+#[cfg(not(target_os = "macos"))]
+use daemon::coworker::{indicator_badge_count, indicator_window_title};
 use daemon::coworker::{window_close_action, CloseAction, LifecycleEvent};
 use daemon::embeddings::EmbeddingsHandle;
 use daemon::DaemonHandle;
@@ -67,6 +69,33 @@ fn quit_app(app: tauri::AppHandle) {
     request_quit(&app);
 }
 
+/// Dock / taskbar badge while a hidden session is still working (TD-2904).
+/// No tray (TD-4703). The UI owns the label; this only applies it.
+const WINDOW_VISIBILITY_EVENT: &str = "window-visibility";
+
+#[tauri::command]
+fn set_coworker_indicator(app: tauri::AppHandle, label: Option<String>) {
+    let window = app
+        .get_webview_window("main")
+        .or_else(|| app.webview_windows().into_values().next());
+    let Some(window) = window else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.set_badge_label(label);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window.set_badge_count(indicator_badge_count(label.as_deref()));
+        let _ = window.set_title(&indicator_window_title(label.as_deref()));
+    }
+}
+
+fn emit_window_visibility(app: &tauri::AppHandle, visible: bool) {
+    let _ = app.emit(WINDOW_VISIBILITY_EVENT, visible);
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     let window = app
         .get_webview_window("main")
@@ -75,6 +104,18 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // The window is up — the badge must not keep claiming work.
+        // The UI also clears; this covers a napping webview.
+        #[cfg(target_os = "macos")]
+        {
+            let _ = window.set_badge_label(None);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window.set_badge_count(None);
+            let _ = window.set_title(&indicator_window_title(None));
+        }
+        emit_window_visibility(app, true);
     }
 }
 
@@ -204,7 +245,8 @@ pub fn run() {
             get_daemon_info,
             open_path,
             read_text_file,
-            quit_app
+            quit_app,
+            set_coworker_indicator
         ])
         .on_menu_event(|app, event| {
             if event.id() == "quit-tst-desk" {
@@ -223,6 +265,7 @@ pub fn run() {
                         // Close ≠ quit. The host stays up so reopen does
                         // not spawn a second process; tstd keeps running.
                         let _ = window.hide();
+                        emit_window_visibility(window.app_handle(), false);
                         maybe_notice_close_is_not_quit(window.app_handle());
                     }
                     CloseAction::Shutdown => request_quit(window.app_handle()),

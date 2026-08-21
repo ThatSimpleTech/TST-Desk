@@ -213,6 +213,9 @@ Closing the window is not quitting the app. The daemon keeps working after the w
 The first time you close the window: that hides TST Desk. **Quit TST Desk** is what stops it.
 
 OS notifications for an approval or a finished turn still fire while the window is hidden.
+While hidden, a running session or a parked approval badges the Dock (macOS) or the
+taskbar tooltip (Windows / Linux). Clicking the app icon shows the window and focuses
+the approval if one is waiting. There is no tray icon.
 
 See [`docs/tst-desk-backlog.md`](docs/tst-desk-backlog.md) for the current milestone and
 [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) for the full architecture spec. How the pieces

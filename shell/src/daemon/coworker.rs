@@ -21,6 +21,19 @@ pub enum LifecycleEvent {
     Quit,
 }
 
+/// Window title while the coworker indicator is up (taskbar tooltip).
+pub fn indicator_window_title(label: Option<&str>) -> String {
+    match label {
+        Some(text) => format!("TST Desk — {text}"),
+        None => "TST Desk".into(),
+    }
+}
+
+/// Count badge for platforms that cannot show a text dock label.
+pub fn indicator_badge_count(label: Option<&str>) -> Option<i64> {
+    label.map(|_| 1)
+}
+
 /// Close hides when coworker is on. Quit always shuts down.
 pub fn window_close_action(event: LifecycleEvent, coworker_on: bool) -> CloseAction {
     match event {
@@ -87,6 +100,21 @@ fn coworker_enabled_from_yaml(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indicator_title_and_count_follow_the_label() {
+        assert_eq!(indicator_window_title(None), "TST Desk");
+        assert_eq!(
+            indicator_window_title(Some("Running")),
+            "TST Desk — Running"
+        );
+        assert_eq!(
+            indicator_window_title(Some("Approval needed")),
+            "TST Desk — Approval needed"
+        );
+        assert_eq!(indicator_badge_count(None), None);
+        assert_eq!(indicator_badge_count(Some("Running")), Some(1));
+    }
 
     #[test]
     fn close_hides_when_coworker_on() {
