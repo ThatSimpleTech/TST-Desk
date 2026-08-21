@@ -55,6 +55,10 @@ export const settings = $state({
 	cuAgentCursor: true,
 	/** Host overlay on the real display (TD-3402). Default off. */
 	cuShowOnRealDisplay: false,
+	/** Tailscale remote attach (TD-3603). Default off; from setup_state. */
+	remoteAttachEnabled: false,
+	/** Bound Tailscale address, never a token. */
+	remoteBind: null as string | null,
 });
 
 let started = false;
@@ -91,6 +95,8 @@ export function resetSettings(): void {
 	settings.cuGlow = true;
 	settings.cuAgentCursor = true;
 	settings.cuShowOnRealDisplay = false;
+	settings.remoteAttachEnabled = false;
+	settings.remoteBind = null;
 	started = false;
 }
 
@@ -111,6 +117,8 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuGlow = event.cu_glow ?? true;
 		settings.cuAgentCursor = event.cu_agent_cursor ?? true;
 		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? false;
+		settings.remoteAttachEnabled = event.remote_attach_enabled ?? false;
+		settings.remoteBind = event.remote_bind ?? null;
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -220,6 +228,11 @@ export function setLoadGlobalMemory(enabled: boolean): void {
 /** Turn coworker mode on or off (TD-2905). Acked with setup_state. */
 export function setCoworker(enabled: boolean): void {
 	sendToDaemon({ type: "set_coworker", enabled });
+}
+
+/** Turn remote attach on or off (TD-3603). Acked with setup_state. */
+export function setRemoteAttach(enabled: boolean): void {
+	sendToDaemon({ type: "set_remote_attach", enabled });
 }
 
 /** Persist computer-use indicator prefs (TD-3402). Acked with setup_state. */

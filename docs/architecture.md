@@ -332,6 +332,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `design_hit_test` | yes | Ask the session browser what is at a CSS-pixel point (TD-3403). Observe only. Acked with `design_hit`. |
 | `check_cu_permissions` | — | Re-probe computer-use OS permissions / integrity without raising a TCC prompt (TD-3302, TD-3303). Acked with `cu_permissions`. |
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
+| `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener. Acked with `setup_state` (TD-3603). |
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
 | `save_job` | — | Create or replace a scheduled job from draft fields. Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
 | `delete_job` | — | Remove a scheduled job by id. Acked with `job_list`. Unknown id is a typed error (TD-3805). |
@@ -372,7 +373,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin`. |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach`. `remote_bind` is the bound Tailscale address, never a token. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |

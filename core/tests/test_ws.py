@@ -373,6 +373,59 @@ class TestWebSocketServer:
                 await server.stop()
 
     @pytest.mark.asyncio
+    async def test_apply_bind_adds_and_drops_extra_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TD-3603: extra listener rebinds without restarting loopback."""
+        recorded: list[tuple[str, int]] = []
+
+        class _FakeSock:
+            def __init__(self, host: str, port: int) -> None:
+                self._host = host
+                self._port = port
+
+            def getsockname(self) -> tuple[str, int]:
+                return (self._host, self._port)
+
+        class _FakeServer:
+            def __init__(self, host: str, port: int) -> None:
+                self.sockets = [_FakeSock(host, port)]
+
+            def close(self) -> None:
+                return None
+
+            async def wait_closed(self) -> None:
+                return None
+
+        async def fake_serve(_handler: object, host: str, port: int, **_kwargs: Any) -> _FakeServer:
+            bound = 54321 if port == 0 else port
+            recorded.append((host, bound))
+            return _FakeServer(host, bound)
+
+        monkeypatch.setattr("tstd.ws.serve", fake_serve)
+        extra = "100.64.1.5"
+        with tempfile.TemporaryDirectory() as tmp:
+            server = WebSocketServer(
+                Path(tmp),
+                interfaces=lambda: {"tailscale0": (extra,)},
+                ping_interval=0,
+            )
+            await server.start()
+            try:
+                assert recorded == [("127.0.0.1", 54321)]
+                assert server.extra_host is None
+                await server.apply_bind("tailscale0")
+                assert recorded == [("127.0.0.1", 54321), (extra, 54321)]
+                assert server.extra_host == extra
+                loopback_port = server.port
+                await server.apply_bind("")
+                assert server.extra_host is None
+                assert server.port == loopback_port
+                assert all(host in {"127.0.0.1", "::1"} for host in server.bound_hosts)
+            finally:
+                await server.stop()
+
+    @pytest.mark.asyncio
     async def test_health_fields_in_daemon(self) -> None:
         """Verify the daemon's health endpoint reflects WebSocket server state."""
         from tstd.daemon import Daemon
