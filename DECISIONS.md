@@ -7157,3 +7157,36 @@ on `protocol.py`, AppShell, ScreenPane, and DECISIONS.
 **Alternative rejected:** Cherry-picking only the exit harness onto main
 and leaving chrome on side branches.
 
+---
+
+## 2026-08-21 — TD-3803: scheduler store is data-dir JSON, parse does not persist (Class B)
+
+**Decision:** Scheduled jobs live at `{user_data_dir}/scheduler/jobs.json`
+with envelope `{version: 1, jobs: [...]}`. Atomic temp-file replace,
+mode `0o600` on POSIX. Not the workspace, not git. The Pydantic `Job`
+is `id`, absolute `workspace` (filesystem path, no secrets),
+`instruction`, exactly one of `cadence` (5-field cron or
+`every N minutes|hours|days`) or `next_run` (ISO-8601),
+`deliver_to` (`window` | `slack` | `ntfy`), and `paused`.
+
+Natural-language create is `parse_job_request(text) -> JobDraft`. That
+function does not call a model and does not import the store: it is the
+schema a worker would fill (JSON, key-value lines, or a small
+deterministic phrase parse). `validate_draft` is a second, still
+in-memory step. `save_job` is a third call. No `list_jobs` /
+`save_job` / `delete_job` protocol verbs — the Scheduled rail is
+TD-3805. No runner, no asyncio loop, no Slack/ntfy send (TD-3804 /
+TD-3801 / TD-3802).
+
+**Rationale:** Hermes' cron is the reference (JSON, NL in, deliver
+anywhere) but must not be wired into the agent core. A data-dir store
+keeps jobs off clones and off the audit log. Splitting parse from save
+is the "shown for edit before save" AC without a window this story.
+Leaving the runner out is the third AC.
+
+**Alternative rejected:** YAML next to `coworker.yaml` — JSON matches
+`sessions.json` and the Hermes shape. Protocol verbs this story —
+no UI consumer yet; adding them would freeze a wire contract before
+the rail. Calling a worker model to parse — needs network/spend and
+is not required to ship the schema.
+
