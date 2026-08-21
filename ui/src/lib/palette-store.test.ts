@@ -19,8 +19,19 @@ const mocks = vi.hoisted(() => {
 		chatState: { sessionId: null as string | null },
 		statusState: { sessionId: null as string | null, workspacePath: null as string | null },
 		chatSelects: [] as string[],
+		inTauri: false,
+		invoke: vi.fn(),
 	};
 });
+
+vi.mock("@tauri-apps/api/core", () => ({
+	invoke: (...args: unknown[]) => mocks.invoke(...args),
+}));
+
+vi.mock("./open-file", () => ({
+	isTauri: () => mocks.inTauri,
+	openInEditor: async () => false,
+}));
 
 vi.mock("./connection-status.svelte.js", () => ({
 	onEvent: (handler: (e: DaemonEventUnion) => void) => {
@@ -114,6 +125,8 @@ beforeEach(() => {
 	mocks.stateHandlers.clear();
 	mocks.sent.length = 0;
 	mocks.chatSelects.length = 0;
+	mocks.inTauri = false;
+	mocks.invoke.mockReset();
 	mocks.chatState.sessionId = null;
 	mocks.statusState.sessionId = null;
 	mocks.statusState.workspacePath = null;
@@ -152,6 +165,7 @@ describe("entries", () => {
 		expect(ids).toContain("action:open-settings");
 		expect(ids).toContain("action:toggle-theme");
 		expect(ids).toContain("action:end-session");
+		expect(ids).toContain("action:quit-app");
 		expect(ids).toContain("session:s-newest");
 	});
 
@@ -270,6 +284,13 @@ describe("commands", () => {
 		// No sessions listed and nothing attached: new-session has no anchor.
 		runPaletteEntry(paletteEntries()[0]);
 		expect(mocks.sent).toEqual([]);
+		expect(palette.open).toBe(false);
+	});
+
+	it("asks the host to quit — close is not this", () => {
+		mocks.inTauri = true;
+		run("Quit TST Desk");
+		expect(mocks.invoke).toHaveBeenCalledWith("quit_app");
 		expect(palette.open).toBe(false);
 	});
 });

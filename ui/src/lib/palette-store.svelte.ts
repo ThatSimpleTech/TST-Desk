@@ -9,6 +9,7 @@
 //
 // The matching and the registry are pure — see palette.ts.
 
+import { invoke } from "@tauri-apps/api/core";
 import {
 	ACTION_ENTRIES,
 	nextIndex,
@@ -16,6 +17,7 @@ import {
 	type PaletteCommand,
 	type PaletteEntry,
 } from "./palette";
+import { isTauri } from "./open-file";
 import { chat } from "./chat-store.svelte.js";
 import { endSession } from "./session-actions.svelte.js";
 import { openDecisions } from "./decisions.svelte.js";
@@ -120,6 +122,11 @@ function dispatch(command: PaletteCommand): void {
 			return;
 		case "end-session":
 			if (chat.sessionId !== null) endSession(chat.sessionId);
+			return;
+		case "quit-app":
+			if (isTauri()) {
+				void invoke("quit_app");
+			}
 			return;
 	}
 }

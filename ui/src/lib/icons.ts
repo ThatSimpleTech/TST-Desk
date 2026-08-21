@@ -110,6 +110,8 @@ export const ICONS = {
 		'<circle cx="5" cy="12" r="1"/>' +
 		'<circle cx="12" cy="12" r="1"/>' +
 		'<circle cx="19" cy="12" r="1"/>',
+	/** Quit the app (command palette, TD-2903). */
+	power: '<path d="M12 2v10"/><path d="M18.4 6.6a8 8 0 1 1-12.8 0"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -1,8 +1,9 @@
 """Machine-wide coworker mode (TD-2902).
 
 When on, closing the window hides it and leaves ``tstd`` running. The
-host omits ``--parent-pid`` so a dead window process does not reap the
-daemon. Default on once M5 ships. The Settings toggle is TD-2905.
+host process stays alive, so ``--parent-pid`` is safe: the watchdog
+stays quiet on close and still reaps on host SIGKILL (TD-2903).
+Default on once M5 ships. The Settings toggle is TD-2905.
 
 Same shape as skip-all (TD-804): user data dir, YAML bool only.
 Absent or unreadable is on — the opposite of skip-all's default.

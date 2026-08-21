@@ -4595,8 +4595,9 @@ the divergence the TODO named.
 
 **Completed (2026-08-20):** Close hides the window and leaves the host
 and `tstd` running. Quit still reaps. Coworker defaults on
-(`coworker.yaml`); spawn omits `--parent-pid` so the watchdog is never
-armed. A live `port.json` is attached, not spawned over. OS notify
+(`coworker.yaml`). TD-2903 restored `--parent-pid` — close keeps the
+host alive, so the watchdog stays quiet; SIGKILL of the host still
+reaps. A live `port.json` is attached, not spawned over. OS notify
 already fires when unfocused; a hidden window is unfocused.
 
 ---
@@ -4605,11 +4606,17 @@ already fires when unfocused; a hidden window is unfocused.
 **Size:** 3 · **Depends on:** TD-2902
 
 **Acceptance criteria:**
-- [ ] Menu / palette **Quit TST Desk** sends `shutdown`, reaps the
+- [x] Menu / palette **Quit TST Desk** sends `shutdown`, reaps the
       process group, and leaves no listener (TD-1304 contract)
-- [ ] Close window is not Quit. Copy in the first-run of this behavior
+- [x] Close window is not Quit. Copy in the first-run of this behavior
       says so once
-- [ ] Force-quit / SIGKILL still has no orphan (watchdog or host)
+- [x] Force-quit / SIGKILL still has no orphan (watchdog or host)
+
+**Completed (2026-08-20):** Palette and the native menu **Quit TST Desk**
+call `quit_app` → daemon `shutdown` + embeddings reap + `app.exit`.
+Close still hides. First hide stamps `{user_data_dir}/close-is-not-quit.yaml`
+and shows the copy once. `--parent-pid` is always passed so a force-quit
+host does not leave a listener.
 
 ---
 
