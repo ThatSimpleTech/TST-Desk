@@ -21,6 +21,8 @@ export type PaletteCommand =
 	| { kind: "open-settings" }
 	| { kind: "toggle-theme" }
 	| { kind: "end-session" }
+	| { kind: "stop-computer-use" }
+	| { kind: "resume-computer-use" }
 	| { kind: "quit-app" };
 
 export interface PaletteEntry {
@@ -101,6 +103,22 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 		icon: "check",
 		keywords: "distill memory close",
 		command: { kind: "end-session" },
+	},
+	{
+		id: "action:stop-computer-use",
+		title: "Stop computer use",
+		subtitle: "Halt all desktop actuation immediately. Capture still works.",
+		icon: "stop",
+		keywords: "kill switch cu actuation emergency halt",
+		command: { kind: "stop-computer-use" },
+	},
+	{
+		id: "action:resume-computer-use",
+		title: "Resume computer use",
+		subtitle: "Allow desktop actuation again",
+		icon: "retry",
+		keywords: "switch cu actuation continue",
+		command: { kind: "resume-computer-use" },
 	},
 	{
 		id: "action:quit-app",

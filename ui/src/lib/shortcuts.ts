@@ -28,7 +28,8 @@ export type ShortcutAction =
 	| "close-modal"
 	| "cancel-turn"
 	| "open-settings"
-	| "open-palette";
+	| "open-palette"
+	| "stop-computer-use";
 
 /** Map a keydown to one app-level action, or null when nothing applies. */
 export function resolveShortcut(
@@ -53,5 +54,9 @@ export function resolveShortcut(
 	// including on top of an open modal; opening it twice just clears it.
 	if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey))
 		return "open-palette";
+	// ⌘. / Ctrl+. — engage the computer-use kill-switch (TD-3404). A
+	// panic key must work over a modal; resume is palette / title bar.
+	if (event.key === "." && (event.metaKey || event.ctrlKey))
+		return "stop-computer-use";
 	return null;
 }

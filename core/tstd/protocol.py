@@ -622,6 +622,18 @@ class OpenArtifact(ClientMessage):
     artifact_id: str = Field(min_length=1)
 
 
+class SetCuKill(ClientMessage):
+    """Engage or clear the process-wide computer-use kill-switch (TD-3404).
+
+    Connection-scoped: the flag is shared across every session on this
+    daemon, so the message carries no ``session_id``. Capture
+    (screenshot) still runs. Acked with ``cu_kill_state``.
+    """
+
+    type: Literal["set_cu_kill"] = "set_cu_kill"
+    killed: bool
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -1347,6 +1359,20 @@ class Artifact(DaemonEvent):
     path: str
 
 
+class CuKillState(DaemonEvent):
+    """Current computer-use kill-switch (TD-3404).
+
+    Connection-scoped with ``seq`` fixed at 1: the flag is process-wide,
+    not a fact in any session's event log. Replaying it from a session
+    log would desync every other viewer. Capture still runs when
+    ``killed`` is true.
+    """
+
+    type: Literal["cu_kill_state"] = "cu_kill_state"
+    seq: int = 1
+    killed: bool
+
+
 class Ping(BaseModel):
     """Application-level liveness frame (TD-1716).  No session, no seq.
 
@@ -1426,7 +1452,8 @@ ClientMessageT = Annotated[
     | ExportUsage
     | DeleteApiKey
     | ListArtifacts
-    | OpenArtifact,
+    | OpenArtifact
+    | SetCuKill,
     Field(discriminator="type"),
 ]
 
@@ -1468,7 +1495,8 @@ DaemonEventT = Annotated[
     | ArtifactList
     | Artifact
     | Ping
-    | Error,
+    | Error
+    | CuKillState,
     Field(discriminator="type"),
 ]
 
@@ -1528,6 +1556,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "export_usage",
         "list_artifacts",
         "open_artifact",
+        "set_cu_kill",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -1570,6 +1599,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "artifact",
         "ping",
         "error",
+        "cu_kill_state",
     }
 )
 

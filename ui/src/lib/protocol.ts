@@ -367,6 +367,12 @@ export interface OpenArtifact extends ClientMessage {
   artifact_id: string;
 }
 
+/** Engage or clear the process-wide computer-use kill-switch (TD-3404). */
+export interface SetCuKill extends ClientMessage {
+  type: "set_cu_kill";
+  killed: boolean;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -417,7 +423,8 @@ export type ClientMessageUnion =
   | GetUsage
   | ExportUsage
   | ListArtifacts
-  | OpenArtifact;
+  | OpenArtifact
+  | SetCuKill;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -896,6 +903,12 @@ export interface Error extends DaemonEvent {
   message: string;
 }
 
+/** Process-wide computer-use kill-switch (TD-3404). Connection-scoped, seq=1. */
+export interface CuKillState extends DaemonEvent {
+  type: "cu_kill_state";
+  killed: boolean;
+}
+
 export interface ContextCompacted extends DaemonEvent {
   type: "context_compacted";
   session_id: string;
@@ -949,4 +962,5 @@ export type DaemonEventUnion =
   | ArtifactReady
   | ArtifactList
   | Artifact
-  | Error;
+  | Error
+  | CuKillState;

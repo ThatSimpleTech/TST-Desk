@@ -304,6 +304,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
 | `list_artifacts` | yes | List artifacts persisted with the session (TD-3201). Acked with `artifact_list`. |
 | `open_artifact` | yes | Open one artifact by id. Acked with `artifact` (metadata and path, not bytes). Unknown id is a typed error. |
+| `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
 
 ### Daemon → client
 
@@ -352,6 +353,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
 | `error` | session | A typed error, usually in response to a bad message. |
+| `cu_kill_state` | connection | Current computer-use kill-switch. Process-wide, so seq is fixed at 1 and it is not written to a session log (TD-3404). |
 
 ### Adding a message
 

@@ -38,6 +38,7 @@ from tstd.protocol import (
     ConversationReset,
     CostUpdate,
     CreateRule,
+    CuKillState,
     DecisionLogged,
     DeleteApiKey,
     DeleteSession,
@@ -90,6 +91,7 @@ from tstd.protocol import (
     SetApiKey,
     SetBranch,
     SetCoworker,
+    SetCuKill,
     SetLoadGlobalMemory,
     SetPreset,
     SetSessionStar,
@@ -580,6 +582,9 @@ FIXTURES = {
         mime="text/markdown",
         path="notes.md",
     ),
+    # TD-3404: process-wide kill-switch. Connection-scoped; no session_id.
+    "set_cu_kill": SetCuKill(killed=True),
+    "cu_kill_state": CuKillState(killed=True),
 }
 
 
