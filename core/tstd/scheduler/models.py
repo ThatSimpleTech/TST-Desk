@@ -1,0 +1,206 @@
+"""Pydantic job schema (TD-3803).
+
+A draft is what a worker would fill from natural language. It is not a
+job until ``validate_draft`` succeeds. Validation never writes disk.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+from ..logging import redact_secrets
+
+DeliverTo = Literal["window", "slack", "ntfy"]
+
+_CRON_FIELD = re.compile(
+    r"^(?:\*(?:/\d+)?|[0-9]+(?:-[0-9]+)?(?:/\d+)?(?:,[0-9]+(?:-[0-9]+)?(?:/\d+)?)*)$"
+)
+_INTERVAL = re.compile(
+    r"^every\s+([1-9]\d*)\s+(minutes?|hours?|days?)$",
+    re.IGNORECASE,
+)
+_UNITS = {
+    "minute": "minute",
+    "minutes": "minute",
+    "hour": "hour",
+    "hours": "hour",
+    "day": "day",
+    "days": "day",
+}
+
+
+class JobError(Exception):
+    """Scheduler store error."""
+
+
+class JobValidationError(JobError, ValueError):
+    """Draft or job failed validation. Nothing was persisted."""
+
+
+class JobDraft(BaseModel):
+    """Editable parse result. All fields optional so the user can fill gaps."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+    workspace: str | None = None
+    instruction: str | None = None
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: DeliverTo | None = None
+    paused: bool = False
+
+
+class Job(BaseModel):
+    """A persisted scheduled job. Inert until TD-3804."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(min_length=1)
+    workspace: str = Field(min_length=1)
+    instruction: str = Field(min_length=1)
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: DeliverTo
+    paused: bool = False
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_a_name(cls, value: str) -> str:
+        if Path(value).name != value or not value.strip():
+            raise ValueError("id must be a single path segment")
+        return value
+
+    @field_validator("workspace")
+    @classmethod
+    def _absolute_workspace(cls, value: str) -> str:
+        return normalize_workspace(value)
+
+    @field_validator("instruction")
+    @classmethod
+    def _instruction_plain(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("instruction is required")
+        reject_secrets(text, "instruction")
+        return text
+
+    @field_validator("cadence")
+    @classmethod
+    def _cadence_shape(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_cadence(value)
+
+    @field_validator("next_run")
+    @classmethod
+    def _next_run_iso(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_next_run(value)
+
+    @model_validator(mode="after")
+    def _one_schedule(self) -> Job:
+        if (self.cadence is None) == (self.next_run is None):
+            raise ValueError("exactly one of cadence or next_run is required")
+        return self
+
+
+def reject_secrets(text: str, field: str) -> None:
+    """Refuse secret-shaped text so jobs.json never holds a key."""
+    if redact_secrets(text) != text:
+        raise JobValidationError(f"{field} must not contain secrets")
+
+
+def normalize_workspace(raw: str) -> str:
+    """Absolute filesystem path, no credentials, not a URL."""
+    text = raw.strip()
+    if not text:
+        raise JobValidationError("workspace is required")
+    reject_secrets(text, "workspace")
+    if "://" in text:
+        raise JobValidationError("workspace must be a filesystem path")
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        raise JobValidationError("workspace must be an absolute path")
+    return os.path.normpath(str(path))
+
+
+def normalize_cadence(raw: str) -> str:
+    """Canonical cron (5 fields) or ``every N {minute|hour|day}[s]``."""
+    text = " ".join(raw.split())
+    if not text:
+        raise JobValidationError("cadence is empty")
+    interval = _INTERVAL.fullmatch(text)
+    if interval is not None:
+        count = int(interval.group(1))
+        stem = _UNITS[interval.group(2).lower()]
+        unit = stem if count == 1 else f"{stem}s"
+        return f"every {count} {unit}"
+    fields = text.split()
+    if len(fields) == 5 and all(_CRON_FIELD.fullmatch(part) for part in fields):
+        return " ".join(fields)
+    raise JobValidationError(
+        "cadence must be a 5-field cron expression or 'every N minutes|hours|days'"
+    )
+
+
+def normalize_next_run(raw: str) -> str:
+    """Timezone-aware ISO-8601. Naive values are stored as UTC."""
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        when = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise JobValidationError("next_run must be an ISO-8601 datetime") from exc
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when.isoformat()
+
+
+def validate_draft(draft: JobDraft) -> Job:
+    """Turn an editable draft into a Job. Does not persist."""
+    missing: list[str] = []
+    if not (draft.workspace and draft.workspace.strip()):
+        missing.append("workspace")
+    if not (draft.instruction and draft.instruction.strip()):
+        missing.append("instruction")
+    if draft.deliver_to is None:
+        missing.append("deliver_to")
+    has_cadence = bool(draft.cadence and draft.cadence.strip())
+    has_next = bool(draft.next_run and draft.next_run.strip())
+    if has_cadence and has_next:
+        raise JobValidationError("provide cadence or next_run, not both")
+    if not has_cadence and not has_next:
+        missing.append("cadence or next_run")
+    if missing:
+        raise JobValidationError("missing " + ", ".join(missing))
+    try:
+        return Job(
+            id=draft.id or str(uuid.uuid4()),
+            workspace=draft.workspace or "",
+            instruction=draft.instruction or "",
+            cadence=draft.cadence,
+            next_run=draft.next_run,
+            deliver_to=draft.deliver_to or "window",
+            paused=draft.paused,
+        )
+    except (ValidationError, JobValidationError) as exc:
+        if isinstance(exc, JobValidationError):
+            raise
+        raise JobValidationError(str(exc)) from exc
