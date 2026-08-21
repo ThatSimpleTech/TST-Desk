@@ -57,6 +57,7 @@ from tstd.protocol import (
     SetCuIndicators,
     SetCuKill,
     SetLoadGlobalMemory,
+    SetRemoteAttach,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
@@ -185,6 +186,13 @@ class TestClientMessages:
         assert back.killed is True
         # Process-wide: a session_id would make a per-session latch.
         assert "session_id" not in SetCuKill.model_fields
+
+    def test_set_remote_attach(self) -> None:
+        msg = SetRemoteAttach(enabled=True)
+        back = _roundtrip(msg)
+        assert isinstance(back, SetRemoteAttach)
+        assert back.enabled is True
+        assert "session_id" not in SetRemoteAttach.model_fields
 
     def test_resume(self) -> None:
         msg = Resume(session_id="sess-1")

@@ -106,6 +106,7 @@ from tstd.protocol import (
     SetCuKill,
     SetLoadGlobalMemory,
     SetPreset,
+    SetRemoteAttach,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
@@ -210,6 +211,7 @@ FIXTURES = {
     "design_hit_test": DesignHitTest(session_id="sess-1", x=12.0, y=34.0),
     "check_cu_permissions": CheckCuPermissions(),
     "set_cu_kill": SetCuKill(killed=True),
+    "set_remote_attach": SetRemoteAttach(enabled=True),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
@@ -490,6 +492,8 @@ FIXTURES = {
         cu_glow=True,
         cu_agent_cursor=True,
         cu_show_on_real_display=False,
+        remote_attach_enabled=False,
+        remote_bind=None,
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so

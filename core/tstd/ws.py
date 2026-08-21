@@ -276,6 +276,49 @@ class WebSocketServer:
             extra={"extra_fields": {"port": self._port, "extra_host": self._extra_host}},
         )
 
+    async def apply_bind(self, spec: str) -> None:
+        """Rebind the extra Tailscale listener without touching loopback.
+
+        Empty *spec* drops the extra server and the remote-token file.
+        A new spec resolves, replaces the extra listener on the same
+        port, and mints a remote token when the host is not loopback.
+        The loopback server and port file stay put.
+        """
+        extra = resolve_remote_bind(spec, self._interfaces)
+        self._bind = spec.strip()
+        if extra == self._extra_host:
+            return
+        await self._stop_extra()
+        if extra is None:
+            return
+        if self._server is None or self._port == 0:
+            raise RuntimeError("cannot apply a remote bind before the loopback server is up")
+        validate_interface(extra, extra_allowed=extra)
+        self._extra_server = await serve(
+            self._on_connect,
+            extra,
+            self._port,
+            process_request=self._auth_middleware,
+        )
+        self._extra_host = extra
+        if not is_loopback_host(extra) or self._is_remote_connection is not None:
+            self._issue_remote_token()
+        log.info(
+            "ws extra listener updated",
+            extra={"extra_fields": {"port": self._port, "extra_host": self._extra_host}},
+        )
+
+    async def _stop_extra(self) -> None:
+        """Drop the extra listener and its remote token. Loopback stays."""
+        extra = self._extra_server
+        self._extra_server = None
+        self._extra_host = None
+        if extra is not None:
+            extra.close()
+            await extra.wait_closed()
+        remove_remote_token_file(self.data_dir)
+        self._remote_token = ""
+
     async def _ping_loop(self) -> None:
         """Emit an application-level ping to every handshaken client (TD-1716).
 
@@ -313,20 +356,16 @@ class WebSocketServer:
         self._connections.clear()
         self._handshaken.clear()
 
-        for server in (self._extra_server, self._server):
-            if server is not None:
-                server.close()
-                await server.wait_closed()
-        self._extra_server = None
+        await self._stop_extra()
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
         self._server = None
-        self._extra_host = None
 
         # Clean shutdown removes the port file so the host can tell a live
-        # daemon from a defunct one. The remote token is rotated the same
-        # way: gone on stop, a new file on the next remote-bind start.
+        # daemon from a defunct one. The remote token is already gone with
+        # the extra listener; a new file is minted on the next remote-bind.
         remove_port_file(self.data_dir)
-        remove_remote_token_file(self.data_dir)
-        self._remote_token = ""
 
         log.info("ws server stopped")
 
