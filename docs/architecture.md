@@ -41,9 +41,9 @@ installer.
 
 **The daemon (`core/tstd/`)** holds every piece of state that matters: the session registry, each
 session's append-only event log, the conversation, the boundary, the policy, the cost ledger, the
-audit database. It binds a WebSocket server to loopback and nothing else — a non-loopback bind is
-refused outright by `validate_interface` in `core/tstd/ws.py`, which is prime directive §2.1
-enforced in code rather than by convention.
+audit database. It binds a WebSocket server to loopback by default. A non-loopback bind is
+refused by `validate_interface` in `core/tstd/ws.py` unless `remote.bind` names a Tailscale
+address (never `0.0.0.0` / `::`) — prime directive §2.1, with the spec §8 opt-in.
 
 **The host (`shell/`)** manages the window and the daemon process lifecycle: it resolves the
 `tstd` binary, attaches when `port.json` names a live listener, and otherwise spawns with
@@ -112,6 +112,25 @@ errors — not JSON dumps. On `approval_request` (TD-3103) a TTY prints a card
 to use the window and does not send `approve`. Class C never accepts `always`.
 Ctrl+C sends `detach`, not `cancel`. An unknown id is the daemon's existing
 `session_not_found` error.
+
+**Browser attach (TD-3701).** The same Svelte `ProtocolClient` — not a second
+app — works outside Tauri. A phone or laptop browser does not read `port.json`.
+It connects to `ws://<tailscale-ip>:<port>` (the extra listener from TD-3601)
+and presents the rotating `{user_data_dir}/remote-token` (TD-3602) in
+`hello.token`. The UI takes that pair from a connect form, or from
+`?ws=&token=` / `#ws=&token=` (hash preferred; the token is stripped from the
+address bar after read). Loopback in a browser still uses the port-file token.
+There is no account and no hosted relay. The daemon still does not bind
+`0.0.0.0` / `::`; the form refuses those as connect targets too.
+
+The window is still only a viewer. Read transcript, send, and approve are the
+same client messages they are on the desktop. Settings will copy address +
+token (TD-3603); until then, the port is the one in `port.json` and the token
+is the contents of `remote-token`.
+
+On a viewport narrower than 640px the same `AppShell` hides the session rail
+and the inspector so the phone is chat + approval. Either pane can be shown
+again; they are not a separate product.
 
 ---
 
@@ -206,12 +225,17 @@ discriminated unions (`ClientMessageT`, `DaemonEventT`) so parsing is total and 
 
 ### The handshake
 
-1. Client connects to `ws://127.0.0.1:<port>` from the port file.
+1. Client connects to `ws://127.0.0.1:<port>` from the port file, or to the extra Tailscale
+   listener when `remote.bind` is on.
 2. Client sends `hello` with the token and its `PROTOCOL_VERSION`, within the handshake timeout.
    Missing the window is `handshake_timeout`.
-3. Daemon validates the version first, then the token. An out-of-range version fails with
+3. Daemon validates the version first, then the token. Loopback hellos present the port-file
+   token. A non-loopback hello (the extra listener, or a non-loopback peer) must present the
+   rotating token in `{user_data_dir}/remote-token` — the port-file token is not enough. The
+   protocol field is still `hello.token`. An out-of-range version fails with
    `version_unsupported` and a message naming the versions on both sides; a bad token fails with
-   `auth_failed`. Either way the daemon sends a typed `error` frame and closes with 1008.
+   `auth_failed` and does not open a session. Either way the daemon sends a typed `error` frame
+   and closes with 1008.
 4. Daemon replies `hello_ack` and the connection is live. From here the daemon also sends `ping`
    on a timer, to handshaken clients only.
 

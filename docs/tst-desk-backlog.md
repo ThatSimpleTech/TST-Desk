@@ -5035,11 +5035,14 @@ one instruction, deliver.
 **Size:** 5 · **Depends on:** TD-202, TD-2902
 
 **Acceptance criteria:**
-- [ ] Config names an interface or a Tailscale IPv4; the server binds
+- [x] Config names an interface or a Tailscale IPv4; the server binds
       that address and loopback, never `0.0.0.0` / `::`
-- [ ] A bind to a non-Tailscale non-loopback address is refused
-- [ ] `test_outbound_hosts` / bind tests name the new path
-- [ ] Off by default
+- [x] A bind to a non-Tailscale non-loopback address is refused
+- [x] `test_outbound_hosts` / bind tests name the new path
+- [x] Off by default
+
+Done (2026-08-21): `remote.bind` dual-listens loopback + Tailscale;
+`0.0.0.0` / LAN refused; off by default.
 
 ---
 
@@ -5047,10 +5050,13 @@ one instruction, deliver.
 **Size:** 5 · **Depends on:** TD-3601, TD-203
 
 **Acceptance criteria:**
-- [ ] Loopback keeps the port-file token
-- [ ] A non-loopback hello requires a user-data-dir token with
+- [x] Loopback keeps the port-file token
+- [x] A non-loopback hello requires a user-data-dir token with
       rotation; a leaked port file is not enough
-- [ ] Failed auth is a typed close, not a session
+- [x] Failed auth is a typed close, not a session
+
+Done (2026-08-21): remote hello needs `{user_data_dir}/remote-token`;
+port-file token stays loopback-only; failed auth is `auth_failed`.
 
 ---
 
@@ -5071,13 +5077,17 @@ one instruction, deliver.
 **Size:** 8 · **Depends on:** TD-3602, TD-1003
 
 **Acceptance criteria:**
-- [ ] The same protocol client works from a browser on the Tailscale
+- [x] The same protocol client works from a browser on the Tailscale
       address (read transcript, send, approve)
-- [ ] No account. No hosted relay
-- [ ] Layout degrades to one pane on a narrow viewport (chat +
+- [x] No account. No hosted relay
+- [x] Layout degrades to one pane on a narrow viewport (chat +
       approval). Inspector is optional
-- [ ] Size 8 because a second client surface will sprawl — split if
+- [x] Size 8 because a second client surface will sprawl — split if
       the mobile layout becomes its own product
+
+Done (2026-08-21): same AppShell + ProtocolClient without Tauri; form or
+`ws`+`token` query/hash; remote hello uses the 3602 token; <640px is
+chat + approval.
 
 ---
 
@@ -5085,9 +5095,14 @@ one instruction, deliver.
 **Size:** 3 · **Depends on:** TD-3701, TD-802
 
 **Acceptance criteria:**
-- [ ] Approve / deny / always-allow from the remote client resolve
+- [x] Approve / deny / always-allow from the remote client resolve
       the parked session
-- [ ] Two clients cannot double-resolve (TD-1014 contract)
+- [x] Two clients cannot double-resolve (TD-1014 contract)
+
+Done (2026-08-21): remote hello (3602 token) approve/deny/always-allow
+unparks the same session future; a second client gets
+`no_pending_approval` and cannot flip the outcome. Same ApprovalCard
+store dismisses on send (TD-1014).
 
 ---
 

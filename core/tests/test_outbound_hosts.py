@@ -233,7 +233,11 @@ _ASYNCIO_NETWORK_CALLS = frozenset(
 _OUTBOUND_CAPABLE = {
     "provider.py": "the one chat client; base_url is a constructor argument from config",
     "discovery.py": "GET /v1/models, refused before sending unless the endpoint is loopback",
-    "ws.py": "the loopback WebSocket server; validate_interface() guards the interface",
+    "ws.py": (
+        "the loopback WebSocket server plus opt-in Tailscale bind "
+        "(remote.bind); validate_interface() and resolve_remote_bind() "
+        "guard the interface — never 0.0.0.0"
+    ),
     "daemon.py": "websockets.exceptions for typed disconnects; it serves, it never dials",
     "e2e_harness.py": "the headless harness, a protocol client of our own loopback daemon",
     "benchmarks.py": "the benchmark client, likewise loopback",

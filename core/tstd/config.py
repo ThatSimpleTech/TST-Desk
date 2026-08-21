@@ -227,6 +227,17 @@ class ComputerUseConfig(BaseModel):
         raise ValueError("command must be a string or a list of arguments")
 
 
+class RemoteConfig(BaseModel):
+    """Opt-in Tailscale bind (TD-3601). Empty is off — loopback only."""
+
+    bind: str = ""
+
+    @field_validator("bind")
+    @classmethod
+    def _strip_bind(cls, value: str) -> str:
+        return value.strip()
+
+
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
@@ -237,6 +248,7 @@ class ModelConfig(BaseModel):
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
+    remote: RemoteConfig = Field(default_factory=RemoteConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -319,7 +331,14 @@ def load_config(path: Path | None = None) -> ModelConfig:
     # Fill from the shipped file so the destination exists without
     # rewriting theirs.
     shipped: dict[str, Any] | None = None
-    for key in ("search", "embeddings", "project_context", "session", "computer_use"):
+    for key in (
+        "search",
+        "embeddings",
+        "project_context",
+        "session",
+        "computer_use",
+        "remote",
+    ):
         if key in data:
             continue
         if shipped is None:

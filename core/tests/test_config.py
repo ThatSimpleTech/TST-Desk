@@ -18,6 +18,7 @@ from tstd.config import (
     ConfigError,
     EmbeddingsConfig,
     ModelConfig,
+    RemoteConfig,
     TierConfig,
     cached_config,
     default_config_yaml,
@@ -164,6 +165,12 @@ class TestTiers:
         cfg = _load_shipped(tmp_path)
         assert cfg.computer_use.command == ""
         assert ComputerUseConfig().command == ""
+
+    def test_shipped_remote_bind_is_empty(self, tmp_path: Path) -> None:
+        """TD-3601: packaged config is loopback-only."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.remote.bind == ""
+        assert RemoteConfig().bind == ""
 
     def test_computer_use_command_accepts_string_or_list(self) -> None:
         assert ComputerUseConfig(command="python -m tst_cu_mcp").command == ("python -m tst_cu_mcp")
