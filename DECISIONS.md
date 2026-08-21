@@ -6484,3 +6484,33 @@ stay Later.
 table was how those parts stayed vapor and how they also stayed safe
 from R8. Naming stories with exit harnesses is the middle path. R10
 is the reminder that a written story is not a start order.
+
+---
+
+## 2026-08-20 — TD-2204: spawn only on embeddings.command (Class B)
+
+**Decision:** `embeddings.command` is a string or argv list. Empty or
+omitted is attach-only: the Python client still POSTs to
+`embeddings.base_url` if something is already listening. A filled
+`base_url` never causes the host to spawn — the packaged default URL
+would otherwise launch a sidecar the user did not ask for.
+
+The Tauri host runs a supervisor parallel to `tstd`. It has its own
+restart budget (`MAX_EMBEDDINGS_RESTARTS`) and never increments the
+daemon's. Sidecar death is logged; heading-match (TD-2201) is the
+floor. Quit reaps the embeddings process group with the same
+`kill_spawned_group` as `tstd`. No new protocol message.
+
+The host reads `command` from the user-data `config.yaml` with
+`serde_yaml` and ignores the rest of the file. Python stores the field
+so the schema and the docs stay one source of truth; the loader does
+not spawn.
+
+**Rationale:** Size 5 is the host work. Coupling spawn to `base_url`
+would make every default install try to start a binary that is not
+there. Sharing `tstd`'s restart budget would let a flapping embedder
+take the session down. PROTOCOL_VERSION stays 1 because the window
+already owns process lifetime.
+
+**Alternative rejected:** Restarting `tstd` when the sidecar dies.
+Also rejected: treating a packaged `base_url` as an implicit spawn.

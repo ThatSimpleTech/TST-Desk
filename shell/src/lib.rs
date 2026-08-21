@@ -1,5 +1,6 @@
 pub mod daemon;
 
+use daemon::embeddings::EmbeddingsHandle;
 use daemon::DaemonHandle;
 use tauri::Manager;
 
@@ -33,7 +34,9 @@ fn open_path(path: String) -> Result<(), String> {
         #[cfg(all(unix, not(target_os = "macos")))]
         return std::process::Command::new("xdg-open").arg(&path).spawn();
     };
-    spawn().map(|_| ()).map_err(|e| format!("no opener available: {e}"))
+    spawn()
+        .map(|_| ())
+        .map_err(|e| format!("no opener available: {e}"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -54,8 +57,13 @@ pub fn run() {
                 )?;
             }
             // Spawn and supervise the daemon for the life of the app.
-            let handle = daemon::start(app.handle().clone(), daemon::data_dir());
+            // Embeddings is a parallel supervisor (TD-2204): its death
+            // never shares tstd's restart budget.
+            let data_dir = daemon::data_dir();
+            let handle = daemon::start(app.handle().clone(), data_dir.clone());
+            let embeddings = daemon::embeddings::start(data_dir);
             app.manage(handle);
+            app.manage(embeddings);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_daemon_info, open_path])
@@ -64,15 +72,20 @@ pub fn run() {
                 api.prevent_close();
                 let app = window.app_handle().clone();
                 let handle = window.app_handle().state::<DaemonHandle>().inner().clone();
+                let embeddings = window
+                    .app_handle()
+                    .state::<EmbeddingsHandle>()
+                    .inner()
+                    .clone();
                 // TODO(v0.3): detached-session behavior will keep the daemon
                 // alive here instead of shutting it down, so sessions survive
                 // the window closing.
                 handle.request_shutdown();
+                embeddings.request_shutdown();
                 tauri::async_runtime::spawn(async move {
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
-                        handle.wait_for_done(),
-                    )
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                        tokio::join!(handle.wait_for_done(), embeddings.wait_for_done());
+                    })
                     .await;
                     app.exit(0);
                 });
@@ -87,6 +100,7 @@ pub fn run() {
             // guarantee; this just closes the window before the OS reaps us.
             if let tauri::RunEvent::Exit = event {
                 daemon::best_effort_kill(&app_handle.state::<DaemonHandle>());
+                daemon::embeddings::best_effort_kill(&app_handle.state::<EmbeddingsHandle>());
             }
         });
 }
