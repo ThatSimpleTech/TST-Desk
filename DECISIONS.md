@@ -7157,3 +7157,29 @@ on `protocol.py`, AppShell, ScreenPane, and DECISIONS.
 **Alternative rejected:** Cherry-picking only the exit harness onto main
 and leaving chrome on side branches.
 
+---
+
+## 2026-08-21 — E48: review findings filed as one epic under M5 (Class B)
+
+**Decision:** The findings from the 2026-08-21 full-repo security and
+consistency review are filed as a single new epic, E48 (TD-4801–4816),
+counted in the M5 totals, rather than scattered across the epics whose
+code they touch. TD-4801 (the one-line defects) shipped with the filing;
+the rest await sequencing. The high-severity security stories
+(TD-4802–4806) should land before any v0.3 tag, but that gate is
+advisory — M5's exit condition is unchanged. The same recompute corrected
+two drifted summary rows (M1.5 12/30→15/36, M3 50/142→47/136); the v0.1
+subtotals were unaffected.
+
+**Rationale:** The findings share one provenance and read best with that
+context kept together — the E20 precedent (work with no backlog home)
+rather than TD-1409/1410-style scatter into thematic ranges. M5 placement
+follows the E19 precedent: defects in shipped behavior are bugfix work on
+the current milestone, not a new phase. Changing M5's exit condition
+would be a Class C call and was not made.
+
+**Alternative rejected:** Scattering the stories into the E6/E7/E9/E10/E14
+number ranges. It would have made the review's through-line — several
+README promises are enforced less strongly than stated — invisible in the
+document.
+
