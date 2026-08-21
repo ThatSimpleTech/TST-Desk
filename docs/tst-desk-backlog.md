@@ -5050,10 +5050,13 @@ Done (2026-08-21): `remote.bind` dual-listens loopback + Tailscale;
 **Size:** 5 · **Depends on:** TD-3601, TD-203
 
 **Acceptance criteria:**
-- [ ] Loopback keeps the port-file token
-- [ ] A non-loopback hello requires a user-data-dir token with
+- [x] Loopback keeps the port-file token
+- [x] A non-loopback hello requires a user-data-dir token with
       rotation; a leaked port file is not enough
-- [ ] Failed auth is a typed close, not a session
+- [x] Failed auth is a typed close, not a session
+
+Done (2026-08-21): remote hello needs `{user_data_dir}/remote-token`;
+port-file token stays loopback-only; failed auth is `auth_failed`.
 
 ---
 

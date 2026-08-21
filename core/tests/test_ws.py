@@ -13,6 +13,11 @@ import pytest
 from websockets.asyncio.client import connect
 
 from tstd.protocol import PROTOCOL_VERSION
+from tstd.remote_auth import (
+    connection_is_remote,
+    read_remote_token_file,
+    write_remote_token_file,
+)
 from tstd.ws import (
     WebSocketServer,
     create_port_file_path,
@@ -115,6 +120,53 @@ class TestPortFile:
             data_dir = Path(tmp)
             (data_dir / "port.json").write_text("not-json", encoding="utf-8")
             assert read_port_file(data_dir) is None
+
+
+class TestRemoteTokenFile:
+    def test_write_remote_token_restricted_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            path = write_remote_token_file(data_dir, "remote-secret")
+            assert path == data_dir / "remote-token"
+            mode = path.stat().st_mode & 0o777
+            if sys.platform == "win32":
+                assert mode == 0o666, f"expected the Windows no-op 0o666, got {oct(mode)}"
+                assert path.read_text(encoding="utf-8") == "remote-secret"
+            else:
+                assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+            assert read_remote_token_file(data_dir) == "remote-secret"
+
+    def test_remote_token_is_not_the_port_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            write_port_file(data_dir, 1, "port-token")
+            write_remote_token_file(data_dir, "remote-token-value")
+            assert json.loads((data_dir / "port.json").read_text())["token"] == "port-token"
+            assert read_remote_token_file(data_dir) == "remote-token-value"
+
+    def test_write_does_not_log_the_token(self, caplog: pytest.LogCaptureFixture) -> None:
+        token = generate_token()
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            caplog.at_level("INFO", logger="tstd.remote_auth"),
+        ):
+            write_remote_token_file(Path(tmp), token)
+        assert token not in caplog.text
+
+
+class TestConnectionIsRemote:
+    def test_loopback_extra_is_not_remote(self) -> None:
+        assert connection_is_remote("127.0.0.1", ("127.0.0.1", 9), ("127.0.0.1", 10)) is False
+        assert connection_is_remote("::1", ("::1", 9), ("::1", 10)) is False
+
+    def test_extra_host_listener_is_remote(self) -> None:
+        assert connection_is_remote("100.64.1.5", ("100.64.1.5", 9), ("100.64.2.3", 10)) is True
+
+    def test_loopback_peer_on_loopback_socket_stays_local(self) -> None:
+        assert connection_is_remote("100.64.1.5", ("127.0.0.1", 9), ("127.0.0.1", 10)) is False
+
+    def test_non_loopback_peer_is_remote(self) -> None:
+        assert connection_is_remote(None, ("127.0.0.1", 9), ("100.64.1.5", 10)) is True
 
 
 async def _do_handshake(uri: str, token: str) -> None:
