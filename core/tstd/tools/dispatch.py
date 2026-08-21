@@ -94,6 +94,7 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
         hosts=hosts,
         is_mutation=tool.mutates,
         actuates=tool.actuates,
+        source=tool.source,
     )
 
 

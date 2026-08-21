@@ -50,8 +50,8 @@ class Tool:
             ``True`` is pointer/keyboard actuation (Class B, ask).
         source: Where the tool came from. Empty for built-ins;
             ``mcp:<server>`` for tools contributed by an MCP server
-            (TD-4401). Provenance is metadata only — it never gates
-            dispatch (the classifier does that, TD-702).
+            (TD-4401). Provenance never exempts a tool from the
+            chokepoint — it feeds the classifier's B-floor (TD-4402).
     """
 
     name: str
