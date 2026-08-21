@@ -34,6 +34,7 @@
 	class:card--danger={dangerous}
 	tabindex="-1"
 	bind:this={cardEl}
+	data-approval-card={approval.toolCallId}
 	aria-label={`Approval required: ${approval.summary}`}
 >
 	<header class="card-head">

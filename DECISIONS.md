@@ -6812,3 +6812,24 @@ TD-1002 / TD-1304 backstop again.
 **Alternative rejected:** Keep the omit and add a second host-side
 watchdog. Also rejected: nagging on every close.
 
+---
+
+## 2026-08-20 — TD-2904: UI-driven dock badge; no tray (Class B)
+
+**Decision:** The UI decides the coworker indicator from window visibility
+plus live session states. `awaiting_approval` wins over `running`. The host
+command `set_coworker_indicator` applies an optional label: macOS
+`set_badge_label` (the dock text that "says so"), and on other platforms
+`set_badge_count(1)` where a count badge exists plus the window title as a
+taskbar tooltip. Hide and `show_main_window` emit `window-visibility` so the
+UI can clear the badge and focus a parked approval when the dock / app icon
+is clicked. No tray (TD-4703). No new daemon protocol.
+
+**Rationale:** Session truth already lives in the window. A tray is Later.
+macOS is the badge the story names; a title tooltip is the cheap Windows /
+Linux path. Reopen already shows the window — the new work is the badge and
+landing on the parked card.
+
+**Alternative rejected:** Host inferring session state. Also rejected: a
+tray icon.
+

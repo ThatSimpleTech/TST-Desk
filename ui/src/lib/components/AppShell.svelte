@@ -47,6 +47,7 @@
 	import { startStack, refreshStack } from '../stack-store.svelte.js';
 	import { startOsNotify, createTauriOsNotifyBridge } from '../os-notify.svelte.js';
 	import { startCloseHint } from '../close-hint';
+	import { startCoworkerIndicator } from '../coworker-indicator.svelte.js';
 	import { isTauri } from '../open-file';
 	import { session } from '../session-status.svelte.js';
 	import { resolveShortcut } from '../shortcuts';
@@ -103,6 +104,7 @@
 		const offStack = startStack();
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
 		const offArtifacts = startArtifacts();
+		const offCoworker = startCoworkerIndicator();
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
 			offCloseHint = off;
@@ -117,6 +119,7 @@
 			offStack();
 			offOsNotify();
 			offArtifacts();
+			offCoworker();
 			offCloseHint();
 		};
 	});

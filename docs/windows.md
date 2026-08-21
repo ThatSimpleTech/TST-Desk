@@ -146,8 +146,10 @@ Closing the window is not quitting the app (TD-2902).
 
 - **Close** (title-bar X, Alt+F4) hides the window. `tstd` keeps running. In-flight turns
   and parked approvals continue. OS notifications still fire while the window is gone.
-  Clicking the app again shows the window and re-attaches; a second host process attaches
-  to the live listener instead of spawning another daemon.
+  While hidden, a running session or a parked approval badges the dock / taskbar (or the
+  taskbar tooltip). Clicking the app icon shows the window, focuses a parked approval if
+  there is one, and re-attaches; a second host process attaches to the live listener
+  instead of spawning another daemon.
 - **Quit** (menu / palette **Quit TST Desk**, Cmd+Q, or dock Quit) sends
   `shutdown`, reaps the process group, and leaves no listener. That is the TD-1002 v0.1
   contract, kept for Quit.
@@ -156,4 +158,4 @@ The first time this happens: closing the window hides TST Desk; **Quit TST Desk*
 stops it.
 
 For where each of these decisions was made and what was rejected, see the TD-1402, TD-1406,
-TD-2902, and TD-2903 entries in `DECISIONS.md`.
+TD-2902, TD-2903, and TD-2904 entries in `DECISIONS.md`.
