@@ -32,6 +32,13 @@ export function isCuTool(name: string): boolean {
 	return BROWSER_TOOLS.has(name) || DESKTOP_TOOLS.has(name);
 }
 
+/** Capture cannot actuate — Design may stay on during a screenshot. */
+const CU_CAPTURE = new Set(["browser_screenshot", "desktop_screenshot"]);
+
+export function isActuatingCuTool(name: string): boolean {
+	return isCuTool(name) && !CU_CAPTURE.has(name);
+}
+
 export function screenTabVisible(args: {
 	boundSessionId: string | null;
 	sessionId: string | null;

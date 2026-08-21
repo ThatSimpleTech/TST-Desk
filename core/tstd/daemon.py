@@ -33,7 +33,7 @@ from .boundary_config import (
     load_workspace_boundary,
     scaffold_workspace_config,
 )
-from .browser import BrowserDriver, browser_driver_from_config
+from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
 from .config import (
     ConfigError,
     ModelConfig,
@@ -115,6 +115,9 @@ from .protocol import (
     DeleteApiKey,
     DeleteSession,
     Deny,
+    DesignHit,
+    DesignHitBox,
+    DesignHitTest,
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
@@ -1404,6 +1407,9 @@ class Daemon:
         if isinstance(msg, OpenArtifact):
             return await self._handle_open_artifact(msg)
 
+        if isinstance(msg, DesignHitTest):
+            return await self._handle_design_hit_test(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -1974,6 +1980,37 @@ class Daemon:
             title=entry.title,
             mime=entry.mime,
             path=entry.path,
+        ).model_dump_json()
+
+    async def _handle_design_hit_test(self, msg: DesignHitTest) -> str:
+        """Observe the session browser at a CSS-pixel point (TD-3403)."""
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+                session_id=msg.session_id,
+            )
+        try:
+            raw = await self.browser_driver.hit_test(msg.x, msg.y)
+        except BrowserError:
+            raw = {}
+        node = normalize_hit(raw, msg.x, msg.y)
+        box_raw = node.get("box")
+        box = DesignHitBox.model_validate(box_raw) if isinstance(box_raw, dict) else None
+        xpath = node.get("xpath")
+        role = node.get("role")
+        attributes = node.get("attributes")
+        styles = node.get("styles")
+        return DesignHit(
+            session_id=msg.session_id,
+            x=msg.x,
+            y=msg.y,
+            xpath=xpath if isinstance(xpath, str) else None,
+            role=role if isinstance(role, str) else None,
+            attributes=attributes if isinstance(attributes, dict) else {},
+            box=box,
+            styles=styles if isinstance(styles, dict) else {},
         ).model_dump_json()
 
     async def _handle_list_memory(self, msg: ListMemory) -> str:

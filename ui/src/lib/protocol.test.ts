@@ -94,6 +94,8 @@ import type {
   Artifact,
   ScreenFrame,
   CuKillState,
+  DesignHitTest,
+  DesignHit,
   Ping,
   Error,
   Attachment,
@@ -797,6 +799,7 @@ describe("All fixtures have required shape", () => {
       "run_diagnostics",
       "get_usage", "export_usage",
       "list_artifacts", "open_artifact",
+      "design_hit_test",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -817,6 +820,7 @@ describe("All fixtures have required shape", () => {
       "artifact_ready", "artifact_list", "artifact",
       "screen_frame",
       "cu_kill_state",
+      "design_hit",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -988,6 +992,24 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isBoolean(m.killed)).toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
+  });
+
+  it("design_hit_test is a CSS-pixel point (TD-3403)", () => {
+    const m = fixtures.design_hit_test as DesignHitTest;
+    expect(m.type).toBe("design_hit_test");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isNumber(m.x)).toBe(true);
+    expect(isNumber(m.y)).toBe(true);
+  });
+
+  it("design_hit carries xpath, role, box, and styles (TD-3403)", () => {
+    const m = fixtures.design_hit as DesignHit;
+    expect(m.type).toBe("design_hit");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isNumber(m.x)).toBe(true);
+    expect(isNumber(m.y)).toBe(true);
+    expect(typeof m.xpath === "string" || m.xpath === null).toBe(true);
+    expect(m.box === null || (m.box !== undefined && isNumber(m.box.width))).toBe(true);
   });
 
   it("session_list carries the auto-title field (TD-3001)", () => {
