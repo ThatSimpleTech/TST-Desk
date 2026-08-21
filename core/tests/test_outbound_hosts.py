@@ -56,7 +56,9 @@ import pytest
 
 from tstd.config import (
     ModelConfig,
+    NotifyConfig,
     Preset,
+    SlackNotifyConfig,
     TierConfig,
     cached_config,
     is_loopback_url,
@@ -64,6 +66,7 @@ from tstd.config import (
 from tstd.context.embeddings import EmbeddingsClient
 from tstd.daemon import Daemon
 from tstd.discovery import resolve_tier_slugs
+from tstd.notify.slack import send as slack_send
 from tstd.provider import ChatCompletionRequest, ChatMessage, ProviderClient, RetryConfig
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent / "tstd"
@@ -244,6 +247,7 @@ _OUTBOUND_CAPABLE = {
     "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
     "tools/web_search.py": "web_search; destination is search.base_url from config",
     "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
+    "notify/slack.py": "slack incoming webhook; destination host is notify.slack.host from config",
 }
 
 
@@ -460,6 +464,41 @@ async def test_embeddings_destination_traces_to_config(
     assert vectors == [[0.1, 0.2]]
     assert recorder.origins() == {"http://127.0.0.1:64111"}
     assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64111/v1/embeddings"}
+
+
+async def test_slack_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """Slack notify lands where notify.slack.host points. The webhook URL
+    is injected (keychain in production); the host allowlist is config."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        slack=SlackNotifyConfig(enabled=True, host="127.0.0.1", timeout_seconds=1)
+    )
+    await slack_send(
+        config,
+        "hello",
+        webhook_url="http://127.0.0.1:64112/services/T/B/injected",
+    )
+    assert recorder.origins() == {"http://127.0.0.1:64112"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64112/services/T/B/injected"}
+
+
+async def test_moving_the_slack_host_moves_the_destination(
+    recorder: TransportRecorder,
+) -> None:
+    """Change notify.slack.host (and the injected URL's host) and the
+    request follows. A hardcoded Slack host would not."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        slack=SlackNotifyConfig(enabled=True, host="somewhere-else.invalid", timeout_seconds=1)
+    )
+    await slack_send(
+        config,
+        "hello",
+        webhook_url="https://somewhere-else.invalid/services/T/B/injected",
+    )
+    assert recorder.origins() == {"https://somewhere-else.invalid"}
 
 
 async def test_moving_the_configured_endpoint_moves_every_destination(

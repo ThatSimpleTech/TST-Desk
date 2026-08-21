@@ -200,6 +200,26 @@ class EmbeddingsConfig(BaseModel):
         raise ValueError("command must be a string or a list of arguments")
 
 
+class SlackNotifyConfig(BaseModel):
+    """Slack incoming webhook (TD-3801). Off by default.
+
+    ``host`` is the only host ``tstd.notify.slack.send`` may reach. The
+    webhook URL itself is a keychain secret (account ``tst-slack-webhook``),
+    never this file, never a log, never the audit database. Empty ``host``
+    or ``enabled: false`` means no send.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class NotifyConfig(BaseModel):
+    """Outbound notification channels. Slack first; no 20-platform gateway."""
+
+    slack: SlackNotifyConfig = Field(default_factory=SlackNotifyConfig)
+
+
 class ComputerUseConfig(BaseModel):
     """Desktop computer-use sidecar (TD-3301) and browser (TD-1710).
 
@@ -237,6 +257,7 @@ class ModelConfig(BaseModel):
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
+    notify: NotifyConfig = Field(default_factory=NotifyConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -319,7 +340,14 @@ def load_config(path: Path | None = None) -> ModelConfig:
     # Fill from the shipped file so the destination exists without
     # rewriting theirs.
     shipped: dict[str, Any] | None = None
-    for key in ("search", "embeddings", "project_context", "session", "computer_use"):
+    for key in (
+        "search",
+        "embeddings",
+        "project_context",
+        "session",
+        "computer_use",
+        "notify",
+    ):
         if key in data:
             continue
         if shipped is None:

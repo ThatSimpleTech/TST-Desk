@@ -321,6 +321,31 @@ async def delete_api_key(provider_name: str = "openrouter") -> None:
     await backend.delete_secret(f"tst-{provider_name}")
 
 
+SLACK_WEBHOOK_ACCOUNT = "tst-slack-webhook"
+
+
+async def get_slack_webhook_url() -> str:
+    """Retrieve the Slack incoming-webhook URL from the OS keychain.
+
+    Stored under account ``tst-slack-webhook``. The URL is a secret —
+    callers must not write it to config, logs, or the audit database.
+    """
+    backend = _get_backend()
+    return await backend.get_secret(SLACK_WEBHOOK_ACCOUNT)
+
+
+async def store_slack_webhook_url(url: str) -> None:
+    """Store the Slack incoming-webhook URL in the OS keychain."""
+    backend = _get_backend()
+    await backend.set_secret(SLACK_WEBHOOK_ACCOUNT, url)
+
+
+async def delete_slack_webhook_url() -> None:
+    """Delete the Slack incoming-webhook URL from the OS keychain."""
+    backend = _get_backend()
+    await backend.delete_secret(SLACK_WEBHOOK_ACCOUNT)
+
+
 def has_keychain_backend() -> bool:
     """Check if a keychain backend is available for this platform."""
     try:
