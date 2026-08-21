@@ -5035,11 +5035,14 @@ one instruction, deliver.
 **Size:** 5 · **Depends on:** TD-202, TD-2902
 
 **Acceptance criteria:**
-- [ ] Config names an interface or a Tailscale IPv4; the server binds
+- [x] Config names an interface or a Tailscale IPv4; the server binds
       that address and loopback, never `0.0.0.0` / `::`
-- [ ] A bind to a non-Tailscale non-loopback address is refused
-- [ ] `test_outbound_hosts` / bind tests name the new path
-- [ ] Off by default
+- [x] A bind to a non-Tailscale non-loopback address is refused
+- [x] `test_outbound_hosts` / bind tests name the new path
+- [x] Off by default
+
+Done (2026-08-21): `remote.bind` dual-listens loopback + Tailscale;
+`0.0.0.0` / LAN refused; off by default.
 
 ---
 
