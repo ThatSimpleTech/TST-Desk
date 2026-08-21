@@ -4162,11 +4162,11 @@ easy to get slightly wrong. Propose the ranker shape before building.
 **Size:** 5 · **Depends on:** TD-2202, TD-1002
 
 **Acceptance criteria:**
-- [ ] The host can spawn a configured embeddings binary the way it spawns
+- [x] The host can spawn a configured embeddings binary the way it spawns
       `tstd`, or attach to an already-running loopback endpoint
-- [ ] A dead sidecar does not take down the daemon; TD-2201 runs instead
-- [ ] Quit reaps the embeddings child
-- [ ] Optional — a workspace with no embeddings config never tries to spawn
+- [x] A dead sidecar does not take down the daemon; TD-2201 runs instead
+- [x] Quit reaps the embeddings child
+- [x] Optional — a workspace with no embeddings config never tries to spawn
 
 **Notes:** size 5 is the host work. If this slips, M4 still exits on
 heading-match + distill. Do not block TD-2701 on this story.

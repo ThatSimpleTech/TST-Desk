@@ -57,7 +57,7 @@ no effect.
 | `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, and `local`. |
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
-| `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables. |
+| `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 
 ### `search`
 
@@ -77,9 +77,10 @@ this key.
 
 Memory ranking (TD-2202). The client sends OpenAI `POST /v1/embeddings` to
 `base_url`. The host is configuration, never a Python literal. Empty
-`base_url` disables the sidecar; a down loopback endpoint falls back to
+`base_url` disables the client; a down loopback endpoint falls back to
 heading-match (TD-2201) and does not fail the turn. Do not point this at
-Ollama `/api/embed`.
+Ollama `/api/embed`. The Tauri host spawns a sidecar only when `command`
+is set (TD-2204). A filled `base_url` with no `command` is attach-only.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -88,6 +89,7 @@ Ollama `/api/embed`.
 | `timeout_seconds` | float > 0 | `2` | How long a probe may run before heading-match takes over. |
 | `top_k` | int ≥ 1 | `4` | Maximum topic files kept after `MEMORY.md` when the sidecar answers. |
 | `token_budget` | int ≥ 1 | `2000` | Cap on loaded memory tokens (TD-506 heuristic, file bytes). Lowest-ranked topics drop until under the cap; `MEMORY.md` is the last file dropped. |
+| `command` | string or list | *empty* | Host-only argv for the embeddings binary. A string is split on whitespace; a list is used as-is (numbers become strings). Empty or omitted means attach-only — the host never tries to spawn. Sidecar death is logged and does not restart `tstd`. |
 
 <!-- verify: model -->
 ```yaml

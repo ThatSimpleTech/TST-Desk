@@ -14,6 +14,7 @@ import pytest
 from tstd.config import (
     PRESETS,
     ConfigError,
+    EmbeddingsConfig,
     ModelConfig,
     TierConfig,
     cached_config,
@@ -142,6 +143,20 @@ class TestTiers:
         """Worker tier defaults to 16K max_output_tokens for edits."""
         cfg = _load_shipped(tmp_path)
         assert cfg.tier("worker").max_output_tokens == 16384
+
+    def test_shipped_embeddings_command_is_empty(self, tmp_path: Path) -> None:
+        """TD-2204: packaged config is attach-only (no host spawn)."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.embeddings.command == ""
+        assert EmbeddingsConfig().command == ""
+
+    def test_embeddings_command_accepts_string_or_list(self) -> None:
+        assert EmbeddingsConfig(command="llama-server --embeddings").command == (
+            "llama-server --embeddings"
+        )
+        assert EmbeddingsConfig.model_validate(
+            {"command": ["llama-server", "--port", 8080]}
+        ).command == ["llama-server", "--port", "8080"]
 
 
 # ── Validation ───────────────────────────────────────────────────────────
