@@ -61,6 +61,7 @@
 	import { startCoworkerIndicator } from '../coworker-indicator.svelte.js';
 	import { isTauri } from '../open-file';
 	import { session } from '../session-status.svelte.js';
+	import { startCuKill, setCuKill } from '../cu-kill.svelte.js';
 	import { resolveShortcut } from '../shortcuts';
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
@@ -100,7 +101,8 @@
 		else if (action === 'open-palette') openPalette();
 		else if (action === 'toggle-design') {
 			if (toggleDesign()) showRightPane('screen');
-		} else openSettings();
+		} else if (action === 'stop-computer-use') setCuKill(true);
+		else openSettings();
 	}
 
 	// Top-most first, matching DOM order at the same --z-modal (settings is
@@ -136,6 +138,7 @@
 		const offCuIndicators = startCuIndicators();
 		const offDesign = startDesign();
 		const offCoworker = startCoworkerIndicator();
+		const offCuKill = startCuKill();
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
 			offCloseHint = off;
@@ -155,6 +158,7 @@
 			offCuIndicators();
 			offDesign();
 			offCoworker();
+			offCuKill();
 			offCloseHint();
 		};
 	});

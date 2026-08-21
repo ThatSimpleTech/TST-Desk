@@ -133,6 +133,30 @@ describe("resolveShortcut — Design mode (TD-3403)", () => {
 	});
 });
 
+describe("resolveShortcut — computer-use kill-switch (TD-3404)", () => {
+	it("stops on ⌘. (meta) and Ctrl+.", () => {
+		expect(resolveShortcut({ key: ".", metaKey: true, ctrlKey: false }, IDLE)).toBe(
+			"stop-computer-use",
+		);
+		expect(resolveShortcut({ key: ".", metaKey: false, ctrlKey: true }, IDLE)).toBe(
+			"stop-computer-use",
+		);
+	});
+
+	it("works over a running turn and over an open pane", () => {
+		expect(resolveShortcut({ key: ".", metaKey: true, ctrlKey: false }, LIVE)).toBe(
+			"stop-computer-use",
+		);
+		expect(
+			resolveShortcut({ key: ".", metaKey: true, ctrlKey: false }, { ...IDLE, modalOpen: true }),
+		).toBe("stop-computer-use");
+	});
+
+	it("leaves a bare period alone so typing works", () => {
+		expect(resolveShortcut({ key: ".", metaKey: false, ctrlKey: false }, IDLE)).toBeNull();
+	});
+});
+
 describe("resolveShortcut — everything else", () => {
 	it("returns null for unrelated keys", () => {
 		expect(resolveShortcut({ key: "a", metaKey: false, ctrlKey: false }, LIVE)).toBeNull();

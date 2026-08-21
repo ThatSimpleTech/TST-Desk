@@ -18,6 +18,7 @@ import {
 	type PaletteEntry,
 } from "./palette";
 import { isTauri } from "./open-file";
+import { setCuKill } from "./cu-kill.svelte.js";
 import { chat } from "./chat-store.svelte.js";
 import { endSession } from "./session-actions.svelte.js";
 import { openDecisions } from "./decisions.svelte.js";
@@ -122,6 +123,12 @@ function dispatch(command: PaletteCommand): void {
 			return;
 		case "end-session":
 			if (chat.sessionId !== null) endSession(chat.sessionId);
+			return;
+		case "stop-computer-use":
+			setCuKill(true);
+			return;
+		case "resume-computer-use":
+			setCuKill(false);
 			return;
 		case "quit-app":
 			if (isTauri()) {
