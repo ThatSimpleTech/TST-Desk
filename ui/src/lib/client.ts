@@ -58,6 +58,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "artifact_list", // TD-3201
   "artifact", // TD-3201
   "error",
+  "cu_permissions", // TD-3302
 ]);
 
 /**

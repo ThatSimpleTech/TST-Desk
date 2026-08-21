@@ -22,10 +22,13 @@ class MockDesktopDriver:
         *,
         foreground_title: str = "Mock Window",
         foreground_app: str = "mock",
+        permission_denied: bool = False,
     ) -> None:
         self.foreground_title = foreground_title
         self.foreground_app = foreground_app
         self.killed = False
+        # Scripted TCC denial: raise before any record or actuation.
+        self.permission_denied = permission_denied
         # Successful operations only — a refusal must not appear here.
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.actuations: list[str] = []
@@ -33,7 +36,24 @@ class MockDesktopDriver:
     def set_killed(self, killed: bool) -> None:
         self.killed = bool(killed)
 
+    def _refuse_if_denied(self) -> None:
+        if self.permission_denied:
+            raise DesktopError(
+                DesktopError.PERMISSION_DENIED,
+                "Screen Recording or Accessibility is not granted. Nothing was sent.",
+            )
+
+    async def check_permissions(self) -> dict[str, Any]:
+        granted = not self.permission_denied
+        return {
+            "platform": "macos",
+            "screen_recording": {"granted": granted},
+            "accessibility": {"granted": granted},
+            "all_granted": granted,
+        }
+
     def _guard(self, expect_window: str | None, *, actuating: bool) -> None:
+        self._refuse_if_denied()
         if actuating and self.killed:
             raise DesktopError("cu_killed", "computer-use kill-switch is engaged")
         if expect_window is not None and not window_matches(
@@ -53,6 +73,8 @@ class MockDesktopDriver:
 
     async def screenshot(self, display: int | None = None) -> str:
         # Capture is not actuation: the kill-switch must not blind the eyes.
+        # Screen Recording still applies — a TCC deny is not a hang.
+        self._refuse_if_denied()
         self._record("screenshot", False, display=display)
         return json.dumps(
             {

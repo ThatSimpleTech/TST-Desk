@@ -367,6 +367,11 @@ export interface OpenArtifact extends ClientMessage {
   artifact_id: string;
 }
 
+/** Re-probe computer-use OS permissions (TD-3302). Connection-scoped. */
+export interface CheckCuPermissions extends ClientMessage {
+  type: "check_cu_permissions";
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -417,7 +422,8 @@ export type ClientMessageUnion =
   | GetUsage
   | ExportUsage
   | ListArtifacts
-  | OpenArtifact;
+  | OpenArtifact
+  | CheckCuPermissions;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -896,6 +902,18 @@ export interface Error extends DaemonEvent {
   message: string;
 }
 
+/** Computer-use OS permission report (TD-3302). Connection-scoped. */
+export interface CuPermissions extends DaemonEvent {
+  type: "cu_permissions";
+  granted: boolean;
+  screen_recording: boolean;
+  accessibility: boolean;
+  screen_recording_url: string;
+  accessibility_url: string;
+  first_run: boolean;
+  platform: "macos";
+}
+
 export interface ContextCompacted extends DaemonEvent {
   type: "context_compacted";
   session_id: string;
@@ -949,4 +967,5 @@ export type DaemonEventUnion =
   | ArtifactReady
   | ArtifactList
   | Artifact
-  | Error;
+  | Error
+  | CuPermissions;

@@ -6908,3 +6908,34 @@ importing `tst_cu_mcp` backends into `tstd`. Also rejected: HTTP sidecar
 (embeddings-style) — the MCP server is already stdio and a socket would
 invite a bind.
 
+---
+
+## 2026-08-21 — TD-3302: macOS CU permission onboarding (Class B)
+
+**Decision:** Desktop TCC denial is `DesktopError.PERMISSION_DENIED`.
+The mock raises it when scripted. Live MCP errors that name Screen
+Recording, Accessibility, or TCC map to the same code. The tool result
+carries that code; the daemon also emits connection-scoped
+`cu_permissions` (granted/denied + System Settings URLs) on the first
+desktop tool call and on every later deny. First-run is
+`{user_data_dir}/cu-macos-permissions.yaml` `{shown: true}`, not the
+workspace. `check_cu_permissions` re-probes with `request=False` (never
+a TCC hang). Settings "Computer use permissions" reopens the same macOS
+copy. Windows-specific copy is TD-3303.
+
+Deep links are the current `x-apple.systemsettings` pane IDs:
+
+- Screen Recording: `x-apple.systemsettings:com.apple.preferences.privacy-security.ScreenCapture`
+- Accessibility: `x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility`
+
+These differ from the older
+`x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`
+/ `Privacy_Accessibility` aliases, which still resolve on some builds.
+
+**Rationale:** A hang waiting for the TCC dialog is a defect. The UI
+must not infer URLs. A user-data flag matches close-is-not-quit.
+
+**Alternative rejected:** Prompting TCC from the sidecar (`request=True`).
+Also rejected: a workspace file for first-run. Also rejected: Windows
+copy in this story.
+
