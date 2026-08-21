@@ -5118,8 +5118,11 @@ Done (2026-08-21): `send(config, message)`; URL in keychain
 **Size:** 2 · **Depends on:** TD-3801
 
 **Acceptance criteria:**
-- [ ] Same `send` shape; topic URL from config; off by default
-- [ ] Discord/Telegram are TD-4707, not this story
+- [x] Same `send` shape; topic URL from config; off by default
+- [x] Discord/Telegram are TD-4707, not this story
+
+Done (2026-08-21): `send(config, message)`; topic URL in keychain
+`tst-ntfy-topic`; host from `notify.ntfy.host`; off by default.
 
 ---
 

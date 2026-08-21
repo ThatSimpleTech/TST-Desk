@@ -60,7 +60,7 @@ no effect.
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
-| `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack is off until `notify.slack.enabled` is true and a webhook URL is stored in the OS keychain. |
+| `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 
 ### `search`
 
@@ -112,16 +112,18 @@ under the user data dir. Playwright missing always falls back to mock.
 
 ### `notify`
 
-Outbound notification channels (TD-3801). Each channel is a standalone
-`send(config, message)` — Slack first, no 20-platform gateway (spec §8).
-Off by default. The Slack incoming-webhook URL is a keychain secret
-(account `tst-slack-webhook`), never this file, never the audit log.
-`host` is the only host the notifier may reach; the keychain URL's host
-must match it or the send is dropped.
+Outbound notification channels (TD-3801, TD-3802). Each channel is a
+standalone `send(config, message)` — Slack first, ntfy optional, no
+20-platform gateway (spec §8). Discord/Telegram are TD-4707. Off by
+default. Destination URLs are keychain secrets (`tst-slack-webhook`,
+`tst-ntfy-topic`), never this file, never the audit log. `host` is the
+only host a notifier may reach; the keychain URL's host must match it
+or the send is dropped.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `slack` | mapping | see below | Slack incoming webhook. |
+| `ntfy` | mapping | see below | ntfy topic POST. |
 
 #### `notify.slack`
 
@@ -130,6 +132,14 @@ must match it or the send is dropped.
 | `enabled` | bool | `false` | When false, approval-needed and turn-complete never POST. |
 | `host` | string | *empty* | Allowed destination hostname. Empty disables even if `enabled` is true. |
 | `timeout_seconds` | float > 0 | `5` | How long a webhook POST may run. Failures are logged and never fail the turn. |
+
+#### `notify.ntfy`
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | When false, approval-needed and turn-complete never POST. |
+| `host` | string | *empty* | Allowed destination hostname. Empty disables even if `enabled` is true. Typical public instance is ntfy.sh. |
+| `timeout_seconds` | float > 0 | `5` | How long a topic POST may run. Failures are logged and never fail the turn. |
 
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
@@ -194,6 +204,10 @@ computer_use:
   browser: mock
 notify:
   slack:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  ntfy:
     enabled: false
     host: ""
     timeout_seconds: 5

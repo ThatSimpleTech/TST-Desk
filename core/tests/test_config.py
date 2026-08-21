@@ -18,6 +18,7 @@ from tstd.config import (
     ConfigError,
     EmbeddingsConfig,
     ModelConfig,
+    NtfyNotifyConfig,
     SlackNotifyConfig,
     TierConfig,
     cached_config,
@@ -172,6 +173,13 @@ class TestTiers:
         assert cfg.notify.slack.enabled is False
         assert cfg.notify.slack.host == ""
         assert SlackNotifyConfig().enabled is False
+
+    def test_shipped_ntfy_notify_is_off(self, tmp_path: Path) -> None:
+        """TD-3802: packaged config does not send to ntfy."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.notify.ntfy.enabled is False
+        assert cfg.notify.ntfy.host == ""
+        assert NtfyNotifyConfig().enabled is False
 
     def test_computer_use_command_accepts_string_or_list(self) -> None:
         assert ComputerUseConfig(command="python -m tst_cu_mcp").command == ("python -m tst_cu_mcp")
