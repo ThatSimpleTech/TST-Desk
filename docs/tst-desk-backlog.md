@@ -5139,11 +5139,14 @@ draft; save is a second call; no runner.
 **Size:** 5 · **Depends on:** TD-3803, TD-3101
 
 **Acceptance criteria:**
-- [ ] Due jobs start a session (or `tst run`) in the named workspace,
+- [x] Due jobs start a session (or `tst run`) in the named workspace,
       then deliver a summary to the configured channel
-- [ ] Missed runs while the daemon was down fire once on revive, not
+- [x] Missed runs while the daemon was down fire once on revive, not
       in a stampede
-- [ ] Caps and the classifier still apply
+- [x] Caps and the classifier still apply
+
+Done (2026-08-21): daemon tick + in-process `_start_session` turn;
+one fire then cadence advances `next_run` (or pause if one-shot).
 
 ---
 

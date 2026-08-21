@@ -7190,3 +7190,37 @@ no UI consumer yet; adding them would freeze a wire contract before
 the rail. Calling a worker model to parse — needs network/spend and
 is not required to ship the schema.
 
+---
+
+## 2026-08-21 — TD-3804: in-process one-shot wake, cadence stamps next_run (Class B)
+
+**Decision:** The daemon owns a short tick (15s) that, on start and each
+tick, arms cadence-only jobs (writes a future `next_run` without
+firing), then `due_jobs(now)` → for each due job run **once**. Execution
+is `_start_session` + `add_user_message` + wait for `turn_complete` —
+the in-process counterpart of `tst run`. No nested daemon, no
+self-WebSocket, no classifier/caps bypass.
+
+After a fire: a cadence job keeps `cadence` and stamps `next_run` to
+the next slot **after now** (interval add, or next 5-field cron). A
+one-shot (`next_run` only) is paused. A job whose `next_run` is three
+intervals in the past therefore fires once, not three times. Paused
+jobs never run.
+
+`Job` may now carry both `cadence` and `next_run`. Create
+(`validate_draft`) still requires exactly one. Window delivery is a
+recorded callback; `slack` / `ntfy` call an optional `send` hook, else
+log. No Slack HTTP (TD-3801). No new protocol event (the Scheduled
+rail is TD-3805).
+
+**Rationale:** Reusing the live session path keeps prime directive §2.6
+and caps on the same chokepoint as a window turn. Advancing from *now*
+is the anti-stampede rule. A protocol delivery event would freeze a
+wire contract before the rail has a consumer.
+
+**Alternative rejected:** Calling `cli.run_turn` over the daemon's own
+socket — stdout noise, stdin approvals, and a nested client. Catch-up
+loops from the missed `next_run` — that is the stampede. Adding
+`croniter` — the validated 5-field subset walks minutes without a
+dependency.
+
