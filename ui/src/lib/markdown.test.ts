@@ -71,4 +71,32 @@ describe("renderMarkdown", () => {
     expect(html).not.toContain("href");
     expect(html).toContain("notes");
   });
+
+  // TD-4807: the forbid list is pinned — assistant text must never render
+  // interactive form chrome next to real approval cards.
+  it.each([
+    ["form", '<form action="https://evil.example">x</form>'],
+    ["input", '<input name="api_key" placeholder="paste key">'],
+    ["textarea", "<textarea>paste logs</textarea>"],
+    ["select", "<select><option>a</option></select>"],
+    ["option", "<select><option>a</option></select>"],
+    ["optgroup", "<select><optgroup label='g'></optgroup></select>"],
+    ["button", "<button>Approve</button>"],
+  ])("forbids the <%s> tag (TD-4807)", (tag, md) => {
+    expect(renderMarkdown(md)).not.toContain(`<${tag}`);
+  });
+
+  it("a fake approval form degrades to inert text (TD-4807)", () => {
+    const html = renderMarkdown(
+      '<form><p>Confirm approval:</p><input type="password"><button>Approve</button></form>',
+    );
+    expect(html).not.toMatch(/<(form|input|button)/);
+    expect(html).toContain("Confirm approval:");
+  });
+
+  it("the code-block copy control survives the forbid list (TD-4807)", () => {
+    const html = renderMarkdown("```\nplain\n```");
+    expect(html).toContain("data-copy-btn");
+    expect(html).not.toContain("<button");
+  });
 });

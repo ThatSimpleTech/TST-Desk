@@ -7210,3 +7210,29 @@ also removes one worker call per shell command — less spend, less latency.
 substitutions, wrappers); every added form is a new false-negative
 surface, and the B floor already asks in every case the parser misses.
 
+
+## 2026-08-21 — TD-4807: the webview CSP lives in `vite.config.ts`, not `tauri.conf.json` (Class B)
+
+**Decision:** The content security policy is configured as `kit.csp` in
+`ui/vite.config.ts` (mode `hash`), which SvelteKit emits as a build-time
+`<meta>` tag. `shell/tauri.conf.json` keeps `"csp": null`. This deviates
+from the story's literal acceptance wording ("`tauri.conf.json` sets a
+content security policy"); the intent — a locked policy the app renders
+under — is met, and a guard test pins `csp: null` so nobody adds a second,
+intersecting policy later.
+
+**Rationale:** SvelteKit's prerendered HTML contains an inline bootstrap
+script that imports content-hashed chunks, so the bootstrap's own hash
+changes on every build. A static policy in `tauri.conf.json` cannot carry
+that hash; `script-src 'self'` alone would block the bootstrap and the app
+would not boot, and `'unsafe-inline'` would gut the policy. Hash mode
+computes the hash at build time, so the policy is always in sync with the
+build it ships with. Tauri's own bridge is unaffected: v2 delivers it via
+native initialization scripts and `WKUserScript`, which page CSP does not
+govern (verified against tauri-2.11.5 `manager/mod.rs::set_csp`, which
+only processes CSP when the config sets one).
+
+**Alternative rejected:** A `beforeBuildCommand` codegen step that hashes
+the built HTML and rewrites `tauri.conf.json`. It reproduces what
+`kit.csp` already does, maintained by the framework, and adds build
+machinery for no gain.
