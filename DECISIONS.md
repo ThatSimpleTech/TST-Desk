@@ -7561,3 +7561,26 @@ keeps both attach paths honest. Slugs stay omitted; discovery and
 preset that duplicates `vllm`. The first silently moves every Ollama user.
 The second is two names for one URL.
 
+## 2026-08-21 — TD-3902: local grounding is loopback-only, miss is TD-3304 (Class B)
+
+**Decision:** Click grounding is a nested `computer_use.grounding` block.
+Empty `base_url` is off. A filled URL must be loopback (load error
+otherwise) — never an off-box vision call. Optional `slug` is discovered
+from `/v1/models` like TD-1805. The OpenAI-compatible vision client lives
+in `tstd/desktop/grounding_client.py`; the desktop click handler asks it
+when enabled and otherwise (or on miss / down / unresolved) clicks the
+intended (x, y). That intended path is still TD-3304's eval. Cost on
+this path is always 0 (loopback-only). Latency is on the tool result
+as `grounding.latency_ms`. No protocol event.
+
+**Rationale:** Size 8 split from the start so the eval helper stays
+untouched and CI never needs a live UI-TARS. Forcing loopback keeps
+§2.3 and "loopback prices 0" as structure, not a comment. Recording
+latency on the click JSON is visible to tests without a new event
+type or off-box telemetry.
+
+**Alternative rejected:** Rewriting `grounding.py` so the eval itself
+calls a model. Also rejected: failing the click when grounding misses.
+Also rejected: price keys on the grounding block — billed cost cannot
+be non-zero while the only legal destination is loopback.
+

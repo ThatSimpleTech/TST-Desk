@@ -62,6 +62,7 @@ from .cu_indicators import (
     set_current_prefs,
 )
 from .desktop import DesktopDriver, desktop_driver_from_config
+from .desktop.grounding_client import GroundingClient
 from .desktop.permissions import (
     cu_permissions_from_report,
     driver_cu_platform,
@@ -1826,6 +1827,7 @@ class Daemon:
             allowed_commands=sess.boundary_config.boundary.shell_allowlist(),
             desktop_driver=self.desktop_driver,
             browser_driver=self.browser_driver,
+            grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
         )
 
         sink = self._audit_writer

@@ -216,9 +216,16 @@ session:
 # stdio (no socket). The daemon owns the child.
 # browser: mock (default, CI) or playwright (TD-1710). Missing Playwright
 # always falls back to the in-process mock.
+# grounding (TD-3902): local UI-TARS (or compatible) click targeting.
+# Empty base_url is off — clicks use the intended (x, y). A filled URL
+# must be loopback (the vllm preset's :8000/v1, or a dedicated sidecar).
+# Optional slug is discovered from /v1/models when omitted.
 computer_use:
   command: ""
   browser: mock
+  grounding:
+    base_url: ""
+    timeout_seconds: 8
 
 # Opt-in Tailscale bind (TD-3601). Empty is off: 127.0.0.1 only.
 # Settings → Allow remote attach (TD-3603) turns this on. The documented

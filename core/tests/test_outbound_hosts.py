@@ -66,6 +66,8 @@ from tstd.config import (
 )
 from tstd.context.embeddings import EmbeddingsClient
 from tstd.daemon import Daemon
+from tstd.desktop.grounding_client import GroundingClient
+from tstd.desktop.protocol import TINY_PNG
 from tstd.discovery import resolve_tier_slugs
 from tstd.notify.ntfy import send as ntfy_send
 from tstd.notify.slack import send as slack_send
@@ -254,6 +256,10 @@ _OUTBOUND_CAPABLE = {
     "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
     "tools/web_search.py": "web_search; destination is search.base_url from config",
     "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
+    "desktop/grounding_client.py": (
+        "UI-TARS grounding; destination is computer_use.grounding.base_url "
+        "from config; loopback-only, empty disables"
+    ),
     "notify/slack.py": "slack incoming webhook; destination host is notify.slack.host from config",
     "notify/ntfy.py": "ntfy topic POST; destination host is notify.ntfy.host from config",
 }
@@ -472,6 +478,20 @@ async def test_embeddings_destination_traces_to_config(
     assert vectors == [[0.1, 0.2]]
     assert recorder.origins() == {"http://127.0.0.1:64111"}
     assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64111/v1/embeddings"}
+
+
+async def test_grounding_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """The grounding client lands where computer_use.grounding.base_url points."""
+    client = GroundingClient(
+        base_url="http://127.0.0.1:64113/v1",
+        slug="sentinel-model",
+        timeout_seconds=1,
+    )
+    await client.locate(TINY_PNG, "Save")
+    assert recorder.origins() == {"http://127.0.0.1:64113"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64113/v1/chat/completions"}
 
 
 async def test_slack_destination_traces_to_config(

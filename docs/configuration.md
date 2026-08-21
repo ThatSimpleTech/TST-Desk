@@ -58,7 +58,7 @@ no effect.
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
-| `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. |
+| `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
@@ -110,6 +110,26 @@ under the user data dir. Playwright missing always falls back to mock.
 |---|---|---|---|
 | `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
+| `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
+
+#### `computer_use.grounding`
+
+UI-TARS (or any OpenAI-compatible vision chat) on loopback. Empty
+`base_url` is off: `desktop_click` uses the intended (x, y) — the
+TD-3304 path. A down endpoint, a missing model, or an unreadable
+reply also falls back to that point; the click does not fail because
+grounding missed. Off-box URLs are a load error. Cost on loopback is
+zero. Latency is recorded on the tool result.
+
+The URL may be the same `vllm` loopback as the tiers (`:8000/v1`) or a
+dedicated sidecar. Optional `slug` is discovered from `/v1/models`
+when omitted, same as a loopback tier (TD-1805).
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `base_url` | string | *empty* | OpenAI-compatible endpoint, including the `/v1` suffix. Empty disables. Must be loopback when set. |
+| `slug` | string or omitted | *omitted* | Model id. Omitted discovers the single model the endpoint serves. Required only if the server lists several. |
+| `timeout_seconds` | float > 0 | `8` | How long a locate request may run before the intended point is used. |
 
 ### `notify`
 
@@ -227,6 +247,9 @@ session:
 computer_use:
   command: ""
   browser: mock
+  grounding:
+    base_url: ""
+    timeout_seconds: 8
 remote:
   bind: ""
 notify:
@@ -467,6 +490,11 @@ endpoint:
 
 The doctor's `provider` row always names the endpoint (`reachable at …` or the discovery
 failure's `fix`). It does not print the developer's model list.
+
+To ground computer-use clicks on the same loopback server, set
+`computer_use.grounding.base_url` to that `/v1` URL (or a dedicated
+sidecar). Empty keeps the intended (x, y). A vision model that is
+down or unnamed falls back the same way — it does not fail the click.
 
 ---
 
