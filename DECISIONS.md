@@ -7002,3 +7002,28 @@ replay and rewind attach; connection-scoped seq=1 matches `artifact_list`.
 gate). Also rejected: treating hit-test as a tool call (would go through
 the classifier and look like actuation).
 
+---
+
+## 2026-08-21 — TD-3405: M6 exit is a protocol-client CU pass (Class B)
+
+**Decision:** `tstd.e2e_m6.run_m6` is a fourth protocol-client pass, not
+a branch of `e2e_harness.run`. The headless path scripts
+`desktop_screenshot` (Class A) then a `desktop_click` whose
+`expect_window` mismatches (`focus_mismatch`, mock records no move)
+then a `desktop_click` the harness approves on `approval_request`. A
+second scripted pass runs the six TD-1710 browser verbs plus
+`screen_frame` against `MockBrowserDriver`. That mock browser path is
+the CI green for the "live TD-1710" AC.
+
+A `@pytest.mark.live` test may launch Playwright when the package is
+importable and a display exists. It does not claim a live browser
+unless Chromium actually started. Default `addopts` (`-m 'not live'`)
+deselects it.
+
+**Rationale:** Folding CU into `e2e_harness.run` would change a frozen
+signature (TD-1401). CI has no pointer and often no Playwright or
+display. Claiming a live browser from a mock would falsify the M6 exit.
+
+**Alternative rejected:** Marking the mock six-verb path `@pytest.mark.live`.
+Also rejected: launching Chrome in the default suite.
+
