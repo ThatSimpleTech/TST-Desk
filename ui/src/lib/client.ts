@@ -506,7 +506,9 @@ export class ProtocolClient {
     if (this.stopped) return;
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     const attempt = this.reconnectAttempt;
-    const backoff = Math.min(this.opts.baseBackoffMs ?? 500 * 2 ** attempt, this.opts.maxBackoffMs ?? 15_000);
+    // `??` binds looser than `*`: without the parens a configured base is
+    // applied flat and only the default grows exponentially (TD-4801).
+    const backoff = Math.min((this.opts.baseBackoffMs ?? 500) * 2 ** attempt, this.opts.maxBackoffMs ?? 15_000);
     this.reconnectAttempt += 1;
     this.retryTimer = setTimeout(() => void this.open(), backoff);
   }

@@ -393,7 +393,8 @@ class TestAmbiguous:
     def test_unless_an_unambiguous_rule_fires_goes_unclassified(self) -> None:
         # A mutation with no recognized shape: no rule fires, must be
         # decided by the worker-tier classifier (TD-703), defaulting to B.
-        decision = classify(boundary(), req(tool_name="shell", is_mutation=True))
+        # (Not "shell": shell has a static B floor, TD-4805.)
+        decision = classify(boundary(), req(tool_name="custom_tool", is_mutation=True))
         assert decision.decision_class is None
         assert decision.rule is None
 

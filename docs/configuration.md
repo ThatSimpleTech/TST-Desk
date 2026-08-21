@@ -383,16 +383,23 @@ regardless of this list. And the shell tool declares no path arguments, so it is
 working directory and `allowed_commands`, not by these globs. A command that writes outside
 them is not stopped here.
 
-Steering files (`AGENTS.md`, `CLAUDE.md`, `.tst/rules/**`) are refused for writing no matter
-what you put in this list. That is enforced in the tool, not by configuration.
+Steering files (`AGENTS.md`, `CLAUDE.md`, `.tst/rules/**`) and the approval policy itself
+(`.tst/config.yaml`) are refused for writing no matter what you put in this list. That is
+enforced in the tool, not by configuration.
 
 **`allowed_commands` matching.** The command is split into top-level segments on pipes,
 semicolons, and the like; each segment's leading binary — after skipping `VAR=value` prefixes —
 is resolved with `which` and matched on the basename, so `git` and `/usr/bin/git` both match
 `git`. Only the leading binary of each segment is checked, so `sh`, `sudo`, and `env` match as
 themselves: list them deliberately, because listing `sh` allows anything `sh -c` can run.
-Backticks are refused outright, and a binary that cannot be resolved is refused fail-closed.
-This is a policy rail, not a sandbox.
+Listed binaries can also re-exec others — `find -exec`, `xargs`, `make`, and any interpreter
+all walk through a basename match. Backticks are refused outright, and a binary that cannot be
+resolved is refused fail-closed. This is a policy rail, not a sandbox.
+
+**Shell commands always ask.** Every shell call is at least Class B: the static classifier
+cannot see inside a command string, so shell never auto-runs on the classifier's say-so
+(TD-4805). Commands that redirect or `tee` into a steering path are Class C outright.
+Automation trust belongs to your saved "always allow" rules, which still apply.
 
 ### 4.2 `caps` — when the agent stops and asks
 

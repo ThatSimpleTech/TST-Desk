@@ -15,11 +15,15 @@ import os
 import re
 import sqlite3
 import sys
+import tempfile
+from enum import StrEnum
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from types import UnionType
+from typing import Any, Literal, Union, get_args, get_origin
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 from tests.test_dispatch import (
     attach_auto_approver,
@@ -39,11 +43,11 @@ from tstd.autonomy import (
 from tstd.autonomy.classifier import RULE_TABLE, is_steering_write
 from tstd.logging import SECRET_PATTERNS, JSONFormatter, SecretsRedactionFilter
 from tstd.mock import MockProvider, Script
-from tstd.protocol import DaemonEvent, ShellOutput, build_error
+from tstd.protocol import DaemonEvent, ShellOutput, build_error, scrub_wire_json
 from tstd.protocol import ToolCall as ToolCallEvent
 from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
-from tstd.session import EventSubscriber, Session, SessionEventLog
+from tstd.session import EventSubscriber, Session, SessionEventLog, _redact_event
 from tstd.tools import (
     Tool,
     ToolDispatcher,
@@ -257,13 +261,13 @@ STEERING_POSITIVE = [
     ".tst/rules/style.md",
     ".tst/rules/deep/style.md",
     ".tst/rules",  # the rules dir itself
+    ".tst/config.yaml",  # the approval policy is steering-adjacent (TD-4803)
 ]
 
 STEERING_NEGATIVE = [
     "AGENTS.md.bak",
     "MYAGENTS.md",
     "notes.md",
-    ".tst/config.yaml",
     ".tst/rules.md",  # a file named rules.md is not the rules dir
     ".tst/memory/MEMORY.md",  # memory is the carve-out (TD-2102)
     ".tst/memory/gotchas.md",
@@ -371,10 +375,117 @@ async def test_shell_child_never_sees_daemon_secrets(
     assert "still-here" in out
 
 
+# ── 3b. Shell hardening: static steering classification, env net (TD-4805) ──
+
+
+def _shell_decision(ws: Path, command: str) -> Any:
+    """Static classification of a shell call — no worker tier involved."""
+    return DecisionClassifier(Boundary(workspace_root=ws)).classify(
+        DecisionRequest(tool_name="shell", arguments={"command": command}, is_mutation=True)
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo never > AGENTS.md",
+        "echo never >> CLAUDE.md",
+        "echo never > .tst/rules/evil.md",
+        "echo never > .tst/config.yaml",
+        "echo never > ./AGENTS.md",
+        "tee .tst/rules/x.md",
+        "tee -a AGENTS.md",
+        "echo never > notes.md && tee CLAUDE.md",
+    ],
+)
+def test_shell_write_to_steering_is_static_c(ws: Path, command: str) -> None:
+    """A shell command writing a steering path is Class C from the static
+    table alone — no model judgment involved (TD-4805)."""
+    decision = _shell_decision(ws, command)
+    assert decision.decision_class is DecisionClass.C
+    assert decision.rule is not None
+    assert decision.rule.id == "shell-steering-write"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat AGENTS.md",  # reading steering is fine
+        "echo hi > notes.md",  # benign redirect
+        "git status",
+        "echo done 2>&1",  # descriptor dup writes no file
+        'echo "unclosed',  # unparseable → no targets, still not unsafe
+    ],
+)
+def test_shell_without_steering_target_hits_the_b_floor(ws: Path, command: str) -> None:
+    """Every other shell command is statically B: the table cannot see
+    inside the string, so shell never gets a model-granted A (TD-4805)."""
+    decision = _shell_decision(ws, command)
+    assert decision.decision_class is DecisionClass.B
+    assert decision.rule is not None
+    assert decision.rule.id == "shell-floor"
+
+
+def test_shell_floor_precedes_worker_consultation(ws: Path) -> None:
+    """The floor is static, so the worker tier is never consulted for
+    shell — its A cannot auto-run a command."""
+    decision = _shell_decision(ws, "make deploy")
+    assert decision.decision_class is not None  # static decided; worker not needed
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["DOCKER_AUTH_CONFIG", "MYSQL_PWD", "SOME_SERVICE_AUTH", "TSTD_PLANTED_AUTH_TOKEN"],
+)
+def test_sanitized_env_drops_widened_secret_names(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """The TD-4805 net: AUTH word forms and PWD carriers drop too."""
+    monkeypatch.setenv(name, "planted")  # tst-secret-ok
+    assert name not in sanitized_env()
+
+
+def test_sanitized_env_keeps_author_and_ssh_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AUTH as a substring must not eat GIT_AUTHOR_* (the child commits as
+    the user) or SSH_AUTH_SOCK (a capability, not a secret value)."""
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "Ada")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "ada@example.com")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+    env = sanitized_env()
+    assert env["GIT_AUTHOR_NAME"] == "Ada"
+    assert env["GIT_AUTHOR_EMAIL"] == "ada@example.com"
+    assert env["SSH_AUTH_SOCK"] == "/tmp/agent.sock"
+
+
+def test_sanitized_env_drops_credential_url_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A URL with embedded credentials is a secret whatever the name."""
+    monkeypatch.setenv("TSTD_PLANTED_DB", "postgres://user:hunter2@host/db")  # tst-secret-ok
+    monkeypatch.setenv("TSTD_PLANTED_CLEAN", "postgres://host/db")
+    env = sanitized_env()
+    assert "TSTD_PLANTED_DB" not in env
+    assert env["TSTD_PLANTED_CLEAN"] == "postgres://host/db"
+
+
+def test_allowlist_docs_name_the_escape_hatches() -> None:
+    """The allowlist docstring names the re-exec hatches instead of
+    implying containment (TD-4805)."""
+    import tstd.tools.shell as shell_mod
+
+    doc = shell_mod.__doc__ or ""
+    for hatch in ("find -exec", "xargs", "sh -c"):
+        assert hatch in doc
+
+
 # ── 4. Secret redaction ───────────────────────────────────────────────────
 
 FAKE_SECRETS = [
     "sk-PROJEXAMPLEKEYfakefake0000abcd",  # tst-secret-ok
+    # Dashed forms — the shapes the shipped presets actually hold
+    # (TD-4801). The pre-TD-4801 pattern required 20+ alphanumerics with
+    # no dashes and missed all three of these.
+    "sk-or-v1-0000000000000000000000000000000000000000000000abcd",  # tst-secret-ok
+    "sk-proj-FAKEFAKE0_fake-fake-fake-fake-fake-fake-fake0abcd",  # tst-secret-ok
+    "sk-ant-api03-FAKEFAKE0fakefakefakefakefakefakefake0abcd",  # tst-secret-ok
     "github_pat_11FAKEFAKE0abcdefghijklmnopqrstuvwxyz01",  # tst-secret-ok
     "ghp_FAKEFAKEFAKEFAKE00000000000000000abcd",  # tst-secret-ok
     "AKIAIOSFODNN7EXAMPLE",  # tst-secret-ok
@@ -727,3 +838,233 @@ def test_dispatch_call_sites_confined() -> None:
         if re.search(r"\.dispatch\(|dispatch_many\(", text):
             callers.add(py_file.name)
     assert callers <= allowed, f"unexpected dispatch call sites: {sorted(callers - allowed)}"
+
+
+# ── 6. Whole-event redaction (TD-4802) ─────────────────────────────────
+#
+# TD-1405's chokepoint redacted a hand-listed set of event types; every type
+# added later (ApprovalRequest, DecisionLogged, the assistant deltas) skipped
+# it. The scrub is now whole-event, and these tests make that categorical:
+# the enumeration plants a canary in every string field of every event type
+# and requires none to survive.
+
+
+def _carries_text(annotation: Any) -> bool:
+    """Whether the annotation can hold free text somewhere in its shape."""
+    if annotation is str:
+        return True
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return True
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        return any(a is not type(None) and _carries_text(a) for a in get_args(annotation))
+    if origin in (list, tuple, set, frozenset):
+        args = get_args(annotation)
+        return bool(args) and _carries_text(args[0])
+    if origin is dict:
+        args = get_args(annotation)
+        return len(args) == 2 and _carries_text(args[1])
+    return False
+
+
+def _synth(annotation: Any, *, canary: bool) -> Any:
+    """A valid value for a field annotation, planting PLANTED where it fits."""
+    if annotation is str:
+        return PLANTED if canary else "x"
+    origin = get_origin(annotation)
+    if origin is Literal:
+        return get_args(annotation)[0]
+    if origin in (Union, UnionType):
+        for arg in get_args(annotation):
+            if arg is not type(None):
+                return _synth(arg, canary=canary)
+        return None
+    if origin in (list, tuple, set, frozenset):
+        args = get_args(annotation)
+        item = args[0] if args else None
+        if isinstance(item, type) and issubclass(item, BaseModel):
+            return [item(**_canary_kwargs(item))]
+        if item is str:
+            return [PLANTED if canary else "x"]
+        return []
+    if origin is dict:
+        args = get_args(annotation)
+        val = args[1] if len(args) == 2 else None
+        if val is str:
+            return {"k": PLANTED if canary else "x"}
+        if isinstance(val, type) and issubclass(val, BaseModel):
+            return {"k": val(**_canary_kwargs(val))}
+        return {}
+    if annotation is int:
+        return 1
+    if annotation is float:
+        return 0.5
+    if annotation is bool:
+        return False
+    if isinstance(annotation, type):
+        if issubclass(annotation, BaseModel):
+            return annotation(**_canary_kwargs(annotation))
+        if issubclass(annotation, StrEnum):
+            return next(iter(annotation))
+    return None
+
+
+def _canary_kwargs(cls: type[BaseModel]) -> dict[str, Any]:
+    """Constructor kwargs with PLANTED in every string field that accepts it.
+
+    A field that rejects the canary under validation is shape-constrained —
+    it cannot carry a secret — and excludes itself.
+    """
+    kwargs = {
+        name: _synth(field.annotation, canary=False)
+        for name, field in cls.model_fields.items()
+        if field.is_required()
+    }
+    cls(**kwargs)  # synthesizer sanity: a failure here is a bug in this test
+    for name, field in cls.model_fields.items():
+        if not _carries_text(field.annotation):
+            continue
+        probe = {**kwargs, name: _synth(field.annotation, canary=True)}
+        try:
+            cls(**probe)
+        except ValidationError:
+            continue
+        kwargs = probe
+    return kwargs
+
+
+@pytest.mark.parametrize(
+    "event_cls",
+    sorted(DaemonEvent.__subclasses__(), key=lambda c: c.__name__),
+    ids=lambda c: c.__name__,
+)
+def test_every_event_type_scrubs_every_text_field(event_cls: type[DaemonEvent]) -> None:
+    """A canary planted in any string field of any event type never survives
+    insertion redaction. New event types join this test automatically — a
+    type that skips the scrub fails here the day it is added."""
+    event = event_cls(**_canary_kwargs(event_cls))
+    scrubbed = _redact_event(event)
+    assert PLANTED not in json.dumps(scrubbed.model_dump())
+
+
+def test_benign_event_returns_same_object() -> None:
+    """Fast path: nothing matched, so the caller's object is stored as-is."""
+    event = ToolCallEvent(
+        seq=1, session_id="s1", tool_call_id="t1", name="fs_read", arguments={"path": "a.md"}
+    )
+    assert _redact_event(event) is event
+
+
+def test_previously_skipped_fields_are_scrubbed() -> None:
+    """The named TD-4802 regressions, pinned directly: the pre-fix chokepoint
+    let each of these through raw. Also proves the enumeration test's canary
+    planting is not vacuous — each constructed event really carries it."""
+    from tstd.protocol import ApprovalRequest, AssistantDelta, DecisionLogged
+
+    cases = [
+        ApprovalRequest(
+            seq=1,
+            session_id="s1",
+            tool_call_id="t1",
+            tool_name="shell",
+            arguments={"command": f"deploy {PLANTED}"},
+            decision_class="B",
+            summary=f"Run deploy with {PLANTED}",
+            reason=f"class B, key {PLANTED}",
+        ),
+        DecisionLogged(
+            seq=1, session_id="s1", decision_class="B", what=f"write {PLANTED}", why="asked"
+        ),
+        AssistantDelta(seq=1, session_id="s1", delta=f"your key is {PLANTED}"),
+    ]
+    for event in cases:
+        assert PLANTED in json.dumps(event.model_dump()), "canary planting went vacuous"
+        scrubbed = _redact_event(event)
+        assert PLANTED not in json.dumps(scrubbed.model_dump())
+
+
+def test_scrub_wire_json_redacts_nested_reply_text() -> None:
+    """The reply funnel scrubs nested structures — a session title is the
+    first user message and rode the wire raw before TD-4802."""
+    payload = json.dumps(
+        {
+            "type": "session_list",
+            "seq": 1,
+            "sessions": [
+                {
+                    "session_id": "s1",
+                    "workspace_path": "/tmp/ws",
+                    "state": "idle",
+                    "created_at": "2026-08-21",
+                    "updated_at": "2026-08-21",
+                    "event_count": 1,
+                    "title": f"rotate the key {PLANTED}",
+                }
+            ],
+        }
+    )
+    out = scrub_wire_json(payload)
+    assert PLANTED not in out
+    assert "[REDACTED]" in out
+    # Benign frames pass semantically unchanged.
+    benign = json.dumps({"type": "ready", "seq": 1, "version": "0.1.0", "protocol_version": 1})
+    assert json.loads(scrub_wire_json(benign)) == json.loads(benign)
+
+
+async def test_connection_scoped_reply_scrubs_memory_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end: memory file content (user text) in a list_memory reply
+    never reaches the socket raw."""
+    from tests.test_setup_state import _ask, _connect_and_handshake, _start_daemon, _stop_daemon
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    workspace = tmp_path / "ws"
+    (workspace / ".tst" / "memory").mkdir(parents=True)
+    (workspace / ".tst" / "memory" / "notes.md").write_text(
+        f"the key is {PLANTED}\n", encoding="utf-8"
+    )
+
+    with tempfile.TemporaryDirectory() as data:
+        daemon, task = await _start_daemon(Path(data))
+        try:
+            ws = await _connect_and_handshake(
+                f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+            )
+            resp = await _ask(ws, {"type": "list_memory", "workspace_path": str(workspace)})
+            assert resp["type"] == "memory_files"
+            assert PLANTED not in json.dumps(resp)
+            assert "[REDACTED]" in json.dumps(resp)
+            await ws.close()
+        finally:
+            await _stop_daemon(task)
+
+
+def test_append_decision_scrubs_free_text(tmp_path: Path) -> None:
+    """The decisions ledger scrubbed nothing while tool_calls scrubbed
+    everything (TD-4802)."""
+    store = AuditStore(tmp_path / "audit.db")
+    store.append_session("s1", str(tmp_path), 1.0)
+    store.append_decision(
+        "s1", DecisionClass.B, f"write the key {PLANTED}", f"because {PLANTED} was asked", None
+    )
+    row = _query_one(tmp_path / "audit.db", "SELECT what, why FROM decisions")
+    store.close()
+    assert row is not None
+    assert PLANTED not in row[0] and PLANTED not in row[1]
+    assert "[REDACTED]" in row[0] and "[REDACTED]" in row[1]
+
+
+def test_formatter_redacts_extra_fields_and_traceback() -> None:
+    """The redaction filter runs on msg/args before formatting; extra_fields
+    and the traceback are merged after — the formatter scrubs them itself."""
+    logger, buf = capture_logger("test.security.formatter")
+    try:
+        raise ValueError(f"bad key {PLANTED}")
+    except ValueError:
+        logger.exception("boom", extra={"extra_fields": {"detail": PLANTED, "n": 1}})
+    rendered = json.loads(buf.getvalue())
+    assert rendered["detail"] == "[REDACTED]"
+    assert rendered["n"] == 1
+    assert PLANTED not in rendered["exception"]
+    assert PLANTED not in buf.getvalue()

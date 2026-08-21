@@ -96,6 +96,7 @@ describe("screen store (TD-1710, TD-3401)", () => {
 			tool_call_id: "c1",
 			status: "success",
 			output: "ok",
+			truncated: false,
 		});
 		expect(screen.hasCuTool).toBe(false);
 	});
