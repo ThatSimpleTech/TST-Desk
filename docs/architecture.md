@@ -46,10 +46,12 @@ refused outright by `validate_interface` in `core/tstd/ws.py`, which is prime di
 enforced in code rather than by convention.
 
 **The host (`shell/`)** manages the window and the daemon process lifecycle: it resolves the
-`tstd` binary, spawns it with an explicit `--data-dir` and `--parent-pid`, waits for the port
-file, probes the handshake, supervises with a bounded restart budget, and on window close asks
-the daemon to shut down before killing it. It also exposes the daemon's port and token to the
-webview through a Tauri command, so the window never reads the port file itself. AGENTS.md §6
+`tstd` binary, attaches when `port.json` names a live listener, and otherwise spawns with
+`--data-dir` (and `--parent-pid` only when coworker mode is off). It probes the handshake and
+supervises with a bounded restart budget. Closing the window hides it and leaves `tstd`
+running; Quit still shuts the daemon down and reaps the process group. It also exposes the
+daemon's port and token to the webview through a Tauri command, so the window never reads the
+port file itself. AGENTS.md §6
 states the rule plainly: *"Keep it thin. … Business logic belongs in Python."* The host never
 parses a protocol message beyond checking for `hello_ack`. When you find yourself wanting to add
 a decision to the Rust side, that is the signal that it belongs in `tstd` instead.

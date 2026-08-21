@@ -134,8 +134,25 @@ Worth stating, because "Windows" tends to attract blame:
 - **Manifest and config paths.** Written with forward slashes regardless of host, so a workspace
   committed on Windows reads the same on a Mac.
 - **The parent watchdog.** Windows uses `OpenProcess` plus `GetExitCodeProcess` rather than
-  `kill(pid, 0)`, but the observable behaviour — the daemon exits when its parent dies — is the
-  same.
+  `kill(pid, 0)`. When coworker mode is off, the observable behaviour — the daemon exits when
+  its parent dies — is the same. When coworker mode is on (the default), the host does not
+  pass `--parent-pid`, so a dead window process does not reap `tstd`.
 
-For where each of these decisions was made and what was rejected, see the TD-1402 and TD-1406
-entries in `DECISIONS.md`.
+---
+
+## 6. Close vs Quit
+
+Closing the window is not quitting the app (TD-2902).
+
+- **Close** (title-bar X, Alt+F4) hides the window. `tstd` keeps running. In-flight turns
+  and parked approvals continue. OS notifications still fire while the window is gone.
+  Clicking the app again shows the window and re-attaches; a second host process attaches
+  to the live listener instead of spawning another daemon.
+- **Quit** (File → Exit, or the equivalent tray/taskbar Quit when it exists) sends
+  `shutdown`, reaps the process group, and leaves no listener. That is the TD-1002 v0.1
+  contract, kept for Quit.
+
+The first time this happens: closing the window hides TST Desk; **Quit** is what stops it.
+
+For where each of these decisions was made and what was rejected, see the TD-1402, TD-1406,
+and TD-2902 entries in `DECISIONS.md`.

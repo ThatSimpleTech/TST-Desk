@@ -7,15 +7,18 @@
 //!
 //! - port file: `core/tstd/ws.py` (`create_port_file_path`, `write_port_file`)
 //! - handshake + shutdown messages: `core/tstd/protocol.py`
-//! - orphan watchdog: `core/tstd/daemon.py` (`--parent-pid`)
+//! - orphan watchdog: `core/tstd/daemon.py` (`--parent-pid`, coworker off)
+//! - coworker flag: `{data_dir}/coworker.yaml` (TD-2902)
 //!
-//! The daemon is a single real guarantee for force-quit orphan prevention,
-//! but the host also tries a best-effort kill from `RunEvent::Exit`.
+//! Quit still best-effort-kills from `RunEvent::Exit`. Close hides the
+//! window and leaves `tstd` running when coworker mode is on; spawn then
+//! omits `--parent-pid` so a dead window process does not reap the daemon.
 //!
 //! PyInstaller's `--onefile` sidecar (TD-1301) is a bootloader that spawns
 //! the real daemon as a child. Port-file matching and group-kill live in
 //! [`daemon_pid`] (TD-1304).
 
+pub mod coworker;
 mod daemon_pid;
 pub mod embeddings;
 
@@ -31,7 +34,11 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{watch, Notify};
 use tokio_tungstenite::tungstenite::Message;
 
-pub use daemon_pid::{kill_spawned_group, port_file_belongs_to_spawn};
+pub use coworker::{
+    load_coworker, parent_pid_argv, should_spawn_new_daemon, window_close_action, CloseAction,
+    LifecycleEvent,
+};
+pub use daemon_pid::{kill_spawned_group, pid_is_alive, port_file_belongs_to_spawn};
 
 /// Protocol version advertised in the `hello` handshake.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -76,7 +83,7 @@ impl DaemonStatus {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PortFile {
     pub port: u16,
     pub token: String,
@@ -142,6 +149,7 @@ impl DaemonHandle {
 
 /// Spawn the supervision loop for the given app handle and data dir.
 pub fn start(app: AppHandle, data_dir: PathBuf) -> DaemonHandle {
+    coworker::ensure_coworker_file(&data_dir);
     let (status_tx, status_rx) = watch::channel(DaemonStatus::Starting);
     let handle = DaemonHandle {
         app,
@@ -181,50 +189,17 @@ async fn run_supervision(h: DaemonHandle) {
 
         emit(&h, "starting", None, 0);
 
-        let mut child = match spawn_daemon(&h.data_dir) {
-            Ok(c) => c,
+        let (mut watch, mut ws, port_file, pid) = match acquire_daemon(&h.data_dir).await {
+            Ok(acquired) => acquired,
             Err(e) => {
-                log::error!("failed to spawn tstd: {e}");
+                log::error!("{e}");
                 if !bump_restart(&h, &mut restart).await {
                     break;
                 }
                 continue;
             }
-        };
-        let Some(pid) = child.id() else {
-            // The child exited before we could learn its pid — treat as a crash.
-            log::warn!("daemon exited before handing over its pid");
-            let _ = child.wait().await;
-            if !bump_restart(&h, &mut restart).await {
-                break;
-            }
-            continue;
         };
         h.child_pid.store(pid as i32, Ordering::Relaxed);
-
-        let port_file = match wait_for_port_file(&h.data_dir, pid, PORT_FILE_TIMEOUT).await {
-            Ok(pf) => pf,
-            Err(e) => {
-                log::error!("daemon started but never wrote a port file: {e}");
-                reap_tree(&mut child, pid).await;
-                if !bump_restart(&h, &mut restart).await {
-                    break;
-                }
-                continue;
-            }
-        };
-
-        let mut ws = match connect_handshake(port_file.port, &port_file.token).await {
-            Ok(ws) => ws,
-            Err(e) => {
-                log::error!("daemon up but handshake failed: {e}");
-                reap_tree(&mut child, pid).await;
-                if !bump_restart(&h, &mut restart).await {
-                    break;
-                }
-                continue;
-            }
-        };
 
         // Success: the daemon is up and we are connected.
         restart = 0;
@@ -237,7 +212,7 @@ async fn run_supervision(h: DaemonHandle) {
         });
         emit(&h, "connected", Some(port_file.port), 0);
 
-        // Supervise: exit the child, or a shutdown request from the host.
+        // Supervise: the listener exits, or a shutdown request from the host.
         let shutdown_req = h.shutdown_notify.clone();
         let shutdown_wait = async {
             while !h.shutdown.load(Ordering::SeqCst) {
@@ -246,16 +221,18 @@ async fn run_supervision(h: DaemonHandle) {
         };
         tokio::pin!(shutdown_wait);
         tokio::select! {
-            res = child.wait() => {
-                log::info!("daemon exited under supervision: {res:?}");
+            () = watch.wait_exit(pid) => {
+                log::info!("daemon exited under supervision (pid {pid})");
                 // Bootloader may have exited while the grandchild still
                 // listens — reap the group before we spawn another.
-                daemon_pid::kill_spawned_group(pid);
+                if matches!(watch, ChildWatch::Spawned { .. }) {
+                    daemon_pid::kill_spawned_group(pid);
+                }
             }
             _ = &mut shutdown_wait => {
                 h.set_status(DaemonStatus::Stopping);
                 emit(&h, "stopping", None, 0);
-                graceful_shutdown(&h, &mut ws, &mut child, pid).await;
+                graceful_shutdown(&h, &mut ws, &mut watch, pid).await;
                 h.set_conn(None);
                 h.child_pid.store(-1, Ordering::Relaxed);
                 h.set_status(DaemonStatus::Stopped);
@@ -359,15 +336,93 @@ fn resolve_with(
     Err("tstd not found; set TSTD_PATH or add it to PATH".into())
 }
 
-/// Spawn the daemon child with the host's pid as its watched parent.
+/// How the host is watching a live `tstd`: a child it spawned, or a
+/// leftover listener it attached to (TD-2902).
+enum ChildWatch {
+    Spawned { child: tokio::process::Child },
+    Attached,
+}
+
+impl ChildWatch {
+    async fn wait_exit(&mut self, pid: u32) {
+        match self {
+            Self::Spawned { child } => {
+                let _ = child.wait().await;
+            }
+            Self::Attached => wait_pid_gone(pid).await,
+        }
+    }
+}
+
+/// Attach when `port.json` names a live listener; otherwise spawn.
+async fn acquire_daemon(
+    data_dir: &Path,
+) -> Result<(ChildWatch, ClientWs, PortFile, u32), String> {
+    if let Some(pf) = live_port_file(data_dir) {
+        log::info!(
+            "tstd already running at port {} (pid {}); attaching",
+            pf.port,
+            pf.pid
+        );
+        let pid = pf.pid;
+        let ws = connect_handshake(pf.port, &pf.token).await?;
+        return Ok((ChildWatch::Attached, ws, pf, pid));
+    }
+
+    let mut child = spawn_daemon(data_dir)?;
+    let Some(pid) = child.id() else {
+        log::warn!("daemon exited before handing over its pid");
+        let _ = child.wait().await;
+        return Err("daemon exited before handing over its pid".into());
+    };
+    let port_file = match wait_for_port_file(data_dir, pid, PORT_FILE_TIMEOUT).await {
+        Ok(pf) => pf,
+        Err(e) => {
+            reap_tree(&mut child, pid).await;
+            return Err(e);
+        }
+    };
+    let ws = match connect_handshake(port_file.port, &port_file.token).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            reap_tree(&mut child, pid).await;
+            return Err(e);
+        }
+    };
+    Ok((ChildWatch::Spawned { child }, ws, port_file, pid))
+}
+
+/// `port.json` when it names a live process. Handshake is the attach
+/// proof; this only decides "do not spawn a second tstd".
+pub fn live_port_file(dir: &Path) -> Option<PortFile> {
+    let raw = std::fs::read_to_string(dir.join("port.json")).ok()?;
+    let pf: PortFile = serde_json::from_str(&raw).ok()?;
+    if should_spawn_new_daemon(pf.pid, pid_is_alive(pf.pid)) {
+        None
+    } else {
+        Some(pf)
+    }
+}
+
+async fn wait_pid_gone(pid: u32) {
+    loop {
+        if !pid_is_alive(pid) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// Spawn the daemon child. `--parent-pid` is passed only when coworker
+/// mode is off (TD-1002 / TD-2905 off path).
 pub fn spawn_daemon(data_dir: &Path) -> Result<tokio::process::Child, String> {
     let argv = resolve_command()?;
+    let coworker_on = load_coworker(data_dir);
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..])
         .arg("--data-dir")
         .arg(data_dir)
-        .arg("--parent-pid")
-        .arg(std::process::id().to_string())
+        .args(parent_pid_argv(coworker_on, std::process::id()))
         .arg("--log-level")
         .arg("INFO")
         .stdout(Stdio::null())
@@ -448,7 +503,7 @@ pub async fn connect_handshake(port: u16, token: &str) -> Result<ClientWs, Strin
 async fn graceful_shutdown(
     h: &DaemonHandle,
     ws: &mut ClientWs,
-    child: &mut tokio::process::Child,
+    watch: &mut ChildWatch,
     spawned_pid: u32,
 ) {
     h.set_status(DaemonStatus::Stopping);
@@ -458,16 +513,27 @@ async fn graceful_shutdown(
     // No graceful close handshake: the daemon tears down its own connection
     // DURING shutdown, so waiting for a close ack can race it into a hang.
 
-    match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
-        Ok(Ok(_status)) => log::info!("daemon exited cleanly after shutdown"),
-        Ok(Err(e)) => log::warn!("daemon wait errored after shutdown: {e}"),
-        Err(_elapsed) => {
-            log::warn!("daemon did not exit within grace; killing the process group");
+    match watch {
+        ChildWatch::Spawned { child } => {
+            match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
+                Ok(Ok(_status)) => log::info!("daemon exited cleanly after shutdown"),
+                Ok(Err(e)) => log::warn!("daemon wait errored after shutdown: {e}"),
+                Err(_elapsed) => {
+                    log::warn!("daemon did not exit within grace; killing the process group");
+                }
+            }
+            reap_tree(child, spawned_pid).await;
+        }
+        ChildWatch::Attached => {
+            match tokio::time::timeout(SHUTDOWN_GRACE, wait_pid_gone(spawned_pid)).await {
+                Ok(()) => log::info!("attached daemon exited cleanly after shutdown"),
+                Err(_elapsed) => {
+                    log::warn!("attached daemon did not exit within grace; killing");
+                }
+            }
+            daemon_pid::kill_spawned_group(spawned_pid);
         }
     }
-    // Backstop: a onefile bootloader may have exited while the grandchild
-    // is still listening. Group-kill is a no-op if the tree is already gone.
-    reap_tree(child, spawned_pid).await;
 }
 
 /// SIGKILL the spawned process group, then wait on the leader.
@@ -569,5 +635,48 @@ mod tests {
             assert!(!argv.is_empty());
             assert!(argv.last().unwrap().ends_with("tstd"));
         }
+    }
+
+    #[test]
+    fn live_port_file_attaches_when_pid_is_this_process() {
+        let dir = std::env::temp_dir().join(format!(
+            "tstd-live-port-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid = std::process::id();
+        std::fs::write(
+            dir.join("port.json"),
+            format!(r#"{{"port": 5111, "token": "deadbeef", "pid": {pid}}}"#),
+        )
+        .unwrap();
+        let pf = live_port_file(&dir).expect("live pid must attach, not spawn");
+        assert_eq!(pf.pid, pid);
+        assert!(!should_spawn_new_daemon(pf.pid, pid_is_alive(pf.pid)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn live_port_file_ignores_dead_or_zero_pid() {
+        let dir = std::env::temp_dir().join(format!(
+            "tstd-dead-port-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("port.json"),
+            r#"{"port": 7, "token": "x", "pid": 0}"#,
+        )
+        .unwrap();
+        assert!(live_port_file(&dir).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

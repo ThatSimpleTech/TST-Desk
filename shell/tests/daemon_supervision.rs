@@ -12,12 +12,19 @@ use std::time::Duration;
 use futures_util::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
 use tst_desk_lib::daemon::{
-    connect_handshake, kill_spawned_group, port_file_belongs_to_spawn, spawn_daemon,
-    wait_for_port_file,
+    connect_handshake, kill_spawned_group, live_port_file, parent_pid_argv,
+    port_file_belongs_to_spawn, should_spawn_new_daemon, spawn_daemon, wait_for_port_file,
 };
 
 fn make_dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("tstd-supervision-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "tstd-supervision-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     std::fs::create_dir_all(&dir).expect("create data dir");
     dir
 }
@@ -63,6 +70,38 @@ async fn spawns_daemon_connects_via_port_file_and_shuts_down_cleanly() {
         .await
         .expect("stat port file");
     assert!(!after, "clean shutdown must remove the port file");
+    cleanup(&dir);
+}
+
+/// A live leftover `tstd` is attached, not spawned again (TD-2902).
+#[tokio::test]
+async fn attaches_to_live_port_file_without_second_spawn() {
+    let dir = make_dir();
+    std::fs::write(dir.join("coworker.yaml"), "enabled: true\n").expect("coworker on");
+    let mut child = spawn_daemon(&dir).expect("spawn tstd");
+    let pid = child.id().expect("daemon handed over its pid");
+
+    let pf = wait_for_port_file(&dir, pid, Duration::from_secs(30))
+        .await
+        .expect("daemon should write a port file");
+
+    let live = live_port_file(&dir).expect("port.json must name a live listener");
+    assert_eq!(live.port, pf.port);
+    assert!(!should_spawn_new_daemon(live.pid, true));
+    assert!(parent_pid_argv(true, 1).is_empty());
+
+    let mut ws = connect_handshake(live.port, &live.token)
+        .await
+        .expect("attach handshake against the first daemon");
+    ws.send(Message::Text(r#"{"type":"shutdown"}"#.into()))
+        .await
+        .expect("send shutdown");
+    drop(ws);
+
+    tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("daemon should exit promptly after shutdown")
+        .expect("wait on child");
     cleanup(&dir);
 }
 

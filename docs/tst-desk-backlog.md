@@ -4580,18 +4580,24 @@ file from becoming the next outage.
 **Size:** 5 · **Depends on:** TD-1002, TD-2901
 
 **Acceptance criteria:**
-- [ ] Window close hides the window and leaves `tstd` running; in-flight
+- [x] Window close hides the window and leaves `tstd` running; in-flight
       turns and parked approvals continue
-- [ ] Reopening the app attaches with `from_seq` and does not spawn a
+- [x] Reopening the app attaches with `from_seq` and does not spawn a
       second daemon
-- [ ] OS notifications for approval and turn-complete still fire
+- [x] OS notifications for approval and turn-complete still fire
       (TD-1702) while the window is gone
-- [ ] `--parent-pid` does not kill `tstd` when the window process exits
+- [x] `--parent-pid` does not kill `tstd` when the window process exits
       if coworker mode is on
-- [ ] Documented per platform: close vs quit
+- [x] Documented per platform: close vs quit
 
 **Notes:** The v0.1 AC on TD-1002 stays true for "Quit." This story is
 the divergence the TODO named.
+
+**Completed (2026-08-20):** Close hides the window and leaves the host
+and `tstd` running. Quit still reaps. Coworker defaults on
+(`coworker.yaml`); spawn omits `--parent-pid` so the watchdog is never
+armed. A live `port.json` is attached, not spawned over. OS notify
+already fires when unfocused; a hidden window is unfocused.
 
 ---
 

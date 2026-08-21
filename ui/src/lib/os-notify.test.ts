@@ -99,6 +99,9 @@ describe("noticeFor", () => {
 describe("shouldNotify", () => {
 	it("is silent when the window is focused", () => {
 		expect(shouldNotify(true)).toBe(false);
+	});
+
+	it("fires when the window is hidden (unfocused)", () => {
 		expect(shouldNotify(false)).toBe(true);
 	});
 });
