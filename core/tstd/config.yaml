@@ -142,6 +142,8 @@ search:
 # Local embeddings sidecar. OpenAI POST /v1/embeddings only — never Ollama
 # /api/embed (that evicts a resident chat model). Empty base_url disables.
 # A down sidecar falls back to heading-match memory loading (TD-2201).
+# command (string or argv list) is host-only (TD-2204). Empty / omitted is
+# attach-only — a filled base_url never causes the host to spawn.
 embeddings:
   base_url: http://127.0.0.1:8080/v1
   model: nomic-embed-text

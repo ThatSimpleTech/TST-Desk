@@ -17,6 +17,7 @@
 //! [`daemon_pid`] (TD-1304).
 
 mod daemon_pid;
+pub mod embeddings;
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;

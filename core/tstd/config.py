@@ -19,7 +19,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .logging import user_data_dir
 
@@ -150,11 +150,15 @@ class SearchConfig(BaseModel):
 
 
 class EmbeddingsConfig(BaseModel):
-    """Local embeddings sidecar (TD-2202).
+    """Local embeddings sidecar (TD-2202, TD-2204).
 
     ``base_url`` is the only host the embeddings client may reach. Empty
     disables. The client speaks OpenAI ``POST /v1/embeddings``, never
     Ollama's native embed route.
+
+    ``command`` is host-only. Empty or omitted means attach-only: the
+    client POSTs to ``base_url`` if something is already listening. A
+    filled ``base_url`` never causes a spawn.
     """
 
     base_url: str = ""
@@ -162,6 +166,18 @@ class EmbeddingsConfig(BaseModel):
     timeout_seconds: float = Field(default=2.0, gt=0)
     top_k: int = Field(default=4, ge=1)
     token_budget: int = Field(default=2000, ge=1)
+    command: str | list[str] = ""
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _coerce_command(cls, value: Any) -> str | list[str]:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        raise ValueError("command must be a string or a list of arguments")
 
 
 class ModelConfig(BaseModel):
