@@ -28,14 +28,19 @@
 		sessions,
 		stateTone,
 	} from '../sessions.svelte.js';
+	import { toggleArchivedView } from '../session-actions.svelte.js';
+	import { archivedToggle } from '../rail';
 	import InstructionsColumn from './InstructionsColumn.svelte';
 	import MemoryColumn from './MemoryColumn.svelte';
 
 	let known = $derived(workspaces.entries);
 	let selected = $derived(projects.selectedPath);
 	let recents = $derived(
-		selected === null ? [] : projectSessions(sessions.rows, selected),
+		selected === null
+			? []
+			: projectSessions(sessions.rows, selected, { archived: sessions.showArchived }),
 	);
+	let shelf = $derived(archivedToggle(sessions.showArchived));
 
 	function openRecent(sessionId: string): void {
 		selectRow(sessionId);
@@ -94,9 +99,21 @@
 				<InstructionsColumn workspacePath={selected} />
 				<MemoryColumn workspacePath={selected} />
 				<section class="col" aria-label="Recents">
-					<h2 class="section">Recents</h2>
+					<div class="recents-head">
+						<h2 class="section">{sessions.showArchived ? 'Archived' : 'Recents'}</h2>
+						<button
+							class="shelf"
+							type="button"
+							aria-pressed={sessions.showArchived}
+							aria-label={shelf.hint}
+							title={shelf.hint}
+							onclick={() => toggleArchivedView()}
+						>
+							{shelf.label}
+						</button>
+					</div>
 					{#if recents.length === 0}
-						<p class="empty">{projectRecentsEmptyCopy()}</p>
+						<p class="empty">{projectRecentsEmptyCopy(sessions.showArchived)}</p>
 					{:else}
 						<ul class="list">
 							{#each recents as row (row.sessionId)}
@@ -284,6 +301,13 @@
 		min-width: 0;
 	}
 
+	.recents-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: var(--space-2);
+	}
+
 	.section {
 		margin: 0;
 		font-family: var(--font-sans);
@@ -292,6 +316,16 @@
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
 		color: var(--color-ink-muted);
+	}
+
+	.shelf {
+		border: none;
+		background: transparent;
+		color: var(--color-accent);
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		cursor: pointer;
+		padding: 0;
 	}
 
 	.dot {

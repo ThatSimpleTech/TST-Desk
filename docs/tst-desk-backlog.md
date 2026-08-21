@@ -4484,10 +4484,10 @@ the pin file is a new schema.
 **Size:** 2 · **Depends on:** TD-2801, TD-1701
 
 **Acceptance criteria:**
-- [ ] The home recents list is `session_list` filtered to this
+- [x] The home recents list is `session_list` filtered to this
       `workspace_path`, newest first
-- [ ] Clicking a row attaches that session (same as the rail history)
-- [ ] Archived sessions do not appear unless the Archived filter is on
+- [x] Clicking a row attaches that session (same as the rail history)
+- [x] Archived sessions do not appear unless the Archived filter is on
 
 ---
 
