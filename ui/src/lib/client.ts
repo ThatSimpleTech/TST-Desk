@@ -220,6 +220,11 @@ export class ProtocolClient {
     this.send({ type: "set_tier", session_id: sessionId, tier });
   }
 
+  /** Force the brain tier until cleared (TD-4603). Acked with tier_state. */
+  setPlanMode(sessionId: string, enabled: boolean): void {
+    this.send({ type: "set_plan_mode", session_id: sessionId, enabled });
+  }
+
   // ── Onboarding (TD-1101 first-run wizard) ───────────────────────────
 
   /** Ask for the setup state (key presence, presets). Replies with setup_state. */

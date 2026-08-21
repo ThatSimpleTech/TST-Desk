@@ -5537,10 +5537,22 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 3 · **Depends on:** TD-303, TD-1006
 
 **Acceptance criteria:**
-- [ ] A Plan flag forces `brain` on every completion until cleared
-- [ ] `set_tier` to worker/validator is refused while on
-- [ ] Tools still dispatch; the meter is honest (this is expensive)
-- [ ] Not a plan document. Not accept-to-execute
+- [x] A Plan flag forces `brain` on every completion until cleared
+- [x] `set_tier` to worker/validator is refused while on
+- [x] Tools still dispatch; the meter is honest (this is expensive)
+- [x] Not a plan document. Not accept-to-execute
+
+**Completed (2026-08-21):** the lock lives on `TierRouter` — `set_plan_lock(True)`
+makes `active_tier` return `brain` above every other priority (override, escalation,
+lead turns), and `set_tier` to worker/validator raises while it is on (brain stays
+allowed). New `set_plan_mode` message toggles it; the daemon acks with `tier_state`,
+which now carries `plan_lock` so the title bar's `plan` chip reflects daemon state and
+never derives it. Tools are untouched — the lock only interposes on tier resolution,
+and the classifier/dispatch path never reads it, so dispatch and the cost meter
+behave exactly as before, just on the brain's bill. A pinned override held beneath
+the lock resumes when it clears; `reset()` clears it with the rest of the session
+state. Not a plan document, not accept-to-execute — nothing is drafted or gated on
+approval; it is a tier lock and nothing else.
 
 ---
 

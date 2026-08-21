@@ -51,6 +51,7 @@ class TierRouter:
         self._override: TierName | None = None
         self._last_tier: TierName = "brain"
         self._escalated: bool = False
+        self._plan_lock: bool = False
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -59,11 +60,15 @@ class TierRouter:
         """The tier that should handle the current (or next) turn.
 
         Priority:
-        1. Explicit override (set_tier)
-        2. Escalation (worker -> brain after repeated failures)
-        3. Lead turns (brain for first N turns)
-        4. Default fallback (worker)
+        1. Plan lock (forces brain until cleared, TD-4603)
+        2. Explicit override (set_tier)
+        3. Escalation (worker -> brain after repeated failures)
+        4. Lead turns (brain for first N turns)
+        5. Default fallback (worker)
         """
+        if self._plan_lock:
+            return "brain"
+
         if self._override is not None:
             return self._override
 
@@ -140,10 +145,28 @@ class TierRouter:
         return False
 
     def set_tier(self, tier: TierName) -> None:
-        """Override the active tier. Takes effect on the next turn."""
+        """Override the active tier. Takes effect on the next turn.
+
+        While the plan lock is on, pinning ``worker`` or ``validator`` is
+        refused — the lock exists so planning turns cannot silently drop
+        to a cheaper tier (TD-4603). Pinning ``brain`` stays allowed.
+        """
         if tier not in TIER_NAMES:
             raise ValueError(f"Invalid tier: {tier!r}. Must be one of {TIER_NAMES}")
+        if self._plan_lock and tier != "brain":
+            raise ValueError(
+                f"plan lock is on: set_tier to {tier!r} is refused until it is cleared"
+            )
         self._override = tier
+
+    def set_plan_lock(self, enabled: bool) -> None:
+        """Force ``brain`` on every completion until cleared (TD-4603)."""
+        self._plan_lock = enabled
+
+    @property
+    def plan_lock(self) -> bool:
+        """Whether the plan lock is forcing the brain tier."""
+        return self._plan_lock
 
     def clear_override(self) -> None:
         """Remove a runtime override, returning to normal routing."""
@@ -167,6 +190,7 @@ class TierRouter:
         self._override = None
         self._last_tier = "brain"
         self._escalated = False
+        self._plan_lock = False
 
     # ── Serialization / inspection ────────────────────────────────────
 
@@ -180,4 +204,5 @@ class TierRouter:
             "failure_threshold": self._failure_threshold,
             "override": self._override,
             "escalated": self._escalated,
+            "plan_lock": self._plan_lock,
         }

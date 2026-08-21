@@ -7210,3 +7210,27 @@ also removes one worker call per shell command — less spend, less latency.
 substitutions, wrappers); every added form is a new false-negative
 surface, and the B floor already asks in every case the parser misses.
 
+
+## 2026-08-21 — TD-4603: the plan lock lives on the router, not the session (Class B)
+
+**Decision:** Plan mode is a boolean on `TierRouter` (`set_plan_lock`), not a
+session field the loop consults. `active_tier` returns `brain` above every other
+priority while it is on, and `set_tier` to worker/validator raises `ValueError`
+(the daemon renders that as a `bad_request` error). The wire shape is one new
+client message, `set_plan_mode {session_id, enabled}`, acked with `tier_state`,
+which gains an additive `plan_lock: bool = False`. No timeline event is emitted
+on toggle — nothing switched tiers in the routing sense; the state ack carries
+the truth and old clients ignore the new field.
+
+**Rationale:** Every tier decision already flows through `active_tier`, so a
+router-level flag cannot be bypassed by any future call site (lead-turns
+handoffs, escalation, and overrides all yield to it by construction). A session-
+level flag would need every tier consumer to remember to check it — the same
+shape of bug TD-702's chokepoint exists to prevent. Refusing only worker/validator
+(allowing brain pins) matches the criterion's letter and keeps "plan + pin brain"
+idempotent.
+
+**Alternative rejected:** Emulating plan mode with an automatic `set_tier("brain")`
+override. That would destroy a user's pinned tier underneath them and conflate
+"pinned brain" (a routing preference) with "locked brain for planning" (a mode),
+making the title bar unable to tell the two apart once `tier_state` carried both.

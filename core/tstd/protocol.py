@@ -318,6 +318,19 @@ class SetTier(ClientMessage):
     tier: Literal["brain", "worker", "validator"]
 
 
+class SetPlanMode(ClientMessage):
+    """Force the brain tier on every completion until cleared (TD-4603).
+
+    A session-level flag, not a plan document and not accept-to-execute.
+    Carries only a boolean — by the same construction that keeps
+    ``set_tier_slug`` honest, it cannot smuggle a secret into a file.
+    """
+
+    type: Literal["set_plan_mode"] = "set_plan_mode"
+    session_id: str
+    enabled: bool
+
+
 class GetInstructionStack(ClientMessage):
     """Request the current instruction stack for a session."""
 
@@ -900,6 +913,10 @@ class TierState(DaemonEvent):
     session_id: str
     tier: TierName
     override: TierName | None = None
+    # Plan lock (TD-4603): when true, ``tier`` is brain because the lock
+    # forces it, and set_tier to worker/validator is refused until the
+    # client clears the lock with set_plan_mode.
+    plan_lock: bool = False
     # tier name → configured model slug, "brain"/"worker"/"validator".
     model_slugs: dict[str, str] = Field(default_factory=dict)
 
@@ -1551,6 +1568,7 @@ ClientMessageT = Annotated[
     | Attach
     | Detach
     | SetTier
+    | SetPlanMode
     | GetInstructionStack
     | ListInstructions
     | ListMemory
@@ -1660,6 +1678,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "attach",
         "detach",
         "set_tier",
+        "set_plan_mode",
         "get_instruction_stack",
         "list_instructions",
         "list_memory",
