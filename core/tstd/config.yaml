@@ -148,3 +148,8 @@ embeddings:
   timeout_seconds: 2
   top_k: 4
   token_budget: 2000
+
+# Pinned project context on the brain prompt (TD-2805). Over cap, last
+# pin in is first dropped.
+project_context:
+  token_budget: 2000

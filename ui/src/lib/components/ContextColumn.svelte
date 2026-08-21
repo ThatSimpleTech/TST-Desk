@@ -72,6 +72,15 @@
 			{/each}
 		</ul>
 	{/if}
+	{#if contextPins.capacityCap > 0}
+		<p class="meter" aria-label="Project capacity">
+			{contextPins.instructionTokens + contextPins.memoryTokens + contextPins.pinTokens}
+			/ {contextPins.capacityCap} tokens
+			{#if contextPins.dropped.length > 0}
+				· dropped last-in-first-out: {contextPins.dropped.join(', ')}
+			{/if}
+		</p>
+	{/if}
 	{#if contextPins.error !== null}
 		<p class="err">{contextPins.error}</p>
 	{/if}
@@ -176,6 +185,12 @@
 		font-size: var(--text-xs);
 		cursor: pointer;
 		padding: var(--space-1);
+	}
+
+	.meter {
+		margin: var(--space-3) 0 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
 	}
 
 	.err {

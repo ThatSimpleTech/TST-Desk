@@ -6,6 +6,7 @@ pins; the assembler reads. Unpin removes the pin, not the file.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -13,6 +14,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from .context.tokens import heuristic_count
 from .logging import get_logger
 
 log = get_logger("tstd.context_pins")
@@ -153,3 +155,75 @@ def add_pin(workspace: Path, raw: str) -> PinRecord:
 def remove_pin(workspace: Path, rel: str) -> None:
     pins = [p for p in load_pins(workspace) if p.path != rel]
     save_pins(workspace, pins)
+
+
+@dataclass(frozen=True)
+class ProjectContextLoad:
+    """Brain-only pin block after LIFO budget (TD-2805)."""
+
+    files: tuple[PinRecord, ...]
+    dropped: tuple[PinRecord, ...]
+    block: str | None
+    tokens: int
+
+
+def _pin_body(workspace: Path, pin: PinRecord) -> str:
+    target = workspace.resolve() / pin.path
+    if target.is_file():
+        try:
+            return target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+    if target.is_dir():
+        try:
+            names = sorted(p.name for p in target.iterdir() if p.is_file())
+        except OSError:
+            return ""
+        return "folder: " + ", ".join(names)
+    return ""
+
+
+def load_project_context(workspace: Path, token_budget: int) -> ProjectContextLoad:
+    """Load pins oldest-first; drop newest until under *token_budget*."""
+    ordered = sorted(load_pins(workspace), key=lambda p: p.added_at)
+    kept: list[PinRecord] = list(ordered)
+    dropped: list[PinRecord] = []
+
+    def _block(pins: list[PinRecord]) -> str:
+        parts = ["<!-- project_context -->"]
+        for pin in pins:
+            parts.append(f"### {pin.path}\n{_pin_body(workspace, pin)}")
+        return "\n\n".join(parts)
+
+    while kept:
+        text = _block(kept)
+        tokens = heuristic_count(text).count
+        if tokens <= token_budget:
+            return ProjectContextLoad(tuple(kept), tuple(dropped), text, tokens)
+        dropped.insert(0, kept.pop())
+    return ProjectContextLoad((), tuple(dropped), None, 0)
+
+
+def project_capacity(
+    workspace: Path,
+    token_budget: int,
+) -> tuple[int, int, int, list[str]]:
+    """Instructions + memory + pins vs cap. Returns tokens and dropped names."""
+    from .context.memory_loader import list_workspace_memory
+
+    instruction_text = ""
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        path = workspace / name
+        if path.is_file():
+            instruction_text += path.read_text(encoding="utf-8", errors="replace")
+            break
+    rules = workspace / ".tst" / "rules"
+    if rules.is_dir():
+        for rule in sorted(rules.glob("*.md")):
+            instruction_text += rule.read_text(encoding="utf-8", errors="replace")
+    instruction_tokens = heuristic_count(instruction_text).count if instruction_text else 0
+    memory_tokens = 0
+    for item in list_workspace_memory(workspace):
+        memory_tokens += heuristic_count(item.content).count
+    loaded = load_project_context(workspace, token_budget)
+    return instruction_tokens, memory_tokens, loaded.tokens, [p.path for p in loaded.dropped]

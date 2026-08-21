@@ -749,6 +749,7 @@ async def agent_loop(
             #     imports (bounded by TD-504's max depth 4).
             while True:
                 memory_block: str | None = None
+                project_context: str | None = None
                 if tier == "brain":
                     loaded = await load_memory_for_turn(
                         session.workspace_path,
@@ -758,11 +759,20 @@ async def agent_loop(
                     )
                     session.last_memory = loaded
                     memory_block = loaded.block
+                    from .context_pins import load_project_context
+
+                    ctx = await asyncio.to_thread(
+                        load_project_context,
+                        Path(session.workspace_path),
+                        config.project_context.token_budget,
+                    )
+                    project_context = ctx.block
                 assembled = await assembler.assemble(
                     tier,
                     task=user_content if tier == "worker" else None,
                     matched_paths=set(session.touched_paths),
                     memory=memory_block,
+                    project_context=project_context if tier == "brain" else None,
                     approved_imports=frozenset(approved_imports),
                     denied_imports=frozenset(denied_imports),
                 )
