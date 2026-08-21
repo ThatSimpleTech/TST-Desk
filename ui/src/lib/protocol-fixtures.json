@@ -826,6 +826,15 @@
     "mime": "text/markdown",
     "path": "notes.md"
   },
+  "set_cu_kill": {
+    "type": "set_cu_kill",
+    "killed": true
+  },
+  "cu_kill_state": {
+    "type": "cu_kill_state",
+    "seq": 1,
+    "killed": true
+  },
   "hello_ack": {
     "type": "hello_ack",
     "version": 1

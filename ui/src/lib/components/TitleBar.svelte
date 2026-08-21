@@ -9,6 +9,7 @@
 	import { session, setTier, type SessionIndicator } from '../session-status.svelte.js';
 	import { formatUsd } from '../cost-format.js';
 	import CostMeter from './CostMeter.svelte';
+	import CuKillSwitch from './CuKillSwitch.svelte';
 	import WorkspacePicker from './WorkspacePicker.svelte';
 
 	const TIERS = ['brain', 'worker', 'validator'] as const;
@@ -53,6 +54,7 @@
 
 <div class="titlebar">
 	<WorkspacePicker {pickDirectory} />
+	<CuKillSwitch />
 
 	{#if session.sessionId !== null}
 		<!-- Tier chips -->

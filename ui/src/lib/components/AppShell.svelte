@@ -50,6 +50,7 @@
 	import { startCoworkerIndicator } from '../coworker-indicator.svelte.js';
 	import { isTauri } from '../open-file';
 	import { session } from '../session-status.svelte.js';
+	import { startCuKill, setCuKill } from '../cu-kill.svelte.js';
 	import { resolveShortcut } from '../shortcuts';
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
@@ -74,6 +75,7 @@
 		else if (action === 'close-modal') closeTopModal();
 		else if (action === 'cancel-turn') cancelTurn();
 		else if (action === 'open-palette') openPalette();
+		else if (action === 'stop-computer-use') setCuKill(true);
 		else openSettings();
 	}
 
@@ -105,6 +107,7 @@
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
 		const offArtifacts = startArtifacts();
 		const offCoworker = startCoworkerIndicator();
+		const offCuKill = startCuKill();
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
 			offCloseHint = off;
@@ -120,6 +123,7 @@
 			offOsNotify();
 			offArtifacts();
 			offCoworker();
+			offCuKill();
 			offCloseHint();
 		};
 	});

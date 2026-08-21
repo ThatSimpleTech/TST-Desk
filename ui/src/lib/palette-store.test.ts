@@ -165,6 +165,8 @@ describe("entries", () => {
 		expect(ids).toContain("action:open-settings");
 		expect(ids).toContain("action:toggle-theme");
 		expect(ids).toContain("action:end-session");
+		expect(ids).toContain("action:stop-computer-use");
+		expect(ids).toContain("action:resume-computer-use");
 		expect(ids).toContain("action:quit-app");
 		expect(ids).toContain("session:s-newest");
 	});
@@ -285,6 +287,17 @@ describe("commands", () => {
 		runPaletteEntry(paletteEntries()[0]);
 		expect(mocks.sent).toEqual([]);
 		expect(palette.open).toBe(false);
+	});
+
+	it("stops computer use through the same message as the title bar", () => {
+		run("Stop computer use");
+		expect(mocks.sent).toEqual([{ type: "set_cu_kill", killed: true }]);
+		expect(palette.open).toBe(false);
+	});
+
+	it("resumes computer use through the same message as the title bar", () => {
+		run("Resume computer use");
+		expect(mocks.sent).toEqual([{ type: "set_cu_kill", killed: false }]);
 	});
 
 	it("asks the host to quit — close is not this", () => {

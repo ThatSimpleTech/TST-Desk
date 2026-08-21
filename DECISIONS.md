@@ -6908,3 +6908,23 @@ importing `tst_cu_mcp` backends into `tstd`. Also rejected: HTTP sidecar
 (embeddings-style) — the MCP server is already stdio and a socket would
 invite a bind.
 
+---
+
+## 2026-08-21 — TD-3404: kill-switch is connection-scoped (Class B)
+
+**Decision:** `set_cu_kill` / `cu_kill_state` are connection-scoped.
+`cu_kill_state.seq` is fixed at 1. The flag is process-wide
+(`Daemon.set_computer_use_killed` / the shared desktop driver), so it
+does not belong in a session event log and must not advance a session
+cursor. The chrome updates only from `cu_kill_state`; it starts as
+not-killed, matching the daemon default.
+
+**Rationale:** A session-scoped seq would replay a process-wide latch
+from one transcript onto a reconnect and desync every other viewer.
+Handshake push was rejected: injecting a frame after `hello_ack` would
+steal the next `recv` in every existing socket test.
+
+**Alternative rejected:** Session-scoped `cu_kill_state`. Also rejected:
+piggybacking on `setup_state` (would rewrite an existing message). Also
+rejected: a `get_cu_kill` verb — the story named only set + event.
+
