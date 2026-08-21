@@ -649,6 +649,17 @@ class DesignHitTest(ClientMessage):
     y: float
 
 
+class CheckCuPermissions(ClientMessage):
+    """Re-probe computer-use OS permissions / integrity (TD-3302, TD-3303).
+
+    Connection-scoped.  The daemon answers with ``cu_permissions``.  The
+    probe never raises a TCC prompt and never waits on a Windows grant
+    dialog (there is none) — a hang is a defect.
+    """
+
+    type: Literal["check_cu_permissions"] = "check_cu_permissions"
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -1465,6 +1476,36 @@ class DesignHit(DaemonEvent):
     styles: dict[str, str] = Field(default_factory=dict)
 
 
+class CuPermissions(DaemonEvent):
+    """Computer-use OS permission / integrity report (TD-3302, TD-3303).
+
+    Connection-scoped (seq is fixed at 1).  ``first_run`` is true when
+    this is the first desktop CU attempt for this platform on this
+    machine.
+
+    macOS carries granted/denied for Screen Recording and Accessibility
+    plus System Settings deep links.  Windows has no grant dialog — the
+    same event names the two silent failure modes (UIPI, secure desktop)
+    with empty settings URLs.
+    """
+
+    type: Literal["cu_permissions"] = "cu_permissions"
+    seq: int = 1
+    granted: bool
+    screen_recording: bool
+    accessibility: bool
+    screen_recording_url: str
+    accessibility_url: str
+    first_run: bool = False
+    platform: Literal["macos", "windows"] = "macos"
+    no_gate: str = ""
+    uipi: str = ""
+    secure_desktop: str = ""
+    elevated: bool = False
+    uipi_applies: bool = False
+    secure_desktop_applies: bool = False
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -1519,7 +1560,8 @@ ClientMessageT = Annotated[
     | DeleteApiKey
     | ListArtifacts
     | OpenArtifact
-    | DesignHitTest,
+    | DesignHitTest
+    | CheckCuPermissions,
     Field(discriminator="type"),
 ]
 
@@ -1564,7 +1606,8 @@ DaemonEventT = Annotated[
     | Error
     | ScreenFrame
     | CuKillState
-    | DesignHit,
+    | DesignHit
+    | CuPermissions,
     Field(discriminator="type"),
 ]
 
@@ -1626,6 +1669,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_artifacts",
         "open_artifact",
         "design_hit_test",
+        "check_cu_permissions",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -1671,6 +1715,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "screen_frame",
         "cu_kill_state",
         "design_hit",
+        "cu_permissions",
     }
 )
 

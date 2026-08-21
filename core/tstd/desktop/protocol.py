@@ -8,7 +8,7 @@ never move a pointer.
 from __future__ import annotations
 
 import base64
-from typing import Protocol
+from typing import Any, Protocol
 
 # 1x1 PNG so CI can exercise screenshot without a display.
 TINY_PNG_B64 = (
@@ -24,6 +24,12 @@ class DesktopError(Exception):
     Lives here, not under ``tstd.tools``, so importing the driver cannot
     cycle through ``tools/__init__`` → handlers → desktop.
     """
+
+    PERMISSION_DENIED = "permission_denied"
+    UIPI = "uipi"
+    SECURE_DESKTOP = "secure_desktop"
+    # First-run / Settings reopen: TCC deny or a Windows integrity refuse.
+    REOPEN_CODES = frozenset({PERMISSION_DENIED, UIPI, SECURE_DESKTOP})
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -79,6 +85,9 @@ class DesktopDriver(Protocol):
         expect_window: str | None = None,
     ) -> str:
         """Scroll; optional move to *x*, *y* first."""
+
+    async def check_permissions(self) -> dict[str, Any]:
+        """Probe capture/input status. Must not prompt or hang."""
 
     async def aclose(self) -> None:
         """Reap a sidecar if this driver owns one."""

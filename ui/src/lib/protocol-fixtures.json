@@ -269,6 +269,9 @@
     "x": 12.0,
     "y": 34.0
   },
+  "check_cu_permissions": {
+    "type": "check_cu_permissions"
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -876,6 +879,23 @@
     "styles": {
       "display": "inline-block"
     }
+  },
+  "cu_permissions": {
+    "type": "cu_permissions",
+    "seq": 1,
+    "granted": false,
+    "screen_recording": false,
+    "accessibility": true,
+    "screen_recording_url": "x-apple.systemsettings:com.apple.preferences.privacy-security.ScreenCapture",
+    "accessibility_url": "x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility",
+    "first_run": true,
+    "platform": "macos",
+    "no_gate": "",
+    "uipi": "",
+    "secure_desktop": "",
+    "elevated": false,
+    "uipi_applies": false,
+    "secure_desktop_applies": false
   },
   "hello_ack": {
     "type": "hello_ack",

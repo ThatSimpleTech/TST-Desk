@@ -11,6 +11,11 @@ import json
 from typing import Any
 
 from ..logging import get_logger
+from .permissions import (
+    is_permission_failure,
+    is_secure_desktop_failure,
+    is_uipi_failure,
+)
 from .protocol import DesktopError
 
 log = get_logger("tstd.desktop.mcp")
@@ -153,4 +158,10 @@ def map_mcp_error(message: str) -> DesktopError:
         return DesktopError("cu_killed", message)
     if "e20" in lower or "no computer-use backend" in lower:
         return DesktopError("e20", message)
+    if is_uipi_failure(message):
+        return DesktopError(DesktopError.UIPI, message)
+    if is_secure_desktop_failure(message):
+        return DesktopError(DesktopError.SECURE_DESKTOP, message)
+    if is_permission_failure(message):
+        return DesktopError(DesktopError.PERMISSION_DENIED, message)
     return DesktopError("cu_error", message)

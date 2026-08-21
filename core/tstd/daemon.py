@@ -61,6 +61,15 @@ from .cu_indicators import (
     set_current_prefs,
 )
 from .desktop import DesktopDriver, desktop_driver_from_config
+from .desktop.permissions import (
+    cu_permissions_from_report,
+    driver_cu_platform,
+    is_desktop_tool,
+    load_shown,
+    mark_shown,
+    probe_report,
+)
+from .desktop.protocol import DesktopError
 from .discovery import resolve_tier_slugs
 from .keychain import (
     KeychainError,
@@ -107,10 +116,12 @@ from .protocol import (
     ArtifactReady,
     Attach,
     Cancel,
+    CheckCuPermissions,
     ClientMessageT,
     ContextPinEntry,
     ContextPins,
     CreateRule,
+    CuPermissions,
     DaemonEvent,
     DeleteApiKey,
     DeleteSession,
@@ -186,6 +197,12 @@ from .protocol import (
 )
 from .protocol import (
     TierSwitched as TierSwitchedEvent,
+)
+from .protocol import (
+    ToolCall as ToolCallEvent,
+)
+from .protocol import (
+    ToolResult as ToolResultEvent,
 )
 from .provider import (
     ChatCompletionRequest,
@@ -512,6 +529,40 @@ class Daemon:
             cu_show_on_real_display=self.cu_indicators.show_on_real_display,
             pinned_workspaces=list(self.workspace_pins),
         )
+
+    def _cu_permissions_session(self, event: DaemonEvent) -> str | None:
+        """Session to notify about computer-use permissions, or None.
+
+        First desktop tool call (once per platform) and every typed
+        integrity refuse (``permission_denied``, ``uipi``,
+        ``secure_desktop``).  The panel is connection-scoped — this
+        does not persist.
+        """
+        plat = driver_cu_platform(self.desktop_driver)
+        if (
+            isinstance(event, ToolCallEvent)
+            and is_desktop_tool(event.name)
+            and not load_shown(self.data_dir, plat)
+        ):
+            return event.session_id
+        if isinstance(event, ToolResultEvent) and event.error_code in DesktopError.REOPEN_CODES:
+            return event.session_id
+        return None
+
+    async def _cu_permissions_event(self, *, first_run: bool) -> CuPermissions:
+        """Probe the driver without prompting. Stamp first-run when asked."""
+        raw = await probe_report(self.desktop_driver)
+        if first_run:
+            mark_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
+        return cu_permissions_from_report(raw, first_run=first_run)
+
+    async def _emit_cu_permissions(self, session_id: str, *, first_run: bool) -> None:
+        """Push ``cu_permissions`` to clients attached to *session_id*."""
+        event = await self._cu_permissions_event(first_run=first_run)
+        payload = event.model_dump_json()
+        for conn in list(self._attached_clients.get(session_id, set())):
+            with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+                await conn.send(payload)
 
     async def _provider_probe(self, api_key: str | None = None) -> ProviderError | None:
         """One-token live call against the active brain (TD-1101).
@@ -955,6 +1006,12 @@ class Daemon:
                 await event_log.drop_before(result.earliest_seq)
         if isinstance(event, SessionStateEvent):
             await self._session_store.update_state(event.session_id, event.state)
+        announce = self._cu_permissions_session(event)
+        if announce is not None:
+            first_run = not load_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
+            self._tasks.append(
+                asyncio.create_task(self._emit_cu_permissions(announce, first_run=first_run))
+            )
 
     @staticmethod
     def _version() -> str:
@@ -1496,6 +1553,9 @@ class Daemon:
 
         if isinstance(msg, ExportUsage):
             return await self._usage_export(msg.format)
+
+        if isinstance(msg, CheckCuPermissions):
+            return (await self._cu_permissions_event(first_run=False)).model_dump_json()
 
         if isinstance(msg, EndSession):
             found = self.session_registry.get(msg.session_id)
