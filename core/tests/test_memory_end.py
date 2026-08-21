@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from tests.test_loop import make_config
+from tests.test_usage_recording import ScriptedProvider
 from tstd.daemon import Daemon
 from tstd.memory_store import memory_dir
 from tstd.mock import MockProvider, Script
@@ -113,6 +114,23 @@ class TestGracefulQuit:
         assert session is not None
         assert any(isinstance(e, MemoryProposal) for e in session.event_log.all_events)
         assert memory_dir(ws).joinpath("MEMORY.md").read_text(encoding="utf-8") == "old\n"
+        runner = daemon.session_registry.get_runner(sid)
+        if runner is not None:
+            await runner.cancel()
+        await daemon._shutdown()
+
+    async def test_shutdown_skips_when_provider_cannot_distill(self, tmp_path: Path) -> None:
+        """Quit distill is best-effort: a streaming-only mock must not crash it."""
+        ws = tmp_path / "ws"
+        _write(memory_dir(ws) / "MEMORY.md", "old\n")
+        daemon = Daemon(data_dir=tmp_path / "data", provider=ScriptedProvider())
+        daemon.config = make_config()
+        sid = await _open(daemon, ws)
+        await _seed_turn(daemon, sid)
+        await daemon._distill_live_sessions()
+        session = daemon.session_registry.get(sid)
+        assert session is not None
+        assert [e for e in session.event_log.all_events if isinstance(e, MemoryProposal)] == []
         runner = daemon.session_registry.get_runner(sid)
         if runner is not None:
             await runner.cancel()

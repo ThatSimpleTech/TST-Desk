@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from tstd import __version__
 from tstd.daemon import Daemon, DaemonState
 from tstd.logging import (
     JSONFormatter,
@@ -37,8 +38,8 @@ class TestDaemonState:
 
 class TestDaemonLifecycle:
     @pytest.mark.asyncio
-    async def test_start_and_stop(self) -> None:
-        d = Daemon()
+    async def test_start_and_stop(self, tmp_path: Path) -> None:
+        d = Daemon(data_dir=tmp_path / "data")
 
         async def stop() -> None:
             await asyncio.sleep(0.2)
@@ -49,8 +50,8 @@ class TestDaemonLifecycle:
         assert d.state.uptime >= 0.2
 
     @pytest.mark.asyncio
-    async def test_health(self) -> None:
-        d = Daemon()
+    async def test_health(self, tmp_path: Path) -> None:
+        d = Daemon(data_dir=tmp_path / "data")
 
         async def stop() -> None:
             await asyncio.sleep(0.2)
@@ -58,15 +59,15 @@ class TestDaemonLifecycle:
 
         await asyncio.gather(d.run(), stop())
         h = d.health()
-        assert h["version"] == "0.1.0"
+        assert h["version"] == __version__
         assert h["uptime"] > 0
         assert h["active_sessions"] == 0
-        assert h["data_dir"] is not None
+        assert h["data_dir"] == str(tmp_path / "data")
         assert h["shutdown_requested"] is True
 
     @pytest.mark.asyncio
-    async def test_multiple_shutdown_requests_idempotent(self) -> None:
-        d = Daemon()
+    async def test_multiple_shutdown_requests_idempotent(self, tmp_path: Path) -> None:
+        d = Daemon(data_dir=tmp_path / "data")
 
         async def stop() -> None:
             await asyncio.sleep(0.1)
