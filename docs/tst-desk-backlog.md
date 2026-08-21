@@ -5154,9 +5154,14 @@ one fire then cadence advances `next_run` (or pause if one-shot).
 **Size:** 2 · **Depends on:** TD-3804, TD-1712
 
 **Acceptance criteria:**
-- [ ] Rail **Scheduled** becomes `ready` and lists jobs
-- [ ] Create / pause / delete
-- [ ] The invariant test (every `ready` entry activates) stays green
+- [x] Rail **Scheduled** becomes `ready` and lists jobs
+- [x] Create / pause / delete
+- [x] The invariant test (every `ready` entry activates) stays green
+
+Done (2026-08-21): Scheduled is `ready`/`current`; `list_jobs` /
+`save_job` / `delete_job` at the end of the protocol unions; pane
+lists and edits draft fields. The runner still ticks; the rail does
+not fire jobs.
 
 ---
 

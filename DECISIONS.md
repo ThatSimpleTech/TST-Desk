@@ -7224,3 +7224,23 @@ loops from the missed `next_run` — that is the stampede. Adding
 `croniter` — the validated 5-field subset walks minutes without a
 dependency.
 
+---
+
+## 2026-08-21 — TD-3805: scheduled rail verbs; pause is save (Class B)
+
+**Decision:** `list_jobs`, `save_job`, and `delete_job` sit at the end
+of the client union. The only new event is connection-scoped `job_list`
+(seq fixed at 1). The daemon talks to the 3803 store; it does not run
+jobs. Pause is `save_job` with `paused` set. Create is draft fields on
+`save_job` (no NL parse, no model). Scheduled is `ready`/`current` like
+Artifacts.
+
+**Rationale:** 3803 left the verbs off the wire until a consumer
+existed. The rail is that consumer. One list event keeps the pane a
+viewer. Running from the rail would duplicate 3804's tick.
+
+**Alternative rejected:** A `pause_job` verb — paused is already a
+field. A `job_saved` / `job_deleted` pair — the pane only needs the
+list. NL create in the rail — 3803's parse is a worker draft, not this
+surface.
+

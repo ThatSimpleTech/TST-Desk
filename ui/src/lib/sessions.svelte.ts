@@ -36,7 +36,7 @@ import {
 	session,
 	workspaceName,
 } from "./session-status.svelte.js";
-import { showHome, showProjects, showArtifacts, projects } from "./projects.svelte.js";
+import { showHome, showProjects, showArtifacts, showScheduled, projects } from "./projects.svelte.js";
 import { railFunctions, type RailSurface } from "./rail";
 import type { DaemonEventUnion, SessionSummary } from "./protocol";
 
@@ -282,10 +282,10 @@ export function toggleCollapsed(): void {
 	saveCollapsed(sessions.collapsed);
 }
 
-/** Activate a rail function entry (TD-1712 / TD-2801 / TD-3202). Returns
- *  false — having done nothing — for any entry the live registry doesn't
- *  call `ready`. Home, Projects, and Artifacts swap current/ready with
- *  the surface. */
+/** Activate a rail function entry (TD-1712 / TD-2801 / TD-3202 / TD-3805).
+ *  Returns false — having done nothing — for any entry the live registry
+ *  doesn't call `ready`. Home, Projects, Artifacts, and Scheduled swap
+ *  current/ready with the surface. */
 export function activateRailFunction(id: RailSurface): boolean {
 	const entry = railFunctions(projects.surface).find((e) => e.id === id);
 	if (entry === undefined || entry.state !== "ready") return false;
@@ -299,6 +299,10 @@ export function activateRailFunction(id: RailSurface): boolean {
 	}
 	if (id === "artifacts") {
 		showArtifacts();
+		return true;
+	}
+	if (id === "scheduled") {
+		showScheduled();
 		return true;
 	}
 	// Marking an entry ready without wiring it here lands back here;

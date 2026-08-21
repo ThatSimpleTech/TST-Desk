@@ -672,6 +672,45 @@ class SetCuKill(ClientMessage):
     killed: bool
 
 
+class ListJobs(ClientMessage):
+    """List persisted scheduled jobs (TD-3805).
+
+    Connection-scoped: jobs live in the user data dir, not a session.
+    The daemon answers with ``job_list``. Does not run anything.
+    """
+
+    type: Literal["list_jobs"] = "list_jobs"
+
+
+class SaveJob(ClientMessage):
+    """Create or replace a scheduled job (TD-3805).
+
+    Draft fields, not a natural-language parse. Pause is this verb with
+    ``paused`` set. The runner (TD-3804) is the only code that fires
+    jobs. Acked with ``job_list``.
+    """
+
+    type: Literal["save_job"] = "save_job"
+    id: str | None = None
+    workspace: str | None = None
+    instruction: str | None = None
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    paused: bool = False
+
+
+class DeleteJob(ClientMessage):
+    """Remove a scheduled job by id (TD-3805).
+
+    Acked with ``job_list``. Unknown id is a typed error. Does not run
+    anything.
+    """
+
+    type: Literal["delete_job"] = "delete_job"
+    job_id: str = Field(min_length=1)
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -1521,6 +1560,29 @@ class CuPermissions(DaemonEvent):
     secure_desktop_applies: bool = False
 
 
+class JobEntry(BaseModel):
+    """One persisted job on ``job_list`` (TD-3805)."""
+
+    id: str
+    workspace: str
+    instruction: str
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"]
+    paused: bool = False
+
+
+class JobList(DaemonEvent):
+    """Response to ``list_jobs`` / ``save_job`` / ``delete_job`` (TD-3805).
+
+    Connection-scoped. Seq is fixed at 1 so it cannot rewind attach.
+    """
+
+    type: Literal["job_list"] = "job_list"
+    seq: int = 1
+    jobs: list[JobEntry] = Field(default_factory=list)
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -1577,7 +1639,10 @@ ClientMessageT = Annotated[
     | OpenArtifact
     | DesignHitTest
     | CheckCuPermissions
-    | SetCuKill,
+    | SetCuKill
+    | ListJobs
+    | SaveJob
+    | DeleteJob,
     Field(discriminator="type"),
 ]
 
@@ -1623,7 +1688,8 @@ DaemonEventT = Annotated[
     | ScreenFrame
     | CuKillState
     | DesignHit
-    | CuPermissions,
+    | CuPermissions
+    | JobList,
     Field(discriminator="type"),
 ]
 
@@ -1687,6 +1753,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "design_hit_test",
         "check_cu_permissions",
         "set_cu_kill",
+        "list_jobs",
+        "save_job",
+        "delete_job",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -1733,6 +1802,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "cu_kill_state",
         "design_hit",
         "cu_permissions",
+        "job_list",
     }
 )
 

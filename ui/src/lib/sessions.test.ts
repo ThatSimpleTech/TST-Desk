@@ -125,7 +125,7 @@ import {
   toggleRowMenu,
 } from "./session-actions.svelte.js";
 import { railFunctions } from "./rail";
-import { projects, resetProjects, showArtifacts, showProjects } from "./projects.svelte.js";
+import { projects, resetProjects, showArtifacts, showProjects, showScheduled } from "./projects.svelte.js";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -436,12 +436,6 @@ describe("collapse", () => {
 // ── Rail function entries (TD-1712 AC: never a dead click) ────────────────
 
 describe("rail function entries", () => {
-  it("refuses a surface whose epic hasn't landed, and touches nothing", () => {
-    expect(activateRailFunction("scheduled")).toBe(false);
-    expect(mocks.surfaceCalls).toEqual([]);
-    expect(sentTypes()).toEqual([]);
-  });
-
   it("refuses the surface the window is already on, and touches nothing", () => {
     expect(activateRailFunction("home")).toBe(false);
     expect(mocks.surfaceCalls).toEqual([]);
@@ -457,12 +451,13 @@ describe("rail function entries", () => {
   it("activates every entry the registry calls ready", () => {
     // Marking an entry ready without wiring it fails here rather than
     // shipping a button that does nothing. Ready depends on the surface.
-    for (const surface of ["home", "projects", "artifacts"] as const) {
+    for (const surface of ["home", "projects", "artifacts", "scheduled"] as const) {
       for (const entry of railFunctions(surface)) {
         if (entry.state !== "ready") continue;
         resetProjects();
         if (surface === "projects") showProjects();
         if (surface === "artifacts") showArtifacts();
+        if (surface === "scheduled") showScheduled();
         expect(activateRailFunction(entry.id)).toBe(true);
       }
     }
@@ -479,6 +474,14 @@ describe("rail function entries", () => {
     expect(activateRailFunction("artifacts")).toBe(true);
     expect(projects.surface).toBe("artifacts");
     expect(activateRailFunction("artifacts")).toBe(false);
+    expect(activateRailFunction("home")).toBe(true);
+    expect(projects.surface).toBe("home");
+  });
+
+  it("Scheduled opens the scheduled surface", () => {
+    expect(activateRailFunction("scheduled")).toBe(true);
+    expect(projects.surface).toBe("scheduled");
+    expect(activateRailFunction("scheduled")).toBe(false);
     expect(activateRailFunction("home")).toBe(true);
     expect(projects.surface).toBe("home");
   });
