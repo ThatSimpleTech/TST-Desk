@@ -68,6 +68,7 @@ import type {
   ValidateApiKey,
   SetPreset,
   SetSkipAllApprovals,
+  SetLoadGlobalMemory,
   SetupState,
   ApiKeyValidated,
   RunDiagnostics,
@@ -168,6 +169,13 @@ describe("Client message fixtures match TypeScript types", () => {
   it("set_skip_all_approvals", () => {
     const m = fixtures.set_skip_all_approvals as SetSkipAllApprovals;
     expect(m.type).toBe("set_skip_all_approvals");
+    expect(isBoolean(m.enabled)).toBe(true);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("set_load_global_memory", () => {
+    const m = fixtures.set_load_global_memory as SetLoadGlobalMemory;
+    expect(m.type).toBe("set_load_global_memory");
     expect(isBoolean(m.enabled)).toBe(true);
     expect("session_id" in m).toBe(false);
   });
@@ -706,6 +714,7 @@ describe("All fixtures have required shape", () => {
       "hello", "open_workspace", "user_message", "fork_from", "set_branch", "approve", "deny",
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
       "set_skip_all_approvals",
+      "set_load_global_memory",
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",

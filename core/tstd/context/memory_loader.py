@@ -234,6 +234,52 @@ def discover_memory_files(workspace: str | Path) -> tuple[MemoryCandidate, ...]:
     return (index, *topics)
 
 
+def global_memory_dir(home: str | Path) -> Path:
+    """``~/.tstdesk/memory`` — spec §5. Never a workspace path."""
+    return Path(home) / ".tstdesk" / "memory"
+
+
+def discover_global_memory(home: str | Path) -> tuple[MemoryCandidate, ...]:
+    """Read ``~/.tstdesk/memory/*.md``. Call only when the toggle is on."""
+    root = global_memory_dir(home)
+    try:
+        if not root.is_dir():
+            return ()
+        root = root.resolve()
+    except OSError as exc:
+        log.warning(
+            "global memory directory unreadable, skipped",
+            extra={"extra_fields": {"path": str(root), "error": str(exc)}},
+        )
+        return ()
+    found: list[MemoryCandidate] = []
+    for path in sorted(root.glob("*.md")):
+        candidate = _read_candidate(path, root, root)
+        if candidate is None:
+            continue
+        found.append(
+            MemoryCandidate(
+                path=candidate.path,
+                relative=Path("~/.tstdesk/memory") / candidate.path.name,
+                text=candidate.text,
+                is_index=candidate.is_index,
+            )
+        )
+    return tuple(found)
+
+
+def load_memory_from_global(home: str | Path, task: str) -> MemoryLoad:
+    """Heading-match over the opted-in global directory."""
+    selected: list[MemoryFile] = []
+    for candidate in discover_global_memory(home):
+        if candidate.is_index:
+            selected.append(_to_file(candidate, "always-index"))
+            continue
+        if headings_overlap_task(candidate.text, task):
+            selected.append(_to_file(candidate, "heading"))
+    return MemoryLoad(tuple(selected))
+
+
 def load_memory_for_task(workspace: str | Path, task: str) -> MemoryLoad:
     """Select ``MEMORY.md`` plus topic files whose headings overlap *task*.
 

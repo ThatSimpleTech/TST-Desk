@@ -107,6 +107,12 @@ export interface SetSkipAllApprovals extends ClientMessage {
   enabled: boolean;
 }
 
+/** Turn global memory on or off (TD-2603). Machine-wide, no session. */
+export interface SetLoadGlobalMemory extends ClientMessage {
+  type: "set_load_global_memory";
+  enabled: boolean;
+}
+
 export interface Resume extends ClientMessage {
   type: "resume";
   session_id: string;
@@ -313,6 +319,7 @@ export type ClientMessageUnion =
   | ListPolicyRules
   | RevokePolicyRule
   | SetSkipAllApprovals
+  | SetLoadGlobalMemory
   | Resume
   | Cancel
   | Attach
@@ -680,6 +687,8 @@ export interface SetupState extends DaemonEvent {
   tier_slugs?: Record<string, string | null>;
   // TD-804: skip-all approvals. Additive, default off.
   skip_all_approvals?: boolean;
+  // TD-2603: load ~/.tstdesk/memory/ after workspace memory. Additive, default off.
+  load_global_memory?: boolean;
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the

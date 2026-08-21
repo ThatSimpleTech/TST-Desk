@@ -33,6 +33,7 @@ from .memory_loader import (
     enforce_memory_budget,
     headings_overlap_task,
     load_memory_for_task,
+    load_memory_from_global,
 )
 from .tokens import heuristic_count
 
@@ -195,31 +196,43 @@ async def load_memory_for_turn(
     workspace: str | Path,
     task: str,
     client: EmbeddingsClient | None = None,
+    *,
+    load_global: bool = False,
+    home: Path | None = None,
 ) -> MemoryLoad:
     """Rank when the sidecar answers; otherwise heading-match.
 
-    A down sidecar cannot fail the turn.
+    A down sidecar cannot fail the turn. Global files are appended only
+    when *load_global* is on — off never stats ``~/.tstdesk/memory``.
     """
     heading = load_memory_for_task(workspace, task)
     budget = client.token_budget if client is not None else DEFAULT_TOKEN_BUDGET
     if client is None or not client.enabled:
-        return enforce_memory_budget(heading, budget)
-    candidates = discover_memory_files(workspace)
-    topics = [item for item in candidates if not item.is_index]
-    if not topics:
-        return enforce_memory_budget(heading, budget)
-    vectors = await client.embed_or_none([task, *[item.text for item in topics]])
-    if vectors is None or len(vectors) != 1 + len(topics):
-        return enforce_memory_budget(heading, budget)
-    ranked = apply_rank(
-        candidates,
-        task,
-        vectors[0],
-        vectors[1:],
-        top_k=client.top_k,
-        token_budget=client.token_budget,
-    )
-    return enforce_memory_budget(ranked, client.token_budget)
+        result = enforce_memory_budget(heading, budget)
+    else:
+        candidates = discover_memory_files(workspace)
+        topics = [item for item in candidates if not item.is_index]
+        if not topics:
+            result = enforce_memory_budget(heading, budget)
+        else:
+            vectors = await client.embed_or_none([task, *[item.text for item in topics]])
+            if vectors is None or len(vectors) != 1 + len(topics):
+                result = enforce_memory_budget(heading, budget)
+            else:
+                ranked = apply_rank(
+                    candidates,
+                    task,
+                    vectors[0],
+                    vectors[1:],
+                    top_k=client.top_k,
+                    token_budget=client.token_budget,
+                )
+                result = enforce_memory_budget(ranked, client.token_budget)
+    if not load_global:
+        return result
+    extra = load_memory_from_global(home if home is not None else Path.home(), task)
+    merged = MemoryLoad(result.files + extra.files, dropped=result.dropped + extra.dropped)
+    return enforce_memory_budget(merged, budget)
 
 
 def _vectors(payload: object) -> list[list[float]] | None:

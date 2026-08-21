@@ -51,6 +51,7 @@ from tstd.protocol import (
     Resume,
     RevokePolicyRule,
     SessionState,
+    SetLoadGlobalMemory,
     SetSkipAllApprovals,
     SetTier,
     ShellOutput,
@@ -139,6 +140,13 @@ class TestClientMessages:
         assert back.enabled is True
         # Machine-wide: a session_id would make a clone-local setting.
         assert "session_id" not in SetSkipAllApprovals.model_fields
+
+    def test_set_load_global_memory(self) -> None:
+        msg = SetLoadGlobalMemory(enabled=True)
+        back = _roundtrip(msg)
+        assert isinstance(back, SetLoadGlobalMemory)
+        assert back.enabled is True
+        assert "session_id" not in SetLoadGlobalMemory.model_fields
 
     def test_resume(self) -> None:
         msg = Resume(session_id="sess-1")

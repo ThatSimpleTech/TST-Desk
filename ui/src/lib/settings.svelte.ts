@@ -45,6 +45,8 @@ export const settings = $state({
 	rulesSessionId: null as string | null,
 	/** Machine-wide skip-all (TD-804). From setup_state, not inferred. */
 	skipAllApprovals: false,
+	/** Machine-wide global memory (TD-2603). From setup_state. */
+	loadGlobalMemory: false,
 });
 
 let started = false;
@@ -76,6 +78,7 @@ export function resetSettings(): void {
 	settings.rules = [];
 	settings.rulesSessionId = null;
 	settings.skipAllApprovals = false;
+	settings.loadGlobalMemory = false;
 	started = false;
 }
 
@@ -91,6 +94,7 @@ function reduce(event: DaemonEventUnion): void {
 		// setup_state is the ack for set_tier_slug, so it ends the save.
 		settings.savingTier = null;
 		settings.skipAllApprovals = event.skip_all_approvals ?? false;
+		settings.loadGlobalMemory = event.load_global_memory ?? false;
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -190,4 +194,9 @@ export function revokeRule(tool: string, args: string): void {
 /** Turn skip-all on or off (TD-804). The daemon acks with setup_state. */
 export function setSkipAllApprovals(enabled: boolean): void {
 	sendToDaemon({ type: "set_skip_all_approvals", enabled });
+}
+
+/** Turn global memory on or off (TD-2603). Acked with setup_state. */
+export function setLoadGlobalMemory(enabled: boolean): void {
+	sendToDaemon({ type: "set_load_global_memory", enabled });
 }

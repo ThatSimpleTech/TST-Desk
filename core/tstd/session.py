@@ -254,6 +254,9 @@ class Session:
         # Last brain-turn memory selection (TD-2604). None until a brain
         # turn has run the loader.
         self.last_memory: MemoryLoad | None = None
+        # TD-2603: machine-wide opt-in. The daemon stamps this on open
+        # and when the Settings toggle flips.
+        self.load_global_memory = False
 
     async def _observe_turn_end(self, event: DaemonEvent, _log: SessionEventLog) -> None:
         """Lower the open-turn count when the loop reports a turn complete."""
