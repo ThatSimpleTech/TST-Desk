@@ -24,7 +24,9 @@
 	import { push } from '../timeline-store.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
 	import ProjectPane from './ProjectPane.svelte';
+	import ArtifactPane from './ArtifactPane.svelte';
 	import { projects } from '../projects.svelte.js';
+	import { startArtifacts, bindArtifacts } from '../artifacts.svelte.js';
 	import TitleBar from './TitleBar.svelte';
 	import NotificationBanner from '../NotificationBanner.svelte';
 	import ToastStack from '../ToastStack.svelte';
@@ -98,6 +100,7 @@
 		// dropped and the pane stays on "No instruction stack yet."
 		const offStack = startStack();
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
+		const offArtifacts = startArtifacts();
 		return () => {
 			offTimeline();
 			offWizard();
@@ -107,6 +110,7 @@
 			offUsage();
 			offStack();
 			offOsNotify();
+			offArtifacts();
 		};
 	});
 
@@ -117,6 +121,11 @@
 		if (rightPane.tab !== 'stack') return;
 		void session.sessionId;
 		refreshStack();
+	});
+
+	$effect(() => {
+		if (projects.surface !== 'artifacts') return;
+		bindArtifacts(session.sessionId, session.workspacePath);
 	});
 
 	// The usage pane (TD-1706) reads the audit store, which the live event
@@ -174,10 +183,14 @@
 		{#snippet left()}
 			<section
 				class="pane-chat"
-				aria-label={projects.surface === 'projects' ? 'Projects' : 'Chat pane'}
+				aria-label={projects.surface === 'projects'
+					? 'Projects'
+					: projects.surface === 'artifacts'
+						? 'Artifacts'
+						: 'Chat pane'}
 			>
-				<!-- Chat stays mounted when Projects is showing so the store
-				     subscription is not torn down (TD-2801). -->
+				<!-- Chat stays mounted when another surface is showing so the
+				     store subscription is not torn down (TD-2801). -->
 				<div
 					class="pane-layer"
 					class:pane-hidden={projects.surface !== 'home'}
@@ -187,6 +200,8 @@
 				</div>
 				{#if projects.surface === 'projects'}
 					<div class="pane-layer"><ProjectPane /></div>
+				{:else if projects.surface === 'artifacts'}
+					<div class="pane-layer"><ArtifactPane /></div>
 				{/if}
 			</section>
 		{/snippet}
@@ -247,7 +262,7 @@
 </div>
 
 <ApprovalBar />
-{#if projects.surface !== 'projects'}
+{#if projects.surface === 'home'}
 	<MemoryProposalBar />
 {/if}
 <ToastStack />

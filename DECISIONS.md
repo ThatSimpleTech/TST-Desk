@@ -6628,3 +6628,29 @@ preview (TD-3202) can open the file itself.
 
 **Alternative rejected:** A model tool this story — tests register
 through the daemon API. Also rejected: dumping bytes on the socket.
+
+---
+
+## 2026-08-20 — TD-3202: Artifacts rail, path-only open, wall-limited read (Class B)
+
+**Decision:** Artifacts is a `ready` rail surface (Home / Projects /
+Artifacts / Scheduled). The pane lists the bound session from
+`artifact_list` / `artifact_ready`. `open_artifact` still returns
+metadata + path. Preview bytes come from the shell command
+`read_text_file`, which reads UTF-8 only when the resolved path is
+under the session workspace or `{data_dir}/sessions/{id}/` (2 MiB
+cap). The UI never `fetch()`es a URL.
+
+Workspace vs session for Open-in-OS is inferred from TD-3201's persist
+convention: `artifacts/{artifact_id}` is session-local and is not
+handed to `open_path`. HTML preview is `sandbox=""` (forced on the
+iframe) plus a first `default-src 'none'` CSP in `srcdoc`. Code
+highlighting reuses the chat markdown / highlight.js pipeline. Not a
+file tree, not Monaco, not apply/reject.
+
+**Rationale:** Location is not on the wire. Bytes stay off the
+WebSocket. A local HTTP file server would be a socket. The Files pane
+is writes-this-session, the wrong list.
+
+**Alternative rejected:** Reusing Files. Serving bytes over loopback
+HTTP. Adding `location` to the protocol this story.
