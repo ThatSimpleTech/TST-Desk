@@ -4636,9 +4636,9 @@ host does not leave a listener.
 **Size:** 2 · **Depends on:** TD-2902
 
 **Acceptance criteria:**
-- [ ] Settings toggle **Keep running when the window closes**, default
+- [x] Settings toggle **Keep running when the window closes**, default
       on once M5 ships, persisted in the user data dir
-- [ ] Off restores TD-1002 v0.1 behavior (close = shutdown)
+- [x] Off restores TD-1002 v0.1 behavior (close = shutdown)
 
 ---
 
