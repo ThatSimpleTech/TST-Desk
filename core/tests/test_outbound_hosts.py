@@ -251,6 +251,11 @@ _OUTBOUND_CAPABLE = {
     "e2e_m5.py": "the M5 coworker harness, a protocol client of our own loopback daemon",
     "e2e_m6.py": "the M6 exit harness, a protocol client of our own loopback daemon",
     "e2e_m7.py": "the M7 exit harness, a protocol client of our own loopback daemon",
+    "e2e_m8.py": (
+        "the M8 exit harness; probes and dials only the shipped vllm "
+        "preset's loopback /v1 (or a loopback override); off-box is refused "
+        "before send"
+    ),
     "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
     "tools/web_search.py": "web_search; destination is search.base_url from config",
     "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
