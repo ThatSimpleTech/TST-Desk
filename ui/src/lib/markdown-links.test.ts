@@ -59,8 +59,10 @@ describe("Markdown link clicks (TD-4806)", () => {
 
 	it("copy buttons still work alongside link routing", async () => {
 		const root = await render("```\nplain\n```");
+		// The control is a span, not a button: `button` is on the sanitizer
+		// forbid list (TD-4807).
 		const btn = root.querySelector("[data-copy-btn]");
-		if (!(btn instanceof HTMLButtonElement)) throw new Error("copy button not rendered");
+		if (!(btn instanceof HTMLElement)) throw new Error("copy control not rendered");
 		const writeText = vi.fn().mockResolvedValue(undefined);
 		Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
 

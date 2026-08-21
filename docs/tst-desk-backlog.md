@@ -5997,17 +5997,34 @@ opener mock with default prevented, and that copy buttons are undisturbed.
 **Size:** 2 · **Depends on:** TD-1002
 
 **Acceptance criteria:**
-- [ ] `tauri.conf.json` sets a content security policy locked to what the app uses
+- [x] `tauri.conf.json` sets a content security policy locked to what the app uses
       (self, the localhost WS, inline styles as needed) and the app still renders —
-      highlight.js, fonts, and the socket all verified
-- [ ] The DOMPurify config forbids `form`, `input`, and `button` tags so assistant text
-      cannot render a fake approval form
-- [ ] Tests pin the tag list; the CSP is verified by a manual smoke pass and noted
+      highlight.js, fonts, and the socket all verified — **mechanism amended:** the
+      policy lives in `ui/vite.config.ts` as `kit.csp` (hash mode), emitted as a
+      build-time meta tag; `tauri.conf.json` stays `csp: null`. See DECISIONS
+      2026-08-21. Render verified by dev smoke (screenshot: chrome, highlight.js,
+      serif fonts, copy control, socket connected).
+- [x] The DOMPurify config forbids `form`, `input`, and `button` tags so assistant text
+      cannot render a fake approval form — plus `textarea`, `select`, `option`,
+      `optgroup`; the code-block copy control became a `<span>` so the forbid list
+      is categorical
+- [x] Tests pin the tag list; the CSP is verified by a manual smoke pass and noted —
+      `csp-config.test.ts` pins every directive and the `csp: null` guard; the
+      emitted meta's sha256 was verified against the built bootstrap; dev-mode smoke
+      passed. A full packaged-.app smoke remains a pre-release manual step.
 
 `csp: null` in the Tauri config means any successful injection runs with full webview
 privileges. DOMPurify's default profile allows form elements, and the app renders
 model-controlled markdown next to real approval cards — a lookalike form is a phishing
 surface inside the trust boundary.
+
+**Completed (2026-08-21):** `kit.csp` hash mode emits
+`default-src 'self'; script-src 'self' + per-build bootstrap hash; style-src 'self'
+'unsafe-inline'; connect-src 'self' ws://127.0.0.1:* ipc://localhost (+ ws://localhost:*
+in dev); img-src 'self' data:; font-src 'self'; object-src/base-uri/form-action 'none'`.
+Tauri's bridge is unaffected (native init scripts; verified in tauri-2.11.5 source).
+DOMPurify `FORBID_TAGS` drops the form family categorically; tests pin each tag, the
+fake-approval-form degradation, copy-control survival, and every CSP directive.
 
 ### TD-4808 — `network: deny` never reaches the web tools; `side_effect_class` is dead metadata
 **Size:** 2 · **Depends on:** TD-609, TD-610

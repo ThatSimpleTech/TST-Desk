@@ -19,11 +19,13 @@ function ensureConfigured(): void {
   if (configured) return;
   marked.use({
     renderer: {
-      code({ text, lang }: { text: string; lang?: string }): string {
-        const language = lang !== undefined && lang !== "" && hljs.getLanguage(lang) ? lang : "plaintext";
-        const highlighted = hljs.highlight(text, { language }).value;
-        return `<div class="code-block"><button type="button" class="copy-btn" data-copy-btn>Copy</button><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`;
-      },
+			code({ text, lang }: { text: string; lang?: string }): string {
+				const language = lang !== undefined && lang !== "" && hljs.getLanguage(lang) ? lang : "plaintext";
+				const highlighted = hljs.highlight(text, { language }).value;
+				// A span, not a button: `button` sits on the sanitizer forbid
+				// list (TD-4807) so model output can never render one.
+				return `<div class="code-block"><span class="copy-btn" data-copy-btn>Copy</span><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`;
+			},
     },
   });
   // Links in model output must never navigate the app webview (TD-4806).
@@ -47,9 +49,16 @@ function ensureConfigured(): void {
   configured = true;
 }
 
+// Interactive form chrome is forbidden outright (TD-4807): assistant text
+// renders next to real approval cards, and DOMPurify's default profile
+// allows form elements — a lookalike approval form is a phishing surface
+// inside the trust boundary. Stripped tags leave their text behind, which
+// is inert.
+const FORBIDDEN_TAGS = ["form", "input", "textarea", "select", "option", "optgroup", "button"];
+
 /** Render markdown to sanitized HTML, safe for {@html}. */
 export function renderMarkdown(md: string): string {
   ensureConfigured();
   const html = marked.parse(md, { async: false });
-  return DOMPurify.sanitize(html);
+  return DOMPurify.sanitize(html, { FORBID_TAGS: FORBIDDEN_TAGS });
 }
