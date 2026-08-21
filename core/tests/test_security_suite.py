@@ -396,6 +396,13 @@ def _shell_decision(ws: Path, command: str) -> Any:
         "tee .tst/rules/x.md",
         "tee -a AGENTS.md",
         "echo never > notes.md && tee CLAUDE.md",
+        # TD-4817: the operator forms the extractor originally missed.
+        "echo never >& AGENTS.md",
+        "echo never >| .tst/config.yaml",
+        "echo never >| .tst/rules/evil.md",
+        "echo never >! CLAUDE.md",  # zsh clobber, attached
+        "echo never >&! AGENTS.md",
+        "echo never >! .tst/config.yaml",  # spaced clobber
     ],
 )
 def test_shell_write_to_steering_is_static_c(ws: Path, command: str) -> None:
@@ -414,6 +421,8 @@ def test_shell_write_to_steering_is_static_c(ws: Path, command: str) -> None:
         "echo hi > notes.md",  # benign redirect
         "git status",
         "echo done 2>&1",  # descriptor dup writes no file
+        "echo hi >&2",  # stderr dup, not a file write (TD-4817)
+        "exec 3>&1",  # fd juggling extracts a numeric non-target
         'echo "unclosed',  # unparseable → no targets, still not unsafe
     ],
 )
@@ -464,6 +473,24 @@ def test_sanitized_env_drops_credential_url_values(monkeypatch: pytest.MonkeyPat
     env = sanitized_env()
     assert "TSTD_PLANTED_DB" not in env
     assert env["TSTD_PLANTED_CLEAN"] == "postgres://host/db"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "redis://:hunter2@prod-cache:6379/0",  # tst-secret-ok
+        "rediss://:hunter2@prod-cache:6380",  # tst-secret-ok
+        "postgresql://:hunter2@db.internal/app",  # tst-secret-ok
+        "mongodb://:hunter2@mongo.internal:27017",  # tst-secret-ok
+    ],
+)
+def test_sanitized_env_drops_password_only_credential_urls(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Heroku-style `scheme://:password@host` — the username is empty and
+    the password is the whole secret (TD-4819)."""
+    monkeypatch.setenv("TSTD_PLANTED_URL", value)
+    assert "TSTD_PLANTED_URL" not in sanitized_env()
 
 
 def test_allowlist_docs_name_the_escape_hatches() -> None:

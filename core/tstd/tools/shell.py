@@ -84,7 +84,9 @@ _AUTH_NAME_RE = re.compile(r"(^|_)AUTH($|_)", re.IGNORECASE)
 _AUTH_NAME_EXEMPT = frozenset({"SSH_AUTH_SOCK"})
 # A URL with embedded credentials (user:pass@ before the host) is a secret
 # regardless of the variable's name — DATABASE_URL, REDIS_URL, SMTP URLs.
-_CREDENTIAL_URL_VALUE_RE = re.compile(r"://[^/\s:]+:[^/\s@]+@")
+# The username may be empty (Heroku-style `redis://:pw@host`): the secret
+# is the password, so the user part is `*` not `+` (TD-4819).
+_CREDENTIAL_URL_VALUE_RE = re.compile(r"://[^/\s@]*:[^/\s@]+@")
 
 # Shell operators that separate top-level commands.  Newline is a command
 # separator too.

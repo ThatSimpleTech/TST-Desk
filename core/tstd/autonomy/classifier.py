@@ -332,7 +332,7 @@ def _rule_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
 # the table, which is why the shell also gets a Class B floor: a model's
 # reading of an opaque string is never the sole gate on running it.
 
-_REDIRECT_TOKENS = frozenset({">", ">>", "&>", "&>>"})
+_REDIRECT_TOKENS = frozenset({">", ">>", "&>", "&>>", ">&", ">|"})
 _SEGMENT_SEPARATORS = frozenset({"|", "&", ";", "||", "&&"})
 
 
@@ -340,11 +340,15 @@ def _shell_write_targets(command: str) -> list[str]:
     """Best-effort write-target extraction from a shell command string.
 
     Tokenizes with ``punctuation_chars`` so ``> file`` and ``>file`` both
-    split.  Covers redirection (``>``, ``>>``, ``&>``, ``&>>`` — but not
-    descriptor dups like ``2>&1``, which write no file) and ``tee``
-    arguments.  Quoted operators can still split on older Pythons, so a
-    mention of a steering name inside quotes may over-classify as C —
-    fail-safe, and rare next to the unquoted forms scripts actually use.
+    split.  Covers redirection (``>``, ``>>``, ``&>``, ``&>>``, plus
+    ``>&``/``>|`` — TD-4817; descriptor dups like ``2>&1`` extract a
+    numeric non-target, which never matches a steering path) and ``tee``
+    arguments.  A zsh clobber mark rides the target as a leading ``!``
+    (``>!file``, ``>&!file``, spaced ``>! file``) and is stripped before
+    the steering check.  Quoted operators can still split on older
+    Pythons, so a mention of a steering name inside quotes may
+    over-classify as C — fail-safe, and rare next to the unquoted forms
+    scripts actually use.
 
     Other write forms (``cp``, ``mv``, ``sed -i``, editors) are not
     parsed: the command falls through to the B floor and asks, which is
@@ -362,8 +366,16 @@ def _shell_write_targets(command: str) -> list[str]:
     while i < len(tokens):
         token = tokens[i]
         if token in _REDIRECT_TOKENS and i + 1 < len(tokens):
-            targets.append(tokens[i + 1])
-            i += 2
+            target = tokens[i + 1]
+            advance = 2
+            if target == "!" and i + 2 < len(tokens):
+                # zsh spaced clobber: `>! file` / `>&! file`
+                target = tokens[i + 2]
+                advance = 3
+            target = target.lstrip("!")
+            if target:
+                targets.append(target)
+            i += advance
             continue
         if token == "tee":
             j = i + 1
