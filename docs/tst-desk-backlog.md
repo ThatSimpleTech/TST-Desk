@@ -4829,17 +4829,20 @@ classifier and approval gate as every other tool. Prefer wrapping
 **Size:** 8 · **Depends on:** TD-601, TD-1710
 
 **Acceptance criteria:**
-- [ ] Screenshot / move / click / type / scroll are tools on the
+- [x] Screenshot / move / click / type / scroll are tools on the
       session dispatcher, Class B (ask) except screenshot which may be
       A if it cannot actuate
-- [ ] Path/host rules do not apply; a **focus guard** (`expect_window`)
+- [x] Path/host rules do not apply; a **focus guard** (`expect_window`)
       does — mismatch refuses without actuating
-- [ ] Kill-switch stops actuation; capture still works
-- [ ] macOS and Windows each have a live path; Linux is E20
-- [ ] Mock driver for CI (the tst-cua mock, TD-102)
+- [x] Kill-switch stops actuation; capture still works
+- [x] macOS and Windows each have a live path; Linux is E20
+- [x] Mock driver for CI (the tst-cua mock, TD-102)
 
 **Notes:** Size 8. Split if the MCP-bridge and the product tools
 diverge. Do not bind a socket; stdio to the sidecar is enough.
+
+Done (2026-08-21): five `desktop_*` tools; `Tool.actuates` → Class A/B;
+stdio MCP sidecar; mock when `computer_use.command` is empty.
 
 ---
 
