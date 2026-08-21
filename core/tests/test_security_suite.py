@@ -375,6 +375,12 @@ async def test_shell_child_never_sees_daemon_secrets(
 
 FAKE_SECRETS = [
     "sk-PROJEXAMPLEKEYfakefake0000abcd",  # tst-secret-ok
+    # Dashed forms — the shapes the shipped presets actually hold
+    # (TD-4801). The pre-TD-4801 pattern required 20+ alphanumerics with
+    # no dashes and missed all three of these.
+    "sk-or-v1-0000000000000000000000000000000000000000000000abcd",  # tst-secret-ok
+    "sk-proj-FAKEFAKE0_fake-fake-fake-fake-fake-fake-fake0abcd",  # tst-secret-ok
+    "sk-ant-api03-FAKEFAKE0fakefakefakefakefakefakefake0abcd",  # tst-secret-ok
     "github_pat_11FAKEFAKE0abcdefghijklmnopqrstuvwxyz01",  # tst-secret-ok
     "ghp_FAKEFAKEFAKEFAKE00000000000000000abcd",  # tst-secret-ok
     "AKIAIOSFODNN7EXAMPLE",  # tst-secret-ok

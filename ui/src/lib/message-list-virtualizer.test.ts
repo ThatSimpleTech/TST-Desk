@@ -26,7 +26,9 @@ async function startHarness(): Promise<{
 	let api: { seed: (n: number) => void; append: (t: string) => void } | null = null;
 	app = mount(MessageListHarness, {
 		target: document.body,
-		props: { onready: (next) => (api = next) },
+		props: {
+			onready: (next: { seed: (n: number) => void; append: (t: string) => void }) => (api = next),
+		},
 	});
 	await tick();
 	if (api === null) throw new Error("harness did not start");

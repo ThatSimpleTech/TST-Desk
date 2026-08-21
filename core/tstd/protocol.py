@@ -10,6 +10,7 @@ Field naming is snake_case on the wire in both Python and TypeScript
 
 from __future__ import annotations
 
+import hmac
 import json
 import secrets
 from typing import Annotated, Any, Literal
@@ -71,10 +72,16 @@ def validate_version(version: int) -> None:
 def validate_token(provided: str, expected: str) -> None:
     """Check that the client's token matches the server's.
 
+    Compared in constant time on UTF-8 bytes: the token is the only
+    credential on the loopback socket, so a timing side channel is a
+    remote-local concern, but ``!=`` on a secret is never the right
+    habit. Bytes comparison also keeps a non-ASCII ``provided`` from
+    raising ``TypeError`` instead of failing the handshake cleanly.
+
     Raises:
         HandshakeError: If the token is invalid.
     """
-    if provided != expected:
+    if not hmac.compare_digest(provided.encode(), expected.encode()):
         raise HandshakeError(
             "auth_failed",
             "Invalid auth token. Check the token in the port file and try again.",
