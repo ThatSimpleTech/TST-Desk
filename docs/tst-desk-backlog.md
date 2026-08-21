@@ -4624,11 +4624,11 @@ host does not leave a listener.
 **Size:** 2 · **Depends on:** TD-2902
 
 **Acceptance criteria:**
-- [ ] While the window is hidden and a session is running or
+- [x] While the window is hidden and a session is running or
       `awaiting_approval`, the dock/taskbar badge or tooltip says so
-- [ ] Clicking the app icon shows the window and focuses the parked
+- [x] Clicking the app icon shows the window and focuses the parked
       approval if there is one
-- [ ] No tray icon required (TD-4703)
+- [x] No tray icon required (TD-4703)
 
 ---
 
