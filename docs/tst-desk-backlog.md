@@ -5117,12 +5117,15 @@ the 20-platform gateway.
 **Size:** 3 · **Depends on:** TD-1702
 
 **Acceptance criteria:**
-- [ ] Config holds a webhook URL (user-data-dir, not the workspace,
+- [x] Config holds a webhook URL (user-data-dir, not the workspace,
       not the audit log in plaintext — treat as a secret, keychain or
       equivalent)
-- [ ] Approval-needed and turn-complete can deliver to Slack when
+- [x] Approval-needed and turn-complete can deliver to Slack when
       enabled
-- [ ] Destination is config-sourced (`test_outbound_hosts`)
+- [x] Destination is config-sourced (`test_outbound_hosts`)
+
+Done (2026-08-21): `send(config, message)`; URL in keychain
+`tst-slack-webhook`; host from `notify.slack.host`; off by default.
 
 ---
 
@@ -5130,8 +5133,11 @@ the 20-platform gateway.
 **Size:** 2 · **Depends on:** TD-3801
 
 **Acceptance criteria:**
-- [ ] Same `send` shape; topic URL from config; off by default
-- [ ] Discord/Telegram are TD-4707, not this story
+- [x] Same `send` shape; topic URL from config; off by default
+- [x] Discord/Telegram are TD-4707, not this story
+
+Done (2026-08-21): `send(config, message)`; topic URL in keychain
+`tst-ntfy-topic`; host from `notify.ntfy.host`; off by default.
 
 ---
 

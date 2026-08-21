@@ -176,3 +176,17 @@ computer_use:
 # Never 0.0.0.0 / ::. A non-Tailscale LAN address is refused.
 remote:
   bind: ""
+
+# Slack incoming webhook (TD-3801) and ntfy topic POST (TD-3802). Off by
+# default. Destination URLs are keychain secrets (tst-slack-webhook,
+# tst-ntfy-topic), never this file. host is the only destination send()
+# may reach — set it to the URL's hostname when you enable a channel.
+notify:
+  slack:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  ntfy:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
