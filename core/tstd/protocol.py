@@ -10,6 +10,7 @@ Field naming is snake_case on the wire in both Python and TypeScript
 
 from __future__ import annotations
 
+import hmac
 import json
 import secrets
 from typing import Annotated, Any, Literal
@@ -17,7 +18,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 
 from .attachments import AttachmentLimits
-from .logging import redact_secrets
+from .logging import redact_secrets, redact_structure
 from .router import TierName
 
 # Current protocol version
@@ -71,10 +72,16 @@ def validate_version(version: int) -> None:
 def validate_token(provided: str, expected: str) -> None:
     """Check that the client's token matches the server's.
 
+    Compared in constant time on UTF-8 bytes: the token is the only
+    credential on the loopback socket, so a timing side channel is a
+    remote-local concern, but ``!=`` on a secret is never the right
+    habit. Bytes comparison also keeps a non-ASCII ``provided`` from
+    raising ``TypeError`` instead of failing the handshake cleanly.
+
     Raises:
         HandshakeError: If the token is invalid.
     """
-    if provided != expected:
+    if not hmac.compare_digest(provided.encode(), expected.encode()):
         raise HandshakeError(
             "auth_failed",
             "Invalid auth token. Check the token in the port file and try again.",
@@ -1918,6 +1925,19 @@ def build_error(code: str, message: str, session_id: str | None = None) -> str:
     if session_id is not None:
         payload["session_id"] = session_id
     return json.dumps(payload)
+
+
+def scrub_wire_json(payload: str) -> str:
+    """Redact secret-shaped strings in a serialized daemon→client frame.
+
+    The daemon's reply funnel runs every direct reply through here
+    (TD-4802): connection-scoped replies (``session_list``,
+    ``memory_files``, ``setup_state``, …) bypass the session event log,
+    where redaction normally happens at insertion, and their payloads can
+    be user text — a session title is the first user message.  Idempotent:
+    a frame already scrubbed at insertion passes through unchanged.
+    """
+    return json.dumps(redact_structure(json.loads(payload)), ensure_ascii=False)
 
 
 def validate_hello(hello: Hello) -> None:

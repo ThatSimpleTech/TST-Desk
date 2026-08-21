@@ -223,6 +223,29 @@ describe("reconnect and backoff", () => {
     expect(h.sockets.length).toBe(2);
     h.client.stop();
   });
+
+  it("grows exponentially from a custom baseBackoffMs (TD-4801)", async () => {
+    const h = buildClient({ baseBackoffMs: 5, maxBackoffMs: 1000 });
+    await h.client.start();
+    h.servers[0].handshake();
+
+    // Drop: attempt 0 -> 5ms.
+    h.servers[0].drop();
+    await vi.advanceTimersByTimeAsync(5);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.sockets.length).toBe(2);
+
+    // Drop again: attempt 1 must be 10ms, not a flat 5ms. Under the old
+    // precedence (`base ?? 500 * 2**attempt`) a configured base never grew,
+    // so the second retry would already have fired by the 9ms mark.
+    h.servers[1].drop();
+    await vi.advanceTimersByTimeAsync(9);
+    expect(h.sockets.length).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.sockets.length).toBe(3);
+    h.client.stop();
+  });
 });
 
 describe("from_seq replay — no gaps, no duplicates", () => {

@@ -33,6 +33,22 @@ _BLOCKED_NAMES = frozenset(
 )
 
 
+def search_hosts() -> tuple[str, ...]:
+    """The hosts ``web_search`` reaches, from config — for the classifier.
+
+    The search endpoint is ``search.base_url``, not a tool argument, so
+    the dispatcher cannot read it out of the call.  Registered as the
+    tool's ``host_resolver`` (TD-4808): ``network: deny`` and the host
+    allowlist classify the call before it runs.  Empty when search is
+    not configured or the URL has no host.
+    """
+    base_url = cached_config().search.base_url.strip()
+    if not base_url:
+        return ()
+    host = urlsplit(base_url).hostname
+    return (host.lower(),) if host else ()
+
+
 class _AnchorCollector(HTMLParser):
     """Collect http(s) anchors and their link text."""
 

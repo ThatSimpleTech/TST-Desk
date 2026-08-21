@@ -199,6 +199,7 @@ from .protocol import (
     ValidateApiKey,
     build_error,
     parse_client_message,
+    scrub_wire_json,
 )
 from .protocol import (
     BoundaryUpdate as BoundaryUpdateEvent,
@@ -1112,6 +1113,20 @@ class Daemon:
         return __version__
 
     async def _handle_message(self, raw: str, _connection: Any) -> str | None:
+        """Post-handshake entry point — and the reply redaction chokepoint.
+
+        Every direct reply funnels through here and is scrubbed before it
+        reaches the socket (TD-4802): connection-scoped replies bypass the
+        session event log, where redaction happens at insertion (TD-1405).
+        Broadcast and replay carry log events, already scrubbed at
+        insertion, so they do not pass through here.
+        """
+        reply = await self._dispatch_message(raw, _connection)
+        if reply is None:
+            return None
+        return scrub_wire_json(reply)
+
+    async def _dispatch_message(self, raw: str, _connection: Any) -> str | None:
         """Handle a post-handshake message from a client.
 
         Routes messages to the session layer. Returns a response string

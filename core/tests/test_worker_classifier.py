@@ -34,9 +34,13 @@ def make_static(workspace: Path) -> DecisionClassifier:
 
 
 def ambiguous_request(
-    tool: str = "shell", arguments: dict[str, object] | None = None
+    tool: str = "custom_tool", arguments: dict[str, object] | None = None
 ) -> DecisionRequest:
-    """A request no static rule resolves (no paths/hosts declared)."""
+    """A request no static rule resolves (no paths/hosts declared).
+
+    Not ``shell``: shell has a static B floor since TD-4805, so it never
+    reaches the worker tier these tests exercise.
+    """
     return DecisionRequest(
         tool_name=tool,
         arguments=arguments or {"command": "run something"},
@@ -152,7 +156,7 @@ class TestWorkerCall:
         decision = await classifier.classify(ambiguous_request())
         assert decision.decision_class is DecisionClass.A
         assert len(worker.calls) == 1
-        assert "Tool: shell" in worker.calls[0]
+        assert "Tool: custom_tool" in worker.calls[0]
 
     async def test_worker_b_response_is_b(self, tmp_path: Path) -> None:
         worker = SpyWorker(response="B")
@@ -177,14 +181,14 @@ class TestCache:
     async def test_different_shape_misses_cache(self, tmp_path: Path) -> None:
         worker = SpyWorker(response="B")
         classifier = AmbiguousClassifier(make_static(tmp_path), worker)
-        await classifier.classify(ambiguous_request("shell"))
-        await classifier.classify(ambiguous_request("shell", arguments={"command": "other"}))
+        await classifier.classify(ambiguous_request("custom_tool"))
+        await classifier.classify(ambiguous_request("custom_tool", arguments={"command": "other"}))
         assert len(worker.calls) == 2
 
     async def test_different_tool_misses_cache(self, tmp_path: Path) -> None:
         worker = SpyWorker(response="B")
         classifier = AmbiguousClassifier(make_static(tmp_path), worker)
-        await classifier.classify(ambiguous_request("shell"))
+        await classifier.classify(ambiguous_request("custom_tool"))
         await classifier.classify(ambiguous_request("git"))
         assert len(worker.calls) == 2
 

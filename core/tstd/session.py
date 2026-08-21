@@ -17,18 +17,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
 from .autonomy.classifier import DecisionClass
 from .boundary_config import BoundaryConfig
-from .logging import get_logger, redact_secrets, redact_structure
+from .logging import get_logger, redact_structure
 from .policy import ApprovalOutcome, PolicyConfig, propose_always_allow
 from .protocol import (
-    ArtifactReady,
     ConversationReset,
     DaemonEvent,
-    Error,
     PolicyRuleSummary,
-    ShellOutput,
-    ToolCall,
     ToolResult,
-    UserTurn,
 )
 from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
@@ -70,27 +65,26 @@ def _redact_event(event: DaemonEvent) -> DaemonEvent:
     covers all three at once.  The model's conversation is built from
     dispatch results, not logged events, so execution is unaffected, and
     the caller's own event object is left untouched (a copy is stored).
+
+    The scrub is whole-event (TD-4802): every string field of every event
+    type passes through ``redact_structure``.  The per-type field list this
+    replaced let ``ApprovalRequest.summary``, ``DecisionLogged.what/why``,
+    and the assistant deltas through raw — each added after TD-1405 by
+    authors who reasonably assumed the chokepoint was categorical.
+    Shape-constrained fields (Literals, enums, generated ids) never match
+    the patterns; a field that does match is carrying a secret and must be
+    scrubbed wherever it sits.
+
+    The union's contract is path-not-bytes (``ScreenFrame``, ``Artifact``):
+    no event carries bulk payload text such as a data URL, where a regex
+    hit would corrupt the payload.  A future event that carries one needs
+    a targeted exemption here, not a bypass of the scrub.
     """
-    if isinstance(event, ToolCall):
-        return event.model_copy(update={"arguments": redact_structure(event.arguments)})
-    if isinstance(event, ToolResult):
-        update: dict[str, Any] = {"output": redact_secrets(event.output)}
-        if event.diff is not None:
-            update["diff"] = redact_secrets(event.diff)
-        return event.model_copy(update=update)
-    if isinstance(event, UserTurn):
-        return event.model_copy(update={"content": redact_secrets(event.content)})
-    if isinstance(event, ShellOutput):
-        return event.model_copy(update={"chunk": redact_secrets(event.chunk)})
-    if isinstance(event, Error):
-        return event.model_copy(update={"message": redact_secrets(event.message)})
-    if isinstance(event, SessionStateEvent) and event.reason is not None:
-        return event.model_copy(update={"reason": redact_secrets(event.reason)})
-    if isinstance(event, ArtifactReady):
-        return event.model_copy(
-            update={"title": redact_secrets(event.title), "path": redact_secrets(event.path)}
-        )
-    return event
+    dumped = event.model_dump()
+    scrubbed = redact_structure(dumped)
+    if scrubbed == dumped:
+        return event
+    return type(event).model_validate(scrubbed)
 
 
 # ── Event log ──────────────────────────────────────────────────────────

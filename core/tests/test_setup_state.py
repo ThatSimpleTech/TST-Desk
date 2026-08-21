@@ -211,12 +211,15 @@ class TestSetApiKey:
                 ws = await _connect_and_handshake(
                     f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
                 )
-                resp = await _ask(ws, {"type": "set_api_key", "api_key": "sk-live-check-12345"})
-                assert fake_keychain.stored["openrouter"] == "sk-live-check-12345"
+                resp = await _ask(
+                    ws,
+                    {"type": "set_api_key", "api_key": "sk-live-check-12345"},  # tst-secret-ok
+                )
+                assert fake_keychain.stored["openrouter"] == "sk-live-check-12345"  # tst-secret-ok
                 assert resp["type"] == "setup_state"
                 assert resp["has_api_key"] is True
                 # The key is never echoed anywhere on the wire.
-                assert "sk-live-check-12345" not in json.dumps(resp)
+                assert "sk-live-check-12345" not in json.dumps(resp)  # tst-secret-ok
                 await ws.close()
             finally:
                 await _stop_daemon(task)

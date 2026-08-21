@@ -434,7 +434,7 @@ Six top-level sections live here, each read by a different part of the daemon: `
 |---|---|---|---|
 | `writable_paths` | list of glob strings | `["**"]` | Workspace-relative globs the agent may **write** to. A write outside them is refused as `outside_writable_paths` and classified Class C. |
 | `allowed_commands` | list of strings | `[]` | Allowlist for the shell tool, matched on the basename of the resolved binary. **Empty or omitted means any command** — the list narrows a path the classifier and approval gate already guard (TD-606). |
-| `network` | `deny` or a list of hosts | `deny` | Hosts the agent may reach. Any other string is a load error. Declarative in v0.1 — see §4.6. |
+| `network` | `deny` or a list of hosts | `deny` | Hosts the agent may reach, matched as bare lowercase hostnames. Enforced against the web tools: `web_fetch` classifies its URL's host, `web_search` the configured `search.base_url` (TD-4808). Any other string is a load error. Does not gate shell egress — see §4.6. |
 
 **Glob semantics for `writable_paths`.** Patterns are relative to the workspace root, and the
 target is resolved (symlinks followed) before matching:
@@ -451,16 +451,28 @@ regardless of this list. And the shell tool declares no path arguments, so it is
 working directory and `allowed_commands`, not by these globs. A command that writes outside
 them is not stopped here.
 
-Steering files (`AGENTS.md`, `CLAUDE.md`, `.tst/rules/**`) are refused for writing no matter
-what you put in this list. That is enforced in the tool, not by configuration.
+Steering files (`AGENTS.md`, `CLAUDE.md`, `.tst/rules/**`) and the approval policy itself
+(`.tst/config.yaml`) are refused for writing no matter what you put in this list. That is
+enforced in the tool, not by configuration.
 
 **`allowed_commands` matching.** The command is split into top-level segments on pipes,
 semicolons, and the like; each segment's leading binary — after skipping `VAR=value` prefixes —
 is resolved with `which` and matched on the basename, so `git` and `/usr/bin/git` both match
 `git`. Only the leading binary of each segment is checked, so `sh`, `sudo`, and `env` match as
 themselves: list them deliberately, because listing `sh` allows anything `sh -c` can run.
-Backticks are refused outright, and a binary that cannot be resolved is refused fail-closed.
-This is a policy rail, not a sandbox.
+Listed binaries can also re-exec others — `find -exec`, `xargs`, `make`, and any interpreter
+all walk through a basename match. Backticks are refused outright, and a binary that cannot be
+resolved is refused fail-closed. This is a policy rail, not a sandbox.
+
+**Shell commands always ask.** Every shell call is at least Class B: the static classifier
+cannot see inside a command string, so shell never auto-runs on the classifier's say-so
+(TD-4805) — and skip-all approvals does not promote it either (TD-4818); the floor is the
+only gate on an opaque string. The common scripted write forms — redirection (`>`, `>>`,
+`&>`, `&>>`, `>&`, `>|`, zsh `>!`) and `tee` — into a steering path are Class C. Write
+forms the parser does not model (`cp`, `mv`, `sed -i`, `eval`, command substitution) are
+not statically visible: they ask, every time. Automation trust belongs to your saved
+"always allow" rules, which still apply — including an explicit `shell: auto` rule, which
+is your deliberate opt-in, not the floor's default.
 
 ### 4.2 `caps` — when the agent stops and asks
 
@@ -576,10 +588,12 @@ delivers. Both are reported as defects; neither is fixed here.
   it meant: any command. The allowlist narrows a path that is already guarded, since no rule in
   the classifier's table matches on tool name, so a shell call defaults to class B and the user
   answers for it.
-- **`network` is declared but not enforced.** No tool that ships in v0.1 reaches the network, so
-  the host allowlist has nothing to gate; it is carried into the boundary display and the
-  classifier, and nothing rejects a host today. `deny` does not stop `curl` — shell egress is
-  governed by `allowed_commands` alone.
+- **`network` gates the web tools, not the shell.** Since TD-4808 the allowlist is enforced
+  where a host is visible to the classifier: `web_fetch` reduces its `url` argument to a bare
+  host, and `web_search` answers for the configured `search.base_url`. A host outside the list
+  is Class C (refused); an allowlisted host still asks (Class B). But `deny` does not stop
+  `curl` — the classifier cannot see inside a command string, so shell egress is governed by
+  `allowed_commands` and the approval gate alone.
 
 One more sharp edge that is behaviour rather than a defect: saving a policy rule from the UI
 rewrites this file through a YAML dump, which **discards your comments**. Your `boundary:` and

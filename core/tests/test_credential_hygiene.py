@@ -35,7 +35,11 @@ from tests.test_setup_state import (
 )
 from tstd.config import cached_config
 
-CANARY = "sk-" + "canary" + "ab" * 8  # runtime-assembled; scanner-safe
+# Runtime-assembled; scanner-safe. Shaped like a real OpenRouter key
+# (dashed prefix) so the suite exercises the format the app actually
+# stores — an undashed canary matches a too-narrow redaction pattern and
+# the test cannot tell the gap from a working redactor (TD-4801).
+CANARY = "sk-or-v1-" + "canary" + "ab" * 8
 
 
 class _LogCapture(logging.Handler):
