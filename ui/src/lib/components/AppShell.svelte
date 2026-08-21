@@ -156,7 +156,7 @@
 			boundSessionId: screen.boundSessionId,
 			sessionId: session.sessionId,
 			hasFrame: screen.hasFrame,
-			hasBrowserTool: screen.hasBrowserTool,
+			hasCuTool: screen.hasCuTool,
 		}),
 	);
 

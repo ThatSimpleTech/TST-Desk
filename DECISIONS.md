@@ -6929,3 +6929,23 @@ falls back to the mock.
 fake zip. Also rejected: putting PNG bytes on the WebSocket — frames are
 session-dir paths, same wall as artifacts.
 
+---
+
+## 2026-08-21 — TD-3401: shared screen persist (Class B)
+
+**Decision:** Lift `persist_screen_frame` to `tstd.screen.frames`. Browser
+and desktop both call it. `desktop_screenshot` still returns the driver
+JSON (`png_base64`) to the model; the Screen pane watches `screen_frame`
+(path, not bytes). The tab gate is `hasCuTool` (any `browser_*` or
+`desktop_*` this session). Failed desktop clicks stay ordinary
+`tool_result` rows.
+
+**Rationale:** Duplicating the PNG + data-URL write would fork the
+artifact wall. Importing persist from `tstd.browser.frames` would make
+desktop depend on the browser package. A tiny `tstd.screen` module is
+the shared write without a new protocol event.
+
+**Alternative rejected:** A second desktop-only frame event. Also
+rejected: dropping `png_base64` from the desktop tool result in this
+story — the model still needs the image; the pane does not.
+

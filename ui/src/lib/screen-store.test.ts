@@ -20,12 +20,13 @@ import {
 	setScreenPreviewReader,
 	startScreen,
 } from "./screen.svelte.js";
+import { screenTabVisible } from "./screen";
 
 function emit(event: DaemonEventUnion): void {
 	mocks.handler?.(event);
 }
 
-describe("screen store (TD-1710)", () => {
+describe("screen store (TD-1710, TD-3401)", () => {
 	beforeEach(() => {
 		resetScreen();
 		startScreen();
@@ -33,6 +34,36 @@ describe("screen store (TD-1710)", () => {
 
 	afterEach(() => {
 		resetScreen();
+	});
+
+	it("hides the tab until the first CU tool this session", () => {
+		expect(
+			screenTabVisible({
+				boundSessionId: screen.boundSessionId,
+				sessionId: "s1",
+				hasFrame: screen.hasFrame,
+				hasCuTool: screen.hasCuTool,
+			}),
+		).toBe(false);
+		emit({
+			type: "tool_call",
+			seq: 1,
+			session_id: "s1",
+			tool_call_id: "c1",
+			name: "desktop_screenshot",
+			arguments: {},
+		});
+		expect(screen.hasCuTool).toBe(true);
+		expect(screen.boundSessionId).toBe("s1");
+		expect(screen.hasFrame).toBe(false);
+		expect(
+			screenTabVisible({
+				boundSessionId: screen.boundSessionId,
+				sessionId: "s1",
+				hasFrame: screen.hasFrame,
+				hasCuTool: screen.hasCuTool,
+			}),
+		).toBe(true);
 	});
 
 	it("shows after a browser tool_call and keeps the bound session", () => {
@@ -44,7 +75,7 @@ describe("screen store (TD-1710)", () => {
 			name: "browser_navigate",
 			arguments: { url: "https://example.com" },
 		});
-		expect(screen.hasBrowserTool).toBe(true);
+		expect(screen.hasCuTool).toBe(true);
 		expect(screen.boundSessionId).toBe("s1");
 		expect(screen.hasFrame).toBe(false);
 	});
@@ -66,7 +97,7 @@ describe("screen store (TD-1710)", () => {
 			status: "success",
 			output: "ok",
 		});
-		expect(screen.hasBrowserTool).toBe(false);
+		expect(screen.hasCuTool).toBe(false);
 	});
 
 	it("loads a path-only screen_frame through the sidecar reader", async () => {

@@ -8,8 +8,9 @@ bind a socket.
 from __future__ import annotations
 
 import base64
-import struct
 from typing import Any, Protocol
+
+from ..screen.frames import png_size as png_size
 
 # 1x1 PNG so CI can exercise screenshot without launching Chrome.
 TINY_PNG_B64 = (
@@ -30,14 +31,6 @@ class BrowserError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
-
-
-def png_size(data: bytes) -> tuple[int, int]:
-    """Read width and height from a PNG IHDR. ``(0, 0)`` if not a PNG."""
-    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
-        return (0, 0)
-    width, height = struct.unpack(">II", data[16:24])
-    return (int(width), int(height))
 
 
 class BrowserDriver(Protocol):

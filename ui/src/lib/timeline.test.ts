@@ -36,6 +36,25 @@ describe("eventToEntry", () => {
     expect(entry!.details.decision_class).toBe("B");
   });
 
+  it("maps a failed desktop click to a tool_result row, not a screen pane (TD-3401)", () => {
+    const entry = eventToEntry(
+      evt({
+        type: "tool_result",
+        session_id: "s1",
+        tool_call_id: "c1",
+        status: "error",
+        output: "expected the foreground window to match 'Chrome'",
+        truncated: false,
+        error_code: "focus_mismatch",
+        seq: 4,
+      }),
+    );
+    expect(entry).not.toBeNull();
+    expect(entry!.kind).toBe("tool_result");
+    expect(entry!.title).toBe("Error");
+    expect(entry!.details.error_code).toBe("focus_mismatch");
+  });
+
   it("maps a tool_result and carries the diff for file writes", () => {
     const entry = eventToEntry(
       evt({

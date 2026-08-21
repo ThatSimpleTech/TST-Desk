@@ -6,10 +6,13 @@ PathGuard never runs. Classification comes from ``Tool.actuates``.
 
 from __future__ import annotations
 
+import base64
+import json
 from functools import partial
 from typing import TYPE_CHECKING
 
 from ..desktop import DesktopDriver
+from ..screen.frames import persist_screen_frame
 from .registry import Tool, ToolRegistry
 
 if TYPE_CHECKING:
@@ -142,13 +145,33 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
     )
 
 
+def _png_from_driver_json(raw: str) -> bytes | None:
+    """Pull PNG bytes from a successful driver screenshot payload."""
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    b64 = body.get("png_base64") if isinstance(body, dict) else None
+    if not isinstance(b64, str) or not b64:
+        return None
+    try:
+        png = base64.b64decode(b64, validate=True)
+    except (ValueError, TypeError):
+        return None
+    return png if png.startswith(b"\x89PNG") else None
+
+
 async def desktop_screenshot(
     session: object,
     driver: DesktopDriver,
     display: int | None = None,
     tool_call_id: str = "",
 ) -> str:
-    return await driver.screenshot(display=display)
+    raw = await driver.screenshot(display=display)
+    png = _png_from_driver_json(raw)
+    if png is not None:
+        await persist_screen_frame(session, png, tool_call_id=tool_call_id or None)
+    return raw
 
 
 async def desktop_move(
