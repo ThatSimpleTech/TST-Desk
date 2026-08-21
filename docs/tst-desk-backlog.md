@@ -5274,9 +5274,13 @@ the remapped worker slug or omits it if unresolved (TD-1805).
 **Size:** 3 · **Depends on:** TD-3901
 
 **Acceptance criteria:**
-- [ ] Live harness against a loopback vLLM or EZER fixture (or skip
+- [x] Live harness against a loopback vLLM or EZER fixture (or skip
       with copy if the binary is absent — heading-match style)
-- [ ] **This harness is the M8 exit criterion**
+- [x] **This harness is the M8 exit criterion**
+
+Done (2026-08-21): `tstd.e2e_m8` probes the shipped `vllm` loopback;
+skip with heading-match copy if nothing is listening. Live turn is
+one keyless completion at cost 0. Not `e2e_harness.run`.
 
 ---
 
