@@ -135,6 +135,15 @@ class Preset(BaseModel):
     worker: TierConfig
     validator: TierConfig
 
+    def requires_api_key(self) -> bool:
+        """Whether this preset needs a stored key (TD-1801).
+
+        False only when every tier is a loopback endpoint. Conservative on
+        purpose: one off-box tier means the preset still needs a key, so a
+        mixed preset never degrades into an unauthenticated remote call.
+        """
+        return not all(is_loopback_url(getattr(self, name).base_url) for name in TIER_NAMES)
+
 
 class SearchConfig(BaseModel):
     """Web search and page fetch (TD-609, TD-610).
@@ -250,11 +259,11 @@ class ModelConfig(BaseModel):
     def requires_api_key(self) -> bool:
         """Whether the active preset needs a stored key (TD-1801).
 
-        False only when every tier is a loopback endpoint. Conservative on
-        purpose: one off-box tier means the workspace still needs a key, so a
-        mixed preset never degrades into an unauthenticated remote call.
+        Conservative on purpose: one off-box tier means the workspace still
+        needs a key, so a mixed preset never degrades into an
+        unauthenticated remote call.
         """
-        return not all(is_loopback_url(t.base_url) for t in self.tiers().values())
+        return self.presets[self.active_preset].requires_api_key()
 
 
 class ConfigError(Exception):

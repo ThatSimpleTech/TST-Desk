@@ -21,7 +21,7 @@ from typing import Any, ClassVar
 import pytest
 from websockets.asyncio.client import connect
 
-from tstd.config import cached_config
+from tstd.config import Preset, TierConfig, cached_config
 from tstd.daemon import Daemon
 from tstd.keychain import KeychainError, KeychainLockedError
 from tstd.protocol import PROTOCOL_VERSION, DeleteApiKey, ValidateApiKey, parse_client_message
@@ -211,12 +211,13 @@ class TestSetApiKey:
                 ws = await _connect_and_handshake(
                     f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
                 )
-                resp = await _ask(ws, {"type": "set_api_key", "api_key": "sk-live-check-12345"})
-                assert fake_keychain.stored["openrouter"] == "sk-live-check-12345"
+                store = {"type": "set_api_key", "api_key": "sk-live-check-12345"}  # tst-secret-ok
+                resp = await _ask(ws, store)
+                assert fake_keychain.stored["openrouter"] == "sk-live-check-12345"  # tst-secret-ok
                 assert resp["type"] == "setup_state"
                 assert resp["has_api_key"] is True
                 # The key is never echoed anywhere on the wire.
-                assert "sk-live-check-12345" not in json.dumps(resp)
+                assert "sk-live-check-12345" not in json.dumps(resp)  # tst-secret-ok
                 await ws.close()
             finally:
                 await _stop_daemon(task)
@@ -493,3 +494,139 @@ class TestSetPreset:
                 await ws.close()
             finally:
                 await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_switch_drops_the_cached_provider_client(
+        self, fake_keychain: FakeKeychain, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The cached client binds the old preset's endpoint (and key) at
+        # build time, so after a mid-session switch it must be dropped:
+        # otherwise a post-switch session streams the new slugs through the
+        # old endpoint (TD-4817). Dropping—not closing—lets sessions that
+        # already resolved it finish on the client they captured.
+        saver = FakePresetSaver()
+        monkeypatch.setattr("tstd.daemon.save_active_preset", saver)
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                old = await daemon._ensure_provider()
+
+                resp = await _ask(ws, {"type": "set_preset", "name": "local"})
+                assert resp["type"] == "setup_state"
+                assert daemon._provider is None
+
+                new = await daemon._ensure_provider()
+                assert new is not old
+                # The rebuild took the loopback path of the new preset.
+                assert FakeProviderClient.built_with[-1] is None
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+
+def _tier(base_url: str, slug: str | None = "test/model") -> TierConfig:
+    return TierConfig(
+        slug=slug,
+        base_url=base_url,
+        input_price=0.0,
+        output_price=0.0,
+        cache_read_price=0.0,
+        context_window=128000,
+        max_output_tokens=8192,
+    )
+
+
+class TestPresetRequiresApiKey:
+    """TD-1801's rule evaluated per preset, for the picker (TD-4817)."""
+
+    def test_all_loopback_needs_no_key(self) -> None:
+        loopback = "http://127.0.0.1:11434/v1"
+        preset = Preset(
+            brain=_tier(loopback, slug=None),
+            worker=_tier(loopback, slug=None),
+            validator=_tier(loopback, slug=None),
+        )
+        assert preset.requires_api_key() is False
+
+    def test_one_off_box_tier_still_needs_a_key(self) -> None:
+        # Conservative on purpose: a mixed preset never degrades into an
+        # unauthenticated remote call.
+        preset = Preset(
+            brain=_tier("http://127.0.0.1:11434/v1", slug=None),
+            worker=_tier("https://openrouter.ai/api/v1"),
+            validator=_tier("http://127.0.0.1:11434/v1", slug=None),
+        )
+        assert preset.requires_api_key() is True
+
+
+class TestPresetModels:
+    """setup_state carries every preset's routing (TD-4817), as configured."""
+
+    @pytest.mark.asyncio
+    async def test_every_declared_preset_is_described(self, fake_keychain: FakeKeychain) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                resp = await _ask(ws, {"type": "get_setup_state"})
+                models = resp["preset_models"]
+                assert set(models) == set(resp["presets"])
+                for info in models.values():
+                    assert set(info["slugs"]) == {"brain", "worker", "validator"}
+                    assert isinstance(info["key_required"], bool)
+                # The shipped local preset names no slug (discovered) and
+                # runs keyless; every off-box preset needs a key and, by
+                # validation, always names its slugs.
+                assert models["local"]["key_required"] is False
+                assert all(v is None for v in models["local"]["slugs"].values())
+                assert models["tst-default"]["key_required"] is True
+                assert all(v is not None for v in models["tst-default"]["slugs"].values())
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_switching_presets_keeps_discovered_slugs_out_of_the_view(
+        self, fake_keychain: FakeKeychain, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # TD-1703's rule is slugs *as configured*, not as resolved — but
+        # discovery mutates the live tiers in place (TD-1805), and this
+        # handler used to rebuild its snapshot from those shared objects,
+        # presenting a resolved tag as configured after a mid-session
+        # switch. The view must stay at the file's state.
+        saver = FakePresetSaver()
+        monkeypatch.setattr("tstd.daemon.save_active_preset", saver)
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                # What resolve_tier_slugs does to the active preset's tiers.
+                daemon.config.presets["local"].brain.slug = "qwen3.8:27b"
+
+                away = await _ask(ws, {"type": "set_preset", "name": "budget"})
+                assert away["preset_models"]["local"]["slugs"]["brain"] is None
+
+                back = await _ask(ws, {"type": "set_preset", "name": "local"})
+                assert back["active_preset"] == "local"
+                assert back["tier_slugs"]["brain"] is None
+                # Runtime resolution survives the round trip; only the
+                # configured-view was ever at stake.
+                assert daemon.config.presets["local"].brain.slug == "qwen3.8:27b"
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    def test_setup_state_parses_without_preset_models(self) -> None:
+        # Additive field: an event without it validates with an empty map.
+        from tstd.protocol import SetupState
+
+        event = SetupState.model_validate({"has_api_key": False, "active_preset": "tst-default"})
+        assert isinstance(event, SetupState)
+        assert event.preset_models == {}

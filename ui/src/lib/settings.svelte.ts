@@ -11,7 +11,7 @@
 // only via sendToDaemon — no client reference, no import cycle.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
-import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
+import type { DaemonEventUnion, PolicyRuleSummary, PresetModels } from "./protocol";
 
 export type SettingsSection = "appearance" | "model" | "policy" | "key";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
@@ -35,8 +35,12 @@ export const settings = $state({
 	activePreset: null as string | null,
 	/** Slug per tier as the *config file* has it; null = left to discovery. */
 	tierSlugs: {} as Record<string, string | null>,
+	/** Every preset's routing (TD-4817), keyed by preset name. */
+	presetModels: {} as Record<string, PresetModels>,
 	/** Tier whose save is in flight; cleared by the acking setup_state. */
 	savingTier: null as string | null,
+	/** Preset whose switch is in flight; cleared by the acking setup_state. */
+	savingPreset: null as string | null,
 	/** Key section, from setup_state. */
 	hasApiKey: false,
 	keyRequired: true,
@@ -80,7 +84,9 @@ export function resetSettings(): void {
 	settings.presets = [];
 	settings.activePreset = null;
 	settings.tierSlugs = {};
+	settings.presetModels = {};
 	settings.savingTier = null;
+	settings.savingPreset = null;
 	settings.hasApiKey = false;
 	settings.keyRequired = true;
 	settings.rules = [];
@@ -101,10 +107,15 @@ function reduce(event: DaemonEventUnion): void {
 		// A daemon too old to send the field leaves the model section empty
 		// rather than inventing slugs it was never given.
 		settings.tierSlugs = event.tier_slugs ?? {};
+		// Same for the picker (TD-4817): an old daemon means rows render
+		// without their model summary, not with invented ones.
+		settings.presetModels = event.preset_models ?? {};
 		settings.hasApiKey = event.has_api_key;
 		settings.keyRequired = event.key_required;
-		// setup_state is the ack for set_tier_slug, so it ends the save.
+		// setup_state is the ack for set_tier_slug and set_preset, so it
+		// ends both saves.
 		settings.savingTier = null;
+		settings.savingPreset = null;
 		settings.skipAllApprovals = event.skip_all_approvals ?? false;
 		settings.loadGlobalMemory = event.load_global_memory ?? false;
 		settings.coworkerEnabled = event.coworker_enabled ?? true;
@@ -115,6 +126,17 @@ function reduce(event: DaemonEventUnion): void {
 	}
 	if (event.type === "policy_rules") {
 		settings.rules = event.rules;
+		return;
+	}
+	if (event.type === "error") {
+		// A refused save or switch never gets its acking setup_state, so
+		// those refusals release the flags here. Only the codes the two
+		// handlers can return count — letting any daemon error through
+		// would re-enable the controls while the request is still in flight.
+		if (event.code === "bad_request" || event.code === "unknown_preset") {
+			settings.savingTier = null;
+			settings.savingPreset = null;
+		}
 	}
 }
 
@@ -180,6 +202,18 @@ export function saveSlug(tier: string, slug: string): void {
 	settings.savingTier = tier;
 	const sent = sendToDaemon({ type: "set_tier_slug", preset, tier, slug: trimmed });
 	if (!sent) settings.savingTier = null;
+}
+
+/** Switch the active model preset (TD-4817). Acked with setup_state.
+ *
+ * New sessions route on the new preset immediately (the daemon applies it
+ * live); open sessions keep the tiers they started with, which the pane says.
+ */
+export function switchPreset(name: string): void {
+	if (name === settings.activePreset || settings.savingPreset !== null) return;
+	settings.savingPreset = name;
+	const sent = sendToDaemon({ type: "set_preset", name });
+	if (!sent) settings.savingPreset = null;
 }
 
 // ── Policy ────────────────────────────────────────────────────────────

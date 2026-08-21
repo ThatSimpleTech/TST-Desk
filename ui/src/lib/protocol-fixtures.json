@@ -696,6 +696,7 @@
     ],
     "active_preset": "tst-default",
     "tier_slugs": {},
+    "preset_models": {},
     "skip_all_approvals": false,
     "load_global_memory": false,
     "coworker_enabled": true,

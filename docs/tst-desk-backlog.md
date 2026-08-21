@@ -6152,3 +6152,23 @@ dialects. Filed here rather than in E20, which owns the server's Linux port.
 
 The grab-bag rule applies: each box is small, independently verifiable, and none deserves
 its own number. If any grows teeth in the doing, split it out per the sizing rules.
+
+### TD-4817 — Settings preset switcher
+**Size:** 2 · **Depends on:** TD-1703
+
+**Acceptance criteria:**
+- [ ] Settings → Model lists every declared preset with the model each tier
+      routes to, readable at a glance
+- [ ] Choosing a preset switches `active_preset` over the existing `set_preset`
+      wire path and persists to the user `config.yaml`
+- [ ] The tier slug editors follow the newly active preset; a switch applies to
+      new sessions and the pane says so
+- [ ] A preset that needs a key says so before you switch to it
+- [ ] The wizard stays the only first-run writer; settings and wizard drive the
+      same daemon path — no parallel write logic
+
+**Notes:** the gap `configuration.md` §3.3 names outright — after onboarding,
+`active_preset` is hand-edit-only. The daemon has accepted `set_preset` at any
+time since TD-1101, and `setup_state` already carries the preset list; the work
+is the per-preset tier slugs and key requirement so the picker shows what each
+choice routes to before committing, plus the control itself.

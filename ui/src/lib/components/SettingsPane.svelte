@@ -13,6 +13,7 @@
 		setCoworker,
 		isDiscovered,
 		saveSlug,
+		switchPreset,
 		loadRules,
 		SETTINGS_SECTIONS,
 		THEMES,
@@ -38,6 +39,14 @@
 	let drafts = $state<Record<string, string>>({});
 	let keyDraft = $state('');
 
+	// A preset switch re-points tierSlugs (TD-4817); a half-typed draft for
+	// the old preset must not survive into the new one — its blur would pin
+	// a model the new preset never had.
+	$effect(() => {
+		void settings.activePreset;
+		drafts = {};
+	});
+
 	function slugValue(tier: string): string {
 		return drafts[tier] ?? settings.tierSlugs[tier] ?? '';
 	}
@@ -59,6 +68,27 @@
 		if (keyDraft.trim() === '') return;
 		storeKey(keyDraft.trim());
 		keyDraft = '';
+	}
+
+	// Roving tabindex over the preset radiogroup (WAI-ARIA): the checked
+	// radio is the only tab stop, arrows move the choice and follow focus.
+	// The buttons stay enabled during a switch — switchPreset refuses
+	// overlaps, and a disabled checked radio would drop the group from the
+	// tab order mid-flight.
+	let presetList: HTMLElement | undefined = $state();
+
+	function presetKeydown(e: KeyboardEvent): void {
+		const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+		if (step === undefined || settings.savingPreset !== null) return;
+		e.preventDefault();
+		const names = settings.presets;
+		if (names.length === 0) return;
+		const at = names.indexOf(settings.activePreset ?? '');
+		const next = names[(at + step + names.length) % names.length];
+		switchPreset(next);
+		presetList?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[
+			names.indexOf(next)
+		]?.focus();
 	}
 </script>
 
@@ -133,9 +163,53 @@
 					<CuIndicatorToggles />
 					<CuPermissionsPane variant="settings" />
 				{:else if settings.section === 'model'}
-					<p class="hint">
-						Preset <strong>{settings.activePreset ?? '—'}</strong>. Edits are saved to your
-						config.yaml and apply to new sessions.
+					<!-- TD-4817: preset picker over the same set_preset path the
+					     wizard drives — no parallel write logic. -->
+					<div
+						class="preset-list"
+						role="radiogroup"
+						aria-label="Model preset"
+						tabindex={-1}
+						bind:this={presetList}
+						onkeydown={presetKeydown}
+					>
+						{#each settings.presets as name (name)}
+							{@const info = settings.presetModels[name]}
+							<button
+								class="preset"
+								class:preset--active={name === settings.activePreset}
+								type="button"
+								role="radio"
+								aria-checked={name === settings.activePreset}
+								tabindex={name === settings.activePreset ? 0 : -1}
+								onclick={() => switchPreset(name)}
+							>
+								<span class="preset-row">
+									<span class="preset-name">{name}</span>
+									<span class="preset-key">
+										{info ? (info.key_required ? 'needs key' : 'no key needed') : ''}
+									</span>
+								</span>
+								{#if info}
+									<span class="preset-tiers">
+										{#each TIERS as tier (tier)}
+											<span class="preset-tier">
+												<span class="preset-tier-name">{tier}</span>
+												{info.slugs[tier] ?? 'discovered from the endpoint'}
+											</span>
+										{/each}
+									</span>
+								{/if}
+							</button>
+						{/each}
+					</div>
+					<p class="hint" aria-live="polite">
+						{#if settings.savingPreset !== null}
+							Switching to {settings.savingPreset}…
+						{:else}
+							Preset <strong>{settings.activePreset ?? '—'}</strong> runs new sessions; open
+							ones keep the models they started with.
+						{/if}
 					</p>
 					{#each TIERS as tier (tier)}
 						<label class="field">
@@ -337,6 +411,68 @@
 		font-weight: var(--weight-medium);
 		color: var(--color-ink);
 		margin: 0;
+	}
+
+	.preset-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
+	.preset {
+		display: grid;
+		gap: var(--space-2);
+		padding: var(--space-3);
+		text-align: left;
+		background: var(--color-ground);
+		border: var(--border-width) solid var(--color-hairline);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+	}
+
+	.preset:hover,
+	.preset--active {
+		border-color: var(--color-accent);
+	}
+
+	.preset-row {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: var(--space-3);
+	}
+
+	.preset-name {
+		font-size: var(--text-sm);
+		font-weight: var(--weight-medium);
+		color: var(--color-ink);
+	}
+
+	.preset-key {
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
+	}
+
+	.preset-tiers {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: var(--space-2);
+	}
+
+	.preset-tier {
+		display: grid;
+		gap: 2px;
+		font-family: var(--font-mono);
+		font-size: var(--text-xs);
+		color: var(--color-ink-secondary);
+		overflow-wrap: anywhere;
+	}
+
+	.preset-tier-name {
+		font-family: inherit;
+		font-weight: var(--weight-medium);
+		color: var(--color-ink-muted);
+		text-transform: capitalize;
 	}
 
 	.field {

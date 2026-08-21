@@ -7210,3 +7210,26 @@ also removes one worker call per shell command — less spend, less latency.
 substitutions, wrappers); every added form is a new false-negative
 surface, and the B floor already asks in every case the parser misses.
 
+## 2026-08-21 — TD-4817: setup_state carries every preset's routing; the slug snapshot stays a file view (Class B)
+
+**Decision:** `setup_state` gains an additive `preset_models` map — per
+preset, the configured slug per tier plus that preset's own `key_required`.
+The TD-1801 rule moves onto `Preset.requires_api_key()`, with
+`ModelConfig.requires_api_key()` delegating to the active preset. Settings →
+Model renders the map as a picker over the existing `set_preset` wire path.
+Separately, the `SetPreset` handler no longer rebuilds `_slug_snapshot`:
+only `SetTierSlug` may, because it alone reloads from disk before
+snapshotting.
+
+**Rationale:** Discovery mutates the live tiers in place (TD-1805) and
+`model_copy` shares those objects, so the old re-snapshot after `set_preset`
+presented a resolved tag as configured — precisely what TD-1703 built the
+snapshot to prevent, on the path this story makes first-class. Per-preset
+`key_required` on the wire lets the picker state a switch's cost before
+committing, instead of the first turn failing with an auth error.
+
+**Alternative rejected:** Deep-copying the presets at adoption so
+re-snapshotting stayed legal. That duplicates the whole config to fix one
+call site and leaves the trap armed for the next reader; dropping the
+rebuild states the invariant where it broke.
+
