@@ -7,7 +7,7 @@
 	//
 	// Three states, not two: rules live in a workspace, so "no session yet" is
 	// a different claim from "no rules saved" and reads differently.
-	import { settings, revokeRule, setSkipAllApprovals } from '../settings.svelte.js';
+	import { settings, revokeRule, setLoadGlobalMemory, setSkipAllApprovals } from '../settings.svelte.js';
 
 	interface Props {
 		/** The attached session, or null when no workspace is open. */
@@ -33,6 +33,26 @@
 		aria-checked={settings.skipAllApprovals}
 		onclick={() => setSkipAllApprovals(!settings.skipAllApprovals)}
 		>{settings.skipAllApprovals ? 'On' : 'Off'}</button
+	>
+</div>
+
+<div class="skip-all">
+	<div>
+		<p class="skip-title">Load global memory</p>
+		<p class="hint">
+			When on, notes in ~/.tstdesk/memory/ load after this folder's
+			memory. Off never reads that directory. Those files are never
+			committed here.
+		</p>
+	</div>
+	<button
+		class="choice"
+		class:choice--active={settings.loadGlobalMemory}
+		type="button"
+		role="switch"
+		aria-checked={settings.loadGlobalMemory}
+		onclick={() => setLoadGlobalMemory(!settings.loadGlobalMemory)}
+		>{settings.loadGlobalMemory ? 'On' : 'Off'}</button
 	>
 </div>
 

@@ -6410,6 +6410,20 @@ data the stack query already fetches.
 
 ---
 
+## 2026-08-20 — TD-2603: global memory is a skip-all-shaped bit (Class B)
+
+**Decision:** `set_load_global_memory` / `SetupState.load_global_memory`,
+persisted in `{data_dir}/memory.yaml` as `{load_global: true}`. Files
+live at `~/.tstdesk/memory/`. Off never stats that directory. Global
+paths are not workspace memory files, so `MemoryCommitter` skips them.
+The Settings switch sits on the Policy section.
+
+**Rationale:** Spec §5 is opt-in and machine-wide. A workspace file
+would commit into the next clone. Reusing `approvals.yaml` would mix
+two knobs.
+
+---
+
 ## 2026-08-20 — Decompose v0.3–Later (Class B)
 
 **Decision:** Replace the undecomposed post-v0.2 table with M5–M10 and

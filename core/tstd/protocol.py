@@ -225,6 +225,17 @@ class SetSkipAllApprovals(ClientMessage):
     enabled: bool
 
 
+class SetLoadGlobalMemory(ClientMessage):
+    """Turn global memory on or off (TD-2603).
+
+    Machine-wide, no session. Files stay at ``~/.tstdesk/memory/``.
+    The daemon answers with ``setup_state``. Default off.
+    """
+
+    type: Literal["set_load_global_memory"] = "set_load_global_memory"
+    enabled: bool
+
+
 class Resume(ClientMessage):
     """Resume a session paused at a declared cap (TD-707).
 
@@ -1054,6 +1065,9 @@ class SetupState(DaemonEvent):
     # TD-804: skip-all approvals. Additive, default off — an older client
     # that ignores the field keeps asking, which is the safe read.
     skip_all_approvals: bool = False
+    # TD-2603: load ``~/.tstdesk/memory/`` after workspace memory.
+    # Additive, default off — off means that directory is never read.
+    load_global_memory: bool = False
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1185,6 +1199,7 @@ ClientMessageT = Annotated[
     | ForkFrom
     | SetBranch
     | SetSkipAllApprovals
+    | SetLoadGlobalMemory
     | Resume
     | Cancel
     | Attach
@@ -1271,6 +1286,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "fork_from",
         "set_branch",
         "set_skip_all_approvals",
+        "set_load_global_memory",
         "resume",
         "cancel",
         "attach",

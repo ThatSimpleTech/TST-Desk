@@ -49,6 +49,7 @@ import {
 	loadRules,
 	revokeRule,
 	setSkipAllApprovals,
+	setLoadGlobalMemory,
 } from "./settings.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -279,6 +280,23 @@ describe("policy section", () => {
 		expect(settings.skipAllApprovals).toBe(false);
 		emit(setupState({ skip_all_approvals: true }));
 		expect(settings.skipAllApprovals).toBe(true);
+	});
+
+	it("reads load-global-memory from setup_state and defaults off", () => {
+		startSettings();
+		expect(settings.loadGlobalMemory).toBe(false);
+		emit(setupState({ load_global_memory: true }));
+		expect(settings.loadGlobalMemory).toBe(true);
+	});
+
+	it("sends set_load_global_memory and waits for the ack", () => {
+		startSettings();
+		emit(setupState());
+		setLoadGlobalMemory(true);
+		expect(mocks.sent).toEqual([{ type: "set_load_global_memory", enabled: true }]);
+		expect(settings.loadGlobalMemory).toBe(false);
+		emit(setupState({ load_global_memory: true }));
+		expect(settings.loadGlobalMemory).toBe(true);
 	});
 });
 

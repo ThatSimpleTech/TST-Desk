@@ -77,6 +77,10 @@
     "type": "set_skip_all_approvals",
     "enabled": true
   },
+  "set_load_global_memory": {
+    "type": "set_load_global_memory",
+    "enabled": true
+  },
   "resume": {
     "type": "resume",
     "session_id": "sess-1"
@@ -599,7 +603,8 @@
     ],
     "active_preset": "tst-default",
     "tier_slugs": {},
-    "skip_all_approvals": false
+    "skip_all_approvals": false,
+    "load_global_memory": false
   },
   "api_key_validated": {
     "type": "api_key_validated",

@@ -754,6 +754,7 @@ async def agent_loop(
                         session.workspace_path,
                         user_content,
                         embeddings_client,
+                        load_global=session.load_global_memory,
                     )
                     session.last_memory = loaded
                     memory_block = loaded.block

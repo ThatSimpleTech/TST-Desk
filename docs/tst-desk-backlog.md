@@ -4354,10 +4354,10 @@ Spec §5: "open, correct, diff, grep, and revert."
 **Size:** 3 · **Depends on:** TD-2501
 
 **Acceptance criteria:**
-- [ ] Settings has an off-by-default "load global memory" toggle
-- [ ] When on, `~/.tstdesk/memory/` is loaded after workspace memory
-- [ ] Global files are never committed into the workspace repo
-- [ ] Off means zero reads of that directory (test)
+- [x] Settings has an off-by-default "load global memory" toggle
+- [x] When on, `~/.tstdesk/memory/` is loaded after workspace memory
+- [x] Global files are never committed into the workspace repo
+- [x] Off means zero reads of that directory (test)
 
 **Notes:** spec §5. The toggle is machine-wide, like skip-all — not a
 workspace file.

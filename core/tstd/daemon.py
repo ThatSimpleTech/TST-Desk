@@ -61,6 +61,7 @@ from .keychain import (
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .memory_commit import MemoryCommitter
+from .memory_pref import load_global_memory, save_global_memory
 from .memory_store import (
     MemoryCapError,
     MemorySaveError,
@@ -131,6 +132,7 @@ from .protocol import (
     SessionSummary,
     SetApiKey,
     SetBranch,
+    SetLoadGlobalMemory,
     SetPreset,
     SetSkipAllApprovals,
     SetTier,
@@ -400,6 +402,7 @@ class Daemon:
         # TD-804: machine-wide skip-all.  Loaded from the user data dir so
         # a workspace file cannot carry it into someone else's clone.
         self.skip_all_approvals = load_skip_all(self.data_dir)
+        self.load_global_memory = load_global_memory(self.data_dir)
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
@@ -451,6 +454,7 @@ class Daemon:
             active_preset=self.config.active_preset,
             tier_slugs=dict(self._slug_snapshot.get(self.config.active_preset, {})),
             skip_all_approvals=self.skip_all_approvals,
+            load_global_memory=self.load_global_memory,
         )
 
     async def _provider_probe(self, api_key: str | None = None) -> ProviderError | None:
@@ -1216,6 +1220,13 @@ class Daemon:
                     session.resolve_skippable_approvals()
             return (await self._setup_state_event()).model_dump_json()
 
+        if isinstance(msg, SetLoadGlobalMemory):
+            self.load_global_memory = msg.enabled
+            save_global_memory(self.data_dir, msg.enabled)
+            for session in await self.session_registry.list_sessions():
+                session.load_global_memory = msg.enabled
+            return (await self._setup_state_event()).model_dump_json()
+
         if isinstance(msg, Attach):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -1462,6 +1473,7 @@ class Daemon:
 
     async def _attach_session_runtime(self, sess: Session) -> None:
         """Boundary, tools, persist hooks, and a running loop for *sess*."""
+        sess.load_global_memory = self.load_global_memory
         sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
 
         async def _snap() -> None:
