@@ -4872,11 +4872,14 @@ stdio MCP sidecar; mock when `computer_use.command` is empty.
 **Size:** 3 · **Depends on:** TD-3301
 
 **Acceptance criteria:**
-- [ ] A recorded evaluation: click target vs landing, on one fixture
+- [x] A recorded evaluation: click target vs landing, on one fixture
       page per supported OS, written in `DECISIONS.md`
-- [ ] Misses over a stated tolerance fail the eval; they do not ship
+- [x] Misses over a stated tolerance fail the eval; they do not ship
       as "it works"
-- [ ] UI-TARS as a grounding *model* is TD-3902, not this story
+- [x] UI-TARS as a grounding *model* is TD-3902, not this story
+
+Done (2026-08-21): mock eval, 4.0 point hypot; darwin + win32 fixture
+rows; no live claim; Linux is E20.
 
 ---
 
