@@ -54,7 +54,7 @@ no effect.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, and `local`. |
+| `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, `local`, and `vllm`. |
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
@@ -268,7 +268,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
 a wrong number here buys you a wrong cap, not an error. A preset priced at zero (the `local`
-preset) honestly reports a cost of zero.
+and `vllm` presets) honestly reports a cost of zero.
 
 **`context_window` and `max_output_tokens` are a compaction budget, not request parameters.**
 Neither is sent to the model. Together they set the point at which the conversation is
@@ -413,6 +413,60 @@ Invalid model configuration in .../config.yaml: presets.<preset>.<tier>: Value e
 slug is required for the off-box endpoint https://openrouter.ai/api/v1;
 only a loopback endpoint discovers its model from /v1/models
 ```
+
+### 3.5 Attaching vLLM or EZER
+
+The shipped `vllm` preset points every tier at `http://127.0.0.1:8000/v1` — vLLM's
+OpenAI-compatible server default. EZER serves the same `/v1` shape, so attaching EZER is this
+preset, not a different code path. Set it in the user `config.yaml` and restart the daemon
+(or pick `vllm` from the first-run wizard / settings):
+
+<!-- verify: model -->
+```yaml
+presets:
+  vllm:
+    brain:
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    worker:
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    validator:
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+active_preset: vllm
+```
+
+In a copy that already has the shipped presets, the only edit is `active_preset: vllm`. Start
+the server so `GET http://127.0.0.1:8000/v1/models` answers (vLLM's default `vllm serve …`
+listens on 8000; EZER's documented command does the same if it uses that port). If the process
+listens elsewhere, change `base_url` in this file — never in Python.
+
+`slug` is omitted on purpose, same as `local` (§3.4). What "unresolved" means on this
+endpoint:
+
+- **Down.** Nothing is listening at `127.0.0.1:8000`. The turn fails as `model_unresolved`.
+  Diagnostics' `provider` row names `http://127.0.0.1:8000/v1`, not a model tag. Start the
+  server and send the next message.
+- **Zero models.** The server answered `/v1/models` with an empty list. Load a model, then
+  resend.
+- **Several models.** Discovery will not guess — `/v1/models` lists embedding models beside
+  chat models. Set `slug:` on the tier to the one you want.
+
+The doctor's `provider` row always names the endpoint (`reachable at …` or the discovery
+failure's `fix`). It does not print the developer's model list.
 
 ---
 

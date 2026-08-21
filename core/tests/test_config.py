@@ -70,7 +70,7 @@ class TestLoading:
             load_config(path)
 
     def test_all_presets_are_present(self, tmp_path: Path) -> None:
-        """Shipped config has all 3 presets."""
+        """Shipped config has every name in ``PRESETS``."""
         cfg = _load_shipped(tmp_path)
         assert sorted(cfg.presets) == sorted(PRESETS)
 
@@ -150,6 +150,19 @@ class TestTiers:
         cfg.active_preset = "local"
         assert cfg.tier("brain").input_price == 0.0
         assert cfg.tier("worker").input_price == 0.0
+
+    def test_tier_vllm_preset(self, tmp_path: Path) -> None:
+        """TD-3901: the shipped ``vllm`` preset loads, leaves slugs to
+        discovery, and names the documented loopback port — not a model."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.active_preset == "tst-default"
+        assert "vllm" in cfg.presets
+        cfg.active_preset = "vllm"
+        for tier_name in ("brain", "worker", "validator"):
+            tier_cfg = cfg.tier(tier_name)
+            assert tier_cfg.slug is None
+            assert tier_cfg.input_price == 0.0
+            assert "127.0.0.1:8000" in tier_cfg.base_url
 
     def test_worker_max_output(self, tmp_path: Path) -> None:
         """Worker tier defaults to 16K max_output_tokens for edits."""
