@@ -106,10 +106,14 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         if record.exc_info and record.exc_info[0]:
-            obj["exception"] = self.formatException(record.exc_info)
-        # Merge extra fields passed via extra={}
+            # Tracebacks can carry secrets in exception messages and local
+            # variable reprs; the filter runs on msg/args before formatting,
+            # so the last mile scrubs here (TD-4802).
+            obj["exception"] = redact_secrets(self.formatException(record.exc_info))
+        # Merge extra fields passed via extra={} — scrubbed for the same
+        # reason: the filter never sees these values.
         for key, value in getattr(record, "extra_fields", {}).items():
-            obj[key] = value
+            obj[key] = redact_structure(value)
         return json.dumps(obj, default=str, ensure_ascii=False)
 
 
