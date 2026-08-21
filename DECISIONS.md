@@ -7202,3 +7202,24 @@ hitting the extra host is still remote.
 **Alternative rejected:** Reusing the port-file token on both listeners.
 Also rejected: adding `hello.remote_token`.
 
+---
+
+## 2026-08-21 — TD-3603: Settings owns the remote-attach switch (Class B)
+
+**Decision:** `set_remote_attach {enabled}` is the Settings verb. It
+persists `{user_data_dir}/remote-attach.yaml` `{enabled, last_bind}`,
+default off. On sets in-memory `remote.bind` to last-known, else a
+non-empty config bind, else `tailscale0`, and `apply_bind` starts the
+extra listener on the existing port. Off clears bind, remembers the
+spec, and drops only the extra server. `setup_state` reports
+`remote_attach_enabled` and `remote_bind` (the bound address). Never a
+token.
+
+**Rationale:** 3601's yaml bind is the target, not the switch. A
+user-data-dir flag matches coworker. Rebinding the extra server avoids
+a process restart that would drop the local window.
+
+**Alternative rejected:** Surgically rewriting `config.yaml` `remote.bind`
+on every toggle. Also rejected: restarting the daemon to drop the extra
+listener.
+

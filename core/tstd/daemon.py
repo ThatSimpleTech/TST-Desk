@@ -175,6 +175,7 @@ from .protocol import (
     SetCuKill,
     SetLoadGlobalMemory,
     SetPreset,
+    SetRemoteAttach,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
@@ -213,6 +214,11 @@ from .provider import (
     ProviderError,
     auth_failure_message,
 )
+from .remote_attach import (
+    bind_spec_when_enabled,
+    load_remote_attach,
+    save_remote_attach,
+)
 from .router import TIER_NAMES, TierRouter
 from .session import (
     TERMINAL_STATES,
@@ -225,6 +231,7 @@ from .session_lifecycle import archive_session, delete_session, move_session, re
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
+from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .workspace_pins import load_workspace_pins, save_workspace_pins
 from .ws import WebSocketServer
@@ -428,6 +435,7 @@ class Daemon:
         data_dir: Path | None = None,
         provider: ProviderLike | None = None,
         parent_pid: int | None = None,
+        interfaces: InterfaceEnumerator | None = None,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
@@ -459,15 +467,28 @@ class Daemon:
         self.skip_all_approvals = load_skip_all(self.data_dir)
         self.load_global_memory = load_global_memory(self.data_dir)
         self.coworker_enabled = load_coworker(self.data_dir)
+        self.remote_attach_enabled, self.remote_attach_last_bind = load_remote_attach(self.data_dir)
         self.cu_indicators = load_cu_indicators(self.data_dir)
         set_current_prefs(self.cu_indicators)
         self.workspace_pins = load_workspace_pins(self.data_dir)
         self.session_stars = load_session_stars(self.data_dir)
+        bind = ""
+        if self.remote_attach_enabled:
+            spec = bind_spec_when_enabled(self.remote_attach_last_bind, self.config.remote.bind)
+            self.config.remote.bind = spec
+            try:
+                if resolve_remote_bind(spec, interfaces) is not None:
+                    bind = spec
+            except ValueError:
+                bind = ""
+        else:
+            self.config.remote.bind = ""
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
             on_disconnect=self._on_connection_closed,
-            bind=self.config.remote.bind,
+            bind=bind,
+            interfaces=interfaces,
         )
         # Shared across sessions so the kill-switch is process-wide.
         # Empty computer_use.command is the mock; a command is stdio MCP.
@@ -531,6 +552,8 @@ class Daemon:
             cu_agent_cursor=self.cu_indicators.agent_cursor,
             cu_show_on_real_display=self.cu_indicators.show_on_real_display,
             pinned_workspaces=list(self.workspace_pins),
+            remote_attach_enabled=self.remote_attach_enabled,
+            remote_bind=self.ws_server.extra_host,
         )
 
     def _cu_permissions_session(self, event: DaemonEvent) -> str | None:
@@ -1356,6 +1379,9 @@ class Daemon:
             save_coworker(self.data_dir, msg.enabled)
             return (await self._setup_state_event()).model_dump_json()
 
+        if isinstance(msg, SetRemoteAttach):
+            return await self._handle_set_remote_attach(msg)
+
         if isinstance(msg, SetCuIndicators):
             self.cu_indicators = CuIndicatorPrefs(
                 glow=msg.glow,
@@ -1793,6 +1819,31 @@ class Daemon:
         if events:
             return events[0].model_dump_json()
         return None
+
+    async def _handle_set_remote_attach(self, msg: SetRemoteAttach) -> str:
+        """Persist the Settings toggle and rebind the extra listener only."""
+        if msg.enabled:
+            spec = bind_spec_when_enabled(self.remote_attach_last_bind, self.config.remote.bind)
+            self.remote_attach_last_bind = spec
+            self.config.remote.bind = spec
+            try:
+                await self.ws_server.apply_bind(spec)
+            except (ValueError, OSError):
+                # Flag stays on; the address appears once a Tailscale iface exists.
+                log.warning(
+                    "remote attach enabled but extra bind failed",
+                    extra={"extra_fields": {"bind": spec}},
+                )
+        else:
+            if self.config.remote.bind.strip():
+                self.remote_attach_last_bind = self.config.remote.bind.strip()
+            elif self.ws_server.extra_host:
+                self.remote_attach_last_bind = self.ws_server.extra_host
+            self.config.remote.bind = ""
+            await self.ws_server.apply_bind("")
+        self.remote_attach_enabled = msg.enabled
+        save_remote_attach(self.data_dir, msg.enabled, self.remote_attach_last_bind)
+        return (await self._setup_state_event()).model_dump_json()
 
     async def _handle_attach(self, msg: Attach, session: Session, connection: Any) -> str | None:
         """Handle an attach: replay events from from_seq, then stream live."""

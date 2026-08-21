@@ -76,6 +76,7 @@ import type {
   SetSkipAllApprovals,
   SetLoadGlobalMemory,
   SetCoworker,
+  SetRemoteAttach,
   SetCuIndicators,
   SetWorkspacePin,
   SetupState,
@@ -205,6 +206,13 @@ describe("Client message fixtures match TypeScript types", () => {
   it("set_coworker", () => {
     const m = fixtures.set_coworker as SetCoworker;
     expect(m.type).toBe("set_coworker");
+    expect(isBoolean(m.enabled)).toBe(true);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("set_remote_attach", () => {
+    const m = fixtures.set_remote_attach as SetRemoteAttach;
+    expect(m.type).toBe("set_remote_attach");
     expect(isBoolean(m.enabled)).toBe(true);
     expect("session_id" in m).toBe(false);
   });
@@ -677,6 +685,8 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isBoolean(m.cu_glow)).toBe(true);
     expect(isBoolean(m.cu_agent_cursor)).toBe(true);
     expect(isBoolean(m.cu_show_on_real_display)).toBe(true);
+    expect(isBoolean(m.remote_attach_enabled)).toBe(true);
+    expect(m.remote_bind === null || typeof m.remote_bind === "string").toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
   });
@@ -805,6 +815,7 @@ describe("All fixtures have required shape", () => {
       "design_hit_test",
       "check_cu_permissions",
       "set_cu_kill",
+      "set_remote_attach",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

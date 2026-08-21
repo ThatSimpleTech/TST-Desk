@@ -51,6 +51,7 @@ import {
 	setSkipAllApprovals,
 	setLoadGlobalMemory,
 	setCoworker,
+	setRemoteAttach,
 	setCuIndicators,
 } from "./settings.svelte.js";
 
@@ -330,6 +331,48 @@ describe("coworker", () => {
 		expect(settings.coworkerEnabled).toBe(true);
 		emit(setupState({ coworker_enabled: false }));
 		expect(settings.coworkerEnabled).toBe(false);
+	});
+});
+
+describe("remote attach", () => {
+	it("defaults off before the daemon speaks", () => {
+		startSettings();
+		expect(settings.remoteAttachEnabled).toBe(false);
+		expect(settings.remoteBind).toBeNull();
+	});
+
+	it("reads the toggle and bound address from setup_state", () => {
+		startSettings();
+		emit(setupState({ remote_attach_enabled: true, remote_bind: "100.64.1.5" }));
+		expect(settings.remoteAttachEnabled).toBe(true);
+		expect(settings.remoteBind).toBe("100.64.1.5");
+	});
+
+	it("treats omitted remote-attach fields as off", () => {
+		startSettings();
+		emit(setupState({ remote_attach_enabled: true, remote_bind: "100.64.1.5" }));
+		const { remote_attach_enabled: _on, remote_bind: _addr, ...without } = setupState();
+		emit(without as SetupState);
+		expect(settings.remoteAttachEnabled).toBe(false);
+		expect(settings.remoteBind).toBeNull();
+	});
+
+	it("sends set_remote_attach and waits for the ack", () => {
+		startSettings();
+		emit(setupState());
+		setRemoteAttach(true);
+		expect(mocks.sent).toEqual([{ type: "set_remote_attach", enabled: true }]);
+		expect(settings.remoteAttachEnabled).toBe(false);
+		emit(setupState({ remote_attach_enabled: true, remote_bind: "100.64.1.5" }));
+		expect(settings.remoteAttachEnabled).toBe(true);
+		expect(settings.remoteBind).toBe("100.64.1.5");
+	});
+
+	it("never holds a remote token in store state", () => {
+		startSettings();
+		emit(setupState({ remote_attach_enabled: true, remote_bind: "100.64.1.5" }));
+		const dumped = JSON.stringify(settings);
+		expect(dumped).not.toMatch(/remote-token|remote_token|"token":/);
 	});
 });
 
