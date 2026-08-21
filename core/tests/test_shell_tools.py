@@ -515,7 +515,7 @@ class TestExitCode:
 
 class TestEnvSanitized:
     async def test_child_env_excludes_secrets(self, tmp_path: Path, monkeypatch) -> None:
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-super-secret-123")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-super-secret-123")  # tst-secret-ok
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret_value")
         monkeypatch.setenv("DB_PASSWORD", "hunter2-value")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret-value")
@@ -530,7 +530,7 @@ class TestEnvSanitized:
             "GITHUB_TOKEN",
             "DB_PASSWORD",
             "AWS_SECRET_ACCESS_KEY",
-            "sk-super-secret-123",
+            "sk-super-secret-123",  # tst-secret-ok
             "ghp_secret_value",
             "hunter2-value",
             "aws-secret-value",

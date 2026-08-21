@@ -6183,3 +6183,124 @@ dialects. Filed here rather than in E20, which owns the server's Linux port.
 
 The grab-bag rule applies: each box is small, independently verifiable, and none deserves
 its own number. If any grows teeth in the doing, split it out per the sizing rules.
+### TD-4817 — Shell steering guard misses `>&` and `>|` redirect operators
+**Size:** 1 · **Depends on:** TD-4805
+
+**Acceptance criteria:**
+- [x] `_shell_write_targets` extracts targets of `>&` and `>|` redirects, so
+      `echo x >& AGENTS.md` and `echo x >| .tst/config.yaml` classify static C
+- [x] A leading `!` on the target (zsh `>&!`) is stripped before the steering check
+- [x] `2>&1`, `>&2`, and `exec 3>&1` still classify B (descriptor dups are not writes)
+- [x] Both new shapes join the static-C parametrized test; the descriptor forms pin B
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): both operators joined
+`_REDIRECT_TOKENS`; the extractor strips a leading `!` (attached or spaced zsh
+clobber). Descriptor dups extract numeric non-targets, which never match steering —
+pinned in the B-floor parametrization.
+
+Found by the 2026-08-21 ox-alpha review (Vuln 1, reproduced end-to-end): shlex emits
+`>&` and `>|` as single punctuation tokens, the extractor sees nothing, and the command
+lands on the B floor — which skip-all then promotes to silent execution.
+
+### TD-4818 — Skip-all approvals must not promote the shell floor
+**Size:** 2 · **Depends on:** TD-804, TD-4805
+
+**Acceptance criteria:**
+- [x] `resolve_explained` does not convert ask→auto under skip-all when the gate came
+      from the `shell-floor` rule; the approval card still appears
+- [x] Other B-class gates (CU actuation, allowlisted web fetch) keep their TD-804
+      promotion — the exemption is scoped to shell
+- [x] `docs/configuration.md` stops saying steering redirects are "Class C outright"
+      and describes what the static table actually catches
+- [x] Tests: skip-all + shell-floor still asks; skip-all + ordinary B still auto-runs
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): the exemption keys on the
+tool name rather than the rule id — every shell B is the floor, and the name
+survives rule renames. Explicit `shell: auto` workspace rules still win (they
+resolve before the skip-all block); that escape hatch is pinned by test. Class B
+decision recorded in DECISIONS.md.
+
+Found by the 2026-08-21 ox-alpha review (Vuln 2). The B floor exists because the
+classifier cannot see inside a command string; promoting it under skip-all makes every
+unparsed write form (`eval`, `sh -c`, `cp`, command substitution) a silent steering
+write. This also falsifies the TD-4805 DECISIONS rationale — repaired, not relitigated.
+
+### TD-4819 — Credential-URL env filter misses password-only form
+**Size:** 1 · **Depends on:** TD-4805
+
+**Acceptance criteria:**
+- [x] `redis://:pw@host` (empty username) and friends are stripped by `sanitized_env()`
+- [x] Existing vectors (`user:pass@`, benign URLs without credentials) behave as before
+- [x] Tests cover the password-only form for redis/postgresql/mongodb shapes
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): the user class relaxed from
+`+` to `*`; a match still requires the `:…@` tail, so benign URLs are untouched.
+Parametrized over redis/rediss/postgresql/mongodb shapes.
+
+Found by the 2026-08-21 ox-alpha review (Vuln 3): `_CREDENTIAL_URL_VALUE_RE` requires a
+non-empty username, so Heroku-style password-only URLs survive into `printenv` output
+and the persisted timeline.
+
+### TD-4820 — Steering guard admits trailing dot/space aliases
+**Size:** 1 · **Depends on:** TD-4803
+
+**Acceptance criteria:**
+- [x] `check_write` refuses any path component ending in `.` or space, mirroring the
+      8.3/ADS refusals — `.tst/config.yaml.`, `AGENTS.md.`, `.tst./config.yaml`,
+      `.tst/rules./x.md` all refuse
+- [x] Ordinary dotted filenames (`notes.md`, `.tst/config.yaml`) are unaffected
+- [x] Tests pin both the refusals and the unaffected forms
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): the check lives in
+`windows_unsafe_reason`, so the guard and the classifier's `boundary-unsafe-path`
+rule both gained it in one move. `.`/`..` navigation components are excluded; the
+bare policy file still refuses as `steering_file`, not `windows_unsafe` (pinned).
+
+Found by the 2026-08-21 ox-alpha review (Bug 1). Creation-only and Windows-only today
+(Win32 strips trailing dots/spaces at open time, aliasing the real steering file), but
+the guard's contract is fail-closed on any shipped platform's unsafe forms.
+
+### TD-4821 — Repo self-hosting gates: secrets-hook canaries, svelte-check red
+**Size:** 1 · **Depends on:** TD-4801
+
+**Acceptance criteria:**
+- [x] Tracked test canaries matching the widened `sk-` pattern carry the
+      `tst-secret-ok` marker the hook already honors (`test_setup_state.py`,
+      `test_shell_tools.py`); staging those files no longer blocks the commit
+- [x] `svelte-check` is green: `DesignLayer.svelte` `clientWidth`/`clientHeight`
+      `never` errors fixed
+- [x] Hook still rejects an unmarked canary (negative test by hand, noted)
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): five canary lines marked;
+hook verified clean on both files and still exit-1 on an unmarked canary.
+`DesignLayer.svelte`'s `overlaySize` moved to `$derived.by` — the expression form
+is analyzed inline, where TS narrows the `bind:this` target to `null` and reports
+`never`; the closure form gets the declared type. svelte-check: 0 errors
+(the `MemoryProposalCard` warning is pre-existing and left alone).
+
+Found by the 2026-08-21 ox-alpha review (Bugs 2 and 4). The hook already knows the
+`tst-secret-ok` convention — the canaries simply lacked it.
+
+### TD-4822 — tst-cu-mcp: `tools/list` hang on batched stdin
+**Size:** 2 · **Depends on:** none
+
+**Acceptance criteria:**
+- [ ] initialize + `tools/list` written to stdin together both get answers; the server
+      does not exit silently at EOF
+- [ ] The four failing mcp tests pass
+- [ ] Regression test: batched stdin request completes
+
+Found by the 2026-08-21 ox-alpha review (Bug 3, reproduced 3/3 outside pytest).
+Accepted on the report's reproduction; the fix belongs to the package's protocol loop
+with its own test pass.
+
+### TD-4823 — tst-cu-mcp: mypy is platform-dependent
+**Size:** 1 · **Depends on:** none
+
+**Acceptance criteria:**
+- [ ] `mypy` on `mcp/tst-cu-mcp` passes on macOS (per-module overrides for the
+      Windows-only ctypes names in `backends/windows.py`, or equivalent gating)
+- [ ] The override does not weaken checking on Windows itself
+
+Found by the 2026-08-21 ox-alpha review (Bug 5 / Enhancement 3).
+
