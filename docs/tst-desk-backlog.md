@@ -5946,13 +5946,13 @@ classifier and guard both refuse `.tst/RULES/evil.md`.
 **Size:** 3 · **Depends on:** TD-605, TD-703
 
 **Acceptance criteria:**
-- [ ] A shell command that writes a steering path (`echo … > AGENTS.md`,
+- [x] A shell command that writes a steering path (`echo … > AGENTS.md`,
       `tee .tst/rules/x`) classifies Class C statically, not via model judgment
-- [ ] `sanitized_env` also drops the missed secret carriers (`DOCKER_AUTH_CONFIG`,
+- [x] `sanitized_env` also drops the missed secret carriers (`DOCKER_AUTH_CONFIG`,
       `MYSQL_PWD`, `*_AUTH`, credential-URL forms), with a test per form
-- [ ] The `allowed_commands` docstring and user docs name the known escape hatches
+- [x] The `allowed_commands` docstring and user docs name the known escape hatches
       (`find -exec`, `xargs`, `sh -c`) instead of implying containment
-- [ ] Whether worker-tier shell calls get a static Class B floor is decided and recorded in
+- [x] Whether worker-tier shell calls get a static Class B floor is decided and recorded in
       `DECISIONS.md` either way
 
 The fs tools get path-boundary enforcement; the shell tool gets none, so
@@ -5961,6 +5961,14 @@ The allowlist checks each segment's leading binary, which `find / -exec …` wal
 And the env filter's name list predates several common secret carriers. None of these is
 a sandbox break — the docstring already says the allowlist is a policy rail — but the
 docs and the classifier should say and do exactly what is true.
+
+**Completed (2026-08-21):** two static rules — `shell-steering-write` (C: redirection or
+`tee` into a steering path, extracted with `shlex` punctuation tokenization) and
+`shell-floor` (B: every shell call asks; the worker tier is never consulted for shell, so
+no model-granted A can auto-run an opaque command — recorded in DECISIONS.md). The env net
+gained `PWD` carriers, `AUTH` as a word (`GIT_AUTHOR_*` and `SSH_AUTH_SOCK` survive, with
+the reasoning in the code), and a value-shape check for credential-embedded URLs. The
+allowlist docs name the re-exec hatches in `shell.py` and `configuration.md`.
 
 ### TD-4806 — Rendered markdown links navigate the webview away from the app
 **Size:** 2 · **Depends on:** TD-1004

@@ -375,6 +375,107 @@ async def test_shell_child_never_sees_daemon_secrets(
     assert "still-here" in out
 
 
+# ── 3b. Shell hardening: static steering classification, env net (TD-4805) ──
+
+
+def _shell_decision(ws: Path, command: str) -> Any:
+    """Static classification of a shell call — no worker tier involved."""
+    return DecisionClassifier(Boundary(workspace_root=ws)).classify(
+        DecisionRequest(tool_name="shell", arguments={"command": command}, is_mutation=True)
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo never > AGENTS.md",
+        "echo never >> CLAUDE.md",
+        "echo never > .tst/rules/evil.md",
+        "echo never > .tst/config.yaml",
+        "echo never > ./AGENTS.md",
+        "tee .tst/rules/x.md",
+        "tee -a AGENTS.md",
+        "echo never > notes.md && tee CLAUDE.md",
+    ],
+)
+def test_shell_write_to_steering_is_static_c(ws: Path, command: str) -> None:
+    """A shell command writing a steering path is Class C from the static
+    table alone — no model judgment involved (TD-4805)."""
+    decision = _shell_decision(ws, command)
+    assert decision.decision_class is DecisionClass.C
+    assert decision.rule is not None
+    assert decision.rule.id == "shell-steering-write"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat AGENTS.md",  # reading steering is fine
+        "echo hi > notes.md",  # benign redirect
+        "git status",
+        "echo done 2>&1",  # descriptor dup writes no file
+        'echo "unclosed',  # unparseable → no targets, still not unsafe
+    ],
+)
+def test_shell_without_steering_target_hits_the_b_floor(ws: Path, command: str) -> None:
+    """Every other shell command is statically B: the table cannot see
+    inside the string, so shell never gets a model-granted A (TD-4805)."""
+    decision = _shell_decision(ws, command)
+    assert decision.decision_class is DecisionClass.B
+    assert decision.rule is not None
+    assert decision.rule.id == "shell-floor"
+
+
+def test_shell_floor_precedes_worker_consultation(ws: Path) -> None:
+    """The floor is static, so the worker tier is never consulted for
+    shell — its A cannot auto-run a command."""
+    decision = _shell_decision(ws, "make deploy")
+    assert decision.decision_class is not None  # static decided; worker not needed
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["DOCKER_AUTH_CONFIG", "MYSQL_PWD", "SOME_SERVICE_AUTH", "TSTD_PLANTED_AUTH_TOKEN"],
+)
+def test_sanitized_env_drops_widened_secret_names(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """The TD-4805 net: AUTH word forms and PWD carriers drop too."""
+    monkeypatch.setenv(name, "planted")  # tst-secret-ok
+    assert name not in sanitized_env()
+
+
+def test_sanitized_env_keeps_author_and_ssh_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AUTH as a substring must not eat GIT_AUTHOR_* (the child commits as
+    the user) or SSH_AUTH_SOCK (a capability, not a secret value)."""
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "Ada")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "ada@example.com")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+    env = sanitized_env()
+    assert env["GIT_AUTHOR_NAME"] == "Ada"
+    assert env["GIT_AUTHOR_EMAIL"] == "ada@example.com"
+    assert env["SSH_AUTH_SOCK"] == "/tmp/agent.sock"
+
+
+def test_sanitized_env_drops_credential_url_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A URL with embedded credentials is a secret whatever the name."""
+    monkeypatch.setenv("TSTD_PLANTED_DB", "postgres://user:hunter2@host/db")  # tst-secret-ok
+    monkeypatch.setenv("TSTD_PLANTED_CLEAN", "postgres://host/db")
+    env = sanitized_env()
+    assert "TSTD_PLANTED_DB" not in env
+    assert env["TSTD_PLANTED_CLEAN"] == "postgres://host/db"
+
+
+def test_allowlist_docs_name_the_escape_hatches() -> None:
+    """The allowlist docstring names the re-exec hatches instead of
+    implying containment (TD-4805)."""
+    import tstd.tools.shell as shell_mod
+
+    doc = shell_mod.__doc__ or ""
+    for hatch in ("find -exec", "xargs", "sh -c"):
+        assert hatch in doc
+
+
 # ── 4. Secret redaction ───────────────────────────────────────────────────
 
 FAKE_SECRETS = [

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import shlex
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -316,6 +317,88 @@ def _rule_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
     return req.is_mutation and any(is_steering_write(boundary, p) for p in req.writes)
 
 
+# ── Shell command targets (TD-4805) ────────────────────────────────────
+#
+# The fs tools declare their paths; the shell's targets live inside an
+# opaque command string.  The static table extracts the common scripted
+# write forms — redirection and ``tee`` — and judges them against the
+# steering set.  Everything else about a shell command stays invisible to
+# the table, which is why the shell also gets a Class B floor: a model's
+# reading of an opaque string is never the sole gate on running it.
+
+_REDIRECT_TOKENS = frozenset({">", ">>", "&>", "&>>"})
+_SEGMENT_SEPARATORS = frozenset({"|", "&", ";", "||", "&&"})
+
+
+def _shell_write_targets(command: str) -> list[str]:
+    """Best-effort write-target extraction from a shell command string.
+
+    Tokenizes with ``punctuation_chars`` so ``> file`` and ``>file`` both
+    split.  Covers redirection (``>``, ``>>``, ``&>``, ``&>>`` — but not
+    descriptor dups like ``2>&1``, which write no file) and ``tee``
+    arguments.  Quoted operators can still split on older Pythons, so a
+    mention of a steering name inside quotes may over-classify as C —
+    fail-safe, and rare next to the unquoted forms scripts actually use.
+
+    Other write forms (``cp``, ``mv``, ``sed -i``, editors) are not
+    parsed: the command falls through to the B floor and asks, which is
+    where an opaque string belongs.  An unparseable command yields no
+    targets here — it is not thereby judged safe, just not statically C.
+    """
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=">|&;")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    targets: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in _REDIRECT_TOKENS and i + 1 < len(tokens):
+            targets.append(tokens[i + 1])
+            i += 2
+            continue
+        if token == "tee":
+            j = i + 1
+            while j < len(tokens) and tokens[j] not in _SEGMENT_SEPARATORS:
+                if not tokens[j].startswith("-"):
+                    targets.append(tokens[j])
+                j += 1
+            i = j
+            continue
+        i += 1
+    return targets
+
+
+def _rule_shell_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
+    """A shell command redirects or tees into a steering path (TD-4805)."""
+    if req.tool_name != "shell" or boundary.workspace_root is None:
+        return False
+    command = req.arguments.get("command")
+    if not isinstance(command, str):
+        return False
+    root = boundary.workspace_root
+    for token in _shell_write_targets(command):
+        target = Path(token)
+        if not target.is_absolute():
+            target = root / target
+        if is_steering_write(boundary, target):
+            return True
+    return False
+
+
+def _rule_shell_floor(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """Every shell command is at least Class B (TD-4805).
+
+    The static table cannot see a shell command's targets, so no static
+    A is possible; the only path to A was the worker tier's reading of an
+    opaque string.  Auto-run for shell belongs to the user's saved
+    always-allow rules (TD-803), not to model judgment.
+    """
+    return req.tool_name == "shell"
+
+
 def _rule_memory_write(req: DecisionRequest, boundary: Boundary) -> bool:
     """The call writes only under ``.tst/memory/`` (Class A, TD-2102)."""
     return (
@@ -392,6 +475,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         match=_rule_steering_write,
     ),
     Rule(
+        id="shell-steering-write",
+        description="shell command redirects or tees into a steering path",
+        decision_class=DecisionClass.C,
+        match=_rule_shell_steering_write,
+    ),
+    Rule(
         id="cap-exceeded",
         description="a declared spend/wall-clock/iteration cap is exceeded",
         decision_class=DecisionClass.C,
@@ -402,6 +491,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="action writes in-workspace but outside writable_paths",
         decision_class=DecisionClass.C,
         match=_rule_outside_writable,
+    ),
+    Rule(
+        id="shell-floor",
+        description="shell commands always require approval (never model-granted A)",
+        decision_class=DecisionClass.B,
+        match=_rule_shell_floor,
     ),
     Rule(
         id="memory-file-write",
