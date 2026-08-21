@@ -4850,10 +4850,13 @@ stdio MCP sidecar; mock when `computer_use.command` is empty.
 **Size:** 5 · **Depends on:** TD-3301, TD-1101
 
 **Acceptance criteria:**
-- [ ] First desktop CU attempt explains Screen Recording +
+- [x] First desktop CU attempt explains Screen Recording +
       Accessibility, links to System Settings, and retries
-- [ ] Denied is a typed error, not a hang
-- [ ] Wizard/settings can reopen the explanation
+- [x] Denied is a typed error, not a hang
+- [x] Wizard/settings can reopen the explanation
+
+Done (2026-08-21): `cu_permissions` + Settings reopen; typed
+`permission_denied`; first-run `{user_data_dir}/cu-macos-permissions.yaml`.
 
 ---
 
