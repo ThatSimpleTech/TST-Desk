@@ -89,6 +89,9 @@ Ollama `/api/embed`.
 | `top_k` | int ≥ 1 | `4` | Maximum topic files kept after `MEMORY.md` when the sidecar answers. |
 | `token_budget` | int ≥ 1 | `2000` | Cap on loaded memory tokens (TD-506 heuristic, file bytes). Lowest-ranked topics drop until under the cap; `MEMORY.md` is the last file dropped. |
 
+`project_context` is the pinned-file budget on the brain prompt (TD-2805).
+Newest pins drop first when over `token_budget`.
+
 <!-- verify: model -->
 ```yaml
 presets:
@@ -128,6 +131,8 @@ embeddings:
   model: nomic-embed-text
   timeout_seconds: 2
   top_k: 4
+  token_budget: 2000
+project_context:
   token_budget: 2000
 ```
 

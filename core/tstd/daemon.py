@@ -50,7 +50,7 @@ from .context.instructions import (
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
-from .context_pins import PinOutsideError, add_pin, list_pin_cards, remove_pin
+from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .discovery import resolve_tier_slugs
 from .keychain import (
     KeychainError,
@@ -1740,11 +1740,18 @@ class Daemon:
                 f"Workspace path is not a directory: {root}",
             )
         cards = await asyncio.to_thread(list_pin_cards, root)
+        cap = self.config.project_context.token_budget
+        inst, mem, pins, dropped = await asyncio.to_thread(project_capacity, root, cap)
         return ContextPins(
             workspace_path=str(root),
             pins=[
                 ContextPinEntry(path=c.path, name=c.name, kind=c.kind, lines=c.lines) for c in cards
             ],
+            instruction_tokens=inst,
+            memory_tokens=mem,
+            pin_tokens=pins,
+            capacity_cap=cap,
+            dropped=dropped,
         ).model_dump_json()
 
     async def _handle_list_pins(self, msg: ListPins) -> str:

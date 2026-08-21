@@ -152,6 +152,7 @@ def assemble_for_tier_sync(
     diff: str | None = None,
     test_output: str | None = None,
     memory: str | None = None,
+    project_context: str | None = None,
     config: TierContextConfig | None = None,
     approved_imports: frozenset[Path] = frozenset(),
     denied_imports: frozenset[Path] = frozenset(),
@@ -206,6 +207,8 @@ def assemble_for_tier_sync(
     if tier == "brain":
         if memory is not None:
             blocks["memory"] = memory
+        if project_context is not None:
+            blocks["project_context"] = project_context
         if manifest_text is not None:
             blocks["manifest"] = manifest_text
 
@@ -235,6 +238,7 @@ async def assemble_for_tier(
     diff: str | None = None,
     test_output: str | None = None,
     memory: str | None = None,
+    project_context: str | None = None,
     config: TierContextConfig | None = None,
     approved_imports: frozenset[Path] = frozenset(),
     denied_imports: frozenset[Path] = frozenset(),
@@ -256,6 +260,7 @@ async def assemble_for_tier(
         diff=diff,
         test_output=test_output,
         memory=memory,
+        project_context=project_context,
         config=config,
         approved_imports=approved_imports,
         denied_imports=denied_imports,

@@ -565,7 +565,12 @@
         "kind": "file",
         "lines": 12
       }
-    ]
+    ],
+    "instruction_tokens": 0,
+    "memory_tokens": 0,
+    "pin_tokens": 0,
+    "capacity_cap": 0,
+    "dropped": []
   },
   "context_compacted": {
     "type": "context_compacted",

@@ -614,6 +614,11 @@ export interface ContextPins extends DaemonEvent {
   type: "context_pins";
   workspace_path: string;
   pins: ContextPinEntry[];
+  instruction_tokens?: number;
+  memory_tokens?: number;
+  pin_tokens?: number;
+  capacity_cap?: number;
+  dropped?: string[];
 }
 
 export interface InstructionFiles extends DaemonEvent {

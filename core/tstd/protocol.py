@@ -990,6 +990,11 @@ class ContextPins(DaemonEvent):
     seq: int = 1
     workspace_path: str
     pins: list[ContextPinEntry] = Field(default_factory=list)
+    instruction_tokens: int = Field(default=0, ge=0)
+    memory_tokens: int = Field(default=0, ge=0)
+    pin_tokens: int = Field(default=0, ge=0)
+    capacity_cap: int = Field(default=0, ge=0)
+    dropped: list[str] = Field(default_factory=list)
 
 
 class InstructionFiles(DaemonEvent):

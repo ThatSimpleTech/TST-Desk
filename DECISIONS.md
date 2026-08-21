@@ -6447,6 +6447,18 @@ human pins; the assembler (TD-2805) reads.
 
 ---
 
+## 2026-08-20 — TD-2805: pins after memory, LIFO vs a config cap (Class B)
+
+**Decision:** `project_context.token_budget` in config (default 2000).
+The brain block sits after memory and before the manifest, outside the
+cache prefix. Newest pins drop first. The Context column meter is
+instructions + memory + pins vs that cap.
+
+**Rationale:** Same brain-only gate as memory. A percent-of-context
+cap would hide the number; a token budget is testable.
+
+---
+
 ## 2026-08-20 — Decompose v0.3–Later (Class B)
 
 **Decision:** Replace the undecomposed post-v0.2 table with M5–M10 and

@@ -11,6 +11,11 @@ export const contextPins = $state({
 	pins: [] as ContextPinEntry[],
 	query: "",
 	error: null as string | null,
+	instructionTokens: 0,
+	memoryTokens: 0,
+	pinTokens: 0,
+	capacityCap: 0,
+	dropped: [] as string[],
 });
 
 let started = false;
@@ -31,12 +36,22 @@ export function resetContextPins(): void {
 	contextPins.pins = [];
 	contextPins.query = "";
 	contextPins.error = null;
+	contextPins.instructionTokens = 0;
+	contextPins.memoryTokens = 0;
+	contextPins.pinTokens = 0;
+	contextPins.capacityCap = 0;
+	contextPins.dropped = [];
 }
 
 function reduce(event: DaemonEventUnion): void {
 	if (event.type === "context_pins") {
 		if (contextPins.workspacePath !== event.workspace_path) return;
 		contextPins.pins = event.pins;
+		contextPins.instructionTokens = event.instruction_tokens ?? 0;
+		contextPins.memoryTokens = event.memory_tokens ?? 0;
+		contextPins.pinTokens = event.pin_tokens ?? 0;
+		contextPins.capacityCap = event.capacity_cap ?? 0;
+		contextPins.dropped = event.dropped ?? [];
 		contextPins.error = null;
 		return;
 	}

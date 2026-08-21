@@ -4460,12 +4460,12 @@ the pin file is a new schema.
 **Size:** 3 · **Depends on:** TD-2804, TD-2502
 
 **Acceptance criteria:**
-- [ ] Pinned files load as a brain-only `project_context` block, after
+- [x] Pinned files load as a brain-only `project_context` block, after
       memory, still after the cache prefix
-- [ ] A capacity meter shows tokens for instructions + memory + pins
+- [x] A capacity meter shows tokens for instructions + memory + pins
       against a config cap (the "12% of project capacity" read)
-- [ ] Over cap, pins drop last-in-first-out; the meter says so
-- [ ] Worker/validator do not receive the pin block
+- [x] Over cap, pins drop last-in-first-out; the meter says so
+- [x] Worker/validator do not receive the pin block
 
 ---
 

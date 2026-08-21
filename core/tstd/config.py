@@ -149,6 +149,12 @@ class SearchConfig(BaseModel):
     fetch_max_bytes: int = Field(default=200_000, ge=1)
 
 
+class ProjectContextConfig(BaseModel):
+    """Pinned-file budget on the brain prompt (TD-2805)."""
+
+    token_budget: int = Field(default=2000, ge=1)
+
+
 class EmbeddingsConfig(BaseModel):
     """Local embeddings sidecar (TD-2202).
 
@@ -171,6 +177,7 @@ class ModelConfig(BaseModel):
     active_preset: str = DEFAULT_PRESET
     search: SearchConfig = Field(default_factory=SearchConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
+    project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -253,7 +260,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
     # Fill from the shipped file so the destination exists without
     # rewriting theirs.
     shipped: dict[str, Any] | None = None
-    for key in ("search", "embeddings"):
+    for key in ("search", "embeddings", "project_context"):
         if key in data:
             continue
         if shipped is None:
