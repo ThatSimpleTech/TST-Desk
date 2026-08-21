@@ -4495,10 +4495,10 @@ the pin file is a new schema.
 **Size:** 2 · **Depends on:** TD-2802, TD-2803, TD-2804, TD-2807
 
 **Acceptance criteria:**
-- [ ] A store-level test: bind a workspace with steering, memory, and
+- [x] A store-level test: bind a workspace with steering, memory, and
       pins → the three columns expose those paths
-- [ ] Rail Projects → home → New chat creates a session in that workspace
-- [ ] An invariant test: every `ready` rail entry still activates
+- [x] Rail Projects → home → New chat creates a session in that workspace
+- [x] An invariant test: every `ready` rail entry still activates
       (TD-1712)
 
 **Notes:** not the M4 memory exit (that stays TD-2701). This is the
