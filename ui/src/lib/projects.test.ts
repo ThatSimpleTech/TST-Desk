@@ -15,6 +15,7 @@ import {
 	showArtifacts,
 	showHome,
 	showProjects,
+	showScheduled,
 } from "./projects.svelte.js";
 
 describe("projectSessions", () => {
@@ -102,6 +103,13 @@ describe("surface store", () => {
 	it("Artifacts is its own surface (TD-3202)", () => {
 		showArtifacts();
 		expect(projects.surface).toBe("artifacts");
+		showHome();
+		expect(projects.surface).toBe("home");
+	});
+
+	it("Scheduled is its own surface (TD-3805)", () => {
+		showScheduled();
+		expect(projects.surface).toBe("scheduled");
 		showHome();
 		expect(projects.surface).toBe("home");
 	});

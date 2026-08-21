@@ -35,10 +35,9 @@ export interface RailEntry {
 
 /** The function entries for a given current surface, in rail order.
  *
- * Home, Projects, and Artifacts trade `current` / `ready` so the rail is
- * honest about which pane the window is showing (TD-2801 / TD-3202).
- * Scheduled belongs to v0.5 and stays `planned`: hiding it would hide
- * the shape of the app.
+ * Home, Projects, Artifacts, and Scheduled trade `current` / `ready` so
+ * the rail is honest about which pane the window is showing (TD-2801 /
+ * TD-3202 / TD-3805).
  */
 export function railFunctions(current: RailSurface = "home"): RailEntry[] {
 	return [
@@ -63,7 +62,13 @@ export function railFunctions(current: RailSurface = "home"): RailEntry[] {
 			state: current === "artifacts" ? "current" : "ready",
 			note: null,
 		},
-		{ id: "scheduled", label: "Scheduled", icon: "clock", state: "planned", note: "v0.5" },
+		{
+			id: "scheduled",
+			label: "Scheduled",
+			icon: "clock",
+			state: current === "scheduled" ? "current" : "ready",
+			note: null,
+		},
 	];
 }
 

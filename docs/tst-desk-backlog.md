@@ -5145,11 +5145,14 @@ Done (2026-08-21): `send(config, message)`; topic URL in keychain
 **Size:** 5 · **Depends on:** TD-2901
 
 **Acceptance criteria:**
-- [ ] Jobs persist in the user data dir: id, workspace, instruction,
+- [x] Jobs persist in the user data dir: id, workspace, instruction,
       cadence or next-run, deliver-to (window / Slack / ntfy)
-- [ ] Natural-language create is a *worker* parse into that schema,
+- [x] Natural-language create is a *worker* parse into that schema,
       shown for edit before save
-- [ ] No job runs until M7's runner (TD-3804) exists
+- [x] No job runs until M7's runner (TD-3804) exists
+
+Done (2026-08-21): `{user_data_dir}/scheduler/jobs.json`; parse is a
+draft; save is a second call; no runner.
 
 ---
 
@@ -5157,11 +5160,14 @@ Done (2026-08-21): `send(config, message)`; topic URL in keychain
 **Size:** 5 · **Depends on:** TD-3803, TD-3101
 
 **Acceptance criteria:**
-- [ ] Due jobs start a session (or `tst run`) in the named workspace,
+- [x] Due jobs start a session (or `tst run`) in the named workspace,
       then deliver a summary to the configured channel
-- [ ] Missed runs while the daemon was down fire once on revive, not
+- [x] Missed runs while the daemon was down fire once on revive, not
       in a stampede
-- [ ] Caps and the classifier still apply
+- [x] Caps and the classifier still apply
+
+Done (2026-08-21): daemon tick + in-process `_start_session` turn;
+one fire then cadence advances `next_run` (or pause if one-shot).
 
 ---
 
@@ -5169,9 +5175,14 @@ Done (2026-08-21): `send(config, message)`; topic URL in keychain
 **Size:** 2 · **Depends on:** TD-3804, TD-1712
 
 **Acceptance criteria:**
-- [ ] Rail **Scheduled** becomes `ready` and lists jobs
-- [ ] Create / pause / delete
-- [ ] The invariant test (every `ready` entry activates) stays green
+- [x] Rail **Scheduled** becomes `ready` and lists jobs
+- [x] Create / pause / delete
+- [x] The invariant test (every `ready` entry activates) stays green
+
+Done (2026-08-21): Scheduled is `ready`/`current`; `list_jobs` /
+`save_job` / `delete_job` at the end of the protocol unions; pane
+lists and edits draft fields. The runner still ticks; the rail does
+not fire jobs.
 
 ---
 
