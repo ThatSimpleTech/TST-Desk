@@ -52,6 +52,7 @@ from tstd.protocol import (
     RevokePolicyRule,
     SessionState,
     SetLoadGlobalMemory,
+    SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
     SetWorkspacePin,
@@ -317,6 +318,16 @@ class TestClientMessages:
         back = _roundtrip(ArchiveSession(session_id="sess-1", archived=False))
         assert isinstance(back, ArchiveSession)
         assert back.archived is False
+
+    def test_set_session_star(self) -> None:
+        back = _roundtrip(SetSessionStar(session_id="sess-1"))
+        assert isinstance(back, SetSessionStar)
+        assert back.starred is True
+
+    def test_set_session_star_clears(self) -> None:
+        back = _roundtrip(SetSessionStar(session_id="sess-1", starred=False))
+        assert isinstance(back, SetSessionStar)
+        assert back.starred is False
 
     def test_delete_session(self) -> None:
         back = _roundtrip(DeleteSession(session_id="sess-1"))

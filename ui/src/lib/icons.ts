@@ -75,6 +75,9 @@ export const ICONS = {
 	clock: '<circle cx="12" cy="12" r="9"/>' + '<path d="M12 7v5l3 2"/>',
 	/** Account anchor avatar fallback (rail footer, TD-1712). */
 	user: '<circle cx="12" cy="8" r="4"/>' + '<path d="M4 21a8 8 0 0 1 16 0"/>',
+	/** Star / unstar a session (rail row actions, TD-3003). */
+	star:
+		'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
 	/** Archive / unarchive a session (rail row actions, TD-1715). */
 	archive:
 		'<rect x="2" y="3" width="20" height="5" rx="1"/>' +

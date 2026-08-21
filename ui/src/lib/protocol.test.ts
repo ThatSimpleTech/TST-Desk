@@ -63,6 +63,7 @@ import type {
   SessionList,
   SessionSummary,
   ArchiveSession,
+  SetSessionStar,
   DeleteSession,
   MoveSession,
   PolicyRules,
@@ -743,6 +744,7 @@ describe("All fixtures have required shape", () => {
       "set_skip_all_approvals",
       "set_load_global_memory",
       "set_workspace_pin",
+      "set_session_star",
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",
@@ -845,8 +847,24 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(list.sessions.length).toBeGreaterThan(1);
     for (const s of list.sessions as SessionSummary[]) {
       expect(isBoolean(s.archived)).toBe(true);
+      expect(isBoolean(s.starred)).toBe(true);
     }
     expect(list.sessions.some((s) => s.archived)).toBe(true);
     expect(list.sessions.some((s) => !s.archived)).toBe(true);
+    expect(list.sessions.some((s) => s.starred)).toBe(true);
+    expect(list.sessions.some((s) => !s.starred)).toBe(true);
+  });
+
+  it("set_session_star", () => {
+    const m = fixtures.set_session_star as SetSessionStar;
+    expect(m.type).toBe("set_session_star");
+    expect(isString(m.session_id)).toBe(true);
+    expect(m.starred).toBe(true);
+  });
+
+  it("set_session_star carries the clear direction too", () => {
+    const m = fixtures.unstar_session as SetSessionStar;
+    expect(m.type).toBe("set_session_star");
+    expect(m.starred).toBe(false);
   });
 });

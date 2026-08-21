@@ -83,6 +83,7 @@ from tstd.protocol import (
     SetBranch,
     SetLoadGlobalMemory,
     SetPreset,
+    SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
     SetupState,
@@ -161,6 +162,8 @@ FIXTURES = {
     # Session lifecycle (TD-1715): archive/restore, delete, move to project.
     "archive_session": ArchiveSession(session_id="sess-1"),
     "unarchive_session": ArchiveSession(session_id="sess-1", archived=False),
+    "set_session_star": SetSessionStar(session_id="sess-1"),
+    "unstar_session": SetSessionStar(session_id="sess-1", starred=False),
     "delete_session": DeleteSession(session_id="sess-1"),
     "move_session": MoveSession(session_id="sess-1", workspace_path="/home/user/other"),
     # Onboarding (TD-1101 first-run wizard)
@@ -433,6 +436,7 @@ FIXTURES = {
                 "updated_at": "2026-08-13T09:30:00Z",
                 "event_count": 12,
                 "archived": True,
+                "starred": True,
             },
         ]
     ),

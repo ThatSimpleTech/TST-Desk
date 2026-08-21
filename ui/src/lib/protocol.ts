@@ -254,6 +254,14 @@ export interface ArchiveSession extends ClientMessage {
   archived: boolean;
 }
 
+/** Star or unstar a session on this machine (TD-3003). Metadata only;
+ *  allowed mid-turn. The daemon answers with a refreshed session_list. */
+export interface SetSessionStar extends ClientMessage {
+  type: "set_session_star";
+  session_id: string;
+  starred: boolean;
+}
+
 /** Destroy a session and its event log (TD-1715) — irreversible, so the rail
  *  confirms first. Refused with `session_busy` while a turn is in flight. */
 export interface DeleteSession extends ClientMessage {
@@ -366,6 +374,7 @@ export type ClientMessageUnion =
   | ListSessions
   | NewSession
   | ArchiveSession
+  | SetSessionStar
   | DeleteSession
   | MoveSession
   | GetSetupState
@@ -698,6 +707,8 @@ export interface SessionSummary {
    *  the recents menu, and the pane's auto-bind all read one event — and this
    *  is the flag "hidden from the default list" is rendered from. */
   archived: boolean;
+  /** Pinned to the top of the rail (TD-3003). Machine-wide. */
+  starred: boolean;
 }
 
 export interface SessionList extends DaemonEvent {

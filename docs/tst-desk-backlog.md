@@ -4662,10 +4662,10 @@ to v0.3.
 **Size:** 2 · **Depends on:** TD-1701
 
 **Acceptance criteria:**
-- [ ] A session can be starred; stars persist in the user data dir
+- [x] A session can be starred; stars persist in the user data dir
       (machine-wide, not the workspace — same cut as TD-2806)
-- [ ] Starred rows sort above the rest in the rail, then newest
-- [ ] Filter can show starred only
+- [x] Starred rows sort above the rest in the rail, then newest
+- [x] Filter can show starred only
 
 ---
 

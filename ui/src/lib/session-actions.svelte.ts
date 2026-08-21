@@ -27,6 +27,12 @@ export function toggleArchivedView(): void {
 	closeRowMenus();
 }
 
+/** Restrict the current shelf to starred rows, or show all of it. */
+export function toggleStarredOnly(): void {
+	sessions.showStarredOnly = !sessions.showStarredOnly;
+	closeRowMenus();
+}
+
 /** Open (or close) a row's action menu. One row's menu at a time. */
 export function toggleRowMenu(sessionId: string): void {
 	const wasOpen = sessions.menuFor === sessionId;
@@ -48,6 +54,12 @@ export function endSession(sessionId: string): boolean {
 
 export function setArchived(sessionId: string, archived: boolean): boolean {
 	const sent = sendToDaemon({ type: "archive_session", session_id: sessionId, archived });
+	if (sent) closeRowMenus();
+	return sent;
+}
+
+export function setStarred(sessionId: string, starred: boolean): boolean {
+	const sent = sendToDaemon({ type: "set_session_star", session_id: sessionId, starred });
 	if (sent) closeRowMenus();
 	return sent;
 }

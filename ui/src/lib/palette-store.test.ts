@@ -93,6 +93,7 @@ function sessionList(
 			updated_at: updatedAt,
 			event_count: 3,
 			archived: false,
+			starred: false,
 		})),
 	};
 }

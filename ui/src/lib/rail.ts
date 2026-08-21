@@ -122,7 +122,7 @@ export function railSections(
 
 // ── Row lifecycle actions (TD-1715) ────────────────────────────────────
 
-export type RailRowActionId = "archive" | "unarchive" | "move" | "delete";
+export type RailRowActionId = "star" | "unstar" | "archive" | "unarchive" | "move" | "delete";
 
 export interface RailRowAction {
 	id: RailRowActionId;
@@ -157,8 +157,23 @@ export const DELETE_CONFIRM =
  *  and Move can actually run is the daemon's call — it alone knows if a turn
  *  is in flight — so they are always offered and the refusal comes back typed
  *  (§6: the UI never derives truth it wasn't given). */
-export function rowActions(archived: boolean): RailRowAction[] {
+export function rowActions(archived: boolean, starred = false): RailRowAction[] {
 	return [
+		starred
+			? {
+					id: "unstar",
+					label: "Unstar",
+					icon: "star",
+					danger: false,
+					hint: "Remove this session from the top of the list.",
+				}
+			: {
+					id: "star",
+					label: "Star",
+					icon: "star",
+					danger: false,
+					hint: "Keep this session at the top of the list.",
+				},
 		archived
 			? {
 					id: "unarchive",
@@ -193,14 +208,22 @@ export function archivedToggle(archivedView: boolean): { label: string; hint: st
 		: { label: "Archived", hint: "Show archived sessions" };
 }
 
+export function starredToggle(starredOnly: boolean): { label: string; hint: string } {
+	return starredOnly
+		? { label: "All", hint: "Show every session on this shelf" }
+		: { label: "Starred", hint: "Show starred sessions only" };
+}
+
 /** Empty-state copy per shelf and filter — four different situations that
  *  must not share one sentence. */
 export function emptyRowsCopy(
 	archivedView: boolean,
 	filtered: boolean,
 	anyRows: boolean,
+	starredOnly = false,
 ): string {
 	if (filtered && anyRows) return "No matching sessions";
+	if (starredOnly) return "No starred sessions";
 	if (archivedView) return "No archived sessions";
 	return "No sessions yet";
 }

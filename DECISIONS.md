@@ -6539,3 +6539,17 @@ worker/validator in the check.
 
 **Alternative rejected:** Optional post-turn callbacks on `HarnessPlan`.
 That is a runner change the mock pass would have to skip.
+
+---
+
+## 2026-08-20 — TD-3003: stars are a machine-wide id list (Class B)
+
+**Decision:** `set_session_star` / `SessionSummary.starred`, persisted in
+`{data_dir}/session_stars.yaml` as `{ids: [...]}`. Not `sessions.json`
+and not the workspace. Delete prunes the id. The rail sorts starred
+first, then newest. `showStarredOnly` is a client filter on the same
+`session_list`.
+
+**Rationale:** Same cut as TD-2806. A separate file keeps this off the
+session-store work TD-3001 is doing in parallel. PROTOCOL_VERSION stays
+1 because the field is additive with a default.

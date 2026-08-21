@@ -425,6 +425,18 @@ class ArchiveSession(ClientMessage):
     archived: bool = True
 
 
+class SetSessionStar(ClientMessage):
+    """Star or unstar a session on this machine (TD-3003).
+
+    Stars live in the user data dir, not the workspace. Allowed mid-turn:
+    metadata only. The daemon answers with a refreshed ``session_list``.
+    """
+
+    type: Literal["set_session_star"] = "set_session_star"
+    session_id: str
+    starred: bool = True
+
+
 class DeleteSession(ClientMessage):
     """Destroy a session and its event log (TD-1715).
 
@@ -1066,6 +1078,10 @@ class SessionSummary(BaseModel):
     # default list" is rendered from. Additive with a default, so a client
     # that ignores it behaves exactly as it did.
     archived: bool = False
+    # Pinned to the top of the rail (TD-3003). Machine-wide; not the
+    # workspace. Additive with a default, so a client that ignores it
+    # still sorts newest-first.
+    starred: bool = False
 
 
 class SessionList(DaemonEvent):
@@ -1278,6 +1294,7 @@ ClientMessageT = Annotated[
     | ListSessions
     | NewSession
     | ArchiveSession
+    | SetSessionStar
     | DeleteSession
     | MoveSession
     | GetSetupState
@@ -1370,6 +1387,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_sessions",
         "new_session",
         "archive_session",
+        "set_session_star",
         "delete_session",
         "move_session",
         "get_setup_state",

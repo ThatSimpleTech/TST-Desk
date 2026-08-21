@@ -21,8 +21,8 @@
 	import RailSessionRow from './RailSessionRow.svelte';
 	import { chat } from '../chat-store.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
-	import { archivedToggle, emptyRowsCopy, railSections } from '../rail';
-	import { toggleArchivedView } from '../session-actions.svelte.js';
+	import { archivedToggle, emptyRowsCopy, railSections, starredToggle } from '../rail';
+	import { toggleArchivedView, toggleStarredOnly } from '../session-actions.svelte.js';
 	import {
 		sessions,
 		startSessions,
@@ -49,8 +49,14 @@
 	// you are on, which is the only thing distinguishing the two.
 	let history = $derived(railSections(rows.length, sessions.showArchived)[1]);
 	let shelfToggle = $derived(archivedToggle(sessions.showArchived));
+	let starToggle = $derived(starredToggle(sessions.showStarredOnly));
 	let emptyCopy = $derived(
-		emptyRowsCopy(sessions.showArchived, sessions.filter.trim() !== '', shelfRowCount() > 0)
+		emptyRowsCopy(
+			sessions.showArchived,
+			sessions.filter.trim() !== '',
+			shelfRowCount() > 0,
+			sessions.showStarredOnly
+		)
 	);
 </script>
 
@@ -123,17 +129,30 @@
 			{#if history.badge !== null}
 				<span class="badge">{history.badge}</span>
 			{/if}
-			<button
-				class="shelf"
-				type="button"
-				title={shelfToggle.hint}
-				aria-label={shelfToggle.hint}
-				aria-pressed={sessions.showArchived}
-				onclick={toggleArchivedView}
-			>
-				<Icon name="archive" size={12} />
-				<span>{shelfToggle.label}</span>
-			</button>
+			<div class="shelf-group">
+				<button
+					class="shelf"
+					type="button"
+					title={starToggle.hint}
+					aria-label={starToggle.hint}
+					aria-pressed={sessions.showStarredOnly}
+					onclick={toggleStarredOnly}
+				>
+					<Icon name="star" size={12} />
+					<span>{starToggle.label}</span>
+				</button>
+				<button
+					class="shelf"
+					type="button"
+					title={shelfToggle.hint}
+					aria-label={shelfToggle.hint}
+					aria-pressed={sessions.showArchived}
+					onclick={toggleArchivedView}
+				>
+					<Icon name="archive" size={12} />
+					<span>{shelfToggle.label}</span>
+				</button>
+			</div>
 		</div>
 		<div class="list" role="list" aria-label={history.label}>
 			{#each rows as row (row.sessionId)}
@@ -203,11 +222,17 @@
 
 	/* Shelf toggle (TD-1715): the heading says where you are, this says where
 	   the click goes. Pushed right so it never crowds the count. */
-	.shelf {
+	.shelf-group {
 		display: inline-flex;
 		align-items: center;
 		gap: var(--space-1);
 		margin-left: auto;
+	}
+
+	.shelf {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
 		border: none;
 		background: transparent;
 		border-radius: var(--radius-sm);

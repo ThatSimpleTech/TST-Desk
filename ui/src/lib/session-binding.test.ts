@@ -27,6 +27,7 @@ function summaries(rows: Row[]): SessionSummary[] {
     updated_at: row.updated,
     event_count: 0,
     archived: row.archived ?? false,
+    starred: false,
   }));
 }
 
