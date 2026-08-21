@@ -169,3 +169,10 @@ session:
 computer_use:
   command: ""
   browser: mock
+
+# Opt-in Tailscale bind (TD-3601). Empty is off: 127.0.0.1 only.
+# Set bind to an interface name (tailscale0) or a Tailscale IPv4
+# (100.64.0.0/10). The daemon then also listens on that address.
+# Never 0.0.0.0 / ::. A non-Tailscale LAN address is refused.
+remote:
+  bind: ""

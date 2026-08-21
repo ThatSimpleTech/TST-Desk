@@ -24,6 +24,10 @@ describe("bannerLabel (TD-1304)", () => {
 		expect(bannerLabel("disconnected", "crashed")).toBe("Daemon crashed — reconnecting");
 	});
 
+	it("says Not connected while a browser attach is waiting (no host supervisor)", () => {
+		expect(bannerLabel("disconnected", "starting")).toBe("Not connected");
+	});
+
 	it("says Daemon stopped on an orderly shutdown", () => {
 		expect(bannerLabel("connecting", "stopping")).toBe("Daemon stopped");
 		expect(bannerLabel("stopped", "stopped")).toBe("Stopped");
