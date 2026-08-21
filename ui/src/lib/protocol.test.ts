@@ -972,6 +972,12 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isString(m.screen_recording_url)).toBe(true);
     expect(isString(m.accessibility_url)).toBe(true);
     expect(m.platform).toBe("macos");
+    expect(isString(m.no_gate)).toBe(true);
+    expect(isString(m.uipi)).toBe(true);
+    expect(isString(m.secure_desktop)).toBe(true);
+    expect(isBoolean(m.elevated)).toBe(true);
+    expect(isBoolean(m.uipi_applies)).toBe(true);
+    expect(isBoolean(m.secure_desktop_applies)).toBe(true);
   });
 
   it("session_list carries the auto-title field (TD-3001)", () => {

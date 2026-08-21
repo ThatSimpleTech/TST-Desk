@@ -26,6 +26,10 @@ class DesktopError(Exception):
     """
 
     PERMISSION_DENIED = "permission_denied"
+    UIPI = "uipi"
+    SECURE_DESKTOP = "secure_desktop"
+    # First-run / Settings reopen: TCC deny or a Windows integrity refuse.
+    REOPEN_CODES = frozenset({PERMISSION_DENIED, UIPI, SECURE_DESKTOP})
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)

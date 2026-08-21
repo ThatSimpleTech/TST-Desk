@@ -6939,3 +6939,34 @@ must not infer URLs. A user-data flag matches close-is-not-quit.
 Also rejected: a workspace file for first-run. Also rejected: Windows
 copy in this story.
 
+---
+
+## 2026-08-21 — TD-3303: Windows CU integrity onboarding (Class B)
+
+**Decision:** Windows computer-use has no grant dialog. First desktop CU
+attempt (and Settings reopen) emits the existing `cu_permissions` event
+with `platform: "windows"` and the sidecar's integrity copy: `no_gate`,
+`uipi`, `secure_desktop`, plus `elevated` / `limits_apply`. Settings URLs
+are empty. First-run is `{user_data_dir}/cu-windows-permissions.yaml`
+`{shown: true}` — a sibling of the macOS flag, not a replacement.
+
+Typed refuses are their own codes, not `permission_denied`:
+
+- `uipi` — `SendInput` short / higher-integrity target discarded input
+- `secure_desktop` — UAC / lock / Ctrl+Alt+Del cannot be captured or driven
+
+The mock raises them when scripted (`platform="win32"`). Live MCP strings
+that name UIPI or the secure desktop map to the same codes. The daemon
+reopens the pane on those codes the way it reopens on TCC deny. The
+report shape is `tst_cu_mcp.permissions.build_windows_report`; tstd
+parses it and does not grow a Windows backend.
+
+**Rationale:** Calling UIPI `permission_denied` would open the macOS TCC
+story on a platform that has nothing to grant. Distinct codes keep the
+macOS path intact and fail closed (typed error, no hang, no success on a
+discarded click).
+
+**Alternative rejected:** Overloading `permission_denied` for both OS
+gates. Also rejected: a second Windows probe in tstd. Also rejected:
+waiting for a prompt Windows will not show.
+

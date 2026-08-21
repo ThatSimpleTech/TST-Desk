@@ -4864,10 +4864,14 @@ Done (2026-08-21): `cu_permissions` + Settings reopen; typed
 **Size:** 5 · **Depends on:** TD-3301
 
 **Acceptance criteria:**
-- [ ] First desktop CU attempt names what Windows will prompt for and
+- [x] First desktop CU attempt names what Windows will prompt for and
       what fails if refused
-- [ ] Denied is a typed error
-- [ ] Documented in `docs/windows.md`
+- [x] Denied is a typed error
+- [x] Documented in `docs/windows.md`
+
+Done (2026-08-21): first-run `cu_permissions` with Windows integrity
+copy (`{user_data_dir}/cu-windows-permissions.yaml`); typed `uipi` /
+`secure_desktop`; `docs/windows.md` §7.
 
 ---
 

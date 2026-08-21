@@ -55,11 +55,12 @@ from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capa
 from .coworker import load_coworker, save_coworker
 from .desktop import DesktopDriver, desktop_driver_from_config
 from .desktop.permissions import (
-    build_cu_permissions,
+    cu_permissions_from_report,
+    driver_cu_platform,
     is_desktop_tool,
     load_shown,
     mark_shown,
-    probe_driver,
+    probe_report,
 )
 from .desktop.protocol import DesktopError
 from .discovery import resolve_tier_slugs
@@ -513,32 +514,28 @@ class Daemon:
     def _cu_permissions_session(self, event: DaemonEvent) -> str | None:
         """Session to notify about computer-use permissions, or None.
 
-        First desktop tool call (once) and every ``permission_denied``
-        result.  The panel is connection-scoped — this does not persist.
+        First desktop tool call (once per platform) and every typed
+        integrity refuse (``permission_denied``, ``uipi``,
+        ``secure_desktop``).  The panel is connection-scoped — this
+        does not persist.
         """
+        plat = driver_cu_platform(self.desktop_driver)
         if (
             isinstance(event, ToolCallEvent)
             and is_desktop_tool(event.name)
-            and not load_shown(self.data_dir)
+            and not load_shown(self.data_dir, plat)
         ):
             return event.session_id
-        if (
-            isinstance(event, ToolResultEvent)
-            and event.error_code == DesktopError.PERMISSION_DENIED
-        ):
+        if isinstance(event, ToolResultEvent) and event.error_code in DesktopError.REOPEN_CODES:
             return event.session_id
         return None
 
     async def _cu_permissions_event(self, *, first_run: bool) -> CuPermissions:
         """Probe the driver without prompting. Stamp first-run when asked."""
-        screen, access = await probe_driver(self.desktop_driver)
+        raw = await probe_report(self.desktop_driver)
         if first_run:
-            mark_shown(self.data_dir)
-        return build_cu_permissions(
-            screen_recording=screen,
-            accessibility=access,
-            first_run=first_run,
-        )
+            mark_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
+        return cu_permissions_from_report(raw, first_run=first_run)
 
     async def _emit_cu_permissions(self, session_id: str, *, first_run: bool) -> None:
         """Push ``cu_permissions`` to clients attached to *session_id*."""
@@ -991,7 +988,7 @@ class Daemon:
             await self._session_store.update_state(event.session_id, event.state)
         announce = self._cu_permissions_session(event)
         if announce is not None:
-            first_run = not load_shown(self.data_dir)
+            first_run = not load_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
             self._tasks.append(
                 asyncio.create_task(self._emit_cu_permissions(announce, first_run=first_run))
             )

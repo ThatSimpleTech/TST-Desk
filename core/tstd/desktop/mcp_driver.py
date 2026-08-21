@@ -41,6 +41,7 @@ class McpDesktopDriver:
 
         self._command = command
         self._platform = sys.platform if platform is None else platform
+        self.platform = self._platform
         self._client = client if client is not None else StdioMcpClient(command)
         self.killed = False
 

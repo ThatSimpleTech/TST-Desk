@@ -304,7 +304,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
 | `list_artifacts` | yes | List artifacts persisted with the session (TD-3201). Acked with `artifact_list`. |
 | `open_artifact` | yes | Open one artifact by id. Acked with `artifact` (metadata and path, not bytes). Unknown id is a typed error. |
-| `check_cu_permissions` | — | Re-probe computer-use OS permissions without raising a TCC prompt (TD-3302). Acked with `cu_permissions`. |
+| `check_cu_permissions` | — | Re-probe computer-use OS permissions / integrity without raising a TCC prompt (TD-3302, TD-3303). Acked with `cu_permissions`. |
 
 ### Daemon → client
 
@@ -353,7 +353,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
 | `error` | session | A typed error, usually in response to a bad message. |
-| `cu_permissions` | connection | Screen Recording and Accessibility status plus System Settings deep links (TD-3302). |
+| `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), or Windows UIPI / secure-desktop integrity (TD-3303). |
 
 ### Adding a message
 
