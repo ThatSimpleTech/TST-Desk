@@ -100,9 +100,14 @@ Desktop screenshot / move / click / type / scroll (TD-3301). Empty
 the argv for `mcp/tst-cu-mcp` over stdio — the daemon owns the child and
 does not bind a socket. Linux has no live path (E20).
 
+Browser computer-use (TD-1710): `browser` selects the in-process mock
+(CI, never launches Chrome) or Playwright with a persistent profile
+under the user data dir. Playwright missing always falls back to mock.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
+| `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
@@ -164,6 +169,7 @@ session:
   log_max_events: 10000
 computer_use:
   command: ""
+  browser: mock
 ```
 
 ### A preset

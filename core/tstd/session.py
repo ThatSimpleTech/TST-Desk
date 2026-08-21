@@ -228,6 +228,8 @@ class Session:
     def __init__(self, workspace_path: str) -> None:
         self.id = str(uuid.uuid4())
         self.workspace_path = workspace_path
+        # Session persist dir (TD-1710): screenshots land here, not in the workspace.
+        self.persist_dir: Path | None = None
         self._state = "idle"
         self.event_log = SessionEventLog()
         self._cancel_event = asyncio.Event()

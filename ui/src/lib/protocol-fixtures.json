@@ -826,6 +826,16 @@
     "mime": "text/markdown",
     "path": "notes.md"
   },
+  "screen_frame": {
+    "type": "screen_frame",
+    "seq": 23,
+    "session_id": "sess-1",
+    "path": "screens/aa.png",
+    "mime": "image/png",
+    "width": 1,
+    "height": 1,
+    "tool_call_id": "c1"
+  },
   "hello_ack": {
     "type": "hello_ack",
     "version": 1

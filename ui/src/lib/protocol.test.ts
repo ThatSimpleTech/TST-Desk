@@ -91,6 +91,7 @@ import type {
   ArtifactReady,
   ArtifactList,
   Artifact,
+  ScreenFrame,
   Ping,
   Error,
   Attachment,
@@ -799,6 +800,7 @@ describe("All fixtures have required shape", () => {
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",
+      "screen_frame",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -952,6 +954,16 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isString(m.path)).toBe(true);
     expect(hasKeys(m, ["content"])).toBe(false);
     expect(hasKeys(m, ["content_b64"])).toBe(false);
+  });
+
+  it("screen_frame is a path, not bytes (TD-1710)", () => {
+    const m = fixtures.screen_frame as ScreenFrame;
+    expect(m.type).toBe("screen_frame");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.path)).toBe(true);
+    expect(isString(m.mime)).toBe(true);
+    expect(hasKeys(m, ["content"])).toBe(false);
+    expect(hasKeys(m, ["png_base64"])).toBe(false);
   });
 
   it("session_list carries the auto-title field (TD-3001)", () => {

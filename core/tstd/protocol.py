@@ -1374,6 +1374,23 @@ class Error(DaemonEvent):
     message: str
 
 
+class ScreenFrame(DaemonEvent):
+    """A browser screenshot written to the session dir (TD-1710).
+
+    Path, not bytes. The PNG lives under ``sessions/<id>/`` — the same
+    wall as artifacts. A text data-URL sidecar lets the Screen pane
+    preview through the existing host reader.
+    """
+
+    type: Literal["screen_frame"] = "screen_frame"
+    session_id: str
+    path: str
+    mime: str = "image/png"
+    width: int | None = None
+    height: int | None = None
+    tool_call_id: str | None = None
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -1468,7 +1485,8 @@ DaemonEventT = Annotated[
     | ArtifactList
     | Artifact
     | Ping
-    | Error,
+    | Error
+    | ScreenFrame,
     Field(discriminator="type"),
 ]
 
@@ -1570,6 +1588,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "artifact",
         "ping",
         "error",
+        "screen_frame",
     }
 )
 

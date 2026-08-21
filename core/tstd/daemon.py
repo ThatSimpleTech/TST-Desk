@@ -33,6 +33,7 @@ from .boundary_config import (
     load_workspace_boundary,
     scaffold_workspace_config,
 )
+from .browser import BrowserDriver, browser_driver_from_config
 from .config import (
     ConfigError,
     ModelConfig,
@@ -439,6 +440,9 @@ class Daemon:
         # Shared across sessions so the kill-switch is process-wide.
         # Empty computer_use.command is the mock; a command is stdio MCP.
         self.desktop_driver: DesktopDriver = desktop_driver_from_config(self.config)
+        # Browser CU (TD-1710): mock unless computer_use.browser is playwright
+        # and Playwright is importable. Profile lives under the data dir.
+        self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
 
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
@@ -867,6 +871,7 @@ class Daemon:
             self._audit_writer = None
 
         await self.desktop_driver.aclose()
+        await self.browser_driver.aclose()
 
         log.info("shutdown complete")
 
@@ -1602,10 +1607,12 @@ class Daemon:
         tool_registry = create_registry()
         tool_dispatcher = ToolDispatcher(tool_registry)
         tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals
+        sess.persist_dir = self._session_persist.dir_for(sess.id)
         register_builtin_handlers(
             tool_dispatcher,
             allowed_commands=sess.boundary_config.boundary.shell_allowlist(),
             desktop_driver=self.desktop_driver,
+            browser_driver=self.browser_driver,
         )
 
         sink = self._audit_writer

@@ -3566,18 +3566,26 @@ calls.
 **Size:** 8 · **Depends on:** TD-1007
 
 **Acceptance criteria:**
-- [ ] `files_102.zip` unpacked into the tree first — it is the only copy of the
+- [x] `files_102.zip` unpacked into the tree first — it is the only copy of the
       `tst-cua` driver source
-- [ ] BrowserDriver runs against a real browser (Playwright persistent profile);
+- [x] BrowserDriver runs against a real browser (Playwright persistent profile);
       six-verb actions surface as tools through the existing approval gate
-- [ ] A Screen tab in the right pane streams browser screenshots so the session
+- [x] A Screen tab in the right pane streams browser screenshots so the session
       is watchable
-- [ ] Failure modes (driver crash, stalled page, denied action) land as normal
+- [x] Failure modes (driver crash, stalled page, denied action) land as normal
       timeline entries
 
 **Notes:** the wow story. Browser-only — whole-desktop AX stays v0.4 (TCC
 friction, per-app quirks, boundary model for screen actions). Driver bring-up
 on real hardware is where the estimate lives; timebox and record deviations.
+
+**Completed (2026-08-21):** `files_102.zip` was not in the tree — Class B
+deviation recorded in `DECISIONS.md`. Product driver is first-party
+`tstd.browser` (Playwright persistent profile under the user data dir, plus
+`MockBrowserDriver` for CI) with the same six verbs as tools through the
+existing `Tool.actuates` gate. `screen_frame` carries a session-dir path;
+the Screen tab streams those frames. Crash / stall / deny are `tool_result`
+rows the timeline already renders.
 
 ### TD-1711 — Session liveness honesty
 **Size:** 2 · **Depends on:** TD-1701
