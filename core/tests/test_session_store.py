@@ -170,3 +170,71 @@ class TestLifecycleMetadata:
             rec = SessionStore(Path(tmp)).get("s1")
             assert rec is not None
             assert rec.archived is False
+            assert rec.title is None
+
+
+class TestSessionTitle:
+    """Auto-title from the first non-empty user message (TD-3001)."""
+
+    async def test_first_message_titles_and_later_ones_do_not(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            assert await store.maybe_set_title("s1", "  Fix the rail titles  ") is True
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.title == "Fix the rail titles"
+
+            assert await store.maybe_set_title("s1", "a later message") is False
+            assert store.get("s1") is not None
+            assert store.get("s1").title == "Fix the rail titles"  # type: ignore[union-attr]
+
+    async def test_empty_and_whitespace_stay_untitled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            assert await store.maybe_set_title("s1", "") is False
+            assert await store.maybe_set_title("s1", "   \n\t  ") is False
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.title is None
+
+    async def test_title_is_first_line_collapsed_and_capped(self) -> None:
+        from tstd.session_store import SESSION_TITLE_MAX_LEN, title_from_user_message
+
+        assert title_from_user_message("hello\nworld") == "hello"
+        assert title_from_user_message("  lots   of\tspace  ") == "lots of space"
+        long = "x" * (SESSION_TITLE_MAX_LEN + 20)
+        assert title_from_user_message(long) == "x" * SESSION_TITLE_MAX_LEN
+        assert title_from_user_message("") is None
+
+    async def test_title_survives_upsert_and_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            await store.maybe_set_title("s1", "Keep this title")
+            await store.update_state("s1", "running")
+            await store.upsert("s1", "/ws", "complete")
+            rec = SessionStore(Path(tmp)).get("s1")
+            assert rec is not None
+            assert rec.title == "Keep this title"
+
+    async def test_a_store_written_before_title_still_loads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "sessions.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "session_id": "s1",
+                            "workspace_path": "/ws",
+                            "state": "idle",
+                            "created_at": "2026-08-13T10:00:00Z",
+                            "updated_at": "2026-08-13T10:00:00Z",
+                            "archived": False,
+                        }
+                    ]
+                )
+            )
+            rec = SessionStore(Path(tmp)).get("s1")
+            assert rec is not None
+            assert rec.title is None

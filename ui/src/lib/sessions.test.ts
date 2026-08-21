@@ -130,13 +130,21 @@ type SummaryState = SessionSummary["state"];
 
 function sessionList(
   entries: Array<
-    [id: string, updatedAt: string, state?: SummaryState, path?: string, archived?: boolean, starred?: boolean]
+    [
+      id: string,
+      updatedAt: string,
+      state?: SummaryState,
+      path?: string,
+      archived?: boolean,
+      starred?: boolean,
+      title?: string | null,
+    ]
   >,
 ): DaemonEventUnion {
   return {
     type: "session_list",
     seq: 1,
-    sessions: entries.map(([id, updatedAt, state, path, archived, starred]) => ({
+    sessions: entries.map(([id, updatedAt, state, path, archived, starred, title]) => ({
       session_id: id,
       workspace_path: path ?? "/ws/proj",
       state: state ?? "idle",
@@ -145,6 +153,7 @@ function sessionList(
       event_count: 3,
       archived: archived ?? false,
       starred: starred ?? false,
+      title: title ?? null,
     })),
   };
 }
@@ -284,6 +293,17 @@ describe("filter", () => {
   it("matches the workspace path", () => {
     setFilter("web");
     expect(visibleRows().map((r) => r.sessionId)).toEqual(["def67890-rest"]);
+  });
+
+  it("matches the auto-title (TD-3001)", () => {
+    emit(
+      sessionList([
+        ["abc12345-rest", "2026-08-14T09:00:00Z", "idle", "/ws/api-server", false, false, "Fix the rail"],
+        ["def67890-rest", "2026-08-13T09:00:00Z", "interrupted", "/ws/web-app"],
+      ]),
+    );
+    setFilter("rail");
+    expect(visibleRows().map((r) => r.sessionId)).toEqual(["abc12345-rest"]);
   });
 
   it("no match yields an empty list without touching the rows", () => {
@@ -533,9 +553,23 @@ describe("presentation helpers", () => {
       updatedAt: "2026-08-14T11:00:00Z",
       archived: false,
       starred: false,
+      title: null,
     };
     expect(rowTitle(row)).toBe("abc12345");
     expect(rowSubtitle(row, now)).toBe("api-server · 1h");
+  });
+
+  it("row title prefers the daemon title over the short id (TD-3001)", () => {
+    const row = {
+      sessionId: "abc12345-0000-0000-0000-000000000000",
+      workspacePath: "/ws/api-server",
+      state: "idle" as SummaryState,
+      updatedAt: "2026-08-14T11:00:00Z",
+      archived: false,
+      starred: false,
+      title: "Fix the rail titles",
+    };
+    expect(rowTitle(row)).toBe("Fix the rail titles");
   });
 });
 

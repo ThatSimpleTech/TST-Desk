@@ -1104,6 +1104,9 @@ class SessionSummary(BaseModel):
     # workspace. Additive with a default, so a client that ignores it
     # still sorts newest-first.
     starred: bool = False
+    # Auto-title from the first non-empty user message (TD-3001). None
+    # until then — the rail falls back to the short id. Additive.
+    title: str | None = None
 
 
 class SessionList(DaemonEvent):

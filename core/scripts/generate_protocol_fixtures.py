@@ -436,6 +436,7 @@ FIXTURES = {
                 "created_at": "2026-08-13T10:00:00Z",
                 "updated_at": "2026-08-13T10:00:00Z",
                 "event_count": 0,
+                "title": "hello world",
             },
             # TD-1715: the list stays complete and marks what is filed away.
             {

@@ -928,4 +928,10 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(hasKeys(m, ["content"])).toBe(false);
     expect(hasKeys(m, ["content_b64"])).toBe(false);
   });
+
+  it("session_list carries the auto-title field (TD-3001)", () => {
+    const list = fixtures.session_list as SessionList;
+    expect(list.sessions[0]?.title).toBe("hello world");
+    expect(list.sessions[1]?.title ?? null).toBeNull();
+  });
 });

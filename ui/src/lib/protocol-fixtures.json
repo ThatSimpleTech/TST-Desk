@@ -619,7 +619,8 @@
         "updated_at": "2026-08-13T10:00:00Z",
         "event_count": 0,
         "archived": false,
-        "starred": false
+        "starred": false,
+        "title": "hello world"
       },
       {
         "session_id": "sess-2",
@@ -629,7 +630,8 @@
         "updated_at": "2026-08-13T09:30:00Z",
         "event_count": 12,
         "archived": true,
-        "starred": true
+        "starred": true,
+        "title": null
       }
     ]
   },

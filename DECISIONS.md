@@ -6711,3 +6711,23 @@ is writes-this-session, the wrong list.
 
 **Alternative rejected:** Reusing Files. Serving bytes over loopback
 HTTP. Adding `location` to the protocol this story.
+
+---
+
+## 2026-08-20 — TD-3001: first-message title, 60-char cap (Class B)
+
+**Decision:** Auto-title from the first non-empty user message. First
+line only, whitespace collapsed, then hard-capped at 60 characters
+(`SESSION_TITLE_MAX_LEN` in `session_store.py`). No model call. Empty
+or attachment-only first messages stay untitled (`title: null`); the
+rail and palette fall back to `session_id[:8]`. Later messages never
+overwrite. Stored on `SessionRecord` / `sessions.json`, not a
+machine-wide preference file.
+
+**Rationale:** The rail's v0.1 short-id stand-in is what E30 replaces.
+A 60-char one-liner fits the 260px rail without wrapping. A model
+title would spend, race the first turn, and disagree across restarts.
+`sessions.json` is the session's own metadata; a user-data-dir file
+would orphan titles when the workspace's session list is the record.
+
+---
