@@ -388,20 +388,21 @@ def test_the_seams_the_story_asks_for_are_named() -> None:
     assert required <= named, f"unnamed extension points: {sorted(required - named)}"
 
 
-def test_the_provider_factory_seam_is_a_closure_in_start_session() -> None:
-    """The guide calls the provider a closure built in ``_start_session``.
+def test_the_provider_factory_seam_is_a_closure_in_attach_session_runtime() -> None:
+    """The guide calls the provider a closure built in ``_attach_session_runtime``.
 
     Worth pinning: it is why a session can be opened and attached with no
     API key stored, and turning it into an eagerly-constructed object
-    would break first-run without failing any existing test.
+    would break first-run without failing any existing test. Open and
+    revive share this helper, so the factory is not inside ``_start_session``.
     """
     source = (ROOT / "core" / "tstd" / "daemon.py").read_text(encoding="utf-8")
-    start = source.index("async def _start_session")
+    start = source.index("async def _attach_session_runtime")
     body = source[start : source.index("\n    async def ", start + 1)]
     assert "async def get_provider()" in body, (
         "the provider factory closure has moved or changed shape"
     )
-    assert "_start_session" in _rows("seams")["Daemon"][-1]
+    assert "_attach_session_runtime" in _rows("seams")["Daemon"][-1]
 
 
 # ── The "how to add a tool" walkthrough, executed ────────────────────────

@@ -1421,8 +1421,8 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
-            pending = self._pending_memory.get(msg.session_id)
-            if pending is None or pending.proposal_id != msg.proposal_id:
+            parked = self._pending_memory.get(msg.session_id)
+            if parked is None or parked.proposal_id != msg.proposal_id:
                 return build_error(
                     "no_memory_proposal",
                     "No live memory proposal to accept, edit, or reject.",
@@ -1432,9 +1432,9 @@ class Daemon:
                 del self._pending_memory[msg.session_id]
                 return None
             if isinstance(msg, MemoryEdit):
-                paths = await apply_edits(found.workspace_path, pending.proposal, msg.files, found)
+                paths = await apply_edits(found.workspace_path, parked.proposal, msg.files, found)
             else:
-                paths = await apply_proposal(found.workspace_path, pending.proposal, found)
+                paths = await apply_proposal(found.workspace_path, parked.proposal, found)
             await MemoryCommitter(Path(found.workspace_path)).commit(paths)
             del self._pending_memory[msg.session_id]
             return await self._memory_files_reply(found.workspace_path)
@@ -1478,13 +1478,13 @@ class Daemon:
             return
         try:
             provider = await self._ensure_provider()
+            emitted = await distill_if_due(session, provider, self.config)
         except Exception as exc:
             log.warning(
-                "distill skipped; provider unavailable",
+                "distill skipped; provider failed",
                 extra={"extra_fields": {"session_id": session.id, "error": str(exc)}},
             )
             return
-        emitted = await distill_if_due(session, provider, self.config)
         if emitted is None:
             return
         self._pending_memory[session.id] = emitted

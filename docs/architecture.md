@@ -290,6 +290,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
 | `session_state` | session | A session state transition, with an optional reason. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
+| `user_turn` | session | A user message the loop accepted. Exists so a restarted daemon can replay the user's side without inventing it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
 | `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. |
 | `tool_call` | session | A tool call about to execute, with its decision class. |
@@ -359,7 +360,7 @@ change; changing the same behaviour anywhere else usually is not.
 | `RULE_TABLE` | `core/tstd/autonomy/classifier.py` | The static decision rules, in priority order, first match wins. Anything the table cannot decide falls to the worker-tier classifier and defaults to class B — fail toward asking, never toward acting. |
 | `Precedence` | `core/tstd/context/discover.py` | The steering hierarchy: `user global` < `workspace` < `rules` < `nested`. Adding a scope means adding a level here, and `docs/steering.md` documents each one. |
 | `ToolDispatcher` | `core/tstd/tools/dispatch.py` | The single chokepoint every tool call passes through: schema validation, classifier, path guard, policy gate, handler, checkpoint, ledger. Prime directive §2.6 lives here, and reaching a handler unclassified raises rather than executing. |
-| `Daemon` | `core/tstd/daemon.py` | `_start_session` is where a session is wired: router, boundary, policy, tool stack, and the provider factory. The provider is a closure, not an object, so a session can be opened and attached before any API key exists — the key is only needed when the loop makes its first model call. |
+| `Daemon` | `core/tstd/daemon.py` | `_attach_session_runtime` is where a session is wired: router, boundary, policy, tool stack, and the provider factory. Open and revive both call it. The provider is a closure, not an object, so a session can be opened and attached before any API key exists — the key is only needed when the loop makes its first model call. |
 
 Two seams that look like extension points and are not:
 

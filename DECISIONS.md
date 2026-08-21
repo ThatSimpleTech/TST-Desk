@@ -6281,7 +6281,8 @@ Unchanged memory emits no `memory_proposal`. The proposal is held in
 process (`Daemon._pending_memory`); it is not written and not
 resurrected after restart. A turn in flight refuses End with
 `session_busy` and is skipped on quit. Crash / force-quit never enter
-`_shutdown`, so they write nothing.
+`_shutdown`, so they write nothing. A provider that cannot complete the
+non-streaming distill call is logged and skipped — quit still reaps.
 
 **Rationale:** Spec mechanic 3 is accept-before-write. Quit generating a
 proposal and then dying is why TD-2404 treats unanswered as reject.
