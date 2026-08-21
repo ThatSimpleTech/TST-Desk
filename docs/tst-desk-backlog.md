@@ -5874,13 +5874,13 @@ backoff parenthesized and pinned by a second-interval test.
 **Size:** 3 · **Depends on:** TD-1405
 
 **Acceptance criteria:**
-- [ ] `ApprovalRequest.summary`, `DecisionLogged`, and assistant text deltas pass through
+- [x] `ApprovalRequest.summary`, `DecisionLogged`, and assistant text deltas pass through
       the redactor before the event log — or each gets a documented, test-enforced argument
       for why its shape cannot carry a secret
-- [ ] `AuditStore.append_decision` scrubs its payload the way `append` does
-- [ ] `JSONFormatter` redacts `extra_fields` values and formatted tracebacks, not just the
+- [x] `AuditStore.append_decision` scrubs its payload the way `append` does
+- [x] `JSONFormatter` redacts `extra_fields` values and formatted tracebacks, not just the
       message and args
-- [ ] A key-shaped string planted in each path above never reaches disk or the wire raw,
+- [x] A key-shaped string planted in each path above never reaches disk or the wire raw,
       proved by tests
 
 TD-1405 redacts at event-log insertion but only for the event shapes it enumerated.
@@ -5888,6 +5888,16 @@ TD-1405 redacts at event-log insertion but only for the event shapes it enumerat
 `extra_fields` are merged into the log record after the redaction filter has run;
 tracebacks are formatted straight into the JSON line. Each is a narrow hole, but the
 README's claim is categorical, so the holes are defects.
+
+**Completed (2026-08-21):** the per-type field list became a whole-event scrub —
+`_redact_event` runs every string field of every event type through `redact_structure`,
+with the path-not-bytes contract documented for future payload-carrying events. The
+connection-scoped reply path (`session_list` titles, `memory_files` contents — user text
+that never rode the log) got its own chokepoint: `_handle_message` funnels every reply
+through `scrub_wire_json`. `append_decision` and the `JSONFormatter` last mile
+(`extra_fields`, tracebacks) scrub too. The drift guard is an enumeration test that plants
+a canary in every string field validation accepts on every `DaemonEvent` subclass — a new
+event type that skips the scrub fails red the day it is added.
 
 ### TD-4803 — `.tst/config.yaml` is agent-writable, so the agent can rewrite its own guardrails
 **Size:** 2 · **Depends on:** TD-706
