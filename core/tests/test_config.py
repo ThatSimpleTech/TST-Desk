@@ -18,6 +18,7 @@ from tstd.config import (
     ConfigError,
     EmbeddingsConfig,
     ModelConfig,
+    SlackNotifyConfig,
     TierConfig,
     cached_config,
     default_config_yaml,
@@ -164,6 +165,13 @@ class TestTiers:
         cfg = _load_shipped(tmp_path)
         assert cfg.computer_use.command == ""
         assert ComputerUseConfig().command == ""
+
+    def test_shipped_slack_notify_is_off(self, tmp_path: Path) -> None:
+        """TD-3801: packaged config does not send to Slack."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.notify.slack.enabled is False
+        assert cfg.notify.slack.host == ""
+        assert SlackNotifyConfig().enabled is False
 
     def test_computer_use_command_accepts_string_or_list(self) -> None:
         assert ComputerUseConfig(command="python -m tst_cu_mcp").command == ("python -m tst_cu_mcp")

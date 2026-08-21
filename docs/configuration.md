@@ -60,6 +60,7 @@ no effect.
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
+| `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack is off until `notify.slack.enabled` is true and a webhook URL is stored in the OS keychain. |
 
 ### `search`
 
@@ -108,6 +109,27 @@ under the user data dir. Playwright missing always falls back to mock.
 |---|---|---|---|
 | `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
+
+### `notify`
+
+Outbound notification channels (TD-3801). Each channel is a standalone
+`send(config, message)` — Slack first, no 20-platform gateway (spec §8).
+Off by default. The Slack incoming-webhook URL is a keychain secret
+(account `tst-slack-webhook`), never this file, never the audit log.
+`host` is the only host the notifier may reach; the keychain URL's host
+must match it or the send is dropped.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `slack` | mapping | see below | Slack incoming webhook. |
+
+#### `notify.slack`
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | When false, approval-needed and turn-complete never POST. |
+| `host` | string | *empty* | Allowed destination hostname. Empty disables even if `enabled` is true. |
+| `timeout_seconds` | float > 0 | `5` | How long a webhook POST may run. Failures are logged and never fail the turn. |
 
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
@@ -170,6 +192,11 @@ session:
 computer_use:
   command: ""
   browser: mock
+notify:
+  slack:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
 ```
 
 ### A preset

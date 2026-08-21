@@ -7157,3 +7157,26 @@ on `protocol.py`, AppShell, ScreenPane, and DECISIONS.
 **Alternative rejected:** Cherry-picking only the exit harness onto main
 and leaving chrome on side branches.
 
+---
+
+## 2026-08-21 — TD-3801: Slack webhook URL is a keychain secret (Class B)
+
+**Decision:** Slack notify is one function, `tstd.notify.slack.send(config,
+message)`. `notify.slack.enabled` and `notify.slack.host` live in the user
+`config.yaml`. The incoming-webhook URL is a keychain secret
+(`tst-slack-webhook`), never yaml, never a log line, never the audit
+database. Tests inject the URL. `send` POSTs only when enabled and the
+URL's host matches the configured host. Approval-needed and turn-complete
+schedule a fire-and-forget send from the daemon event subscriber; errors
+are logged without the URL and never fail the turn. Off by default. No
+20-platform gateway.
+
+**Rationale:** Spec §8 is the Hermes `send(config, message)` shape, Slack
+first. Prime directive §2.2 forbids secrets in config, logs, and audit.
+`test_outbound_hosts` requires the destination host to come from
+configuration, not a Python literal.
+
+**Alternative rejected:** Putting the webhook URL in `config.yaml`. Also
+rejected: a multi-platform notify gateway. Also rejected: failing the
+turn when Slack is down.
+
