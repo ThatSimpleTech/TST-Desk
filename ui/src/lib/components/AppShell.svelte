@@ -36,10 +36,16 @@
 	import DoctorPane from './DoctorPane.svelte';
 	import DecisionsPane from './DecisionsPane.svelte';
 	import SettingsPane from './SettingsPane.svelte';
+	import CuPermissionsPane from './CuPermissionsPane.svelte';
 	import CommandPalette from './CommandPalette.svelte';
 	import Icon from './Icon.svelte';
 	import { start as startOnboarding, onboarding, closeWizard } from '../onboarding.svelte.js';
 	import { startSettings, openSettings, closeSettings, settings } from '../settings.svelte.js';
+	import {
+		startCuPermissions,
+		closeCuPermissions,
+		cuPermissions,
+	} from '../cu-permissions.svelte.js';
 	import { startDoctor, runDoctor, closeDoctor, doctor } from '../doctor.svelte.js';
 	import { startDecisions, openDecisions, closeDecisions, decisions } from '../decisions.svelte.js';
 	import { palette, openPalette, closePalette } from '../palette-store.svelte.js';
@@ -76,7 +82,12 @@
 				workspaceMenuOpen: workspaces.menuOpen,
 				paletteOpen: palette.open,
 				modalOpen:
-					onboarding.open || doctor.open || decisions.open || settings.open || palette.open,
+					onboarding.open ||
+					doctor.open ||
+					decisions.open ||
+					settings.open ||
+					cuPermissions.open ||
+					palette.open,
 				turnLive: showCancel(chat.turnState),
 			},
 		);
@@ -95,7 +106,8 @@
 	// Top-most first, matching DOM order at the same --z-modal (settings is
 	// last among the panes, so it paints above decisions/doctor/wizard).
 	function closeTopModal(): void {
-		if (settings.open) closeSettings();
+		if (cuPermissions.open) closeCuPermissions();
+		else if (settings.open) closeSettings();
 		else if (decisions.open) closeDecisions();
 		else if (doctor.open) closeDoctor();
 		else if (onboarding.open) closeWizard();
@@ -112,6 +124,7 @@
 		const offDoctor = startDoctor();
 		const offDecisions = startDecisions();
 		const offSettings = startSettings();
+		const offCuPerms = startCuPermissions();
 		const offUsage = startUsage();
 		// TD-1204: subscribe for the window's life, not the tab's. The
 		// panel is only mounted on Stack; a reply with no subscriber is
@@ -133,6 +146,7 @@
 			offDoctor();
 			offDecisions();
 			offSettings();
+			offCuPerms();
 			offUsage();
 			offStack();
 			offOsNotify();
@@ -334,6 +348,7 @@
 <DoctorPane />
 <DecisionsPane />
 <SettingsPane />
+<CuPermissionsPane />
 <CommandPalette />
 
 <style>

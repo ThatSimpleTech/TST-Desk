@@ -383,6 +383,11 @@ export interface DesignHitTest extends ClientMessage {
   y: number;
 }
 
+/** Re-probe computer-use OS permissions / integrity (TD-3302, TD-3303). Connection-scoped. */
+export interface CheckCuPermissions extends ClientMessage {
+  type: "check_cu_permissions";
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -435,7 +440,8 @@ export type ClientMessageUnion =
   | ExportUsage
   | ListArtifacts
   | OpenArtifact
-  | DesignHitTest;
+  | DesignHitTest
+  | CheckCuPermissions;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -956,6 +962,24 @@ export interface DesignHit extends DaemonEvent {
   styles: Record<string, string>;
 }
 
+/** Computer-use OS permission / integrity report (TD-3302, TD-3303). Connection-scoped. */
+export interface CuPermissions extends DaemonEvent {
+  type: "cu_permissions";
+  granted: boolean;
+  screen_recording: boolean;
+  accessibility: boolean;
+  screen_recording_url: string;
+  accessibility_url: string;
+  first_run: boolean;
+  platform: "macos" | "windows";
+  no_gate: string;
+  uipi: string;
+  secure_desktop: string;
+  elevated: boolean;
+  uipi_applies: boolean;
+  secure_desktop_applies: boolean;
+}
+
 export interface ContextCompacted extends DaemonEvent {
   type: "context_compacted";
   session_id: string;
@@ -1012,4 +1036,5 @@ export type DaemonEventUnion =
   | Error
   | ScreenFrame
   | CuKillState
-  | DesignHit;
+  | DesignHit
+  | CuPermissions;

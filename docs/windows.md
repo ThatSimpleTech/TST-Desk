@@ -159,3 +159,33 @@ stops it.
 
 For where each of these decisions was made and what was rejected, see the TD-1402, TD-1406,
 TD-2902, TD-2903, and TD-2904 entries in `DECISIONS.md`.
+
+---
+
+## 7. Computer-use integrity
+
+Windows does not have a Screen Recording or Accessibility analog. There is no TCC-style grant
+dialog, nothing to click, and nothing to grant. `check_permissions` reports capture and input
+as allowed (`all_granted: true`) because that is true — and then names the two conditions
+under which actuation succeeds and does nothing.
+
+**UIPI (User Interface Privilege Isolation).** A process cannot send synthetic input to a
+window running at a higher integrity level. Clicks and keystrokes aimed at an elevated (Run as
+administrator) window are discarded by the OS. The sidecar detects a short `SendInput` result
+and raises rather than reporting success; it still cannot deliver the input. The typed tool
+error is `uipi`. Fix: launch TST Desk elevated too, or do not target administrator windows.
+
+**Secure desktop.** UAC consent prompts, the lock screen, and Ctrl+Alt+Del run in a separate
+session that cannot be captured or driven. Screenshots come back black and input never
+arrives. There is no workaround; that is the boundary that makes UAC meaningful. The typed
+tool error is `secure_desktop`.
+
+Neither is a permission the user can grant in Settings. A hang waiting for a prompt that will
+not appear is a defect. The first desktop computer-use attempt on Windows emits `cu_permissions`
+with this explanation (`platform: "windows"`). Settings reopens the same pane. macOS first-run
+is unchanged (Screen Recording + Accessibility).
+
+The report itself is `tst_cu_mcp.permissions.build_windows_report`. The daemon parses it; it
+does not grow a second Windows backend.
+
+See the TD-3303 entry in `DECISIONS.md`.

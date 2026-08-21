@@ -89,6 +89,7 @@ import type {
   LogTrimmed,
   ListArtifacts,
   OpenArtifact,
+  CheckCuPermissions,
   ArtifactReady,
   ArtifactList,
   Artifact,
@@ -96,6 +97,7 @@ import type {
   CuKillState,
   DesignHitTest,
   DesignHit,
+  CuPermissions,
   Ping,
   Error,
   Attachment,
@@ -800,6 +802,7 @@ describe("All fixtures have required shape", () => {
       "get_usage", "export_usage",
       "list_artifacts", "open_artifact",
       "design_hit_test",
+      "check_cu_permissions",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -821,6 +824,7 @@ describe("All fixtures have required shape", () => {
       "screen_frame",
       "cu_kill_state",
       "design_hit",
+      "cu_permissions",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -1010,6 +1014,28 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isNumber(m.y)).toBe(true);
     expect(typeof m.xpath === "string" || m.xpath === null).toBe(true);
     expect(m.box === null || (m.box !== undefined && isNumber(m.box.width))).toBe(true);
+  });
+
+  it("check_cu_permissions", () => {
+    const m = fixtures.check_cu_permissions as CheckCuPermissions;
+    expect(m.type).toBe("check_cu_permissions");
+  });
+
+  it("cu_permissions names both TCC gates and settings URLs", () => {
+    const m = fixtures.cu_permissions as CuPermissions;
+    expect(m.type).toBe("cu_permissions");
+    expect(isBoolean(m.granted)).toBe(true);
+    expect(isBoolean(m.screen_recording)).toBe(true);
+    expect(isBoolean(m.accessibility)).toBe(true);
+    expect(isString(m.screen_recording_url)).toBe(true);
+    expect(isString(m.accessibility_url)).toBe(true);
+    expect(m.platform).toBe("macos");
+    expect(isString(m.no_gate)).toBe(true);
+    expect(isString(m.uipi)).toBe(true);
+    expect(isString(m.secure_desktop)).toBe(true);
+    expect(isBoolean(m.elevated)).toBe(true);
+    expect(isBoolean(m.uipi_applies)).toBe(true);
+    expect(isBoolean(m.secure_desktop_applies)).toBe(true);
   });
 
   it("session_list carries the auto-title field (TD-3001)", () => {

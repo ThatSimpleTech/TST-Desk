@@ -7057,3 +7057,65 @@ invent live accuracy.
 accuracy. Also rejected: a Linux live row. Also rejected: a tolerance
 loose enough that any click passes.
 
+---
+
+## 2026-08-21 — TD-3302: macOS CU permission onboarding (Class B)
+
+**Decision:** Desktop TCC denial is `DesktopError.PERMISSION_DENIED`.
+The mock raises it when scripted. Live MCP errors that name Screen
+Recording, Accessibility, or TCC map to the same code. The tool result
+carries that code; the daemon also emits connection-scoped
+`cu_permissions` (granted/denied + System Settings URLs) on the first
+desktop tool call and on every later deny. First-run is
+`{user_data_dir}/cu-macos-permissions.yaml` `{shown: true}`, not the
+workspace. `check_cu_permissions` re-probes with `request=False` (never
+a TCC hang). Settings "Computer use permissions" reopens the same macOS
+copy. Windows-specific copy is TD-3303.
+
+Deep links are the current `x-apple.systemsettings` pane IDs:
+
+- Screen Recording: `x-apple.systemsettings:com.apple.preferences.privacy-security.ScreenCapture`
+- Accessibility: `x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility`
+
+These differ from the older
+`x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`
+/ `Privacy_Accessibility` aliases, which still resolve on some builds.
+
+**Rationale:** A hang waiting for the TCC dialog is a defect. The UI
+must not infer URLs. A user-data flag matches close-is-not-quit.
+
+**Alternative rejected:** Prompting TCC from the sidecar (`request=True`).
+Also rejected: a workspace file for first-run. Also rejected: Windows
+copy in this story.
+
+---
+
+## 2026-08-21 — TD-3303: Windows CU integrity onboarding (Class B)
+
+**Decision:** Windows computer-use has no grant dialog. First desktop CU
+attempt (and Settings reopen) emits the existing `cu_permissions` event
+with `platform: "windows"` and the sidecar's integrity copy: `no_gate`,
+`uipi`, `secure_desktop`, plus `elevated` / `limits_apply`. Settings URLs
+are empty. First-run is `{user_data_dir}/cu-windows-permissions.yaml`
+`{shown: true}` — a sibling of the macOS flag, not a replacement.
+
+Typed refuses are their own codes, not `permission_denied`:
+
+- `uipi` — `SendInput` short / higher-integrity target discarded input
+- `secure_desktop` — UAC / lock / Ctrl+Alt+Del cannot be captured or driven
+
+The mock raises them when scripted (`platform="win32"`). Live MCP strings
+that name UIPI or the secure desktop map to the same codes. The daemon
+reopens the pane on those codes the way it reopens on TCC deny. The
+report shape is `tst_cu_mcp.permissions.build_windows_report`; tstd
+parses it and does not grow a Windows backend.
+
+**Rationale:** Calling UIPI `permission_denied` would open the macOS TCC
+story on a platform that has nothing to grant. Distinct codes keep the
+macOS path intact and fail closed (typed error, no hang, no success on a
+discarded click).
+
+**Alternative rejected:** Overloading `permission_denied` for both OS
+gates. Also rejected: a second Windows probe in tstd. Also rejected:
+waiting for a prompt Windows will not show.
+
