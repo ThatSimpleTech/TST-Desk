@@ -5124,11 +5124,14 @@ the 20-platform gateway.
 **Size:** 5 · **Depends on:** TD-2901
 
 **Acceptance criteria:**
-- [ ] Jobs persist in the user data dir: id, workspace, instruction,
+- [x] Jobs persist in the user data dir: id, workspace, instruction,
       cadence or next-run, deliver-to (window / Slack / ntfy)
-- [ ] Natural-language create is a *worker* parse into that schema,
+- [x] Natural-language create is a *worker* parse into that schema,
       shown for edit before save
-- [ ] No job runs until M7's runner (TD-3804) exists
+- [x] No job runs until M7's runner (TD-3804) exists
+
+Done (2026-08-21): `{user_data_dir}/scheduler/jobs.json`; parse is a
+draft; save is a second call; no runner.
 
 ---
 
