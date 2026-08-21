@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 //
-// Computer-use permission panel (TD-3302): mock denied opens the same
-// copy Settings reopens; Retry re-probes.
+// Computer-use permission panel (TD-3302, TD-3303): mock denied opens
+// the same copy Settings reopens; Windows first-run is integrity copy;
+// Retry re-probes.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ClientMessageUnion, CuPermissions, DaemonEventUnion } from "./protocol";
@@ -51,6 +52,12 @@ function report(over: Partial<CuPermissions> = {}): CuPermissions {
 			"x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility",
 		first_run: true,
 		platform: "macos",
+		no_gate: "",
+		uipi: "",
+		secure_desktop: "",
+		elevated: false,
+		uipi_applies: false,
+		secure_desktop_applies: false,
 		...over,
 	};
 }
@@ -88,6 +95,64 @@ describe("cu_permissions event", () => {
 			error_code: "permission_denied",
 		});
 		expect(cuPermissions.open).toBe(true);
+	});
+
+	it("opens Windows copy on a first-run windows event", () => {
+		startCuPermissions();
+		emit(
+			report({
+				platform: "windows",
+				granted: true,
+				screen_recording: true,
+				accessibility: true,
+				screen_recording_url: "",
+				accessibility_url: "",
+				no_gate: "Windows has no equivalent of macOS TCC",
+				uipi: "higher integrity level; elevated windows discard input",
+				secure_desktop: "no workaround",
+				uipi_applies: true,
+				secure_desktop_applies: true,
+			}),
+		);
+		expect(cuPermissions.open).toBe(true);
+		expect(cuPermissions.platform).toBe("windows");
+		expect(cuPermissions.granted).toBe(true);
+		expect(cuPermissions.noGate).toContain("TCC");
+		expect(cuPermissions.uipi).toContain("integrity");
+		expect(cuPermissions.secureDesktop).toContain("no workaround");
+		expect(cuPermissions.uipiApplies).toBe(true);
+	});
+
+	it("opens on a typed uipi tool result", () => {
+		startCuPermissions();
+		emit({
+			type: "tool_result",
+			seq: 2,
+			session_id: "sess-1",
+			tool_call_id: "c1",
+			status: "error",
+			output: "UIPI discarded input",
+			truncated: false,
+			error_code: "uipi",
+		});
+		expect(cuPermissions.open).toBe(true);
+		expect(cuPermissions.platform).toBe("windows");
+	});
+
+	it("opens on a typed secure_desktop tool result", () => {
+		startCuPermissions();
+		emit({
+			type: "tool_result",
+			seq: 2,
+			session_id: "sess-1",
+			tool_call_id: "c1",
+			status: "error",
+			output: "secure desktop",
+			truncated: false,
+			error_code: "secure_desktop",
+		});
+		expect(cuPermissions.open).toBe(true);
+		expect(cuPermissions.platform).toBe("windows");
 	});
 });
 

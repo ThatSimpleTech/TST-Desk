@@ -623,11 +623,11 @@ class OpenArtifact(ClientMessage):
 
 
 class CheckCuPermissions(ClientMessage):
-    """Re-probe computer-use OS permissions (TD-3302).
+    """Re-probe computer-use OS permissions / integrity (TD-3302, TD-3303).
 
     Connection-scoped.  The daemon answers with ``cu_permissions``.  The
-    probe never raises a TCC prompt — a hang waiting for the dialog is a
-    defect.
+    probe never raises a TCC prompt and never waits on a Windows grant
+    dialog (there is none) — a hang is a defect.
     """
 
     type: Literal["check_cu_permissions"] = "check_cu_permissions"
@@ -1386,13 +1386,16 @@ class Error(DaemonEvent):
 
 
 class CuPermissions(DaemonEvent):
-    """Computer-use OS permission report (TD-3302).
+    """Computer-use OS permission / integrity report (TD-3302, TD-3303).
 
-    Connection-scoped (seq is fixed at 1).  Carries granted/denied for
-    Screen Recording and Accessibility plus the current System Settings
-    deep links.  ``first_run`` is true when this is the first desktop CU
-    attempt on this machine.  Windows-specific copy is TD-3303 — this
-    event always names the macOS pair (darwin and the mock).
+    Connection-scoped (seq is fixed at 1).  ``first_run`` is true when
+    this is the first desktop CU attempt for this platform on this
+    machine.
+
+    macOS carries granted/denied for Screen Recording and Accessibility
+    plus System Settings deep links.  Windows has no grant dialog — the
+    same event names the two silent failure modes (UIPI, secure desktop)
+    with empty settings URLs.
     """
 
     type: Literal["cu_permissions"] = "cu_permissions"
@@ -1403,7 +1406,13 @@ class CuPermissions(DaemonEvent):
     screen_recording_url: str
     accessibility_url: str
     first_run: bool = False
-    platform: Literal["macos"] = "macos"
+    platform: Literal["macos", "windows"] = "macos"
+    no_gate: str = ""
+    uipi: str = ""
+    secure_desktop: str = ""
+    elevated: bool = False
+    uipi_applies: bool = False
+    secure_desktop_applies: bool = False
 
 
 # ── Discriminated unions ───────────────────────────────────────────────

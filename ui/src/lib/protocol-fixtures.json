@@ -838,7 +838,13 @@
     "screen_recording_url": "x-apple.systemsettings:com.apple.preferences.privacy-security.ScreenCapture",
     "accessibility_url": "x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility",
     "first_run": true,
-    "platform": "macos"
+    "platform": "macos",
+    "no_gate": "",
+    "uipi": "",
+    "secure_desktop": "",
+    "elevated": false,
+    "uipi_applies": false,
+    "secure_desktop_applies": false
   },
   "hello_ack": {
     "type": "hello_ack",

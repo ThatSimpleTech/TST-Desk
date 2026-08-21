@@ -11,6 +11,7 @@ import base64
 import json
 from typing import Any
 
+from .permissions import normalize_cu_platform, windows_report
 from .protocol import TINY_PNG, DesktopError, window_matches
 
 
@@ -23,12 +24,22 @@ class MockDesktopDriver:
         foreground_title: str = "Mock Window",
         foreground_app: str = "mock",
         permission_denied: bool = False,
+        platform: str = "macos",
+        elevated: bool = False,
+        uipi_blocked: bool = False,
+        secure_desktop_blocked: bool = False,
     ) -> None:
         self.foreground_title = foreground_title
         self.foreground_app = foreground_app
         self.killed = False
         # Scripted TCC denial: raise before any record or actuation.
         self.permission_denied = permission_denied
+        # Default mock stays macOS-shaped on every host so TD-3302 tests
+        # pin identically. ``platform="win32"`` is the Windows first-run path.
+        self.platform = platform
+        self.elevated = elevated
+        self.uipi_blocked = uipi_blocked
+        self.secure_desktop_blocked = secure_desktop_blocked
         # Successful operations only — a refusal must not appear here.
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.actuations: list[str] = []
@@ -37,6 +48,17 @@ class MockDesktopDriver:
         self.killed = bool(killed)
 
     def _refuse_if_denied(self) -> None:
+        if self.secure_desktop_blocked:
+            raise DesktopError(
+                DesktopError.SECURE_DESKTOP,
+                "The secure desktop cannot be captured or driven. Nothing was sent.",
+            )
+        if self.uipi_blocked:
+            raise DesktopError(
+                DesktopError.UIPI,
+                "Synthetic input was discarded by UIPI "
+                "(target is a higher integrity level). Nothing was sent.",
+            )
         if self.permission_denied:
             raise DesktopError(
                 DesktopError.PERMISSION_DENIED,
@@ -44,6 +66,8 @@ class MockDesktopDriver:
             )
 
     async def check_permissions(self) -> dict[str, Any]:
+        if normalize_cu_platform(self.platform) == "windows":
+            return windows_report(elevated=self.elevated)
         granted = not self.permission_denied
         return {
             "platform": "macos",
