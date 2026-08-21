@@ -6619,3 +6619,29 @@ mode.
 **Alternative rejected:** `TSTD_PROVIDER=mock` in the production
 daemon. Tests inject the mock on `Daemon(...)`. An env backdoor is a
 footgun. Also rejected: reusing an existing session in the workspace.
+
+---
+
+## 2026-08-20 — TD-3204: M5 exit is a protocol-client coworker pass (Class B)
+
+**Decision:** `tstd.e2e_m5.run_m5` is a third protocol-client pass, not
+a branch of `e2e_harness.run`. Closing the viewer is dropping the
+WebSocket (no `cancel`, no `shutdown`). The harness then proves the
+in-memory runner and `session_list` still show `running`/`idle`, sends
+a second turn from a new `hello` + `attach` + `user_message`, and
+reattaches `from_seq=1` to assert both turns replay with contiguous
+seqs. `tst run` is `cli.run_turn` against that same
+`Daemon(provider=MockProvider)` so CI stays offline.
+
+This tip does not include TD-3201 (`artifacts.py` / `record_artifact`)
+or the Tauri hide-on-close commit. The ACs do not require an artifact;
+the product claim under test is that the session outlives the viewer.
+
+**Rationale:** M5's exit criterion is coworker mode at the protocol
+cut TD-1401 already uses. Folding detach/reopen into `run()` would
+change a frozen signature. A live Tauri window is not available in CI
+and is not on this tip.
+
+**Alternative rejected:** Spawning a production `tstd` for `tst run`.
+That process has no mock provider and would leave CI. Also rejected:
+merging the artifact branch into this worktree.
