@@ -5893,9 +5893,9 @@ README's claim is categorical, so the holes are defects.
 **Size:** 2 · **Depends on:** TD-706
 
 **Acceptance criteria:**
-- [ ] The fs write tool refuses `.tst/config.yaml` the way it refuses steering files
-- [ ] The daemon's own config-write path (user-initiated from the UI) still works
-- [ ] A test drives a policy-poisoning write (e.g. setting `class_c_default: auto`) through
+- [x] The fs write tool refuses `.tst/config.yaml` the way it refuses steering files
+- [x] The daemon's own config-write path (user-initiated from the UI) still works
+- [x] A test drives a policy-poisoning write (e.g. setting `class_c_default: auto`) through
       the fs tool and asserts refusal
 
 The approval policy lives in `.tst/config.yaml`. `is_steering_write` covers `AGENTS.md`,
@@ -5905,21 +5905,32 @@ self-escalation the steering-file rule exists to prevent, through the side door.
 has the UI owning config writes, so the refusal targets the agent's fs tool, not the
 daemon's config path.
 
+**Completed (2026-08-21):** `is_steering_write` refuses `_POLICY_FILE_PARTS`
+(`.tst/config.yaml`, case-folded) alongside the rules dir — one chokepoint feeds both the
+classifier (Class C, `steering-file-write`) and the guard (`steering_file` refusal). The
+daemon's scaffold path writes directly and is pinned unaffected; a dispatcher-level test
+drives the `class_c_default: auto` poisoning write and asserts the file survives.
+
 ### TD-4804 — Steering-directory check is case-sensitive on case-insensitive filesystems
 **Size:** 2 · **Depends on:** TD-602
 
 **Acceptance criteria:**
-- [ ] The `.tst/rules/` prefix comparison case-folds, so `.tst/RULES/…` (any case variant)
+- [x] The `.tst/rules/` prefix comparison case-folds, so `.tst/RULES/…` (any case variant)
       is refused as a steering write
-- [ ] Over-refusal on case-sensitive filesystems (a literal `.tst/RULES/` directory is
+- [x] Over-refusal on case-sensitive filesystems (a literal `.tst/RULES/` directory is
       treated as steering there too) is accepted and documented in the code
-- [ ] Tests drive the comparison with case variants; the basename check's existing
-      upper-casing is covered the same way
+- [x] Tests drive the comparison with case variants; the memory carve-out folds the same
+      way so `.tst/MEMORY/…` stays memory, not steering
 
 `is_steering_write` upper-cases basenames but compares the rules-dir tuple verbatim. On
 APFS and NTFS — both default case-insensitive — a write to `.tst/RULES/evil.md` lands in
 `.tst/rules/` while the guard sees a different path and allows it. The primary dev platform
 is macOS, so the shipped-default filesystem is the vulnerable one.
+
+**Completed (2026-08-21):** `_fold()` case-folds the guard's directory comparisons
+unconditionally, documented in the code. Parametrized variants cover `RULES`/`Rules`/`rUlEs`
+and `MEMORY`/`Memory`; the basename check still wins under a case-variant memory dir; the
+classifier and guard both refuse `.tst/RULES/evil.md`.
 
 ### TD-4805 — Shell tool hardening: steering-aware classification, env filter gaps, allowlist honesty
 **Size:** 3 · **Depends on:** TD-605, TD-703

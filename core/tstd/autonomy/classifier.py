@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -56,6 +56,24 @@ class DecisionClass(StrEnum):
 _STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
 _STEERING_RULES_DIR_PARTS = (".tst", "rules")
 _MEMORY_DIR_PARTS = (".tst", "memory")
+# The approval policy lives here (spec §6). Not a steering file by name,
+# but a write to it rewrites the guardrails — the self-escalation the
+# steering refusal exists to prevent (TD-4803).
+_POLICY_FILE_PARTS = (".tst", "config.yaml")
+
+
+def _fold(parts: Sequence[str]) -> tuple[str, ...]:
+    """Case-fold path parts for guard comparisons (TD-4804).
+
+    APFS and NTFS — the shipped-default filesystems — are case-insensitive,
+    so a verbatim tuple match lets ``.tst/RULES/…`` past the steering
+    check while the filesystem lands it in ``.tst/rules/``. Folding is
+    unconditional: on a case-sensitive filesystem a literal ``.tst/RULES/``
+    directory is over-refused as steering, and that is accepted — the
+    guard fails closed, and a case-variant of a reserved name is never
+    legitimate.
+    """
+    return tuple(p.casefold() for p in parts)
 
 
 @dataclass(frozen=True)
@@ -218,7 +236,7 @@ def is_memory_write(boundary: Boundary, path: Path) -> bool:
     ``CLAUDE.md`` as a basename stay steering even if dropped here.
     """
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
-    if len(relative) < 2 or tuple(relative[:2]) != _MEMORY_DIR_PARTS:
+    if len(relative) < 2 or _fold(relative[:2]) != _MEMORY_DIR_PARTS:
         return False
     return relative[-1].upper() not in {s.upper() for s in _STEERING_BASENAMES}
 
@@ -226,10 +244,11 @@ def is_memory_write(boundary: Boundary, path: Path) -> bool:
 def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
-    Steering files — ``AGENTS.md``, ``CLAUDE.md``, and anything under
-    ``.tst/rules/`` — are read-only to the filesystem tool, unconditionally.
+    Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
+    ``.tst/rules/``, and the approval policy at ``.tst/config.yaml``
+    (TD-4803) — are read-only to the filesystem tool, unconditionally.
     ``.tst/memory/`` is the carve-out (TD-2102); never fold it into
-    ``.tst/**``.
+    ``.tst/**``.  Directory comparisons case-fold (TD-4804): see ``_fold``.
     """
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
     if not relative:
@@ -239,7 +258,9 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
         return True
     if is_memory_write(boundary, path):
         return False
-    return tuple(relative[:2]) == _STEERING_RULES_DIR_PARTS
+    if _fold(relative) == _POLICY_FILE_PARTS:
+        return True
+    return _fold(relative[:2]) == _STEERING_RULES_DIR_PARTS
 
 
 def writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:
