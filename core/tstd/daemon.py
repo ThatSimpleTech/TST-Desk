@@ -54,6 +54,12 @@ from .context.prompt import PromptAssembler
 from .context.stack import build_instruction_stack
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .coworker import load_coworker, save_coworker
+from .cu_indicators import (
+    CuIndicatorPrefs,
+    load_cu_indicators,
+    save_cu_indicators,
+    set_current_prefs,
+)
 from .desktop import DesktopDriver, desktop_driver_from_config
 from .discovery import resolve_tier_slugs
 from .keychain import (
@@ -150,6 +156,7 @@ from .protocol import (
     SetApiKey,
     SetBranch,
     SetCoworker,
+    SetCuIndicators,
     SetLoadGlobalMemory,
     SetPreset,
     SetSessionStar,
@@ -430,6 +437,8 @@ class Daemon:
         self.skip_all_approvals = load_skip_all(self.data_dir)
         self.load_global_memory = load_global_memory(self.data_dir)
         self.coworker_enabled = load_coworker(self.data_dir)
+        self.cu_indicators = load_cu_indicators(self.data_dir)
+        set_current_prefs(self.cu_indicators)
         self.workspace_pins = load_workspace_pins(self.data_dir)
         self.session_stars = load_session_stars(self.data_dir)
         self.ws_server = WebSocketServer(
@@ -495,6 +504,9 @@ class Daemon:
             skip_all_approvals=self.skip_all_approvals,
             load_global_memory=self.load_global_memory,
             coworker_enabled=self.coworker_enabled,
+            cu_glow=self.cu_indicators.glow,
+            cu_agent_cursor=self.cu_indicators.agent_cursor,
+            cu_show_on_real_display=self.cu_indicators.show_on_real_display,
             pinned_workspaces=list(self.workspace_pins),
         )
 
@@ -1279,6 +1291,16 @@ class Daemon:
         if isinstance(msg, SetCoworker):
             self.coworker_enabled = msg.enabled
             save_coworker(self.data_dir, msg.enabled)
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetCuIndicators):
+            self.cu_indicators = CuIndicatorPrefs(
+                glow=msg.glow,
+                agent_cursor=msg.agent_cursor,
+                show_on_real_display=msg.show_on_real_display,
+            )
+            save_cu_indicators(self.data_dir, self.cu_indicators)
+            set_current_prefs(self.cu_indicators)
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetWorkspacePin):

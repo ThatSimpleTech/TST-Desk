@@ -76,6 +76,7 @@ import type {
   SetSkipAllApprovals,
   SetLoadGlobalMemory,
   SetCoworker,
+  SetCuIndicators,
   SetWorkspacePin,
   SetupState,
   ApiKeyValidated,
@@ -92,6 +93,7 @@ import type {
   ArtifactList,
   Artifact,
   ScreenFrame,
+  CuKillState,
   Ping,
   Error,
   Attachment,
@@ -199,6 +201,15 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.set_coworker as SetCoworker;
     expect(m.type).toBe("set_coworker");
     expect(isBoolean(m.enabled)).toBe(true);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("set_cu_indicators", () => {
+    const m = fixtures.set_cu_indicators as SetCuIndicators;
+    expect(m.type).toBe("set_cu_indicators");
+    expect(isBoolean(m.glow)).toBe(true);
+    expect(isBoolean(m.agent_cursor)).toBe(true);
+    expect(isBoolean(m.show_on_real_display)).toBe(true);
     expect("session_id" in m).toBe(false);
   });
 
@@ -658,6 +669,9 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isString(m.active_preset)).toBe(true);
     expect(isBoolean(m.skip_all_approvals)).toBe(true);
     expect(isBoolean(m.coworker_enabled)).toBe(true);
+    expect(isBoolean(m.cu_glow)).toBe(true);
+    expect(isBoolean(m.cu_agent_cursor)).toBe(true);
+    expect(isBoolean(m.cu_show_on_real_display)).toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
   });
@@ -770,6 +784,7 @@ describe("All fixtures have required shape", () => {
       "set_skip_all_approvals",
       "set_load_global_memory",
       "set_coworker",
+      "set_cu_indicators",
       "set_workspace_pin",
       "set_session_star",
       "rename_session",
@@ -801,6 +816,7 @@ describe("All fixtures have required shape", () => {
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",
       "screen_frame",
+      "cu_kill_state",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -964,6 +980,14 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isString(m.mime)).toBe(true);
     expect(hasKeys(m, ["content"])).toBe(false);
     expect(hasKeys(m, ["png_base64"])).toBe(false);
+  });
+
+  it("cu_kill_state carries the kill bit (TD-3402)", () => {
+    const m = fixtures.cu_kill_state as CuKillState;
+    expect(m.type).toBe("cu_kill_state");
+    expect(isBoolean(m.killed)).toBe(true);
+    expect(m.seq).toBe(1);
+    expect("session_id" in m).toBe(false);
   });
 
   it("session_list carries the auto-title field (TD-3001)", () => {

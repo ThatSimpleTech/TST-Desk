@@ -59,6 +59,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "artifact", // TD-3201
   "error",
   "screen_frame", // TD-1710
+  "cu_kill_state", // TD-3402
 ]);
 
 /**

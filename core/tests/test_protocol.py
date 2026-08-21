@@ -53,6 +53,7 @@ from tstd.protocol import (
     RevokePolicyRule,
     SessionState,
     SetCoworker,
+    SetCuIndicators,
     SetLoadGlobalMemory,
     SetSessionStar,
     SetSkipAllApprovals,
@@ -158,6 +159,15 @@ class TestClientMessages:
         assert isinstance(back, SetCoworker)
         assert back.enabled is False
         assert "session_id" not in SetCoworker.model_fields
+
+    def test_set_cu_indicators(self) -> None:
+        msg = SetCuIndicators(glow=False, agent_cursor=True, show_on_real_display=True)
+        back = _roundtrip(msg)
+        assert isinstance(back, SetCuIndicators)
+        assert back.glow is False
+        assert back.agent_cursor is True
+        assert back.show_on_real_display is True
+        assert "session_id" not in SetCuIndicators.model_fields
 
     def test_set_workspace_pin(self) -> None:
         msg = SetWorkspacePin(path="/ws", pinned=True)

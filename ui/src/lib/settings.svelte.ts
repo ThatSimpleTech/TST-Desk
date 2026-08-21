@@ -49,6 +49,12 @@ export const settings = $state({
 	loadGlobalMemory: false,
 	/** Machine-wide coworker (TD-2905). Default on; from setup_state. */
 	coworkerEnabled: true,
+	/** Screen-pane glow (TD-3402). Default on; from setup_state. */
+	cuGlow: true,
+	/** Screen-pane agent cursor (TD-3402). Default on; from setup_state. */
+	cuAgentCursor: true,
+	/** Host overlay on the real display (TD-3402). Default off. */
+	cuShowOnRealDisplay: false,
 });
 
 let started = false;
@@ -82,6 +88,9 @@ export function resetSettings(): void {
 	settings.skipAllApprovals = false;
 	settings.loadGlobalMemory = false;
 	settings.coworkerEnabled = true;
+	settings.cuGlow = true;
+	settings.cuAgentCursor = true;
+	settings.cuShowOnRealDisplay = false;
 	started = false;
 }
 
@@ -99,6 +108,9 @@ function reduce(event: DaemonEventUnion): void {
 		settings.skipAllApprovals = event.skip_all_approvals ?? false;
 		settings.loadGlobalMemory = event.load_global_memory ?? false;
 		settings.coworkerEnabled = event.coworker_enabled ?? true;
+		settings.cuGlow = event.cu_glow ?? true;
+		settings.cuAgentCursor = event.cu_agent_cursor ?? true;
+		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? false;
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -208,4 +220,18 @@ export function setLoadGlobalMemory(enabled: boolean): void {
 /** Turn coworker mode on or off (TD-2905). Acked with setup_state. */
 export function setCoworker(enabled: boolean): void {
 	sendToDaemon({ type: "set_coworker", enabled });
+}
+
+/** Persist computer-use indicator prefs (TD-3402). Acked with setup_state. */
+export function setCuIndicators(next: {
+	glow?: boolean;
+	agentCursor?: boolean;
+	showOnRealDisplay?: boolean;
+}): void {
+	sendToDaemon({
+		type: "set_cu_indicators",
+		glow: next.glow ?? settings.cuGlow,
+		agent_cursor: next.agentCursor ?? settings.cuAgentCursor,
+		show_on_real_display: next.showOnRealDisplay ?? settings.cuShowOnRealDisplay,
+	});
 }

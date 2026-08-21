@@ -6,6 +6,8 @@
 	import { session } from '../session-status.svelte.js';
 	import { screen } from '../screen.svelte.js';
 	import { SCREEN_EMPTY_COPY, screenTabVisible } from '../screen';
+	import GlowLayer from './GlowLayer.svelte';
+	import AgentCursor from './AgentCursor.svelte';
 
 	let visible = $derived(
 		screenTabVisible({
@@ -19,14 +21,18 @@
 </script>
 
 <div class="screen-pane">
-	{#if !visible || empty}
-		<p class="empty">{SCREEN_EMPTY_COPY}</p>
-		{#if screen.error !== null}
-			<p class="error">{screen.error}</p>
+	<div class="stage">
+		{#if !visible || empty}
+			<p class="empty">{SCREEN_EMPTY_COPY}</p>
+			{#if screen.error !== null}
+				<p class="error">{screen.error}</p>
+			{/if}
+		{:else}
+			<img class="frame" src={screen.preview} alt="Computer-use screen" />
 		{/if}
-	{:else}
-		<img class="frame" src={screen.preview} alt="Computer-use screen" />
-	{/if}
+		<GlowLayer />
+		<AgentCursor />
+	</div>
 </div>
 
 <style>
@@ -38,6 +44,16 @@
 		align-items: center;
 		justify-content: center;
 		background: var(--color-bg);
+	}
+
+	.stage {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		max-width: 100%;
+		max-height: 100%;
 	}
 
 	.empty {

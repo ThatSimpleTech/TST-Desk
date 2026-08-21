@@ -47,6 +47,7 @@
 	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
 	import { startStack, refreshStack } from '../stack-store.svelte.js';
 	import { startScreen, screen } from '../screen.svelte.js';
+	import { startCuIndicators } from '../screen-indicator.svelte.js';
 	import { screenTabVisible } from '../screen';
 	import { startOsNotify, createTauriOsNotifyBridge } from '../os-notify.svelte.js';
 	import { startCloseHint } from '../close-hint';
@@ -108,6 +109,7 @@
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
 		const offArtifacts = startArtifacts();
 		const offScreen = startScreen();
+		const offCuIndicators = startCuIndicators();
 		const offCoworker = startCoworkerIndicator();
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
@@ -124,6 +126,7 @@
 			offOsNotify();
 			offArtifacts();
 			offScreen();
+			offCuIndicators();
 			offCoworker();
 			offCloseHint();
 		};

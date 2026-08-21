@@ -38,6 +38,7 @@ from tstd.protocol import (
     ConversationReset,
     CostUpdate,
     CreateRule,
+    CuKillState,
     DecisionLogged,
     DeleteApiKey,
     DeleteSession,
@@ -91,6 +92,7 @@ from tstd.protocol import (
     SetApiKey,
     SetBranch,
     SetCoworker,
+    SetCuIndicators,
     SetLoadGlobalMemory,
     SetPreset,
     SetSessionStar,
@@ -142,6 +144,7 @@ FIXTURES = {
     "set_skip_all_approvals": SetSkipAllApprovals(enabled=True),
     "set_load_global_memory": SetLoadGlobalMemory(enabled=True),
     "set_coworker": SetCoworker(enabled=True),
+    "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
     "set_workspace_pin": SetWorkspacePin(path="/home/user/project", pinned=True),
     "resume": Resume(session_id="sess-1"),
     "cancel": Cancel(session_id="sess-1"),
@@ -470,6 +473,9 @@ FIXTURES = {
         active_preset="tst-default",
         skip_all_approvals=False,
         coworker_enabled=True,
+        cu_glow=True,
+        cu_agent_cursor=True,
+        cu_show_on_real_display=False,
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so
@@ -590,6 +596,7 @@ FIXTURES = {
         tool_call_id="c1",
         seq=23,
     ),
+    "cu_kill_state": CuKillState(killed=True),
 }
 
 

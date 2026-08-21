@@ -6949,3 +6949,35 @@ the shared write without a new protocol event.
 rejected: dropping `png_base64` from the desktop tool result in this
 story — the model still needs the image; the pane does not.
 
+---
+
+## 2026-08-21 — TD-3402: Screen-pane glow and agent cursor (Class B)
+
+**Decision:** Three machine-wide bits live in `{user_data_dir}/cu-indicators.yaml`
+(`glow`, `agent_cursor`, `show_on_real_display`). Settings → Appearance
+sends `set_cu_indicators`; `setup_state` reports them (glow and cursor
+default on; real display off). Glow and the agent cursor are CSS overlays
+on the Screen pane. They are not a second hardware pointer and do not
+call any OS cursor API.
+
+`show_on_real_display` is the contract for a later host/sidecar software
+overlay. TD-3402's host path is a no-op (`notify_host_real_display_overlay`).
+When the toggle is on, `desktop_screenshot` / `browser_screenshot` (and
+the browser post-actuation refresh) set `real_display_overlay_hidden`
+for the duration of the capture so an overlay cannot paint into the
+frame.
+
+Live means a `desktop_*` / `browser_*` tool is in flight, or the session
+is still in a CU turn after one. The store clears on `turn_complete`,
+`session_state` cancelled, and `cu_kill_state` with `killed=true`.
+`prefers-reduced-motion` is a static border and no cursor trail.
+
+**Rationale:** A second OS pointer would fight the real one. Putting
+indicators on the Screen frame matches how the user already watches CU.
+The hide flag is the smallest real-display contract that screenshot
+tests can assert without building a host overlay in this story.
+
+**Alternative rejected:** Moving the hardware pointer for the indicator.
+Also rejected: a Tauri invoke that writes the YAML (two writers). Also
+rejected: drawing a host overlay in this story.
+
