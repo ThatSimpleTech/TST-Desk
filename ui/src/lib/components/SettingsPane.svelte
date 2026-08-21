@@ -11,6 +11,7 @@
 		setSection,
 		setTheme,
 		setCoworker,
+		setRemoteAttach,
 		isDiscovered,
 		saveSlug,
 		loadRules,
@@ -130,6 +131,27 @@
 						>
 					</div>
 					<p class="hint">Off restores close = shutdown. Quit always shuts down.</p>
+					<div class="keep-running">
+						<p class="keep-title">Allow remote attach</p>
+						<button
+							class="choice"
+							class:choice--active={settings.remoteAttachEnabled}
+							type="button"
+							role="switch"
+							aria-checked={settings.remoteAttachEnabled}
+							onclick={() => setRemoteAttach(!settings.remoteAttachEnabled)}
+							>{settings.remoteAttachEnabled ? 'On' : 'Off'}</button
+						>
+					</div>
+					<p class="hint">
+						{#if settings.remoteBind}
+							Listening on {settings.remoteBind}. Off unbinds that address and leaves
+							127.0.0.1.
+						{:else}
+							Off by default. On binds the Tailscale address; the port-file token stays
+							local.
+						{/if}
+					</p>
 					<CuIndicatorToggles />
 					<CuPermissionsPane variant="settings" />
 				{:else if settings.section === 'model'}

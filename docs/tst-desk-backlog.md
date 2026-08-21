@@ -5064,8 +5064,12 @@ port-file token stays loopback-only; failed auth is `auth_failed`.
 **Size:** 2 · **Depends on:** TD-3602
 
 **Acceptance criteria:**
-- [ ] Toggle + the bound address shown (not a secret)
-- [ ] Off unbinds the Tailscale iface and leaves loopback
+- [x] Toggle + the bound address shown (not a secret)
+- [x] Off unbinds the Tailscale iface and leaves loopback
+
+Done (2026-08-21): Settings `Allow remote attach` sends `set_remote_attach`;
+`setup_state` reports `remote_attach_enabled` and `remote_bind` (address,
+never a token). Off drops the extra listener and leaves loopback.
 
 ---
 

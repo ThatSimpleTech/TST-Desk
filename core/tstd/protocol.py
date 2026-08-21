@@ -269,6 +269,20 @@ class SetCuIndicators(ClientMessage):
     show_on_real_display: bool
 
 
+class SetRemoteAttach(ClientMessage):
+    """Turn Tailscale remote attach on or off (TD-3603).
+
+    Machine-wide, no session. Persists ``{user_data_dir}/remote-attach.yaml``.
+    On sets ``remote.bind`` to the last-known Tailscale target (default
+    ``tailscale0``) and starts the extra listener. Off clears the bind
+    and drops that listener; loopback stays. The daemon answers with
+    ``setup_state``. Default off. Never carries a token.
+    """
+
+    type: Literal["set_remote_attach"] = "set_remote_attach"
+    enabled: bool
+
+
 class Resume(ClientMessage):
     """Resume a session paused at a declared cap (TD-707).
 
@@ -1249,6 +1263,10 @@ class SetupState(DaemonEvent):
     cu_show_on_real_display: bool = False
     # TD-2806: workspaces pinned on this machine. Not a workspace file.
     pinned_workspaces: list[str] = Field(default_factory=list)
+    # TD-3603: Settings "Allow remote attach". Additive, default off.
+    # ``remote_bind`` is the bound Tailscale address, never a token.
+    remote_attach_enabled: bool = False
+    remote_bind: str | None = None
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1577,7 +1595,8 @@ ClientMessageT = Annotated[
     | OpenArtifact
     | DesignHitTest
     | CheckCuPermissions
-    | SetCuKill,
+    | SetCuKill
+    | SetRemoteAttach,
     Field(discriminator="type"),
 ]
 
@@ -1687,6 +1706,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "design_hit_test",
         "check_cu_permissions",
         "set_cu_kill",
+        "set_remote_attach",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(

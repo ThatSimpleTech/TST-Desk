@@ -127,6 +127,12 @@ export interface SetCuIndicators extends ClientMessage {
   show_on_real_display: boolean;
 }
 
+/** Turn Tailscale remote attach on or off (TD-3603). Machine-wide, no session. */
+export interface SetRemoteAttach extends ClientMessage {
+  type: "set_remote_attach";
+  enabled: boolean;
+}
+
 /** Pin or unpin a workspace on the Projects list (TD-2806). */
 export interface SetWorkspacePin extends ClientMessage {
   type: "set_workspace_pin";
@@ -448,7 +454,8 @@ export type ClientMessageUnion =
   | OpenArtifact
   | DesignHitTest
   | CheckCuPermissions
-  | SetCuKill;
+  | SetCuKill
+  | SetRemoteAttach;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -820,6 +827,10 @@ export interface SetupState extends DaemonEvent {
   // TD-3402: host overlay on the real display. Additive, default off.
   cu_show_on_real_display?: boolean;
   pinned_workspaces?: string[];
+  // TD-3603: Allow remote attach. Additive, default off.
+  // remote_bind is the bound Tailscale address, never a token.
+  remote_attach_enabled?: boolean;
+  remote_bind?: string | null;
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the
