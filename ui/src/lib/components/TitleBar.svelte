@@ -6,7 +6,7 @@
 	//
 	// The picker and the meter own their own markup and styles in
 	// WorkspacePicker/CostMeter; what stays here is the row itself.
-	import { session, setTier, type SessionIndicator } from '../session-status.svelte.js';
+	import { session, setTier, setPlanMode, type SessionIndicator } from '../session-status.svelte.js';
 	import { formatUsd } from '../cost-format.js';
 	import CostMeter from './CostMeter.svelte';
 	import CuKillSwitch from './CuKillSwitch.svelte';
@@ -77,6 +77,21 @@
 					{/if}
 				</button>
 			{/each}
+			<!-- Plan lock (TD-4603): brain on every completion until cleared.
+			     Not a plan document, not accept-to-execute — a tier lock. The
+			     meter stays honest: this is the expensive path by design. -->
+			<button
+				class="chip"
+				class:chip--active={session.planLock}
+				type="button"
+				aria-pressed={session.planLock}
+				title={session.planLock
+					? 'Plan is on — brain forced every turn until cleared (expensive)'
+					: 'Plan — force the brain tier every turn until cleared (expensive)'}
+				onclick={() => setPlanMode(!session.planLock)}
+			>
+				plan
+			</button>
 		</div>
 
 		<CostMeter />
