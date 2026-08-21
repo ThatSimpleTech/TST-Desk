@@ -68,6 +68,7 @@ function sessionList(summaries: Summary[]): DaemonEventUnion {
       updated_at: s.updated,
       event_count: 0,
       archived: s.archived ?? false,
+      starred: false,
     })),
   };
 }

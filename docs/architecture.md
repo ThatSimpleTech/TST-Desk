@@ -266,6 +266,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `list_sessions` | — | Ask for the current session list. |
 | `new_session` | yes | Create a fresh session in an existing session's workspace. |
 | `archive_session` | yes | File a session away, or restore it. Never a kill. |
+| `set_session_star` | yes | Star or unstar a session. Machine-wide. Acked with `session_list` (TD-3003). |
 | `delete_session` | yes | Destroy a session and its event log. Refused mid-turn. |
 | `move_session` | yes | Reassign a session to another workspace, keeping its id and log. |
 | `get_setup_state` | — | Ask for the onboarding state: key presence, presets, active preset. |

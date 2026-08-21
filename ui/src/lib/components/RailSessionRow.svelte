@@ -29,6 +29,7 @@
 		requestDelete,
 		requestMove,
 		setArchived,
+		setStarred,
 		toggleRowMenu
 	} from '../session-actions.svelte.js';
 
@@ -41,7 +42,9 @@
 	let targets = $derived(moving ? moveTargets(row.sessionId) : []);
 
 	function run(id: RailRowActionId): void {
-		if (id === 'archive') setArchived(row.sessionId, true);
+		if (id === 'star') setStarred(row.sessionId, true);
+		else if (id === 'unstar') setStarred(row.sessionId, false);
+		else if (id === 'archive') setArchived(row.sessionId, true);
 		else if (id === 'unarchive') setArchived(row.sessionId, false);
 		else if (id === 'move') requestMove(row.sessionId);
 		else if (id === 'delete') requestDelete(row.sessionId);
@@ -75,7 +78,7 @@
 
 	{#if menuOpen}
 		<div class="menu" role="group" aria-label={`Actions for session ${rowTitle(row)}`}>
-			{#each rowActions(row.archived) as action (action.id)}
+			{#each rowActions(row.archived, row.starred) as action (action.id)}
 				<button
 					class="action"
 					class:action-danger={action.danger}

@@ -52,6 +52,8 @@ export interface SessionRow {
 	/** Filed away (TD-1715). Daemon truth; the rail only decides which shelf
 	 *  it renders on. */
 	archived: boolean;
+	/** Pinned above newer unstarred rows (TD-3003). Daemon truth. */
+	starred: boolean;
 }
 
 export const sessions = $state({
@@ -60,6 +62,8 @@ export const sessions = $state({
 	collapsed: false,
 	/** Which shelf the history section is showing (TD-1715). */
 	showArchived: false,
+	/** Restrict the current shelf to starred rows (TD-3003). */
+	showStarredOnly: false,
 	/** Row whose action menu is open; one at a time. */
 	menuFor: null as string | null,
 	/** Row whose Delete is awaiting confirmation — Delete is irreversible, so
@@ -112,6 +116,7 @@ export function resetSessions(): void {
 	sessions.filter = "";
 	sessions.collapsed = false;
 	sessions.showArchived = false;
+	sessions.showStarredOnly = false;
 	closeRowMenus();
 }
 
@@ -134,8 +139,12 @@ function reduce(event: DaemonEventUnion): void {
 				state: s.state,
 				updatedAt: s.updated_at,
 				archived: s.archived,
+				starred: s.starred,
 			}))
-			.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+			.sort((a, b) => {
+				if (a.starred !== b.starred) return a.starred ? -1 : 1;
+				return a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0;
+			});
 		// A move re-homes the bound session without unbinding it (TD-1715),
 		// so the title bar's workspace has to follow the list rather than the
 		// attach it never re-ran.
@@ -201,6 +210,7 @@ export function visibleRows(): SessionRow[] {
 	return sessions.rows.filter(
 		(r) =>
 			r.archived === sessions.showArchived &&
+			(!sessions.showStarredOnly || r.starred) &&
 			(needle === "" ||
 				r.sessionId.toLowerCase().includes(needle) ||
 				r.workspacePath.toLowerCase().includes(needle)),
@@ -210,7 +220,9 @@ export function visibleRows(): SessionRow[] {
 /** Rows on the shelf being shown, before the filter — tells "nothing here"
  *  apart from "nothing matches". */
 export function shelfRowCount(): number {
-	return sessions.rows.filter((r) => r.archived === sessions.showArchived).length;
+	return sessions.rows.filter(
+		(r) => r.archived === sessions.showArchived && (!sessions.showStarredOnly || r.starred),
+	).length;
 }
 
 export function setFilter(value: string): void {

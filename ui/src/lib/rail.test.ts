@@ -18,6 +18,7 @@ import {
 	accountRow,
 	rowActions,
 	archivedToggle,
+	starredToggle,
 	emptyRowsCopy,
 	DELETE_CONFIRM,
 	MOVE_HINT,
@@ -152,13 +153,17 @@ describe("accountRow", () => {
 
 describe("rowActions", () => {
 	it("offers archive, move and delete on a live row", () => {
-		expect(rowActions(false).map((a) => a.id)).toEqual(["archive", "move", "delete"]);
+		expect(rowActions(false).map((a) => a.id)).toEqual(["star", "archive", "move", "delete"]);
 	});
 
 	it("swaps archive for unarchive on a filed row, never both", () => {
 		const ids = rowActions(true).map((a) => a.id);
-		expect(ids).toEqual(["unarchive", "move", "delete"]);
+		expect(ids).toEqual(["star", "unarchive", "move", "delete"]);
 		expect(ids).not.toContain("archive");
+	});
+
+	it("swaps star for unstar on a starred row, never both", () => {
+		expect(rowActions(false, true).map((a) => a.id)).toEqual(["unstar", "archive", "move", "delete"]);
 	});
 
 	it("marks only delete destructive", () => {
@@ -218,6 +223,11 @@ describe("archived shelf", () => {
 		expect(archivedToggle(false).label).toBe("Archived");
 		expect(archivedToggle(true).label).toBe("Sessions");
 	});
+
+	it("labels the starred filter with where the click goes", () => {
+		expect(starredToggle(false).label).toBe("Starred");
+		expect(starredToggle(true).label).toBe("All");
+	});
 });
 
 describe("emptyRowsCopy", () => {
@@ -226,6 +236,7 @@ describe("emptyRowsCopy", () => {
 		expect(emptyRowsCopy(true, false, false)).toBe("No archived sessions");
 		expect(emptyRowsCopy(false, true, true)).toBe("No matching sessions");
 		expect(emptyRowsCopy(true, true, true)).toBe("No matching sessions");
+		expect(emptyRowsCopy(false, false, false, true)).toBe("No starred sessions");
 	});
 
 	it("does not claim a filter hid rows when the shelf itself is empty", () => {

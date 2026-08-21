@@ -140,6 +140,7 @@ from .protocol import (
     SetBranch,
     SetLoadGlobalMemory,
     SetPreset,
+    SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
     SetTierSlug,
@@ -181,6 +182,7 @@ from .session import (
 )
 from .session_lifecycle import archive_session, delete_session, move_session
 from .session_persist import LoadedSession, SessionPersist
+from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .workspace_pins import load_workspace_pins, save_workspace_pins
@@ -412,6 +414,7 @@ class Daemon:
         self.skip_all_approvals = load_skip_all(self.data_dir)
         self.load_global_memory = load_global_memory(self.data_dir)
         self.workspace_pins = load_workspace_pins(self.data_dir)
+        self.session_stars = load_session_stars(self.data_dir)
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
@@ -1268,6 +1271,20 @@ class Daemon:
             refusal = await archive_session(self._session_store, msg.session_id, msg.archived)
             return refusal if refusal is not None else await self._handle_list_sessions()
 
+        if isinstance(msg, SetSessionStar):
+            if self._session_store.get(msg.session_id) is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                    session_id=msg.session_id,
+                )
+            stars = [i for i in self.session_stars if i != msg.session_id]
+            if msg.starred:
+                stars.append(msg.session_id)
+            self.session_stars = stars
+            save_session_stars(self.data_dir, stars)
+            return await self._handle_list_sessions()
+
         if isinstance(msg, DeleteSession):
             refusal = await delete_session(
                 self.session_registry,
@@ -1276,6 +1293,9 @@ class Daemon:
                 self._release_session,
                 persist=self._session_persist,
             )
+            if refusal is None:
+                self.session_stars = [i for i in self.session_stars if i != msg.session_id]
+                save_session_stars(self.data_dir, self.session_stars)
             return refusal if refusal is not None else await self._handle_list_sessions()
 
         if isinstance(msg, MoveSession):
@@ -1667,6 +1687,7 @@ class Daemon:
 
     async def _handle_list_sessions(self) -> str:
         """Build the durable session list as a ``session_list`` event."""
+        starred = set(self.session_stars)
         summaries: list[SessionSummary] = []
         for record in self._session_store.records():
             sess = self.session_registry.get(record.session_id)
@@ -1679,8 +1700,10 @@ class Daemon:
                     updated_at=record.updated_at,
                     event_count=sess.event_log.last_seq if sess else 0,
                     archived=record.archived,
+                    starred=record.session_id in starred,
                 )
             )
+        summaries.sort(key=lambda s: (s.starred, s.updated_at), reverse=True)
         return SessionList(seq=1, sessions=summaries).model_dump_json()
 
     def _release_session(self, session_id: str) -> None:

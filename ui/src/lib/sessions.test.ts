@@ -116,7 +116,9 @@ import {
   requestDelete,
   requestMove,
   setArchived,
+  setStarred,
   toggleArchivedView,
+  toggleStarredOnly,
   toggleRowMenu,
 } from "./session-actions.svelte.js";
 import { railFunctions } from "./rail";
@@ -128,13 +130,13 @@ type SummaryState = SessionSummary["state"];
 
 function sessionList(
   entries: Array<
-    [id: string, updatedAt: string, state?: SummaryState, path?: string, archived?: boolean]
+    [id: string, updatedAt: string, state?: SummaryState, path?: string, archived?: boolean, starred?: boolean]
   >,
 ): DaemonEventUnion {
   return {
     type: "session_list",
     seq: 1,
-    sessions: entries.map(([id, updatedAt, state, path, archived]) => ({
+    sessions: entries.map(([id, updatedAt, state, path, archived, starred]) => ({
       session_id: id,
       workspace_path: path ?? "/ws/proj",
       state: state ?? "idle",
@@ -142,6 +144,7 @@ function sessionList(
       updated_at: updatedAt,
       event_count: 3,
       archived: archived ?? false,
+      starred: starred ?? false,
     })),
   };
 }
@@ -520,6 +523,7 @@ describe("presentation helpers", () => {
       state: "idle" as SummaryState,
       updatedAt: "2026-08-14T11:00:00Z",
       archived: false,
+      starred: false,
     };
     expect(rowTitle(row)).toBe("abc12345");
     expect(rowSubtitle(row, now)).toBe("api-server · 1h");
@@ -583,6 +587,39 @@ describe("archived shelf", () => {
     setFilter("zzz");
     expect(visibleRows()).toEqual([]);
     expect(shelfRowCount()).toBe(1);
+  });
+});
+
+describe("starred rows (TD-3003)", () => {
+  it("sorts starred above a newer unstarred row", () => {
+    emit(
+      sessionList([
+        ["older", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, true],
+        ["newer", "2026-08-14T12:00:00Z"],
+      ]),
+    );
+    expect(visibleRows().map((r) => r.sessionId)).toEqual(["older", "newer"]);
+  });
+
+  it("filters to starred only when that toggle is on", () => {
+    emit(
+      sessionList([
+        ["pinned", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, true],
+        ["plain", "2026-08-14T12:00:00Z"],
+      ]),
+    );
+    toggleStarredOnly();
+    expect(sessions.showStarredOnly).toBe(true);
+    expect(visibleRows().map((r) => r.sessionId)).toEqual(["pinned"]);
+  });
+
+  it("stars with the daemon's verb", () => {
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"]]));
+    mocks.sent.length = 0;
+    setStarred("s-live", true);
+    expect(mocks.sent).toEqual([
+      { type: "set_session_star", session_id: "s-live", starred: true },
+    ]);
   });
 });
 
