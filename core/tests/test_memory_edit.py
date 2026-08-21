@@ -43,7 +43,8 @@ class TestMemoryEdit:
             ),
             None,
         )
-        assert reply is None
+        assert reply is not None
+        assert json.loads(reply)["type"] == "memory_files"
         assert memory_dir(ws).joinpath("MEMORY.md").read_text(encoding="utf-8") == (
             "edited by hand\n"
         )

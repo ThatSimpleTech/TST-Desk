@@ -42,6 +42,17 @@ onDaemonEvent((event) => {
  * replays only the gap does not empty the footer with nothing coming
  * back to refill it.
  */
+/** Proposals the Memory column can host for this workspace. */
+export function pendingForWorkspace(
+  workspacePath: string,
+  rows: readonly { sessionId: string; workspacePath: string }[],
+): PendingMemoryProposal[] {
+  if (boundSessionId === null || pending.length === 0) return [];
+  const row = rows.find((r) => r.sessionId === boundSessionId);
+  if (row === undefined || row.workspacePath !== workspacePath) return [];
+  return [...pending];
+}
+
 export function bindMemoryProposal(sessionId: string | null): void {
   if (sessionId === boundSessionId) return;
   boundSessionId = sessionId;
