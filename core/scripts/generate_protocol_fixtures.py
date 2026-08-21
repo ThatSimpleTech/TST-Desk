@@ -21,6 +21,10 @@ from tstd.protocol import (
     ApprovalRequest,
     Approve,
     ArchiveSession,
+    Artifact,
+    ArtifactEntry,
+    ArtifactList,
+    ArtifactReady,
     AssistantDelta,
     AssistantReasoning,
     Attach,
@@ -52,6 +56,7 @@ from tstd.protocol import (
     InstructionFileEntry,
     InstructionFiles,
     InstructionStack,
+    ListArtifacts,
     ListInstructions,
     ListMemory,
     ListPins,
@@ -67,6 +72,7 @@ from tstd.protocol import (
     MemoryProposal,
     MemoryReject,
     MoveSession,
+    OpenArtifact,
     OpenWorkspace,
     Ping,
     PolicyRules,
@@ -178,6 +184,9 @@ FIXTURES = {
     # Usage and cost (TD-1706)
     "get_usage": GetUsage(),
     "export_usage": ExportUsage(format="csv"),
+    # Artifacts (TD-3201): list/open on the wire; record is a daemon API.
+    "list_artifacts": ListArtifacts(session_id="sess-1"),
+    "open_artifact": OpenArtifact(session_id="sess-1", artifact_id="art-1"),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", seq=2),
@@ -536,6 +545,33 @@ FIXTURES = {
         session_id="sess-1",
         requested_from_seq=1,
         earliest_seq=8,
+    ),
+    # TD-3201: session-scoped notice; list/open replies stay off the log.
+    "artifact_ready": ArtifactReady(
+        session_id="sess-1",
+        artifact_id="art-1",
+        title="Notes",
+        mime="text/markdown",
+        path="notes.md",
+        seq=22,
+    ),
+    "artifact_list": ArtifactList(
+        session_id="sess-1",
+        artifacts=[
+            ArtifactEntry(
+                artifact_id="art-1",
+                title="Notes",
+                mime="text/markdown",
+                path="notes.md",
+            )
+        ],
+    ),
+    "artifact": Artifact(
+        session_id="sess-1",
+        artifact_id="art-1",
+        title="Notes",
+        mime="text/markdown",
+        path="notes.md",
     ),
 }
 

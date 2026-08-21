@@ -4721,11 +4721,18 @@ the session. The work view is the right-pane surface that is not chat.
 **Size:** 5 · **Depends on:** TD-2901, TD-1709
 
 **Acceptance criteria:**
-- [ ] Daemon can store an artifact (id, session, mime, path under the
+- [x] Daemon can store an artifact (id, session, mime, path under the
       workspace or the session data dir, title)
-- [ ] Protocol: `artifact_ready` event; list/open messages
-- [ ] Workspace-wall applies; no write outside it
-- [ ] Gate and fixtures updated (TD-1010 contract)
+- [x] Protocol: `artifact_ready` event; list/open messages
+- [x] Workspace-wall applies; no write outside it
+- [x] Gate and fixtures updated (TD-1010 contract)
+
+**Done (2026-08-20):** `Daemon.record_artifact` writes
+`sessions/{id}/artifacts.json` plus optional bytes under
+`sessions/{id}/artifacts/`, or registers a workspace path that passes
+`PathGuard`. `artifact_ready` is session-scoped; `list_artifacts` /
+`open_artifact` answer with path metadata, not bytes. Unknown id is
+`artifact_not_found`. See DECISIONS.md 2026-08-20 TD-3201.
 
 ---
 

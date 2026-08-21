@@ -6588,3 +6588,43 @@ ruler for a protocol that addresses events by seq. A session event for
 
 **Alternative rejected:** Byte-cap rotation. Also rejected: making
 tombstones resumable without a conversation snapshot.
+
+---
+
+## 2026-08-20 — TD-3201: artifact record behind two walls (Class B)
+
+**Decision:** Artifacts persist with the session, not the workspace
+index. Metadata is `{data_dir}/sessions/{id}/artifacts.json`. Bytes the
+daemon itself stores land at `{data_dir}/sessions/{id}/artifacts/{id}`.
+A record may instead name a workspace-relative path. The on-disk row
+adds `location: workspace | session` so list/open can re-check the
+correct wall after a symlink changes; that field is not on the wire.
+
+Protocol (additive, `PROTOCOL_VERSION` stays 1):
+
+- `artifact_ready` `{session_id, artifact_id, title, mime, path}` —
+  session-scoped, written to the event log
+- `list_artifacts` `{session_id}` → connection-scoped `artifact_list`
+- `open_artifact` `{session_id, artifact_id}` → connection-scoped
+  `artifact` (metadata + path). Unknown id is `artifact_not_found`.
+  Bytes never ride the WebSocket.
+
+`Daemon.record_artifact(...)` is the only writer this story. No client
+record message. No model tool. No Artifacts rail.
+
+Wall: a relative path is judged by `PathGuard.check_read` against the
+session workspace (same helpers as the filesystem tools). An absolute
+path under that session's persist dir is the other allowed location.
+`../`, absolute escape, symlink-out, and another session's persist dir
+are refused. Title and path on persisted events go through
+`redact_secrets`.
+
+**Rationale:** Attachments (TD-1709) are inbound on a turn. The Files
+pane (TD-1705) is writes-this-session. Artifacts are durable products
+of the session. Putting bytes in the session persist dir keeps them
+when the workspace path is not the thing the model made, without
+opening a write-anywhere door. List/open return a path so a later
+preview (TD-3202) can open the file itself.
+
+**Alternative rejected:** A model tool this story — tests register
+through the daemon API. Also rejected: dumping bytes on the socket.

@@ -575,6 +575,28 @@ class ExportUsage(ClientMessage):
     format: Literal["jsonl", "csv"] = "jsonl"
 
 
+class ListArtifacts(ClientMessage):
+    """List artifacts persisted with a session (TD-3201).
+
+    The daemon answers with ``artifact_list``.  Bytes stay off the wire.
+    """
+
+    type: Literal["list_artifacts"] = "list_artifacts"
+    session_id: str
+
+
+class OpenArtifact(ClientMessage):
+    """Open one artifact by id (TD-3201).
+
+    The daemon answers with ``artifact`` (metadata and path).  An unknown
+    id is a typed error.  Huge bytes are not dumped on the socket.
+    """
+
+    type: Literal["open_artifact"] = "open_artifact"
+    session_id: str
+    artifact_id: str = Field(min_length=1)
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -1246,6 +1268,54 @@ class LogTrimmed(DaemonEvent):
     earliest_seq: int = Field(ge=1)
 
 
+class ArtifactEntry(BaseModel):
+    """One artifact on ``artifact_list`` (TD-3201). Path, not bytes."""
+
+    artifact_id: str = Field(min_length=1)
+    title: str
+    mime: str
+    path: str
+
+
+class ArtifactReady(DaemonEvent):
+    """An artifact was recorded for this session (TD-3201).
+
+    Session-scoped: it rides the event log so attach can replay the
+    notice.  ``list_artifacts`` is the source of truth after a trim.
+    """
+
+    type: Literal["artifact_ready"] = "artifact_ready"
+    session_id: str
+    artifact_id: str = Field(min_length=1)
+    title: str
+    mime: str
+    path: str
+
+
+class ArtifactList(DaemonEvent):
+    """Response to ``list_artifacts`` (TD-3201). Connection-scoped."""
+
+    type: Literal["artifact_list"] = "artifact_list"
+    seq: int = 1
+    session_id: str
+    artifacts: list[ArtifactEntry] = Field(default_factory=list)
+
+
+class Artifact(DaemonEvent):
+    """Response to ``open_artifact`` (TD-3201): metadata and path.
+
+    Connection-scoped.  Bytes stay on disk; the client opens the path.
+    """
+
+    type: Literal["artifact"] = "artifact"
+    seq: int = 1
+    session_id: str
+    artifact_id: str = Field(min_length=1)
+    title: str
+    mime: str
+    path: str
+
+
 class Ping(BaseModel):
     """Application-level liveness frame (TD-1716).  No session, no seq.
 
@@ -1321,7 +1391,9 @@ ClientMessageT = Annotated[
     | RunDiagnostics
     | GetUsage
     | ExportUsage
-    | DeleteApiKey,
+    | DeleteApiKey
+    | ListArtifacts
+    | OpenArtifact,
     Field(discriminator="type"),
 ]
 
@@ -1359,6 +1431,9 @@ DaemonEventT = Annotated[
     | UsageReport
     | UsageExported
     | LogTrimmed
+    | ArtifactReady
+    | ArtifactList
+    | Artifact
     | Ping
     | Error,
     Field(discriminator="type"),
@@ -1416,6 +1491,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "run_diagnostics",
         "get_usage",
         "export_usage",
+        "list_artifacts",
+        "open_artifact",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -1453,6 +1530,9 @@ _KNOWN_EVENT_TYPES = frozenset(
         "usage_report",
         "usage_exported",
         "log_trimmed",
+        "artifact_ready",
+        "artifact_list",
+        "artifact",
         "ping",
         "error",
     }

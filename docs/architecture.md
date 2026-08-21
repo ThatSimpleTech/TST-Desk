@@ -279,6 +279,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `run_diagnostics` | — | Run the doctor checks. |
 | `get_usage` | — | Ask for token and cost rollups by session, day and week (TD-1706). |
 | `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
+| `list_artifacts` | yes | List artifacts persisted with the session (TD-3201). Acked with `artifact_list`. |
+| `open_artifact` | yes | Open one artifact by id. Acked with `artifact` (metadata and path, not bytes). Unknown id is a typed error. |
 
 ### Daemon → client
 
@@ -322,6 +324,9 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |
 | `log_trimmed` | connection | Attach asked for a seq the on-disk window dropped. Replay continues from `earliest_seq` (TD-2901). |
+| `artifact_ready` | session | An artifact was recorded for this session (TD-3201). |
+| `artifact_list` | connection | The artifacts `list_artifacts` asked for. |
+| `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
 | `error` | session | A typed error, usually in response to a bad message. |
 
