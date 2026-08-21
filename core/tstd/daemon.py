@@ -1399,7 +1399,7 @@ class Daemon:
                 paths = await apply_proposal(found.workspace_path, pending.proposal, found)
             await MemoryCommitter(Path(found.workspace_path)).commit(paths)
             del self._pending_memory[msg.session_id]
-            return None
+            return await self._memory_files_reply(found.workspace_path)
 
         if isinstance(msg, Shutdown):
             log.info("shutdown requested via websocket")

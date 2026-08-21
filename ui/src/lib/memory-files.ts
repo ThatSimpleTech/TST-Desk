@@ -10,3 +10,8 @@ export interface MemoryFile {
 export function memoryEmptyCopy(): string {
 	return "No memory yet. End a session to distill the first notes into this folder.";
 }
+
+/** Locality copy — this folder, this machine. Never "sync". */
+export function memoryLocalCopy(): string {
+	return "Local to this machine and this folder. Nothing is uploaded.";
+}

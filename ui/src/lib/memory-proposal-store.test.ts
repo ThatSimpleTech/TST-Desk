@@ -24,7 +24,13 @@ vi.mock("./connection-status.svelte.js", () => ({
   sendToDaemon: connection.send,
 }));
 
-import { accept, bindMemoryProposal, pending, reject } from "./memory-proposal-store.svelte.js";
+import {
+  accept,
+  bindMemoryProposal,
+  pending,
+  pendingForWorkspace,
+  reject,
+} from "./memory-proposal-store.svelte.js";
 
 function proposal(overrides: Partial<MemoryProposal> = {}): MemoryProposal {
   return {
@@ -167,6 +173,13 @@ describe("decision actions", () => {
       session_id: "s1",
       proposal_id: "mp-1",
     });
+  });
+
+  it("hosts the card on the Memory column for this workspace", () => {
+    emit(proposal());
+    const rows = [{ sessionId: "s1", workspacePath: "/ws" }];
+    expect(pendingForWorkspace("/ws", rows).map((p) => p.proposalId)).toEqual(["mp-1"]);
+    expect(pendingForWorkspace("/other", rows)).toEqual([]);
   });
 
   it("reject sends memory_reject and drops the card", () => {

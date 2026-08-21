@@ -4432,10 +4432,10 @@ format. The agent still cannot write these paths (TD-2102).
 **Size:** 2 · **Depends on:** TD-2801, TD-2601
 
 **Acceptance criteria:**
-- [ ] The column shows `.tst/memory/**` for this workspace (E26's pane)
-- [ ] Copy says it is local to this machine / this folder — no "sync"
-- [ ] Distill proposals (E24) can open against this column
-- [ ] Empty state points at the first End session / quit distill
+- [x] The column shows `.tst/memory/**` for this workspace (E26's pane)
+- [x] Copy says it is local to this machine / this folder — no "sync"
+- [x] Distill proposals (E24) can open against this column
+- [x] Empty state points at the first End session / quit distill
 
 ---
 

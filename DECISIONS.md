@@ -6384,6 +6384,19 @@ commit path."
 
 ---
 
+## 2026-08-20 — TD-2803: proposals open on the Memory column (Class B)
+
+**Decision:** The project-home Memory column hosts the distill card when
+the bound session belongs to that workspace. The shell footer hides the
+same card while Projects is the surface so the user does not get two.
+Accept replies with `memory_files` so the column refreshes. Locality
+copy names this machine and this folder and never says "sync."
+
+**Rationale:** TD-2803 is E26's pane hosted here, not a second store.
+The footer stays for chat. Duplicate cards would fight.
+
+---
+
 ## 2026-08-20 — Decompose v0.3–Later (Class B)
 
 **Decision:** Replace the undecomposed post-v0.2 table with M5–M10 and

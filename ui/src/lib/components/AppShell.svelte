@@ -247,7 +247,9 @@
 </div>
 
 <ApprovalBar />
-<MemoryProposalBar />
+{#if projects.surface !== 'projects'}
+	<MemoryProposalBar />
+{/if}
 <ToastStack />
 <WizardPane />
 <DoctorPane />

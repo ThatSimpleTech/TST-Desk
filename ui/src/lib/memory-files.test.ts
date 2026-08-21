@@ -2,7 +2,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
-import { memoryEmptyCopy } from "./memory-files";
+import { memoryEmptyCopy, memoryLocalCopy } from "./memory-files";
 
 const mocks = vi.hoisted(() => ({
 	handler: null as ((e: DaemonEventUnion) => void) | null,
@@ -53,6 +53,12 @@ afterEach(() => {
 describe("copy", () => {
 	it("points the empty state at the first distill", () => {
 		expect(memoryEmptyCopy()).toMatch(/End a session/);
+	});
+
+	it("says the folder is local and never mentions sync", () => {
+		expect(memoryLocalCopy()).toMatch(/this machine/);
+		expect(memoryLocalCopy()).toMatch(/this folder/);
+		expect(memoryLocalCopy().toLowerCase()).not.toMatch(/sync/);
 	});
 });
 

@@ -4,7 +4,8 @@
 	// Lists .tst/memory/*.md. Click shows the markdown. Edit/save is a
 	// human-path client message — never a tool, never a steering write.
 	import Markdown from './chat/Markdown.svelte';
-	import { memoryEmptyCopy } from '../memory-files';
+	import MemoryProposalCard from './MemoryProposalCard.svelte';
+	import { memoryEmptyCopy, memoryLocalCopy } from '../memory-files';
 	import {
 		beginEdit,
 		cancelEdit,
@@ -16,6 +17,8 @@
 		setMemoryDraft,
 		startMemoryFiles,
 	} from '../memory-files.svelte.js';
+	import { pendingForWorkspace } from '../memory-proposal-store.svelte.js';
+	import { sessions } from '../sessions.svelte.js';
 
 	let { workspacePath }: { workspacePath: string } = $props();
 
@@ -28,10 +31,19 @@
 	let empty = $derived(memoryFiles.files.length === 0);
 	let selected = $derived(selectedMemoryFile());
 	let dirty = $derived(selected !== null && memoryFiles.draft !== selected.content);
+	let proposals = $derived(pendingForWorkspace(workspacePath, sessions.rows));
 </script>
 
 <section class="col" aria-label="Memory">
 	<h2 class="section">Memory</h2>
+	<p class="lede">{memoryLocalCopy()}</p>
+	{#if proposals.length > 0}
+		<div class="proposals" aria-label="Memory proposal">
+			{#each proposals as proposal (proposal.proposalId)}
+				<MemoryProposalCard {proposal} />
+			{/each}
+		</div>
+	{/if}
 	{#if empty}
 		<p class="empty">{memoryEmptyCopy()}</p>
 	{:else}
@@ -94,6 +106,16 @@
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
 		color: var(--color-ink-muted);
+	}
+
+	.lede {
+		margin: var(--space-2) 0 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
+	}
+
+	.proposals {
+		margin-top: var(--space-3);
 	}
 
 	.empty {

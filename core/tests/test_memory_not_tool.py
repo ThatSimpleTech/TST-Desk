@@ -74,7 +74,9 @@ class TestDistillIsNotAToolWrite:
             ),
             None,
         )
-        assert reply is None
+        assert reply is not None
+        listed = json.loads(reply)
+        assert listed["type"] == "memory_files"
         assert memory_dir(ws).joinpath("MEMORY.md").read_text(encoding="utf-8") == "new\n"
         assert store_writes
         assert all("memory" in p.parts for p in store_writes)
