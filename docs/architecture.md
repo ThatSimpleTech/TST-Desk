@@ -292,7 +292,6 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_session_star` | yes | Star or unstar a session. Machine-wide. Acked with `session_list` (TD-3003). |
 | `delete_session` | yes | Destroy a session and its event log. Refused mid-turn. |
 | `move_session` | yes | Reassign a session to another workspace, keeping its id and log. |
-| `star_session` | yes | Star or unstar a session. Machine-wide preference. |
 | `rename_session` | yes | Set a session's display title, or restore the auto-title when empty. Metadata only. |
 | `get_setup_state` | — | Ask for the onboarding state: key presence, presets, active preset. |
 | `set_api_key` | — | Store an API key in the OS keychain. |
