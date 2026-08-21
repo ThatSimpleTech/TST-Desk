@@ -47,4 +47,28 @@ describe("renderMarkdown", () => {
     expect(html).toContain("<h1>Title</h1>");
     expect(html).toContain("<li>a</li>");
   });
+
+  it("rewrites http(s) links for external opening (TD-4806)", () => {
+    const html = renderMarkdown("[docs](https://example.com)");
+    expect(html).toContain('href="https://example.com"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noreferrer noopener"');
+  });
+
+  it.each([
+    ["javascript:alert(1)"],
+    ["data:text/html,<script>alert(1)</script>"],
+    ["file:///etc/passwd"],
+    ["mailto:a@b.c"],
+  ])("drops the non-http(s) link %s (TD-4806)", (href) => {
+    const html = renderMarkdown(`[click](${href})`);
+    expect(html).not.toContain("href");
+    expect(html).toContain("click"); // the text survives; the link is inert
+  });
+
+  it("drops relative hrefs — meaningless inside the app (TD-4806)", () => {
+    const html = renderMarkdown("[notes](./notes.md)");
+    expect(html).not.toContain("href");
+    expect(html).toContain("notes");
+  });
 });

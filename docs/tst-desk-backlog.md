@@ -5974,17 +5974,24 @@ allowlist docs name the re-exec hatches in `shell.py` and `configuration.md`.
 **Size:** 2 · **Depends on:** TD-1004
 
 **Acceptance criteria:**
-- [ ] Links in rendered assistant markdown are rewritten (`target="_blank"`,
+- [x] Links in rendered assistant markdown are rewritten (`target="_blank"`,
       `rel="noreferrer"`) and clicks route through the Tauri opener, never webview
       navigation
-- [ ] Non-http(s) schemes (`javascript:`, `data:`, `file:`) are dropped by the renderer
-- [ ] A UI test renders a markdown link and asserts the click reaches the opener bridge,
+- [x] Non-http(s) schemes (`javascript:`, `data:`, `file:`) are dropped by the renderer
+- [x] A UI test renders a markdown link and asserts the click reaches the opener bridge,
       not `window.location`
 
 `Markdown.svelte` wires copy buttons in its click handler but does nothing for anchors, so
 a model-emitted link navigates the app webview to an arbitrary external site — the app
 window becomes a browser with no chrome, and the session UI is gone. DOMPurify already
 sanitizes the HTML; the gap is navigation, not injection.
+
+**Completed (2026-08-21):** a DOMPurify `afterSanitizeAttributes` hook rewrites anchors —
+http(s) gets `target="_blank" rel="noreferrer noopener"`; every other scheme and relative
+hrefs lose `href` and render as inert text. The delegated click handler in
+`Markdown.svelte` preventDefaults anchor clicks and routes them through the opener
+plugin's `openUrl`. Tests pin the rewrite, the per-scheme drops, the click reaching the
+opener mock with default prevented, and that copy buttons are undisturbed.
 
 ### TD-4807 — The webview ships with no CSP and form tags survive sanitization
 **Size:** 2 · **Depends on:** TD-1002

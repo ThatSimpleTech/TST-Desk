@@ -10,7 +10,22 @@
 
 	let { text }: { text: string } = $props();
 
+	async function openLink(url: string): Promise<void> {
+		const { openUrl } = await import("@tauri-apps/plugin-opener");
+		await openUrl(url);
+	}
+
 	function handleClick(event: MouseEvent): void {
+		// Model-emitted links open in the OS browser via the opener plugin —
+		// the webview itself never navigates (TD-4806). The renderer already
+		// rewrote the anchor's target/rel as defense in depth.
+		const anchor = (event.target as HTMLElement).closest("a[href]");
+		if (anchor !== null) {
+			event.preventDefault();
+			const href = anchor.getAttribute("href");
+			if (href !== null) void openLink(href);
+			return;
+		}
 		const btn = (event.target as HTMLElement).closest("[data-copy-btn]");
 		if (btn === null) return;
 		const code = btn.closest(".code-block")?.querySelector("code");
