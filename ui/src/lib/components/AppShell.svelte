@@ -47,6 +47,7 @@
 	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
 	import { startStack, refreshStack } from '../stack-store.svelte.js';
 	import { startScreen, screen } from '../screen.svelte.js';
+	import { startDesign, toggleDesign } from '../design.svelte.js';
 	import { screenTabVisible } from '../screen';
 	import { startOsNotify, createTauriOsNotifyBridge } from '../os-notify.svelte.js';
 	import { startCloseHint } from '../close-hint';
@@ -63,13 +64,21 @@
 	// The mapping itself is pure — see shortcuts.ts. One listener, one layer
 	// order: no pane installs a keydown handler of its own.
 	function onGlobalKeydown(event: KeyboardEvent): void {
-		const action = resolveShortcut(event, {
-			workspaceMenuOpen: workspaces.menuOpen,
-			paletteOpen: palette.open,
-			modalOpen:
-				onboarding.open || doctor.open || decisions.open || settings.open || palette.open,
-			turnLive: showCancel(chat.turnState),
-		});
+		const action = resolveShortcut(
+			{
+				key: event.key,
+				metaKey: event.metaKey,
+				ctrlKey: event.ctrlKey,
+				shiftKey: event.shiftKey,
+			},
+			{
+				workspaceMenuOpen: workspaces.menuOpen,
+				paletteOpen: palette.open,
+				modalOpen:
+					onboarding.open || doctor.open || decisions.open || settings.open || palette.open,
+				turnLive: showCancel(chat.turnState),
+			},
+		);
 		if (action === null) return;
 		event.preventDefault();
 		if (action === 'close-menu') closeWorkspaceMenu();
@@ -77,7 +86,9 @@
 		else if (action === 'close-modal') closeTopModal();
 		else if (action === 'cancel-turn') cancelTurn();
 		else if (action === 'open-palette') openPalette();
-		else openSettings();
+		else if (action === 'toggle-design') {
+			if (toggleDesign()) showRightPane('screen');
+		} else openSettings();
 	}
 
 	// Top-most first, matching DOM order at the same --z-modal (settings is
@@ -108,6 +119,7 @@
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
 		const offArtifacts = startArtifacts();
 		const offScreen = startScreen();
+		const offDesign = startDesign();
 		const offCoworker = startCoworkerIndicator();
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
@@ -124,6 +136,7 @@
 			offOsNotify();
 			offArtifacts();
 			offScreen();
+			offDesign();
 			offCoworker();
 			offCloseHint();
 		};

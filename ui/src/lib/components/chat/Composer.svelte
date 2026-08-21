@@ -18,9 +18,12 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
+	import { acceptPickDrafts } from "../../design";
+	import { clearPicks, design, removePick } from "../../design.svelte.js";
 	import type { AttachmentLimits } from "../../protocol";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
+	import DesignChips from "./DesignChips.svelte";
 
 	let {
 		disabled = false,
@@ -115,11 +118,21 @@
 	// is the confirmation that it landed.
 	function submit(): void {
 		const text = value.trim();
+		const picks = acceptPickDrafts(design.picks, limits, attachments);
+		if (!picks.ok) {
+			refusal = { name: "design-pick.json", code: "attachment_too_many", message: picks.message };
+			return;
+		}
+		const outgoing: AttachmentDraft[] = [
+			...attachments,
+			...picks.drafts.map((d, i) => ({ ...d, id: `d${i}` })),
+		];
 		// TD-1709: attached files alone are a message worth sending.
-		if ((text === "" && attachments.length === 0) || disabled) return;
-		onsubmit(text, attachments);
+		if ((text === "" && outgoing.length === 0) || disabled) return;
+		onsubmit(text, outgoing);
 		value = "";
 		attachments = [];
+		clearPicks();
 		refusal = null;
 	}
 
@@ -147,6 +160,9 @@
 		ondragleave={() => (dragging = false)}
 		ondrop={handleDrop}
 	>
+		{#if design.picks.length > 0}
+			<DesignChips picks={design.picks} onremove={removePick} />
+		{/if}
 		{#if attachments.length > 0}
 			<AttachmentChips
 				chips={toChips(attachments)}

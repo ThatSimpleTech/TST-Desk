@@ -367,6 +367,14 @@ export interface OpenArtifact extends ClientMessage {
   artifact_id: string;
 }
 
+/** Ask the session browser what is at a CSS-pixel point (TD-3403). */
+export interface DesignHitTest extends ClientMessage {
+  type: "design_hit_test";
+  session_id: string;
+  x: number;
+  y: number;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -417,7 +425,8 @@ export type ClientMessageUnion =
   | GetUsage
   | ExportUsage
   | ListArtifacts
-  | OpenArtifact;
+  | OpenArtifact
+  | DesignHitTest;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -907,6 +916,26 @@ export interface ScreenFrame extends DaemonEvent {
   tool_call_id?: string | null;
 }
 
+/** Reply to design_hit_test (TD-3403). Connection-scoped; seq is 1. */
+export interface DesignHitBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface DesignHit extends DaemonEvent {
+  type: "design_hit";
+  session_id: string;
+  x: number;
+  y: number;
+  xpath?: string | null;
+  role?: string | null;
+  attributes: Record<string, string>;
+  box?: DesignHitBox | null;
+  styles: Record<string, string>;
+}
+
 export interface ContextCompacted extends DaemonEvent {
   type: "context_compacted";
   session_id: string;
@@ -961,4 +990,5 @@ export type DaemonEventUnion =
   | ArtifactList
   | Artifact
   | Error
-  | ScreenFrame;
+  | ScreenFrame
+  | DesignHit;

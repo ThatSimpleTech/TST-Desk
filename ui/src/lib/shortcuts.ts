@@ -9,6 +9,8 @@ export interface ShortcutEvent {
 	key: string;
 	metaKey: boolean;
 	ctrlKey: boolean;
+	/** ⌘⇧D / Ctrl+Shift+D toggles Design mode (TD-3403). */
+	shiftKey?: boolean;
 }
 
 export interface ShortcutContext {
@@ -28,7 +30,8 @@ export type ShortcutAction =
 	| "close-modal"
 	| "cancel-turn"
 	| "open-settings"
-	| "open-palette";
+	| "open-palette"
+	| "toggle-design";
 
 /** Map a keydown to one app-level action, or null when nothing applies. */
 export function resolveShortcut(
@@ -53,5 +56,13 @@ export function resolveShortcut(
 	// including on top of an open modal; opening it twice just clears it.
 	if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey))
 		return "open-palette";
+	// ⌘⇧D / Ctrl+Shift+D — Design mode on the Screen pane (TD-3403).
+	if (
+		event.key.toLowerCase() === "d" &&
+		(event.metaKey || event.ctrlKey) &&
+		event.shiftKey === true
+	) {
+		return "toggle-design";
+	}
 	return null;
 }
