@@ -11,9 +11,53 @@ import contextlib
 from pathlib import Path
 from typing import Any
 
-from .protocol import BrowserError
+from .protocol import BrowserError, normalize_hit
 
 _DEFAULT_TIMEOUT_MS = 30_000
+
+# Observe-only: elementFromPoint plus a short xpath. Never clicks.
+_HIT_TEST_JS = """([x, y]) => {
+  const el = document.elementFromPoint(x, y);
+  if (!el) {
+    return {
+      xpath: null, role: null, attributes: {},
+      box: {x, y, width: 0, height: 0}, styles: {},
+    };
+  }
+  function xpathOf(node) {
+    if (node.id) return '//*[@id="' + node.id + '"]';
+    const parts = [];
+    let cur = node;
+    while (cur && cur.nodeType === 1) {
+      let i = 1;
+      let sib = cur.previousElementSibling;
+      while (sib) {
+        if (sib.nodeName === cur.nodeName) i += 1;
+        sib = sib.previousElementSibling;
+      }
+      parts.unshift(cur.nodeName.toLowerCase() + '[' + i + ']');
+      cur = cur.parentElement;
+    }
+    return '/' + parts.join('/');
+  }
+  const rect = el.getBoundingClientRect();
+  const cs = getComputedStyle(el);
+  const attributes = {};
+  for (const a of el.attributes) attributes[a.name] = a.value;
+  return {
+    xpath: xpathOf(el),
+    role: el.getAttribute('role'),
+    attributes,
+    box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    styles: {
+      display: cs.display,
+      position: cs.position,
+      'font-size': cs.fontSize,
+      color: cs.color,
+      'background-color': cs.backgroundColor,
+    },
+  };
+}"""
 
 
 def playwright_available() -> bool:
@@ -138,6 +182,16 @@ class PlaywrightBrowserDriver:
             raise
         except Exception as exc:
             raise self._map_error(exc) from exc
+
+    async def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        page = await self._ensure_page()
+        try:
+            raw = await page.evaluate(_HIT_TEST_JS, [x, y])
+        except BrowserError:
+            raise
+        except Exception as exc:
+            raise self._map_error(exc) from exc
+        return normalize_hit(raw, x, y)
 
     async def aclose(self) -> None:
         context, playwright = self._context, self._playwright

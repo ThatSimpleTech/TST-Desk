@@ -6949,3 +6949,24 @@ the shared write without a new protocol event.
 rejected: dropping `png_base64` from the desktop tool result in this
 story — the model still needs the image; the pane does not.
 
+---
+
+## 2026-08-21 — TD-3403: Design mode pick is a text attachment (Class B)
+
+**Decision:** A Design pick travels as a normal TD-1709 text attachment
+(`design-pick.json`): xpath or role, attributes, computed box/styles, and
+the cropped screenshot as a `data:image/png;base64,…` field. No new
+`user_message` wire type. Browser hit-test is a connection-scoped
+`design_hit_test` / `design_hit` pair (seq=1, not in the session log)
+that calls `BrowserDriver.hit_test`. The mock returns a scripted node;
+Playwright uses `elementFromPoint`. Desktop AX is TD-3406.
+
+**Rationale:** Caps already refuse raw PNG bytes. A data-URL inside UTF-8
+JSON is text, so the daemon accepts the crop without opening the
+vision-attachments story (TD-4705). A logged hit-test event would pollute
+replay and rewind attach; connection-scoped seq=1 matches `artifact_list`.
+
+**Alternative rejected:** A binary image attachment (fails the text
+gate). Also rejected: treating hit-test as a tool call (would go through
+the classifier and look like actuation).
+

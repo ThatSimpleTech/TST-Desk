@@ -4933,14 +4933,36 @@ Point at the running UI instead of describing it. Browser first
 the AX hit-test is cheap; otherwise file a split.
 
 **Acceptance criteria:**
-- [ ] ⌘⇧D toggles Design on the Screen pane. On: clicks select. Off:
+- [x] ⌘⇧D toggles Design on the Screen pane. On: clicks select. Off:
       watch surface
-- [ ] Click / shift-click / shift-drag on a frozen frame
-- [ ] Chip on the composer: xpath or AX role, attributes, computed
+- [x] Click / shift-click / shift-drag on a frozen frame
+- [x] Chip on the composer: xpath or AX role, attributes, computed
       box/styles, cropped screenshot
-- [ ] Travels with `user_message` under attachment caps
-- [ ] Cannot run while the agent is actuating that surface
-- [ ] Voice is TD-4701. React fiber is out. Source maps are a follow-up
+- [x] Travels with `user_message` under attachment caps
+- [x] Cannot run while the agent is actuating that surface
+- [x] Voice is TD-4701. React fiber is out. Source maps are a follow-up
+
+**Completed (2026-08-21):** Design freezes the last `screen_frame`. Clicks
+map into CSS pixels. Browser hit-test is `design_hit_test` → driver
+`hit_test` (mock scripted node in CI; Playwright `elementFromPoint` live).
+The chip is a `design-pick.json` text attachment (xpath/role/attrs/box/
+styles + data-URL crop) under TD-1709 caps. Actuating CU tools force
+Design off. Desktop AX was not cheap in `tst-cu-mcp` — split to TD-3406.
+
+---
+
+### TD-3406 — Desktop Design-mode hit-test
+**Size:** 5 · **Depends on:** TD-3403, TD-3301
+
+AX hit-test is not in `tst-cu-mcp` (permission probe only; no
+element-at-point). Design mode v1 is browser-only; desktop frames get a
+geometric box + crop, not an AX role.
+
+**Acceptance criteria:**
+- [ ] Desktop Screen frames accept Design picks via AX role + attributes
+- [ ] Crop + box still travel as TD-1709 attachments
+- [ ] Same ⌘⇧D / actuating gate as TD-3403
+- [ ] Observe only — never actuates
 
 ---
 
@@ -5621,13 +5643,13 @@ the product." Web search is already TD-609/TD-610.
 | M4 Memory (v0.2) | E21–E28 | 32 | 90 |
 | **Total v0.1 + v0.2** | **27** | **180** | **507** |
 | M5 Cowork (v0.3) | E29–E32 | 15 | 51 |
-| M6 Computer use (v0.4) | E20, E33–E34 | 11 | 58 |
+| M6 Computer use (v0.4) | E20, E33–E34 | 12 | 63 |
 | M7 Remote (v0.5) | E36–E38 | 11 | 43 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
 | Later | E47 | 7 | 34 |
-| **Total planned** | **46** | **251** | **823** |
+| **Total planned** | **46** | **252** | **828** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
