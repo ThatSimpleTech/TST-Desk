@@ -1215,6 +1215,20 @@ class PolicyRules(DaemonEvent):
     rules: list[PolicyRuleSummary] = Field(default_factory=list)
 
 
+class PresetModels(BaseModel):
+    """One preset's routing, for the settings preset picker (TD-4817).
+
+    ``slugs`` maps each tier to its configured slug — ``None`` where a
+    loopback tier leaves its model to discovery (TD-1805), which the UI
+    renders as *discovered from the endpoint*, never as a blank box.
+    ``key_required`` applies TD-1801's rule to this preset specifically, so
+    the picker can say what a switch costs before you make it.
+    """
+
+    slugs: dict[str, str | None] = Field(default_factory=dict)
+    key_required: bool = True
+
+
 class SetupState(DaemonEvent):
     """Response to ``get_setup_state``; also the ack for ``set_api_key`` and
     ``set_preset`` (TD-1101).
@@ -1239,6 +1253,11 @@ class SetupState(DaemonEvent):
     # Additive with a default, like ``key_required``: an older client that
     # ignores it behaves exactly as it did.
     tier_slugs: dict[str, str | None] = Field(default_factory=dict)
+    # TD-4817: every declared preset's routing, so the settings picker can
+    # show what each choice does before you commit. Slugs are as configured
+    # (see ``tier_slugs``), not as discovered. Additive with a default, like
+    # ``tier_slugs``: an older client that ignores it sees what it saw.
+    preset_models: dict[str, PresetModels] = Field(default_factory=dict)
     # TD-804: skip-all approvals. Additive, default off — an older client
     # that ignores the field keeps asking, which is the safe read.
     skip_all_approvals: bool = False

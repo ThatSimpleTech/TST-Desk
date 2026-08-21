@@ -160,6 +160,7 @@ from .protocol import (
     OpenWorkspace,
     PolicyRules,
     PolicyRuleSummary,
+    PresetModels,
     RemovePin,
     RenameSession,
     Resume,
@@ -524,6 +525,15 @@ class Daemon:
             presets=sorted(self.config.presets),
             active_preset=self.config.active_preset,
             tier_slugs=dict(self._slug_snapshot.get(self.config.active_preset, {})),
+            preset_models={
+                name: PresetModels(
+                    slugs=dict(self._slug_snapshot.get(name, {})),
+                    # base_url never mutates in place (only slugs do), so the
+                    # live presets are honest for this even after discovery.
+                    key_required=preset.requires_api_key(),
+                )
+                for name, preset in self.config.presets.items()
+            },
             skip_all_approvals=self.skip_all_approvals,
             load_global_memory=self.load_global_memory,
             coworker_enabled=self.coworker_enabled,
@@ -1530,7 +1540,18 @@ class Daemon:
             # sessions keep the tier slugs they opened with.  model_copy
             # keeps the process-wide cached instance untouched.
             self.config = self.config.model_copy(update={"active_preset": msg.name})
-            self._slug_snapshot = _snapshot_slugs(self.config)
+            # The shared client binds the old preset's endpoint and key at
+            # build time, so it is dropped (not closed — sessions that
+            # already resolved it are still using it) and the next
+            # _ensure_provider rebuilds against the new preset. Without
+            # this, a post-switch session streams the new slugs through the
+            # old endpoint (TD-4817).
+            self._provider = None
+            # The snapshot is NOT rebuilt here. It is the file's view of the
+            # slugs (TD-1703), and nothing in the file changed — but discovery
+            # mutates the live tiers in place (TD-1805), so re-reading them
+            # would present a resolved tag as configured. SetTierSlug below
+            # may rebuild: it reloads from disk first.
             log.info(
                 "active preset changed",
                 extra={"extra_fields": {"preset": msg.name}},

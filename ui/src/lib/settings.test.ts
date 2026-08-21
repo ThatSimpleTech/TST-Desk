@@ -46,6 +46,7 @@ import {
 	setTheme,
 	isDiscovered,
 	saveSlug,
+	switchPreset,
 	loadRules,
 	revokeRule,
 	setSkipAllApprovals,
@@ -214,6 +215,87 @@ describe("model section", () => {
 		mocks.sendOk = false;
 		saveSlug("brain", "qwen3.8:27b");
 		expect(settings.savingTier).toBeNull();
+	});
+});
+
+describe("preset switcher", () => {
+	it("reads each preset's routing from setup_state", () => {
+		startSettings();
+		emit(
+			setupState({
+				preset_models: {
+					local: { slugs: { brain: null, worker: null, validator: null }, key_required: false },
+					"tst-default": {
+						slugs: { brain: "a/b", worker: "c/d", validator: "e/f" },
+						key_required: true,
+					},
+				},
+			}),
+		);
+		expect(settings.presetModels["local"].key_required).toBe(false);
+		expect(settings.presetModels["tst-default"].slugs.brain).toBe("a/b");
+	});
+
+	it("invents nothing for the picker when the daemon omits the field", () => {
+		startSettings();
+		const { preset_models: _omitted, ...without } = setupState();
+		emit(without as SetupState);
+		expect(settings.presetModels).toEqual({});
+	});
+
+	it("sends set_preset and waits for the ack before flipping", () => {
+		startSettings();
+		emit(setupState({ active_preset: "local" }));
+		switchPreset("tst-default");
+		expect(mocks.sent).toEqual([{ type: "set_preset", name: "tst-default" }]);
+		// Not applied locally — setup_state is the source of truth.
+		expect(settings.activePreset).toBe("local");
+		expect(settings.savingPreset).toBe("tst-default");
+		emit(setupState({ active_preset: "tst-default", tier_slugs: { brain: "a/b" } }));
+		expect(settings.savingPreset).toBeNull();
+		expect(settings.activePreset).toBe("tst-default");
+		// The slug editors follow the newly active preset from the same ack.
+		expect(settings.tierSlugs.brain).toBe("a/b");
+	});
+
+	it("no-ops on the active preset and refuses overlapping switches", () => {
+		startSettings();
+		emit(setupState({ active_preset: "local" }));
+		switchPreset("local");
+		expect(mocks.sent).toEqual([]);
+		switchPreset("budget");
+		switchPreset("tst-default");
+		expect(mocks.sent).toEqual([{ type: "set_preset", name: "budget" }]);
+	});
+
+	it("does not leave a switch hanging when the socket is down", () => {
+		startSettings();
+		emit(setupState());
+		mocks.sendOk = false;
+		switchPreset("budget");
+		expect(settings.savingPreset).toBeNull();
+	});
+
+	it("releases both in-flight flags when the daemon refuses", () => {
+		// A refused save or switch never gets its acking setup_state.
+		startSettings();
+		emit(setupState());
+		saveSlug("brain", "qwen3.8:27b");
+		settings.savingPreset = "budget";
+		emit({ type: "error", seq: 2, code: "bad_request", message: "nope" });
+		expect(settings.savingTier).toBeNull();
+		expect(settings.savingPreset).toBeNull();
+	});
+
+	it("keeps an in-flight switch through an unrelated daemon error", () => {
+		// Only the codes the save/switch handlers can return release the
+		// flags; any error doing so would re-enable the controls while the
+		// request is still in flight.
+		startSettings();
+		emit(setupState());
+		switchPreset("budget");
+		emit({ type: "error", seq: 2, code: "session_busy", message: "unrelated" });
+		expect(settings.savingPreset).toBe("budget");
 	});
 });
 

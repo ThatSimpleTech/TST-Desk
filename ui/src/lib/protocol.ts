@@ -789,6 +789,15 @@ export interface PolicyRules extends DaemonEvent {
   rules: PolicyRuleSummary[];
 }
 
+// TD-4817: one preset's routing for the settings picker. slugs are as the
+// config file has them (null = left to discovery, TD-1805); key_required
+// applies TD-1801's rule to this preset, so the picker can say what a
+// switch costs before you make it.
+export interface PresetModels {
+  slugs: Record<string, string | null>;
+  key_required: boolean;
+}
+
 // TD-1101 first-run wizard: the daemon's reply to get_setup_state
 // (and the ack for set_api_key / set_preset / set_skip_all_approvals).
 // has_api_key is the
@@ -808,6 +817,10 @@ export interface SetupState extends DaemonEvent {
   // save cannot pin a model the user left floating. Optional because an
   // older daemon does not send it.
   tier_slugs?: Record<string, string | null>;
+  // TD-4817: every declared preset's routing, so the settings picker shows
+  // what each choice does before you commit. Optional because an older
+  // daemon does not send it.
+  preset_models?: Record<string, PresetModels>;
   // TD-804: skip-all approvals. Additive, default off.
   skip_all_approvals?: boolean;
   // TD-2603: load ~/.tstdesk/memory/ after workspace memory. Additive, default off.

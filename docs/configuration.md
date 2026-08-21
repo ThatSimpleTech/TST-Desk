@@ -287,8 +287,9 @@ active_preset: my-mix
 ```
 
 In practice you add the `my-mix:` block alongside the shipped presets and change
-`active_preset`. The first-run wizard is the only part of the UI that writes `active_preset`;
-after onboarding, change it by hand here.
+`active_preset`. The first-run wizard and Settings → Model both write `active_preset` — they
+drive the same daemon path (TD-4817), so a switch there is persisted here for you; a hand edit
+works too, but needs an app restart to be picked up (below).
 
 **When an edit takes effect.** The model config is read once at daemon start. Changing a preset
 or a tier slug from the UI reloads the file immediately; a hand edit does not, so quit and
