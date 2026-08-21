@@ -113,6 +113,12 @@ export interface SetLoadGlobalMemory extends ClientMessage {
   enabled: boolean;
 }
 
+/** Turn coworker mode on or off (TD-2905). Machine-wide, no session. */
+export interface SetCoworker extends ClientMessage {
+  type: "set_coworker";
+  enabled: boolean;
+}
+
 /** Pin or unpin a workspace on the Projects list (TD-2806). */
 export interface SetWorkspacePin extends ClientMessage {
   type: "set_workspace_pin";
@@ -374,6 +380,7 @@ export type ClientMessageUnion =
   | RevokePolicyRule
   | SetSkipAllApprovals
   | SetLoadGlobalMemory
+  | SetCoworker
   | SetWorkspacePin
   | Resume
   | Cancel
@@ -774,6 +781,8 @@ export interface SetupState extends DaemonEvent {
   skip_all_approvals?: boolean;
   // TD-2603: load ~/.tstdesk/memory/ after workspace memory. Additive, default off.
   load_global_memory?: boolean;
+  // TD-2905: keep running when the window closes. Additive, default on.
+  coworker_enabled?: boolean;
   pinned_workspaces?: string[];
 }
 

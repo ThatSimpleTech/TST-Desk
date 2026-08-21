@@ -50,6 +50,7 @@ import {
 	revokeRule,
 	setSkipAllApprovals,
 	setLoadGlobalMemory,
+	setCoworker,
 } from "./settings.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -297,6 +298,37 @@ describe("policy section", () => {
 		expect(settings.loadGlobalMemory).toBe(false);
 		emit(setupState({ load_global_memory: true }));
 		expect(settings.loadGlobalMemory).toBe(true);
+	});
+});
+
+describe("coworker", () => {
+	it("defaults on before the daemon speaks", () => {
+		startSettings();
+		expect(settings.coworkerEnabled).toBe(true);
+	});
+
+	it("reads coworker from setup_state", () => {
+		startSettings();
+		emit(setupState({ coworker_enabled: false }));
+		expect(settings.coworkerEnabled).toBe(false);
+	});
+
+	it("treats an omitted coworker field as on", () => {
+		startSettings();
+		emit(setupState({ coworker_enabled: false }));
+		const { coworker_enabled: _omitted, ...without } = setupState();
+		emit(without as SetupState);
+		expect(settings.coworkerEnabled).toBe(true);
+	});
+
+	it("sends set_coworker and waits for the ack", () => {
+		startSettings();
+		emit(setupState());
+		setCoworker(false);
+		expect(mocks.sent).toEqual([{ type: "set_coworker", enabled: false }]);
+		expect(settings.coworkerEnabled).toBe(true);
+		emit(setupState({ coworker_enabled: false }));
+		expect(settings.coworkerEnabled).toBe(false);
 	});
 });
 

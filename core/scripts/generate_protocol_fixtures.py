@@ -89,6 +89,7 @@ from tstd.protocol import (
     SessionState,
     SetApiKey,
     SetBranch,
+    SetCoworker,
     SetLoadGlobalMemory,
     SetPreset,
     SetSessionStar,
@@ -139,6 +140,7 @@ FIXTURES = {
     "revoke_policy_rule": RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *"),
     "set_skip_all_approvals": SetSkipAllApprovals(enabled=True),
     "set_load_global_memory": SetLoadGlobalMemory(enabled=True),
+    "set_coworker": SetCoworker(enabled=True),
     "set_workspace_pin": SetWorkspacePin(path="/home/user/project", pinned=True),
     "resume": Resume(session_id="sess-1"),
     "cancel": Cancel(session_id="sess-1"),
@@ -466,6 +468,7 @@ FIXTURES = {
         presets=["budget", "local", "tst-default"],
         active_preset="tst-default",
         skip_all_approvals=False,
+        coworker_enabled=True,
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so

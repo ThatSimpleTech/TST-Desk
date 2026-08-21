@@ -81,6 +81,10 @@
     "type": "set_load_global_memory",
     "enabled": true
   },
+  "set_coworker": {
+    "type": "set_coworker",
+    "enabled": true
+  },
   "set_workspace_pin": {
     "type": "set_workspace_pin",
     "path": "/home/user/project",
@@ -675,6 +679,7 @@
     "tier_slugs": {},
     "skip_all_approvals": false,
     "load_global_memory": false,
+    "coworker_enabled": true,
     "pinned_workspaces": []
   },
   "api_key_validated": {
