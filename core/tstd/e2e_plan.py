@@ -1,18 +1,21 @@
-"""What one headless-harness pass runs against (TD-1401, TD-1803).
+"""What one headless-harness pass runs against (TD-1401, TD-1803, TD-2701).
 
-Split out so the harness and its live leg can both name these types without
-importing each other: ``e2e_harness`` builds the mock plan, ``e2e_live``
-builds the live one, and neither has to know the other exists.
+Split out so the harness and its live / memory legs can name these types
+without importing each other: ``e2e_harness`` builds the mock plan,
+``e2e_live`` builds the live one, ``e2e_memory`` builds the M4 memory
+plan, and none of them has to know the others exist.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from .policy import PolicyConfig
 from .provider import ChatCompletionRequest, ChatCompletionResponse, ProviderError, StreamChunk
+
+MemoryResolution = Literal["accept", "reject"]
 
 
 class RecordingProvider(Protocol):
@@ -66,3 +69,26 @@ class HarnessPlan:
     turn_timeout: float
     budget_secs: float
     policy: PolicyConfig | None = None
+
+
+@dataclass(frozen=True)
+class MemoryHarnessPlan:
+    """What the M4 memory pass runs against (TD-2701).
+
+    Separate from :class:`HarnessPlan` so ``e2e_harness.run`` stays the
+    frozen hello.txt path. Distill / accept / reject are extra verbs
+    that pass never sends; making them optional fields on the M1 plan
+    would grow a branch the mock pass does not take.
+    """
+
+    provider: RecordingProvider
+    steering: str
+    prompt: str
+    topic: str
+    memory_files: dict[str, str]
+    accept_relpath: str
+    accept_content: str
+    brain_slug: str
+    worker_slug: str
+    turn_timeout: float
+    budget_secs: float

@@ -6435,3 +6435,27 @@ stay Later.
 table was how those parts stayed vapor and how they also stayed safe
 from R8. Naming stories with exit harnesses is the middle path. R10
 is the reminder that a written story is not a start order.
+
+---
+
+## 2026-08-20 — TD-2701: memory harness is a sister pass, not a `run()` branch (Class B)
+
+**Decision:** `tstd.e2e_memory.run_memory` is a second protocol-client
+pass. It reuses `e2e_harness._send` / `_wait_for_port_file` and
+`HarnessResult`, and names its inputs as `MemoryHarnessPlan` in
+`e2e_plan.py`. It does not call `e2e_harness.run` and does not add
+fields to `HarnessPlan`. Accept and reject are two resolutions of the
+same plan. The daemon's config is replaced with distinct per-tier slugs
+and `embeddings.base_url=""`.
+
+**Rationale:** Distill / `memory_accept` / `memory_reject` are verbs the
+hello.txt pass never sends. Folding them into `run()` would grow a
+branch TD-1401 does not take, which is the failure mode the live leg
+was designed to avoid. Distill is a worker `chat_completion` with
+`DISTILL_SYSTEM_PROMPT`, not a PromptAssembler worker prompt; the
+harness scripts two Class A writes so lead-turns hand off and a real
+in-loop worker assemble is on the recording, then also assembles
+worker/validator in the check.
+
+**Alternative rejected:** Optional post-turn callbacks on `HarnessPlan`.
+That is a runner change the mock pass would have to skip.
