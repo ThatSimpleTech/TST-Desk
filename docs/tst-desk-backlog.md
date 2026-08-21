@@ -5102,12 +5102,15 @@ the 20-platform gateway.
 **Size:** 3 · **Depends on:** TD-1702
 
 **Acceptance criteria:**
-- [ ] Config holds a webhook URL (user-data-dir, not the workspace,
+- [x] Config holds a webhook URL (user-data-dir, not the workspace,
       not the audit log in plaintext — treat as a secret, keychain or
       equivalent)
-- [ ] Approval-needed and turn-complete can deliver to Slack when
+- [x] Approval-needed and turn-complete can deliver to Slack when
       enabled
-- [ ] Destination is config-sourced (`test_outbound_hosts`)
+- [x] Destination is config-sourced (`test_outbound_hosts`)
+
+Done (2026-08-21): `send(config, message)`; URL in keychain
+`tst-slack-webhook`; host from `notify.slack.host`; off by default.
 
 ---
 
