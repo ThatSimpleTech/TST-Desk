@@ -366,7 +366,7 @@ Six top-level sections live here, each read by a different part of the daemon: `
 |---|---|---|---|
 | `writable_paths` | list of glob strings | `["**"]` | Workspace-relative globs the agent may **write** to. A write outside them is refused as `outside_writable_paths` and classified Class C. |
 | `allowed_commands` | list of strings | `[]` | Allowlist for the shell tool, matched on the basename of the resolved binary. **Empty or omitted means any command** — the list narrows a path the classifier and approval gate already guard (TD-606). |
-| `network` | `deny` or a list of hosts | `deny` | Hosts the agent may reach. Any other string is a load error. Declarative in v0.1 — see §4.6. |
+| `network` | `deny` or a list of hosts | `deny` | Hosts the agent may reach, matched as bare lowercase hostnames. Enforced against the web tools: `web_fetch` classifies its URL's host, `web_search` the configured `search.base_url` (TD-4808). Any other string is a load error. Does not gate shell egress — see §4.6. |
 
 **Glob semantics for `writable_paths`.** Patterns are relative to the workspace root, and the
 target is resolved (symlinks followed) before matching:
@@ -515,10 +515,12 @@ delivers. Both are reported as defects; neither is fixed here.
   it meant: any command. The allowlist narrows a path that is already guarded, since no rule in
   the classifier's table matches on tool name, so a shell call defaults to class B and the user
   answers for it.
-- **`network` is declared but not enforced.** No tool that ships in v0.1 reaches the network, so
-  the host allowlist has nothing to gate; it is carried into the boundary display and the
-  classifier, and nothing rejects a host today. `deny` does not stop `curl` — shell egress is
-  governed by `allowed_commands` alone.
+- **`network` gates the web tools, not the shell.** Since TD-4808 the allowlist is enforced
+  where a host is visible to the classifier: `web_fetch` reduces its `url` argument to a bare
+  host, and `web_search` answers for the configured `search.base_url`. A host outside the list
+  is Class C (refused); an allowlisted host still asks (Class B). But `deny` does not stop
+  `curl` — the classifier cannot see inside a command string, so shell egress is governed by
+  `allowed_commands` and the approval gate alone.
 
 One more sharp edge that is behaviour rather than a defect: saving a policy rule from the UI
 rewrites this file through a YAML dump, which **discards your comments**. Your `boundary:` and

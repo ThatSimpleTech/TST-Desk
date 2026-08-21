@@ -476,6 +476,125 @@ def test_allowlist_docs_name_the_escape_hatches() -> None:
         assert hatch in doc
 
 
+# ── 3c. The network rail reaches the web tools (TD-4808) ─────────────────
+#
+# ``network: deny`` and the host allowlist only bite if the classifier can
+# see the host a call reaches.  web_fetch carries it in an argument;
+# web_search's host lives in config (search.base_url).  Both must land in
+# the DecisionRequest, or the rail is decorative.
+
+
+def _classify_tool_call(
+    ws: Path,
+    tool_name: str,
+    arguments: dict[str, Any],
+    allowed_hosts: frozenset[str] = frozenset(),
+) -> Any:
+    """Static classification of a real registered tool call (TD-4808)."""
+    from tstd.tools.dispatch import build_decision_request
+
+    tool = create_registry().require(tool_name)
+    request = build_decision_request(tool, arguments)
+    return DecisionClassifier(Boundary(workspace_root=ws, allowed_hosts=allowed_hosts)).classify(
+        request
+    )
+
+
+def test_web_fetch_host_is_classified_against_the_allowlist(ws: Path) -> None:
+    decision = _classify_tool_call(ws, "web_fetch", {"url": "https://news.example.com/x"})
+    assert decision.decision_class is DecisionClass.C
+    assert decision.rule is not None
+    assert decision.rule.id == "network-new-host"
+
+
+def test_web_fetch_to_an_allowlisted_host_asks_not_refuses(ws: Path) -> None:
+    decision = _classify_tool_call(
+        ws,
+        "web_fetch",
+        {"url": "https://news.example.com/x"},
+        allowed_hosts=frozenset({"news.example.com"}),
+    )
+    assert decision.decision_class is DecisionClass.B
+    assert decision.rule is not None
+    assert decision.rule.id == "side-effect-ask-floor"
+
+
+def test_web_fetch_url_is_reduced_to_a_bare_host(ws: Path) -> None:
+    # Scheme, case, and port must not defeat the allowlist match.
+    decision = _classify_tool_call(
+        ws,
+        "web_fetch",
+        {"url": "https://NEWS.example.com:8443/x?q=1"},
+        allowed_hosts=frozenset({"news.example.com"}),
+    )
+    assert decision.rule is not None
+    assert decision.rule.id != "network-new-host"
+
+
+def test_web_search_host_comes_from_config(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import tstd.tools.web_search as web_search_mod
+
+    monkeypatch.setattr(
+        web_search_mod,
+        "cached_config",
+        lambda: SimpleNamespace(
+            search=SimpleNamespace(base_url="https://searx.example.com/search")
+        ),
+    )
+    denied = _classify_tool_call(ws, "web_search", {"query": "anything"})
+    assert denied.decision_class is DecisionClass.C
+    assert denied.rule is not None
+    assert denied.rule.id == "network-new-host"
+
+    allowed = _classify_tool_call(
+        ws, "web_search", {"query": "anything"}, allowed_hosts=frozenset({"searx.example.com"})
+    )
+    assert allowed.decision_class is DecisionClass.B
+    assert allowed.rule is not None
+    assert allowed.rule.id == "side-effect-ask-floor"
+
+
+def test_web_search_unconfigured_reaches_no_host(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import tstd.tools.web_search as web_search_mod
+
+    monkeypatch.setattr(
+        web_search_mod,
+        "cached_config",
+        lambda: SimpleNamespace(search=SimpleNamespace(base_url="")),
+    )
+    decision = _classify_tool_call(ws, "web_search", {"query": "anything"})
+    assert decision.decision_class is DecisionClass.B
+    assert decision.rule is not None
+    assert decision.rule.id == "side-effect-ask-floor"
+
+
+def test_host_of_reduction() -> None:
+    from tstd.tools.dispatch import host_of
+
+    assert host_of("https://Example.COM:8443/a?b=c") == "example.com"
+    assert host_of("http://user:pass@example.com/") == "example.com"
+    assert host_of("example.com") == "example.com"
+    # Non-network schemes reach no host — not a network call.
+    assert host_of("about:blank") is None
+    assert host_of("file:///etc/passwd") is None
+    assert host_of("data:text/html,x") is None
+
+
+def test_web_tools_keep_their_rails_declared() -> None:
+    """Drift guard: the rail is only wired while the declarations stay."""
+    registry = create_registry()
+    assert registry.require("web_fetch").host_fields == ("url",)
+    assert registry.require("web_search").host_resolver is not None
+    # And the floor stays declared — removal is an AC-level decision,
+    # not a refactor side effect.
+    assert registry.require("web_fetch").side_effect_class == "ask"
+    assert registry.require("web_search").side_effect_class == "ask"
+
+
 # ── 4. Secret redaction ───────────────────────────────────────────────────
 
 FAKE_SECRETS = [

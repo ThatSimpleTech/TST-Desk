@@ -120,6 +120,11 @@ class DecisionRequest:
         actuates: Desktop computer-use only (TD-3301). ``None`` means the
             existing path/host table applies. ``False`` is capture-only
             (Class A). ``True`` is actuation (Class B).
+        side_effect_class: The tool's declared approval floor (TD-4808).
+            ``never`` classifies C alongside the other refusals, ahead of
+            every grant; ``ask`` is at least B via the terminal floor
+            rule, so specific grants (memory, in-workspace edit) keep
+            their deliberate class.
     """
 
     tool_name: str
@@ -129,6 +134,7 @@ class DecisionRequest:
     hosts: frozenset[str] = frozenset()
     is_mutation: bool = False
     actuates: bool | None = None
+    side_effect_class: str = "auto"
 
 
 # ── Rule table ─────────────────────────────────────────────────────────
@@ -486,6 +492,16 @@ RULE_TABLE: tuple[Rule, ...] = (
         decision_class=DecisionClass.C,
         match=_rule_cap_exceeded,
     ),
+    # "never" sits with the refusals, ahead of every A grant: a tool that
+    # declares it must not slip to auto via a specific grant like
+    # in-workspace-edit (TD-4808; the C-before-A invariant test enforces
+    # this placement).
+    Rule(
+        id="side-effect-never",
+        description="tool declares side_effect_class 'never'",
+        decision_class=DecisionClass.C,
+        match=lambda req, _b: req.side_effect_class == "never",
+    ),
     Rule(
         id="path-outside-writable",
         description="action writes in-workspace but outside writable_paths",
@@ -521,6 +537,17 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="desktop actuation requires approval",
         decision_class=DecisionClass.B,
         match=_rule_desktop_actuation,
+    ),
+    # The ask floor is terminal by design (TD-4808): every specific grant
+    # above — memory writes, in-workspace edits, desktop capture — keeps
+    # its deliberate class, and the floor only catches calls no rule spoke
+    # for.  Before this, ``side_effect_class`` was advisory metadata the
+    # classifier never read.
+    Rule(
+        id="side-effect-ask-floor",
+        description="tool declares side_effect_class 'ask' — never model-granted A",
+        decision_class=DecisionClass.B,
+        match=lambda req, _b: req.side_effect_class == "ask",
     ),
 )
 
