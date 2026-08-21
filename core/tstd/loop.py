@@ -755,6 +755,7 @@ async def agent_loop(
                         user_content,
                         embeddings_client,
                     )
+                    session.last_memory = loaded
                     memory_block = loaded.block
                 assembled = await assembler.assemble(
                     tier,
@@ -852,6 +853,7 @@ async def agent_loop(
                         seq=1,
                         last_cached_tokens=tracker.last_cached_prompt_tokens,
                         cache_observed=tracker.cache_observed,
+                        memory=session.last_memory,
                     )
                 )
                 log.info(

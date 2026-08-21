@@ -6397,6 +6397,19 @@ The footer stays for chat. Duplicate cards would fight.
 
 ---
 
+## 2026-08-20 — TD-2604: memory rides instruction_stack (Class B)
+
+**Decision:** Additive `memory`, `memory_dropped`, and
+`memory_placeholder` on `instruction_stack`. The session keeps the last
+brain-turn `MemoryLoad`. No new client verb. The inspector quotes
+`MEMORY_PLACEHOLDER` when nothing loaded.
+
+**Rationale:** TD-2502 already said the inspector names file + why
+without a second API. A new event would be a six-place change for
+data the stack query already fetches.
+
+---
+
 ## 2026-08-20 — Decompose v0.3–Later (Class B)
 
 **Decision:** Replace the undecomposed post-v0.2 table with M5–M10 and

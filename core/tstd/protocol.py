@@ -943,6 +943,14 @@ class InstructionFiles(DaemonEvent):
     created: str | None = None
 
 
+class MemoryStackEntry(BaseModel):
+    """One memory file the inspector names (TD-2604)."""
+
+    path: str
+    tokens: int = Field(ge=0)
+    reason: Literal["always-index", "heading", "embedding"]
+
+
 class InstructionStack(DaemonEvent):
     """Response to ``get_instruction_stack``: the resolved stack with counts."""
 
@@ -962,6 +970,11 @@ class InstructionStack(DaemonEvent):
     # does not report cache reuse" instead of guessing between them
     # (TD-1811). Additive with a safe default — no PROTOCOL_VERSION bump.
     cache_observed: bool = False
+    # Last brain-turn memory selection (TD-2604). Empty + placeholder
+    # means none loaded — the prompt still carries MEMORY_PLACEHOLDER.
+    memory: list[MemoryStackEntry] = Field(default_factory=list)
+    memory_dropped: list[MemoryStackEntry] = Field(default_factory=list)
+    memory_placeholder: bool = False
 
 
 class SessionSummary(BaseModel):

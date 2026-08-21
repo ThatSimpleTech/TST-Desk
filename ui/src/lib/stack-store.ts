@@ -6,6 +6,7 @@ import type {
 	ClientMessageUnion,
 	DaemonEventUnion,
 	InstructionStackEntry,
+	MemoryStackEntry,
 } from "./protocol";
 
 /** What the stack panel renders from. */
@@ -26,6 +27,9 @@ export interface StackState {
 	cacheObserved: boolean;
 	/** False until the first stack for the session has landed. */
 	loaded: boolean;
+	memory: MemoryStackEntry[];
+	memoryDropped: MemoryStackEntry[];
+	memoryPlaceholder: boolean;
 }
 
 export function createStackState(): StackState {
@@ -37,6 +41,9 @@ export function createStackState(): StackState {
 		lastCachedTokens: null,
 		cacheObserved: false,
 		loaded: false,
+		memory: [],
+		memoryDropped: [],
+		memoryPlaceholder: true,
 	};
 }
 
@@ -48,6 +55,9 @@ export function clearStack(state: StackState): void {
 	state.lastCachedTokens = null;
 	state.cacheObserved = false;
 	state.loaded = false;
+	state.memory = [];
+	state.memoryDropped = [];
+	state.memoryPlaceholder = true;
 }
 
 export interface StackStoreDeps {
@@ -73,6 +83,9 @@ export function createStackStore(deps: StackStoreDeps, state: StackState) {
 			// An older daemon omits the field; false is the honest read of
 			// "we were not told that a call has landed".
 			state.cacheObserved = event.cache_observed ?? false;
+			state.memory = event.memory ?? [];
+			state.memoryDropped = event.memory_dropped ?? [];
+			state.memoryPlaceholder = event.memory_placeholder ?? true;
 			state.loaded = true;
 			return true;
 		},
@@ -104,6 +117,17 @@ export type StackStore = ReturnType<typeof createStackStore>;
 /** Thousands-separated token count ("12,345"). */
 export function formatTokens(tokens: number): string {
 	return tokens.toLocaleString("en-US");
+}
+
+/** Honest empty-memory copy — the same sentence the prompt carries. */
+export function memoryPlaceholderCopy(): string {
+	return "<!-- memory: none loaded for this session -->";
+}
+
+export function memoryReasonLabel(reason: MemoryStackEntry["reason"]): string {
+	if (reason === "always-index") return "always-index";
+	if (reason === "embedding") return "embedding";
+	return "heading";
 }
 
 /** Which of the four things the badge can honestly say (TD-1811). A miss

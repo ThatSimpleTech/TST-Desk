@@ -603,6 +603,12 @@ export interface MemoryProposal extends DaemonEvent {
   files: MemoryFileDiff[];
 }
 
+export interface MemoryStackEntry {
+  path: string;
+  tokens: number;
+  reason: "always-index" | "heading" | "embedding";
+}
+
 export interface InstructionStack extends DaemonEvent {
   type: "instruction_stack";
   session_id: string;
@@ -615,6 +621,9 @@ export interface InstructionStack extends DaemonEvent {
   // Whether a main-loop call has come back at all: tells "no turn yet"
   // apart from "the provider reports no cache figure" (TD-1811).
   cache_observed?: boolean;
+  memory?: MemoryStackEntry[];
+  memory_dropped?: MemoryStackEntry[];
+  memory_placeholder?: boolean;
 }
 
 export interface SessionSummary {

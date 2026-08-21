@@ -496,7 +496,10 @@
     "total_tokens": 500,
     "token_method": "cl100k_base",
     "last_cached_tokens": null,
-    "cache_observed": false
+    "cache_observed": false,
+    "memory": [],
+    "memory_dropped": [],
+    "memory_placeholder": false
   },
   "memory_files": {
     "type": "memory_files",
