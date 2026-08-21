@@ -7291,3 +7291,30 @@ names the gap.
 **Alternative rejected:** Full streamable-HTTP with SSE parsing in this story.
 That is a separate transport project; TD-4401's criteria are about config-listed
 servers reaching the registry safely, which JSON mode satisfies end to end.
+
+
+## 2026-08-21 — TD-4402: MCP-contributed tools get a static Class B floor (Class B)
+
+**Decision:** Every tool contributed by an MCP server classifies at least
+Class B from the static rule table. The floor keys on the tool's
+provenance (`source` starts with `mcp:`), which `build_decision_request`
+now carries onto the request; the worker tier is never consulted for an
+MCP call. Provenance feeds the floor, never an exemption — an MCP call
+naming an undeclared host still classifies C from `network-new-host`,
+which sits above the floor.
+
+**Rationale:** An MCP tool declares no path or host fields, so its
+request reaches the table with nothing to judge; without the floor it
+falls through to a worker tier that can answer A. But an MCP call is an
+external contract by construction — exactly what Class A forbids — and
+the daemon cannot statically see inside one. Same reasoning as TD-4805's
+shell floor: a model's reading of an opaque call is never the sole gate.
+In the default configuration both B and worker-A-except-auto land at
+"ask", so the floor costs nothing the default user had and removes the
+auto-run path.
+
+**Alternative rejected:** Keying the floor on the `mcp__` name prefix.
+The prefix is a wire-facing convention for providers; gating on the
+structured provenance field keeps the security behavior off the naming
+scheme and generalizes to other contributed sources (TD-4601 plugins)
+without a string convention becoming load-bearing.

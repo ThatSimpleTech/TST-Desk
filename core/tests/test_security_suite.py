@@ -476,6 +476,92 @@ def test_allowlist_docs_name_the_escape_hatches() -> None:
         assert hatch in doc
 
 
+# ── 3c. MCP-contributed tools floor at B (TD-4402) ────────────────────────
+#
+# An MCP tool declares no path or host fields, so its request reaches the
+# table with nothing to judge — without the floor it would fall through to
+# a worker tier that can answer A. Same reasoning as the shell floor.
+
+
+def _mcp_decision(ws: Path, **fields: Any) -> Any:
+    """Static classification of an MCP-contributed call."""
+    return DecisionClassifier(Boundary(workspace_root=ws)).classify(
+        DecisionRequest(tool_name="mcp__git__status", source="mcp:git", **fields)
+    )
+
+
+def test_mcp_call_with_no_declared_targets_floors_at_b(ws: Path) -> None:
+    """Missing host/path fields fail toward B, never A (TD-4402)."""
+    decision = _mcp_decision(ws)
+    assert decision.decision_class is DecisionClass.B
+    assert decision.rule is not None
+    assert decision.rule.id == "mcp-floor"
+
+
+def test_mcp_declared_host_off_allowlist_is_still_c(ws: Path) -> None:
+    """The floor sits under the C rules, not over them: an MCP call naming
+    an undeclared host is C (network-new-host), not B."""
+    decision = _mcp_decision(ws, hosts=frozenset({"example.com"}))
+    assert decision.decision_class is DecisionClass.C
+    assert decision.rule is not None
+    assert decision.rule.id == "network-new-host"
+
+
+def test_mcp_floor_leaves_unsourced_tools_alone(ws: Path) -> None:
+    """Only mcp-sourced requests floor: the same shape with no provenance
+    stays ambiguous and goes to the worker tier, unchanged."""
+    decision = DecisionClassifier(Boundary(workspace_root=ws)).classify(
+        DecisionRequest(tool_name="mcp__git__status")
+    )
+    assert decision.decision_class is None
+
+
+async def test_mcp_worker_never_consulted(ws: Path) -> None:
+    """The floor is static: even a worker eager to answer A is not asked."""
+    spy = SpyWorker("A")
+    classifier = AmbiguousClassifier(
+        static=DecisionClassifier(Boundary(workspace_root=ws)),
+        call_worker=spy,
+    )
+    classification = await classifier.classify(
+        DecisionRequest(tool_name="mcp__git__status", source="mcp:git")
+    )
+    assert classification.decision_class is DecisionClass.B
+    assert spy.calls == []
+
+
+async def test_mcp_dispatch_without_classifier_raises(ws: Path) -> None:
+    """The bypass attempt: an MCP-contributed tool reaching the dispatcher
+    with no classifier attached raises — the chokepoint holds for
+    contributed tools exactly as for built-ins."""
+    dispatcher = make_dispatcher(ws, with_classifier=False)
+    dispatcher.registry.register(Tool(name="mcp__git__status", source="mcp:git"))
+
+    async def handler(**_kwargs: Any) -> str:
+        return "should never run"
+
+    dispatcher.register_handler("mcp__git__status", handler)
+    with pytest.raises(UnclassifiedToolCall):
+        await dispatcher.dispatch("c1", "mcp__git__status", {})
+
+
+async def test_mcp_call_dispatches_as_b(ws: Path) -> None:
+    """Fully wired, an MCP tool runs through the classifier and lands on
+    the result as Class B — approval-gated like any structural action."""
+    dispatcher = make_dispatcher(ws)  # auto-approver attached (TD-802)
+    dispatcher.registry.register(
+        Tool(name="mcp__git__status", source="mcp:git", side_effect_class="ask")
+    )
+
+    async def handler(**_kwargs: Any) -> str:
+        return "ok"
+
+    dispatcher.register_handler("mcp__git__status", handler)
+    result = await dispatcher.dispatch("c1", "mcp__git__status", {})
+    assert result.status == "success"
+    assert result.decision_class is DecisionClass.B
+
+
 # ── 4. Secret redaction ───────────────────────────────────────────────────
 
 FAKE_SECRETS = [
