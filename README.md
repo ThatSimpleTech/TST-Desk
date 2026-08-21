@@ -129,10 +129,10 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
   [`config.py`](core/tstd/config.py)'s `requires_api_key()` returns false when every tier points
   at loopback, and the provider client is then built with `api_key=None` and sends no
   `Authorization` header at all.
-- **No server.** The daemon binds `127.0.0.1` and nothing else.
-  [`ws.py`](core/tstd/ws.py)'s `validate_interface()` refuses every other interface, and the
-  server's `start()` deliberately takes no `host` parameter, so the literal cannot be
-  configured away. `core/tests/test_security_suite.py` asserts both.
+- **No server.** The daemon binds `127.0.0.1` by default.
+  [`ws.py`](core/tstd/ws.py)'s `validate_interface()` refuses every other interface unless
+  `remote.bind` names a Tailscale address (never `0.0.0.0`). `start()` takes no `host`
+  parameter. `core/tests/test_security_suite.py` asserts both.
 - **No subscription.** You pay your model provider per token and nobody else. There is no
   billing code in this repository because there is nothing to bill.
 - **No telemetry.** No analytics, no phone-home, no crash reporting. The only outbound HTTP the

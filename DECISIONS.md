@@ -7157,3 +7157,27 @@ on `protocol.py`, AppShell, ScreenPane, and DECISIONS.
 **Alternative rejected:** Cherry-picking only the exit harness onto main
 and leaving chrome on side branches.
 
+---
+
+## 2026-08-21 — TD-3601: opt-in Tailscale bind (Class B)
+
+**Decision:** `remote.bind` (empty string, off by default) names either a
+Tailscale IPv4/IPv6 or an interface. The daemon then serves on
+`127.0.0.1` **and** that address on the same port. The port file still
+describes loopback. `0.0.0.0` / `::` are never legal.
+
+A host is Tailscale when it is CGNAT `100.64.0.0/10`, Tailscale ULA
+`fd7a:115c:a1e0::/48`, or an address on an interface named `tailscale*`
+(or `utun*` that already has a Tailscale address). Classification uses
+an injectable ifaddrs table; the default enumerator calls `getifaddrs`,
+never `tailscale status`. `validate_interface` stays loopback-only
+unless `extra_allowed` is that exact resolved address.
+
+**Rationale:** Spec §8 is the documented exception to §2.1, and it is
+opt-in. Dual listeners keep the local host on loopback. Injecting the
+table keeps the suite offline.
+
+**Alternative rejected:** Calling `tailscale status` on the start path.
+Also rejected: binding `0.0.0.0` and filtering. Also rejected: adding a
+`host` parameter to `WebSocketServer.start`.
+

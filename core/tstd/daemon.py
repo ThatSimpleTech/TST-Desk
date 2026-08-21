@@ -467,6 +467,7 @@ class Daemon:
             self.data_dir,
             message_handler=self._handle_message,
             on_disconnect=self._on_connection_closed,
+            bind=self.config.remote.bind,
         )
         # Shared across sessions so the kill-switch is process-wide.
         # Empty computer_use.command is the mock; a command is stdio MCP.
