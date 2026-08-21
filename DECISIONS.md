@@ -7236,3 +7236,33 @@ only processes CSP when the config sets one).
 the built HTML and rewrites `tauri.conf.json`. It reproduces what
 `kit.csp` already does, maintained by the framework, and adds build
 machinery for no gain.
+
+## 2026-08-21 — TD-4808: `side_effect_class` is a floor, and the network rail reads hosts (Class B)
+
+**Decision:** Two dead rails were wired rather than removed (the story's
+AC offered either). (1) `Tool.side_effect_class` now rides the
+`DecisionRequest` and is enforced: `never` classifies C alongside the
+other refusals, ahead of every A grant; `ask` is a terminal B floor that
+only catches calls no specific rule spoke for. (2) `web_fetch` declares
+`host_fields=("url",)` with URL→host reduction in dispatch, and
+`web_search` declares a `host_resolver` that reads `search.base_url`
+from config at classification time, so `network: deny` and the host
+allowlist classify both tools before they run.
+
+**Rationale:** A floor preserves the deliberate grants — in-workspace
+edits and memory writes stay Class A (checkpointed, revertable) even
+though `fs_write` declares `ask`. Placing the floor *above* those rules
+would overturn TD-1410's checkpoint-backed autonomy; placing `never`
+with the C cluster keeps the suite's C-before-A invariant meaningful.
+Wiring beat removal because the declarations close a real hole: before
+this, an allowlisted-host `web_fetch` fell through to the worker model,
+which could grant Class A to a network call.
+
+**Alternative rejected:** Removing `side_effect_class` from the schema.
+The field is honest now that it is enforced, and removing it would leave
+web tools with no approval floor at all.
+
+**Follow-up:** `network: deny` still does not stop shell egress (`curl`)
+— the classifier cannot see inside a command string; `allowed_commands`
+and the approval gate govern that path. Documented in configuration.md
+§4.6.

@@ -164,6 +164,69 @@ class TestNetworkNewHost:
         assert not fired_as(decision, "network-new-host")
 
 
+# ── Rule: side-effect floor (TD-4808) ──────────────────────────────────
+
+
+class TestSideEffectFloor:
+    def test_never_is_c(self) -> None:
+        decision = classify(boundary(), req(tool_name="nuke", side_effect_class="never"))
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "side-effect-never")
+
+    def test_never_beats_the_in_workspace_edit_grant(self) -> None:
+        # A "never" tool with path fields must not reach A via a specific
+        # grant — the C-before-A invariant holds for the floor too.
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="nuke",
+                writes=(WS / "src" / "x.py",),
+                is_mutation=True,
+                side_effect_class="never",
+            ),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "side-effect-never")
+
+    def test_ask_with_no_other_rail_is_b(self) -> None:
+        decision = classify(boundary(), req(tool_name="custom_tool", side_effect_class="ask"))
+        assert decision.decision_class is DecisionClass.B
+        assert fired_as(decision, "side-effect-ask-floor")
+
+    def test_ask_floor_does_not_override_in_workspace_edit(self) -> None:
+        # Deliberate: in-workspace edits are Class A (checkpointed,
+        # revertable) even though fs_write declares "ask" — the floor
+        # only catches calls no specific rule spoke for.
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / "src" / "x.py",),
+                is_mutation=True,
+                side_effect_class="ask",
+            ),
+        )
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "in-workspace-edit")
+
+    def test_ask_floor_does_not_override_memory_write(self) -> None:
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "memory" / "MEMORY.md",),
+                is_mutation=True,
+                side_effect_class="ask",
+            ),
+        )
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "memory-file-write")
+
+    def test_auto_with_no_rule_still_goes_to_the_worker(self) -> None:
+        decision = classify(boundary(), req(tool_name="custom_tool", side_effect_class="auto"))
+        assert decision.decision_class is None
+
+
 # ── Rule: steering-file write → C (even inside workspace) ──────────────
 
 

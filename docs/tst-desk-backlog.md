@@ -6030,15 +6030,29 @@ fake-approval-form degradation, copy-control survival, and every CSP directive.
 **Size:** 2 · **Depends on:** TD-609, TD-610
 
 **Acceptance criteria:**
-- [ ] Either the web tools declare host fields the classifier enforces `network: deny`
-      against, or the policy surface stops advertising a rail that is not wired
-- [ ] `side_effect_class` is enforced in classification or removed from the schema
-- [ ] Tests for whichever way each goes
+- [x] Either the web tools declare host fields the classifier enforces `network: deny`
+      against, or the policy surface stops advertising a rail that is not wired —
+      wired: `web_fetch` declares `host_fields=("url",)` with URL→host reduction;
+      `web_search` declares a `host_resolver` reading `search.base_url` at
+      classification time
+- [x] `side_effect_class` is enforced in classification or removed from the schema —
+      enforced as a floor: `never` → C ahead of every grant, `ask` → terminal B
+      floor (DECISIONS 2026-08-21)
+- [x] Tests for whichever way each goes — floor placement and precedence in
+      test_classifier.py; end-to-end wiring, host reduction, config-host resolution,
+      and a declaration drift guard in test_security_suite.py
 
 A policy rule can say `network: deny` and the web tools will still fetch — nothing carries
 the rule to the tool. Dead rails are worse than absent ones: the config reads as though
 a guarantee exists. Same shape as TD-1410's argument: a promise that holds by construction
 until the day it silently doesn't.
+
+**Completed (2026-08-21):** both rails wired. `network: deny` now refuses `web_fetch`
+and `web_search` (Class C via `network-new-host`); an allowlisted host asks (Class B via
+the new floor). `side_effect_class` is enforced as a floor — specific grants
+(in-workspace edit, memory write) keep their deliberate Class A. Shell egress remains
+ungated by `network` (the classifier cannot see inside a command string) — documented in
+configuration.md §4.6. Browser CU tools keep their `actuates` rail unchanged.
 
 ### TD-4809 — Shell host: release builds honor TSTD_PATH, Windows open_path is cmd-injectable, externalBin lives in an npm flag
 **Size:** 2 · **Depends on:** TD-1301
