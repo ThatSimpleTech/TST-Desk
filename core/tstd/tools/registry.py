@@ -48,6 +48,10 @@ class Tool:
         actuates: Desktop computer-use only (TD-3301). ``None`` means this
             is not a CU tool. ``False`` is capture-only (Class A).
             ``True`` is pointer/keyboard actuation (Class B, ask).
+        source: Where the tool came from. Empty for built-ins;
+            ``mcp:<server>`` for tools contributed by an MCP server
+            (TD-4401). Provenance is metadata only — it never gates
+            dispatch (the classifier does that, TD-702).
     """
 
     name: str
@@ -67,6 +71,7 @@ class Tool:
     # path_fields would otherwise fall through to the worker as B for
     # screenshot too.
     actuates: bool | None = None
+    source: str = ""
 
     def __post_init__(self) -> None:
         """Validate basic invariants."""
@@ -189,6 +194,7 @@ class ToolRegistry:
                 "parameters": tool.parameters,
                 "side_effect_class": tool.side_effect_class,
                 "parallel_safe": tool.parallel_safe,
+                "source": tool.source,
             }
             for tool in self.list_tools()
         ]

@@ -2,12 +2,19 @@
 
 No socket. The child is spawned with stdin/stdout pipes. Stderr is drained
 so a chatty sidecar cannot fill the pipe and stall.
+
+The wire mechanics are generic; the error vocabulary is not. By default
+errors map into ``DesktopError`` computer-use codes (the TD-3301 sidecar).
+The extension loader (``tstd.mcp``, TD-4401) injects its own mapper and
+transport wording so a generic server's failure is never mistaken for a
+computer-use one.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from typing import Any
 
 from ..logging import get_logger
@@ -30,10 +37,22 @@ _CALL_TIMEOUT = 30.0
 class StdioMcpClient:
     """One JSON-RPC session over a child process's stdio."""
 
-    def __init__(self, command: list[str]) -> None:
+    def __init__(
+        self,
+        command: list[str],
+        *,
+        error_mapper: Callable[[str], Exception] | None = None,
+        transport_code: str = "cu_error",
+        transport_label: str = "computer-use sidecar",
+    ) -> None:
         if not command:
             raise ValueError("MCP sidecar command must be a non-empty argv")
         self._command = command
+        self._error_mapper: Callable[[str], Exception] = (
+            error_mapper if error_mapper is not None else map_mcp_error
+        )
+        self._transport_code = transport_code
+        self._transport_label = transport_label
         self._proc: asyncio.subprocess.Process | None = None
         self._next_id = 1
         self._lock = asyncio.Lock()
@@ -80,6 +99,16 @@ class StdioMcpClient:
             {"name": name, "arguments": arguments or {}},
         )
 
+    async def list_tools(self) -> list[dict[str, Any]]:
+        """Ask the server for its tool catalog (TD-4401)."""
+        result = await self.request("tools/list", {})
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+        return [tool for tool in tools if isinstance(tool, dict)]
+
+    def is_alive(self) -> bool:
+        """Best-effort liveness: False once the child has exited."""
+        return self._proc is None or self._proc.returncode is None
+
     async def aclose(self) -> None:
         proc = self._proc
         self._proc = None
@@ -105,7 +134,7 @@ class StdioMcpClient:
     ) -> Any:
         proc = self._proc
         if proc is None or proc.stdin is None or proc.stdout is None:
-            raise DesktopError("cu_error", "computer-use sidecar is not running")
+            raise DesktopError(self._transport_code, f"{self._transport_label} is not running")
         message: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         req_id: int | None = None
         if with_id:
@@ -122,7 +151,7 @@ class StdioMcpClient:
         while True:
             raw = await proc.stdout.readline()
             if not raw:
-                raise DesktopError("cu_error", "computer-use sidecar closed stdout")
+                raise DesktopError(self._transport_code, f"{self._transport_label} closed stdout")
             try:
                 parsed: Any = json.loads(raw.decode("utf-8"))
             except json.JSONDecodeError:
@@ -132,7 +161,7 @@ class StdioMcpClient:
             if "error" in parsed:
                 err = parsed["error"]
                 text = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-                raise map_mcp_error(str(text))
+                raise self._error_mapper(str(text))
             return parsed.get("result")
 
     async def _drain_stderr(self) -> None:
@@ -144,7 +173,11 @@ class StdioMcpClient:
                 line = await proc.stderr.readline()
                 if not line:
                     return
-                log.debug("cu-mcp stderr: %s", line.decode("utf-8", errors="replace").rstrip())
+                log.debug(
+                    "%s stderr: %s",
+                    self._transport_label,
+                    line.decode("utf-8", errors="replace").rstrip(),
+                )
         except asyncio.CancelledError:
             return
 

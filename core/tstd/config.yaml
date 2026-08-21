@@ -169,3 +169,12 @@ session:
 computer_use:
   command: ""
   browser: mock
+# MCP servers (TD-4401). Each entry names a server exactly one way:
+#   command: stdio argv (string or list), or
+#   url:     a loopback HTTP endpoint (127.0.0.0/8, ::1, localhost).
+# The entry carries the destination and nothing else — no environment,
+# no headers; a token lives in the OS keychain, never in this file.
+# Servers start once per daemon; nothing is discovered or hot-reloaded.
+# Enabled servers contribute tools named mcp__<server>__<tool>.
+mcp:
+  servers: {}
