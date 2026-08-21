@@ -21,6 +21,7 @@
 	import { storeKey, validateKey, removeKey, onboarding } from '../onboarding.svelte.js';
 	import { session } from '../session-status.svelte.js';
 	import PolicyRuleList from './PolicyRuleList.svelte';
+	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
 	import Icon from './Icon.svelte';
 
 	const TIERS = ['brain', 'worker', 'validator'] as const;
@@ -128,6 +129,7 @@
 						>
 					</div>
 					<p class="hint">Off restores close = shutdown. Quit always shuts down.</p>
+					<CuIndicatorToggles />
 				{:else if settings.section === 'model'}
 					<p class="hint">
 						Preset <strong>{settings.activePreset ?? '—'}</strong>. Edits are saved to your

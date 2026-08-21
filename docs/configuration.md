@@ -479,6 +479,14 @@ that lives in the user data dir as `approvals.yaml`, so a clone cannot carry it.
 on, a Class B call that would have asked runs as auto. Class C still parks or refuses. A
 `never` rule still refuses. The classifier still runs. `effect: yolo` is not a valid rule.
 
+**Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
+not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the
+user data dir (glow and cursor default on; the real-display overlay defaults off). Glow and
+the agent cursor are drawn on the Screen pane. When the real-display toggle is on, screenshot
+tools hide that overlay for the duration of the capture so it cannot appear in the frame.
+The host overlay path is a no-op in this release; the hide flag is the contract. This is not
+a second hardware pointer.
+
 ### 4.5 `approved_external_imports`
 
 | Key | Type | Default | Effect |

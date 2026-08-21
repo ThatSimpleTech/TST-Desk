@@ -4914,14 +4914,22 @@ emits `screen_frame` (path, not bytes). The Screen tab gates on `hasCuTool`
 **Size:** 5 · **Depends on:** TD-3401
 
 **Acceptance criteria:**
-- [ ] Settings: **Computer-use glow** and **Agent cursor**, default on,
+- [x] Settings: **Computer-use glow** and **Agent cursor**, default on,
       user-data-dir
-- [ ] Screen pane shows both while a CU turn is live
-- [ ] **Show indicators on the real display** is a third toggle,
+- [x] Screen pane shows both while a CU turn is live
+- [x] **Show indicators on the real display** is a third toggle,
       default off; if on, hidden during every `screenshot`
-- [ ] Not a second hardware pointer (OS has one)
-- [ ] `prefers-reduced-motion`: static border, no trail
-- [ ] Clears on turn end, cancel, and kill-switch
+- [x] Not a second hardware pointer (OS has one)
+- [x] `prefers-reduced-motion`: static border, no trail
+- [x] Clears on turn end, cancel, and kill-switch
+
+**Completed (2026-08-21):** Settings → Appearance persists the three bits
+in `{user_data_dir}/cu-indicators.yaml` via `set_cu_indicators`. Glow and
+the agent cursor are CSS overlays on the Screen pane (not a second OS
+pointer). The real-display host path is a no-op; screenshot tools raise
+`real_display_overlay_hidden` while capturing when that toggle is on.
+`prefers-reduced-motion` is a static border and no trail. The store
+clears on `turn_complete`, cancel, and `cu_kill_state`.
 
 ---
 

@@ -11,6 +11,7 @@ import json
 from functools import partial
 from typing import TYPE_CHECKING
 
+from ..cu_indicators import hide_real_display_for_screenshot
 from ..desktop import DesktopDriver
 from ..screen.frames import persist_screen_frame
 from .registry import Tool, ToolRegistry
@@ -167,7 +168,8 @@ async def desktop_screenshot(
     display: int | None = None,
     tool_call_id: str = "",
 ) -> str:
-    raw = await driver.screenshot(display=display)
+    with hide_real_display_for_screenshot():
+        raw = await driver.screenshot(display=display)
     png = _png_from_driver_json(raw)
     if png is not None:
         await persist_screen_frame(session, png, tool_call_id=tool_call_id or None)

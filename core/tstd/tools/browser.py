@@ -12,6 +12,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from ..browser import BrowserDriver, BrowserError
+from ..cu_indicators import hide_real_display_for_screenshot
 from ..screen.frames import persist_screen_frame
 from .registry import Tool, ToolRegistry
 from .results import HandlerRefusal
@@ -151,7 +152,8 @@ def _refuse(exc: BrowserError) -> HandlerRefusal:
 async def _refresh_frame(session: object, driver: BrowserDriver, tool_call_id: str) -> None:
     """Best-effort screenshot after a successful actuation. Never fails the tool."""
     try:
-        png = await driver.screenshot_png()
+        with hide_real_display_for_screenshot():
+            png = await driver.screenshot_png()
         await persist_screen_frame(session, png, tool_call_id=tool_call_id)
     except (BrowserError, OSError):
         return
@@ -163,7 +165,8 @@ async def browser_screenshot(
     tool_call_id: str = "",
 ) -> str:
     try:
-        png = await driver.screenshot_png()
+        with hide_real_display_for_screenshot():
+            png = await driver.screenshot_png()
     except BrowserError as exc:
         raise _refuse(exc) from exc
     body = await persist_screen_frame(session, png, tool_call_id=tool_call_id or None)

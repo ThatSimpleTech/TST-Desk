@@ -51,6 +51,7 @@ import {
 	setSkipAllApprovals,
 	setLoadGlobalMemory,
 	setCoworker,
+	setCuIndicators,
 } from "./settings.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -329,6 +330,67 @@ describe("coworker", () => {
 		expect(settings.coworkerEnabled).toBe(true);
 		emit(setupState({ coworker_enabled: false }));
 		expect(settings.coworkerEnabled).toBe(false);
+	});
+});
+
+describe("computer-use indicators", () => {
+	it("defaults glow and cursor on, real display off", () => {
+		startSettings();
+		expect(settings.cuGlow).toBe(true);
+		expect(settings.cuAgentCursor).toBe(true);
+		expect(settings.cuShowOnRealDisplay).toBe(false);
+	});
+
+	it("reads the three bits from setup_state", () => {
+		startSettings();
+		emit(
+			setupState({
+				cu_glow: false,
+				cu_agent_cursor: false,
+				cu_show_on_real_display: true,
+			}),
+		);
+		expect(settings.cuGlow).toBe(false);
+		expect(settings.cuAgentCursor).toBe(false);
+		expect(settings.cuShowOnRealDisplay).toBe(true);
+	});
+
+	it("treats omitted glow/cursor as on and real display as off", () => {
+		startSettings();
+		emit(
+			setupState({
+				cu_glow: false,
+				cu_agent_cursor: false,
+				cu_show_on_real_display: true,
+			}),
+		);
+		const {
+			cu_glow: _g,
+			cu_agent_cursor: _c,
+			cu_show_on_real_display: _r,
+			...without
+		} = setupState();
+		emit(without as SetupState);
+		expect(settings.cuGlow).toBe(true);
+		expect(settings.cuAgentCursor).toBe(true);
+		expect(settings.cuShowOnRealDisplay).toBe(false);
+	});
+
+	it("sends set_cu_indicators and waits for the ack", () => {
+		startSettings();
+		emit(setupState());
+		setCuIndicators({ glow: false });
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_cu_indicators",
+				glow: false,
+				agent_cursor: true,
+				show_on_real_display: false,
+			},
+		]);
+		expect(settings.cuGlow).toBe(true);
+		emit(setupState({ cu_glow: false }));
+		expect(settings.cuGlow).toBe(false);
 	});
 });
 

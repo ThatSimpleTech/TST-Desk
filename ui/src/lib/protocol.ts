@@ -119,6 +119,14 @@ export interface SetCoworker extends ClientMessage {
   enabled: boolean;
 }
 
+/** Computer-use glow / cursor / real-display overlay (TD-3402). */
+export interface SetCuIndicators extends ClientMessage {
+  type: "set_cu_indicators";
+  glow: boolean;
+  agent_cursor: boolean;
+  show_on_real_display: boolean;
+}
+
 /** Pin or unpin a workspace on the Projects list (TD-2806). */
 export interface SetWorkspacePin extends ClientMessage {
   type: "set_workspace_pin";
@@ -381,6 +389,7 @@ export type ClientMessageUnion =
   | SetSkipAllApprovals
   | SetLoadGlobalMemory
   | SetCoworker
+  | SetCuIndicators
   | SetWorkspacePin
   | Resume
   | Cancel
@@ -783,6 +792,11 @@ export interface SetupState extends DaemonEvent {
   load_global_memory?: boolean;
   // TD-2905: keep running when the window closes. Additive, default on.
   coworker_enabled?: boolean;
+  // TD-3402: Screen-pane glow / agent cursor. Additive, default on.
+  cu_glow?: boolean;
+  cu_agent_cursor?: boolean;
+  // TD-3402: host overlay on the real display. Additive, default off.
+  cu_show_on_real_display?: boolean;
   pinned_workspaces?: string[];
 }
 
@@ -907,6 +921,12 @@ export interface ScreenFrame extends DaemonEvent {
   tool_call_id?: string | null;
 }
 
+/** Process-wide computer-use kill-switch visibility (TD-3402). */
+export interface CuKillState extends DaemonEvent {
+  type: "cu_kill_state";
+  killed: boolean;
+}
+
 export interface ContextCompacted extends DaemonEvent {
   type: "context_compacted";
   session_id: string;
@@ -961,4 +981,5 @@ export type DaemonEventUnion =
   | ArtifactList
   | Artifact
   | Error
-  | ScreenFrame;
+  | ScreenFrame
+  | CuKillState;

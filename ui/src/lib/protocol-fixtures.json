@@ -85,6 +85,12 @@
     "type": "set_coworker",
     "enabled": true
   },
+  "set_cu_indicators": {
+    "type": "set_cu_indicators",
+    "glow": true,
+    "agent_cursor": true,
+    "show_on_real_display": false
+  },
   "set_workspace_pin": {
     "type": "set_workspace_pin",
     "path": "/home/user/project",
@@ -680,6 +686,9 @@
     "skip_all_approvals": false,
     "load_global_memory": false,
     "coworker_enabled": true,
+    "cu_glow": true,
+    "cu_agent_cursor": true,
+    "cu_show_on_real_display": false,
     "pinned_workspaces": []
   },
   "api_key_validated": {
@@ -835,6 +844,11 @@
     "width": 1,
     "height": 1,
     "tool_call_id": "c1"
+  },
+  "cu_kill_state": {
+    "type": "cu_kill_state",
+    "seq": 1,
+    "killed": true
   },
   "hello_ack": {
     "type": "hello_ack",

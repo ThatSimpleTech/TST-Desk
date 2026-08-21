@@ -255,6 +255,20 @@ class SetCoworker(ClientMessage):
     enabled: bool
 
 
+class SetCuIndicators(ClientMessage):
+    """Computer-use glow / agent cursor / real-display overlay (TD-3402).
+
+    Machine-wide, no session. Persists ``{user_data_dir}/cu-indicators.yaml``.
+    The daemon answers with ``setup_state``. Glow and cursor default on;
+    the real-display overlay defaults off.
+    """
+
+    type: Literal["set_cu_indicators"] = "set_cu_indicators"
+    glow: bool
+    agent_cursor: bool
+    show_on_real_display: bool
+
+
 class Resume(ClientMessage):
     """Resume a session paused at a declared cap (TD-707).
 
@@ -1191,6 +1205,12 @@ class SetupState(DaemonEvent):
     # TD-2905: keep running when the window closes. Additive, default on —
     # a missing file and an older client that ignores the field stay on.
     coworker_enabled: bool = True
+    # TD-3402: Screen-pane glow / agent cursor. Additive, default on.
+    cu_glow: bool = True
+    cu_agent_cursor: bool = True
+    # TD-3402: host/sidecar overlay on the real display. Additive, default
+    # off. Hidden for the duration of every screenshot when on.
+    cu_show_on_real_display: bool = False
     # TD-2806: workspaces pinned on this machine. Not a workspace file.
     pinned_workspaces: list[str] = Field(default_factory=list)
 
@@ -1392,6 +1412,18 @@ class ScreenFrame(DaemonEvent):
     tool_call_id: str | None = None
 
 
+class CuKillState(DaemonEvent):
+    """Process-wide computer-use kill-switch visibility (TD-3402).
+
+    Connection-scoped. ``killed=true`` clears Screen-pane glow and cursor.
+    The in-window control that emits this is TD-3404.
+    """
+
+    type: Literal["cu_kill_state"] = "cu_kill_state"
+    seq: int = 1
+    killed: bool
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -1408,6 +1440,7 @@ ClientMessageT = Annotated[
     | SetSkipAllApprovals
     | SetLoadGlobalMemory
     | SetCoworker
+    | SetCuIndicators
     | SetWorkspacePin
     | Resume
     | Cancel
@@ -1487,7 +1520,8 @@ DaemonEventT = Annotated[
     | Artifact
     | Ping
     | Error
-    | ScreenFrame,
+    | ScreenFrame
+    | CuKillState,
     Field(discriminator="type"),
 ]
 
@@ -1510,6 +1544,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_skip_all_approvals",
         "set_load_global_memory",
         "set_coworker",
+        "set_cu_indicators",
         "set_workspace_pin",
         "resume",
         "cancel",
@@ -1590,6 +1625,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "ping",
         "error",
         "screen_frame",
+        "cu_kill_state",
     }
 )
 
