@@ -19,6 +19,7 @@
 	import WorkPanel from './WorkPanel.svelte';
 	import StackPanel from './StackPanel.svelte';
 	import UsagePanel from './UsagePanel.svelte';
+	import ScreenPane from './ScreenPane.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
 	import MemoryProposalBar from './MemoryProposalBar.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
@@ -45,6 +46,8 @@
 	import { rightPane, showRightPane } from '../right-pane.svelte.js';
 	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
 	import { startStack, refreshStack } from '../stack-store.svelte.js';
+	import { startScreen, screen } from '../screen.svelte.js';
+	import { screenTabVisible } from '../screen';
 	import { startOsNotify, createTauriOsNotifyBridge } from '../os-notify.svelte.js';
 	import { startCloseHint } from '../close-hint';
 	import { startCoworkerIndicator } from '../coworker-indicator.svelte.js';
@@ -104,6 +107,7 @@
 		const offStack = startStack();
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
 		const offArtifacts = startArtifacts();
+		const offScreen = startScreen();
 		const offCoworker = startCoworkerIndicator();
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
@@ -119,6 +123,7 @@
 			offStack();
 			offOsNotify();
 			offArtifacts();
+			offScreen();
 			offCoworker();
 			offCloseHint();
 		};
@@ -145,6 +150,15 @@
 		showRightPane('usage');
 		if (!usage.loaded) refreshUsage();
 	}
+
+	let showScreenTab = $derived(
+		screenTabVisible({
+			boundSessionId: screen.boundSessionId,
+			sessionId: session.sessionId,
+			hasFrame: screen.hasFrame,
+			hasBrowserTool: screen.hasBrowserTool,
+		}),
+	);
 
 </script>
 
@@ -216,7 +230,7 @@
 			</section>
 		{/snippet}
 		{#snippet right()}
-			<section class="pane-activity" aria-label="Activity, files, work, stack, and usage pane">
+			<section class="pane-activity" aria-label="Activity, files, work, stack, usage, and screen pane">
 				<div class="pane-tabs" role="tablist" aria-label="Right pane views">
 					<button
 						role="tab"
@@ -265,6 +279,17 @@
 					>
 						Usage
 					</button>
+					{#if showScreenTab}
+						<button
+							role="tab"
+							aria-selected={rightPane.tab === 'screen'}
+							class="tab"
+							class:tab-active={rightPane.tab === 'screen'}
+							onclick={() => showRightPane('screen')}
+						>
+							Screen
+						</button>
+					{/if}
 				</div>
 				{#if rightPane.tab === 'activity'}
 					<ActivityTimeline />
@@ -274,6 +299,8 @@
 					<WorkPanel />
 				{:else if rightPane.tab === 'usage'}
 					<UsagePanel />
+				{:else if rightPane.tab === 'screen'}
+					<ScreenPane />
 				{:else}
 					<StackPanel />
 				{/if}
@@ -404,7 +431,8 @@
 	.pane-activity > :global(.timeline),
 	.pane-activity > :global(.files-panel),
 	.pane-activity > :global(.work-panel),
-	.pane-activity > :global(.stack-panel) {
+	.pane-activity > :global(.stack-panel),
+	.pane-activity > :global(.screen-pane) {
 		flex: 1;
 		min-height: 0;
 	}

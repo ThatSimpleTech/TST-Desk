@@ -201,14 +201,19 @@ class EmbeddingsConfig(BaseModel):
 
 
 class ComputerUseConfig(BaseModel):
-    """Desktop computer-use sidecar (TD-3301).
+    """Desktop computer-use sidecar (TD-3301) and browser (TD-1710).
 
     Empty ``command`` is mock-only: no child, no real pointer. A non-empty
     value is argv for ``mcp/tst-cu-mcp`` over stdio. The daemon owns the
     child. No socket.
+
+    ``browser`` is ``mock`` (default, CI) or ``playwright``. Playwright
+    missing always falls back to the mock. The live profile lives under
+    the user data dir, not the workspace.
     """
 
     command: str | list[str] = ""
+    browser: Literal["mock", "playwright"] = "mock"
 
     @field_validator("command", mode="before")
     @classmethod

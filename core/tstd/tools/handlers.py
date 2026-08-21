@@ -22,8 +22,10 @@ import os
 from functools import partial
 from pathlib import Path
 
+from ..browser import BrowserDriver, MockBrowserDriver
 from ..context.manifest import _FALLBACK_IGNORE
 from ..desktop import DesktopDriver, MockDesktopDriver
+from .browser import register_browser_handlers
 from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
 from .shell import ShellPolicy, run_shell
@@ -148,13 +150,15 @@ def register_builtin_handlers(
     dispatcher: ToolDispatcher,
     allowed_commands: tuple[str, ...] | None = None,
     desktop_driver: DesktopDriver | None = None,
+    browser_driver: BrowserDriver | None = None,
 ) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
     ``allowed_commands`` restricts the shell tool to the given binaries
     when set (TD-605); ``None`` leaves it unrestricted.  ``desktop_driver``
     is the process-wide computer-use backend (TD-3301); omitted means the
-    in-process mock so every builtin still has a handler.
+    in-process mock so every builtin still has a handler.  ``browser_driver``
+    is the session browser (TD-1710); omitted is the in-process mock.
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
@@ -167,4 +171,7 @@ def register_builtin_handlers(
     )
     register_desktop_handlers(
         dispatcher, desktop_driver if desktop_driver is not None else MockDesktopDriver()
+    )
+    register_browser_handlers(
+        dispatcher, browser_driver if browser_driver is not None else MockBrowserDriver()
     )

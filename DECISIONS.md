@@ -6908,3 +6908,24 @@ importing `tst_cu_mcp` backends into `tstd`. Also rejected: HTTP sidecar
 (embeddings-style) — the MCP server is already stdio and a socket would
 invite a bind.
 
+---
+
+## 2026-08-21 — TD-1710: first-party browser driver (`files_102.zip` absent)
+
+**Decision:** `files_102.zip` is not in this tree. Do not invent a zip. The
+product browser driver is first-party `tstd.browser` (Playwright persistent
+profile + `MockBrowserDriver`), same six verbs as the tst-cua BrowserDriver
+would have exposed: navigate, click, type, scroll, screenshot, wait.
+
+**Rationale:** The backlog AC names the zip as the only copy of the tst-cua
+driver source. A search of the worktree found none. Inventing a zip would
+falsify provenance. A first-party module keeps the six-verb contract, the
+approval gate (`Tool.actuates`: screenshot Class A, the rest Class B), and
+the Screen pane's `screen_frame` path-not-bytes stream. CI never launches
+Chrome; `computer_use.browser: mock` is the default, and missing Playwright
+falls back to the mock.
+
+**Alternative rejected:** Vendoring a reconstructed tst-cua tree under a
+fake zip. Also rejected: putting PNG bytes on the WebSocket — frames are
+session-dir paths, same wall as artifacts.
+

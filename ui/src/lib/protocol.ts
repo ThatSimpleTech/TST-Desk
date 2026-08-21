@@ -896,6 +896,17 @@ export interface Error extends DaemonEvent {
   message: string;
 }
 
+/** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */
+export interface ScreenFrame extends DaemonEvent {
+  type: "screen_frame";
+  session_id: string;
+  path: string;
+  mime: string;
+  width?: number | null;
+  height?: number | null;
+  tool_call_id?: string | null;
+}
+
 export interface ContextCompacted extends DaemonEvent {
   type: "context_compacted";
   session_id: string;
@@ -949,4 +960,5 @@ export type DaemonEventUnion =
   | ArtifactReady
   | ArtifactList
   | Artifact
-  | Error;
+  | Error
+  | ScreenFrame;

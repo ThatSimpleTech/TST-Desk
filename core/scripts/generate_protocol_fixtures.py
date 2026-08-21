@@ -85,6 +85,7 @@ from tstd.protocol import (
     RuleActivated,
     RunDiagnostics,
     SaveMemory,
+    ScreenFrame,
     SessionList,
     SessionState,
     SetApiKey,
@@ -579,6 +580,15 @@ FIXTURES = {
         title="Notes",
         mime="text/markdown",
         path="notes.md",
+    ),
+    "screen_frame": ScreenFrame(
+        session_id="sess-1",
+        path="screens/aa.png",
+        mime="image/png",
+        width=1,
+        height=1,
+        tool_call_id="c1",
+        seq=23,
     ),
 }
 
