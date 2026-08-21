@@ -54,11 +54,14 @@ from tstd.config import (
     ConfigError,
     EmbeddingsConfig,
     ModelConfig,
+    NotifyConfig,
+    NtfyNotifyConfig,
     Preset,
     ProjectContextConfig,
     RemoteConfig,
     SearchConfig,
     SessionConfig,
+    SlackNotifyConfig,
     TierConfig,
     default_config_yaml,
     load_config,
@@ -202,6 +205,9 @@ _PROJECT_CONTEXT_FIELDS = frozenset(ProjectContextConfig.model_fields)
 _SESSION_FIELDS = frozenset(SessionConfig.model_fields)
 _COMPUTER_USE_FIELDS = frozenset(ComputerUseConfig.model_fields)
 _REMOTE_FIELDS = frozenset(RemoteConfig.model_fields)
+_NOTIFY_FIELDS = frozenset(NotifyConfig.model_fields)
+_SLACK_NOTIFY_FIELDS = frozenset(SlackNotifyConfig.model_fields)
+_NTFY_NOTIFY_FIELDS = frozenset(NtfyNotifyConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
 _SECTION_FIELDS = frozenset(BoundarySection.model_fields)
 _CAPS_FIELDS = frozenset(CapsSection.model_fields)
@@ -263,6 +269,12 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             _check_keys(data["computer_use"], _COMPUTER_USE_FIELDS, f"{where} computer_use")
         if "remote" in data:
             _check_keys(data["remote"], _REMOTE_FIELDS, f"{where} remote")
+        if "notify" in data:
+            _check_keys(data["notify"], _NOTIFY_FIELDS, f"{where} notify")
+            if "slack" in data["notify"]:
+                _check_keys(data["notify"]["slack"], _SLACK_NOTIFY_FIELDS, f"{where} notify.slack")
+            if "ntfy" in data["notify"]:
+                _check_keys(data["notify"]["ntfy"], _NTFY_NOTIFY_FIELDS, f"{where} notify.ntfy")
         for name, preset in data.get("presets", {}).items():
             _check_keys(preset, _PRESET_FIELDS, f"{where} presets.{name}")
             for tier, body in preset.items():
@@ -286,6 +298,9 @@ def test_every_config_key_is_documented() -> None:
         | _SESSION_FIELDS
         | _COMPUTER_USE_FIELDS
         | _REMOTE_FIELDS
+        | _NOTIFY_FIELDS
+        | _SLACK_NOTIFY_FIELDS
+        | _NTFY_NOTIFY_FIELDS
         | _PRESET_FIELDS
         | _TIER_FIELDS
         | WORKSPACE_SECTIONS

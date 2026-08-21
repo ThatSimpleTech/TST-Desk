@@ -95,6 +95,8 @@ from .memory_trigger import (
     completed_turn_count,
     distill_if_due,
 )
+from .notify.ntfy import schedule as schedule_ntfy_notify
+from .notify.slack import schedule as schedule_slack_notify
 from .policy import (
     add_rule,
     load_approved_imports,
@@ -1015,6 +1017,12 @@ class Daemon:
             self._tasks.append(
                 asyncio.create_task(self._emit_cu_permissions(announce, first_run=first_run))
             )
+        task = schedule_slack_notify(self.config, event)
+        if task is not None:
+            self._tasks.append(task)
+        task = schedule_ntfy_notify(self.config, event)
+        if task is not None:
+            self._tasks.append(task)
 
     @staticmethod
     def _version() -> str:

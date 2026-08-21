@@ -200,6 +200,41 @@ class EmbeddingsConfig(BaseModel):
         raise ValueError("command must be a string or a list of arguments")
 
 
+class SlackNotifyConfig(BaseModel):
+    """Slack incoming webhook (TD-3801). Off by default.
+
+    ``host`` is the only host ``tstd.notify.slack.send`` may reach. The
+    webhook URL itself is a keychain secret (account ``tst-slack-webhook``),
+    never this file, never a log, never the audit database. Empty ``host``
+    or ``enabled: false`` means no send.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class NtfyNotifyConfig(BaseModel):
+    """ntfy topic POST (TD-3802). Off by default.
+
+    ``host`` is the only host ``tstd.notify.ntfy.send`` may reach. The
+    topic URL itself is a keychain secret (account ``tst-ntfy-topic``),
+    never this file, never a log, never the audit database. Empty ``host``
+    or ``enabled: false`` means no send. Discord/Telegram are TD-4707.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class NotifyConfig(BaseModel):
+    """Outbound notification channels. Slack first, ntfy optional; no gateway."""
+
+    slack: SlackNotifyConfig = Field(default_factory=SlackNotifyConfig)
+    ntfy: NtfyNotifyConfig = Field(default_factory=NtfyNotifyConfig)
+
+
 class ComputerUseConfig(BaseModel):
     """Desktop computer-use sidecar (TD-3301) and browser (TD-1710).
 
@@ -249,6 +284,7 @@ class ModelConfig(BaseModel):
     session: SessionConfig = Field(default_factory=SessionConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
+    notify: NotifyConfig = Field(default_factory=NotifyConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -338,6 +374,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "session",
         "computer_use",
         "remote",
+        "notify",
     ):
         if key in data:
             continue
