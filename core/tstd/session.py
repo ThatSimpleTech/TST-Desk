@@ -20,6 +20,7 @@ from .boundary_config import BoundaryConfig
 from .logging import get_logger, redact_secrets, redact_structure
 from .policy import ApprovalOutcome, PolicyConfig, propose_always_allow
 from .protocol import (
+    ArtifactReady,
     ConversationReset,
     DaemonEvent,
     Error,
@@ -85,6 +86,10 @@ def _redact_event(event: DaemonEvent) -> DaemonEvent:
         return event.model_copy(update={"message": redact_secrets(event.message)})
     if isinstance(event, SessionStateEvent) and event.reason is not None:
         return event.model_copy(update={"reason": redact_secrets(event.reason)})
+    if isinstance(event, ArtifactReady):
+        return event.model_copy(
+            update={"title": redact_secrets(event.title), "path": redact_secrets(event.path)}
+        )
     return event
 
 

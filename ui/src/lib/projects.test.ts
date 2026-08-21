@@ -12,6 +12,7 @@ import {
 	projects,
 	resetProjects,
 	selectProject,
+	showArtifacts,
 	showHome,
 	showProjects,
 } from "./projects.svelte.js";
@@ -96,5 +97,12 @@ describe("surface store", () => {
 		showHome();
 		expect(projects.surface).toBe("home");
 		expect(projects.selectedPath).toBe("/ws/desk");
+	});
+
+	it("Artifacts is its own surface (TD-3202)", () => {
+		showArtifacts();
+		expect(projects.surface).toBe("artifacts");
+		showHome();
+		expect(projects.surface).toBe("home");
 	});
 });

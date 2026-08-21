@@ -84,6 +84,11 @@ import type {
   UsageReport,
   UsageExported,
   LogTrimmed,
+  ListArtifacts,
+  OpenArtifact,
+  ArtifactReady,
+  ArtifactList,
+  Artifact,
   Ping,
   Error,
   Attachment,
@@ -763,6 +768,7 @@ describe("All fixtures have required shape", () => {
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
       "run_diagnostics",
       "get_usage", "export_usage",
+      "list_artifacts", "open_artifact",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -780,6 +786,7 @@ describe("All fixtures have required shape", () => {
       "instruction_stack", "instruction_files", "context_pins", "memory_files", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
+      "artifact_ready", "artifact_list", "artifact",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -876,5 +883,49 @@ describe("Session lifecycle messages match TypeScript types", () => {
     const m = fixtures.unstar_session as SetSessionStar;
     expect(m.type).toBe("set_session_star");
     expect(m.starred).toBe(false);
+  });
+});
+
+describe("Artifact messages match TypeScript types (TD-3201)", () => {
+  it("list_artifacts", () => {
+    const m = fixtures.list_artifacts as ListArtifacts;
+    expect(m.type).toBe("list_artifacts");
+    expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("open_artifact", () => {
+    const m = fixtures.open_artifact as OpenArtifact;
+    expect(m.type).toBe("open_artifact");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.artifact_id)).toBe(true);
+  });
+
+  it("artifact_ready", () => {
+    const m = fixtures.artifact_ready as ArtifactReady;
+    expect(m.type).toBe("artifact_ready");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.artifact_id)).toBe(true);
+    expect(isString(m.title)).toBe(true);
+    expect(isString(m.mime)).toBe(true);
+    expect(isString(m.path)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("artifact_list", () => {
+    const m = fixtures.artifact_list as ArtifactList;
+    expect(m.type).toBe("artifact_list");
+    expect(isString(m.session_id)).toBe(true);
+    expect(Array.isArray(m.artifacts)).toBe(true);
+    expect(isString(m.artifacts[0]?.artifact_id)).toBe(true);
+    expect(isString(m.artifacts[0]?.path)).toBe(true);
+  });
+
+  it("artifact is metadata and path, not bytes", () => {
+    const m = fixtures.artifact as Artifact;
+    expect(m.type).toBe("artifact");
+    expect(isString(m.artifact_id)).toBe(true);
+    expect(isString(m.path)).toBe(true);
+    expect(hasKeys(m, ["content"])).toBe(false);
+    expect(hasKeys(m, ["content_b64"])).toBe(false);
   });
 });

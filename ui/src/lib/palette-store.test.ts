@@ -148,6 +148,7 @@ describe("entries", () => {
 		expect(ids).toContain("action:open-decisions");
 		expect(ids).toContain("action:run-doctor");
 		expect(ids).toContain("action:show-stack");
+		expect(ids).toContain("action:show-work");
 		expect(ids).toContain("action:open-settings");
 		expect(ids).toContain("action:toggle-theme");
 		expect(ids).toContain("action:end-session");
@@ -234,6 +235,12 @@ describe("commands", () => {
 		expect(rightPane.tab).toBe("activity");
 		run("Open stack");
 		expect(rightPane.tab).toBe("stack");
+	});
+
+	it("shows the work pane", () => {
+		expect(rightPane.tab).toBe("activity");
+		run("Open work");
+		expect(rightPane.tab).toBe("work");
 	});
 
 	it("toggles the theme, treating system as a way into dark", () => {

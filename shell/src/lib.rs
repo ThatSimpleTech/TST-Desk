@@ -1,7 +1,9 @@
 pub mod daemon;
+mod read_text;
 
 use daemon::embeddings::EmbeddingsHandle;
 use daemon::DaemonHandle;
+use read_text::read_text_file;
 use tauri::Manager;
 
 /// Expose the daemon's live connection info to the frontend (TD-1003 will
@@ -66,7 +68,11 @@ pub fn run() {
             app.manage(embeddings);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_daemon_info, open_path])
+        .invoke_handler(tauri::generate_handler![
+            get_daemon_info,
+            open_path,
+            read_text_file
+        ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();

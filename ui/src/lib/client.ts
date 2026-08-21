@@ -54,6 +54,9 @@ const KNOWN_EVENT_TYPES = new Set([
   "usage_report", // TD-1706: was missing; the usage panel never loaded
   "usage_exported", // TD-1706
   "log_trimmed", // TD-2901: attach from a rotated seq
+  "artifact_ready", // TD-3201
+  "artifact_list", // TD-3201
+  "artifact", // TD-3201
   "error",
 ]);
 

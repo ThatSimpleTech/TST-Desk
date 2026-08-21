@@ -4,9 +4,9 @@
 	// connection banner (TD-1003) sit in the shell header so daemon/socket
 	// state is visible at all times. The activity pane hosts the activity
 	// timeline (TD-1005), fed live from the daemon event stream, the files
-	// pane (TD-1705), the resolved-stack panel (TD-1201), and the usage and
-	// cost pane (TD-1706) behind an Activity | Files | Stack | Usage tab
-	// strip.
+	// pane (TD-1705), the work diffs stack (TD-3203), the resolved-stack
+	// panel (TD-1201), and the usage and cost pane (TD-1706) behind an
+	// Activity | Files | Work | Stack | Usage tab strip.
 	// Failure notices (TD-1008) render as banners under the header (blocking)
 	// or toasts bottom-right (transient); the footer hosts pending approval
 	// cards (TD-1007) and memory proposals (TD-2402).
@@ -16,6 +16,7 @@
 	import ConnectionBanner from '../ConnectionBanner.svelte';
 	import ActivityTimeline from './ActivityTimeline.svelte';
 	import FilesPanel from './FilesPanel.svelte';
+	import WorkPanel from './WorkPanel.svelte';
 	import StackPanel from './StackPanel.svelte';
 	import UsagePanel from './UsagePanel.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
@@ -24,7 +25,9 @@
 	import { push } from '../timeline-store.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
 	import ProjectPane from './ProjectPane.svelte';
+	import ArtifactPane from './ArtifactPane.svelte';
 	import { projects } from '../projects.svelte.js';
+	import { startArtifacts, bindArtifacts } from '../artifacts.svelte.js';
 	import TitleBar from './TitleBar.svelte';
 	import NotificationBanner from '../NotificationBanner.svelte';
 	import ToastStack from '../ToastStack.svelte';
@@ -98,6 +101,7 @@
 		// dropped and the pane stays on "No instruction stack yet."
 		const offStack = startStack();
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
+		const offArtifacts = startArtifacts();
 		return () => {
 			offTimeline();
 			offWizard();
@@ -107,6 +111,7 @@
 			offUsage();
 			offStack();
 			offOsNotify();
+			offArtifacts();
 		};
 	});
 
@@ -117,6 +122,11 @@
 		if (rightPane.tab !== 'stack') return;
 		void session.sessionId;
 		refreshStack();
+	});
+
+	$effect(() => {
+		if (projects.surface !== 'artifacts') return;
+		bindArtifacts(session.sessionId, session.workspacePath);
 	});
 
 	// The usage pane (TD-1706) reads the audit store, which the live event
@@ -174,10 +184,14 @@
 		{#snippet left()}
 			<section
 				class="pane-chat"
-				aria-label={projects.surface === 'projects' ? 'Projects' : 'Chat pane'}
+				aria-label={projects.surface === 'projects'
+					? 'Projects'
+					: projects.surface === 'artifacts'
+						? 'Artifacts'
+						: 'Chat pane'}
 			>
-				<!-- Chat stays mounted when Projects is showing so the store
-				     subscription is not torn down (TD-2801). -->
+				<!-- Chat stays mounted when another surface is showing so the
+				     store subscription is not torn down (TD-2801). -->
 				<div
 					class="pane-layer"
 					class:pane-hidden={projects.surface !== 'home'}
@@ -187,11 +201,13 @@
 				</div>
 				{#if projects.surface === 'projects'}
 					<div class="pane-layer"><ProjectPane /></div>
+				{:else if projects.surface === 'artifacts'}
+					<div class="pane-layer"><ArtifactPane /></div>
 				{/if}
 			</section>
 		{/snippet}
 		{#snippet right()}
-			<section class="pane-activity" aria-label="Activity, files, stack, and usage pane">
+			<section class="pane-activity" aria-label="Activity, files, work, stack, and usage pane">
 				<div class="pane-tabs" role="tablist" aria-label="Right pane views">
 					<button
 						role="tab"
@@ -211,6 +227,15 @@
 						onclick={() => showRightPane('files')}
 					>
 						Files
+					</button>
+					<button
+						role="tab"
+						aria-selected={rightPane.tab === 'work'}
+						class="tab"
+						class:tab-active={rightPane.tab === 'work'}
+						onclick={() => showRightPane('work')}
+					>
+						Work
 					</button>
 					<button
 						role="tab"
@@ -236,6 +261,8 @@
 					<ActivityTimeline />
 				{:else if rightPane.tab === 'files'}
 					<FilesPanel />
+				{:else if rightPane.tab === 'work'}
+					<WorkPanel />
 				{:else if rightPane.tab === 'usage'}
 					<UsagePanel />
 				{:else}
@@ -247,7 +274,7 @@
 </div>
 
 <ApprovalBar />
-{#if projects.surface !== 'projects'}
+{#if projects.surface === 'home'}
 	<MemoryProposalBar />
 {/if}
 <ToastStack />
@@ -367,6 +394,7 @@
 
 	.pane-activity > :global(.timeline),
 	.pane-activity > :global(.files-panel),
+	.pane-activity > :global(.work-panel),
 	.pane-activity > :global(.stack-panel) {
 		flex: 1;
 		min-height: 0;

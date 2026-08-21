@@ -9,7 +9,7 @@
 // panel links to it, and a link in the header cannot reach state the
 // right pane's markup owns.
 
-export type RightPaneTab = "activity" | "files" | "stack" | "usage";
+export type RightPaneTab = "activity" | "files" | "work" | "stack" | "usage";
 
 export const rightPane = $state({ tab: "activity" as RightPaneTab });
 
