@@ -66,7 +66,12 @@ class JobDraft(BaseModel):
 
 
 class Job(BaseModel):
-    """A persisted scheduled job. Inert until TD-3804."""
+    """A persisted scheduled job.
+
+    Create still supplies exactly one of ``cadence`` or ``next_run``.
+    After a run the runner may keep ``cadence`` and stamp ``next_run``
+    (TD-3804) so the next fire is a single slot, not a catch-up burst.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -115,8 +120,8 @@ class Job(BaseModel):
 
     @model_validator(mode="after")
     def _one_schedule(self) -> Job:
-        if (self.cadence is None) == (self.next_run is None):
-            raise ValueError("exactly one of cadence or next_run is required")
+        if self.cadence is None and self.next_run is None:
+            raise ValueError("cadence or next_run is required")
         return self
 
 

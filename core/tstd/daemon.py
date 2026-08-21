@@ -214,6 +214,8 @@ from .provider import (
     auth_failure_message,
 )
 from .router import TIER_NAMES, TierRouter
+from .scheduler.runner import RecordingDeliver, run_due_jobs, run_turn_on_daemon
+from .scheduler.runner import SendFn as NotifySendFn
 from .session import (
     TERMINAL_STATES,
     Session,
@@ -428,6 +430,8 @@ class Daemon:
         data_dir: Path | None = None,
         provider: ProviderLike | None = None,
         parent_pid: int | None = None,
+        notify_send: NotifySendFn | None = None,
+        scheduler_tick: float = 15.0,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
@@ -474,6 +478,9 @@ class Daemon:
         # Browser CU (TD-1710): mock unless computer_use.browser is playwright
         # and Playwright is importable. Profile lives under the data dir.
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
+        self._notify_send = notify_send
+        self._scheduler_tick = scheduler_tick
+        self._scheduler_deliver = RecordingDeliver(send=notify_send)
 
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
@@ -901,6 +908,7 @@ class Daemon:
             self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
             self._audit_writer.start()
         await self.ws_server.start()
+        self._tasks.append(asyncio.create_task(self._scheduler_loop()))
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:
@@ -984,6 +992,35 @@ class Daemon:
                     }
                 },
             )
+
+    async def _scheduler_loop(self) -> None:
+        """On start (revive) and on a short tick, fire each due job once."""
+        while not self._shutdown_event.is_set():
+            try:
+                await self.run_due_jobs()
+            except Exception:
+                log.exception("scheduler tick failed")
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=self._scheduler_tick,
+                )
+            except TimeoutError:
+                continue
+
+    async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
+        """Wake due jobs against this daemon. Tests call this directly."""
+        when = now if now is not None else datetime.now(UTC)
+        return await run_due_jobs(
+            self.data_dir,
+            when,
+            run_turn=self._scheduled_run_turn,
+            deliver=self._scheduler_deliver,
+        )
+
+    async def _scheduled_run_turn(self, workspace: Path, message: str) -> str:
+        """In-process ``tst run``: one session, one message, no nested daemon."""
+        return await run_turn_on_daemon(self, workspace, message)
 
     async def _parent_watchdog(self, parent_pid: int) -> None:
         """Poll the host's liveness and shut down if it dies (TD-1002).
