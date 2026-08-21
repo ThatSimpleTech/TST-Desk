@@ -5227,10 +5227,10 @@ after M1.5.** Prefer after M6 so CU has something to ground.
 **Size:** 5 · **Depends on:** TD-1805
 
 **Acceptance criteria:**
-- [ ] A shipped preset points at a documented EZER or vLLM loopback
+- [x] A shipped preset points at a documented EZER or vLLM loopback
       URL; slugs still optional on loopback
-- [ ] Docs: how to attach, what "unresolved" means
-- [ ] Doctor rows name the endpoint, not the developer's model list
+- [x] Docs: how to attach, what "unresolved" means
+- [x] Doctor rows name the endpoint, not the developer's model list
       (TD-1809)
 
 ---

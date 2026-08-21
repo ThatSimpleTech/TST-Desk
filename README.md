@@ -52,9 +52,9 @@ workspace → done.
    cheap live call. The key goes into your OS keychain, not a file.
    *Or skip this entirely:* pick the `local` preset instead. It ships pointed at Ollama's
    default loopback port, and for a loopback endpoint no key is asked for and none is sent.
-   (Any other OpenAI-compatible server means editing that tier's `base_url` in `config.yaml`
-   by hand — there is no UI for it yet.)
-3. **Pick a preset.** `tst-default`, `budget`, or `local`. You can change presets from settings,
+   (vLLM or EZER: pick the `vllm` preset instead — it ships pointed at
+   `http://127.0.0.1:8000/v1`. A different port is a `base_url` edit in `config.yaml`.)
+3. **Pick a preset.** `tst-default`, `budget`, `local`, or `vllm`. You can change presets from settings,
    and pin which tier handles the turn from the title bar mid-session. Changing the *model*
    behind a tier is also a settings change, but it applies to new sessions — a running session
    keeps the model it opened with.
@@ -74,7 +74,7 @@ is nobody to bill you — see [The promises](#the-promises).
 
 The shipped stack routes three tiers: a **brain** for planning turns, a **worker** for
 token-heavy edits, and a **validator** for review. Cheap tiers do the volume; the expensive tier
-only plans. Three presets ship, and the prices below are the ones in
+only plans. Four presets ship, and the prices below are the ones in
 [`core/tstd/config.yaml`](core/tstd/config.yaml), in dollars per million tokens:
 
 | Preset | Tier | Input | Output | Cache read |
@@ -88,6 +88,9 @@ only plans. Three presets ship, and the prices below are the ones in
 | `local` | `brain` | $0.00 | $0.00 | $0.00 |
 | `local` | `worker` | $0.00 | $0.00 | $0.00 |
 | `local` | `validator` | $0.00 | $0.00 | $0.00 |
+| `vllm` | `brain` | $0.00 | $0.00 | $0.00 |
+| `vllm` | `worker` | $0.00 | $0.00 | $0.00 |
+| `vllm` | `validator` | $0.00 | $0.00 | $0.00 |
 
 Model slugs are deliberately not restated here. The landscape moves weekly, so
 `core/tstd/config.yaml` is the one place they live — read it there, and change them there

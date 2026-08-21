@@ -7542,3 +7542,22 @@ The floor's honesty is precisely that it does not pretend to see inside the stri
 **Follow-up:** TD-4822/TD-4823 (tst-cu-mcp findings from the same review) are
 filed, not yet staffed.
 
+## 2026-08-21 — TD-3901: a fourth shipped preset, not a retarget of `local` (Class B)
+
+**Decision:** Ship a `vllm` preset with every tier at `http://127.0.0.1:8000/v1`
+(vLLM's OpenAI server default; EZER attaches at the same `/v1` shape). Leave
+`local` on Ollama `http://127.0.0.1:11434/v1`. `active_preset` stays
+`tst-default`. A different EZER/vLLM port is a `base_url` edit in
+`config.yaml`, never a URL in Python (§2.7).
+
+**Rationale:** Spec §7 already treats a local vLLM/EZER server as the same
+OpenAI-compatible client. Retargeting `local` would break the Ollama
+convention TD-1802/TD-1805 documented. Two loopback presets, one port each,
+keeps both attach paths honest. Slugs stay omitted; discovery and
+`model_unresolved` are unchanged. Doctor `provider` rows keep naming
+`base_url`, not a model tag (TD-1809).
+
+**Alternative rejected:** Pointing `local` at 8000, or adding an `ezer`
+preset that duplicates `vllm`. The first silently moves every Ollama user.
+The second is two names for one URL.
+

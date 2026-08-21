@@ -27,7 +27,7 @@ TierName = Literal["brain", "worker", "validator"]
 TIER_NAMES: tuple[TierName, ...] = ("brain", "worker", "validator")
 
 # Presets shipped with the package. Users may add more.
-PRESETS: tuple[str, ...] = ("tst-default", "budget", "local")
+PRESETS: tuple[str, ...] = ("tst-default", "budget", "local", "vllm")
 
 DEFAULT_PRESET = "tst-default"
 

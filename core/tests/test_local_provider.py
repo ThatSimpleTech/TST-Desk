@@ -167,6 +167,9 @@ class TestRequiresApiKey:
     def test_local_preset_needs_no_key(self) -> None:
         assert _config_with_preset("local").requires_api_key() is False
 
+    def test_vllm_preset_needs_no_key(self) -> None:
+        assert _config_with_preset("vllm").requires_api_key() is False
+
     def test_shipped_default_preset_needs_a_key(self) -> None:
         assert _config_with_preset("tst-default").requires_api_key() is True
 
@@ -296,3 +299,18 @@ class TestDoctorRows:
         rows = {c.name: c for c in report.checks}
         assert rows["api_key"].status == "fail"
         assert rows["provider"].status == "skip"
+
+    async def test_vllm_preset_provider_row_names_the_endpoint_not_a_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keychain_calls: list[str]
+    ) -> None:
+        """TD-3901 / TD-1809: the row names ``127.0.0.1:8000``, not a slug.
+        Discovery is patched so a live server is never contacted."""
+        monkeypatch.setattr("tstd.daemon.ProviderClient", _FakeClient)
+        monkeypatch.setattr("tstd.daemon.resolve_tier_slugs", _resolve_one_model)
+        daemon = _daemon(monkeypatch, tmp_path, "vllm")
+        report = await daemon._diagnostics_report()
+        rows = {c.name: c for c in report.checks}
+        assert rows["provider"].status == "ok"
+        assert "127.0.0.1:8000" in rows["provider"].detail
+        assert _RESOLVED_SLUG not in rows["provider"].detail
+        assert _RESOLVED_SLUG not in (rows["provider"].fix or "")

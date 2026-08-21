@@ -181,7 +181,7 @@ class TestSetupState:
                 assert resp["type"] == "setup_state"
                 assert resp["has_api_key"] is False
                 assert resp["active_preset"] == "tst-default"
-                assert {"tst-default", "budget", "local"} <= set(resp["presets"])
+                assert {"tst-default", "budget", "local", "vllm"} <= set(resp["presets"])
                 await ws.close()
             finally:
                 await _stop_daemon(task)
