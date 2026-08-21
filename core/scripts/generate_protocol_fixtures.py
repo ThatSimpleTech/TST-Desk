@@ -57,6 +57,7 @@ from tstd.protocol import (
     ListPins,
     ListPolicyRules,
     ListSessions,
+    LogTrimmed,
     MemoryAccept,
     MemoryEdit,
     MemoryFileDiff,
@@ -529,6 +530,12 @@ FIXTURES = {
         format="csv",
         path="/home/user/.local/share/tst-desk/exports/usage-20260817T120000Z.csv",
         rows=42,
+    ),
+    # TD-2901: connection-scoped notice when attach asked for a rotated seq.
+    "log_trimmed": LogTrimmed(
+        session_id="sess-1",
+        requested_from_seq=1,
+        earliest_seq=8,
     ),
 }
 

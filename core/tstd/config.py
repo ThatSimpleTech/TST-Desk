@@ -155,6 +155,20 @@ class ProjectContextConfig(BaseModel):
     token_budget: int = Field(default=2000, ge=1)
 
 
+DEFAULT_LOG_MAX_EVENTS = 10000
+
+
+class SessionConfig(BaseModel):
+    """On-disk session event-log window (TD-2901).
+
+    Count of events, not bytes: attach is ``from_seq``, and a byte cap
+    would drop a different prefix than the seq cursor. Zero and omitted
+    must not mean unbounded — the default is ``DEFAULT_LOG_MAX_EVENTS``.
+    """
+
+    log_max_events: int = Field(default=DEFAULT_LOG_MAX_EVENTS, ge=1)
+
+
 class EmbeddingsConfig(BaseModel):
     """Local embeddings sidecar (TD-2202, TD-2204).
 
@@ -194,6 +208,7 @@ class ModelConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
+    session: SessionConfig = Field(default_factory=SessionConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -276,7 +291,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
     # Fill from the shipped file so the destination exists without
     # rewriting theirs.
     shipped: dict[str, Any] | None = None
-    for key in ("search", "embeddings", "project_context"):
+    for key in ("search", "embeddings", "project_context", "session"):
         if key in data:
             continue
         if shipped is None:

@@ -155,3 +155,8 @@ embeddings:
 # pin in is first dropped.
 project_context:
   token_budget: 2000
+
+# On-disk session event log (TD-2901). Attach replays this file. The cap
+# is an event count so from_seq stays honest; 0 is invalid, not unbounded.
+session:
+  log_max_events: 10000

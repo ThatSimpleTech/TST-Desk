@@ -210,9 +210,10 @@ about the daemon or the machine rather than about one session — fix `seq` at 1
 belong to no session's log and must never advance a client's bookkeeping.
 
 `attach` replays from a given `seq` and then follows live, which is what makes reopening a window
-lossless. `ping` is the odd one out: it is a daemon→client frame with no `seq` at all,
-deliberately not a `DaemonEvent`, because a liveness frame that advanced the sequence would
-corrupt replay.
+lossless. If that `seq` is below the on-disk window (`session.log_max_events`), attach sends
+`log_trimmed` and replays from the earliest kept seq. `ping` is the odd one out: it is a
+daemon→client frame with no `seq` at all, deliberately not a `DaemonEvent`, because a liveness
+frame that advanced the sequence would corrupt replay.
 
 ### Unknown types
 
@@ -290,6 +291,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 |---|---|---|
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
 | `session_state` | session | A session state transition, with an optional reason. |
+| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `user_turn` | session | A user message the loop accepted. Exists so a restarted daemon can replay the user's side without inventing it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
@@ -320,6 +322,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |
+| `log_trimmed` | connection | Attach asked for a seq the on-disk window dropped. Replay continues from `earliest_seq` (TD-2901). |
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
 | `error` | session | A typed error, usually in response to a bad message. |
 

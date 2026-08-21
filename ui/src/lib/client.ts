@@ -53,6 +53,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "diagnostics_report", // TD-1104 doctor
   "usage_report", // TD-1706: was missing; the usage panel never loaded
   "usage_exported", // TD-1706
+  "log_trimmed", // TD-2901: attach from a rotated seq
   "error",
 ]);
 
@@ -399,6 +400,21 @@ export class ProtocolClient {
     if (type === "instruction_stack") {
       if (sessionId !== undefined && seq !== undefined && seq === this.lastSeq(sessionId) + 1) {
         this.lastSeqBySession.set(sessionId, seq);
+      }
+      this.dispatch(msg as DaemonEventUnion);
+      return;
+    }
+
+    // TD-2901: the durable window dropped seqs before earliest_seq.
+    // Jump the cursor so replay from the kept prefix is not a false gap,
+    // and do not treat the connection-scoped seq=1 as a session event.
+    if (type === "log_trimmed") {
+      const earliest = (msg as Record<string, unknown>).earliest_seq;
+      if (typeof sessionId === "string" && typeof earliest === "number" && earliest > 1) {
+        const jumped = earliest - 1;
+        if (jumped > this.lastSeq(sessionId)) {
+          this.lastSeqBySession.set(sessionId, jumped);
+        }
       }
       this.dispatch(msg as DaemonEventUnion);
       return;

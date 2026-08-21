@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from tests.test_loop import wait_for_turn
@@ -113,6 +114,21 @@ class TestRestoreHonesty:
         assert daemon.session_registry.get_runner("half-1") is None
         turns = [e for e in sess.event_log.all_events if isinstance(e, UserTurn)]
         assert turns[0].content == "saved text"
+
+        reply = await daemon._handle_message(
+            json.dumps(
+                {
+                    "type": "user_message",
+                    "session_id": "half-1",
+                    "content": "please continue",
+                }
+            ),
+            object(),
+        )
+        assert reply is not None
+        body = json.loads(reply)
+        assert body["type"] == "error"
+        assert body["code"] == "session_not_running"
 
     async def test_corrupt_conversation_does_not_invent_messages(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"

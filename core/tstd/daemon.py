@@ -119,6 +119,7 @@ from .protocol import (
     ListPins,
     ListPolicyRules,
     ListSessions,
+    LogTrimmed,
     MemoryAccept,
     MemoryEdit,
     MemoryFileEntry,
@@ -394,8 +395,11 @@ class Daemon:
         self._tasks: list[asyncio.Task[Any]] = []
         self.session_registry = SessionRegistry()
         self._session_store = SessionStore(self.data_dir)
-        self._session_persist = SessionPersist(self.data_dir)
         self.config = cached_config()
+        self._session_persist = SessionPersist(
+            self.data_dir,
+            log_max_events=self.config.session.log_max_events,
+        )
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
         self._pending_memory: dict[str, DistillEmit] = {}
@@ -858,7 +862,7 @@ class Daemon:
         have a transcript, not a model context.
         """
         for record in self._session_store.records():
-            loaded = self._session_persist.load(record.session_id)
+            loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
             if loaded is not None and loaded.conversation is not None:
                 await self._revive_session(record.session_id, record.workspace_path, loaded)
                 continue
@@ -900,11 +904,13 @@ class Daemon:
                 return
             await asyncio.sleep(self._parent_poll_interval)
 
-    async def _on_session_event(self, event: DaemonEvent, _log: SessionEventLog) -> None:
+    async def _on_session_event(self, event: DaemonEvent, event_log: SessionEventLog) -> None:
         """Write the event to disk and refresh the registry row."""
         session_id = getattr(event, "session_id", None)
         if isinstance(session_id, str) and session_id:
-            await asyncio.to_thread(self._session_persist.append_event, session_id, event)
+            result = await asyncio.to_thread(self._session_persist.append_event, session_id, event)
+            if result.trimmed:
+                await event_log.drop_before(result.earliest_seq)
         if isinstance(event, SessionStateEvent):
             await self._session_store.update_state(event.session_id, event.state)
 
@@ -1656,8 +1662,19 @@ class Daemon:
         if superseded is not None and not superseded.done():
             superseded.cancel()
 
-        # Replay events from from_seq
-        for event in session.event_log.events_from(msg.from_seq):
+        # Replay from from_seq. A rotated prefix is a typed notice, then
+        # the same gap/dup rules over whatever is still in the window.
+        earliest = session.event_log.earliest_seq
+        if msg.from_seq < earliest:
+            await connection.send(
+                LogTrimmed(
+                    session_id=session_id,
+                    requested_from_seq=msg.from_seq,
+                    earliest_seq=earliest,
+                ).model_dump_json()
+            )
+        replay_from = max(msg.from_seq, earliest)
+        for event in session.event_log.events_from(replay_from):
             await connection.send(event.model_dump_json())
 
         # Register as attached

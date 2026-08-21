@@ -93,6 +93,60 @@ class TestAttachDetachIntegration:
             await asyncio.gather(daemon_task, return_exceptions=True)
 
     @pytest.mark.asyncio
+    async def test_attach_after_restart_replays_from_disk(self, tmp_path: Path) -> None:
+        """A new daemon replays the on-disk log with the same from_seq rules."""
+        data_dir = tmp_path / "data"
+        workspace = tmp_path / "ws"
+        data_dir.mkdir()
+        workspace.mkdir()
+
+        first = Daemon(data_dir=data_dir)
+        first_task = asyncio.create_task(first.run())
+        for _ in range(50):
+            if first.ws_server.port:
+                break
+            await asyncio.sleep(0.05)
+        assert first.ws_server.port > 0
+
+        uri = f"ws://127.0.0.1:{first.ws_server.port}"
+        ws = await _connect_and_handshake(uri, first.ws_server.token)
+        session_state = await _open_workspace(ws, str(workspace))
+        session_id = session_state["session_id"]
+        session = first.session_registry.get(session_id)
+        assert session is not None
+        await session.event_log.add(AssistantDelta(session_id=session_id, delta="a", seq=1))
+        await session.event_log.add(AssistantDelta(session_id=session_id, delta="b", seq=1))
+        expected = [event.seq for event in session.event_log.events_from(1)]
+        await ws.close()
+        first._shutdown_event.set()
+        await asyncio.gather(first_task, return_exceptions=True)
+
+        second = Daemon(data_dir=data_dir)
+        second_task = asyncio.create_task(second.run())
+        for _ in range(50):
+            if second.ws_server.port:
+                break
+            await asyncio.sleep(0.05)
+        assert second.ws_server.port > 0
+
+        revived = second.session_registry.get(session_id)
+        assert revived is not None
+        restored = [event.seq for event in revived.event_log.events_from(1)]
+        assert expected == restored[: len(expected)]
+        assert restored == list(range(1, len(restored) + 1))
+
+        uri = f"ws://127.0.0.1:{second.ws_server.port}"
+        ws = await _connect_and_handshake(uri, second.ws_server.token)
+        await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 1}))
+        replayed = []
+        for _ in range(len(restored)):
+            replayed.append(json.loads(await asyncio.wait_for(ws.recv(), timeout=2)))
+        assert [frame["seq"] for frame in replayed] == restored
+        await ws.close()
+        second._shutdown_event.set()
+        await asyncio.gather(second_task, return_exceptions=True)
+
+    @pytest.mark.asyncio
     async def test_attach_streams_live_events(self, tmp_path: Path) -> None:
         """After replay, new events stream live to the attached client."""
         with tempfile.TemporaryDirectory() as tmp:

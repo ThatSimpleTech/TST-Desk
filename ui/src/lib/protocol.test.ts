@@ -83,6 +83,7 @@ import type {
   ExportUsage,
   UsageReport,
   UsageExported,
+  LogTrimmed,
   Ping,
   Error,
   Attachment,
@@ -713,6 +714,15 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.rows)).toBe(true);
   });
 
+  it("log_trimmed", () => {
+    const m = fixtures.log_trimmed as LogTrimmed;
+    expect(m.type).toBe("log_trimmed");
+    expect(m.seq).toBe(1);
+    expect(isString(m.session_id)).toBe(true);
+    expect(isNumber(m.requested_from_seq)).toBe(true);
+    expect(isNumber(m.earliest_seq)).toBe(true);
+  });
+
   it("ping", () => {
     // TD-1716: the liveness frame is the one daemon→client frame with no seq
     // and no session — a fact about the connection, not an event in any log.
@@ -769,7 +779,7 @@ describe("All fixtures have required shape", () => {
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "instruction_files", "context_pins", "memory_files", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
-      "diagnostics_report", "usage_report", "usage_exported",
+      "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

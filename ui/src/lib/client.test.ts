@@ -288,6 +288,33 @@ describe("from_seq replay — no gaps, no duplicates", () => {
     h.client.stop();
   });
 
+  it("log_trimmed jumps lastSeq so a windowed replay is not a false gap", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.attach("sess-1");
+
+    h.servers[0].push(
+      JSON.stringify({
+        type: "log_trimmed",
+        session_id: "sess-1",
+        seq: 1,
+        requested_from_seq: 1,
+        earliest_seq: 8,
+      }),
+    );
+    expect(h.onEvent).toHaveBeenCalledTimes(1);
+    expect(h.onEvent.mock.calls[0][0].type).toBe("log_trimmed");
+    expect(h.client.lastSeq("sess-1")).toBe(7);
+
+    h.servers[0].push(
+      JSON.stringify({ type: "assistant_delta", session_id: "sess-1", delta: "kept", seq: 8 }),
+    );
+    expect(h.client.lastSeq("sess-1")).toBe(8);
+    expect(h.onEvent).toHaveBeenCalledTimes(2);
+    h.client.stop();
+  });
+
   it("reconnects to fetch the gap when a seq jump beyond +1 is seen", async () => {
     const h = buildClient({ baseBackoffMs: 5, maxBackoffMs: 8 });
     await h.client.start();

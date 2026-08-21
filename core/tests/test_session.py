@@ -54,6 +54,17 @@ class TestSessionEventLog:
         await log.add(AssistantDelta(session_id="s", delta="b", seq=1))
         assert log.last_seq == 2
 
+    async def test_drop_before_matches_a_window_and_keeps_last_seq(self) -> None:
+        log = SessionEventLog()
+        await log.add(AssistantDelta(session_id="s", delta="a", seq=1))
+        await log.add(AssistantDelta(session_id="s", delta="b", seq=1))
+        await log.add(AssistantDelta(session_id="s", delta="c", seq=1))
+        await log.drop_before(2)
+        assert [e.seq for e in log.events_from(1)] == [2, 3]
+        assert log.earliest_seq == 2
+        assert log.last_seq == 3
+        assert log.events_from(1)[0].seq == log.earliest_seq
+
     async def test_all_events_returns_copy(self) -> None:
         log = SessionEventLog()
         await log.add(AssistantDelta(session_id="s", delta="a", seq=1))

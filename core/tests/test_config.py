@@ -12,6 +12,7 @@ from typing import ClassVar
 import pytest
 
 from tstd.config import (
+    DEFAULT_LOG_MAX_EVENTS,
     PRESETS,
     ConfigError,
     EmbeddingsConfig,
@@ -56,6 +57,13 @@ class TestLoading:
         cfg = _load_shipped(tmp_path)
         assert isinstance(cfg, ModelConfig)
         assert cfg.active_preset == "tst-default"
+        assert cfg.session.log_max_events == DEFAULT_LOG_MAX_EVENTS
+
+    def test_session_log_max_events_zero_is_rejected(self, tmp_path: Path) -> None:
+        text = default_config_yaml().replace("log_max_events: 10000", "log_max_events: 0")
+        path = _write_config(tmp_path, text)
+        with pytest.raises(ConfigError, match="log_max_events"):
+            load_config(path)
 
     def test_all_presets_are_present(self, tmp_path: Path) -> None:
         """Shipped config has all 3 presets."""
