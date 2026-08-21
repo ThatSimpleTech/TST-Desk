@@ -5095,9 +5095,14 @@ chat + approval.
 **Size:** 3 · **Depends on:** TD-3701, TD-802
 
 **Acceptance criteria:**
-- [ ] Approve / deny / always-allow from the remote client resolve
+- [x] Approve / deny / always-allow from the remote client resolve
       the parked session
-- [ ] Two clients cannot double-resolve (TD-1014 contract)
+- [x] Two clients cannot double-resolve (TD-1014 contract)
+
+Done (2026-08-21): remote hello (3602 token) approve/deny/always-allow
+unparks the same session future; a second client gets
+`no_pending_approval` and cannot flip the outcome. Same ApprovalCard
+store dismisses on send (TD-1014).
 
 ---
 

@@ -542,11 +542,17 @@ class Session:
         return outcome
 
     def get_pending_approval(self, tool_call_id: str) -> PendingApproval | None:
-        """Return the metadata for a parked approval, or ``None`` if none.
+        """Return the metadata for a still-parked approval, or ``None``.
 
         The daemon uses this to generate the always-allow rule (TD-803).
+        An already-resolved future still sits in the map until the waiter
+        pops it; treat that as gone so a second client cannot always-allow
+        after another client already won (TD-3702 / TD-1014).
         """
-        return self._pending_approvals.get(tool_call_id)
+        pending = self._pending_approvals.get(tool_call_id)
+        if pending is None or pending.future.done():
+            return None
+        return pending
 
     def resolve_approval(
         self, tool_call_id: str, approved: bool, detail: str | None = None
