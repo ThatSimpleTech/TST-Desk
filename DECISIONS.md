@@ -6645,3 +6645,69 @@ and is not on this tip.
 **Alternative rejected:** Spawning a production `tstd` for `tst run`.
 That process has no mock provider and would leave CI. Also rejected:
 merging the artifact branch into this worktree.
+
+---
+
+## 2026-08-20 — TD-3201: artifact record behind two walls (Class B)
+
+**Decision:** Artifacts persist with the session, not the workspace
+index. Metadata is `{data_dir}/sessions/{id}/artifacts.json`. Bytes the
+daemon itself stores land at `{data_dir}/sessions/{id}/artifacts/{id}`.
+A record may instead name a workspace-relative path. The on-disk row
+adds `location: workspace | session` so list/open can re-check the
+correct wall after a symlink changes; that field is not on the wire.
+
+Protocol (additive, `PROTOCOL_VERSION` stays 1):
+
+- `artifact_ready` `{session_id, artifact_id, title, mime, path}` —
+  session-scoped, written to the event log
+- `list_artifacts` `{session_id}` → connection-scoped `artifact_list`
+- `open_artifact` `{session_id, artifact_id}` → connection-scoped
+  `artifact` (metadata + path). Unknown id is `artifact_not_found`.
+  Bytes never ride the WebSocket.
+
+`Daemon.record_artifact(...)` is the only writer this story. No client
+record message. No model tool. No Artifacts rail.
+
+Wall: a relative path is judged by `PathGuard.check_read` against the
+session workspace (same helpers as the filesystem tools). An absolute
+path under that session's persist dir is the other allowed location.
+`../`, absolute escape, symlink-out, and another session's persist dir
+are refused. Title and path on persisted events go through
+`redact_secrets`.
+
+**Rationale:** Attachments (TD-1709) are inbound on a turn. The Files
+pane (TD-1705) is writes-this-session. Artifacts are durable products
+of the session. Putting bytes in the session persist dir keeps them
+when the workspace path is not the thing the model made, without
+opening a write-anywhere door. List/open return a path so a later
+preview (TD-3202) can open the file itself.
+
+**Alternative rejected:** A model tool this story — tests register
+through the daemon API. Also rejected: dumping bytes on the socket.
+
+---
+
+## 2026-08-20 — TD-3202: Artifacts rail, path-only open, wall-limited read (Class B)
+
+**Decision:** Artifacts is a `ready` rail surface (Home / Projects /
+Artifacts / Scheduled). The pane lists the bound session from
+`artifact_list` / `artifact_ready`. `open_artifact` still returns
+metadata + path. Preview bytes come from the shell command
+`read_text_file`, which reads UTF-8 only when the resolved path is
+under the session workspace or `{data_dir}/sessions/{id}/` (2 MiB
+cap). The UI never `fetch()`es a URL.
+
+Workspace vs session for Open-in-OS is inferred from TD-3201's persist
+convention: `artifacts/{artifact_id}` is session-local and is not
+handed to `open_path`. HTML preview is `sandbox=""` (forced on the
+iframe) plus a first `default-src 'none'` CSP in `srcdoc`. Code
+highlighting reuses the chat markdown / highlight.js pipeline. Not a
+file tree, not Monaco, not apply/reject.
+
+**Rationale:** Location is not on the wire. Bytes stay off the
+WebSocket. A local HTTP file server would be a socket. The Files pane
+is writes-this-session, the wrong list.
+
+**Alternative rejected:** Reusing Files. Serving bytes over loopback
+HTTP. Adding `location` to the protocol this story.

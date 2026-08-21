@@ -1,6 +1,6 @@
 <script lang="ts">
-	// The rail's function-surface group (TD-1712): Home, Projects, Scheduled,
-	// grouped above session history. The registry in ../rail.ts decides each
+	// The rail's function-surface group (TD-1712): Home, Projects, Artifacts,
+	// Scheduled, grouped above session history. The registry in ../rail.ts decides each
 	// row's state, and only a `ready` one is clickable — `current` renders
 	// selected (you are already there) and `planned` renders muted with its
 	// milestone. The store's dispatcher refuses both, so neither the markup

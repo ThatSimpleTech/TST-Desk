@@ -107,6 +107,9 @@ function dispatch(command: PaletteCommand): void {
 		case "show-stack":
 			showRightPane("stack");
 			return;
+		case "show-work":
+			showRightPane("work");
+			return;
 		case "open-settings":
 			openSettings();
 			return;

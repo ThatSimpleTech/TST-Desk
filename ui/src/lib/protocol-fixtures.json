@@ -234,6 +234,15 @@
     "type": "export_usage",
     "format": "csv"
   },
+  "list_artifacts": {
+    "type": "list_artifacts",
+    "session_id": "sess-1"
+  },
+  "open_artifact": {
+    "type": "open_artifact",
+    "session_id": "sess-1",
+    "artifact_id": "art-1"
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -768,6 +777,37 @@
     "session_id": "sess-1",
     "requested_from_seq": 1,
     "earliest_seq": 8
+  },
+  "artifact_ready": {
+    "type": "artifact_ready",
+    "seq": 22,
+    "session_id": "sess-1",
+    "artifact_id": "art-1",
+    "title": "Notes",
+    "mime": "text/markdown",
+    "path": "notes.md"
+  },
+  "artifact_list": {
+    "type": "artifact_list",
+    "seq": 1,
+    "session_id": "sess-1",
+    "artifacts": [
+      {
+        "artifact_id": "art-1",
+        "title": "Notes",
+        "mime": "text/markdown",
+        "path": "notes.md"
+      }
+    ]
+  },
+  "artifact": {
+    "type": "artifact",
+    "seq": 1,
+    "session_id": "sess-1",
+    "artifact_id": "art-1",
+    "title": "Notes",
+    "mime": "text/markdown",
+    "path": "notes.md"
   },
   "hello_ack": {
     "type": "hello_ack",

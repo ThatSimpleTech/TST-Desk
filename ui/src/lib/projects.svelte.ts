@@ -1,13 +1,13 @@
 // Project-home surface store (TD-2801).
 //
-// The rail's Home / Projects rows are honest about which surface the
-// window is showing. Selecting a project is a UI choice — it does not
-// attach a session. New chat and a recent click do that.
+// The rail's Home / Projects / Artifacts rows are honest about which
+// surface the window is showing. Selecting a project is a UI choice —
+// it does not attach a session. New chat and a recent click do that.
 
 import type { RailSurface } from "./rail";
 
 export const projects = $state({
-	/** The main pane: chat (home) or the project list/home. */
+	/** The main pane: chat (home), the project list/home, or artifacts. */
 	surface: "home" as Exclude<RailSurface, "scheduled">,
 	/** Workspace path of the open project home; null is the list. */
 	selectedPath: null as string | null,
@@ -21,6 +21,11 @@ export function showHome(): void {
 export function showProjects(): void {
 	projects.surface = "projects";
 	projects.selectedPath = null;
+}
+
+/** Open the bound session's artifact list (TD-3202). */
+export function showArtifacts(): void {
+	projects.surface = "artifacts";
 }
 
 /** Open one project's home. */

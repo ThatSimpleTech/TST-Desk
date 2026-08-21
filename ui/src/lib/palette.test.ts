@@ -88,6 +88,7 @@ describe("rankEntries", () => {
 	it("puts the obvious answer first for the abbreviations people type", () => {
 		expect(titles(ACTION_ENTRIES, "doc")[0]).toBe("Run doctor");
 		expect(titles(ACTION_ENTRIES, "stack")[0]).toBe("Open stack");
+		expect(titles(ACTION_ENTRIES, "work")[0]).toBe("Open work");
 		expect(titles(ACTION_ENTRIES, "theme")[0]).toBe("Toggle theme");
 		expect(titles(ACTION_ENTRIES, "new")[0]).toBe("New session");
 		expect(titles(ACTION_ENTRIES, "sett")[0]).toBe("Open settings");
@@ -147,6 +148,7 @@ describe("icons", () => {
 			"open-settings",
 			"run-doctor",
 			"show-stack",
+			"show-work",
 			"toggle-theme",
 		]);
 	});

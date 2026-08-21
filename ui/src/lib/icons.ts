@@ -67,6 +67,11 @@ export const ICONS = {
 	moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
 	/** A session (command palette, TD-1707). */
 	'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+	/** Artifacts surface (rail functions, TD-3202). */
+	box:
+		'<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>' +
+		'<path d="m3.3 7 8.7 5 8.7-5"/>' +
+		'<path d="M12 22V12"/>',
 	/** Home surface (rail functions, TD-1712). */
 	home:
 		'<path d="M3 10.2 12 3l9 7.2V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>' +

@@ -339,6 +339,19 @@ export interface ExportUsage extends ClientMessage {
   format: "jsonl" | "csv";
 }
 
+/** List artifacts persisted with a session (TD-3201). */
+export interface ListArtifacts extends ClientMessage {
+  type: "list_artifacts";
+  session_id: string;
+}
+
+/** Open one artifact by id (TD-3201). Unknown id is a typed error. */
+export interface OpenArtifact extends ClientMessage {
+  type: "open_artifact";
+  session_id: string;
+  artifact_id: string;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -385,7 +398,9 @@ export type ClientMessageUnion =
   | SetTierSlug
   | RunDiagnostics
   | GetUsage
-  | ExportUsage;
+  | ExportUsage
+  | ListArtifacts
+  | OpenArtifact;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -817,6 +832,41 @@ export interface LogTrimmed extends DaemonEvent {
   earliest_seq: number;
 }
 
+/** One artifact on artifact_list (TD-3201). Path, not bytes. */
+export interface ArtifactEntry {
+  artifact_id: string;
+  title: string;
+  mime: string;
+  path: string;
+}
+
+/** An artifact was recorded for this session (TD-3201). */
+export interface ArtifactReady extends DaemonEvent {
+  type: "artifact_ready";
+  session_id: string;
+  artifact_id: string;
+  title: string;
+  mime: string;
+  path: string;
+}
+
+/** Response to list_artifacts (TD-3201). Connection-scoped. */
+export interface ArtifactList extends DaemonEvent {
+  type: "artifact_list";
+  session_id: string;
+  artifacts: ArtifactEntry[];
+}
+
+/** Response to open_artifact (TD-3201): metadata and path, not bytes. */
+export interface Artifact extends DaemonEvent {
+  type: "artifact";
+  session_id: string;
+  artifact_id: string;
+  title: string;
+  mime: string;
+  path: string;
+}
+
 export interface Error extends DaemonEvent {
   type: "error";
   session_id?: string | null;
@@ -874,4 +924,7 @@ export type DaemonEventUnion =
   | UsageReport
   | UsageExported
   | LogTrimmed
+  | ArtifactReady
+  | ArtifactList
+  | Artifact
   | Error;

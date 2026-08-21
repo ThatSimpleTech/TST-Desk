@@ -23,6 +23,7 @@ from typing import Any, Literal, cast
 
 import websockets.exceptions
 
+from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, to_entry
 from .attachments import AttachmentError, decode_attachments, render_user_content
 from .audit import AuditStore
 from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
@@ -92,6 +93,9 @@ from .protocol import (
     ApiKeyValidated,
     Approve,
     ArchiveSession,
+    Artifact,
+    ArtifactList,
+    ArtifactReady,
     Attach,
     Cancel,
     ClientMessageT,
@@ -114,6 +118,7 @@ from .protocol import (
     HandshakeError,
     InstructionFileEntry,
     InstructionFiles,
+    ListArtifacts,
     ListInstructions,
     ListMemory,
     ListPins,
@@ -127,6 +132,7 @@ from .protocol import (
     MemoryReject,
     MoveSession,
     NewSession,
+    OpenArtifact,
     OpenWorkspace,
     PolicyRules,
     PolicyRuleSummary,
@@ -400,6 +406,7 @@ class Daemon:
             self.data_dir,
             log_max_events=self.config.session.log_max_events,
         )
+        self._artifacts = ArtifactStore(self._session_persist)
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
         self._pending_memory: dict[str, DistillEmit] = {}
@@ -1337,6 +1344,12 @@ class Daemon:
         if isinstance(msg, RemovePin):
             return await self._handle_remove_pin(msg)
 
+        if isinstance(msg, ListArtifacts):
+            return await self._handle_list_artifacts(msg)
+
+        if isinstance(msg, OpenArtifact):
+            return await self._handle_open_artifact(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -1819,6 +1832,91 @@ class Daemon:
             )
         await asyncio.to_thread(remove_pin, root, msg.path)
         return await self._context_pins_reply(root)
+
+    async def record_artifact(
+        self,
+        session_id: str,
+        title: str,
+        mime: str,
+        *,
+        path: str | None = None,
+        content: bytes | None = None,
+    ) -> ArtifactRecord:
+        """Persist an artifact and emit ``artifact_ready`` (TD-3201).
+
+        Tests and later loop/tool callers use this.  There is no client
+        record message and no model tool this story.
+        """
+        found = self.session_registry.get(session_id)
+        if found is None:
+            raise ArtifactError(
+                "session_not_found",
+                f"Session {session_id!r} not found",
+            )
+        record = await asyncio.to_thread(
+            self._artifacts.record,
+            session_id,
+            title,
+            mime,
+            Path(found.workspace_path),
+            path=path,
+            content=content,
+        )
+        await found.event_log.add(
+            ArtifactReady(
+                session_id=session_id,
+                artifact_id=record.id,
+                title=record.title,
+                mime=record.mime,
+                path=record.path,
+                seq=1,
+            )
+        )
+        return record
+
+    async def _handle_list_artifacts(self, msg: ListArtifacts) -> str:
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+                session_id=msg.session_id,
+            )
+        records = await asyncio.to_thread(
+            self._artifacts.list_records,
+            msg.session_id,
+            Path(found.workspace_path),
+        )
+        return ArtifactList(
+            session_id=msg.session_id,
+            artifacts=[to_entry(r) for r in records],
+        ).model_dump_json()
+
+    async def _handle_open_artifact(self, msg: OpenArtifact) -> str:
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+                session_id=msg.session_id,
+            )
+        try:
+            record = await asyncio.to_thread(
+                self._artifacts.get,
+                msg.session_id,
+                msg.artifact_id,
+                Path(found.workspace_path),
+            )
+        except ArtifactError as exc:
+            return build_error(exc.code, exc.message, session_id=msg.session_id)
+        entry = to_entry(record)
+        return Artifact(
+            session_id=msg.session_id,
+            artifact_id=entry.artifact_id,
+            title=entry.title,
+            mime=entry.mime,
+            path=entry.path,
+        ).model_dump_json()
 
     async def _handle_list_memory(self, msg: ListMemory) -> str:
         """List a workspace's Memory files (TD-2601). Not a tool."""
