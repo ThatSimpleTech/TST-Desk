@@ -9,6 +9,7 @@ Registration is explicit in v0.1 — no dynamic discovery (TD-601).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -17,11 +18,18 @@ from ..provider import FunctionDefinition, ToolDefinition
 # ── Side-effect classification ──────────────────────────────────────────
 
 SideEffectClass = Literal["auto", "ask", "never"]
-"""Classification for the approval gate:
+"""The approval floor when no static classifier rule speaks (TD-4808).
 
-- ``auto``: no user approval needed (read-only, safe).
-- ``ask``: prompt the user for approval before execution.
-- ``never``: never allow the tool to be called (reserved for v0.1).
+- ``auto``: no floor — an otherwise-unmatched call may still reach the
+  worker tier and return Class A.
+- ``ask``: the call is at least Class B — a model may never grant it A.
+- ``never``: the call is Class C outright.
+
+This is a *floor*, not the final class: specific static rules still speak
+first and may classify lower by design (an in-workspace ``fs_write`` is
+Class A — checkpointed and revertable — even though ``fs_write`` declares
+``ask``).  Before TD-4808 the classifier never read this field and the
+declaration was advisory only.
 """
 
 
@@ -43,6 +51,12 @@ class Tool:
         path_fields: Argument keys holding file paths the tool reads or
             writes, used to build a ``DecisionRequest`` for the classifier.
         host_fields: Argument keys holding network hosts the tool reaches.
+            Values may be bare hosts or URLs; dispatch reduces URLs to
+            their host (TD-4808).
+        host_resolver: For tools whose hosts come from configuration, not
+            arguments (``web_search`` reaches ``search.base_url``).  Called
+            at classification time so config edits are seen; returns
+            normalized bare hosts.
         mutates: True when the tool changes state (a write), so its
             ``path_fields`` are treated as write targets.
         actuates: Desktop computer-use only (TD-3301). ``None`` means this
@@ -61,6 +75,7 @@ class Tool:
     # classify it without a model call.  Explicit, per-tool — no heuristics.
     path_fields: tuple[str, ...] = ()
     host_fields: tuple[str, ...] = ()
+    host_resolver: Callable[[], tuple[str, ...]] | None = None
     mutates: bool = False
     # None = not a desktop CU tool (existing path/host table). False =
     # capture-only → Class A. True = actuation → Class B. Empty
@@ -203,6 +218,10 @@ def _register_builtins(registry: ToolRegistry) -> None:
     These are the filesystem and shell tools that the agent loop needs
     to function.  Extensions (MCP, etc.) are registered separately.
     """
+    # Local import: the web module pulls in httpx, and the registry is
+    # imported by code that never searches (TD-4808).
+    from .web_search import search_hosts
+
     registry.register(
         Tool(
             name="fs_read",
@@ -302,6 +321,8 @@ def _register_builtins(registry: ToolRegistry) -> None:
             },
             side_effect_class="ask",
             parallel_safe=True,
+            # The host comes from config, not the arguments (TD-4808).
+            host_resolver=search_hosts,
         )
     )
 
@@ -325,6 +346,7 @@ def _register_builtins(registry: ToolRegistry) -> None:
             },
             side_effect_class="ask",
             parallel_safe=True,
+            host_fields=("url",),
         )
     )
 

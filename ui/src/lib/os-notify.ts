@@ -5,6 +5,7 @@
 // does not know about Tauri.
 
 import type { DaemonEventUnion } from "./protocol";
+import { redact } from "./redact";
 
 export interface OsNotice {
 	title: string;
@@ -17,7 +18,10 @@ export function noticeFor(event: DaemonEventUnion): OsNotice | null {
 	if (event.type === "approval_request") {
 		return {
 			title: "Approval needed",
-			body: event.summary || `The agent wants to run ${event.tool_name}`,
+			// The daemon redacts at event-log insertion; this is the same belt
+			// the diagnostics report gets — a notification banner is a human-
+			// facing surface too (TD-4801).
+			body: redact(event.summary) || `The agent wants to run ${event.tool_name}`,
 			kind: "approval",
 		};
 	}
@@ -25,7 +29,7 @@ export function noticeFor(event: DaemonEventUnion): OsNotice | null {
 		return {
 			title: event.failed ? "Turn failed" : "Turn complete",
 			body: event.failed
-				? (event.error_code ?? "The turn did not finish")
+				? redact(event.error_code ?? "The turn did not finish")
 				: "The agent finished a turn",
 			kind: "turn",
 		};

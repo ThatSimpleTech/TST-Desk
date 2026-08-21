@@ -46,7 +46,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M2 — The window** | E10, E11, E12 | A human does the same thing through the app, never touching a terminal |
 | **M3 — Shippable** | E13, E14, E15, E16, E17, E19 | A stranger can install and use it from a fresh machine |
 | **M4 — Memory** | E21–E28 | The brain prompt carries a relevant memory subset; a session end proposes a diff the user accepts; a project home shows Instructions / Memory / Context for the workspace |
-| **M5 — Cowork (v0.3)** | E29–E32 | Close the window; the session keeps running. CLI attach. Artifacts. Named sessions |
+| **M5 — Cowork (v0.3)** | E29–E32, E48 | Close the window; the session keeps running. CLI attach. Artifacts. Named sessions |
 | **M6 — Computer use (v0.4)** | E20, E33–E34 | Screen pane watches a real desktop or browser; glow/cursor; Design mode; OS permission onboarding |
 | **M7 — Remote (v0.5)** | E36–E38 | Tailscale bind (never `0.0.0.0`). Phone attach. Slack. Scheduler rail goes live |
 | **M8 — Local remainder (v0.6)** | E39 | EZER/vLLM path. UI-TARS grounding. Floor already shipped as M1.5 |
@@ -5707,20 +5707,20 @@ the product." Web search is already TD-609/TD-610.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 55 | 162 |
-| M1.5 Local models | E18 | 12 | 30 |
+| M1.5 Local models | E18 | 15 | 36 |
 | M2 The window | E10–E12 | 24 | 68 |
-| M3 Shippable | E13–E17, E19 | 50 | 142 |
+| M3 Shippable | E13–E17, E19 | 47 | 136 |
 | **Total v0.1** | **19** | **148** | **417** |
 | M4 Memory (v0.2) | E21–E28 | 32 | 90 |
 | **Total v0.1 + v0.2** | **27** | **180** | **507** |
-| M5 Cowork (v0.3) | E29–E32 | 15 | 51 |
+| M5 Cowork (v0.3) | E29–E32, E48 | 31 | 84 |
 | M6 Computer use (v0.4) | E20, E33–E34 | 12 | 63 |
 | M7 Remote (v0.5) | E36–E38 | 11 | 43 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
 | Later | E47 | 7 | 34 |
-| **Total planned** | **46** | **252** | **828** |
+| **Total planned** | **47** | **268** | **861** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -5861,3 +5861,489 @@ backend, and the choice affects what safety guarantees the server can honestly c
 
 **Notes:** Resist implementing while investigating. The output of this story is a decision and a
 size, and the honest answer may be "X11 only, Wayland reports unsupported".
+
+---
+
+
+## Epic E48 — Security-review hardening
+
+**Milestone: M5.** Counted in the M5 totals. Filed as a new epic, not scattered across
+E6/E7/E9/E10/E14: every story here came out of one pass — the full-repo security and
+consistency review of 2026-08-21 — and the stories read best with that provenance kept in
+one place (the E20 precedent). No existing epic owns "defects found by auditing what already
+shipped."
+
+Several are defects against promises the README makes in public: redaction that misses the
+key formats this app actually stores, a steering boundary that a case-insensitive filesystem
+walks around, a policy file the agent can rewrite to promote its own autonomy. Per §7 a gap
+in boundary enforcement is a defect, not a missing nice-to-have. TD-4802 through TD-4806
+should land before any v0.3 tag; that gate is advisory and the sequencing call is the
+maintainer's — M5's exit condition is unchanged.
+
+TD-4801 is the cheap batch — one-line defects with tests — and ships with the filing.
+
+**Goal:** every promise the project makes in its README, spec, and prime directives is
+enforced in code at the strength the prose claims.
+
+### TD-4801 — Review quick fixes: key-shape redaction, token comparison, notification redaction, backoff precedence
+**Size:** 2 · **Depends on:** TD-1405
+
+**Acceptance criteria:**
+- [x] `SECRET_PATTERNS` matches the dashed key forms the shipped presets can hold
+      (`sk-or-v1-…`, `sk-proj-…`, `sk-ant-…`), proved by fakes in the security suite's
+      table that the old pattern misses
+- [x] The credential-hygiene canary is reshaped to a dashed OpenRouter-style key, so the
+      end-to-end test exercises the format the app actually stores
+- [x] The pre-commit hook's `sk-` pattern covers the same dashed forms
+- [x] `validate_token` compares with `hmac.compare_digest`
+- [x] OS notification bodies pass through the UI `redact()` belt, pinned by a test
+- [x] Reconnect backoff honors a custom `baseBackoffMs` exponentially —
+      `(base ?? 500) * 2 ** attempt` — pinned by a test that goes red under the old
+      operator precedence
+
+Found 2026-08-21. The UI's own `redact.ts` already documented the core gap in a comment —
+"core requires 20+ alphanumerics with no dashes, which misses those" — and compensated
+locally. The belt knew about the suspenders' hole. The backoff bug is a precedence slip:
+`baseBackoffMs ?? 500 * 2 ** attempt` parses as `base ?? (500 * 2**attempt)`, so any
+configured base is applied flat and the exponential growth only exists for the default.
+The existing tests never assert the second retry's delay, so the suite stayed green.
+
+**Completed (2026-08-21):** pattern widened to `sk-[a-zA-Z0-9][a-zA-Z0-9_-]{15,}` matching
+the UI belt's shape; three dashed fakes added to the security-suite table; canary reshaped;
+hook pattern updated; `compare_digest` on UTF-8 bytes; `redact()` wraps notification copy;
+backoff parenthesized and pinned by a second-interval test.
+
+### TD-4802 — Redaction chokepoint skips three event types, extra fields, and tracebacks
+**Size:** 3 · **Depends on:** TD-1405
+
+**Acceptance criteria:**
+- [x] `ApprovalRequest.summary`, `DecisionLogged`, and assistant text deltas pass through
+      the redactor before the event log — or each gets a documented, test-enforced argument
+      for why its shape cannot carry a secret
+- [x] `AuditStore.append_decision` scrubs its payload the way `append` does
+- [x] `JSONFormatter` redacts `extra_fields` values and formatted tracebacks, not just the
+      message and args
+- [x] A key-shaped string planted in each path above never reaches disk or the wire raw,
+      proved by tests
+
+TD-1405 redacts at event-log insertion but only for the event shapes it enumerated.
+`ApprovalRequest.summary` is model-adjacent free text that also lands in OS notifications;
+`extra_fields` are merged into the log record after the redaction filter has run;
+tracebacks are formatted straight into the JSON line. Each is a narrow hole, but the
+README's claim is categorical, so the holes are defects.
+
+**Completed (2026-08-21):** the per-type field list became a whole-event scrub —
+`_redact_event` runs every string field of every event type through `redact_structure`,
+with the path-not-bytes contract documented for future payload-carrying events. The
+connection-scoped reply path (`session_list` titles, `memory_files` contents — user text
+that never rode the log) got its own chokepoint: `_handle_message` funnels every reply
+through `scrub_wire_json`. `append_decision` and the `JSONFormatter` last mile
+(`extra_fields`, tracebacks) scrub too. The drift guard is an enumeration test that plants
+a canary in every string field validation accepts on every `DaemonEvent` subclass — a new
+event type that skips the scrub fails red the day it is added.
+
+### TD-4803 — `.tst/config.yaml` is agent-writable, so the agent can rewrite its own guardrails
+**Size:** 2 · **Depends on:** TD-706
+
+**Acceptance criteria:**
+- [x] The fs write tool refuses `.tst/config.yaml` the way it refuses steering files
+- [x] The daemon's own config-write path (user-initiated from the UI) still works
+- [x] A test drives a policy-poisoning write (e.g. setting `class_c_default: auto`) through
+      the fs tool and asserts refusal
+
+The approval policy lives in `.tst/config.yaml`. `is_steering_write` covers `AGENTS.md`,
+`CLAUDE.md`, and `.tst/rules/`, but not the policy file, and `writable_paths` defaults to
+`**`. A session that can write its own policy can promote Class C to `auto` — the
+self-escalation the steering-file rule exists to prevent, through the side door. Spec §6
+has the UI owning config writes, so the refusal targets the agent's fs tool, not the
+daemon's config path.
+
+**Completed (2026-08-21):** `is_steering_write` refuses `_POLICY_FILE_PARTS`
+(`.tst/config.yaml`, case-folded) alongside the rules dir — one chokepoint feeds both the
+classifier (Class C, `steering-file-write`) and the guard (`steering_file` refusal). The
+daemon's scaffold path writes directly and is pinned unaffected; a dispatcher-level test
+drives the `class_c_default: auto` poisoning write and asserts the file survives.
+
+### TD-4804 — Steering-directory check is case-sensitive on case-insensitive filesystems
+**Size:** 2 · **Depends on:** TD-602
+
+**Acceptance criteria:**
+- [x] The `.tst/rules/` prefix comparison case-folds, so `.tst/RULES/…` (any case variant)
+      is refused as a steering write
+- [x] Over-refusal on case-sensitive filesystems (a literal `.tst/RULES/` directory is
+      treated as steering there too) is accepted and documented in the code
+- [x] Tests drive the comparison with case variants; the memory carve-out folds the same
+      way so `.tst/MEMORY/…` stays memory, not steering
+
+`is_steering_write` upper-cases basenames but compares the rules-dir tuple verbatim. On
+APFS and NTFS — both default case-insensitive — a write to `.tst/RULES/evil.md` lands in
+`.tst/rules/` while the guard sees a different path and allows it. The primary dev platform
+is macOS, so the shipped-default filesystem is the vulnerable one.
+
+**Completed (2026-08-21):** `_fold()` case-folds the guard's directory comparisons
+unconditionally, documented in the code. Parametrized variants cover `RULES`/`Rules`/`rUlEs`
+and `MEMORY`/`Memory`; the basename check still wins under a case-variant memory dir; the
+classifier and guard both refuse `.tst/RULES/evil.md`.
+
+### TD-4805 — Shell tool hardening: steering-aware classification, env filter gaps, allowlist honesty
+**Size:** 3 · **Depends on:** TD-605, TD-703
+
+**Acceptance criteria:**
+- [x] A shell command that writes a steering path (`echo … > AGENTS.md`,
+      `tee .tst/rules/x`) classifies Class C statically, not via model judgment
+- [x] `sanitized_env` also drops the missed secret carriers (`DOCKER_AUTH_CONFIG`,
+      `MYSQL_PWD`, `*_AUTH`, credential-URL forms), with a test per form
+- [x] The `allowed_commands` docstring and user docs name the known escape hatches
+      (`find -exec`, `xargs`, `sh -c`) instead of implying containment
+- [x] Whether worker-tier shell calls get a static Class B floor is decided and recorded in
+      `DECISIONS.md` either way
+
+The fs tools get path-boundary enforcement; the shell tool gets none, so
+`echo rule > .tst/rules/x.md` is only as safe as the classifier's reading of the string.
+The allowlist checks each segment's leading binary, which `find / -exec …` walks through.
+And the env filter's name list predates several common secret carriers. None of these is
+a sandbox break — the docstring already says the allowlist is a policy rail — but the
+docs and the classifier should say and do exactly what is true.
+
+**Completed (2026-08-21):** two static rules — `shell-steering-write` (C: redirection or
+`tee` into a steering path, extracted with `shlex` punctuation tokenization) and
+`shell-floor` (B: every shell call asks; the worker tier is never consulted for shell, so
+no model-granted A can auto-run an opaque command — recorded in DECISIONS.md). The env net
+gained `PWD` carriers, `AUTH` as a word (`GIT_AUTHOR_*` and `SSH_AUTH_SOCK` survive, with
+the reasoning in the code), and a value-shape check for credential-embedded URLs. The
+allowlist docs name the re-exec hatches in `shell.py` and `configuration.md`.
+
+### TD-4806 — Rendered markdown links navigate the webview away from the app
+**Size:** 2 · **Depends on:** TD-1004
+
+**Acceptance criteria:**
+- [x] Links in rendered assistant markdown are rewritten (`target="_blank"`,
+      `rel="noreferrer"`) and clicks route through the Tauri opener, never webview
+      navigation
+- [x] Non-http(s) schemes (`javascript:`, `data:`, `file:`) are dropped by the renderer
+- [x] A UI test renders a markdown link and asserts the click reaches the opener bridge,
+      not `window.location`
+
+`Markdown.svelte` wires copy buttons in its click handler but does nothing for anchors, so
+a model-emitted link navigates the app webview to an arbitrary external site — the app
+window becomes a browser with no chrome, and the session UI is gone. DOMPurify already
+sanitizes the HTML; the gap is navigation, not injection.
+
+**Completed (2026-08-21):** a DOMPurify `afterSanitizeAttributes` hook rewrites anchors —
+http(s) gets `target="_blank" rel="noreferrer noopener"`; every other scheme and relative
+hrefs lose `href` and render as inert text. The delegated click handler in
+`Markdown.svelte` preventDefaults anchor clicks and routes them through the opener
+plugin's `openUrl`. Tests pin the rewrite, the per-scheme drops, the click reaching the
+opener mock with default prevented, and that copy buttons are undisturbed.
+
+### TD-4807 — The webview ships with no CSP and form tags survive sanitization
+**Size:** 2 · **Depends on:** TD-1002
+
+**Acceptance criteria:**
+- [x] `tauri.conf.json` sets a content security policy locked to what the app uses
+      (self, the localhost WS, inline styles as needed) and the app still renders —
+      highlight.js, fonts, and the socket all verified — **mechanism amended:** the
+      policy lives in `ui/vite.config.ts` as `kit.csp` (hash mode), emitted as a
+      build-time meta tag; `tauri.conf.json` stays `csp: null`. See DECISIONS
+      2026-08-21. Render verified by dev smoke (screenshot: chrome, highlight.js,
+      serif fonts, copy control, socket connected).
+- [x] The DOMPurify config forbids `form`, `input`, and `button` tags so assistant text
+      cannot render a fake approval form — plus `textarea`, `select`, `option`,
+      `optgroup`; the code-block copy control became a `<span>` so the forbid list
+      is categorical
+- [x] Tests pin the tag list; the CSP is verified by a manual smoke pass and noted —
+      `csp-config.test.ts` pins every directive and the `csp: null` guard; the
+      emitted meta's sha256 was verified against the built bootstrap; dev-mode smoke
+      passed. A full packaged-.app smoke remains a pre-release manual step.
+
+`csp: null` in the Tauri config means any successful injection runs with full webview
+privileges. DOMPurify's default profile allows form elements, and the app renders
+model-controlled markdown next to real approval cards — a lookalike form is a phishing
+surface inside the trust boundary.
+
+**Completed (2026-08-21):** `kit.csp` hash mode emits
+`default-src 'self'; script-src 'self' + per-build bootstrap hash; style-src 'self'
+'unsafe-inline'; connect-src 'self' ws://127.0.0.1:* ipc://localhost (+ ws://localhost:*
+in dev); img-src 'self' data:; font-src 'self'; object-src/base-uri/form-action 'none'`.
+Tauri's bridge is unaffected (native init scripts; verified in tauri-2.11.5 source).
+DOMPurify `FORBID_TAGS` drops the form family categorically; tests pin each tag, the
+fake-approval-form degradation, copy-control survival, and every CSP directive.
+
+### TD-4808 — `network: deny` never reaches the web tools; `side_effect_class` is dead metadata
+**Size:** 2 · **Depends on:** TD-609, TD-610
+
+**Acceptance criteria:**
+- [x] Either the web tools declare host fields the classifier enforces `network: deny`
+      against, or the policy surface stops advertising a rail that is not wired —
+      wired: `web_fetch` declares `host_fields=("url",)` with URL→host reduction;
+      `web_search` declares a `host_resolver` reading `search.base_url` at
+      classification time
+- [x] `side_effect_class` is enforced in classification or removed from the schema —
+      enforced as a floor: `never` → C ahead of every grant, `ask` → terminal B
+      floor (DECISIONS 2026-08-21)
+- [x] Tests for whichever way each goes — floor placement and precedence in
+      test_classifier.py; end-to-end wiring, host reduction, config-host resolution,
+      and a declaration drift guard in test_security_suite.py
+
+A policy rule can say `network: deny` and the web tools will still fetch — nothing carries
+the rule to the tool. Dead rails are worse than absent ones: the config reads as though
+a guarantee exists. Same shape as TD-1410's argument: a promise that holds by construction
+until the day it silently doesn't.
+
+**Completed (2026-08-21):** both rails wired. `network: deny` now refuses `web_fetch`
+and `web_search` (Class C via `network-new-host`); an allowlisted host asks (Class B via
+the new floor). `side_effect_class` is enforced as a floor — specific grants
+(in-workspace edit, memory write) keep their deliberate Class A. Shell egress remains
+ungated by `network` (the classifier cannot see inside a command string) — documented in
+configuration.md §4.6. Browser CU tools keep their `actuates` rail unchanged.
+
+### TD-4809 — Shell host: release builds honor TSTD_PATH, Windows open_path is cmd-injectable, externalBin lives in an npm flag
+**Size:** 2 · **Depends on:** TD-1301
+
+**Acceptance criteria:**
+- [ ] `TSTD_PATH` is honored in debug builds only (or renamed `TSTD_DEV_…`) — a release
+      binary must run its bundled sidecar, not whatever the environment names
+- [ ] Windows `open_path` no longer builds a `cmd /C start` command line from an
+      unsanitized path (opener plugin's path API, or validate and refuse metacharacters)
+- [ ] `externalBin` is declared in `tauri.conf.json` so the sidecar bundling cannot drift
+      between the npm script and CI
+- [ ] A Rust test pins the release-build refusal; the Windows change is verified by review
+      and noted (no Windows CI)
+
+An environment variable that swaps the daemon binary is a dev convenience; honored in a
+release build it is a local-privilege hook into every session. The `cmd /C start` path
+concatenation is injectable with `&`-class metacharacters. The `externalBin` injection
+works today but lives in a quoted npm flag — invisible to anyone reading the Tauri config.
+
+### TD-4810 — daemon_supervision tests race on process-wide TSTD_PATH
+**Size:** 1 · **Depends on:** TD-1301
+
+**Acceptance criteria:**
+- [ ] The env-mutating test serializes (or receives the path explicitly), so parallel
+      `cargo test` cannot interleave the mutation with another test's `spawn_daemon`
+- [ ] The flake signature — clean-shutdown test fails because the port file survives —
+      is reproduced by forcing the interleaving, then fixed
+- [ ] 10 consecutive full Rust suite runs with no failure
+
+Observed 2026-08-21: `spawns_daemon_connects_via_port_file_and_shuts_down_cleanly` failed
+on a full-suite run and passed in isolation. `onefile_shape_attaches_and_group_kill_reaps_grandchild`
+mutates process-wide `TSTD_PATH`; under parallel test threads that mutation can land inside
+another test's daemon spawn. Same disease TD-1409 treated: a test whose outcome depends on
+what else is running.
+
+### TD-4811 — README Status denies shipped M4 features
+**Size:** 1 · **Depends on:** TD-1501
+
+**Acceptance criteria:**
+- [ ] The Status section reflects M4's exit (memory, session revive) and M5's in-flight
+      state
+- [ ] Every "not yet" claim in the README is audited against the backlog's completed
+      stories
+- [ ] The docs test that pins README numbers also pins the status claims that can be
+      machine-checked
+
+The README still says memory and detached sessions are not built. M4 exited; the brain
+prompt carries a memory subset and sessions revive from disk. The README is the project's
+public face — the one document whose claims a stranger acts on — and it currently
+under-sells what the tests prove.
+
+### TD-4812 — Process debt: unrecorded M4-gate call, stale spec sections, release-tag collision, stale kickoff prompt
+**Size:** 2 · **Depends on:** none
+
+**Acceptance criteria:**
+- [ ] `DECISIONS.md` records who authorized starting M4 with M3's gate open, and why —
+      marked as a retroactive record
+- [ ] Spec §10's open decisions are marked answered with pointers to their `DECISIONS.md`
+      entries, and §9's phasing reflects the re-plan
+- [ ] The `v0.2.0` tag collision is closed — rename the `tst-cu-mcp` tag to
+      `tst-cu-mcp-v0.2.0`, or narrow `release.yml`'s trigger pattern
+- [ ] `tst-desk-kickoff-prompt.md` is updated to the `docs/` paths or deleted; `AGENTS.md`
+      §11's layout is refreshed (maintainer edit — steering files are read-only to agents)
+
+M4 started while M3's exit condition was open. That may have been the right call, but the
+decision is not in the log, and the log is the project's memory for exactly this kind of
+call. Separately: `tst-cu-mcp` tagged `v0.2.0` in a repo whose `release.yml` fires on
+`v*` — a namespace collision that can trigger a TST Desk release from the server's tag.
+
+### TD-4813 — macOS keychain write exposes the API key in the process list
+**Size:** 2 · **Depends on:** TD-1102
+
+**Acceptance criteria:**
+- [ ] The macOS backend stops passing the secret as `security -w <argv>` (Security
+      framework bindings, or another argv-free path)
+- [ ] A test or documented manual check asserts the secret does not appear in `ps` during
+      `set_api_key`
+- [ ] Linux and Windows backends audited for the same exposure and cleared or fixed
+
+`security add-generic-password -w <secret>` puts the key in the process's argument list,
+readable by any local process via `ps` for the lifetime of the call. Short window, real
+exposure — and prime directive §2.2's "no secret is ever written to a log" spirit covers
+the process table too. The Windows backend already uses proper bindings; macOS should too.
+
+### TD-4814 — web_fetch's SSRF check is a DNS-rebinding TOCTOU
+**Size:** 2 · **Depends on:** TD-610
+
+**Acceptance criteria:**
+- [ ] The resolved address is pinned into the connection (resolve-and-connect or a custom
+      transport), so the check-then-fetch window closes — or the limitation is documented
+      and the private-address check re-runs at connect time
+- [ ] A test with a double-flip DNS stub proves the fix, or pins the documented limitation
+
+`web_fetch` resolves the host, checks the address is not private, then connects — and the
+second resolution is free to answer differently. The guard is real against honest mistakes
+and bypassable by a hostile DNS answer. Worth closing properly or labeling honestly.
+
+### TD-4815 — tst-cu-mcp: actuation switch coercion, unbounded click count, trust-boundary docs
+**Size:** 2 · **Depends on:** none
+
+**Acceptance criteria:**
+- [ ] The actuation-enabled config parses quoted YAML booleans (`"true"`/`"false"` strings)
+      fail-closed, not fail-open
+- [ ] `click` count is bounded; absurd counts are refused
+- [ ] The README documents the no-approval-gate trust model — any local process that can
+      reach the server can drive input — as a stated posture, not an oversight
+
+The actuation kill-switch reads a config value that YAML can deliver as a string, and the
+comparison fails open: a quoted `"false"` still enables input actuation. The server is a
+developer tool with OS-level permissions; its safety switches have to survive config
+dialects. Filed here rather than in E20, which owns the server's Linux port.
+
+### TD-4816 — Low-severity review follow-ups
+**Size:** 3 · **Depends on:** none
+
+**Acceptance criteria:**
+- [ ] `events.jsonl` is created with restrictive permissions (no create-then-chmod window)
+- [ ] The git tool sanitizes its child environment the way the shell tool does
+- [ ] The audit schema docstring stops claiming `DROP TABLE` is impossible, or makes it true
+- [ ] Tauri `opener:allow-open-path` is scoped, or documented as intentionally unscoped
+- [ ] The UI validates inbound daemon events against the union before dispatch, or documents
+      the trust it places in the socket
+- [ ] `serde_yaml` (deprecated) and `tokio-tungstenite` are replaced or bumped
+- [ ] MCP lows: astral-plane typing guard, DPI fallback documented, screenshot temp-file
+      lifecycle
+- [ ] `conversation.json`'s plaintext-at-rest posture is stated in the README's security
+      section
+
+The grab-bag rule applies: each box is small, independently verifiable, and none deserves
+its own number. If any grows teeth in the doing, split it out per the sizing rules.
+### TD-4817 — Shell steering guard misses `>&` and `>|` redirect operators
+**Size:** 1 · **Depends on:** TD-4805
+
+**Acceptance criteria:**
+- [x] `_shell_write_targets` extracts targets of `>&` and `>|` redirects, so
+      `echo x >& AGENTS.md` and `echo x >| .tst/config.yaml` classify static C
+- [x] A leading `!` on the target (zsh `>&!`) is stripped before the steering check
+- [x] `2>&1`, `>&2`, and `exec 3>&1` still classify B (descriptor dups are not writes)
+- [x] Both new shapes join the static-C parametrized test; the descriptor forms pin B
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): both operators joined
+`_REDIRECT_TOKENS`; the extractor strips a leading `!` (attached or spaced zsh
+clobber). Descriptor dups extract numeric non-targets, which never match steering —
+pinned in the B-floor parametrization.
+
+Found by the 2026-08-21 ox-alpha review (Vuln 1, reproduced end-to-end): shlex emits
+`>&` and `>|` as single punctuation tokens, the extractor sees nothing, and the command
+lands on the B floor — which skip-all then promotes to silent execution.
+
+### TD-4818 — Skip-all approvals must not promote the shell floor
+**Size:** 2 · **Depends on:** TD-804, TD-4805
+
+**Acceptance criteria:**
+- [x] `resolve_explained` does not convert ask→auto under skip-all when the gate came
+      from the `shell-floor` rule; the approval card still appears
+- [x] Other B-class gates (CU actuation, allowlisted web fetch) keep their TD-804
+      promotion — the exemption is scoped to shell
+- [x] `docs/configuration.md` stops saying steering redirects are "Class C outright"
+      and describes what the static table actually catches
+- [x] Tests: skip-all + shell-floor still asks; skip-all + ordinary B still auto-runs
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): the exemption keys on the
+tool name rather than the rule id — every shell B is the floor, and the name
+survives rule renames. Explicit `shell: auto` workspace rules still win (they
+resolve before the skip-all block); that escape hatch is pinned by test. Class B
+decision recorded in DECISIONS.md.
+
+Found by the 2026-08-21 ox-alpha review (Vuln 2). The B floor exists because the
+classifier cannot see inside a command string; promoting it under skip-all makes every
+unparsed write form (`eval`, `sh -c`, `cp`, command substitution) a silent steering
+write. This also falsifies the TD-4805 DECISIONS rationale — repaired, not relitigated.
+
+### TD-4819 — Credential-URL env filter misses password-only form
+**Size:** 1 · **Depends on:** TD-4805
+
+**Acceptance criteria:**
+- [x] `redis://:pw@host` (empty username) and friends are stripped by `sanitized_env()`
+- [x] Existing vectors (`user:pass@`, benign URLs without credentials) behave as before
+- [x] Tests cover the password-only form for redis/postgresql/mongodb shapes
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): the user class relaxed from
+`+` to `*`; a match still requires the `:…@` tail, so benign URLs are untouched.
+Parametrized over redis/rediss/postgresql/mongodb shapes.
+
+Found by the 2026-08-21 ox-alpha review (Vuln 3): `_CREDENTIAL_URL_VALUE_RE` requires a
+non-empty username, so Heroku-style password-only URLs survive into `printenv` output
+and the persisted timeline.
+
+### TD-4820 — Steering guard admits trailing dot/space aliases
+**Size:** 1 · **Depends on:** TD-4803
+
+**Acceptance criteria:**
+- [x] `check_write` refuses any path component ending in `.` or space, mirroring the
+      8.3/ADS refusals — `.tst/config.yaml.`, `AGENTS.md.`, `.tst./config.yaml`,
+      `.tst/rules./x.md` all refuse
+- [x] Ordinary dotted filenames (`notes.md`, `.tst/config.yaml`) are unaffected
+- [x] Tests pin both the refusals and the unaffected forms
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): the check lives in
+`windows_unsafe_reason`, so the guard and the classifier's `boundary-unsafe-path`
+rule both gained it in one move. `.`/`..` navigation components are excluded; the
+bare policy file still refuses as `steering_file`, not `windows_unsafe` (pinned).
+
+Found by the 2026-08-21 ox-alpha review (Bug 1). Creation-only and Windows-only today
+(Win32 strips trailing dots/spaces at open time, aliasing the real steering file), but
+the guard's contract is fail-closed on any shipped platform's unsafe forms.
+
+### TD-4821 — Repo self-hosting gates: secrets-hook canaries, svelte-check red
+**Size:** 1 · **Depends on:** TD-4801
+
+**Acceptance criteria:**
+- [x] Tracked test canaries matching the widened `sk-` pattern carry the
+      `tst-secret-ok` marker the hook already honors (`test_setup_state.py`,
+      `test_shell_tools.py`); staging those files no longer blocks the commit
+- [x] `svelte-check` is green: `DesignLayer.svelte` `clientWidth`/`clientHeight`
+      `never` errors fixed
+- [x] Hook still rejects an unmarked canary (negative test by hand, noted)
+
+Completed 2026-08-21 (branch `td/4817-review-repairs`): five canary lines marked;
+hook verified clean on both files and still exit-1 on an unmarked canary.
+`DesignLayer.svelte`'s `overlaySize` moved to `$derived.by` — the expression form
+is analyzed inline, where TS narrows the `bind:this` target to `null` and reports
+`never`; the closure form gets the declared type. svelte-check: 0 errors
+(the `MemoryProposalCard` warning is pre-existing and left alone).
+
+Found by the 2026-08-21 ox-alpha review (Bugs 2 and 4). The hook already knows the
+`tst-secret-ok` convention — the canaries simply lacked it.
+
+### TD-4822 — tst-cu-mcp: `tools/list` hang on batched stdin
+**Size:** 2 · **Depends on:** none
+
+**Acceptance criteria:**
+- [ ] initialize + `tools/list` written to stdin together both get answers; the server
+      does not exit silently at EOF
+- [ ] The four failing mcp tests pass
+- [ ] Regression test: batched stdin request completes
+
+Found by the 2026-08-21 ox-alpha review (Bug 3, reproduced 3/3 outside pytest).
+Accepted on the report's reproduction; the fix belongs to the package's protocol loop
+with its own test pass.
+
+### TD-4823 — tst-cu-mcp: mypy is platform-dependent
+**Size:** 1 · **Depends on:** none
+
+**Acceptance criteria:**
+- [ ] `mypy` on `mcp/tst-cu-mcp` passes on macOS (per-module overrides for the
+      Windows-only ctypes names in `backends/windows.py`, or equivalent gating)
+- [ ] The override does not weaken checking on Windows itself
+
+Found by the 2026-08-21 ox-alpha review (Bug 5 / Enhancement 3).
+

@@ -23,7 +23,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
-from .logging import redact_structure, user_data_dir
+from .logging import redact_secrets, redact_structure, user_data_dir
 
 DecisionClass = Literal["A", "B", "C"]
 ToolCallStatus = Literal["success", "error", "refused"]
@@ -303,11 +303,22 @@ class AuditStore:
 
         ``commit_sha`` is NULL for Class B decisions: the TD-704 rule
         binds Class A to a commit but Class B stands on judgment alone.
+
+        ``what``/``why`` are free text and can quote tool output, so they
+        are scrubbed like every other stored string (TD-4802) — this
+        insert bypassed the redactor while ``append_tool_call`` scrubbed.
         """
         cur = self._conn.execute(
             "INSERT INTO decisions (session_id, decision_class, what, why, commit_sha, ts)"
             " VALUES (?, ?, ?, ?, ?, ?)",
-            (session_id, decision_class, what, why, commit_sha, ts or time.time()),
+            (
+                session_id,
+                decision_class,
+                redact_secrets(what),
+                redact_secrets(why),
+                commit_sha,
+                ts or time.time(),
+            ),
         )
         self._conn.commit()
         return int(cur.lastrowid or 0)

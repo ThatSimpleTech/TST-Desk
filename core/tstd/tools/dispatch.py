@@ -12,6 +12,7 @@ import json
 from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
@@ -40,6 +41,7 @@ __all__ = [
     "UnclassifiedToolCall",
     "ValidationError",
     "build_decision_request",
+    "host_of",
     "truncate_output",
 ]
 
@@ -68,6 +70,23 @@ ApprovalHandler = Callable[
 ]
 
 
+def host_of(value: str) -> str | None:
+    """Reduce a ``host_fields`` argument value to a bare lowercase host.
+
+    The value may be a URL (``web_fetch``'s ``url``) or a bare host.
+    http(s) URLs yield their hostname; non-network schemes (``about:``,
+    ``file:``, ``data:``) reach no host and yield ``None``.  A scheme-less
+    value is treated conservatively as a host verbatim — better a
+    allowlist miss (Class C) than a silent pass (TD-4808).
+    """
+    parts = urlsplit(value.strip())
+    if parts.scheme in ("http", "https"):
+        return parts.hostname.lower() if parts.hostname else None
+    if parts.scheme:
+        return None
+    return value.strip().lower() or None
+
+
 def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionRequest:
     """Reduce a tool call to the signals the decision classifier needs.
 
@@ -77,9 +96,23 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
     ``path_fields`` as reads; mutating tools expose them as write
     targets.  Desktop CU tools keep those fields empty so PathGuard
     does not run; ``actuates`` is what the table classifies.
+
+    Hosts come from two places (TD-4808): ``host_fields`` argument
+    values, reduced by :func:`host_of`, and the tool's optional
+    ``host_resolver`` for config-carried hosts (``web_search`` →
+    ``search.base_url``).  ``side_effect_class`` rides along so the
+    table can enforce it as a floor.
     """
     paths = tuple(Path(arguments[f]) for f in tool.path_fields if isinstance(arguments.get(f), str))
-    hosts = frozenset(arguments[f] for f in tool.host_fields if isinstance(arguments.get(f), str))
+    hosts: set[str] = set()
+    for f in tool.host_fields:
+        raw = arguments.get(f)
+        if isinstance(raw, str):
+            host = host_of(raw)
+            if host is not None:
+                hosts.add(host)
+    if tool.host_resolver is not None:
+        hosts.update(tool.host_resolver())
     if tool.mutates:
         writes = paths
         reads: tuple[Path, ...] = ()
@@ -91,9 +124,10 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
         arguments=dict(arguments),
         writes=writes,
         reads=reads,
-        hosts=hosts,
+        hosts=frozenset(hosts),
         is_mutation=tool.mutates,
         actuates=tool.actuates,
+        side_effect_class=tool.side_effect_class,
     )
 
 

@@ -166,6 +166,7 @@ describe("design store (TD-3403)", () => {
 			tool_call_id: "c1",
 			status: "success",
 			output: "ok",
+			truncated: false,
 		});
 		expect(design.actuating).toBe(false);
 		expect(toggleDesign()).toBe(true);

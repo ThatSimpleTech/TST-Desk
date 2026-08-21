@@ -7405,3 +7405,140 @@ the fixture and leave the suite.
 **Alternative rejected:** Listening on `0.0.0.0` then closing. Also
 rejected: posting to a Slack incoming webhook from CI.
 
+---
+
+## 2026-08-21 — E48: review findings filed as one epic under M5 (Class B)
+
+**Decision:** The findings from the 2026-08-21 full-repo security and
+consistency review are filed as a single new epic, E48 (TD-4801–4816),
+counted in the M5 totals, rather than scattered across the epics whose
+code they touch. TD-4801 (the one-line defects) shipped with the filing;
+the rest await sequencing. The high-severity security stories
+(TD-4802–4806) should land before any v0.3 tag, but that gate is
+advisory — M5's exit condition is unchanged. The same recompute corrected
+two drifted summary rows (M1.5 12/30→15/36, M3 50/142→47/136); the v0.1
+subtotals were unaffected.
+
+**Rationale:** The findings share one provenance and read best with that
+context kept together — the E20 precedent (work with no backlog home)
+rather than TD-1409/1410-style scatter into thematic ranges. M5 placement
+follows the E19 precedent: defects in shipped behavior are bugfix work on
+the current milestone, not a new phase. Changing M5's exit condition
+would be a Class C call and was not made.
+
+**Alternative rejected:** Scattering the stories into the E6/E7/E9/E10/E14
+number ranges. It would have made the review's through-line — several
+README promises are enforced less strongly than stated — invisible in the
+document.
+
+
+---
+
+## 2026-08-21 — TD-4805: shell gets a static Class B floor (Class B)
+
+**Decision:** Every `shell` call classifies at least Class B from the
+static rule table; the worker tier is never consulted for shell. A new
+static C rule covers the one case the table *can* see — redirection or
+`tee` into a steering path (`echo … > AGENTS.md`, `tee .tst/rules/x`).
+Other write forms (`cp`, `sed -i`, editors) are deliberately not parsed;
+they hit the B floor and ask. Auto-run for shell remains available
+through the user's saved always-allow rules (TD-803) — that is where
+automation trust lives.
+
+**Rationale:** The static table cannot see a shell command's targets, so
+no static A is possible; the only path to A was a model's reading of an
+opaque string. A model's judgment should never be the sole gate on
+running an opaque command. In the default configuration (`class_c_default:
+ask`) a worker-C and the static B both land at "ask", so the floor loses
+nothing the default user had and removes the worker-A auto-run path. It
+also removes one worker call per shell command — less spend, less latency.
+
+**Alternative rejected:** Parsing more of the shell grammar statically
+(`cp`/`mv`/`rm` target extraction). The grammar is unbounded (quoting,
+substitutions, wrappers); every added form is a new false-negative
+surface, and the B floor already asks in every case the parser misses.
+
+
+## 2026-08-21 — TD-4807: the webview CSP lives in `vite.config.ts`, not `tauri.conf.json` (Class B)
+
+**Decision:** The content security policy is configured as `kit.csp` in
+`ui/vite.config.ts` (mode `hash`), which SvelteKit emits as a build-time
+`<meta>` tag. `shell/tauri.conf.json` keeps `"csp": null`. This deviates
+from the story's literal acceptance wording ("`tauri.conf.json` sets a
+content security policy"); the intent — a locked policy the app renders
+under — is met, and a guard test pins `csp: null` so nobody adds a second,
+intersecting policy later.
+
+**Rationale:** SvelteKit's prerendered HTML contains an inline bootstrap
+script that imports content-hashed chunks, so the bootstrap's own hash
+changes on every build. A static policy in `tauri.conf.json` cannot carry
+that hash; `script-src 'self'` alone would block the bootstrap and the app
+would not boot, and `'unsafe-inline'` would gut the policy. Hash mode
+computes the hash at build time, so the policy is always in sync with the
+build it ships with. Tauri's own bridge is unaffected: v2 delivers it via
+native initialization scripts and `WKUserScript`, which page CSP does not
+govern (verified against tauri-2.11.5 `manager/mod.rs::set_csp`, which
+only processes CSP when the config sets one).
+
+**Alternative rejected:** A `beforeBuildCommand` codegen step that hashes
+the built HTML and rewrites `tauri.conf.json`. It reproduces what
+`kit.csp` already does, maintained by the framework, and adds build
+machinery for no gain.
+
+## 2026-08-21 — TD-4808: `side_effect_class` is a floor, and the network rail reads hosts (Class B)
+
+**Decision:** Two dead rails were wired rather than removed (the story's
+AC offered either). (1) `Tool.side_effect_class` now rides the
+`DecisionRequest` and is enforced: `never` classifies C alongside the
+other refusals, ahead of every A grant; `ask` is a terminal B floor that
+only catches calls no specific rule spoke for. (2) `web_fetch` declares
+`host_fields=("url",)` with URL→host reduction in dispatch, and
+`web_search` declares a `host_resolver` that reads `search.base_url`
+from config at classification time, so `network: deny` and the host
+allowlist classify both tools before they run.
+
+**Rationale:** A floor preserves the deliberate grants — in-workspace
+edits and memory writes stay Class A (checkpointed, revertable) even
+though `fs_write` declares `ask`. Placing the floor *above* those rules
+would overturn TD-1410's checkpoint-backed autonomy; placing `never`
+with the C cluster keeps the suite's C-before-A invariant meaningful.
+Wiring beat removal because the declarations close a real hole: before
+this, an allowlisted-host `web_fetch` fell through to the worker model,
+which could grant Class A to a network call.
+
+**Alternative rejected:** Removing `side_effect_class` from the schema.
+The field is honest now that it is enforced, and removing it would leave
+web tools with no approval floor at all.
+
+**Follow-up:** `network: deny` still does not stop shell egress (`curl`)
+— the classifier cannot see inside a command string; `allowed_commands`
+and the approval gate govern that path. Documented in configuration.md
+§4.6.
+---
+
+## 2026-08-21 — TD-4818: skip-all exempts the shell floor, scoped by tool name
+
+**Class:** B (structural — changes TD-804's promotion semantics for one tool)
+
+**Decision:** `resolve_explained` no longer promotes ask→auto under skip-all when
+the tool is `shell`. The exemption keys on the tool, not the `shell-floor` rule id:
+every shell B *is* the floor (the rule is static and total for that tool), and the
+tool name survives rule renames. An explicit workspace `shell: auto` rule still
+wins — policy rules resolve before the skip-all block, so a deliberate opt-in is
+untouched; only the floor default and explicit `ask` rules stop promoting.
+
+**Rationale:** The B floor exists because the classifier cannot see inside a
+command string. Promoting it under skip-all auto-ran every write form the parser
+misses (`eval`, `sh -c`, `cp`, command substitution) — the ox-alpha review
+reproduced silent steering writes this way, falsifying TD-4805's "the B floor
+already asks in every case the parser misses" rationale. CU actuation keeps its
+promotion (autonomous CU runs are the designed TD-804 use case), and allowlisted
+web fetches keep theirs (two explicit opt-ins: the allowlist entry and skip-all).
+
+**Alternative rejected:** Parsing more write forms (`cp`, `mv`, `sed -i`, `eval`)
+into the static table. The set is unbounded — interpreters, `find -exec`, editors.
+The floor's honesty is precisely that it does not pretend to see inside the string.
+
+**Follow-up:** TD-4822/TD-4823 (tst-cu-mcp findings from the same review) are
+filed, not yet staffed.
+

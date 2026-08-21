@@ -148,6 +148,13 @@ def windows_unsafe_reason(p: str, canonical: Path | None = None) -> str | None:
         return "8.3 short name segment (can alias a different path on Windows)"
     if is_alternate_data_stream(p):
         return "alternate data stream (colon in filename)"
+    # Trailing dot or space in a component (TD-4820): Win32 strips both at
+    # open time, so `AGENTS.md.` or `.tst./config.yaml` alias the real
+    # steering file on Windows while creating an inert lookalike elsewhere.
+    # Refused everywhere — the guard is fail-closed on any shipped
+    # platform's unsafe forms.  "." and ".." are navigation, not components.
+    if any(part not in (".", "..") and part.endswith((".", " ")) for part in Path(p).parts):
+        return "trailing dot or space in a path component (Windows strips it at open)"
     return None
 
 
@@ -225,7 +232,8 @@ class PathGuard:
             raise RefusalError(
                 "steering_file",
                 target,
-                "steering files (AGENTS.md/CLAUDE.md/.tst/rules) are read-only",
+                "steering files (AGENTS.md/CLAUDE.md/.tst/rules) and the "
+                "approval policy (.tst/config.yaml) are read-only",
             )
         root = self.boundary.workspace_root
         if root is None or not is_in_workspace(self.boundary, target):
