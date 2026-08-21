@@ -71,9 +71,10 @@ boundary resting on it.
 
 ## 3. File permissions
 
-Two files are written with `chmod(0o600)`: the session store (`sessions.json`) and the port file
-(`port.json`, which carries the daemon's auth token). **On Windows that chmod is a no-op, and
-that is the decision, not an oversight.**
+Three files are written with `chmod(0o600)`: the session store (`sessions.json`), the port file
+(`port.json`, which carries the loopback auth token), and — when a non-loopback listener is
+up — `remote-token` (a rotating token distinct from the port file). **On Windows that chmod is a
+no-op, and that is the decision, not an oversight.**
 
 `os.chmod` on Windows can only toggle the read-only attribute. `0o600` carries a write bit, so
 nothing is set, and `stat` reports the Windows default `0o666`. What actually protects both
@@ -86,11 +87,11 @@ restriction the containing directory already provides, at the cost of a subproce
 startup path — and an Administrator, the only extra principal in scope, can take ownership of
 the file regardless.
 
-This is asserted, not assumed. `test_restricted_mode` in `core/tests/test_session_store.py` and
-`test_write_port_file_restricted_mode` in `core/tests/test_ws.py` both branch on platform: POSIX
-asserts `0o600`, Windows asserts the file exists, reads back, and carries `0o666`. If a future
-Python makes `os.chmod` meaningful on Windows, those tests fail — which is exactly when this
-page should be rewritten.
+This is asserted, not assumed. `test_restricted_mode` in `core/tests/test_session_store.py`,
+`test_write_port_file_restricted_mode`, and `test_write_remote_token_restricted_mode` in
+`core/tests/test_ws.py` all branch on platform: POSIX asserts `0o600`, Windows asserts the file
+exists, reads back, and carries `0o666`. If a future Python makes `os.chmod` meaningful on
+Windows, those tests fail — which is exactly when this page should be rewritten.
 
 **What this means for you:** on a shared or Administrator-managed Windows machine, the port
 file's token is readable by any local Administrator. That is true of anything under

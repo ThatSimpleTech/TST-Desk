@@ -5,6 +5,11 @@ and supports multiple simultaneous client connections. An opt-in
 ``remote.bind`` may add a Tailscale address on the same port — never
 ``0.0.0.0`` / ``::``. The port file still describes loopback.
 
+A hello on the extra listener (or any non-loopback peer) must present
+the rotating token in ``{user_data_dir}/remote-token``. The port-file
+token is not enough there. Loopback hellos keep using ``hello.token``
+against the port-file token — one field, two expected values.
+
 Post-handshake messages are routed to a message handler provided by the
 daemon. The handler receives parsed messages and returns responses to
 send back to the client.
@@ -33,6 +38,12 @@ from .protocol import (
     parse_hello,
     validate_hello,
     validate_token,
+)
+from .remote_auth import (
+    connection_is_remote,
+    is_loopback_host,
+    remove_remote_token_file,
+    write_remote_token_file,
 )
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 
@@ -159,11 +170,13 @@ class WebSocketServer:
         ping_interval: float = PING_INTERVAL_SECONDS,
         bind: str = "",
         interfaces: InterfaceEnumerator | None = None,
+        is_remote_connection: Callable[[ServerConnection], bool] | None = None,
     ) -> None:
         self.data_dir = data_dir
         self._server: Server | None = None
         self._extra_server: Server | None = None
         self._token: str = ""
+        self._remote_token: str = ""
         self._port: int = 0
         self._connections: set[ServerConnection] = set()
         # Connections past the handshake — the only ones a ping is meaningful
@@ -177,6 +190,7 @@ class WebSocketServer:
         self._bind = bind
         self._interfaces = interfaces
         self._extra_host: str | None = None
+        self._is_remote_connection = is_remote_connection
 
     @property
     def port(self) -> int:
@@ -187,8 +201,22 @@ class WebSocketServer:
         return self._token
 
     @property
+    def remote_token(self) -> str:
+        return self._remote_token
+
+    @property
     def extra_host(self) -> str | None:
         return self._extra_host
+
+    def peer_is_remote(self, websocket: ServerConnection) -> bool:
+        """True when this connection must present the remote-token."""
+        if self._is_remote_connection is not None:
+            return self._is_remote_connection(websocket)
+        return connection_is_remote(
+            self._extra_host,
+            websocket.local_address,
+            websocket.remote_address,
+        )
 
     @property
     def bound_hosts(self) -> tuple[str, ...]:
@@ -233,6 +261,12 @@ class WebSocketServer:
             self._extra_host = extra
 
         write_port_file(self.data_dir, self._port, self._token)
+        # A 127.0.0.1 extra is still loopback — no remote token. Tests may
+        # inject is_remote_connection without binding a second host.
+        if (
+            extra is not None and not is_loopback_host(extra)
+        ) or self._is_remote_connection is not None:
+            self._issue_remote_token()
 
         if self._ping_interval > 0:
             self._ping_task = asyncio.create_task(self._ping_loop())
@@ -288,10 +322,25 @@ class WebSocketServer:
         self._extra_host = None
 
         # Clean shutdown removes the port file so the host can tell a live
-        # daemon from a defunct one.
+        # daemon from a defunct one. The remote token is rotated the same
+        # way: gone on stop, a new file on the next remote-bind start.
         remove_port_file(self.data_dir)
+        remove_remote_token_file(self.data_dir)
+        self._remote_token = ""
 
         log.info("ws server stopped")
+
+    def _issue_remote_token(self) -> None:
+        """Mint a new remote token and replace the on-disk file.
+
+        Called on every start that has a remote listener (or a test
+        classifier). The previous file is invalid after this write.
+        """
+        token = generate_token()
+        while token == self._token:
+            token = generate_token()
+        self._remote_token = token
+        write_remote_token_file(self.data_dir, token)
 
     async def _on_connect(self, websocket: ServerConnection) -> None:
         """Handle a new client connection, requiring a token handshake."""
@@ -308,7 +357,8 @@ class WebSocketServer:
                 raise HandshakeError("bad_request", "Handshake must be text")
             hello = parse_hello(raw)
             validate_hello(hello)
-            validate_token(hello.token, self._token)
+            expected = self._remote_token if self.peer_is_remote(websocket) else self._token
+            validate_token(hello.token, expected)
             await websocket.send(build_hello_ack())
             self._handshaken.add(websocket)
             log.info(
@@ -317,13 +367,16 @@ class WebSocketServer:
             )
         except HandshakeError as e:
             await self._send_and_close(websocket, e.code, e.message)
+            self._connections.discard(websocket)
             return
         except TimeoutError:
             await self._send_and_close(
                 websocket, "handshake_timeout", "No hello message within 10s"
             )
+            self._connections.discard(websocket)
             return
         except websockets.exceptions.ConnectionClosed:
+            self._connections.discard(websocket)
             return
 
         # Post-handshake: route messages to the daemon's message handler.

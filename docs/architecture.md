@@ -206,12 +206,17 @@ discriminated unions (`ClientMessageT`, `DaemonEventT`) so parsing is total and 
 
 ### The handshake
 
-1. Client connects to `ws://127.0.0.1:<port>` from the port file.
+1. Client connects to `ws://127.0.0.1:<port>` from the port file, or to the extra Tailscale
+   listener when `remote.bind` is on.
 2. Client sends `hello` with the token and its `PROTOCOL_VERSION`, within the handshake timeout.
    Missing the window is `handshake_timeout`.
-3. Daemon validates the version first, then the token. An out-of-range version fails with
+3. Daemon validates the version first, then the token. Loopback hellos present the port-file
+   token. A non-loopback hello (the extra listener, or a non-loopback peer) must present the
+   rotating token in `{user_data_dir}/remote-token` — the port-file token is not enough. The
+   protocol field is still `hello.token`. An out-of-range version fails with
    `version_unsupported` and a message naming the versions on both sides; a bad token fails with
-   `auth_failed`. Either way the daemon sends a typed `error` frame and closes with 1008.
+   `auth_failed` and does not open a session. Either way the daemon sends a typed `error` frame
+   and closes with 1008.
 4. Daemon replies `hello_ack` and the connection is live. From here the daemon also sends `ping`
    on a timer, to handshaken clients only.
 

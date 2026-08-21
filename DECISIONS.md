@@ -7181,3 +7181,24 @@ table keeps the suite offline.
 Also rejected: binding `0.0.0.0` and filtering. Also rejected: adding a
 `host` parameter to `WebSocketServer.start`.
 
+---
+
+## 2026-08-21 — TD-3602: remote hello uses a rotating data-dir token (Class B)
+
+**Decision:** One `hello.token` field, two expected values. Loopback
+matches the port-file token. A connection whose server socket is the
+extra (non-loopback) host, or whose peer is not `127.0.0.1` / `::1`,
+must match `{user_data_dir}/remote-token`. That file is `0o600`, minted
+on remote-bind start, and replaced on every daemon restart. A
+`127.0.0.1` extra listener is not remote. Tests may inject
+`is_remote_connection` because a second loopback alias is not always
+bindable.
+
+**Rationale:** A leaked `port.json` must not authenticate on the
+Tailscale listener. A second hello field would fork the protocol for no
+gain. Classification prefers the server socket so a loopback client
+hitting the extra host is still remote.
+
+**Alternative rejected:** Reusing the port-file token on both listeners.
+Also rejected: adding `hello.remote_token`.
+
