@@ -293,7 +293,6 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `session_state` | session | A session state transition, with an optional reason. |
 | `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
-| `user_turn` | session | A user message the loop accepted. Exists so a restarted daemon can replay the user's side without inventing it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
 | `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. |
 | `tool_call` | session | A tool call about to execute, with its decision class. |
