@@ -576,9 +576,9 @@ describe("presentation helpers", () => {
   });
 
   it("row title follows a rename and falls back after restore (TD-3002)", () => {
-    emit(sessionList([["abc12345-xxxx", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, "Custom"]]));
+    emit(sessionList([["abc12345-xxxx", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, false, "Custom"]]));
     expect(rowTitle(sessions.rows[0])).toBe("Custom");
-    emit(sessionList([["abc12345-xxxx", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, null]]));
+    emit(sessionList([["abc12345-xxxx", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, false, null]]));
     expect(rowTitle(sessions.rows[0])).toBe("abc12345");
   });
 });
