@@ -269,6 +269,23 @@ class TestValidationHappensBeforeActuation:
             input_control.type_text("x" * (input_control.MAX_TEXT_LEN + 1))
         assert refuse_all_actuation == []
 
+    def test_overlong_text_is_counted_in_utf16_units(self, refuse_all_actuation: list[str]) -> None:
+        # Astral-plane characters are one Python character but two keyboard
+        # events on Windows; capping on len(text) would let the real event
+        # volume run to twice MAX_TEXT_LEN. Half the cap's worth of emoji is
+        # over the line even though its character count is not.
+        text = "\U0001f600" * (input_control.MAX_TEXT_LEN // 2 + 1)
+        assert len(text) < input_control.MAX_TEXT_LEN
+        assert input_control.utf16_length(text) > input_control.MAX_TEXT_LEN
+        with pytest.raises(ValueError, match="text too long"):
+            input_control.type_text(text)
+        assert refuse_all_actuation == []
+
+    def test_text_at_the_unit_limit_is_typed(self, refuse_all_actuation: list[str]) -> None:
+        # Exactly MAX_TEXT_LEN units must pass: the cap is a ceiling, not a hint.
+        input_control.type_text("x" * input_control.MAX_TEXT_LEN)
+        assert refuse_all_actuation == ["type_text"]
+
     def test_oversized_scroll_is_refused(self, refuse_all_actuation: list[str]) -> None:
         with pytest.raises(ValueError, match="scroll magnitude"):
             input_control.scroll(0, input_control.MAX_SCROLL_LINES + 1)

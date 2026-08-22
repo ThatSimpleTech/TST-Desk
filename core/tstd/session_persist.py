@@ -28,6 +28,13 @@ _EVENTS = "events.jsonl"
 _CONVERSATION = "conversation.json"
 
 
+def _write_all(fd: int, text: str) -> None:
+    """Write ``text`` fully to ``fd``, looping past partial ``os.write`` calls."""
+    view = memoryview(text.encode("utf-8"))
+    while view:
+        view = view[os.write(fd, view) :]
+
+
 @dataclass(frozen=True)
 class AppendResult:
     """What the on-disk window looks like after one append."""
@@ -137,8 +144,12 @@ class SessionPersist:
         events_path = path / _EVENTS
         line = event.model_dump_json() + "\n"
         with self._write_lock:
-            with events_path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
+            # Created 0600 in the same syscall: no world-readable instant.
+            fd = os.open(events_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            try:
+                _write_all(fd, line)
+            finally:
+                os.close(fd)
             events_path.chmod(0o600)
             loaded = self._load_events(events_path)
             kept = self._apply_window(events_path, loaded)
@@ -231,10 +242,12 @@ class SessionPersist:
         """Replace ``events.jsonl`` with ``events``. Temp + replace, mode 0o600."""
         tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         try:
-            tmp.write_text(
-                "".join(event.model_dump_json() + "\n" for event in events),
-                encoding="utf-8",
-            )
+            # Created 0600 in the same syscall: no world-readable instant.
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                _write_all(fd, "".join(event.model_dump_json() + "\n" for event in events))
+            finally:
+                os.close(fd)
             tmp.chmod(0o600)
             os.replace(tmp, path)
             path.chmod(0o600)
@@ -250,7 +263,12 @@ class SessionPersist:
     def _write_json(path: Path, payload: object) -> None:
         tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         try:
-            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            # Created 0600 in the same syscall: no world-readable instant.
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                _write_all(fd, json.dumps(payload))
+            finally:
+                os.close(fd)
             tmp.chmod(0o600)
             os.replace(tmp, path)
         except OSError as e:

@@ -499,7 +499,7 @@ pub async fn connect_handshake(port: u16, token: &str) -> Result<ClientWs, Strin
         "token": token,
         "version": PROTOCOL_VERSION,
     });
-    ws.send(Message::Text(hello.to_string()))
+    ws.send(Message::Text(hello.to_string().into()))
         .await
         .map_err(|e| format!("send hello failed: {e}"))?;
 

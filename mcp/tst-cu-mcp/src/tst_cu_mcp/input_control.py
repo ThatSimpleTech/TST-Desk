@@ -37,6 +37,7 @@ from tst_cu_mcp.focus import assert_foreground
 from tst_cu_mcp.overlay import get_overlay
 
 MOUSE_BUTTONS = ("left", "right")
+# Counted in UTF-16 code units, not Python characters — see utf16_length.
 MAX_TEXT_LEN = 10000
 MAX_SCROLL_LINES = 10000
 # Real multi-click semantics end around triple-click; this bounds the worst
@@ -121,12 +122,25 @@ def parse_key_combo(combo: str) -> object:
     return get_backend().parse_key_combo(combo)
 
 
+def utf16_length(text: str) -> int:
+    """Length of *text* measured in UTF-16 code units rather than characters.
+
+    Python's ``len()`` counts code points, and every character above U+FFFF
+    (astral plane: emoji, CJK Extension B+) is one of those but two UTF-16
+    units — two keyboard events on Windows. Validating against ``len(text)``
+    would let the real event volume reach twice the stated cap, so the bound is
+    counted in the unit the backends actually emit.
+    """
+    return len(text.encode("utf-16-le")) // 2
+
+
 def type_text(text: str, expect_window: str | None = None) -> None:
     """Type a Unicode string at the current focus. The text is never logged."""
     safety.ensure_actuation_allowed()
     get_overlay().activity()
-    if len(text) > MAX_TEXT_LEN:
-        raise ValueError(f"text too long ({len(text)} > {MAX_TEXT_LEN})")
+    units = utf16_length(text)
+    if units > MAX_TEXT_LEN:
+        raise ValueError(f"text too long ({units} UTF-16 units > {MAX_TEXT_LEN})")
     assert_foreground(expect_window)
     if text:
         get_backend().type_text(text)
