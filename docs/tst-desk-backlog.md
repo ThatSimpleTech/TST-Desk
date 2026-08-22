@@ -5495,9 +5495,16 @@ and fully wired it dispatches as Class B through the approval gate.
 **Size:** 3 · **Depends on:** TD-4401, TD-1703
 
 **Acceptance criteria:**
-- [ ] Add / disable / remove a server without editing YAML by hand
-- [ ] Command + args only; no free-form env that could smuggle a key
+- [x] Add / disable / remove a server without editing YAML by hand
+- [x] Command + args only; no free-form env that could smuggle a key
       into a file (paste-a-token stays keychain)
+
+**Completed (2026-08-21):** Three narrow verbs (`set_mcp_server`,
+`set_mcp_enabled`, `remove_mcp_server`) acked with `setup_state`; the add
+verb carries no url/env field and replaces the entry whole, so a key has
+no ride into the config file by construction. Edits reconcile the manager:
+removed/disabled/changed servers close, unchanged keep their transport;
+"applies to new sessions" matches the tier-slug contract. See DECISIONS.md.
 
 ---
 

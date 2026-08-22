@@ -809,7 +809,9 @@ def _placeholder(annotation: Any) -> Any:
     if origin in (Union, UnionType):
         return _placeholder(get_args(annotation)[0])
     if origin is list:
-        return []
+        # A constrained string list (SetMcpServer.command's min_length=1)
+        # needs a real element; model lists sample empty.
+        return ["x"] if get_args(annotation)[0] is str else []
     if origin is dict:
         return {}
     if annotation is bool:
