@@ -62,7 +62,16 @@ Secrets live in `core/tstd/keychain.py`, which shells out to `security` on macOS
 on Linux, and the Windows credential store, all under the service name
 `com.thatsimpletech.tstdesk`. Native folder picking is likewise driven from the UI through the
 Tauri dialog plugin rather than from Rust. The host's native surface is narrow by design: window
-state, dialog, and opener.
+state, dialog, and opener. The opener's `opener:allow-open-path` grant is intentionally left
+without a path scope (`shell/capabilities/default.json`): the paths the UI opens are
+daemon-assembled — stack files, diff headers, usage exports — and land under whichever workspace
+the user picked this session or in the app data dir, while Tauri opener scopes are static
+capability globs with no supported way to extend them at runtime, so a scope tight enough to
+mean anything would break all three surfaces. Scoping that grant alone also reduces nothing:
+the host's own `open_path` command (`shell/src/lib.rs`) performs the identical OS open outside
+the capability system, so the residual risk — a compromised frontend asking the OS to open an
+arbitrary path — rides that command regardless, and is bounded by provenance (daemon-derived
+paths, never free text) rather than by a glob.
 
 **The window (`ui/`)** is a renderer. AGENTS.md §6 again: *"The UI never derives truth it wasn't
 given — if the daemon didn't send it, don't infer it."* Every number in the title bar, every

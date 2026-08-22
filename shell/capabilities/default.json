@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
+  "description": "enables the default permissions. opener:allow-open-path is intentionally granted without a path scope: the UI opens daemon-assembled paths (stack files, diff headers, usage exports) that sit under whichever workspace the user picked this session or in the app data dir, and Tauri opener scopes are static globs with no supported way to extend them at runtime — any scope tight enough to mean something would break those flows. Scoping this grant alone would also bound nothing: the host's own open_path command (shell/src/lib.rs) performs the identical OS open outside the capability system, so a compromised frontend could ask the OS to open an arbitrary path either way.",
   "windows": [
     "main"
   ],

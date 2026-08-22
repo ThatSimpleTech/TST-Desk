@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,69 @@ class TestSessionPersist:
         convo_path = persist.dir_for("s1") / "conversation.json"
         assert oct(events_path.stat().st_mode)[-3:] == "600"
         assert oct(convo_path.stat().st_mode)[-3:] == "600"
+
+    def test_events_file_is_owner_only_from_the_first_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The transcript is 0600 at creation — no world-readable instant."""
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            pytest.skip("file modes are not meaningful when running as root")
+        persist = _persist(tmp_path)
+        persist.prepare("s1")  # dir exists before the permissive umask lands
+        modes_at_first_write: list[int] = []
+        real_write = os.write
+
+        def spy_write(fd: int, data: bytes) -> int:
+            if not modes_at_first_write:
+                modes_at_first_write.append(os.fstat(fd).st_mode & 0o777)
+            return real_write(fd, data)
+
+        monkeypatch.setattr(os, "write", spy_write)
+        old_umask = os.umask(0o000)  # plain open() would create 0o666 here
+        try:
+            persist.append_event(
+                "s1",
+                UserTurn(session_id="s1", turn_id="t1", content="secret", seq=1),
+            )
+            modes_at_first_write.clear()
+            # Rotation rewrites through a temp file; it must be private too.
+            capped = SessionPersist(tmp_path, log_max_events=2)
+            capped.append_event("s1", AssistantDelta(session_id="s1", delta="d2", seq=2))
+            capped.append_event("s1", AssistantDelta(session_id="s1", delta="d3", seq=3))
+        finally:
+            os.umask(old_umask)
+        assert modes_at_first_write == [0o600]
+        events_path = persist.dir_for("s1") / "events.jsonl"
+        assert events_path.stat().st_mode & 0o777 == 0o600
+
+    def test_conversation_snapshot_is_owner_only_from_the_first_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The conversation.json temp file is 0600 in creation — same rule."""
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            pytest.skip("file modes are not meaningful when running as root")
+        persist = _persist(tmp_path)
+        persist.prepare("s1")
+        modes_at_first_write: list[int] = []
+        real_write = os.write
+
+        def spy_write(fd: int, data: bytes) -> int:
+            if not modes_at_first_write:
+                modes_at_first_write.append(os.fstat(fd).st_mode & 0o777)
+            return real_write(fd, data)
+
+        monkeypatch.setattr(os, "write", spy_write)
+        old_umask = os.umask(0o000)
+        try:
+            persist.save_conversation(
+                "s1",
+                [ChatMessage(role="user", content="hello")],
+            )
+        finally:
+            os.umask(old_umask)
+        assert modes_at_first_write == [0o600]
+        convo_path = persist.dir_for("s1") / "conversation.json"
+        assert convo_path.stat().st_mode & 0o777 == 0o600
 
     def test_prepare_writes_empty_conversation_not_missing(self, tmp_path: Path) -> None:
         persist = _persist(tmp_path)

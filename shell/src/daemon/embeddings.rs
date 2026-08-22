@@ -19,7 +19,7 @@ use super::daemon_pid::{apply_process_group, kill_spawned_group};
 /// Own restart cap. Must stay independent of [`super::MAX_RESTARTS`].
 pub const MAX_EMBEDDINGS_RESTARTS: u32 = 3;
 
-type YamlMap = serde_yaml::Mapping;
+type YamlMap = serde_yml::Mapping;
 
 /// Handle the app uses to shut down and reap the embeddings child.
 #[derive(Clone)]
@@ -182,34 +182,34 @@ pub fn load_embeddings_argv(path: &Path) -> Option<Vec<String>> {
 
 /// Parse `embeddings.command` from a YAML body. Never looks at `base_url`.
 pub fn embeddings_argv_from_yaml(text: &str) -> Option<Vec<String>> {
-    let root: serde_yaml::Value = serde_yaml::from_str(text).ok()?;
+    let root: serde_yml::Value = serde_yml::from_str(text).ok()?;
     let map = root.as_mapping()?;
-    let embeddings = map.get(serde_yaml::Value::from("embeddings"))?;
+    let embeddings = map.get("embeddings")?;
     let section = embeddings.as_mapping()?;
-    let command = section.get(serde_yaml::Value::from("command"))?;
+    let command = section.get("command")?;
     argv_from_command(command)
 }
 
-fn argv_from_command(value: &serde_yaml::Value) -> Option<Vec<String>> {
+fn argv_from_command(value: &serde_yml::Value) -> Option<Vec<String>> {
     match value {
-        serde_yaml::Value::String(s) => split_command_string(s),
-        serde_yaml::Value::Sequence(items) => {
+        serde_yml::Value::String(s) => split_command_string(s),
+        serde_yml::Value::Sequence(items) => {
             let argv: Vec<String> = items.iter().filter_map(yaml_arg).collect();
             nonempty_argv(argv)
         }
-        serde_yaml::Value::Null => None,
+        serde_yml::Value::Null => None,
         _ => None,
     }
 }
 
-fn yaml_arg(value: &serde_yaml::Value) -> Option<String> {
+fn yaml_arg(value: &serde_yml::Value) -> Option<String> {
     match value {
-        serde_yaml::Value::String(s) => {
+        serde_yml::Value::String(s) => {
             let trimmed = s.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         }
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_yml::Value::Number(n) => Some(n.to_string()),
+        serde_yml::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }
@@ -252,7 +252,7 @@ async fn reap_tree(child: &mut tokio::process::Child, spawned_pid: u32) {
 /// True when `text` has an embeddings mapping but no spawnable command.
 /// Used by tests to prove a packaged-style `base_url` is attach-only.
 pub fn yaml_is_attach_only(text: &str) -> bool {
-    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(text) else {
+    let Ok(root) = serde_yml::from_str::<serde_yml::Value>(text) else {
         return true;
     };
     let Some(map) = root.as_mapping() else {
@@ -266,8 +266,8 @@ pub fn yaml_is_attach_only(text: &str) -> bool {
 
 fn has_embeddings_section(map: &YamlMap) -> bool {
     matches!(
-        map.get(serde_yaml::Value::from("embeddings")),
-        Some(serde_yaml::Value::Mapping(_))
+        map.get("embeddings"),
+        Some(serde_yml::Value::Mapping(_))
     )
 }
 
