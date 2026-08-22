@@ -5,6 +5,7 @@ immediately — the classifier makes interactive mode better right away
 (spec §12.9).
 """
 
+from .charter import Charter, CharterError, charter_path
 from .checkpoint import Checkpointer, CheckpointOutcome, Notice
 from .classifier import (
     Boundary,
@@ -20,6 +21,8 @@ from .worker import AmbiguousClassifier, build_classifier_prompt, parse_decision
 __all__ = [
     "AmbiguousClassifier",
     "Boundary",
+    "Charter",
+    "CharterError",
     "CheckpointOutcome",
     "Checkpointer",
     "Classification",
@@ -31,6 +34,7 @@ __all__ = [
     "Notice",
     "Rule",
     "build_classifier_prompt",
+    "charter_path",
     "format_entry",
     "parse_decision",
     "parse_ledger",
