@@ -373,7 +373,7 @@ class TransportRecorder:
     def origins(self) -> set[str]:
         found: set[str] = set()
         for url in self.urls:
-            netloc = url.netloc
+            netloc: str | bytes = url.netloc
             if isinstance(netloc, bytes):
                 netloc = netloc.decode()
             found.add(f"{url.scheme}://{netloc}")

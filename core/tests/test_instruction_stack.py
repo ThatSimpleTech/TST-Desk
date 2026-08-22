@@ -15,12 +15,13 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
-from websockets.asyncio.client import connect
+from websockets.asyncio.client import ClientConnection, connect
 
 from tests.test_dispatch import make_config, start_loop, wait_for_turn
-from tstd.context import ContextAssembler, SteeringFileResolver
+from tstd.context import AssembledSteering, ContextAssembler, SteeringFileResolver
 from tstd.context.memory_loader import MemoryFile, MemoryLoad
 from tstd.context.stack import build_instruction_stack
 from tstd.cost import CostTracker
@@ -40,12 +41,14 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content)
 
 
-def _assemble(home: Path, workspace: Path, matched_paths: set[str] | None = None):
+def _assemble(
+    home: Path, workspace: Path, matched_paths: set[str] | None = None
+) -> AssembledSteering:
     assembler = ContextAssembler(resolver=SteeringFileResolver(home_dir=home))
     return assembler.assemble_sync(workspace, matched_paths=matched_paths)
 
 
-async def _connect(uri: str, token: str):
+async def _connect(uri: str, token: str) -> ClientConnection:
     ws = await connect(uri)
     await ws.send(json.dumps({"type": "hello", "token": token, "version": PROTOCOL_VERSION}))
     ack = json.loads(await ws.recv())
@@ -353,11 +356,12 @@ class TestGetInstructionStackHandler:
                 opened = json.loads(await ws_conn.recv())
                 session_id = opened["session_id"]
 
-                async def _query() -> dict:
+                async def _query() -> dict[str, Any]:
                     await ws_conn.send(
                         json.dumps({"type": "get_instruction_stack", "session_id": session_id})
                     )
-                    return json.loads(await ws_conn.recv())
+                    reply: dict[str, Any] = json.loads(await ws_conn.recv())
+                    return reply
 
                 before = await _query()
                 scoped = next(e for e in before["sources"] if e["path"].endswith("src-rules.md"))

@@ -147,6 +147,7 @@ class TestReloadDetection:
         assert len(reloads) == 1
 
         # The reload event carries the new prefix hash
+        assert assembler.last_assembled is not None
         new_hash = assembler.last_assembled.prefix_hash
         assert reloads[0].prefix_hash == new_hash
         assert reloads[0].prefix_tokens > 0
@@ -265,6 +266,7 @@ class TestDebounce:
         # One reload event for the final state, not one per save
         reloads = _reloads(session)
         assert len(reloads) == 1
+        assert assembler.last_assembled is not None
         assert reloads[0].prefix_hash == assembler.last_assembled.prefix_hash
 
         await runner.cancel()

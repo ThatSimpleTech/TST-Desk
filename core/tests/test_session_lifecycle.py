@@ -161,17 +161,22 @@ class TestArchive:
             sid = opened["session_id"]
 
             listing = await _request(ws, {"type": "list_sessions"})
-            assert _summary(listing, sid) is not None
-            assert _summary(listing, sid)["archived"] is False
+            summary = _summary(listing, sid)
+            assert summary is not None
+            assert summary["archived"] is False
 
             listing = await _request(ws, {"type": "archive_session", "session_id": sid})
             assert listing["type"] == "session_list"
-            assert _summary(listing, sid)["archived"] is True
+            summary = _summary(listing, sid)
+            assert summary is not None
+            assert summary["archived"] is True
 
             listing = await _request(
                 ws, {"type": "archive_session", "session_id": sid, "archived": False}
             )
-            assert _summary(listing, sid)["archived"] is False
+            summary = _summary(listing, sid)
+            assert summary is not None
+            assert summary["archived"] is False
             await ws.close()
 
     @pytest.mark.asyncio

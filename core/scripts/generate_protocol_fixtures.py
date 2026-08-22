@@ -63,6 +63,7 @@ from tstd.protocol import (
     InstructionFileEntry,
     InstructionFiles,
     InstructionStack,
+    InstructionStackEntry,
     JobEntry,
     JobList,
     ListArtifacts,
@@ -99,6 +100,7 @@ from tstd.protocol import (
     ScreenFrame,
     SessionList,
     SessionState,
+    SessionSummary,
     SetApiKey,
     SetBranch,
     SetCoworker,
@@ -399,12 +401,12 @@ FIXTURES = {
     "instruction_stack": InstructionStack(
         session_id="sess-1",
         sources=[
-            {
-                "path": "CLAUDE.md",
-                "precedence": "project",
-                "tokens": 500,
-                "token_method": "cl100k_base",
-            }
+            InstructionStackEntry(
+                path="CLAUDE.md",
+                precedence="project",
+                tokens=500,
+                token_method="cl100k_base",
+            )
         ],
         total_tokens=500,
         token_method="cl100k_base",
@@ -454,26 +456,26 @@ FIXTURES = {
     ),
     "session_list": SessionList(
         sessions=[
-            {
-                "session_id": "sess-1",
-                "workspace_path": "/home/user/project",
-                "state": "interrupted",
-                "created_at": "2026-08-13T10:00:00Z",
-                "updated_at": "2026-08-13T10:00:00Z",
-                "event_count": 0,
-                "title": "hello world",
-            },
+            SessionSummary(
+                session_id="sess-1",
+                workspace_path="/home/user/project",
+                state="interrupted",
+                created_at="2026-08-13T10:00:00Z",
+                updated_at="2026-08-13T10:00:00Z",
+                event_count=0,
+                title="hello world",
+            ),
             # TD-1715: the list stays complete and marks what is filed away.
-            {
-                "session_id": "sess-2",
-                "workspace_path": "/home/user/project",
-                "state": "complete",
-                "created_at": "2026-08-13T09:00:00Z",
-                "updated_at": "2026-08-13T09:30:00Z",
-                "event_count": 12,
-                "archived": True,
-                "starred": True,
-            },
+            SessionSummary(
+                session_id="sess-2",
+                workspace_path="/home/user/project",
+                state="complete",
+                created_at="2026-08-13T09:00:00Z",
+                updated_at="2026-08-13T09:30:00Z",
+                event_count=12,
+                archived=True,
+                starred=True,
+            ),
         ]
     ),
     "policy_rules": PolicyRules(

@@ -190,7 +190,7 @@ class TestWithoutWorkspace:
     async def test_unreachable_provider_skips_key_verdict(self, fakes: FakeKeychain) -> None:
         fakes.stored["openrouter"] = "sk-ok"
         FakeProviderClient.scripted = ProviderError(
-            code="connection_error", message="connect failed", status_code=None
+            code="connection_error", message="connect failed"
         )
         with tempfile.TemporaryDirectory() as tmp:
             checks = await _report(Path(tmp))

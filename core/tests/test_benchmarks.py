@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,8 +26,9 @@ REGRESSION_FACTOR = 3.0
 REGRESSION_SLACK_S = 0.25
 
 
-def _payload() -> dict:
-    return json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+def _payload() -> dict[str, Any]:
+    payload: dict[str, Any] = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    return payload
 
 
 @pytest.mark.parametrize("metric", list(benchmarks.MEASURERS))

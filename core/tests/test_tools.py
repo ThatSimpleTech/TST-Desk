@@ -143,15 +143,11 @@ class TestProviderFormat:
         assert all(isinstance(d, ToolDefinition) for d in defs)
         assert all(isinstance(d.function, FunctionDefinition) for d in defs)
 
-        names = {d.function.name for d in defs if d.function}  # type: ignore[union-attr]
+        names = {d.function.name for d in defs if d.function}
         assert names == {"fs_read", "fs_write"}
 
         # The read tool carries its schema
-        read_def = next(
-            d
-            for d in defs
-            if d.function and d.function.name == "fs_read"  # type: ignore[union-attr]
-        )
+        read_def = next(d for d in defs if d.function and d.function.name == "fs_read")
         assert read_def.function.parameters == {  # type: ignore[union-attr]
             "type": "object",
             "properties": {"path": {"type": "string"}},
@@ -218,18 +214,34 @@ class TestBuiltins:
 
     def test_parallel_safety_flags(self) -> None:
         registry = create_registry()
-        assert registry.get("fs_read").parallel_safe is True
-        assert registry.get("fs_write").parallel_safe is False
-        assert registry.get("shell").parallel_safe is False
+        fs_read = registry.get("fs_read")
+        fs_write = registry.get("fs_write")
+        shell = registry.get("shell")
+        assert fs_read is not None
+        assert fs_write is not None
+        assert shell is not None
+        assert fs_read.parallel_safe is True
+        assert fs_write.parallel_safe is False
+        assert shell.parallel_safe is False
 
     def test_side_effect_classes(self) -> None:
         registry = create_registry()
-        assert registry.get("fs_read").side_effect_class == "auto"
-        assert registry.get("fs_write").side_effect_class == "ask"
-        assert registry.get("shell").side_effect_class == "ask"
-        assert registry.get("web_search").side_effect_class == "ask"
-        assert registry.get("web_fetch").side_effect_class == "ask"
-        assert registry.get("web_fetch").parallel_safe is True
+        fs_read = registry.get("fs_read")
+        fs_write = registry.get("fs_write")
+        shell = registry.get("shell")
+        web_search = registry.get("web_search")
+        web_fetch = registry.get("web_fetch")
+        assert fs_read is not None
+        assert fs_write is not None
+        assert shell is not None
+        assert web_search is not None
+        assert web_fetch is not None
+        assert fs_read.side_effect_class == "auto"
+        assert fs_write.side_effect_class == "ask"
+        assert shell.side_effect_class == "ask"
+        assert web_search.side_effect_class == "ask"
+        assert web_fetch.side_effect_class == "ask"
+        assert web_fetch.parallel_safe is True
         shot = registry.get("desktop_screenshot")
         click = registry.get("desktop_click")
         assert shot is not None and click is not None

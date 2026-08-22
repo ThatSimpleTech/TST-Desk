@@ -18,6 +18,7 @@ import sys
 import tempfile
 from enum import StrEnum
 from io import StringIO
+from operator import attrgetter
 from pathlib import Path
 from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
@@ -676,7 +677,7 @@ def event_spy() -> tuple[list[DaemonEvent], EventSubscriber]:
     """A broadcast-stream spy: records the events a client would receive."""
     seen: list[DaemonEvent] = []
 
-    async def _spy(event: DaemonEvent, _log: SessionEventLog) -> None:
+    async def _spy(event: DaemonEvent, log: SessionEventLog) -> None:
         seen.append(event)
 
     return seen, _spy
@@ -733,7 +734,8 @@ def scripted_write(path: Path, content: str, reply: str) -> MockProvider:
 
 def _query_one(db_path: Path, sql: str) -> tuple[Any, ...] | None:
     """Sync query: keeps sqlite3 calls out of async test functions (ASYNC240)."""
-    return sqlite3.connect(db_path).execute(sql).fetchone()
+    row: tuple[Any, ...] | None = sqlite3.connect(db_path).execute(sql).fetchone()
+    return row
 
 
 async def test_secret_in_tool_arguments_redacted_from_audit(
@@ -1096,7 +1098,7 @@ def _canary_kwargs(cls: type[BaseModel]) -> dict[str, Any]:
 
 @pytest.mark.parametrize(
     "event_cls",
-    sorted(DaemonEvent.__subclasses__(), key=lambda c: c.__name__),
+    sorted(DaemonEvent.__subclasses__(), key=attrgetter("__name__")),
     ids=lambda c: c.__name__,
 )
 def test_every_event_type_scrubs_every_text_field(event_cls: type[DaemonEvent]) -> None:
@@ -1207,7 +1209,7 @@ def test_append_decision_scrubs_free_text(tmp_path: Path) -> None:
     store = AuditStore(tmp_path / "audit.db")
     store.append_session("s1", str(tmp_path), 1.0)
     store.append_decision(
-        "s1", DecisionClass.B, f"write the key {PLANTED}", f"because {PLANTED} was asked", None
+        "s1", "B", f"write the key {PLANTED}", f"because {PLANTED} was asked", None
     )
     row = _query_one(tmp_path / "audit.db", "SELECT what, why FROM decisions")
     store.close()

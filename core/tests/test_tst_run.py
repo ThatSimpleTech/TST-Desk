@@ -11,6 +11,7 @@ import asyncio
 import inspect
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -91,7 +92,7 @@ class TestHelloAndSpawn:
             seen["kwargs"] = kwargs
             return object()
 
-        monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
         cli.spawn_daemon(tmp_path)
         assert "--parent-pid" not in seen["argv"]
         assert "--data-dir" in seen["argv"]

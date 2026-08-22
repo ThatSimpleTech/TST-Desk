@@ -469,7 +469,7 @@ class TestRootBlockClaimsHoldOnEveryTier:
         home, ws = _sample_workspace(tmp_path)
         assembler = PromptAssembler(ws, home_dir=home)
         blocks = {
-            assembler.assemble_sync(tier).prefix.split("\n\n")[1]  # type: ignore[arg-type]
+            assembler.assemble_sync(tier).prefix.split("\n\n")[1]
             for tier in ("brain", "worker", "validator")
         }
         assert len(blocks) == 1, blocks

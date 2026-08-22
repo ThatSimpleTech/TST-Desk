@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from websockets.asyncio.client import connect
@@ -26,7 +27,7 @@ from tstd.protocol import PROTOCOL_VERSION
 from tstd.ws import create_port_file_path
 
 
-def _spawn(data_dir: Path) -> subprocess.Popen:
+def _spawn(data_dir: Path) -> subprocess.Popen[bytes]:
     """Start a real tstd daemon on the given data dir, watched by this process.
 
     Spawned as ``python -m tstd.daemon`` rather than the console script:
@@ -52,14 +53,15 @@ def _spawn(data_dir: Path) -> subprocess.Popen:
     )
 
 
-def _read_port_file(path: Path) -> dict | None:
+def _read_port_file(path: Path) -> dict[str, Any] | None:
     """Synchronously read the port file, returning None if it is absent."""
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    info: dict[str, Any] = json.loads(path.read_text())
+    return info
 
 
-async def _wait_for_port_file(path: Path, pid: int, seconds: float = 10.0) -> dict:
+async def _wait_for_port_file(path: Path, pid: int, seconds: float = 10.0) -> dict[str, Any]:
     """Wait for the port file the daemon with the given pid wrote.
 
     Keying on the pid matters on restart: after a SIGKILL the previous
@@ -78,7 +80,7 @@ async def _wait_for_port_file(path: Path, pid: int, seconds: float = 10.0) -> di
         raise RuntimeError(f"port file for pid {pid} never appeared at {path}") from e
 
 
-async def _connect(info: dict):
+async def _connect(info: dict[str, Any]) -> Any:
     ws = await connect(f"ws://127.0.0.1:{info['port']}")
     await ws.send(
         json.dumps({"type": "hello", "token": info["token"], "version": PROTOCOL_VERSION})
@@ -88,25 +90,28 @@ async def _connect(info: dict):
     return ws
 
 
-async def _open_workspace(ws, path: str) -> str:
+async def _open_workspace(ws: Any, path: str) -> str:
     await ws.send(json.dumps({"type": "open_workspace", "path": path}))
     evt = json.loads(await ws.recv())
     assert evt["type"] == "session_state"
-    return evt["session_id"]
+    session_id: str = evt["session_id"]
+    return session_id
 
 
-async def _new_session(ws, session_id: str) -> str:
+async def _new_session(ws: Any, session_id: str) -> str:
     await ws.send(json.dumps({"type": "new_session", "session_id": session_id}))
     evt = json.loads(await ws.recv())
     assert evt["type"] == "session_state"
-    return evt["session_id"]
+    new_id: str = evt["session_id"]
+    return new_id
 
 
-async def _list_sessions(ws) -> list[dict]:
+async def _list_sessions(ws: Any) -> list[dict[str, Any]]:
     await ws.send(json.dumps({"type": "list_sessions"}))
     evt = json.loads(await ws.recv())
     assert evt["type"] == "session_list"
-    return evt["sessions"]
+    sessions: list[dict[str, Any]] = evt["sessions"]
+    return sessions
 
 
 class TestDaemonRestartIntegration:

@@ -15,12 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from tstd.autonomy import Checkpointer
+from tstd.autonomy import Checkpointer, CheckpointOutcome, DecisionClass
 from tstd.autonomy.checkpoint import (
     DIRTY_BASELINE,
     NO_GIT,
     REBASE_IN_PROGRESS,
-    DecisionClass,
     session_branch,
 )
 
@@ -80,7 +79,7 @@ def _tree_files(repo: Path, commit: str) -> dict[str, str]:
     return files
 
 
-async def _checkpoint_file(cp: Checkpointer, path: Path) -> object:
+async def _checkpoint_file(cp: Checkpointer, path: Path) -> CheckpointOutcome:
     return await cp.checkpoint(
         [path],
         tool_name="fs_write",

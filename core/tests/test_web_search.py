@@ -55,7 +55,7 @@ async def test_json_results_follow_config_url(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(
         search_mod, "_endpoint", lambda: ("http://127.0.0.1:9/search", 5.0, 8, 200_000)
     )
-    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(httpx, "AsyncClient", _client_factory(handler))
     out = await search_mod.web_search(None, "tst desk", max_results=2)
     assert "q=tst+desk" in seen[0] or "q=tst%20desk" in seen[0]
     assert "1. One" in out
@@ -76,7 +76,7 @@ async def test_html_results_skip_the_search_host(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(
         search_mod, "_endpoint", lambda: ("http://127.0.0.1:9/search", 5.0, 8, 200_000)
     )
-    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(httpx, "AsyncClient", _client_factory(handler))
     out = await search_mod.web_search(None, "topic")
     assert "The Article" in out
     assert "http://127.0.0.1/article" in out
@@ -90,7 +90,7 @@ async def test_http_error_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         search_mod, "_endpoint", lambda: ("http://127.0.0.1:9/search", 5.0, 8, 200_000)
     )
-    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(httpx, "AsyncClient", _client_factory(handler))
     out = await search_mod.web_search(None, "topic")
     assert out.startswith("Error: search request failed")
 
@@ -114,7 +114,7 @@ async def test_fetch_html_strips_script(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(search_mod, "_blocked_reason", lambda _url: None)
     monkeypatch.setattr(search_mod, "_endpoint", lambda: ("", 5.0, 8, 200_000))
-    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(httpx, "AsyncClient", _client_factory(handler))
     out = await search_mod.web_fetch(None, "http://127.0.0.1/page")
     assert "Hello" in out
     assert "world" in out
@@ -134,7 +134,7 @@ async def test_fetch_refuses_redirect_onto_loopback(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(search_mod, "_blocked_reason", blocked)
     monkeypatch.setattr(search_mod, "_endpoint", lambda: ("", 5.0, 8, 200_000))
-    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    monkeypatch.setattr(httpx, "AsyncClient", _client_factory(handler))
     out = await search_mod.web_fetch(None, "http://203.0.113.1/go")
     assert "cannot be fetched" in out
     assert "leaked" not in out
