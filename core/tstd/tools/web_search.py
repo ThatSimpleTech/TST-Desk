@@ -4,17 +4,27 @@
 takes a URL the model chose (a search hit); that call is Class B so the
 user sees the address. Loopback, link-local, and metadata addresses are
 refused in the handler — that is the wall, not an internet allowlist.
+
+The wall is checked twice by design (TD-4814): once on the handler's own
+resolution for a fast, friendly refusal, and again at connect time, where
+the guarded transport resolves the host itself, validates every answer,
+and dials only an address it checked. A hostile DNS answer cannot show
+the guard a public address and the socket a private one — there is no
+second resolution to poison.
 """
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
 import socket
+from collections.abc import Awaitable, Callable
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
+import httpcore
 import httpx
 
 from ..config import cached_config
@@ -115,6 +125,18 @@ def _endpoint() -> tuple[str, float, int, int]:
     return cfg.base_url.strip(), cfg.timeout_seconds, cfg.max_results, cfg.fetch_max_bytes
 
 
+def _addr_refusal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
+    """Why *ip* must not be dialed, or None if it may be.
+
+    The one statement of the wall's address policy — the handler's
+    pre-check and the connect-time check in :class:`_GuardedBackend` both
+    call this, so the two cannot drift.
+    """
+    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        return "that address cannot be fetched"
+    return None
+
+
 def _blocked_reason(url: str) -> str | None:
     """Why *url* must not be fetched, or None if it may.
 
@@ -148,9 +170,104 @@ def _blocked_reason(url: str) -> str | None:
     if not candidates:
         return "could not resolve host"
     for ip in candidates:
-        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
-            return "that address cannot be fetched"
+        refused = _addr_refusal(ip)
+        if refused is not None:
+            return refused
     return None
+
+
+async def _system_resolve(host: str, port: int) -> list[tuple[Any, ...]]:
+    """The resolver the guarded backend uses by default."""
+    return list(await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM))
+
+
+class _GuardedBackend(httpcore.AnyIOBackend):
+    """Connect-time half of the wall (TD-4814).
+
+    ``web_fetch``'s pre-check resolves the host and refuses private
+    answers, but httpx resolved the host a second time when it opened the
+    socket — and that second answer was free to differ. A hostile DNS
+    server could show the guard a public address and hand the socket
+    ``127.0.0.1``, and the pre-check would never know.
+
+    This backend closes the window by making its resolution the only one:
+    it resolves *host* itself, refuses via :func:`_addr_refusal` before
+    any socket exists, and pins the connection to an address it checked.
+    TLS is unaffected — httpcore wraps the stream with the original
+    hostname for SNI and certificate verification, so https still
+    verifies against the name in the URL while dialing the pinned IP.
+
+    *resolver* is a seam for tests; production uses :func:`_system_resolve`.
+    """
+
+    def __init__(
+        self,
+        resolver: Callable[[str, int], Awaitable[list[tuple[Any, ...]]]] | None = None,
+    ) -> None:
+        super().__init__()
+        self._resolve = resolver if resolver is not None else _system_resolve
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,  # noqa: ASYNC109 - signature is httpcore's override
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        if host.lower() in _BLOCKED_NAMES:
+            raise httpcore.ConnectError("that host cannot be fetched")
+        try:
+            infos = await self._resolve(host, port)
+        except OSError as exc:
+            raise httpcore.ConnectError(f"could not resolve host ({exc})") from exc
+        allowed: list[tuple[Any, ...]] = []
+        for info in infos:
+            try:
+                ip = ipaddress.ip_address(info[4][0])
+            except ValueError:
+                continue
+            refused = _addr_refusal(ip)
+            if refused is not None:
+                raise httpcore.ConnectError(refused)
+            allowed.append(info)
+        if not allowed:
+            raise httpcore.ConnectError("could not resolve host")
+        last: Exception | None = None
+        for info in allowed:
+            try:
+                return await super().connect_tcp(
+                    info[4][0],
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except (OSError, httpcore.ConnectError) as exc:
+                last = exc
+        raise httpcore.ConnectError(f"could not connect to {host}: {last}")
+
+
+class _PinnedTransport(httpx.AsyncHTTPTransport):
+    """The default async transport, rebuilt over :class:`_GuardedBackend`.
+
+    httpx's own constructor has no network-backend parameter, so the pool
+    built by ``super().__init__`` is replaced with one wired to the
+    guarded backend. Everything else — request mapping, timeouts, HTTP/1
+    framing, TLS — is stock httpx/httpcore.
+    """
+
+    def __init__(
+        self,
+        resolver: Callable[[str, int], Awaitable[list[tuple[Any, ...]]]] | None = None,
+    ) -> None:
+        super().__init__()
+        self._pool = httpcore.AsyncConnectionPool(network_backend=_GuardedBackend(resolver))
+
+
+def _pinned_transport() -> _PinnedTransport:
+    """Transport web_fetch dials through; a seam so tests can inject a resolver."""
+    return _PinnedTransport()
 
 
 def _html_to_text(html: str) -> str:
@@ -265,7 +382,9 @@ async def web_fetch(
     _base, timeout, _limit, cap = _endpoint()
     current = target
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=False, transport=_pinned_transport()
+        ) as client:
             response: httpx.Response | None = None
             for _ in range(_MAX_REDIRECTS):
                 blocked = _blocked_reason(current)

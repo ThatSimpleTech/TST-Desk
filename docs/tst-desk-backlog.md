@@ -6274,14 +6274,33 @@ reverting to the CLI add trips it exactly where `ps` would have read.
 **Size:** 2 · **Depends on:** TD-610
 
 **Acceptance criteria:**
-- [ ] The resolved address is pinned into the connection (resolve-and-connect or a custom
+- [x] The resolved address is pinned into the connection (resolve-and-connect or a custom
       transport), so the check-then-fetch window closes — or the limitation is documented
       and the private-address check re-runs at connect time
-- [ ] A test with a double-flip DNS stub proves the fix, or pins the documented limitation
+- [x] A test with a double-flip DNS stub proves the fix, or pins the documented limitation
 
 `web_fetch` resolves the host, checks the address is not private, then connects — and the
 second resolution is free to answer differently. The guard is real against honest mistakes
 and bypassable by a hostile DNS answer. Worth closing properly or labeling honestly.
+
+**Completed (2026-08-22):** closed properly — both horns of the criterion at once, since
+the fix IS resolve-and-connect *and* a connect-time check. `_GuardedBackend`, an
+`httpcore.AnyIOBackend` subclass wired in through a rebuilt `httpcore.AsyncConnectionPool`
+inside an `httpx.AsyncHTTPTransport` subclass (httpx exposes no network-backend parameter,
+so the pool built by the stock constructor is swapped for one behind the guarded backend),
+resolves the host itself, refuses any loopback/link-local/multicast/unspecified answer via
+the same `_addr_refusal` policy function the handler's pre-check uses (one statement of
+the wall; the two checks cannot drift), and pins the dial to an address it validated.
+There is no second resolution left to poison: the backend's resolution is the only one,
+and TLS still verifies the URL's hostname because httpcore applies SNI and certificate
+checking above the stream it hands back. The handler keeps its per-hop pre-check for
+fast, friendly refusals and literal-IP/scheme/hostname screening; redirects were already
+re-checked per hop and now each hop's connection passes the guarded backend too. The
+double-flip stub stages the real attack end to end — `socket.getaddrinfo` fed a clean
+public lie while the injected resolver flips to loopback, against a live HTTP server on
+127.0.0.1 counting hits — and asserts zero hits, an error result, and exactly one
+resolution. Both tests were probe-verified against the unfixed transport (fetch reaches
+the rogue server) before being accepted as green with it.
 
 ### TD-4815 — tst-cu-mcp: actuation switch coercion, unbounded click count, trust-boundary docs
 **Size:** 2 · **Depends on:** none
