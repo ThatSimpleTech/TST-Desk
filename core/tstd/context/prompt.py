@@ -201,6 +201,7 @@ class PromptAssembler:
         matched_paths: set[str] | None = None,
         memory: str | None = None,
         project_context: str | None = None,
+        skills_catalog: str | None = None,
         diff: str | None = None,
         test_output: str | None = None,
         approved_imports: frozenset[Path] = frozenset(),
@@ -218,6 +219,7 @@ class PromptAssembler:
             matched_paths=matched_paths,
             memory=memory,
             project_context=project_context,
+            skills_catalog=skills_catalog,
             diff=diff,
             test_output=test_output,
             approved_imports=approved_imports,
@@ -232,6 +234,7 @@ class PromptAssembler:
         matched_paths: set[str] | None = None,
         memory: str | None = None,
         project_context: str | None = None,
+        skills_catalog: str | None = None,
         diff: str | None = None,
         test_output: str | None = None,
         approved_imports: frozenset[Path] = frozenset(),
@@ -260,6 +263,9 @@ class PromptAssembler:
             manifest_text=manifest_text,
             memory=memory_block,
             project_context=project_context if tier == "brain" else None,
+            # The catalog rides post-prefix like the blocks around it:
+            # adding a skill must not re-bill the prefix (TD-4502).
+            skills_catalog=skills_catalog if tier == "brain" else None,
             diff=diff,
             test_output=test_output,
             config=self._tier_config,

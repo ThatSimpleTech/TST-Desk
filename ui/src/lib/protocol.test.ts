@@ -715,6 +715,26 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("instruction_stack", () => {
+    const m = fixtures.instruction_stack as InstructionStack;
+    expect(m.type).toBe("instruction_stack");
+    expect(isString(m.session_id)).toBe(true);
+    expect(Array.isArray(m.sources)).toBe(true);
+    expect(isNumber(m.total_tokens)).toBe(true);
+    expect(isString(m.token_method)).toBe(true);
+    // TD-4502: loaded skills ride the same event — name, provenance
+    // tree, token count and method; fallback flags a .claude/skills stand-in.
+    expect(Array.isArray(m.skills)).toBe(true);
+    const skill = (m.skills ?? [])[0];
+    expect(isString(skill.name)).toBe(true);
+    expect(skill.source === "workspace" || skill.source === "user").toBe(true);
+    expect(isString(skill.path)).toBe(true);
+    expect(isNumber(skill.tokens)).toBe(true);
+    expect(isString(skill.token_method)).toBe(true);
+    if (skill.fallback !== undefined) expect(typeof skill.fallback).toBe("boolean");
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
   it("rule_activated", () => {
     const m = fixtures.rule_activated as RuleActivated;
     expect(m.type).toBe("rule_activated");

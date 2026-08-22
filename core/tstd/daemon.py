@@ -52,7 +52,7 @@ from .config_write import (
     save_tier_slug,
 )
 from .context.assembler import ContextAssembler
-from .context.commands import discover_commands, expand_command
+from .context.commands import CommandFile, discover_commands, expand_command
 from .context.instructions import (
     InstructionNameError,
     create_rule_file,
@@ -60,7 +60,9 @@ from .context.instructions import (
 )
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
+from .context.skills import LoadedSkill, discover_skills, read_skill_body
 from .context.stack import build_instruction_stack
+from .context.tokens import heuristic_count
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .coworker import load_coworker, save_coworker
 from .cu_indicators import (
@@ -1220,9 +1222,7 @@ class Daemon:
                 return build_error(e.code, e.message, session_id=msg.session_id)
 
             await found.add_user_message(
-                render_user_content(
-                    await self._expand_slash(found.workspace_path, msg.content), decoded
-                )
+                render_user_content(await self._expand_slash(found, msg.content), decoded)
             )
             # Title from the user's text, not the rendered body — an
             # attachment-only message must stay untitled (TD-3001).
@@ -1877,6 +1877,8 @@ class Daemon:
             allowed_commands=sess.boundary_config.boundary.shell_allowlist(),
             desktop_driver=self.desktop_driver,
             browser_driver=self.browser_driver,
+            # Sizes load_skill's budget from the active tier's window.
+            model_config=self.config,
         )
 
         # MCP servers (TD-4401): start once per daemon (failures recorded,
@@ -2110,6 +2112,7 @@ class Daemon:
             # "nothing observed yet" the tracker itself reports (TD-1811).
             cache_observed=(tracker.cache_observed if tracker is not None else False),
             memory=found.last_memory,
+            loaded_skills=list(found.loaded_skills.values()),
         ).model_dump_json()
 
     async def _handle_list_instructions(self, msg: ListInstructions) -> str:
@@ -2354,10 +2357,10 @@ class Daemon:
             ],
         ).model_dump_json()
 
-    async def _expand_slash(self, workspace_path: str, content: str) -> str:
-        """Expand a leading ``/command`` into its markdown body (TD-4501).
+    async def _expand_slash(self, sess: Session, content: str) -> str:
+        """Expand a leading ``/name`` into its markdown body (TD-4501).
 
-        Only a leading slash naming a discovered command expands; every
+        Commands answer first; skills fill in behind them (TD-4502). Any
         other message — including a ``/name`` nothing answers to — is the
         user's text and delivers verbatim. The splice happens here rather
         than in the prompt assembler so the body rides this one turn's
@@ -2367,31 +2370,78 @@ class Daemon:
         if match is None:
             return content
         name, args = match.group(1), match.group(2)
-        commands = await asyncio.to_thread(discover_commands, workspace_path)
-        command = next((c for c in commands if c.name == name), None)
-        if command is None:
-            return content
-        try:
-            expanded = await asyncio.to_thread(expand_command, command, args)
-        except (OSError, UnicodeDecodeError) as exc:
-            log.warning(
-                "slash command unreadable, delivered verbatim",
+        workspace_path = sess.workspace_path
+
+        async def _expand_command() -> tuple[str, CommandFile] | None:
+            commands = await asyncio.to_thread(discover_commands, workspace_path)
+            command = next((c for c in commands if c.name == name), None)
+            if command is None:
+                return None
+            return await asyncio.to_thread(expand_command, command, args), command
+
+        expanded_pair = await _expand_command()
+        if expanded_pair is not None:
+            expanded, command = expanded_pair
+            log.info(
+                "slash command invoked",
                 extra={
-                    "extra_fields": {"name": name, "path": str(command.path), "error": str(exc)}
+                    "extra_fields": {
+                        "name": name,
+                        "source": command.source,
+                        "args": args is not None and args.strip() != "",
+                    }
                 },
             )
-            return content
+            return expanded
+
+        skill = await self._expand_slash_skill(sess, name, args)
+        if skill is not None:
+            return skill
+        return content
+
+    async def _expand_slash_skill(self, sess: Session, name: str, args: str | None) -> str | None:
+        """Expand ``/name`` to a skill body when no command claims it.
+
+        The rendered shape is the slash-command wrapper the transcript
+        already knows; the load is recorded on the session so the
+        inspector lists it beside tool-loaded skills.
+        """
+        skills = await asyncio.to_thread(discover_skills, sess.workspace_path)
+        skill = next((s for s in skills if s.name == name), None)
+        if skill is None:
+            return None
+        try:
+            body = await asyncio.to_thread(read_skill_body, skill.path)
+        except (OSError, UnicodeDecodeError) as exc:
+            log.warning(
+                "skill unreadable, delivered verbatim",
+                extra={"extra_fields": {"name": name, "path": str(skill.path), "error": str(exc)}},
+            )
+            return None
+        sess.loaded_skills[name] = LoadedSkill(
+            name=skill.name,
+            source=skill.source,
+            path=str(skill.path),
+            tokens=heuristic_count(body).count,
+        )
         log.info(
-            "slash command invoked",
+            "slash skill invoked",
             extra={
                 "extra_fields": {
                     "name": name,
-                    "source": command.source,
+                    "source": skill.source,
                     "args": args is not None and args.strip() != "",
                 }
             },
         )
-        return expanded
+        # Same wrapper as a command invocation: from the model's side of
+        # the splice they are one mechanism with different trees.
+        return expand_command(
+            CommandFile(
+                name=skill.name, path=skill.path, source=skill.source, fallback=skill.fallback
+            ),
+            args,
+        )
 
     async def _instruction_files_reply(
         self, workspace: str | Path, created: Path | None = None

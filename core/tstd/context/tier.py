@@ -153,6 +153,7 @@ def assemble_for_tier_sync(
     test_output: str | None = None,
     memory: str | None = None,
     project_context: str | None = None,
+    skills_catalog: str | None = None,
     config: TierContextConfig | None = None,
     approved_imports: frozenset[Path] = frozenset(),
     denied_imports: frozenset[Path] = frozenset(),
@@ -209,6 +210,11 @@ def assemble_for_tier_sync(
             blocks["memory"] = memory
         if project_context is not None:
             blocks["project_context"] = project_context
+        # Name+description catalog only; bodies load on demand after the
+        # prefix (TD-4502). Omitted entirely when the workspace has no
+        # skills, so nothing announces an empty feature.
+        if skills_catalog:
+            blocks["skills"] = skills_catalog
         if manifest_text is not None:
             blocks["manifest"] = manifest_text
 
@@ -239,6 +245,7 @@ async def assemble_for_tier(
     test_output: str | None = None,
     memory: str | None = None,
     project_context: str | None = None,
+    skills_catalog: str | None = None,
     config: TierContextConfig | None = None,
     approved_imports: frozenset[Path] = frozenset(),
     denied_imports: frozenset[Path] = frozenset(),
@@ -261,6 +268,7 @@ async def assemble_for_tier(
         test_output=test_output,
         memory=memory,
         project_context=project_context,
+        skills_catalog=skills_catalog,
         config=config,
         approved_imports=approved_imports,
         denied_imports=denied_imports,

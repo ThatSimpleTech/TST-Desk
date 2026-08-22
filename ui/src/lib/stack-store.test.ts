@@ -74,6 +74,42 @@ describe("applyEvent", () => {
 		expect(state.memoryPlaceholder).toBe(false);
 	});
 
+	it("carries loaded skills apart from steering sources (TD-4502)", () => {
+		const { state, store } = harness();
+		store.applyEvent(
+			stackEvent({
+				skills: [
+					{
+						name: "deploy",
+						source: "workspace",
+						path: "/ws/.tst/skills/deploy/SKILL.md",
+						tokens: 420,
+						token_method: "approximation (4 chars/token)",
+					},
+					{
+						name: "review",
+						source: "user",
+						path: "~/.tstdesk/skills/review/SKILL.md",
+						tokens: 60,
+						token_method: "approximation (4 chars/token)",
+						fallback: true,
+					},
+				],
+			}),
+			"s1",
+		);
+		expect(state.skills.map((s) => s.name)).toEqual(["deploy", "review"]);
+		expect(state.skills[1]!.fallback).toBe(true);
+		// Skills never leak into the steering list.
+		expect(state.sources.map((e) => e.path)).toEqual(["/ws/AGENTS.md"]);
+	});
+
+	it("an older daemon without the skills field reads as none loaded", () => {
+		const { state, store } = harness();
+		store.applyEvent(stackEvent(), "s1");
+		expect(state.skills).toEqual([]);
+	});
+
 	it("a second push replaces the first (hot reload live-update)", () => {
 		const { state, store } = harness();
 		store.applyEvent(stackEvent(), "s1");

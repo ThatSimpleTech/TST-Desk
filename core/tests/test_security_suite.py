@@ -264,6 +264,10 @@ STEERING_POSITIVE = [
     ".tst/config.yaml",  # the approval policy is steering-adjacent (TD-4803)
     ".tst/commands/deploy.md",  # slash-command files are human-written (TD-4501)
     ".tst/commands",  # the commands dir itself
+    ".tst/skills/deploy/SKILL.md",  # skill manifests are human-written (TD-4502)
+    "docs/SKILL.md",  # the NAME is protected anywhere, not one directory
+    "skill.md",  # case-folded like every steering name (TD-4804)
+    ".tst/memory/SKILL.md",  # even under the memory carve-out
 ]
 
 STEERING_NEGATIVE = [
@@ -274,6 +278,9 @@ STEERING_NEGATIVE = [
     ".tst/commands.md",  # nor is a file named commands.md the commands dir
     ".tst/memory/MEMORY.md",  # memory is the carve-out (TD-2102)
     ".tst/memory/gotchas.md",
+    ".tst/skills/deploy/notes.txt",  # supporting assets stay ordinary files
+    "SKILL.md.bak",
+    "myskill.md",  # the stem must be exactly SKILL
 ]
 
 
@@ -397,8 +404,10 @@ def _shell_decision(ws: Path, command: str) -> Any:
         "echo never > .tst/config.yaml",
         "echo never > ./AGENTS.md",
         "echo never > .tst/commands/evil.md",
+        "echo never > .tst/skills/x/SKILL.md",
         "tee .tst/rules/x.md",
         "tee .tst/commands/x.md",
+        "tee .tst/skills/x/SKILL.md",
         "tee -a AGENTS.md",
         "echo never > notes.md && tee CLAUDE.md",
     ],
@@ -444,16 +453,20 @@ def test_shell_floor_precedes_worker_consultation(ws: Path) -> None:
         ("echo never > ~/.tstdesk/commands/f.md", "tstdesk"),
         ("echo never >> ~/.claude/commands/f.md", "claude"),
         ("tee ~/.tstdesk/commands/f.md", "tstdesk"),
+        ("echo never > ~/.tstdesk/skills/x/SKILL.md", "tstdesk"),
+        ("echo never >> ~/.claude/skills/x/SKILL.md", "claude"),
     ],
 )
 def test_shell_write_to_global_commands_is_static_c(
     ws: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, target: str
 ) -> None:
     """A redirect or tee into a user-global commands tree is Class C even
-    though the tree sits outside the workspace (TD-4501). The ~ resolves
-    against home before the workspace join."""
+    though the tree sits outside the workspace (TD-4501) — skill manifests
+    in the skills twins join them (TD-4502). The ~ resolves against home
+    before the workspace join."""
     home = tmp_path / "home"
     (home / f".{target}" / "commands").mkdir(parents=True)
+    (home / f".{target}" / "skills").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(Path, "home", lambda: home)  # type: ignore[method-assign]
     decision = _shell_decision(ws, command)
@@ -468,6 +481,7 @@ def test_shell_write_to_global_commands_is_static_c(
         "echo hi > ~/.tstdesk/notes.md",  # outside commands trees → B floor
         "cat ~/.tstdesk/commands/f.md",  # reading them was always fine
         "echo hi > ~/.tstdesk/config.yaml",  # a lookalike file, not the tree
+        "echo hi > ~/.tstdesk/skills/x/notes.txt",  # skill assets are writable
     ],
 )
 def test_shell_home_paths_that_are_not_commands_stay_off_the_c_rule(

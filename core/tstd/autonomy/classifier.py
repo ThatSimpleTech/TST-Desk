@@ -67,6 +67,11 @@ _POLICY_FILE_PARTS = (".tst", "config.yaml")
 # by the agent would let it author its own prompt for the next /invoke —
 # the same self-escalation, one step removed.
 _COMMANDS_DIR_PARTS = (".tst", "commands")
+# Skill manifests (TD-4502): the body is prompt material loaded on demand,
+# so a write would let the agent author what the brain later reads. The
+# NAME is protected anywhere (``**/SKILL.md``) rather than a directory —
+# supporting assets inside a skill folder are ordinary files.
+_SKILL_BASENAME = "SKILL.MD"
 
 
 def _fold(parts: Sequence[str]) -> tuple[str, ...]:
@@ -257,8 +262,9 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
 
     Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
     ``.tst/rules/``, the approval policy at ``.tst/config.yaml``
-    (TD-4803), and the slash-command tree ``.tst/commands/`` (TD-4501) —
-    are read-only to the filesystem tool, unconditionally.
+    (TD-4803), the slash-command tree ``.tst/commands/`` (TD-4501), and
+    any ``SKILL.md`` manifest (TD-4502) — are read-only to the filesystem
+    tool, unconditionally.
     ``.tst/memory/`` is the carve-out (TD-2102); never fold it into
     ``.tst/**``.  Directory comparisons case-fold (TD-4804): see ``_fold``.
     """
@@ -266,7 +272,7 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     if not relative:
         return False
     basename = relative[-1].upper()
-    if basename in {s.upper() for s in _STEERING_BASENAMES}:
+    if basename == _SKILL_BASENAME or basename in {s.upper() for s in _STEERING_BASENAMES}:
         return True
     if is_memory_write(boundary, path):
         return False
@@ -384,20 +390,31 @@ def _shell_write_targets(command: str) -> list[str]:
 
 
 def _global_commands_write(target: Path) -> bool:
-    """Whether *target* lands in a user-global commands tree (TD-4501).
+    """Whether *target* lands in a protected user-global tree.
 
-    ``~/.tstdesk/commands`` and its Claude Code fallback live outside the
-    workspace, where ``is_steering_write`` cannot see them. Both sides are
-    realpathed so a symlink planted in the tree is judged by where it
-    points, not by where it sits.
+    ``~/.tstdesk/commands``, its Claude Code fallback, and the skills
+    trees beside them live outside the workspace, where
+    ``is_steering_write`` cannot see them. Commands trees are protected
+    whole; skills trees protect only their manifests (TD-4502). Both
+    sides are realpathed so a symlink planted in the tree is judged by
+    where it points, not by where it sits.
     """
     home = Path.home()
+    resolved = canonical_path(target)
     for root in (home / ".tstdesk" / "commands", home / ".claude" / "commands"):
         try:
-            canonical_path(target).relative_to(canonical_path(root))
+            resolved.relative_to(canonical_path(root))
         except ValueError:
             continue
         return True
+    for root in (home / ".tstdesk" / "skills", home / ".claude" / "skills"):
+        try:
+            resolved.relative_to(canonical_path(root))
+        except ValueError:
+            continue
+        # Only the manifest is prompt material; a supporting asset inside
+        # a skill folder is an ordinary file (TD-4502).
+        return target.name.upper() == _SKILL_BASENAME
     return False
 
 

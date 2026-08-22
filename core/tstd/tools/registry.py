@@ -426,6 +426,31 @@ def _register_builtins(registry: ToolRegistry) -> None:
         )
     )
 
+    registry.register(
+        Tool(
+            name="load_skill",
+            description=(
+                "Load a skill's full markdown body by name. The prompt's skills "
+                "catalog lists what is available with one-line descriptions; call "
+                "this before following a skill for the first time in a session. "
+                "The body arrives whole — an oversized one is refused, never "
+                "truncated. Reading is free of side effects."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Skill name from the catalog (the folder name)",
+                    },
+                },
+                "required": ["name"],
+            },
+            side_effect_class="auto",
+            parallel_safe=True,
+        )
+    )
+
 
 def create_registry() -> ToolRegistry:
     """Create a new ToolRegistry with all built-in tools pre-registered."""

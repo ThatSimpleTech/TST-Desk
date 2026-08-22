@@ -120,6 +120,7 @@ from tstd.protocol import (
     SetWorkspacePin,
     ShellOutput,
     Shutdown,
+    SkillStackEntry,
     SteeringReloaded,
     TierState,
     TierSwitched,
@@ -435,6 +436,17 @@ FIXTURES = {
         total_tokens=500,
         token_method="cl100k_base",
         seq=17,
+        # TD-4502: loaded skills ride the stack event, listed apart from
+        # steering.
+        skills=[
+            SkillStackEntry(
+                name="deploy",
+                source="workspace",
+                path="/home/user/project/.tst/skills/deploy/SKILL.md",
+                tokens=420,
+                token_method="approximation (4 chars/token)",
+            )
+        ],
     ),
     "memory_files": MemoryFiles(
         workspace_path="/home/user/project",
