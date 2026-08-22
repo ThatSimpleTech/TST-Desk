@@ -301,6 +301,9 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `delete_api_key` | — | Remove an API key from the OS keychain. |
 | `set_preset` | — | Choose the active model preset. |
 | `set_tier_slug` | — | Set the model slug for one tier of one preset. |
+| `set_mcp_server` | — | Add or replace one stdio MCP server by name and command argv. The entry is replaced whole — there is no field for a url or env, so no secret can ride into the config file (TD-4403). Acked with `setup_state`; applies to new sessions. |
+| `set_mcp_enabled` | — | Enable or disable one configured MCP server by name. Unknown name is a typed error. Acked with `setup_state` (TD-4403); applies to new sessions. |
+| `remove_mcp_server` | — | Remove one configured MCP server by name. Unknown name is a typed error. Acked with `setup_state` (TD-4403); applies to new sessions. |
 | `run_diagnostics` | — | Run the doctor checks. |
 | `get_usage` | — | Ask for token and cost rollups by session, day and week (TD-1706). |
 | `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
@@ -347,7 +350,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin`. |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_mcp_server` / `set_mcp_enabled` / `remove_mcp_server`. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |

@@ -14,6 +14,9 @@
 		isDiscovered,
 		saveSlug,
 		loadRules,
+		saveMcpServer,
+		setMcpEnabled,
+		removeMcpServer,
 		SETTINGS_SECTIONS,
 		THEMES,
 		type SettingsSection,
@@ -31,12 +34,25 @@
 		appearance: 'Appearance',
 		model: 'Model',
 		policy: 'Policy',
+		mcp: 'MCP servers',
 		key: 'API key',
 	};
 
 	/** Draft slug per tier. Empty means "unchanged" — never "clear it". */
 	let drafts = $state<Record<string, string>>({});
 	let keyDraft = $state('');
+
+	// MCP add-form drafts (TD-4403). Name and one command line; the split
+	// into argv happens at save so the disabled state can track validity.
+	let mcpNameDraft = $state('');
+	let mcpCommandDraft = $state('');
+
+	function commitMcpServer(): void {
+		if (saveMcpServer(mcpNameDraft, mcpCommandDraft)) {
+			mcpNameDraft = '';
+			mcpCommandDraft = '';
+		}
+	}
 
 	function slugValue(tier: string): string {
 		return drafts[tier] ?? settings.tierSlugs[tier] ?? '';
@@ -158,6 +174,70 @@
 					{/if}
 				{:else if settings.section === 'policy'}
 					<PolicyRuleList sessionId={session.sessionId} />
+				{:else if settings.section === 'mcp'}
+					<p class="hint">
+						Servers from your config.yaml whose tools the agent may call. Edits apply to new
+						sessions. A server that needs a token reads it from your OS keychain — never paste one
+						here; there is no field for it on purpose.
+					</p>
+					{#each settings.mcpServers as server (server.name)}
+						<div class="server">
+							<span class="server-name">{server.name}</span>
+							<code class="server-cmd" title={server.destination}>{server.destination}</code>
+							<button
+								class="choice"
+								class:choice--active={server.enabled}
+								type="button"
+								role="switch"
+								aria-checked={server.enabled}
+								disabled={settings.savingMcp === server.name}
+								onclick={() => setMcpEnabled(server.name, !server.enabled)}
+							>
+								{server.enabled ? 'On' : 'Off'}
+							</button>
+							<button
+								class="btn btn--danger"
+								type="button"
+								disabled={settings.savingMcp === server.name}
+								onclick={() => removeMcpServer(server.name)}>Remove</button
+							>
+						</div>
+					{/each}
+					{#if settings.mcpServers.length === 0}
+						<p class="hint">No servers configured.</p>
+					{/if}
+					<div class="add-server">
+						<p class="keep-title">Add a server</p>
+						<label class="field">
+							<span class="field-name">Name</span>
+							<input
+								class="input"
+								type="text"
+								bind:value={mcpNameDraft}
+								placeholder="git"
+								aria-label="Server name"
+							/>
+						</label>
+						<label class="field">
+							<span class="field-name">Command</span>
+							<input
+								class="input"
+								type="text"
+								bind:value={mcpCommandDraft}
+								placeholder={'uvx mcp-server-git --repo "my dir"'}
+								aria-label="Command and arguments"
+							/>
+						</label>
+						<p class="hint">Arguments are split on spaces; double quotes group one argument.</p>
+						<div class="actions">
+							<button
+								class="btn"
+								type="button"
+								disabled={mcpNameDraft.trim() === '' || mcpCommandDraft.trim() === ''}
+								onclick={commitMcpServer}>Add server</button
+							>
+						</div>
+					</div>
 				{:else}
 					{#if !settings.keyRequired}
 						<p class="hint">
@@ -337,6 +417,39 @@
 		font-weight: var(--weight-medium);
 		color: var(--color-ink);
 		margin: 0;
+	}
+
+	.server {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		margin-top: var(--space-3);
+		padding-top: var(--space-3);
+		border-top: 1px solid var(--color-hairline);
+	}
+
+	.server-name {
+		min-width: 6rem;
+		font-size: var(--text-sm);
+		font-weight: var(--weight-medium);
+		color: var(--color-ink);
+	}
+
+	.server-cmd {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
+		font-size: var(--text-xs, 11px);
+		color: var(--color-ink-secondary);
+	}
+
+	.add-server {
+		margin-top: var(--space-4);
+		padding-top: var(--space-4);
+		border-top: 1px solid var(--color-hairline);
 	}
 
 	.field {

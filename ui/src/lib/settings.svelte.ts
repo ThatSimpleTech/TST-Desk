@@ -11,13 +11,14 @@
 // only via sendToDaemon — no client reference, no import cycle.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
-import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
+import type { DaemonEventUnion, McpServerInfo, PolicyRuleSummary } from "./protocol";
 
-export type SettingsSection = "appearance" | "model" | "policy" | "key";
+export type SettingsSection = "appearance" | "model" | "policy" | "key" | "mcp";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
 	"model",
 	"policy",
+	"mcp",
 	"key",
 ] as const;
 
@@ -55,6 +56,10 @@ export const settings = $state({
 	cuAgentCursor: true,
 	/** Host overlay on the real display (TD-3402). Default off. */
 	cuShowOnRealDisplay: false,
+	/** MCP section, from setup_state (TD-4403). */
+	mcpServers: [] as McpServerInfo[],
+	/** Server name whose save/toggle/remove is in flight; acked by setup_state. */
+	savingMcp: null as string | null,
 });
 
 let started = false;
@@ -91,6 +96,8 @@ export function resetSettings(): void {
 	settings.cuGlow = true;
 	settings.cuAgentCursor = true;
 	settings.cuShowOnRealDisplay = false;
+	settings.mcpServers = [];
+	settings.savingMcp = null;
 	started = false;
 }
 
@@ -111,6 +118,10 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuGlow = event.cu_glow ?? true;
 		settings.cuAgentCursor = event.cu_agent_cursor ?? true;
 		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? false;
+		// setup_state is also the ack for the MCP edits (TD-4403), so it ends
+		// their save and refreshes the list from the daemon, never a splice.
+		settings.mcpServers = event.mcp_servers ?? [];
+		settings.savingMcp = null;
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -234,4 +245,56 @@ export function setCuIndicators(next: {
 		agent_cursor: next.agentCursor ?? settings.cuAgentCursor,
 		show_on_real_display: next.showOnRealDisplay ?? settings.cuShowOnRealDisplay,
 	});
+}
+
+// ── MCP servers (TD-4403) ─────────────────────────────────────────────
+
+/** Split a command line into argv, or null if the quoting is broken.
+ *
+ * The form takes one line; the daemon stores an argv list. Only double
+ * quotes group here — nothing is ever run through a shell, so shell
+ * quoting rules beyond that do not apply. Null keeps the Add button off.
+ */
+export function splitCommand(line: string): string[] | null {
+	const argv: string[] = [];
+	let current = "";
+	let open = false;
+	for (const ch of line.trim()) {
+		if (ch === '"') {
+			open = !open;
+		} else if (/\s/.test(ch) && !open) {
+			if (current !== "") argv.push(current);
+			current = "";
+		} else {
+			current += ch;
+		}
+	}
+	if (open || (argv.length === 0 && current === "")) return null;
+	if (current !== "") argv.push(current);
+	return argv;
+}
+
+/** Add or replace one stdio server. Acked with setup_state. */
+export function saveMcpServer(name: string, commandLine: string): boolean {
+	const cleaned = name.trim();
+	const command = splitCommand(commandLine);
+	if (cleaned === "" || command === null) return false;
+	settings.savingMcp = cleaned;
+	const sent = sendToDaemon({ type: "set_mcp_server", name: cleaned, command });
+	if (!sent) settings.savingMcp = null;
+	return sent;
+}
+
+/** Enable or disable one server. Acked with setup_state. */
+export function setMcpEnabled(name: string, enabled: boolean): void {
+	settings.savingMcp = name;
+	const sent = sendToDaemon({ type: "set_mcp_enabled", name, enabled });
+	if (!sent) settings.savingMcp = null;
+}
+
+/** Remove one server entirely. Acked with setup_state. */
+export function removeMcpServer(name: string): void {
+	settings.savingMcp = name;
+	const sent = sendToDaemon({ type: "remove_mcp_server", name });
+	if (!sent) settings.savingMcp = null;
 }

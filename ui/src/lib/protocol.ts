@@ -344,6 +344,37 @@ export interface SetTierSlug extends ClientMessage {
   slug: string;
 }
 
+// TD-4403: add or replace one stdio MCP server. Same narrowness discipline
+// as set_tier_slug — a name and a command argv, nothing else, so no key can
+// ride it into config.yaml. No url field and no environment on purpose.
+export interface SetMcpServer extends ClientMessage {
+  type: "set_mcp_server";
+  name: string;
+  command: string[];
+}
+
+// TD-4403: enable or disable one configured server. Acked with setup_state.
+export interface SetMcpEnabled extends ClientMessage {
+  type: "set_mcp_enabled";
+  name: string;
+  enabled: boolean;
+}
+
+// TD-4403: remove one configured server entirely. Acked with setup_state.
+export interface RemoveMcpServer extends ClientMessage {
+  type: "remove_mcp_server";
+  name: string;
+}
+
+// One configured MCP server as the settings screen lists it — config-level
+// truth, not runtime state (that is mcp_state's job). Rides on setup_state.
+export interface McpServerInfo {
+  name: string;
+  transport: "stdio" | "http";
+  destination: string;
+  enabled: boolean;
+}
+
 export interface SetPreset extends ClientMessage {
   type: "set_preset";
   name: string;
@@ -449,6 +480,9 @@ export type ClientMessageUnion =
   | ValidateApiKey
   | SetPreset
   | SetTierSlug
+  | SetMcpServer
+  | SetMcpEnabled
+  | RemoveMcpServer
   | RunDiagnostics
   | GetUsage
   | ExportUsage
@@ -846,6 +880,9 @@ export interface SetupState extends DaemonEvent {
   // TD-3402: host overlay on the real display. Additive, default off.
   cu_show_on_real_display?: boolean;
   pinned_workspaces?: string[];
+  // TD-4403: configured MCP servers for the settings section. Additive,
+  // default empty — an older daemon simply lists none.
+  mcp_servers?: McpServerInfo[];
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the

@@ -200,3 +200,63 @@ class TestMcpWiring:
             await ws.close()
             daemon._shutdown_event.set()
             await asyncio.gather(daemon_task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_settings_messages_edit_servers_without_yaml(
+        self, isolated_config_home: Path, tmp_path: Path
+    ) -> None:
+        """Add over the wire, see it in setup_state and in the next open's
+        mcp_state, disable, remove (TD-4403)."""
+        with tempfile.TemporaryDirectory() as daemon_tmp:
+            workspace = tmp_path / "ws"
+            workspace.mkdir()
+
+            daemon, daemon_task = await _start_daemon(daemon_tmp)
+            uri = f"ws://127.0.0.1:{daemon.ws_server.port}"
+            ws = await _connect_and_handshake(uri, daemon.ws_server.token)
+
+            # Add: the ack carries the configured entry, argv joined for display.
+            command = fake_spec(ECHO_TOOLS)
+            await ws.send(json.dumps({"type": "set_mcp_server", "name": "git", "command": command}))
+            ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            assert ack["type"] == "setup_state"
+            assert [s["name"] for s in ack["mcp_servers"]] == ["git"]
+            assert ack["mcp_servers"][0]["transport"] == "stdio"
+            assert ack["mcp_servers"][0]["enabled"] is True
+            assert "-c" in ack["mcp_servers"][0]["destination"]
+
+            # A session opened now sees the server and its tools: the open
+            # logs mcp_state, and attach replays it with the rest.
+            await ws.send(json.dumps({"type": "open_workspace", "path": str(workspace)}))
+            session_state = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+            session_id = session_state["session_id"]
+            await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 1}))
+            mcp_state = None
+            for _ in range(6):
+                event = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                if event.get("type") == "mcp_state":
+                    mcp_state = event
+                    break
+            assert mcp_state is not None
+            assert mcp_state["servers"][0]["name"] == "git"
+            assert mcp_state["servers"][0]["status"] == "ready"
+            assert mcp_state["servers"][0]["tool_count"] == len(ECHO_TOOLS)
+
+            # Disable: still listed, marked disabled.
+            await ws.send(json.dumps({"type": "set_mcp_enabled", "name": "git", "enabled": False}))
+            ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            assert ack["mcp_servers"][0]["enabled"] is False
+
+            # Remove: gone from the list.
+            await ws.send(json.dumps({"type": "remove_mcp_server", "name": "git"}))
+            ack = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            assert ack["mcp_servers"] == []
+
+            # Unknown names are typed errors, never crashes.
+            await ws.send(json.dumps({"type": "set_mcp_enabled", "name": "nope", "enabled": True}))
+            err = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+            assert err["type"] == "error"
+
+            await ws.close()
+            daemon._shutdown_event.set()
+            await asyncio.gather(daemon_task, return_exceptions=True)
