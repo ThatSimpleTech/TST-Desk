@@ -1,10 +1,14 @@
 # Claude Code kickoff prompt — TST Desk v0.1
 
+> Kept for provenance: this is the prompt that kicked the repo off on 2026-08-12. The spec
+> and backlog moved into `docs/` afterward — paths corrected 2026-08-22 (TD-4812); the rest
+> is preserved as written.
+
 Paste everything below the line into Claude Code, in the directory where you want the repo.
 Make sure these four files are present in that directory first:
 
-- `tst-desk-spec.md`
-- `tst-desk-backlog.md`
+- `docs/tst-desk-spec.md`
+- `docs/tst-desk-backlog.md`
 - `AGENTS.md`
 - this file
 
@@ -22,8 +26,8 @@ and no subscription. The only credential is the user's own API key.
 1. **`AGENTS.md`** — the working contract. How you operate in this repo. It outranks your
    defaults. Pay particular attention to §2 prime directives, §3 scope discipline, §5 decision
    protocol, and §9 reporting format.
-2. **`tst-desk-spec.md`** — what we're building and why. Source of truth for behavior.
-3. **`tst-desk-backlog.md`** — epics, stories, acceptance criteria, sequencing. Source of truth
+2. **`docs/tst-desk-spec.md`** — what we're building and why. Source of truth for behavior.
+3. **`docs/tst-desk-backlog.md`** — epics, stories, acceptance criteria, sequencing. Source of truth
    for scope and order.
 
 Confirm you've read all three and summarize the prime directives back to me in one short list

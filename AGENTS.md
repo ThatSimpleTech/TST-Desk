@@ -218,20 +218,31 @@ tst-desk/
 ├── AGENTS.md              ← this file
 ├── DECISIONS.md           ← you maintain
 ├── docs/
-│   ├── tst-desk-spec.md
-│   └── tst-desk-backlog.md
+│   ├── tst-desk-spec.md       behavior source of truth
+│   ├── tst-desk-backlog.md    scope and order source of truth
+│   ├── architecture.md        how the pieces fit together
+│   ├── configuration.md       every config key documented
+│   ├── steering.md            AGENTS.md and path-scoped rules
+│   ├── windows.md             where Windows behaves differently
+│   └── images/                screenshots embedded in the README
 ├── core/                  ← Python daemon (tstd)
 │   ├── tstd/
 │   │   ├── daemon.py      session lifecycle, WS server
 │   │   ├── protocol.py    typed event schema
-│   │   ├── session.py     SessionRunner
+│   │   ├── session.py     SessionRunner (+ persist/revive)
 │   │   ├── loop.py        agent loop (from tst-cua)
 │   │   ├── router.py      3-tier model routing
+│   │   ├── cost.py        pricing, spend caps, usage export
+│   │   ├── memory_*.py    store, prompt slot, distill, commit
 │   │   ├── context/       steering + manifest assembly
 │   │   ├── tools/         fs, shell, registry
 │   │   ├── autonomy/      classifier, ledger, checkpoints
+│   │   ├── desktop/       MCP and desktop computer-use
+│   │   ├── screen/, browser/  computer-use drivers
+│   │   ├── notify/, scheduler/  remote notify and cron
 │   │   ├── policy.py      approval policy
 │   │   └── audit.py       SQLite append-only log
+│   ├── scripts/           sidecar build, changelog
 │   └── tests/
 ├── shell/                 ← Tauri host (Rust)
 │   └── src/
