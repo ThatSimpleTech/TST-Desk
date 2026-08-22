@@ -6216,17 +6216,28 @@ what else is running.
 **Size:** 1 · **Depends on:** TD-1501
 
 **Acceptance criteria:**
-- [ ] The Status section reflects M4's exit (memory, session revive) and M5's in-flight
+- [x] The Status section reflects M4's exit (memory, session revive) and M5's in-flight
       state
-- [ ] Every "not yet" claim in the README is audited against the backlog's completed
+- [x] Every "not yet" claim in the README is audited against the backlog's completed
       stories
-- [ ] The docs test that pins README numbers also pins the status claims that can be
+- [x] The docs test that pins README numbers also pins the status claims that can be
       machine-checked
 
 The README still says memory and detached sessions are not built. M4 exited; the brain
 prompt carries a memory subset and sessions revive from disk. The README is the project's
 public face — the one document whose claims a stranger acts on — and it currently
 under-sells what the tests prove.
+
+**Completed (2026-08-22):** reality had outrun the story text — M5–M8 and TD-4001
+are on this tip, not in-flight. Status now claims memory + session revive, cowork /
+`tst run` / close-vs-quit, computer-use + kill switch, Tailscale remote attach +
+notify/scheduler, the `vllm` preset + UI-TARS grounding, and `CHARTER.md`
+validation. The not-built list is the M9 remainder (TD-4002+), M10 (MCP loading /
+slash / `SKILL.md` / plan lock), Linux desktop CU (TD-2001/2002), desktop Design
+AX (TD-3406), and green installers (TD-1302/1303 already named in the release
+sentence) — not remote attach and not vLLM. `test_docs_readme_numbers.py` pins
+works vs not-built to *this checkout's* exit-harness boxes so a frozen fork table
+cannot reintroduce a false M7/M8 gap.
 
 ### TD-4812 — Process debt: unrecorded M4-gate call, stale spec sections, release-tag collision, stale kickoff prompt
 **Size:** 2 · **Depends on:** none
