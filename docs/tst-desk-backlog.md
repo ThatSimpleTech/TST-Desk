@@ -47,11 +47,12 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M3 — Shippable** | E13, E14, E15, E16, E17, E19 | A stranger can install and use it from a fresh machine |
 | **M4 — Memory** | E21–E28 | The brain prompt carries a relevant memory subset; a session end proposes a diff the user accepts; a project home shows Instructions / Memory / Context for the workspace |
 | **M5 — Cowork (v0.3)** | E29–E32, E48 | Close the window; the session keeps running. CLI attach. Artifacts. Named sessions |
-| **M6 — Computer use (v0.4)** | E20, E33–E34 | Screen pane watches a real desktop or browser; glow/cursor; Design mode; OS permission onboarding |
+| **M6 — Computer use (v0.4)** | E33–E34 | Screen pane watches a real desktop or browser; glow/cursor; Design mode; OS permission onboarding |
 | **M7 — Remote (v0.5)** | E36–E38 | Tailscale bind (never `0.0.0.0`). Phone attach. Slack. Scheduler rail goes live |
 | **M8 — Local remainder (v0.6)** | E39 | EZER/vLLM path. UI-TARS grounding. Floor already shipped as M1.5 |
 | **M9 — Autonomy (v0.7)** | E40–E43 | Charter, unattended runner, drift checks, circuit breakers, hard-required container, wake-up |
 | **M10 — Extensibility (v0.8)** | E44–E46 | MCP through the classifier. Slash + `SKILL.md`. One-level subagent. Plan lock |
+| **M11 — Linux (unscheduled)** | E20 | The computer-use server runs on X11 or says so early; Wayland decided. Needs a Linux box; starts after M10 |
 | **Later** | E47 | Voice, tray, multi-window, updater, vision. Unversioned; do not pull forward |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
@@ -86,7 +87,8 @@ supervision — heading-match loading is the floor if the sidecar is not running
 
 M5 Cowork hangs off TD-205 / TD-1002: the session already outlives the socket; the
 window still kills the daemon. Persist revive (events.jsonl) landed early — TD-2901
-pins and bounds it. M6 hangs off TD-1710 (browser Screen) and E20 (`tst-cu-mcp`).
+pins and bounds it. M6 hangs off TD-1710 (browser Screen); the `tst-cu-mcp`
+Linux port waits in its own milestone, M11 (TD-4824).
 M7 hangs off M5 (something must be alive to attach to). M9 hangs off M5 and M7
 (spec §9). M10 hangs off E6 (every MCP tool is still a classified tool).
 
@@ -3991,7 +3993,7 @@ story exists to avoid, not a smaller version of the one TD-1901 fixes.
 Spec §5 and §9 named Memory. The project home (E28) was added 2026-08-19 from
 the Claude Projects reference: a workspace you open, with Instructions /
 Memory / Context on the right and recents in the middle. Computer-use
-(TD-1710, E20), packaging clean-VM boxes (TD-1301–1303), and Windows
+(TD-1710), packaging clean-VM boxes (TD-1301–1303), and Windows
 process-group verify (TD-1406) stay where they are — they do not block M4.
 
 **v0.1 leftover that is not M4:** the window still kills the daemon on close. Distill
@@ -4811,7 +4813,7 @@ daemon. Not marked `live`.
 
 Spec §9. Browser slice is already TD-1710 (E17). This milestone is
 **desktop** drive + the chrome that makes it watchable and pointable.
-Linux MCP backends stay E20 (already filed; counted here).
+Linux MCP backends moved out to M11 (TD-4824) — they gate nothing here.
 
 **Do not start until M5 exits**, except TD-1710 which is already on M3.
 
@@ -4820,7 +4822,6 @@ Linux MCP backends stay E20 (already filed; counted here).
 ```
 TD-1710 (browser) ─> E34 Screen chrome
 E33 Desktop drivers ─> E34
-E20 Linux MCP (parallel; needs a Linux box)
 ```
 
 ---
@@ -4843,7 +4844,7 @@ classifier and approval gate as every other tool. Prefer wrapping
 - [x] Path/host rules do not apply; a **focus guard** (`expect_window`)
       does — mismatch refuses without actuating
 - [x] Kill-switch stops actuation; capture still works
-- [x] macOS and Windows each have a live path; Linux is E20
+- [x] macOS and Windows each have a live path; Linux is M11
 - [x] Mock driver for CI (the tst-cua mock, TD-102)
 
 **Notes:** Size 8. Split if the MCP-bridge and the product tools
@@ -4894,7 +4895,7 @@ copy (`{user_data_dir}/cu-windows-permissions.yaml`); typed `uipi` /
 - [x] UI-TARS as a grounding *model* is TD-3902, not this story
 
 Done (2026-08-21): mock eval, 4.0 point hypot; darwin + win32 fixture
-rows; no live claim; Linux is E20.
+rows; no live claim; Linux is M11.
 
 ---
 
@@ -5664,20 +5665,21 @@ the product." Web search is already TD-609/TD-610.
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
 | M1 Headless core | E2–E9 | 55 | 162 |
-| M1.5 Local models | E18 | 15 | 36 |
+| M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 24 | 68 |
-| M3 Shippable | E13–E17, E19 | 47 | 136 |
+| M3 Shippable | E13–E17, E19 | 50 | 142 |
 | **Total v0.1** | **19** | **148** | **417** |
 | M4 Memory (v0.2) | E21–E28 | 32 | 90 |
 | **Total v0.1 + v0.2** | **27** | **180** | **507** |
-| M5 Cowork (v0.3) | E29–E32, E48 | 31 | 84 |
-| M6 Computer use (v0.4) | E20, E33–E34 | 12 | 63 |
+| M5 Cowork (v0.3) | E29–E32, E48 | 39 | 94 |
+| M6 Computer use (v0.4) | E33–E34 | 10 | 52 |
 | M7 Remote (v0.5) | E36–E38 | 11 | 43 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
+| M11 Linux (unscheduled) | E20 | 2 | 11 |
 | Later | E47 | 7 | 34 |
-| **Total planned** | **47** | **268** | **861** |
+| **Total planned** | **47** | **276** | **871** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -5693,9 +5695,24 @@ debugging problem.
 ---
 
 
+# MILESTONE M11 — Linux support (unscheduled)
+
+Pulled out of M6 on 2026-08-21 (TD-4824). The computer-use server's
+Linux port was counting against M6's totals while gating nothing that
+ships, and it cannot be started or verified without a Linux box — so it
+waits until after M10 instead of holding v0.4's tail open. Linux
+packaging targets ride TD-1302's shared CI matrix and are not duplicated
+here.
+
+**M11 exit:** TD-2001 green on a real X11 session plus TD-2002's
+recorded decision.
+
+---
+
 ## Epic E20 — Linux support for the computer-use MCP server
 
-**Milestone: M6.** Counted in the M6 totals. Still cannot be verified off a Linux box.
+**Milestone: M11.** Unscheduled — starts when a Linux box and a slot
+after M10 exist. Cannot be verified off a Linux box.
 
 **Goal:** `mcp/tst-cu-mcp` runs on Linux, or says clearly and early that it cannot.
 
@@ -6163,7 +6180,7 @@ and bypassable by a hostile DNS answer. Worth closing properly or labeling hones
 The actuation kill-switch reads a config value that YAML can deliver as a string, and the
 comparison fails open: a quoted `"false"` still enables input actuation. The server is a
 developer tool with OS-level permissions; its safety switches have to survive config
-dialects. Filed here rather than in E20, which owns the server's Linux port.
+dialects. Filed here rather than in E20 (now M11), which owns the server's Linux port.
 
 ### TD-4816 — Low-severity review follow-ups
 **Size:** 3 · **Depends on:** none
@@ -6304,3 +6321,25 @@ with its own test pass.
 
 Found by the 2026-08-21 ox-alpha review (Bug 5 / Enhancement 3).
 
+
+
+### TD-4824 — Split Linux support into its own milestone
+**Size:** 1 · **Depends on:** none
+
+**Acceptance criteria:**
+- [x] Every Linux-scoped story lives under one milestone (M11 — Epic E20,
+      TD-2001/TD-2002); nothing outside M11 depends on an M11 story
+- [x] M6's header, diagram, and prose no longer claim E20 or its points
+- [x] Summary table recomputed from story headings, every row (M6: 10
+      stories/52 pts; new M11 row: 2/11). The recount also caught older,
+      unrelated drift — stale M1.5/M3/M5 counts plus the un-tabled
+      2026-08-21 tail entries (TD-4817–4823) — so Total planned moves to
+      its true 47 epics / 276 stories / 871 points (v0.1/v0.2 subtotals
+      unchanged: M1.5↔M3 cancels)
+- [x] Reviewed and left put: TD-1302's Linux packaging clause (shared CI
+      matrix, blocks nothing), TD-4816's backend audit box, E47's platform
+      furniture
+
+Completed 2026-08-21 (branch `td/4824-linux-milestone`). Linux waits for a
+box and a deliberate start after M10; it no longer sits in M6's arithmetic
+or gates anything else.
