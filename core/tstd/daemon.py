@@ -34,6 +34,7 @@ from .boundary_config import (
     scaffold_workspace_config,
 )
 from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
+from .commands import discover_commands
 from .config import (
     ConfigError,
     ModelConfig,
@@ -118,6 +119,8 @@ from .protocol import (
     Cancel,
     CheckCuPermissions,
     ClientMessageT,
+    CommandsList,
+    CommandSummary,
     ContextPinEntry,
     ContextPins,
     CreateRule,
@@ -143,6 +146,7 @@ from .protocol import (
     InstructionFileEntry,
     InstructionFiles,
     ListArtifacts,
+    ListCommands,
     ListInstructions,
     ListMemory,
     ListPins,
@@ -1323,6 +1327,30 @@ class Daemon:
                 rules=[
                     PolicyRuleSummary(tool=r.tool, args=r.args, effect=r.effect)
                     for r in found.policy.rules
+                ],
+            ).model_dump_json()
+
+        if isinstance(msg, ListCommands):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            # File IO off the event loop (ASYNC240; OpenWorkspace does the
+            # same for its stat).  Home defaults to Path.home() inside.
+            commands = await asyncio.to_thread(discover_commands, Path(found.workspace_path))
+            return CommandsList(
+                seq=1,
+                commands=[
+                    CommandSummary(
+                        name=c.name,
+                        source=c.source,
+                        description=c.description,
+                        body=c.body,
+                        line_count=c.line_count,
+                    )
+                    for c in commands
                 ],
             ).model_dump_json()
 

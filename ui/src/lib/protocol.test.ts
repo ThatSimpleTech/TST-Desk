@@ -16,6 +16,7 @@ import type {
   Deny,
   AlwaysAllow,
   ListPolicyRules,
+  ListCommands,
   RevokePolicyRule,
   Resume,
   Cancel,
@@ -68,6 +69,7 @@ import type {
   MoveSession,
   RenameSession,
   PolicyRules,
+  CommandsList,
   PolicyRuleSummary,
   GetSetupState,
   SetApiKey,
@@ -185,6 +187,12 @@ describe("Client message fixtures match TypeScript types", () => {
   it("list_policy_rules", () => {
     const m = fixtures.list_policy_rules as ListPolicyRules;
     expect(m.type).toBe("list_policy_rules");
+    expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("list_commands", () => {
+    const m = fixtures.list_commands as ListCommands;
+    expect(m.type).toBe("list_commands");
     expect(isString(m.session_id)).toBe(true);
   });
 
@@ -521,6 +529,21 @@ describe("Daemon event fixtures match TypeScript types", () => {
     }
   });
 
+  it("commands_list (TD-4501)", () => {
+    const m = fixtures.commands_list as CommandsList;
+    expect(m.type).toBe("commands_list");
+    expect(m.seq).toBe(1); // connection-scoped, like policy_rules
+    expect(Array.isArray(m.commands)).toBe(true);
+    expect(m.commands.length).toBeGreaterThan(0);
+    const sources = ["workspace", "user", "workspace_fallback", "user_fallback"];
+    for (const command of m.commands) {
+      expect(isString(command.name)).toBe(true);
+      expect(sources).toContain(command.source);
+      expect(isString(command.body)).toBe(true);
+      expect(typeof command.line_count).toBe("number");
+    }
+  });
+
   it("decision_logged", () => {
     const m = fixtures.decision_logged as DecisionLogged;
     expect(m.type).toBe("decision_logged");
@@ -786,6 +809,7 @@ describe("All fixtures have required shape", () => {
     const clientTypes = [
       "hello", "open_workspace", "user_message", "fork_from", "set_branch", "approve", "deny",
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
+      "list_commands",
       "set_skip_all_approvals",
       "set_load_global_memory",
       "set_coworker",
@@ -819,7 +843,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "context_pins", "memory_files", "memory_proposal", "session_list", "policy_rules", "error",
+      "instruction_stack", "instruction_files", "context_pins", "memory_files", "memory_proposal", "session_list", "policy_rules", "commands_list", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",

@@ -94,6 +94,13 @@ export interface ListPolicyRules extends ClientMessage {
   session_id: string;
 }
 
+/** TD-4501: list every slash command visible to the workspace. The
+ *  session anchors the workspace; the reply is connection-scoped. */
+export interface ListCommands extends ClientMessage {
+  type: "list_commands";
+  session_id: string;
+}
+
 export interface RevokePolicyRule extends ClientMessage {
   type: "revoke_policy_rule";
   session_id: string;
@@ -404,6 +411,7 @@ export type ClientMessageUnion =
   | Deny
   | AlwaysAllow
   | ListPolicyRules
+  | ListCommands
   | RevokePolicyRule
   | SetSkipAllApprovals
   | SetLoadGlobalMemory
@@ -553,6 +561,18 @@ export interface PolicyRuleSummary {
   tool: string;
   args: string;
   effect: "auto" | "ask" | "never";
+}
+
+/** TD-4501: one discovered slash command. source is workspace, user,
+ *  workspace_fallback, or user_fallback (the last two mark .claude reads).
+ *  The body rides the listing so invoking is one insert; the on-disk
+ *  path stays daemon-side. */
+export interface CommandSummary {
+  name: string;
+  source: "workspace" | "user" | "workspace_fallback" | "user_fallback";
+  description?: string | null;
+  body: string;
+  line_count: number;
 }
 
 export interface ApprovalRequest extends DaemonEvent {
@@ -787,6 +807,15 @@ export interface PolicyRules extends DaemonEvent {
   type: "policy_rules";
   seq: number;
   rules: PolicyRuleSummary[];
+}
+
+/** TD-4501: response to list_commands — every discovered slash command,
+ *  bodies included, sorted by name. Connection-scoped like policy_rules
+ *  (seq fixed at 1, no session_id), so it never races a session replay. */
+export interface CommandsList extends DaemonEvent {
+  type: "commands_list";
+  seq: number;
+  commands: CommandSummary[];
 }
 
 // TD-1101 first-run wizard: the daemon's reply to get_setup_state
@@ -1032,6 +1061,7 @@ export type DaemonEventUnion =
   | MemoryProposal
   | SessionList
   | PolicyRules
+  | CommandsList
   | SetupState
   | ApiKeyValidated
   | DiagnosticsReport

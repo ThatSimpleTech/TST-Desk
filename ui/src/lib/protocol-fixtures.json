@@ -67,6 +67,10 @@
     "type": "list_policy_rules",
     "session_id": "sess-1"
   },
+  "list_commands": {
+    "type": "list_commands",
+    "session_id": "sess-1"
+  },
   "revoke_policy_rule": {
     "type": "revoke_policy_rule",
     "session_id": "sess-1",
@@ -681,6 +685,26 @@
         "tool": "fs_*",
         "args": "src/**",
         "effect": "ask"
+      }
+    ]
+  },
+  "commands_list": {
+    "type": "commands_list",
+    "seq": 1,
+    "commands": [
+      {
+        "name": "deploy",
+        "source": "workspace",
+        "description": "Ship it",
+        "body": "Deploy the thing\n",
+        "line_count": 2
+      },
+      {
+        "name": "review",
+        "source": "user_fallback",
+        "description": null,
+        "body": "Review the diff\n",
+        "line_count": 1
       }
     ]
   },

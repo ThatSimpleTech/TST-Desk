@@ -5481,12 +5481,19 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 5 · **Depends on:** TD-1004, TD-501
 
 **Acceptance criteria:**
-- [ ] `.tst/commands/*.md` and `~/.tstdesk/commands/*.md` (user-global
+- [x] `.tst/commands/*.md` and `~/.tstdesk/commands/*.md` (user-global
       wins on name)
-- [ ] `/` in the composer lists them; insert or send (default insert)
-- [ ] Not steering — not in the cache prefix unless invoked
-- [ ] Agent writes to those trees are Class C
-- [ ] Fallback: `.claude/commands/` when ours is empty
+- [x] `/` in the composer lists them; insert or send (default insert)
+- [x] Not steering — not in the cache prefix unless invoked
+- [x] Agent writes to those trees are Class C
+- [x] Fallback: `.claude/commands/` when ours is empty
+
+> Completed 2026-08-21. Dedicated `list_commands` → `commands_list` wire pair
+> (reply connection-scoped: `seq=1`, no `session_id` — see DECISIONS.md);
+> bodies ride the listing. `.claude/commands` fallback is per level and
+> suppressed whenever that level's own directory holds any commands. The
+> composer menu joins shortcuts.ts's Escape layer order (`close-slash-menu`)
+> rather than handling its own keys.
 
 ---
 

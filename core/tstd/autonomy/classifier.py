@@ -57,6 +57,14 @@ class DecisionClass(StrEnum):
 _STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
 _STEERING_RULES_DIR_PARTS = (".tst", "rules")
 _MEMORY_DIR_PARTS = (".tst", "memory")
+# Slash-command trees (TD-4501): the workspace source and the Claude
+# fallback the loader reads when the source is empty. A command body is
+# text the composer inserts verbatim, so a write there is prompt
+# injection with extra steps — same Class C as any steering tree.
+_COMMANDS_DIR_PARTS = (
+    (".tst", "commands"),
+    (".claude", "commands"),
+)
 # The approval policy lives here (spec §6). Not a steering file by name,
 # but a write to it rewrites the guardrails — the self-escalation the
 # steering refusal exists to prevent (TD-4803).
@@ -252,10 +260,12 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
     Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
-    ``.tst/rules/``, and the approval policy at ``.tst/config.yaml``
-    (TD-4803) — are read-only to the filesystem tool, unconditionally.
-    ``.tst/memory/`` is the carve-out (TD-2102); never fold it into
-    ``.tst/**``.  Directory comparisons case-fold (TD-4804): see ``_fold``.
+    ``.tst/rules/``, the command trees under ``.tst/commands/`` and
+    ``.claude/commands/`` (TD-4501), and the approval policy at
+    ``.tst/config.yaml`` (TD-4803) — are read-only to the filesystem
+    tool, unconditionally.  ``.tst/memory/`` is the carve-out (TD-2102);
+    never fold it into ``.tst/**``.  Directory comparisons case-fold
+    (TD-4804): see ``_fold``.
     """
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
     if not relative:
@@ -267,7 +277,8 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
         return False
     if _fold(relative) == _POLICY_FILE_PARTS:
         return True
-    return _fold(relative[:2]) == _STEERING_RULES_DIR_PARTS
+    folded_prefix = _fold(relative[:2])
+    return folded_prefix == _STEERING_RULES_DIR_PARTS or folded_prefix in _COMMANDS_DIR_PARTS
 
 
 def writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:

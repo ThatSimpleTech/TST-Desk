@@ -48,6 +48,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "memory_proposal",
   "session_list",
   "policy_rules", // TD-803: was missing; settings events arrived as unknown
+  "commands_list", // TD-4501 slash commands
   "setup_state", // TD-1101 first-run wizard
   "api_key_validated", // TD-1101
   "diagnostics_report", // TD-1104 doctor

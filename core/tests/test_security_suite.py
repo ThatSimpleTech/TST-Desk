@@ -262,6 +262,10 @@ STEERING_POSITIVE = [
     ".tst/rules/deep/style.md",
     ".tst/rules",  # the rules dir itself
     ".tst/config.yaml",  # the approval policy is steering-adjacent (TD-4803)
+    ".tst/commands/deploy.md",  # slash-command trees are steering (TD-4501)
+    ".TST/COMMANDS/deploy.md",  # case-folded like the rules dir (TD-4804)
+    ".tst/commands",  # the commands dir itself
+    ".claude/commands/review.md",  # the fallback tree is guarded even unused
 ]
 
 STEERING_NEGATIVE = [
@@ -269,8 +273,11 @@ STEERING_NEGATIVE = [
     "MYAGENTS.md",
     "notes.md",
     ".tst/rules.md",  # a file named rules.md is not the rules dir
+    ".tst/commands.md",  # a file named commands.md is not the commands dir
+    ".claude/commands.md",
     ".tst/memory/MEMORY.md",  # memory is the carve-out (TD-2102)
     ".tst/memory/gotchas.md",
+    ".tst/memory/commands/note.md",  # memory subtree beats the commands trees
 ]
 
 

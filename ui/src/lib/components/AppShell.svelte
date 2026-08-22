@@ -63,6 +63,7 @@
 	import { session } from '../session-status.svelte.js';
 	import { startCuKill, setCuKill } from '../cu-kill.svelte.js';
 	import { resolveShortcut } from '../shortcuts';
+	import { commandMenu, dismissSlashMenu, startCommandMenu } from '../commands-store.svelte.js';
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
 	import { workspaces, closeWorkspaceMenu } from '../workspaces.svelte.js';
@@ -89,6 +90,7 @@
 					settings.open ||
 					cuPermissions.open ||
 					palette.open,
+				slashMenuOpen: commandMenu.open,
 				turnLive: showCancel(chat.turnState),
 			},
 		);
@@ -97,6 +99,7 @@
 		if (action === 'close-menu') closeWorkspaceMenu();
 		else if (action === 'close-palette') closePalette();
 		else if (action === 'close-modal') closeTopModal();
+		else if (action === 'close-slash-menu') dismissSlashMenu();
 		else if (action === 'cancel-turn') cancelTurn();
 		else if (action === 'open-palette') openPalette();
 		else if (action === 'toggle-design') {
@@ -139,6 +142,8 @@
 		const offDesign = startDesign();
 		const offCoworker = startCoworkerIndicator();
 		const offCuKill = startCuKill();
+		// TD-4501: the slash-command listing and its menu state.
+		const offCommands = startCommandMenu();
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
 			offCloseHint = off;
@@ -159,6 +164,7 @@
 			offDesign();
 			offCoworker();
 			offCuKill();
+			offCommands();
 			offCloseHint();
 		};
 	});

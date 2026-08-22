@@ -9,6 +9,7 @@ const IDLE: ShortcutContext = {
 	workspaceMenuOpen: false,
 	paletteOpen: false,
 	modalOpen: false,
+	slashMenuOpen: false,
 	turnLive: false,
 };
 const LIVE: ShortcutContext = { ...IDLE, turnLive: true };
@@ -45,6 +46,14 @@ describe("resolveShortcut — Escape", () => {
 		).toBe("close-menu");
 		expect(resolveShortcut(esc(), { ...IDLE, paletteOpen: true, modalOpen: true })).toBe(
 			"close-palette",
+		);
+	});
+
+	it("dismisses the slash menu before cancelling the turn behind it (TD-4501)", () => {
+		expect(resolveShortcut(esc(), { ...LIVE, slashMenuOpen: true })).toBe("close-slash-menu");
+		// A modal outranks it: with settings open, Escape closes the pane.
+		expect(resolveShortcut(esc(), { ...LIVE, slashMenuOpen: true, modalOpen: true })).toBe(
+			"close-modal",
 		);
 	});
 

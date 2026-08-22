@@ -17,10 +17,18 @@
 		type AttachmentDraft,
 		type AttachmentRefusal,
 	} from "../../attachments";
+	import {
+		commandMenu,
+		ensureCommands,
+		moveSelection,
+		resetSelection,
+		setSlashState,
+	} from "../../commands-store.svelte.js";
 	import { shouldSubmit } from "../../chat-store";
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
 	import type { AttachmentLimits } from "../../protocol";
+	import { insertCommand, rankCommands, slashQuery, sourceLabel } from "../../slash";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
@@ -30,6 +38,7 @@
 		running = false,
 		value = $bindable(""),
 		limits,
+		sessionId = null,
 		onsubmit,
 		oncancel,
 	}: {
@@ -41,6 +50,8 @@
 		value?: string;
 		/** The workspace's caps, from `boundary_update` (TD-1709). */
 		limits: AttachmentLimits;
+		/** Live session id, for fetching the slash listing (TD-4501). */
+		sessionId?: string | null;
 		onsubmit: (text: string, attachments: readonly AttachmentDraft[]) => void;
 		oncancel?: () => void;
 	} = $props();
@@ -64,6 +75,52 @@
 		textarea.style.height = "auto";
 		textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
 	});
+
+	// ── Slash commands (TD-4501) ──
+	// A leading "/" with no whitespace after it is a query; the menu shows
+	// the ranked matches unless Escape dismissed exactly this query.
+
+	const slashQueryText = $derived(disabled ? null : slashQuery(value));
+	const slashEntries = $derived(
+		slashQueryText === null ? [] : rankCommands(commandMenu.commands, slashQueryText),
+	);
+	const slashOpen = $derived(
+		slashQueryText !== null &&
+			slashQueryText !== commandMenu.dismissedQuery &&
+			slashEntries.length > 0,
+	);
+
+	// The listing rides one fetch per session; asking again is a no-op.
+	$effect(() => {
+		if (sessionId === null || sessionId === undefined) return;
+		ensureCommands(sessionId);
+	});
+
+	// Keep the store's open/query mirror current — shortcuts.ts reads it to
+	// give Escape its one opinion about this layer, so the composer installs
+	// no keydown handler of its own for that key.
+	$effect(() => {
+		setSlashState(slashOpen, slashQueryText ?? "");
+	});
+
+	// A new query or listing puts the highlight back on the first row.
+	$effect(() => {
+		void slashQueryText;
+		void slashEntries.length;
+		resetSelection();
+	});
+
+	function chooseSlash(command: (typeof slashEntries)[number], send: boolean): void {
+		value = insertCommand(command);
+		if (!send) return;
+		submit();
+	}
+
+	function chooseSelected(send: boolean): void {
+		const command = slashEntries[commandMenu.selected] ?? slashEntries[0];
+		if (command === undefined) return;
+		chooseSlash(command, send);
+	}
 
 	/** Vet each file against the caps and the text test, one at a time so the
 	    running total counts what earlier files in the same drop already took.
@@ -137,6 +194,28 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent): void {
+		// The menu eats the navigation keys first (TD-4501); Escape is
+		// deliberately not here — shortcuts.ts owns that layer.
+		if (slashOpen) {
+			if (event.key === "ArrowDown") {
+				event.preventDefault();
+				moveSelection(1, slashEntries.length);
+				return;
+			}
+			if (event.key === "ArrowUp") {
+				event.preventDefault();
+				moveSelection(-1, slashEntries.length);
+				return;
+			}
+			if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+				// Enter inserts (the default, per the story); ⌘/Ctrl+Enter sends
+				// the chosen command straight away. Shift+Enter still newlines —
+				// the menu stands aside for it.
+				event.preventDefault();
+				chooseSelected(event.metaKey || event.ctrlKey);
+				return;
+			}
+		}
 		if (shouldSubmit(event.key, event.shiftKey)) {
 			event.preventDefault();
 			submit();
@@ -170,6 +249,32 @@
 				onremove={removeAttachment}
 			/>
 		{/if}
+		<!-- TD-4501: the slash menu overlays upward from the card; mousedown is
+		     swallowed so choosing with the mouse never steals the caret. -->
+		{#if slashOpen}
+			<ul class="slash-menu" id="slash-menu" role="listbox" aria-label="Slash commands">
+				{#each slashEntries as command, i (command.name + command.source)}
+					<li role="presentation">
+						<button
+							type="button"
+							class="slash-option"
+							class:selected={i === commandMenu.selected}
+							role="option"
+							id={`slash-option-${i}`}
+							aria-selected={i === commandMenu.selected}
+							onmousedown={(e) => e.preventDefault()}
+							onclick={() => chooseSlash(command, false)}
+						>
+							<span class="slash-name">/{command.name}</span>
+							{#if command.description !== null && command.description !== undefined}
+								<span class="slash-desc">{command.description}</span>
+							{/if}
+							<span class="slash-source">{sourceLabel(command.source)}</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
 		<div class="row">
 			<textarea
 				bind:this={textarea}
@@ -178,6 +283,12 @@
 				{disabled}
 				placeholder={disabled ? "Waiting for a session…" : "Message the agent…"}
 				aria-label="Message composer"
+				role={slashOpen ? "combobox" : undefined}
+				aria-expanded={slashOpen ? "true" : undefined}
+				aria-controls={slashOpen ? "slash-menu" : undefined}
+				aria-activedescendant={
+					slashOpen ? `slash-option-${commandMenu.selected}` : undefined
+				}
 				onkeydown={handleKeydown}
 				onpaste={handlePaste}
 			></textarea>
@@ -236,8 +347,10 @@
 		padding: var(--space-2) var(--space-4) var(--space-3);
 	}
 
-	/* The card carries the chrome; the textarea inside is chromeless. */
+	/* The card carries the chrome; the textarea inside is chromeless.
+	   position:relative anchors the slash menu's upward overlay (TD-4501). */
 	.card {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
@@ -259,6 +372,68 @@
 	.card.dragging {
 		border-color: var(--color-accent);
 		background: var(--color-sunken);
+	}
+
+	.slash-menu {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: calc(100% + var(--space-1));
+		margin: 0;
+		padding: var(--space-1);
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		max-height: 300px;
+		overflow-y: auto;
+		list-style: none;
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-md);
+		z-index: 10;
+	}
+
+	.slash-option {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-2);
+		width: 100%;
+		padding: var(--space-2) var(--space-3);
+		text-align: left;
+		font-size: var(--text-sm);
+		color: var(--color-ink);
+		background: transparent;
+		border: none;
+		border-radius: var(--radius-md);
+		cursor: pointer;
+	}
+
+	.slash-option.selected,
+	.slash-option:hover {
+		background: var(--color-sunken);
+	}
+
+	.slash-name {
+		font-family: var(--font-mono, monospace);
+		flex-shrink: 0;
+	}
+
+	/* The description takes the middle and pushes the source tag right; long
+	   ones ellipsize rather than wrap the row tall. */
+	.slash-desc {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--color-ink-secondary);
+	}
+
+	.slash-source {
+		flex-shrink: 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
 	}
 
 	.row {
