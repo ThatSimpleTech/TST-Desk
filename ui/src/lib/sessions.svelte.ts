@@ -256,14 +256,38 @@ export function selectRow(sessionId: string): void {
  *  With nothing bound (TD-1711: auto-bind refuses terminal sessions, so a
  *  restart can leave the app unbound) the newest listed session is the
  *  anchor instead — the daemon only needs its workspace, and a tombstone
- *  anchor works. With no rows at all there is no workspace to anchor on. */
+ *  anchor works. With no rows at all (fresh install) there is nothing to
+ *  anchor on, so the wired directory picker runs instead of silently
+ *  no-op'ing — the chosen path goes through new_session_in_workspace. */
 export function newSession(): boolean {
 	if (pendingNewAnchor !== null) return false;
 	const anchor = chat.sessionId ?? sessions.rows[0]?.sessionId ?? null;
-	if (anchor === null) return false;
+	if (anchor === null) {
+		// Unwired (tests, or a shell that never mounts the picker): stay the
+		// old silent no-op rather than throw.
+		const pick = pickForNewSession;
+		if (pick === null) return false;
+		void pick().then((path) => {
+			if (path !== null) newSessionInWorkspace(path);
+		});
+		return false;
+	}
 	if (!sendToDaemon({ type: "new_session", session_id: anchor })) return false;
 	pendingNewAnchor = anchor;
 	return true;
+}
+
+/** Directory picker for the no-anchor fallback, wired by the shell.
+ *  Null until then — the fallback just stays a no-op, same as before. */
+let pickForNewSession: (() => Promise<string | null>) | null = null;
+
+/** Wire the picker used when a new session has no workspace to anchor on.
+ *  Mirrors TitleBar/WorkspacePicker's injectable pickDirectory so tests
+ *  can stub it. */
+export function setPickForNewSession(
+	pick: (() => Promise<string | null>) | null,
+): void {
+	pickForNewSession = pick;
 }
 
 /** Close whatever row affordance is open (TD-1715). Lives here rather than
