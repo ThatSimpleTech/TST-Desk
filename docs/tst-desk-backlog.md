@@ -5549,14 +5549,34 @@ spot closed while the predicate was open on the table.
 **Size:** 5 · **Depends on:** TD-4501, TD-508
 
 **Acceptance criteria:**
-- [ ] `.tst/skills/<name>/SKILL.md` (+ user-global). Frontmatter:
+- [x] `.tst/skills/<name>/SKILL.md` (+ user-global). Frontmatter:
       `description`, `whenToUse` only
-- [ ] Brain gets a name+description catalog; bodies load on
+- [x] Brain gets a name+description catalog; bodies load on
       `load_skill` or slash, after the cache prefix
-- [ ] Over-budget skill is refused, not truncated
-- [ ] Agent cannot write `**/SKILL.md`
-- [ ] Fallback: `.claude/skills/` when ours is empty
-- [ ] Inspector lists loaded skills separately from steering
+- [x] Over-budget skill is refused, not truncated
+- [x] Agent cannot write `**/SKILL.md`
+- [x] Fallback: `.claude/skills/` when ours is empty
+- [x] Inspector lists loaded skills separately from steering
+
+**Completed (2026-08-21):** discovery lives in
+`tstd/context/skills.py` — the same four-layer merge as commands
+(workspace `.tst/skills/<name>/SKILL.md`, user-global
+`~/.tstdesk/skills` winning a name, each falling back to its
+`.claude/skills` twin only when it holds none of ours), stems filtered
+to `[A-Za-z0-9_-]+`, symlink escapes skipped. Frontmatter is parsed for
+`description` and `whenToUse`; other keys are ignored, unparseable YAML
+reads as empty. The brain tier alone carries a post-prefix catalog
+block (names + one-line metadata); bodies arrive through the
+`load_skill` tool or an invoked `/name` — commands answer first, skills
+fill in behind, both rendered with the same delimiter wrapper and never
+entering the cache prefix. A load whose body exceeds the active tier's
+compaction headroom is refused whole with both numbers stated, never
+truncated. `SKILL.md` is protected by basename anywhere under the
+workspace — before the memory carve-out, so even
+`.tst/memory/SKILL.md` refuses — and shell writes into the home skills
+trees refuse except ordinary supporting assets. The stack panel lists
+loaded skills in their own section beside Memory, with source and
+fallback chips.
 
 ---
 
