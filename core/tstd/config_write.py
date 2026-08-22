@@ -22,7 +22,13 @@ import re
 import tempfile
 from pathlib import Path
 
-from .config import TIER_NAMES, ConfigError, ensure_user_config, load_config
+import yaml
+
+from .config import TIER_NAMES, ConfigError, McpConfig, ensure_user_config, load_config
+
+# Server names become part of tool names on the wire, so they are held to
+# the same character set the config schema enforces (TD-4403).
+_MCP_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def save_active_preset(name: str, path: Path | None = None) -> Path:
@@ -184,3 +190,172 @@ def save_tier_slug(preset: str, tier: str, slug: str, path: Path | None = None) 
 
     _atomic_write(config_path, "\n".join(lines))
     return config_path
+
+
+# ── MCP servers (TD-4403) ─────────────────────────────────────────────────
+#
+# The settings screen's add / disable / remove. Same surgical discipline as
+# the tier writers, with one extra shape to handle: the shipped config
+# carries an inline-empty ``servers: {}``, which grows into a block on the
+# first edit. A replaced entry is written wholesale — command only — so a
+# hand-added ``url:`` or stale ``enabled:`` can never survive next to a new
+# command and break the one-transport rule.
+
+
+def _locate_mcp_servers(lines: list[str]) -> tuple[int, int] | None:
+    """``(index, end)`` of the ``servers:`` key under top-level ``mcp:``.
+
+    ``end`` is one past the block's last line, per ``_block_bounds``. An
+    inline ``servers: {}`` yields an empty body. ``None`` when there is no
+    ``mcp:`` block or no ``servers:`` key inside it.
+    """
+    mcp_at = _find_key(lines, 0, len(lines), "mcp", 0)
+    if mcp_at < 0:
+        return None
+    mcp_end = _block_bounds(lines, mcp_at, 0)
+    servers_at = _find_key(lines, mcp_at + 1, mcp_end, "servers", 2)
+    if servers_at < 0:
+        return None
+    return servers_at, _block_bounds(lines, servers_at, 2)
+
+
+def _server_block(
+    lines: list[str], servers_at: int, servers_end: int, name: str
+) -> tuple[int, int] | None:
+    """``(index, end)`` of one server's sub-block at indent 4, or ``None``."""
+    at = _find_key(lines, servers_at + 1, servers_end, name, 4)
+    if at < 0:
+        return None
+    return at, _block_bounds(lines, at, 4)
+
+
+def _validate_mcp_entry(name: str, command: list[str]) -> list[str]:
+    """Shared argument checks for the MCP writers; returns the cleaned argv."""
+    if not isinstance(name, str) or not _MCP_NAME_RE.fullmatch(name):
+        raise ConfigError("A server name uses only letters, digits, '_' and '-'")
+    if not command or not all(isinstance(a, str) and a.strip() for a in command):
+        raise ConfigError("A server command is a non-empty argv of non-empty strings")
+    return command
+
+
+def _write_mcp_lines(config_path: Path, lines: list[str]) -> Path:
+    """Validate the edited document parses and its ``mcp`` section still
+    satisfies the schema, then write it atomically.
+
+    The check runs before the replace: an edit that would leave a broken
+    config on disk raises instead, and the user's file keeps working.
+    """
+    text = "\n".join(lines)
+    try:
+        data = yaml.safe_load(text)
+        McpConfig.model_validate((data or {}).get("mcp") or {})
+    except Exception as e:
+        raise ConfigError(f"The edit would not produce a valid mcp section: {e}") from e
+    _atomic_write(config_path, text)
+    return config_path
+
+
+def save_mcp_server(name: str, command: list[str], path: Path | None = None) -> Path:
+    """Add or replace one stdio server under ``mcp.servers`` (TD-4403).
+
+    The entry is written as exactly ``command:`` plus its argv — JSON-encoded,
+    which is always a valid YAML flow sequence and cannot inject structure —
+    replacing any previous block under the same name. Values a user added by
+    hand (a ``url:``, a tweaked ``enabled:``) do not survive the replace; the
+    settings form owns the whole entry it writes.
+
+    Returns the path written. Raises ``ConfigError`` for a bad name or argv,
+    when the file has no ``mcp:`` block to extend, or when the edit would
+    not validate.
+    """
+    argv = _validate_mcp_entry(name, command)
+    entry = [f"    {name}:", f"      command: {json.dumps(argv)}"]
+
+    config_path = ensure_user_config(path)
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    mcp_at = _find_key(lines, 0, len(lines), "mcp", 0)
+    if mcp_at < 0:
+        raise ConfigError(f"{config_path} has no `mcp:` block; add one by hand first")
+    located = _locate_mcp_servers(lines)
+    if located is None:
+        # `mcp:` exists but carries no `servers:` key — insert one directly
+        # under it, before whatever else the block holds.
+        lines[mcp_at + 1 : mcp_at + 1] = ["  servers:", *entry]
+    else:
+        servers_at, servers_end = located
+        existing = _server_block(lines, servers_at, servers_end, name)
+        if existing is not None:
+            start, end = existing
+            lines[start:end] = entry
+        elif lines[servers_at].strip() == "servers: {}":
+            # First entry turns the inline-empty form into a block.
+            lines[servers_at : servers_at + 1] = ["  servers:", *entry]
+        else:
+            lines[servers_end:servers_end] = entry
+    return _write_mcp_lines(config_path, lines)
+
+
+def save_mcp_enabled(name: str, enabled: bool, path: Path | None = None) -> Path:
+    """Set ``enabled:`` on one configured server (TD-4403).
+
+    The line is replaced where it sits, or appended at the end of the
+    server's block when the entry never carried one. Returns the path
+    written; raises ``ConfigError`` for an unknown server.
+    """
+    config_path = ensure_user_config(path)
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    located = _locate_mcp_servers(lines)
+    if located is None:
+        raise ConfigError(f"{config_path} has no `mcp.servers` mapping to edit")
+    servers_at, servers_end = located
+    block = _server_block(lines, servers_at, servers_end, name)
+    if block is None:
+        known = sorted(
+            m.group(1)
+            for m in (
+                re.match(r"    ([A-Za-z0-9_-]+):", line)
+                for line in lines[servers_at + 1 : servers_end]
+            )
+            if m
+        )
+        raise ConfigError(f"Unknown MCP server {name!r}; configured: {', '.join(known) or 'none'}")
+
+    start, end = block
+    new_line = f"      enabled: {json.dumps(enabled)}"
+    enabled_at = _find_key(lines, start + 1, end, "enabled", 6)
+    if enabled_at >= 0:
+        lines[enabled_at] = new_line
+    else:
+        lines.insert(end, new_line)
+    return _write_mcp_lines(config_path, lines)
+
+
+def remove_mcp_server(name: str, path: Path | None = None) -> Path:
+    """Remove one server's block from ``mcp.servers`` (TD-4403).
+
+    The sub-block is deleted whole — the entry's lines are the ones deeper
+    than its key. When the last server goes, ``servers:`` collapses back to
+    the shipped inline-empty form. Returns the path written; raises
+    ``ConfigError`` for an unknown server.
+    """
+    config_path = ensure_user_config(path)
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    located = _locate_mcp_servers(lines)
+    if located is None:
+        raise ConfigError(f"{config_path} has no `mcp.servers` mapping to edit")
+    servers_at, servers_end = located
+    block = _server_block(lines, servers_at, servers_end, name)
+    if block is None:
+        raise ConfigError(f"Unknown MCP server {name!r}")
+
+    start, end = block
+    del lines[start:end]
+    servers_end -= end - start
+    remaining = [
+        line
+        for line in lines[servers_at + 1 : servers_end]
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not remaining:
+        lines[servers_at:servers_end] = ["  servers: {}"]
+    return _write_mcp_lines(config_path, lines)

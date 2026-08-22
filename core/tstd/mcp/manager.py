@@ -1,10 +1,11 @@
 """Load MCP servers from config and register their tools (TD-4401).
 
 One manager per daemon, built from ``ModelConfig.mcp``. Servers start
-once, lazily, on the first session attach (or doctor run) and stay up
-until daemon shutdown — the same lifecycle as the desktop drivers. A
-server that fails to start, or dies later, is recorded as a failure
-and surfaces as a doctor row; it never takes the daemon down.
+lazily on the first session attach (or doctor run) and stay up until
+daemon shutdown or a settings edit replaces them (TD-4403) — the same
+lifecycle as the desktop drivers. A server that fails to start, or
+dies later, is recorded as a failure and surfaces as a doctor row; it
+never takes the daemon down.
 
 Two transports, both named entirely by config: stdio (a child process
 spawned from ``command``) and loopback HTTP (``url``, validated as
@@ -273,19 +274,21 @@ class McpManager:
         self._start_lock = asyncio.Lock()
 
     async def ensure_started(self) -> None:
-        """Start every enabled server exactly once; never raise.
+        """Start every enabled server not already running; never raise.
 
         A server that fails to start is recorded — the doctor and the
         per-session ``mcp_state`` event report it, and the rest of the
         daemon carries on. That is the AC: a dead server is a doctor
-        row, not a dead daemon.
+        row, not a dead daemon. Already-running servers are left alone,
+        so a config generation change (``reconcile``) starts only what
+        the edit added.
         """
         async with self._start_lock:
             if self._started:
                 return
             self._started = True
             for name, server in self._config.servers.items():
-                if not server.enabled:
+                if not server.enabled or name in self._transports:
                     continue
                 try:
                     transport = self._build_transport(server)
@@ -311,6 +314,36 @@ class McpManager:
                     for item in advertised
                     if item.get("name")
                 ]
+
+    async def reconcile(self, config: McpConfig) -> None:
+        """Adopt a freshly loaded config after a settings edit (TD-4403).
+
+        Servers the edit removed, disabled, or changed are closed and
+        dropped — a running process for a server that is no longer
+        configured is exactly the kind of zombie this owns. Unchanged
+        servers keep their process. The next ``ensure_started`` brings
+        new and changed servers up, so the edit reaches new sessions
+        without a daemon restart — the same contract a slug edit holds.
+        """
+        async with self._start_lock:
+            stale: list[tuple[str, McpTransport]] = []
+            for name, transport in self._transports.items():
+                server = config.servers.get(name)
+                if server is None or not server.enabled or server != self._config.servers.get(name):
+                    stale.append((name, transport))
+            for name, transport in stale:
+                try:
+                    await transport.aclose()
+                except Exception as exc:
+                    log.warning(
+                        "MCP server failed to close cleanly",
+                        extra={"extra_fields": {"server": name, "error": str(exc)}},
+                    )
+                self._transports.pop(name, None)
+                self._tools.pop(name, None)
+                self._failures.pop(name, None)
+            self._config = config
+            self._started = False
 
     def _build_transport(self, server: McpServerConfig) -> McpTransport:
         if server.url:

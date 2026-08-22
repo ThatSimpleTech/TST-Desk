@@ -60,7 +60,7 @@ no effect.
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
-| `mcp` | mapping | see below | MCP extension servers whose tools join the registry (TD-4401). Omitted in an older user copy is filled from the shipped file at load. Servers are read once — nothing is discovered or hot-reloaded. |
+| `mcp` | mapping | see below | MCP extension servers whose tools join the registry (TD-4401). Omitted in an older user copy is filled from the shipped file at load. Servers are read at daemon start and when Settings edits them — nothing is discovered. |
 
 ### `search`
 

@@ -174,7 +174,8 @@ computer_use:
 #   url:     a loopback HTTP endpoint (127.0.0.0/8, ::1, localhost).
 # The entry carries the destination and nothing else — no environment,
 # no headers; a token lives in the OS keychain, never in this file.
-# Servers start once per daemon; nothing is discovered or hot-reloaded.
+# Servers load from this file at daemon start; Settings edits apply to
+# new sessions. Nothing is discovered.
 # Enabled servers contribute tools named mcp__<server>__<tool>.
 mcp:
   servers: {}
