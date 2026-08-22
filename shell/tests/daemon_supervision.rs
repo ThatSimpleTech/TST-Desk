@@ -7,23 +7,32 @@
 //! Running this requires the `core` package to be runnable via uv (the debug
 //! `resolve_command` fallback spawns `uv run --directory ../core tstd`).
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures_util::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
 use tst_desk_lib::daemon::{
     connect_handshake, kill_spawned_group, live_port_file, parent_pid_argv,
-    port_file_belongs_to_spawn, should_spawn_new_daemon, spawn_daemon, wait_for_port_file,
+    port_file_belongs_to_spawn, should_spawn_new_daemon, spawn_daemon, spawn_daemon_with,
+    wait_for_port_file,
 };
+
+// The system clock resolves to 1 µs here, so pid + nanos is not unique:
+// tests starting in the same microsecond computed the same data-dir path
+// and one test's cleanup() deleted the other's daemon world mid-flight
+// (TD-4810). A per-process counter cannot collide.
+static DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn make_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "tstd-supervision-{}-{}",
+        "tstd-supervision-{}-{}-{}",
         std::process::id(),
+        DIR_SEQ.fetch_add(1, Ordering::SeqCst),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
     ));
     std::fs::create_dir_all(&dir).expect("create data dir");
     dir
@@ -112,7 +121,9 @@ async fn attaches_to_live_port_file_without_second_spawn() {
 /// real daemon as a child (TD-1304). A shell wrapper that *doesn't* exec
 /// is that shape: the host's child pid is the wrapper, the port file names
 /// the grandchild. Exact-pid matching would time out; descendant matching
-/// must attach, and group-kill must reap both.
+/// must attach, and group-kill must reap both. The wrapper argv is passed
+/// explicitly via [`spawn_daemon_with`] — pointing process-wide TSTD_PATH
+/// at it raced sibling tests' spawns under parallel threads (TD-4810).
 #[cfg(unix)]
 #[tokio::test]
 async fn onefile_shape_attaches_and_group_kill_reaps_grandchild() {
@@ -137,13 +148,8 @@ async fn onefile_shape_attaches_and_group_kill_reaps_grandchild() {
     std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
         .expect("chmod wrapper");
 
-    let previous = std::env::var_os("TSTD_PATH");
-    std::env::set_var("TSTD_PATH", &wrapper);
-    let mut child = spawn_daemon(&dir).expect("spawn wrapper");
-    match previous {
-        Some(v) => std::env::set_var("TSTD_PATH", v),
-        None => std::env::remove_var("TSTD_PATH"),
-    }
+    let mut child =
+        spawn_daemon_with(&dir, &[wrapper.display().to_string()]).expect("spawn wrapper");
     let spawned = child.id().expect("wrapper handed over its pid");
 
     let pf = wait_for_port_file(&dir, spawned, Duration::from_secs(30))

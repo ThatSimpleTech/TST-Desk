@@ -6235,17 +6235,38 @@ helper. Owed: a human `npm run tauri:dev` and packaged-launch pass.
 **Size:** 1 · **Depends on:** TD-1301
 
 **Acceptance criteria:**
-- [ ] The env-mutating test serializes (or receives the path explicitly), so parallel
+- [x] The env-mutating test serializes (or receives the path explicitly), so parallel
       `cargo test` cannot interleave the mutation with another test's `spawn_daemon`
-- [ ] The flake signature — clean-shutdown test fails because the port file survives —
+- [x] The flake signature — clean-shutdown test fails because the port file survives —
       is reproduced by forcing the interleaving, then fixed
-- [ ] 10 consecutive full Rust suite runs with no failure
+- [x] 10 consecutive full Rust suite runs with no failure
 
 Observed 2026-08-21: `spawns_daemon_connects_via_port_file_and_shuts_down_cleanly` failed
 on a full-suite run and passed in isolation. `onefile_shape_attaches_and_group_kill_reaps_grandchild`
 mutates process-wide `TSTD_PATH`; under parallel test threads that mutation can land inside
 another test's daemon spawn. Same disease TD-1409 treated: a test whose outcome depends on
 what else is running.
+
+**Completed (2026-08-22).** Two defects, and the one behind the observed flake turned out
+not to be the one the entry named. The env mutation is gone regardless:
+`spawn_daemon_with(data_dir, argv)` is the new test seam (`spawn_daemon` delegates to it
+with `resolve_command()`), and the onefile-shape test passes its wrapper argv explicitly
+instead of pointing process-wide `TSTD_PATH` at it around the spawn. Forcing that
+interleaving deterministically did contaminate a sibling — an instrumented victim asked
+for the venv daemon and got `/bin/sh` — yet still passed: process groups are per-spawn
+(`process_group(0)`), so the neighbor's group kill never crosses, which meant the flake
+needed something else. Instrumented autopsies over looped suite runs (9 failures in ~55,
+every one a `wait_for_port_file` timeout while the daemon sat alive and healthy and its
+watched directory was *gone*) found it: `make_dir()` built names from `pid + nanos`, the
+macOS clock resolves to exactly 1 µs (verified — consecutive samples step by 1000 ns),
+so co-starting tests computed the same data-dir path, two daemons then fought over one
+`port.json` ("stale port file detected, replacing"), and whichever test finished first
+deleted the shared dir out from under the other. A survivor's stale port file in the
+shared dir is precisely the originally reported "port file survives" shape; TSTD_PATH
+was guilt by participation, not cause. Fix: dir names carry a per-process `AtomicU64`
+counter, so collision is impossible regardless of clock resolution;
+`embeddings_supervision` already used unique per-test tags and needed nothing.
+Criterion 3: ten consecutive green full-suite runs post-fix.
 
 ### TD-4811 — README Status denies shipped M4 features
 **Size:** 1 · **Depends on:** TD-1501
