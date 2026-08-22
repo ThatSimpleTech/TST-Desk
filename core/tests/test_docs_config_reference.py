@@ -50,6 +50,7 @@ from tstd.boundary_config import (
 )
 from tstd.config import (
     TIER_NAMES,
+    AutonomyConfig,
     ComputerUseConfig,
     ConfigError,
     EmbeddingsConfig,
@@ -208,6 +209,7 @@ _COMPUTER_USE_FIELDS = frozenset(ComputerUseConfig.model_fields)
 _GROUNDING_FIELDS = frozenset(GroundingConfig.model_fields)
 _REMOTE_FIELDS = frozenset(RemoteConfig.model_fields)
 _NOTIFY_FIELDS = frozenset(NotifyConfig.model_fields)
+_AUTONOMY_FIELDS = frozenset(AutonomyConfig.model_fields)
 _SLACK_NOTIFY_FIELDS = frozenset(SlackNotifyConfig.model_fields)
 _NTFY_NOTIFY_FIELDS = frozenset(NtfyNotifyConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
@@ -283,6 +285,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                 _check_keys(data["notify"]["slack"], _SLACK_NOTIFY_FIELDS, f"{where} notify.slack")
             if "ntfy" in data["notify"]:
                 _check_keys(data["notify"]["ntfy"], _NTFY_NOTIFY_FIELDS, f"{where} notify.ntfy")
+        if "autonomy" in data:
+            _check_keys(data["autonomy"], _AUTONOMY_FIELDS, f"{where} autonomy")
         for name, preset in data.get("presets", {}).items():
             _check_keys(preset, _PRESET_FIELDS, f"{where} presets.{name}")
             for tier, body in preset.items():
@@ -308,6 +312,7 @@ def test_every_config_key_is_documented() -> None:
         | _GROUNDING_FIELDS
         | _REMOTE_FIELDS
         | _NOTIFY_FIELDS
+        | _AUTONOMY_FIELDS
         | _SLACK_NOTIFY_FIELDS
         | _NTFY_NOTIFY_FIELDS
         | _PRESET_FIELDS

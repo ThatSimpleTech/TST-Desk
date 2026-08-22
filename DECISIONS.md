@@ -7768,3 +7768,27 @@ file, which is the sign-and-start story.
 edit and sign into one click and steal TD-4003's explicit start. Also
 rejected: a reserved `version:` field — it would be a schema fork for a
 number the start gate does not read.
+
+---
+
+## 2026-08-22 — TD-4301: Podman is the named runtime; network is none (Class B)
+
+**Decision:** Autonomous isolation is rootless Podman (or a binary that
+speaks the same `run` argv). `autonomy.runtime` and `autonomy.image`
+live in `config.yaml`, never in Python. The argv bind-mounts only the
+workspace at `/workspace`, passes `--network=none`, `--userns=keep-id`,
+`--security-opt no-new-privileges`, and `--pull=never`. A missing,
+down, or rootful runtime refuses start with install copy. Interactive
+sessions do not import `tstd.autonomy.sandbox`. Firecracker / EZER is
+not this story.
+
+**Rationale:** Spec §12.5 and TD-101 require a container with only the
+workspace bound in. `--network=none` is the wall until the charter can
+punch holes (TD-4302). `--pull=never` keeps a start probe from phoning
+a registry the user did not ask to reach. The image tag is
+configuration so a landscape move does not require a code change.
+
+**Alternative rejected:** Docker as a first-class runtime — its
+`--userns` story is not the same, and naming two engines would split
+the install copy. Also rejected: pulling the image during the start
+check, and requiring a container for interactive sessions.
