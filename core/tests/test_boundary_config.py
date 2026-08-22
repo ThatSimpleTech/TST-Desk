@@ -137,6 +137,21 @@ class TestLoad:
             load_workspace_boundary(tmp_path)
         assert "writable_paths" in str(ei.value)
 
+    def test_unknown_key_inside_boundary_names_itself(self, tmp_path: Path) -> None:
+        # TD-4001: a typo'd key must not silently revert that one
+        # constraint to its default — the wall would loosen without a
+        # word. Same rule the charter's sections follow.
+        self._write(tmp_path, "boundary:\n  writable_path:\n    - src/**\n")
+        with pytest.raises(ConfigError) as ei:
+            load_workspace_boundary(tmp_path)
+        assert "writable_path" in str(ei.value)
+
+    def test_unknown_key_inside_caps_names_itself(self, tmp_path: Path) -> None:
+        self._write(tmp_path, "caps:\n  spend: 5\n")
+        with pytest.raises(ConfigError) as ei:
+            load_workspace_boundary(tmp_path)
+        assert "spend" in str(ei.value)
+
     def test_non_mapping_yaml_rejected(self, tmp_path: Path) -> None:
         self._write(tmp_path, "- just\n- a\n- list\n")
         with pytest.raises(ConfigError):

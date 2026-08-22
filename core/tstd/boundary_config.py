@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .attachments import AttachmentLimits
 from .config import ConfigError
@@ -29,7 +29,14 @@ DEFAULT_MEMORY_MAX_LINES = 200
 
 
 class BoundarySection(BaseModel):
-    """The workspace wall (spec §12.4 ``boundary``)."""
+    """The workspace wall (spec §12.4 ``boundary``).
+
+    Unknown keys are refused: a typo like ``writable_path`` must fail
+    loudly rather than silently fall back to the loosest default — the
+    same rule the charter's top level applies (TD-4001).
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     writable_paths: list[str] = Field(
         default_factory=lambda: list(DEFAULT_WRITABLE_PATHS),
@@ -82,7 +89,13 @@ class BoundarySection(BaseModel):
 
 
 class CapsSection(BaseModel):
-    """Declared caps (spec §12.4 ``caps``); enforced by TD-707."""
+    """Declared caps (spec §12.4 ``caps``); enforced by TD-707.
+
+    Unknown keys are refused, like ``BoundarySection``: a misspelled cap
+    would otherwise silently revert to its default.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     spend_usd: float = Field(default=DEFAULT_SPEND_USD, ge=0)
     wall_clock_hours: float = Field(default=DEFAULT_WALL_CLOCK_HOURS, ge=0)

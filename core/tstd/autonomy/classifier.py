@@ -12,7 +12,8 @@ the *obvious* cases — the ones that must never reach the model:
 - any path outside the workspace → C, always
 - a network call to a host outside the allowlist → C
 - a write to a steering file (``AGENTS.md`` / ``CLAUDE.md`` /
-  ``.tst/rules/**``) → C, even inside the workspace
+  ``.tst/rules/**``, and the signed charter at
+  ``.tst/autonomy/CHARTER.md`` — TD-4001) → C, even inside the workspace
 - a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
 - an in-workspace edit inside ``writable_paths`` → A
@@ -32,6 +33,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+from .charter import CHARTER_RELATIVE_PARTS
 
 # ── Decision classes (spec §12.2) ─────────────────────────────────────
 
@@ -61,6 +64,12 @@ _MEMORY_DIR_PARTS = (".tst", "memory")
 # but a write to it rewrites the guardrails — the self-escalation the
 # steering refusal exists to prevent (TD-4803).
 _POLICY_FILE_PARTS = (".tst", "config.yaml")
+# The signed charter (spec §12.4, TD-4001): the human's contract with the
+# run, committed before start. Read-only to the agent, Class C like
+# steering — while its sibling DECISIONS.md ledger stays writable, so only
+# the single file is protected, not the autonomy directory.  Folded from
+# charter.CHARTER_RELATIVE_PARTS: one source of truth for the path.
+_CHARTER_FILE_PARTS = tuple(p.casefold() for p in CHARTER_RELATIVE_PARTS)
 
 
 def _fold(parts: Sequence[str]) -> tuple[str, ...]:
@@ -252,8 +261,11 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
     Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
-    ``.tst/rules/``, and the approval policy at ``.tst/config.yaml``
-    (TD-4803) — are read-only to the filesystem tool, unconditionally.
+    ``.tst/rules/``, the approval policy at ``.tst/config.yaml``
+    (TD-4803), and the signed charter at ``.tst/autonomy/CHARTER.md``
+    (TD-4001; spec §12.4) — are read-only to the agent,
+    unconditionally.  The charter's own directory stays otherwise
+    writable: ``DECISIONS.md`` there is the ledger the loop appends to.
     ``.tst/memory/`` is the carve-out (TD-2102); never fold it into
     ``.tst/**``.  Directory comparisons case-fold (TD-4804): see ``_fold``.
     """
@@ -266,6 +278,8 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     if is_memory_write(boundary, path):
         return False
     if _fold(relative) == _POLICY_FILE_PARTS:
+        return True
+    if _fold(relative) == _CHARTER_FILE_PARTS:
         return True
     return _fold(relative[:2]) == _STEERING_RULES_DIR_PARTS
 
