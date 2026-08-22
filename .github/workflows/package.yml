@@ -68,8 +68,9 @@ jobs:
         working-directory: ui
 
       # beforeBuildCommand builds the sidecar (core/scripts/build_sidecar.py,
-      # which also smoke-launches it) and the UI; the --config in tauri:build
-      # injects bundle.externalBin so the sidecar ships inside the bundle.
+      # which also smoke-launches it) and the UI; bundle.externalBin in
+      # shell/tauri.conf.json ships the sidecar inside the bundle (TD-4809:
+      # declared once there, so npm and CI cannot drift apart).
       # TAURI_BUNDLER_DMG_IGNORE_CI=false: tauri skips .dmg packaging on CI
       # by default (Finder AppleScript styling is flaky headless); runners
       # handle it — the dev host noted in the backlog entry could not.

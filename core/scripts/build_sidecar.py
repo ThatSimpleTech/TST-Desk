@@ -1,17 +1,22 @@
 """Build and smoke-test the bundled tstd sidecar binary (TD-1301).
 
-    uv run python scripts/build_sidecar.py
+    uv run python scripts/build_sidecar.py [--if-missing]
 
 Produces ``shell/binaries/tstd-<host triple>`` via PyInstaller onefile —
 the Tauri ``externalBin`` convention — then launches it against a scratch
 data dir to prove the bundle serves without a system Python, and reports
 binary size and cold-start time (acceptance: startup under 3 s).
 
+``--if-missing`` skips the build when this host's sidecar already exists;
+tauri.conf.json's beforeDevCommand uses it so `tauri dev` pays the build
+once instead of on every start.
+
 Run from anywhere; paths resolve from this file's location.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -40,6 +45,14 @@ def host_triple() -> str:
     raise RuntimeError("could not parse host triple from rustc -vV")
 
 
+def target_path(triple: str) -> Path:
+    """Where this host's sidecar lands; Tauri's externalBin convention."""
+    # PyInstaller appends .exe on Windows, and Tauri's externalBin
+    # lookup expects the suffix on the triplet file name too.
+    suffix = ".exe" if sys.platform == "win32" else ""
+    return BINARIES / f"tstd-{triple}{suffix}"
+
+
 def build(triple: str) -> Path:
     with tempfile.TemporaryDirectory(prefix="tstd-sidecar-") as work:
         cmd = [
@@ -66,10 +79,10 @@ def build(triple: str) -> Path:
         subprocess.run(cmd, check=True, cwd=CORE)
         # PyInstaller appends .exe on Windows, and Tauri's externalBin
         # lookup expects the suffix on the triplet file name too.
-        suffix = ".exe" if sys.platform == "win32" else ""
+        built = Path(work) / f"tstd{'.exe' if sys.platform == 'win32' else ''}"
         BINARIES.mkdir(parents=True, exist_ok=True)
-        target = BINARIES / f"tstd-{triple}{suffix}"
-        shutil.move(str(Path(work) / f"tstd{suffix}"), target)
+        target = target_path(triple)
+        shutil.move(str(built), target)
         target.chmod(0o755)
         return target
 
@@ -160,7 +173,17 @@ def smoke(binary: Path) -> float:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--if-missing",
+        action="store_true",
+        help="exit early when this host's sidecar is already built",
+    )
+    args = parser.parse_args()
     triple = host_triple()
+    if args.if_missing and target_path(triple).is_file():
+        print(f"sidecar up to date: {target_path(triple)}")
+        return 0
     print(f"building tstd-{triple} ...")
     binary = build(triple)
     size_mb = binary.stat().st_size / (1024 * 1024)

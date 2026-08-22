@@ -14,7 +14,7 @@
 		"test:watch": "vitest",
 		"tauri": "TAURI_APP_PATH=../shell tauri",
 		"tauri:dev": "TAURI_APP_PATH=../shell tauri dev",
-		"tauri:build": "TAURI_APP_PATH=../shell tauri build --config '{\"bundle\":{\"externalBin\":[\"binaries/tstd\"]}}'"
+		"tauri:build": "TAURI_APP_PATH=../shell tauri build"
 	},
 	"dependencies": {
 		"@tanstack/svelte-virtual": "^3.13.35",

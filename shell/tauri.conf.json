@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../ui/build",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "cd ../ui && npm run dev",
+    "beforeDevCommand": "cd ../core && uv run python scripts/build_sidecar.py --if-missing && cd ../ui && npm run dev",
     "beforeBuildCommand": "cd ../core && uv run python scripts/build_sidecar.py && cd ../ui && npm run build"
   },
   "app": {
@@ -26,6 +26,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/tstd"],
     "macOS": {
       "signingIdentity": "tst-desk-dev",
       "entitlements": "./macos-entitlements.plist"
