@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -571,7 +572,7 @@ class _DroppingStream(httpx.AsyncByteStream):
         self._chunks = list(chunks)
         self._drop_after = drop_after
 
-    async def __aiter__(self):
+    async def __aiter__(self) -> AsyncIterator[bytes]:
         for i, chunk in enumerate(self._chunks):
             if i >= self._drop_after:
                 raise httpx.ReadError("connection dropped mid-stream", request=None)

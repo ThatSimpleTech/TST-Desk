@@ -122,6 +122,7 @@ class TestMultiTurnPrefixStability:
         await session.add_user_message("First")
         tc1 = await wait_for_turn(session, 1)
         assert tc1.tier == "brain"
+        assert assembler.last_assembled is not None
         first_hash = assembler.last_assembled.prefix_hash
 
         # Turn 2: brain (steering files unchanged)
@@ -183,6 +184,7 @@ class TestMultiTurnPrefixStability:
 
         await session.add_user_message("First")
         await wait_for_turn(session, 1)
+        assert assembler.last_assembled is not None
         before = assembler.last_assembled.prefix_hash
 
         # Modify the steering file mid-session

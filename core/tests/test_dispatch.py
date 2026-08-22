@@ -7,7 +7,9 @@ to the model, multi-round-trip tool call loops).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -123,10 +125,12 @@ def make_registry_and_dispatcher() -> tuple[ToolRegistry, ToolDispatcher]:
         ToolDispatcher(registry, classifier=make_classifier(), max_result_chars=1000)
     )
 
-    async def echo_handler(session, message, count=1, tool_call_id=""):
+    async def echo_handler(
+        session: object, message: str, count: int = 1, tool_call_id: str = ""
+    ) -> str:
         return f"Echo: {message} (x{count})"
 
-    async def slow_handler(session, delay=0.01, tool_call_id=""):
+    async def slow_handler(session: object, delay: float = 0.01, tool_call_id: str = "") -> str:
         import asyncio
 
         await asyncio.sleep(delay)
@@ -138,10 +142,10 @@ def make_registry_and_dispatcher() -> tuple[ToolRegistry, ToolDispatcher]:
     return registry, dispatcher
 
 
-def mock_factory(mock: MockProvider):
+def mock_factory(mock: MockProvider) -> Callable[[], Awaitable[MockProvider]]:
     """Return a factory that always returns the given mock."""
 
-    async def _factory():
+    async def _factory() -> MockProvider:
         return mock
 
     return _factory
@@ -194,8 +198,12 @@ class TestDispatcherValidation:
         dispatcher = attach_auto_approver(  # TD-802
             ToolDispatcher(registry, classifier=make_classifier())
         )
+
+        async def _unused() -> str:
+            return "x"
+
         with pytest.raises(KeyError):
-            dispatcher.register_handler("unknown_tool", lambda: "x")
+            dispatcher.register_handler("unknown_tool", _unused)
 
     async def test_unknown_tool_name_returns_error(self) -> None:
         _registry, dispatcher = make_registry_and_dispatcher()
@@ -268,7 +276,7 @@ class TestDispatcherExecution:
             ToolDispatcher(registry, classifier=make_classifier())
         )
 
-        async def failing_handler(session, **kwargs):
+        async def failing_handler(session: object, **kwargs: object) -> str:
             raise RuntimeError("Something went wrong")
 
         dispatcher.register_handler("bad_tool", failing_handler)
@@ -297,7 +305,7 @@ class TestDispatcherTruncation:
             ToolDispatcher(registry, classifier=make_classifier(), max_result_chars=100)
         )
 
-        async def big_handler(session, **kwargs):
+        async def big_handler(session: object, **kwargs: object) -> str:
             return "X" * 500
 
         dispatcher.register_handler("big_tool", big_handler)
@@ -333,7 +341,7 @@ class TestDispatcherParallel:
             ToolDispatcher(registry, classifier=make_classifier())
         )
 
-        async def fast_handler(session, delay=0.05, tool_call_id=""):
+        async def fast_handler(session: object, delay: float = 0.05, tool_call_id: str = "") -> str:
             import asyncio
 
             await asyncio.sleep(delay)
@@ -377,7 +385,7 @@ class TestDispatcherParallel:
             ToolDispatcher(registry, classifier=make_classifier())
         )
 
-        async def seq_handler(session, delay=0.05, tool_call_id=""):
+        async def seq_handler(session: object, delay: float = 0.05, tool_call_id: str = "") -> str:
             await asyncio.sleep(delay)
             return "Sequential result"
 
@@ -431,7 +439,7 @@ def make_mixed_dispatcher() -> ToolDispatcher:
     )
     dispatcher = attach_auto_approver(ToolDispatcher(registry, classifier=make_classifier()))
 
-    async def handler(session, delay=0.0, tool_call_id=""):
+    async def handler(session: object, delay: float = 0.0, tool_call_id: str = "") -> str:
         import asyncio
 
         if delay:
@@ -497,7 +505,7 @@ class TestDispatchManyOrdering:
         and leaves its siblings alone."""
         dispatcher = make_mixed_dispatcher()
 
-        async def boom(session, delay=0.0, tool_call_id=""):
+        async def boom(session: object, delay: float = 0.0, tool_call_id: str = "") -> str:
             raise RuntimeError("handler exploded")
 
         dispatcher.register_handler("par_tool", boom)
@@ -524,10 +532,14 @@ class TestDispatchManyOrdering:
         """
         dispatcher = make_mixed_dispatcher()
 
-        async def returns_none(session, delay=0.0, tool_call_id=""):
+        # Deliberately not an ``Awaitable[str]`` — a clean ``None`` return is
+        # the realistic shape that blows up past dispatch's own guards.
+        async def returns_none(
+            session: object, delay: float = 0.0, tool_call_id: str = ""
+        ) -> str | None:
             return None
 
-        dispatcher.register_handler("par_tool", returns_none)
+        dispatcher.register_handler("par_tool", cast(Callable[..., Awaitable[str]], returns_none))
 
         results = await dispatcher.dispatch_many(
             [("c1", "seq_tool", {}), ("c2", "par_tool", {}), ("c3", "seq_tool", {})]

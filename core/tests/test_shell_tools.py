@@ -514,7 +514,9 @@ class TestExitCode:
 
 
 class TestEnvSanitized:
-    async def test_child_env_excludes_secrets(self, tmp_path: Path, monkeypatch) -> None:
+    async def test_child_env_excludes_secrets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-super-secret-123")  # tst-secret-ok
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret_value")
         monkeypatch.setenv("DB_PASSWORD", "hunter2-value")
@@ -539,7 +541,7 @@ class TestEnvSanitized:
         assert "TST_NORMAL_VAR=visible-value" in result.output
         assert "PATH=" in result.output
 
-    def test_sanitized_env_filters_secret_shapes(self, monkeypatch) -> None:
+    def test_sanitized_env_filters_secret_shapes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
         monkeypatch.setenv("MY_TOKEN", "t")
         monkeypatch.setenv("SOME_CREDENTIAL", "c")

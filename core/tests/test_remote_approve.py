@@ -234,7 +234,7 @@ class TestRemoteResolve:
             PolicyConfig(rules=[PolicyRule(tool="fs_write", args="**", effect="ask")]),
         )
         target = tmp_path / "hello.txt"
-        slug = cached_config().tier("brain").slug
+        slug = cached_config().tier("brain").require_slug()
         mock = MockProvider(
             sequences={
                 slug: [
@@ -433,7 +433,7 @@ class TestDoubleResolve:
             PolicyConfig(rules=[PolicyRule(tool="fs_write", args="**", effect="ask")]),
         )
         target = tmp_path / "hello.txt"
-        slug = cached_config().tier("brain").slug
+        slug = cached_config().tier("brain").require_slug()
         mock = MockProvider(
             sequences={
                 slug: [

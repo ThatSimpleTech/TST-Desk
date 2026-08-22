@@ -143,7 +143,7 @@ class TestTheDaemonsOwnWiring:
         import tstd.daemon as daemon_mod
 
         seen: list[tuple[str, ...] | None] = []
-        real = daemon_mod.register_builtin_handlers
+        real = register_builtin_handlers
 
         def _spy(
             dispatcher: object,

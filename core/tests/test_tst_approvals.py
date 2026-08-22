@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from typing import Any
 
 import pytest
@@ -182,14 +183,14 @@ class TestPromptApproval:
 
 class TestStreamWiring:
     async def test_run_tty_y_sends_approve(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys, "stdin", _Stdin("y\n", tty=True))
+        monkeypatch.setattr(sys, "stdin", _Stdin("y\n", tty=True))
         ws = _Ws([_APPROVAL_B, _TURN_DONE])
         code = await cli._stream_turn(ws, _SESSION)
         assert code == 0
         assert ws.sent == [{"type": "approve", "session_id": _SESSION, "tool_call_id": "tc-1"}]
 
     async def test_run_tty_always_on_b(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys, "stdin", _Stdin("always\n", tty=True))
+        monkeypatch.setattr(sys, "stdin", _Stdin("always\n", tty=True))
         ws = _Ws([_APPROVAL_B, _TURN_DONE])
         code = await cli._stream_turn(ws, _SESSION)
         assert code == 0
@@ -198,7 +199,7 @@ class TestStreamWiring:
     async def test_run_non_tty_exits_without_approve(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.setattr(cli.sys, "stdin", _Stdin("y\n", tty=False))
+        monkeypatch.setattr(sys, "stdin", _Stdin("y\n", tty=False))
         ws = _Ws([_APPROVAL_B, _TURN_DONE])
         code = await cli._stream_turn(ws, _SESSION)
         assert code == 1
@@ -211,7 +212,7 @@ class TestStreamWiring:
     async def test_run_class_c_always_does_not_send_always_allow(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.setattr(cli.sys, "stdin", _Stdin("always\nn\n", tty=True))
+        monkeypatch.setattr(sys, "stdin", _Stdin("always\nn\n", tty=True))
         ws = _Ws([_APPROVAL_C, _TURN_DONE])
         code = await cli._stream_turn(ws, _SESSION)
         assert code == 0
@@ -219,7 +220,7 @@ class TestStreamWiring:
         assert CLASS_C_NOT_ALWAYS_ALLOWABLE in capsys.readouterr().err
 
     async def test_attach_tty_n_sends_deny(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(cli.sys, "stdin", _Stdin("n\n", tty=True))
+        monkeypatch.setattr(sys, "stdin", _Stdin("n\n", tty=True))
         ws = _Ws([_APPROVAL_B])
         code = await cli._stream_attached(ws, _SESSION)
         assert code == 0
@@ -228,7 +229,7 @@ class TestStreamWiring:
     async def test_attach_non_tty_keeps_following(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.setattr(cli.sys, "stdin", _Stdin("y\n", tty=False))
+        monkeypatch.setattr(sys, "stdin", _Stdin("y\n", tty=False))
         ws = _Ws([_APPROVAL_B])
         code = await cli._stream_attached(ws, _SESSION)
         assert code == 0

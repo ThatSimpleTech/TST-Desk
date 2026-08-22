@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -120,7 +121,7 @@ class TestAttachAgainstMockDaemon:
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(cli.sys, "stdin", _NonTtyStdin())
+        monkeypatch.setattr(sys, "stdin", _NonTtyStdin())
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         workspace = _workspace(tmp_path)

@@ -13,6 +13,7 @@ import pytest
 
 from tests.test_memory_end import _daemon, _open, _seed_turn
 from tstd.memory_store import memory_dir
+from tstd.mock import MockProvider
 from tstd.protocol import MemoryProposal
 
 
@@ -24,9 +25,9 @@ class TestDistillIsNotAToolWrite:
         await _seed_turn(daemon, sid)
         await daemon._handle_message(json.dumps({"type": "end_session", "session_id": sid}), None)
         mock = daemon._provider
-        assert mock is not None
-        assert mock.calls  # type: ignore[union-attr]
-        assert mock.calls[0].tools is None  # type: ignore[union-attr]
+        assert isinstance(mock, MockProvider)
+        assert mock.calls
+        assert mock.calls[0].tools is None
         runner = daemon.session_registry.get_runner(sid)
         if runner is not None:
             await runner.cancel()

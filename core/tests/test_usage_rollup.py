@@ -262,7 +262,7 @@ def test_every_bucket_totals_the_same_dollars(store: AuditStore) -> None:
 
     # $0.03 + $0.04 + $0.03
     for bucket in ("session", "day", "week"):
-        rows = usage_rollup(store, bucket)  # type: ignore[arg-type]
+        rows = usage_rollup(store, bucket)
         assert sum(r.cost for r in rows) == pytest.approx(0.10), bucket
         assert sum(r.tokens for r in rows) == 70_000, bucket
 

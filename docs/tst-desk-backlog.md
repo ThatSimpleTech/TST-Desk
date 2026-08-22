@@ -6384,3 +6384,28 @@ Closed with a `[[tool.mypy.overrides]]` disabling only `attr-defined` for
 `tst_cu_mcp.backends.windows`: those ctypes names resolve only when mypy itself
 runs on Windows, where the override is a no-op and full checking still applies.
 
+### TD-4825 — core mypy strict is red across ~29 test files
+**Size:** 2 · **Depends on:** none
+
+**Acceptance criteria:**
+- [x] `uv run mypy .` in `core/` reports zero errors
+- [x] The full core pytest suite stays green; no behavior changes ride along
+- [x] Fixes prefer real annotations and explicit exports over new `# type: ignore` comments
+
+`uv run mypy .` in core currently reports 132 errors across 29 test files plus one
+script — present on the pre-M8 local-model stack too, so it predates that merge;
+recent tickets were all mcp-package side, so nobody ran the core gate locally.
+Biggest clusters: loose test-helper annotations (a `-> object` return in
+`test_checkpoint.py` alone accounts for 29), Optional returns used unguarded,
+stdlib modules monkeypatched through implicit re-exports, untyped test defs, and
+a handful of stale ignore comments.
+
+Closed with test-file changes only — not a single source module needed touching.
+Helpers got their real return types (`CheckpointOutcome`, `Popen[bytes]`,
+`DaemonEvent`), Optional uses gained the suite's existing assert-narrowing idiom,
+and the stdlib monkeypatch targets moved to patching the module they actually are
+(`sys`, `httpx`) since the re-exported binding is the same object. Net −4 stale
+ignores, two justified casts, no new ones. Flagged for later, not fixed here:
+`tstd.audit.DecisionClass` (a Literal) and `tstd.autonomy.classifier.DecisionClass`
+(a StrEnum) are same-named incompatible types that callers must bridge manually.
+

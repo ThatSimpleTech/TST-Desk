@@ -19,7 +19,14 @@ from tstd.autonomy import Boundary
 from tstd.config import ModelConfig, Preset, TierConfig
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
-from tstd.protocol import AssistantDelta, AssistantReasoning, RuleActivated, TurnComplete, UserTurn
+from tstd.protocol import (
+    AssistantDelta,
+    AssistantReasoning,
+    DaemonEvent,
+    RuleActivated,
+    TurnComplete,
+    UserTurn,
+)
 from tstd.protocol import ToolCall as ToolCallEvent
 from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
@@ -230,7 +237,7 @@ class TestMultiTurn:
 
 
 class TestTurnEventOrdering:
-    def _event_types(self, events) -> list[tuple[int, str]]:
+    def _event_types(self, events: list[DaemonEvent]) -> list[tuple[int, str]]:
         """Return [(seq, type)] for the given events, in seq order."""
         return [(e.seq, e.type) for e in sorted(events, key=lambda e: e.seq)]
 
@@ -278,7 +285,7 @@ class TestTurnEventOrdering:
         # (the loop-wired stub classifier answers B) does not park.
         dispatcher = attach_auto_approver(ToolDispatcher(registry))
 
-        async def echo_handler(session, message, tool_call_id=""):
+        async def echo_handler(session: object, message: str, tool_call_id: str = "") -> str:
             return f"Echo: {message}"
 
         dispatcher.register_handler("echo", echo_handler)
@@ -583,7 +590,7 @@ class TestCancellation:
 
         call_count = 0
 
-        async def slow_handler(session, delay=0.5, tool_call_id=""):
+        async def slow_handler(session: object, delay: float = 0.5, tool_call_id: str = "") -> str:
             nonlocal call_count
             call_count += 1
             await asyncio.sleep(delay)
@@ -835,10 +842,12 @@ class TestTurnStartedLogging:
             r for r in caplog.records if r.name == "tstd.loop" and r.getMessage() == "turn started"
         ]
         assert len(started) == 2
-        assert started[0].session_id == session.id
-        assert started[0].queued_messages == 1  # the second send still waited
-        assert started[0].content_length == 3
-        assert started[1].queued_messages == 0
+        assert started[0].__dict__["session_id"] == session.id
+        # The dequeue log passes its telemetry flat through ``extra={...}``,
+        # so the fields land directly on the record's dict.
+        assert started[0].__dict__["queued_messages"] == 1  # the second send still waited
+        assert started[0].__dict__["content_length"] == 3
+        assert started[1].__dict__["queued_messages"] == 0
 
         await runner.cancel()
 

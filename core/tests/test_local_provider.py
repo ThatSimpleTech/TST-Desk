@@ -195,6 +195,7 @@ class TestEnsureProvider:
             assert provider.api_key is None
             assert keychain_calls == []
         finally:
+            assert isinstance(provider, ProviderClient)
             await provider.close()
 
     async def test_resolution_is_cached(

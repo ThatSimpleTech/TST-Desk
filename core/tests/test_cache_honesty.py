@@ -113,7 +113,7 @@ async def _turn_complete_logs(
         await runner.cancel()
 
     return [
-        dict(r.extra_fields)
+        dict(r.__dict__["extra_fields"])
         for r in caplog.records
         if r.name == "tstd.loop" and r.getMessage() == "turn complete"
     ]
@@ -271,7 +271,7 @@ class TestIdenticalPrefixStaysZero:
             await runner.cancel()
 
         logs = [
-            dict(r.extra_fields)
+            dict(r.__dict__["extra_fields"])
             for r in caplog.records
             if r.name == "tstd.loop" and r.getMessage() == "turn complete"
         ]

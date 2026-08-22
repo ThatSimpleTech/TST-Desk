@@ -12,6 +12,7 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from websockets.asyncio.client import connect
 
@@ -20,12 +21,15 @@ from tstd.protocol import PROTOCOL_VERSION
 from tstd.ws import create_port_file_path
 
 
-async def _wait_for_port_file(path: Path, seconds: float = 10.0) -> dict:
+async def _wait_for_port_file(path: Path, seconds: float = 10.0) -> dict[str, Any]:
     try:
         async with asyncio.timeout(seconds):
             while True:
                 if await asyncio.to_thread(path.exists):
-                    return await asyncio.to_thread(lambda: json.loads(path.read_text()))
+                    info: dict[str, Any] = await asyncio.to_thread(
+                        lambda: json.loads(path.read_text())
+                    )
+                    return info
                 await asyncio.sleep(0.01)
     except TimeoutError as e:
         raise RuntimeError(f"port file never appeared at {path}") from e
