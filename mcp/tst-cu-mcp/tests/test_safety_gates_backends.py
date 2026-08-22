@@ -135,6 +135,95 @@ class TestConfigDisablesTheWindowsBackend:
         assert refuse_all_actuation == []
 
 
+class TestActuationFlagParsesFailClosed:
+    """``actuation.enabled`` must survive the config dialects that quote it.
+
+    ``bool("false")`` is True in Python, so a naive coercion silently enables
+    actuation for whoever wrote ``enabled: "false"`` believing they had
+    disabled it. A quoted string has to mean what it says, and an
+    unrecognizable value must stop the server rather than guess at a safety
+    setting.
+    """
+
+    @staticmethod
+    def _config_with(tmp_path: Path, enabled_line: str) -> Path:
+        target = tmp_path / "config.yaml"
+        target.write_text(f"actuation:\n  enabled: {enabled_line}\n", encoding="utf-8")
+        return target
+
+    def test_quoted_false_disables_actuation(self, tmp_path: Path) -> None:
+        # The regression this closes: bool("false") is True.
+        from tst_cu_mcp.config import load_config
+
+        cfg = load_config(self._config_with(tmp_path, '"false"'))
+        assert cfg.actuation_enabled is False
+
+    def test_quoted_true_enables_actuation(self, tmp_path: Path) -> None:
+        from tst_cu_mcp.config import load_config
+
+        cfg = load_config(self._config_with(tmp_path, '"true"'))
+        assert cfg.actuation_enabled is True
+
+    @pytest.mark.parametrize(
+        ("line", "expected"),
+        [
+            ('"FALSE"', False),
+            ('"False"', False),
+            ('" no "', False),
+            ('"0"', False),
+            ("FALSE", False),  # bare forms never reach the string path: PyYAML's
+            ("no", False),  # YAML 1.1 resolver turns them into real bools first
+            ('"TRUE"', True),
+            ("true", True),
+            ("false", False),
+            ("on", True),
+        ],
+    )
+    def test_recognized_spellings_coerce_to_their_literal_value(
+        self, tmp_path: Path, line: str, expected: bool
+    ) -> None:
+        from tst_cu_mcp.config import load_config
+
+        cfg = load_config(self._config_with(tmp_path, line))
+        assert cfg.actuation_enabled is expected
+
+    def test_unrecognized_value_stops_startup(self, tmp_path: Path) -> None:
+        from tst_cu_mcp.config import load_config
+
+        target = self._config_with(tmp_path, '"maybe"')
+        with pytest.raises(ValueError, match=r"actuation\.enabled"):
+            load_config(target)
+
+    def test_non_scalar_value_stops_startup(self, tmp_path: Path) -> None:
+        from tst_cu_mcp.config import load_config
+
+        target = self._config_with(tmp_path, "[true]")
+        with pytest.raises(ValueError, match=r"actuation\.enabled"):
+            load_config(target)
+
+    def test_disabled_flag_blocks_a_real_actuation_call(
+        self, tmp_path: Path, refuse_all_actuation: list[str], windows_host: None
+    ) -> None:
+        # End to end: the quoted-"false" config actually stops the hands,
+        # not just parses into a falsy-looking field.
+        from tst_cu_mcp.config import load_config
+
+        safety.set_config(load_config(self._config_with(tmp_path, '"false"')))
+        with pytest.raises(safety.KillSwitchEngaged):
+            input_control.click(10, 10)
+        assert refuse_all_actuation == []
+
+    def test_missing_key_keeps_the_permissive_default(self, tmp_path: Path) -> None:
+        # The documented posture: no config (or no key) means actuation on.
+        # Pinning it so a future tightening of the flag parsing cannot
+        # quietly flip the default.
+        from tst_cu_mcp.config import Config, load_config
+
+        target = tmp_path / "config.yaml"
+        target.write_text("killswitch:\n  stop_file: /tmp/x\n", encoding="utf-8")
+        assert load_config(target).actuation_enabled is Config().actuation_enabled
+
+
 @pytest.mark.usefixtures("windows_host")
 class TestActuationReachesTheBackendWhenAllowed:
     """The negative control. Without it, a gate that blocks everything passes."""
@@ -184,6 +273,21 @@ class TestValidationHappensBeforeActuation:
         with pytest.raises(ValueError, match="scroll magnitude"):
             input_control.scroll(0, input_control.MAX_SCROLL_LINES + 1)
         assert refuse_all_actuation == []
+
+    def test_absurd_click_count_is_refused(self, refuse_all_actuation: list[str]) -> None:
+        # count >= 2 is a multi-click; past triple-click nothing real reads it,
+        # and an unbounded loop of click events at one point is pure harm.
+        with pytest.raises(ValueError, match="click count too large"):
+            input_control.click(10, 10, count=input_control.MAX_CLICK_COUNT + 1)
+        assert refuse_all_actuation == []
+
+    def test_max_click_count_still_reaches_the_backend(
+        self, refuse_all_actuation: list[str]
+    ) -> None:
+        # The bound refuses absurd counts, not multi-clicks: the ceiling value
+        # itself must actuate normally.
+        input_control.click(10, 10, count=input_control.MAX_CLICK_COUNT)
+        assert refuse_all_actuation == ["click"]
 
     def test_bad_combo_is_refused_before_any_key_goes_down(
         self, refuse_all_actuation: list[str]
