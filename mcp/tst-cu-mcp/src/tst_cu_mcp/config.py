@@ -29,6 +29,34 @@ def _default_config_path() -> Path:
     return Path(override) if override else Path.home() / ".tst-cu-mcp" / "config.yaml"
 
 
+_FLAG_TRUE = {"1", "true", "yes", "on"}
+_FLAG_FALSE = {"0", "false", "no", "off"}
+
+
+def _actuation_flag(value: object, source: Path) -> bool:
+    """Coerce ``actuation.enabled`` without ever failing open.
+
+    Generated configs and YAML dialects quote booleans often enough that this
+    switch has to survive it: ``bool("false")`` is True in Python, which would
+    silently enable actuation for someone who believed they had disabled it.
+    A real bool passes through, a recognized string coerces to its literal
+    meaning, and anything else refuses to start the server rather than guess
+    at a safety setting.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _FLAG_TRUE:
+            return True
+        if normalized in _FLAG_FALSE:
+            return False
+    raise ValueError(
+        f"config at {source}: actuation.enabled must be true or false "
+        f'(a quoted "true"/"false" string is accepted), got {value!r}'
+    )
+
+
 def load_config(path: Path | None = None) -> Config:
     """Load config from ``path`` (or the default location). Absent file -> defaults."""
     target = path if path is not None else _default_config_path()
@@ -45,7 +73,7 @@ def load_config(path: Path | None = None) -> Config:
     killswitch = raw.get("killswitch") or {}
     scoping = raw.get("scoping") or {}
     return Config(
-        actuation_enabled=bool(actuation.get("enabled", True)),
+        actuation_enabled=_actuation_flag(actuation.get("enabled", True), target),
         stop_file=killswitch.get("stop_file"),
         allowed_apps=tuple(scoping.get("allowed_apps") or ()),
     )
