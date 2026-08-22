@@ -102,6 +102,7 @@ import {
   selectRow,
   newSession,
   newSessionInWorkspace,
+  setPickForNewSession,
   activateRailFunction,
   stateTone,
   recencyLabel,
@@ -377,6 +378,22 @@ describe("new session", () => {
     expect(newSession()).toBe(true);
     expect(newSession()).toBe(false); // still awaiting the reply
     expect(sentTypes()).toEqual(["new_session"]);
+  });
+
+  it("opens the workspace picker when nothing can anchor (TD-4825)", async () => {
+    // Fresh install: nothing bound, no rows at all.
+    mocks.chatState.sessionId = null;
+    emit(sessionList([]));
+    setPickForNewSession(() => Promise.resolve("/ws/fresh"));
+    try {
+      expect(newSession()).toBe(false); // nothing to send synchronously
+      await vi.waitFor(() => expect(mocks.opened).toEqual(["/ws/fresh"]));
+      // The chosen path flows through newSessionInWorkspace, which hands an
+      // unknown workspace to session-status's openWorkspace (mocks.opened) —
+      // this store never dials the daemon directly for it.
+    } finally {
+      setPickForNewSession(null);
+    }
   });
 
   it("anchors on the newest listed row when nothing is bound (TD-1711)", () => {

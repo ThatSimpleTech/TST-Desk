@@ -24,6 +24,7 @@
 	import MemoryProposalBar from './MemoryProposalBar.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
 	import { push } from '../timeline-store.svelte.js';
+	import { setPickForNewSession } from '../sessions.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
 	import ProjectPane from './ProjectPane.svelte';
 	import ArtifactPane from './ArtifactPane.svelte';
@@ -128,6 +129,13 @@
 		const offSettings = startSettings();
 		const offCuPerms = startCuPermissions();
 		const offUsage = startUsage();
+		// TD-4825: a "+" press with no sessions to anchor on opens the
+		// workspace picker instead of doing nothing.
+		setPickForNewSession(async () => {
+			const { open } = await import('@tauri-apps/plugin-dialog');
+			const chosen = await open({ directory: true, multiple: false });
+			return typeof chosen === 'string' ? chosen : null;
+		});
 		// TD-1204: subscribe for the window's life, not the tab's. The
 		// panel is only mounted on Stack; a reply with no subscriber is
 		// dropped and the pane stays on "No instruction stack yet."
@@ -193,6 +201,21 @@
 			hasCuTool: screen.hasCuTool,
 		}),
 	);
+
+	// First computer-use turn in a session opens Screen so the glow and
+	// frame are watchable. Later tab changes are the user's.
+	let openedScreenFor = $state<string | null>(null);
+	$effect(() => {
+		const id = session.sessionId;
+		if (id === null) {
+			openedScreenFor = null;
+			return;
+		}
+		if (showScreenTab && openedScreenFor !== id) {
+			openedScreenFor = id;
+			showRightPane('screen');
+		}
+	});
 
 </script>
 
