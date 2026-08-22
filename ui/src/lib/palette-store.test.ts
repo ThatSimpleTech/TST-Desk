@@ -89,6 +89,7 @@ import { doctor, resetDoctor } from "./doctor.svelte.js";
 import { settings, resetSettings } from "./settings.svelte.js";
 import { rightPane, resetRightPane } from "./right-pane.svelte.js";
 import { sessions, startSessions, resetSessions } from "./sessions.svelte.js";
+import { resetDesign } from "./design.svelte.js";
 
 function sessionList(
 	entries: Array<[id: string, updatedAt: string, state?: SessionSummary["state"]]>,
@@ -135,6 +136,7 @@ beforeEach(() => {
 	resetDoctor();
 	resetSettings();
 	resetRightPane();
+	resetDesign();
 	resetSessions();
 	startSessions();
 	mocks.sent.length = 0; // drop the start-time refresh from assertions
@@ -167,6 +169,7 @@ describe("entries", () => {
 		expect(ids).toContain("action:end-session");
 		expect(ids).toContain("action:stop-computer-use");
 		expect(ids).toContain("action:resume-computer-use");
+		expect(ids).toContain("action:toggle-design");
 		expect(ids).toContain("action:quit-app");
 		expect(ids).toContain("session:s-newest");
 	});
@@ -298,6 +301,12 @@ describe("commands", () => {
 	it("resumes computer use through the same message as the title bar", () => {
 		run("Resume computer use");
 		expect(mocks.sent).toEqual([{ type: "set_cu_kill", killed: false }]);
+	});
+
+	it("opens the Screen pane for Design mode", () => {
+		expect(rightPane.tab).toBe("activity");
+		run("Toggle Design mode");
+		expect(rightPane.tab).toBe("screen");
 	});
 
 	it("asks the host to quit — close is not this", () => {

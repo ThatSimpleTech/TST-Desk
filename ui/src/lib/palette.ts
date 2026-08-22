@@ -23,6 +23,7 @@ export type PaletteCommand =
 	| { kind: "end-session" }
 	| { kind: "stop-computer-use" }
 	| { kind: "resume-computer-use" }
+	| { kind: "toggle-design" }
 	| { kind: "quit-app" };
 
 export interface PaletteEntry {
@@ -119,6 +120,14 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 		icon: "retry",
 		keywords: "switch cu actuation continue",
 		command: { kind: "resume-computer-use" },
+	},
+	{
+		id: "action:toggle-design",
+		title: "Toggle Design mode",
+		subtitle: "Point at the Screen frame instead of describing it (⌘⇧D)",
+		icon: "mouse-pointer",
+		keywords: "design pick xpath inspect click shift drag screen",
+		command: { kind: "toggle-design" },
 	},
 	{
 		id: "action:quit-app",

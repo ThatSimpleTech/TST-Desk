@@ -12,6 +12,11 @@ Keeping that order here, rather than in each backend, is deliberate: a new
 platform cannot ship without the kill-switch, the off-screen check or the focus
 guard, because it never gets the chance to forget them.
 
+Immediately after the kill-switch passes, every action pings
+:func:`tst_cu_mcp.overlay.get_overlay` so the real-display glow tracks the
+attempt — including attempts that then fail validation, which are still the
+agent driving.
+
 The order within it matters too. The kill-switch comes first because "stop"
 should not depend on anything else being well-formed. Argument validation comes
 before the focus check so a malformed call fails on its own merits rather than
@@ -29,6 +34,7 @@ from tst_cu_mcp import safety
 from tst_cu_mcp.backends import get_backend
 from tst_cu_mcp.displays import list_displays
 from tst_cu_mcp.focus import assert_foreground
+from tst_cu_mcp.overlay import get_overlay
 
 MOUSE_BUTTONS = ("left", "right")
 MAX_TEXT_LEN = 10000
@@ -73,6 +79,7 @@ def cursor_position() -> tuple[int, int]:
 def move_mouse(x: float, y: float, expect_window: str | None = None) -> None:
     """Move the cursor to a global coordinate."""
     safety.ensure_actuation_allowed()
+    get_overlay().activity()
     assert_on_screen(x, y)
     assert_foreground(expect_window)
     get_backend().move_mouse(float(x), float(y))
@@ -87,6 +94,7 @@ def click(
 ) -> None:
     """Click at a global coordinate. ``count`` >= 2 produces a multi-click."""
     safety.ensure_actuation_allowed()
+    get_overlay().activity()
     if button not in MOUSE_BUTTONS:
         raise ValueError(f"unknown button {button!r}; use one of {MOUSE_BUTTONS}")
     if count < 1:
@@ -110,6 +118,7 @@ def parse_key_combo(combo: str) -> object:
 def type_text(text: str, expect_window: str | None = None) -> None:
     """Type a Unicode string at the current focus. The text is never logged."""
     safety.ensure_actuation_allowed()
+    get_overlay().activity()
     if len(text) > MAX_TEXT_LEN:
         raise ValueError(f"text too long ({len(text)} > {MAX_TEXT_LEN})")
     assert_foreground(expect_window)
@@ -120,6 +129,7 @@ def type_text(text: str, expect_window: str | None = None) -> None:
 def press_keys(combo: str, expect_window: str | None = None) -> None:
     """Press and release a key combo such as ``"ctrl+c"`` or ``"return"``."""
     safety.ensure_actuation_allowed()
+    get_overlay().activity()
     backend = get_backend()
     # Parse before actuating so an unknown key is a clean error rather than a
     # half-pressed modifier left down on the user's keyboard.
@@ -131,6 +141,7 @@ def press_keys(combo: str, expect_window: str | None = None) -> None:
 def scroll(dx: int, dy: int, expect_window: str | None = None) -> None:
     """Scroll by lines: dy>0 up, dy<0 down; dx>0 right, dx<0 left."""
     safety.ensure_actuation_allowed()
+    get_overlay().activity()
     if abs(dx) > MAX_SCROLL_LINES or abs(dy) > MAX_SCROLL_LINES:
         raise ValueError(f"scroll magnitude too large (max {MAX_SCROLL_LINES} lines)")
     assert_foreground(expect_window)

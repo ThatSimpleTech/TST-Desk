@@ -5,10 +5,10 @@ else's overlay choice. Same shape as coworker (TD-2905): user data dir,
 YAML bools, atomic replace.
 
 Glow and the agent cursor are drawn on the Screen pane. ``show_on_real_display``
-is the contract for a later host/sidecar software overlay — this module
-never moves the hardware pointer. When that toggle is on, screenshot
-tools raise ``real_display_overlay_hidden`` for the duration of the
-capture so an overlay cannot paint into the frame.
+hands the sidecar the switch for its own real-display glow (a rust ring
+around each screen edge while the agent drives, hidden during captures so
+it cannot paint into a frame). This module still never moves the hardware
+pointer.
 """
 
 from __future__ import annotations
@@ -26,11 +26,11 @@ import yaml
 
 @dataclass(frozen=True)
 class CuIndicatorPrefs:
-    """The three Settings bits. Glow and cursor default on; real display off."""
+    """The three Settings bits. All default on now that the ring is real."""
 
     glow: bool = True
     agent_cursor: bool = True
-    show_on_real_display: bool = False
+    show_on_real_display: bool = True
 
 
 _DEFAULTS = CuIndicatorPrefs()
@@ -63,7 +63,7 @@ def load_cu_indicators(data_dir: str | Path) -> CuIndicatorPrefs:
     return CuIndicatorPrefs(
         glow=_as_bool(raw, "glow", True),
         agent_cursor=_as_bool(raw, "agent_cursor", True),
-        show_on_real_display=_as_bool(raw, "show_on_real_display", False),
+        show_on_real_display=_as_bool(raw, "show_on_real_display", True),
     )
 
 

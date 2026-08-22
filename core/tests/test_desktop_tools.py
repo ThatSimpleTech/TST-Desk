@@ -15,6 +15,7 @@ import pytest
 
 from tests.test_dispatch import attach_auto_approver
 from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClass, DecisionClassifier
+from tstd.config import ComputerUseConfig, ModelConfig, Preset, TierConfig
 from tstd.daemon import Daemon
 from tstd.desktop import (
     LIVE_PLATFORMS,
@@ -365,3 +366,107 @@ class TestMockNeverMovesAPointer:
         await driver.move(9, 8)
         await driver.scroll(0, -3)
         assert driver.actuations == ["move", "scroll"]
+
+
+def _config_with_cu_command(command: str) -> ModelConfig:
+    def tier(slug: str) -> TierConfig:
+        return TierConfig(
+            slug=slug,
+            base_url="http://mock.local/v1",
+            input_price=1.0,
+            output_price=2.0,
+            cache_read_price=0.5,
+            context_window=100_000,
+            max_output_tokens=1_000,
+        )
+
+    return ModelConfig(
+        presets={
+            "test": Preset(
+                brain=tier("test-brain"),
+                worker=tier("test-worker"),
+                validator=tier("test-validator"),
+            ),
+        },
+        active_preset="test",
+        computer_use=ComputerUseConfig(command=command),
+    )
+
+
+class TestOverlayEnvPlumbing:
+    """The daemon's show_on_real_display pref reaches the sidecar as env."""
+
+    def test_prefs_on_threads_overlay_one(self) -> None:
+        from tstd.cu_indicators import CuIndicatorPrefs
+        from tstd.desktop.factory import desktop_driver_from_config
+
+        driver = desktop_driver_from_config(
+            _config_with_cu_command("python -m tst_cu_mcp"),
+            CuIndicatorPrefs(show_on_real_display=True),
+        )
+        assert isinstance(driver, McpDesktopDriver)
+        assert driver._client._env is not None
+        assert driver._client._env["TST_CU_MCP_OVERLAY"] == "1"
+        # The rest of the parent environment still reaches the child.
+        assert "PATH" in driver._client._env
+
+    def test_prefs_off_threads_overlay_zero(self) -> None:
+        from tstd.cu_indicators import CuIndicatorPrefs
+        from tstd.desktop.factory import desktop_driver_from_config
+
+        driver = desktop_driver_from_config(
+            _config_with_cu_command("python -m tst_cu_mcp"),
+            CuIndicatorPrefs(show_on_real_display=False),
+        )
+        assert isinstance(driver, McpDesktopDriver)
+        assert driver._client._env is not None
+        assert driver._client._env["TST_CU_MCP_OVERLAY"] == "0"
+
+    def test_without_prefs_no_env_override(self) -> None:
+        from tstd.desktop.factory import desktop_driver_from_config
+
+        driver = desktop_driver_from_config(_config_with_cu_command("python -m tst_cu_mcp"))
+        assert isinstance(driver, McpDesktopDriver)
+        assert driver._client._env is None
+
+    def test_empty_command_is_mock_even_with_prefs(self) -> None:
+        from tstd.cu_indicators import CuIndicatorPrefs
+        from tstd.desktop.factory import desktop_driver_from_config
+
+        driver = desktop_driver_from_config(
+            _config_with_cu_command(""), CuIndicatorPrefs(show_on_real_display=True)
+        )
+        assert isinstance(driver, MockDesktopDriver)
+
+    async def test_sidecar_child_receives_the_env(self, tmp_path: Path) -> None:
+        """End to end: a spawned sidecar actually sees the merged env."""
+        from tstd.desktop.stdio_mcp import StdioMcpClient
+
+        script = tmp_path / "env_probe_mcp.py"
+        script.write_text(
+            "import json, os, sys\n"
+            "for line in sys.stdin:\n"
+            "    line = line.strip()\n"
+            "    if not line:\n"
+            "        continue\n"
+            "    msg = json.loads(line)\n"
+            "    method = msg.get('method')\n"
+            "    mid = msg.get('id')\n"
+            "    if method == 'initialize':\n"
+            "        print(json.dumps({'jsonrpc': '2.0', 'id': mid, 'result': {\n"
+            "            'protocolVersion': '2024-11-05', 'capabilities': {},\n"
+            "            'serverInfo': {'name': 'env-probe', 'version': '0'}}}))\n"
+            "    elif method == 'tools/call':\n"
+            "        seen = os.environ.get('TST_CU_MCP_OVERLAY', 'unset')\n"
+            "        print(json.dumps({'jsonrpc': '2.0', 'id': mid, 'result': {\n"
+            "            'content': [{'type': 'text', 'text': seen}]}}))\n"
+            "    sys.stdout.flush()\n",
+            encoding="utf-8",
+        )
+        client = StdioMcpClient([sys.executable, str(script)], env={"TST_CU_MCP_OVERLAY": "1"})
+        try:
+            result = await client.call_tool("probe")
+            text = result["content"][0]["text"]
+            assert text == "1"
+        finally:
+            await client.aclose()

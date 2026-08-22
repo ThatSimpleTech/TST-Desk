@@ -1251,9 +1251,9 @@ class SetupState(DaemonEvent):
     # TD-3402: Screen-pane glow / agent cursor. Additive, default on.
     cu_glow: bool = True
     cu_agent_cursor: bool = True
-    # TD-3402: host/sidecar overlay on the real display. Additive, default
-    # off. Hidden for the duration of every screenshot when on.
-    cu_show_on_real_display: bool = False
+    # TD-3402: sidecar glow on the real display. Additive, default on now
+    # that the ring exists. Hidden for the duration of every screenshot.
+    cu_show_on_real_display: bool = True
     # TD-2806: workspaces pinned on this machine. Not a workspace file.
     pinned_workspaces: list[str] = Field(default_factory=list)
 

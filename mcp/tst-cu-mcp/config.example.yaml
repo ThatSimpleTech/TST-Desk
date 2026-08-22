@@ -20,6 +20,18 @@ killswitch:
   #
   # stop_file: C:\Users\you\.tst-cu-mcp\STOP
 
+overlay:
+  # The real-display glow: while the model drives, the edges of every screen
+  # glow rust (macOS only today). Purely a signal — the panels ignore mouse
+  # events, and they hide themselves for the instant of each screenshot so
+  # they can never appear in a captured frame. The glow follows the
+  # kill-switch: engaged means dark.
+  #
+  # Default: true on macOS, no-op elsewhere. The TST_CU_MCP_OVERLAY
+  # environment variable (1/0) overrides this setting — the tst-desk daemon
+  # sets it from the user's "show indicators on the real display" preference.
+  enabled: true
+
 scoping:
   # Reserved for a future milestone and currently unenforced. Listing apps here
   # does nothing yet; it is not a restriction you can rely on today.

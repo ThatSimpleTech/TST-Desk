@@ -1,11 +1,24 @@
 <script lang="ts">
-	// Software agent cursor on the Screen pane (TD-3402).
+	// Software agent cursor on the Screen frame (TD-3402).
 	// Not a second hardware pointer — pointer-events none, no OS cursor API.
+	// Hidden until a move/click has a point, and while Design mode is on.
 	import { cuIndicators } from '../screen-indicator.svelte.js';
-	import { cursorPercent, reducedMotionIndicators } from '../screen-indicator';
+	import { cursorPercent, cursorVisible, reducedMotionIndicators } from '../screen-indicator';
 	import { settings } from '../settings.svelte.js';
+	import { design } from '../design.svelte.js';
+	import Icon from './Icon.svelte';
 
-	let show = $derived(cuIndicators.live && settings.cuAgentCursor);
+	let placed = $derived(
+		cursorVisible(
+			cuIndicators.cursorX,
+			cuIndicators.cursorY,
+			cuIndicators.frameWidth,
+			cuIndicators.frameHeight,
+		),
+	);
+	let show = $derived(
+		cuIndicators.live && settings.cuAgentCursor && placed && !design.enabled,
+	);
 	let trail = $derived(reducedMotionIndicators(cuIndicators.prefersReducedMotion).trail);
 	let pos = $derived(
 		cursorPercent(
@@ -23,19 +36,20 @@
 		class:cursor--trail={trail}
 		style="left: {pos.left}%; top: {pos.top}%"
 		aria-hidden="true"
-	></div>
+	>
+		<Icon name="mouse-pointer" size={16} />
+	</div>
 {/if}
 
 <style>
 	.cursor {
 		position: absolute;
-		width: var(--space-4);
-		height: var(--space-4);
-		margin-left: calc(var(--space-4) / -2);
-		margin-top: calc(var(--space-4) / -2);
-		border-radius: var(--radius-full);
-		background: var(--color-accent);
-		border: var(--border-width) solid var(--color-on-accent);
+		width: 16px;
+		height: 16px;
+		/* Tip of the pointer sits on the last move/click, not the glyph's center. */
+		margin-left: -2px;
+		margin-top: -2px;
+		color: var(--color-accent);
 		pointer-events: none;
 	}
 
@@ -45,21 +59,9 @@
 			top var(--transition-base);
 	}
 
-	.cursor--trail::after {
-		content: '';
-		position: absolute;
-		inset: calc(var(--space-1) * -1);
-		border-radius: var(--radius-full);
-		border: var(--border-width) solid var(--color-accent);
-		opacity: 0.45;
-	}
-
 	@media (prefers-reduced-motion: reduce) {
 		.cursor--trail {
 			transition: none;
-		}
-		.cursor--trail::after {
-			content: none;
 		}
 	}
 </style>

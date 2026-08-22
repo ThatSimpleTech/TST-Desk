@@ -36,16 +36,25 @@ export function pointFromArgs(
 	return { x, y };
 }
 
+/** No phantom midpoint — the overlay stays off until a move/click has a point. */
+export function cursorVisible(
+	x: number | null,
+	y: number | null,
+	width: number | null,
+	height: number | null,
+): boolean {
+	return x !== null && y !== null && width !== null && height !== null && width > 0 && height > 0;
+}
+
 export function cursorPercent(
 	x: number | null,
 	y: number | null,
 	width: number | null,
 	height: number | null,
 ): { left: number; top: number } {
-	if (x === null || y === null || width === null || height === null) {
-		return { left: 50, top: 50 };
+	if (!cursorVisible(x, y, width, height) || x === null || y === null || width === null || height === null) {
+		return { left: 0, top: 0 };
 	}
-	if (width <= 0 || height <= 0) return { left: 50, top: 50 };
 	return {
 		left: clamp((x / width) * 100, 0, 100),
 		top: clamp((y / height) * 100, 0, 100),

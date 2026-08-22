@@ -37,12 +37,13 @@ def set_config(config: Config | None) -> None:
     _config = config
 
 
-def _active_config() -> Config:
+def active_config() -> Config:
+    """The installed config or permissive defaults; readable by other modules."""
     return _config if _config is not None else Config()
 
 
 def stop_file_path(config: Config | None = None) -> Path:
-    cfg = config if config is not None else _active_config()
+    cfg = config if config is not None else active_config()
     if cfg.stop_file:
         return Path(cfg.stop_file)
     override = os.environ.get(STOP_FILE_ENV)
@@ -55,24 +56,41 @@ def _env_stop_engaged() -> bool:
 
 def killswitch_engaged() -> bool:
     """True if actuation is currently blocked for any reason."""
-    if not _active_config().actuation_enabled:
+    if not active_config().actuation_enabled:
         return True
     if _env_stop_engaged():
         return True
     return stop_file_path().exists()
 
 
+def notify_blocked() -> None:
+    """Tell the real-display overlay an actuation was refused.
+
+    Best-effort by contract: signaling must never turn a refusal into a
+    crash, so any overlay trouble is swallowed here.
+    """
+    try:
+        from tst_cu_mcp.overlay import get_overlay
+
+        get_overlay().notify_blocked()
+    except Exception:
+        pass
+
+
 def ensure_actuation_allowed() -> None:
     """Raise :class:`KillSwitchEngaged` if actuation is currently blocked."""
-    cfg = _active_config()
+    cfg = active_config()
     if not cfg.actuation_enabled:
+        notify_blocked()
         raise KillSwitchEngaged("actuation is disabled in config (actuation.enabled = false)")
     if _env_stop_engaged():
+        notify_blocked()
         raise KillSwitchEngaged(
             f"actuation halted by kill-switch env {STOP_ENV}; unset it to resume"
         )
     path = stop_file_path(cfg)
     if path.exists():
+        notify_blocked()
         raise KillSwitchEngaged(
             f"actuation halted by kill-switch stop-file {path}; delete it to resume"
         )

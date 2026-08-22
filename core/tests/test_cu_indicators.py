@@ -41,7 +41,7 @@ class TestCuIndicatorPersist:
         prefs = load_cu_indicators(tmp_path)
         assert prefs.glow is True
         assert prefs.agent_cursor is True
-        assert prefs.show_on_real_display is False
+        assert prefs.show_on_real_display is True
 
     def test_round_trip(self, tmp_path: Path) -> None:
         save_cu_indicators(
@@ -199,7 +199,7 @@ class TestCuIndicatorSettingsWire:
         try:
             assert daemon.cu_indicators.glow is True
             assert daemon.cu_indicators.agent_cursor is True
-            assert daemon.cu_indicators.show_on_real_display is False
+            assert daemon.cu_indicators.show_on_real_display is True
             ws = await _connect_and_handshake(
                 f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
             )
@@ -207,7 +207,7 @@ class TestCuIndicatorSettingsWire:
             assert resp["type"] == "setup_state"
             assert resp["cu_glow"] is True
             assert resp["cu_agent_cursor"] is True
-            assert resp["cu_show_on_real_display"] is False
+            assert resp["cu_show_on_real_display"] is True
             await ws.close()
         finally:
             await _stop_daemon(task)

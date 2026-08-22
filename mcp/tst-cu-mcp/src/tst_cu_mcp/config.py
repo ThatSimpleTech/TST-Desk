@@ -20,6 +20,8 @@ class Config:
 
     actuation_enabled: bool = True
     stop_file: str | None = None
+    # Real-display glow; the TST_CU_MCP_OVERLAY env var overrides this.
+    overlay_enabled: bool = True
     # Reserved for a future scoping milestone; unused (and unenforced) in v1.
     allowed_apps: tuple[str, ...] = ()
 
@@ -43,9 +45,11 @@ def load_config(path: Path | None = None) -> Config:
 
     actuation = raw.get("actuation") or {}
     killswitch = raw.get("killswitch") or {}
+    overlay = raw.get("overlay") or {}
     scoping = raw.get("scoping") or {}
     return Config(
         actuation_enabled=bool(actuation.get("enabled", True)),
         stop_file=killswitch.get("stop_file"),
+        overlay_enabled=bool(overlay.get("enabled", True)),
         allowed_apps=tuple(scoping.get("allowed_apps") or ()),
     )

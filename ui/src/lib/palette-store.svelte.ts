@@ -25,6 +25,7 @@ import { openDecisions } from "./decisions.svelte.js";
 import { runDoctor } from "./doctor.svelte.js";
 import { openSettings, setTheme, settings } from "./settings.svelte.js";
 import { showRightPane } from "./right-pane.svelte.js";
+import { toggleDesign } from "./design.svelte.js";
 import {
 	newSession,
 	selectRow,
@@ -129,6 +130,10 @@ function dispatch(command: PaletteCommand): void {
 			return;
 		case "resume-computer-use":
 			setCuKill(false);
+			return;
+		case "toggle-design":
+			toggleDesign();
+			showRightPane("screen");
 			return;
 		case "quit-app":
 			if (isTauri()) {
