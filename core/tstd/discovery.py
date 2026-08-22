@@ -43,7 +43,7 @@ DISCOVERY_TIMEOUT = 10.0
 than loading anything, so it answers immediately or not at all."""
 
 _START_SERVER_FIX = (
-    "Start a local OpenAI-compatible model server at that address "
+    "Start a local OpenAI-compatible model server at {endpoint} "
     "(Ollama, vLLM, LM Studio, llama.cpp), or point the tier's base_url at one."
 )
 
@@ -143,7 +143,7 @@ async def discover_model(
             raise ModelDiscoveryError(
                 f"no model server answered at {endpoint}: {e}",
                 endpoint=endpoint,
-                fix=_START_SERVER_FIX,
+                fix=_START_SERVER_FIX.format(endpoint=endpoint),
             ) from e
     finally:
         if owned:
@@ -178,14 +178,14 @@ async def discover_model(
         raise ModelDiscoveryError(
             f"{endpoint} is running but serves no models",
             endpoint=endpoint,
-            fix="Load a model into that server, then send the message again.",
+            fix=f"Load a model into the server at {endpoint}, then send the message again.",
         )
     if len(ids) > 1:
         raise ModelDiscoveryError(
             f"{endpoint} serves {len(ids)} models and config names none of them: "
             f"{', '.join(sorted(ids))}",
             endpoint=endpoint,
-            fix=slug_fix,
+            fix=f"{slug_fix} The endpoint is {endpoint}.",
         )
 
     log.info(

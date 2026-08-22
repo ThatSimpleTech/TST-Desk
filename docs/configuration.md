@@ -54,12 +54,14 @@ no effect.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, and `local`. |
+| `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, `local`, and `vllm`. |
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
-| `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. |
+| `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
+| `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
+| `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 
 ### `search`
 
@@ -108,6 +110,58 @@ under the user data dir. Playwright missing always falls back to mock.
 |---|---|---|---|
 | `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
+| `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
+| `local_worker_preset` | string | `vllm` | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
+
+#### `computer_use.grounding`
+
+UI-TARS (or any OpenAI-compatible vision chat) on loopback. Empty
+`base_url` is off: `desktop_click` uses the intended (x, y) — the
+TD-3304 path. A down endpoint, a missing model, or an unreadable
+reply also falls back to that point; the click does not fail because
+grounding missed. Off-box URLs are a load error. Cost on loopback is
+zero. Latency is recorded on the tool result.
+
+The URL may be the same `vllm` loopback as the tiers (`:8000/v1`) or a
+dedicated sidecar. Optional `slug` is discovered from `/v1/models`
+when omitted, same as a loopback tier (TD-1805).
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `base_url` | string | *empty* | OpenAI-compatible endpoint, including the `/v1` suffix. Empty disables. Must be loopback when set. |
+| `slug` | string or omitted | *omitted* | Model id. Omitted discovers the single model the endpoint serves. Required only if the server lists several. |
+| `timeout_seconds` | float > 0 | `8` | How long a locate request may run before the intended point is used. |
+
+### `notify`
+
+Outbound notification channels (TD-3801, TD-3802). Each channel is a
+standalone `send(config, message)` — Slack first, ntfy optional, no
+20-platform gateway (spec §8). Discord/Telegram are TD-4707. Off by
+default. Destination URLs are keychain secrets (`tst-slack-webhook`,
+`tst-ntfy-topic`), never this file, never the audit log. `host` is the
+only host a notifier may reach; the keychain URL's host must match it
+or the send is dropped.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `slack` | mapping | see below | Slack incoming webhook. |
+| `ntfy` | mapping | see below | ntfy topic POST. |
+
+#### `notify.slack`
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | When false, approval-needed and turn-complete never POST. |
+| `host` | string | *empty* | Allowed destination hostname. Empty disables even if `enabled` is true. |
+| `timeout_seconds` | float > 0 | `5` | How long a webhook POST may run. Failures are logged and never fail the turn. |
+
+#### `notify.ntfy`
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | When false, approval-needed and turn-complete never POST. |
+| `host` | string | *empty* | Allowed destination hostname. Empty disables even if `enabled` is true. Typical public instance is ntfy.sh. |
+| `timeout_seconds` | float > 0 | `5` | How long a topic POST may run. Failures are logged and never fail the turn. |
 
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
@@ -122,6 +176,30 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
+
+### `remote`
+
+Opt-in bind on a Tailscale address (TD-3601). Empty is off: the daemon
+listens on `127.0.0.1` only. Set `bind` to a Tailscale IPv4
+(`100.64.0.0/10`), Tailscale IPv6 (`fd7a:115c:a1e0::/48`), or an
+interface name (`tailscale0`). The server then listens on that address
+**and** loopback, never `0.0.0.0` or `::`. A non-Tailscale LAN address
+is refused. Live Tailscale is not required to ship or test; the daemon
+reads local interface addresses, not `tailscale status`.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `bind` | string | *empty* | Interface name or Tailscale IP. Empty / omitted is loopback only. |
+
+**Attach from another device (TD-3701).** Open the same TST Desk UI in a
+browser (the desktop window is Tauri; a phone is not). Connect with
+`ws://<bind>:<port>` plus the rotating token in `{user_data_dir}/remote-token`
+— not the token in `port.json`. Example:
+`ws://100.64.1.2:9xxx` and the file
+`~/Library/Application Support/com.thatsimpletech.tstdesk/remote-token` on
+macOS. A URL of the form `?ws=ws://…&token=…` (or the same pair in the hash)
+fills the form. No account, no relay. TD-3603 will copy address + token from
+Settings; this branch still types them.
 
 <!-- verify: model -->
 ```yaml
@@ -170,6 +248,21 @@ session:
 computer_use:
   command: ""
   browser: mock
+  grounding:
+    base_url: ""
+    timeout_seconds: 8
+  local_worker_preset: vllm
+remote:
+  bind: ""
+notify:
+  slack:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  ntfy:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
 ```
 
 ### A preset
@@ -200,7 +293,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
 a wrong number here buys you a wrong cap, not an error. A preset priced at zero (the `local`
-preset) honestly reports a cost of zero.
+and `vllm` presets) honestly reports a cost of zero.
 
 **`context_window` and `max_output_tokens` are a compaction budget, not request parameters.**
 Neither is sent to the model. Together they set the point at which the conversation is
@@ -345,6 +438,65 @@ Invalid model configuration in .../config.yaml: presets.<preset>.<tier>: Value e
 slug is required for the off-box endpoint https://openrouter.ai/api/v1;
 only a loopback endpoint discovers its model from /v1/models
 ```
+
+### 3.5 Attaching vLLM or EZER
+
+The shipped `vllm` preset points every tier at `http://127.0.0.1:8000/v1` — vLLM's
+OpenAI-compatible server default. EZER serves the same `/v1` shape, so attaching EZER is this
+preset, not a different code path. Set it in the user `config.yaml` and restart the daemon
+(or pick `vllm` from the first-run wizard / settings):
+
+<!-- verify: model -->
+```yaml
+presets:
+  vllm:
+    brain:
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    worker:
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    validator:
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+active_preset: vllm
+```
+
+In a copy that already has the shipped presets, the only edit is `active_preset: vllm`. Start
+the server so `GET http://127.0.0.1:8000/v1/models` answers (vLLM's default `vllm serve …`
+listens on 8000; EZER's documented command does the same if it uses that port). If the process
+listens elsewhere, change `base_url` in this file — never in Python.
+
+`slug` is omitted on purpose, same as `local` (§3.4). What "unresolved" means on this
+endpoint:
+
+- **Down.** Nothing is listening at `127.0.0.1:8000`. The turn fails as `model_unresolved`.
+  Diagnostics' `provider` row names `http://127.0.0.1:8000/v1`, not a model tag. Start the
+  server and send the next message.
+- **Zero models.** The server answered `/v1/models` with an empty list. Load a model, then
+  resend.
+- **Several models.** Discovery will not guess — `/v1/models` lists embedding models beside
+  chat models. Set `slug:` on the tier to the one you want.
+
+The doctor's `provider` row always names the endpoint (`reachable at …` or the discovery
+failure's `fix`). It does not print the developer's model list.
+
+To ground computer-use clicks on the same loopback server, set
+`computer_use.grounding.base_url` to that `/v1` URL (or a dedicated
+sidecar). Empty keeps the intended (x, y). A vision model that is
+down or unnamed falls back the same way — it does not fail the click.
 
 ---
 

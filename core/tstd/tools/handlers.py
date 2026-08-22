@@ -25,6 +25,7 @@ from pathlib import Path
 from ..browser import BrowserDriver, MockBrowserDriver
 from ..context.manifest import _FALLBACK_IGNORE
 from ..desktop import DesktopDriver, MockDesktopDriver
+from ..desktop.grounding_client import GroundingLocator
 from .browser import register_browser_handlers
 from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
@@ -151,6 +152,7 @@ def register_builtin_handlers(
     allowed_commands: tuple[str, ...] | None = None,
     desktop_driver: DesktopDriver | None = None,
     browser_driver: BrowserDriver | None = None,
+    grounding_client: GroundingLocator | None = None,
 ) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
@@ -159,6 +161,8 @@ def register_builtin_handlers(
     is the process-wide computer-use backend (TD-3301); omitted means the
     in-process mock so every builtin still has a handler.  ``browser_driver``
     is the session browser (TD-1710); omitted is the in-process mock.
+    ``grounding_client`` is the optional local click-grounding model
+    (TD-3902); omitted or disabled keeps the intended (x, y).
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
@@ -170,7 +174,9 @@ def register_builtin_handlers(
         "shell", partial(run_shell, policy=ShellPolicy(allowed_commands=allowed_commands))
     )
     register_desktop_handlers(
-        dispatcher, desktop_driver if desktop_driver is not None else MockDesktopDriver()
+        dispatcher,
+        desktop_driver if desktop_driver is not None else MockDesktopDriver(),
+        grounding_client=grounding_client,
     )
     register_browser_handlers(
         dispatcher, browser_driver if browser_driver is not None else MockBrowserDriver()

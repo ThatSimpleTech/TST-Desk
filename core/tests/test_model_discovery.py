@@ -269,12 +269,21 @@ class TestRemoteStaysAConfigError:
 
 
 class TestShippedPreset:
+    @pytest.mark.parametrize("preset", ["local", "vllm"])
     @pytest.mark.parametrize("tier", ["brain", "worker", "validator"])
-    def test_local_preset_names_no_model_tag(self, tier: TierName) -> None:
-        """AC-1: a fresh install must not carry one developer's Ollama tag."""
+    def test_loopback_presets_name_no_model_tag(self, preset: str, tier: TierName) -> None:
+        """AC-1 / TD-3901: a fresh install must not carry one developer's tag."""
         config = shipped_config()
-        config.active_preset = "local"
+        config.active_preset = preset
         assert config.tiers()[tier].slug is None
+
+    def test_vllm_preset_names_the_documented_endpoint(self) -> None:
+        """TD-3901: vLLM's OpenAI server default, not a model id."""
+        config = shipped_config()
+        config.active_preset = "vllm"
+        urls = {t.base_url for t in config.tiers().values()}
+        assert len(urls) == 1
+        assert "127.0.0.1:8000" in next(iter(urls))
 
     @pytest.mark.parametrize("preset", ["tst-default", "budget"])
     @pytest.mark.parametrize("tier", ["brain", "worker", "validator"])
@@ -411,6 +420,20 @@ class TestDiscoveryFailures:
             with pytest.raises(ModelDiscoveryError) as excinfo:
                 await discover_model(server.base_url, tier="worker")
             assert "worker" in excinfo.value.fix
+        finally:
+            await server.stop()
+
+    async def test_the_fix_names_the_endpoint_not_the_served_tags(self) -> None:
+        """TD-3901: ``.fix`` points at the URL. The message may list ids;
+        the doctor-facing fix must not."""
+        server = ModelsEndpoint(["chat-model:9b", "nomic-embed-text", "tiny:0.5b"])
+        await server.start()
+        try:
+            with pytest.raises(ModelDiscoveryError) as excinfo:
+                await resolve_tier_slugs(local_config(server.base_url))
+            assert server.base_url in excinfo.value.fix
+            for served in ("chat-model:9b", "nomic-embed-text", "tiny:0.5b"):
+                assert served not in excinfo.value.fix
         finally:
             await server.stop()
 

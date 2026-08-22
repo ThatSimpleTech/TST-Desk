@@ -306,7 +306,7 @@ V4 Pro as a heavier worker.
   endpoint, or a local vLLM server (EZER path) with no code change.
 - Slugs and prices live in `config.yaml`, not code. **The landscape moves weekly** — users must
   be able to update model choices without a release.
-- First-run wizard: paste key → pick preset (`TST default` / `budget` / `local`) → go.
+- First-run wizard: paste key → pick preset (`TST default` / `budget` / `local` / `vllm`) → go.
 
 ### The `local` preset: the endpoint is ours to guess, the model tag is not
 
@@ -339,6 +339,15 @@ Failure is a typed error naming the endpoint and the fix — a dead endpoint, a 
 and an idle server each say something different — surfaced on the turn as
 `turn_complete{failed, error_code: "model_unresolved"}` and in diagnostics as a failing
 `provider` row with the endpoint in it.
+
+### The `vllm` preset: vLLM and EZER share one OpenAI `/v1`
+
+The shipped `vllm` preset points every tier at `http://127.0.0.1:8000/v1` and names **no**
+model. That is vLLM's OpenAI-compatible server default. EZER serves the same `/v1` contract, so
+attaching it is `active_preset: vllm`, not a second code path. A different port is a
+`base_url` edit in `config.yaml`. Discovery, `model_unresolved`, and the doctor's `provider`
+row are the same rules as the `local` preset; the row names the 8000 endpoint, not a model
+tag.
 
 ---
 

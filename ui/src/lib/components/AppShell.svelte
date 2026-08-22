@@ -28,8 +28,10 @@
 	import ChatPane from './chat/ChatPane.svelte';
 	import ProjectPane from './ProjectPane.svelte';
 	import ArtifactPane from './ArtifactPane.svelte';
+	import ScheduledPane from './ScheduledPane.svelte';
 	import { projects } from '../projects.svelte.js';
 	import { startArtifacts, bindArtifacts } from '../artifacts.svelte.js';
+	import { startScheduled, refreshJobs } from '../scheduled.svelte.js';
 	import TitleBar from './TitleBar.svelte';
 	import NotificationBanner from '../NotificationBanner.svelte';
 	import ToastStack from '../ToastStack.svelte';
@@ -67,6 +69,14 @@
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
 	import { workspaces, closeWorkspaceMenu } from '../workspaces.svelte.js';
+	import RemoteConnectForm from './RemoteConnectForm.svelte';
+	import { narrowMediaQuery } from '../layout-mode';
+
+	// TD-3701: one AppShell. Below 640px the CSS hides rail + inspector;
+	// these flags only reveal them again. Wide viewports ignore the flags.
+	let narrow = $state(false);
+	let showRail = $state(false);
+	let showInspector = $state(false);
 
 	// Global shortcuts (TD-1609): Esc peels layers (menu → palette → modal →
 	// turn), ⌘, opens settings (TD-1703), ⌘K the command palette (TD-1707).
@@ -142,6 +152,7 @@
 		const offStack = startStack();
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
 		const offArtifacts = startArtifacts();
+		const offScheduled = startScheduled();
 		const offScreen = startScreen();
 		const offCuIndicators = startCuIndicators();
 		const offDesign = startDesign();
@@ -151,6 +162,16 @@
 		void startCloseHint().then((off) => {
 			offCloseHint = off;
 		});
+		const mq = window.matchMedia(narrowMediaQuery());
+		const syncNarrow = () => {
+			narrow = mq.matches;
+			if (!mq.matches) {
+				showRail = false;
+				showInspector = false;
+			}
+		};
+		syncNarrow();
+		mq.addEventListener('change', syncNarrow);
 		return () => {
 			offTimeline();
 			offWizard();
@@ -162,12 +183,14 @@
 			offStack();
 			offOsNotify();
 			offArtifacts();
+			offScheduled();
 			offScreen();
 			offCuIndicators();
 			offDesign();
 			offCoworker();
 			offCuKill();
 			offCloseHint();
+			mq.removeEventListener('change', syncNarrow);
 		};
 	});
 
@@ -183,6 +206,11 @@
 	$effect(() => {
 		if (projects.surface !== 'artifacts') return;
 		bindArtifacts(session.sessionId, session.workspacePath);
+	});
+
+	$effect(() => {
+		if (projects.surface !== 'scheduled') return;
+		refreshJobs(session.workspacePath);
 	});
 
 	// The usage pane (TD-1706) reads the audit store, which the live event
@@ -250,6 +278,24 @@
 		aria-label="Run doctor diagnostics"
 		onclick={runDoctor}><Icon name="stethoscope" size={16} /></button
 	>
+	{#if narrow}
+		<button
+			class="shell-gear"
+			type="button"
+			title="Sessions"
+			aria-label="Show sessions"
+			aria-pressed={showRail}
+			onclick={() => (showRail = !showRail)}><Icon name="panel-left" size={16} /></button
+		>
+		<button
+			class="shell-gear"
+			type="button"
+			title="Inspector"
+			aria-label="Show inspector"
+			aria-pressed={showInspector}
+			onclick={() => (showInspector = !showInspector)}>Inspector</button
+		>
+	{/if}
 	<!-- Settings is reached from the rail's account anchor (TD-1712) or ⌘,;
 	     the header no longer buries it behind a gear. -->
 	<ConnectionBanner />
@@ -257,7 +303,11 @@
 
 <NotificationBanner />
 
-<div class="shell-body">
+<div
+	class="shell-body"
+	class:shell-show-rail={showRail}
+	class:shell-show-inspector={showInspector}
+>
 	<!-- Session rail (TD-1701): collapsible session list at the left edge. -->
 	<SessionRail />
 	<SplitPane>
@@ -268,7 +318,9 @@
 					? 'Projects'
 					: projects.surface === 'artifacts'
 						? 'Artifacts'
-						: 'Chat pane'}
+						: projects.surface === 'scheduled'
+							? 'Scheduled'
+							: 'Chat pane'}
 			>
 				<!-- Chat stays mounted when another surface is showing so the
 				     store subscription is not torn down (TD-2801). -->
@@ -283,6 +335,8 @@
 					<div class="pane-layer"><ProjectPane /></div>
 				{:else if projects.surface === 'artifacts'}
 					<div class="pane-layer"><ArtifactPane /></div>
+				{:else if projects.surface === 'scheduled'}
+					<div class="pane-layer"><ScheduledPane /></div>
 				{/if}
 			</section>
 		{/snippet}
@@ -377,6 +431,7 @@
 <SettingsPane />
 <CuPermissionsPane />
 <CommandPalette />
+<RemoteConnectForm />
 
 <style>
 	.shell-header {
@@ -493,5 +548,27 @@
 	.pane-activity > :global(.screen-pane) {
 		flex: 1;
 		min-height: 0;
+	}
+
+	/* TD-3701: one pane on a narrow viewport (chat + approval). Rail and
+	   inspector stay in the DOM so optional reveal is a class, not a second
+	   shell. Keep in sync with NARROW_VIEWPORT_PX / narrowMediaQuery(). */
+	@media (max-width: 639px) {
+		.shell-header {
+			overflow-x: auto;
+		}
+
+		.shell-body:not(.shell-show-rail) :global(.rail) {
+			display: none;
+		}
+
+		.shell-body:not(.shell-show-inspector) :global(.splitpane) {
+			grid-template-columns: 1fr !important;
+		}
+
+		.shell-body:not(.shell-show-inspector) :global(.splitpane .right),
+		.shell-body:not(.shell-show-inspector) :global(.splitpane .divider) {
+			display: none;
+		}
 	}
 </style>

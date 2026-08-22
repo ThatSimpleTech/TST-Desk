@@ -111,6 +111,38 @@ afterEach(() => {
 });
 
 describe("handshake", () => {
+  it("opens a named host instead of loopback when daemon info supplies one (TD-3701)", async () => {
+    const urls: string[] = [];
+    const client = new ProtocolClient({
+      async getDaemonInfo() {
+        return { port: 9000, token: "remote-tok", host: "100.64.1.2" };
+      },
+      socketFactory: (url) => {
+        urls.push(url);
+        return new FakeSocket();
+      },
+    });
+    await client.start();
+    expect(urls[0]).toBe("ws://100.64.1.2:9000");
+    client.stop();
+  });
+
+  it("brackets an IPv6 host in the default URL", async () => {
+    const urls: string[] = [];
+    const client = new ProtocolClient({
+      async getDaemonInfo() {
+        return { port: 9000, token: "remote-tok", host: "fd7a:115c:a1e0::1" };
+      },
+      socketFactory: (url) => {
+        urls.push(url);
+        return new FakeSocket();
+      },
+    });
+    await client.start();
+    expect(urls[0]).toBe("ws://[fd7a:115c:a1e0::1]:9000");
+    client.stop();
+  });
+
   it("sends hello with the token and reports connected on hello_ack", async () => {
     const h = buildClient();
     await h.client.start();

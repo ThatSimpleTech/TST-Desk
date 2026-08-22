@@ -41,9 +41,9 @@ installer.
 
 **The daemon (`core/tstd/`)** holds every piece of state that matters: the session registry, each
 session's append-only event log, the conversation, the boundary, the policy, the cost ledger, the
-audit database. It binds a WebSocket server to loopback and nothing else — a non-loopback bind is
-refused outright by `validate_interface` in `core/tstd/ws.py`, which is prime directive §2.1
-enforced in code rather than by convention.
+audit database. It binds a WebSocket server to loopback by default. A non-loopback bind is
+refused by `validate_interface` in `core/tstd/ws.py` unless `remote.bind` names a Tailscale
+address (never `0.0.0.0` / `::`) — prime directive §2.1, with the spec §8 opt-in.
 
 **The host (`shell/`)** manages the window and the daemon process lifecycle: it resolves the
 `tstd` binary, attaches when `port.json` names a live listener, and otherwise spawns with
@@ -112,6 +112,25 @@ errors — not JSON dumps. On `approval_request` (TD-3103) a TTY prints a card
 to use the window and does not send `approve`. Class C never accepts `always`.
 Ctrl+C sends `detach`, not `cancel`. An unknown id is the daemon's existing
 `session_not_found` error.
+
+**Browser attach (TD-3701).** The same Svelte `ProtocolClient` — not a second
+app — works outside Tauri. A phone or laptop browser does not read `port.json`.
+It connects to `ws://<tailscale-ip>:<port>` (the extra listener from TD-3601)
+and presents the rotating `{user_data_dir}/remote-token` (TD-3602) in
+`hello.token`. The UI takes that pair from a connect form, or from
+`?ws=&token=` / `#ws=&token=` (hash preferred; the token is stripped from the
+address bar after read). Loopback in a browser still uses the port-file token.
+There is no account and no hosted relay. The daemon still does not bind
+`0.0.0.0` / `::`; the form refuses those as connect targets too.
+
+The window is still only a viewer. Read transcript, send, and approve are the
+same client messages they are on the desktop. Settings will copy address +
+token (TD-3603); until then, the port is the one in `port.json` and the token
+is the contents of `remote-token`.
+
+On a viewport narrower than 640px the same `AppShell` hides the session rail
+and the inspector so the phone is chat + approval. Either pane can be shown
+again; they are not a separate product.
 
 ---
 
@@ -206,12 +225,17 @@ discriminated unions (`ClientMessageT`, `DaemonEventT`) so parsing is total and 
 
 ### The handshake
 
-1. Client connects to `ws://127.0.0.1:<port>` from the port file.
+1. Client connects to `ws://127.0.0.1:<port>` from the port file, or to the extra Tailscale
+   listener when `remote.bind` is on.
 2. Client sends `hello` with the token and its `PROTOCOL_VERSION`, within the handshake timeout.
    Missing the window is `handshake_timeout`.
-3. Daemon validates the version first, then the token. An out-of-range version fails with
+3. Daemon validates the version first, then the token. Loopback hellos present the port-file
+   token. A non-loopback hello (the extra listener, or a non-loopback peer) must present the
+   rotating token in `{user_data_dir}/remote-token` — the port-file token is not enough. The
+   protocol field is still `hello.token`. An out-of-range version fails with
    `version_unsupported` and a message naming the versions on both sides; a bad token fails with
-   `auth_failed`. Either way the daemon sends a typed `error` frame and closes with 1008.
+   `auth_failed` and does not open a session. Either way the daemon sends a typed `error` frame
+   and closes with 1008.
 4. Daemon replies `hello_ack` and the connection is live. From here the daemon also sends `ping`
    on a timer, to handshaken clients only.
 
@@ -308,6 +332,10 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `design_hit_test` | yes | Ask the session browser what is at a CSS-pixel point (TD-3403). Observe only. Acked with `design_hit`. |
 | `check_cu_permissions` | — | Re-probe computer-use OS permissions / integrity without raising a TCC prompt (TD-3302, TD-3303). Acked with `cu_permissions`. |
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
+| `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener. Acked with `setup_state` (TD-3603). |
+| `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
+| `save_job` | — | Create or replace a scheduled job from draft fields. Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
+| `delete_job` | — | Remove a scheduled job by id. Acked with `job_list`. Unknown id is a typed error (TD-3805). |
 
 ### Daemon → client
 
@@ -345,7 +373,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin`. |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach`. `remote_bind` is the bound Tailscale address, never a token. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
@@ -360,6 +388,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `cu_kill_state` | connection | Process-wide computer-use kill-switch. Seq is fixed at 1 and it is not written to a session log (TD-3404). `killed=true` clears Screen-pane glow and cursor (TD-3402). |
 | `design_hit` | connection | Reply to `design_hit_test`: xpath, role, attributes, box, styles (TD-3403). Not in the session log. |
 | `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), or Windows UIPI / secure-desktop integrity (TD-3303). |
+| `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` asked for (TD-3805). |
 
 ### Adding a message
 

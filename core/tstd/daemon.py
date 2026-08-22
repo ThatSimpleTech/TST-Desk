@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import websockets.exceptions
+from pydantic import ValidationError
 
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, to_entry
 from .attachments import AttachmentError, decode_attachments, render_user_content
@@ -38,6 +39,7 @@ from .config import (
     ConfigError,
     ModelConfig,
     ModelDiscoveryError,
+    TierConfig,
     cached_config,
     is_loopback_url,
     load_config,
@@ -61,6 +63,7 @@ from .cu_indicators import (
     set_current_prefs,
 )
 from .desktop import DesktopDriver, desktop_driver_from_config
+from .desktop.grounding_client import GroundingClient
 from .desktop.permissions import (
     cu_permissions_from_report,
     driver_cu_platform,
@@ -78,6 +81,7 @@ from .keychain import (
     get_api_key,
     store_api_key,
 )
+from .local_worker import session_is_cu_heavy, titlebar_slugs
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .memory_commit import MemoryCommitter
@@ -95,6 +99,8 @@ from .memory_trigger import (
     completed_turn_count,
     distill_if_due,
 )
+from .notify.ntfy import schedule as schedule_ntfy_notify
+from .notify.slack import schedule as schedule_slack_notify
 from .policy import (
     add_rule,
     load_approved_imports,
@@ -125,6 +131,7 @@ from .protocol import (
     CuPermissions,
     DaemonEvent,
     DeleteApiKey,
+    DeleteJob,
     DeleteSession,
     Deny,
     DesignHit,
@@ -142,8 +149,11 @@ from .protocol import (
     HandshakeError,
     InstructionFileEntry,
     InstructionFiles,
+    JobEntry,
+    JobList,
     ListArtifacts,
     ListInstructions,
+    ListJobs,
     ListMemory,
     ListPins,
     ListPolicyRules,
@@ -165,6 +175,7 @@ from .protocol import (
     Resume,
     RevokePolicyRule,
     RunDiagnostics,
+    SaveJob,
     SaveMemory,
     SessionList,
     SessionSummary,
@@ -175,6 +186,7 @@ from .protocol import (
     SetCuKill,
     SetLoadGlobalMemory,
     SetPreset,
+    SetRemoteAttach,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
@@ -214,7 +226,16 @@ from .provider import (
     ProviderError,
     auth_failure_message,
 )
+from .remote_attach import (
+    bind_spec_when_enabled,
+    load_remote_attach,
+    save_remote_attach,
+)
 from .router import TIER_NAMES, TierRouter
+from .scheduler.models import Job, JobDraft, JobValidationError
+from .scheduler.runner import RecordingDeliver, run_due_jobs, run_turn_on_daemon
+from .scheduler.runner import SendFn as NotifySendFn
+from .scheduler.store import delete_job, get_job, list_jobs, save_job
 from .session import (
     TERMINAL_STATES,
     Session,
@@ -226,6 +247,7 @@ from .session_lifecycle import archive_session, delete_session, move_session, re
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
+from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .workspace_pins import load_workspace_pins, save_workspace_pins
 from .ws import WebSocketServer
@@ -397,22 +419,37 @@ def _approved_import_allowlist(workspace: str | Path) -> frozenset[Path]:
         return frozenset()
 
 
-def _tier_state_event(session_id: str, router: TierRouter, config: ModelConfig) -> TierState:
+def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
     """Build the ``tier_state`` event for the title bar (TD-1006).
 
     A tier whose slug is still unresolved is omitted rather than sent as a
     placeholder (TD-1805): the daemon does not yet know its model, and the
     UI must never be handed a truth it wasn't given.  The loop re-emits
     ``tier_state`` once discovery lands on the first turn.
+
+    After a computer-use tool (TD-3903) the worker slug is the remapped
+    local-worker preset's worker, not the active preset's remote worker.
     """
+    assert session.router is not None
     return TierState(
-        session_id=session_id,
-        tier=router.active_tier,
-        override=router.override,
-        model_slugs={
-            name: slug for name in TIER_NAMES if (slug := config.tier(name).slug) is not None
-        },
+        session_id=session.id,
+        tier=session.router.active_tier,
+        override=session.router.override,
+        model_slugs=titlebar_slugs(config, cu_heavy=session_is_cu_heavy(session)),
         seq=1,  # overwritten by the event log
+    )
+
+
+def _job_entry(job: Job) -> JobEntry:
+    """Wire shape for a persisted job. The rail lists these; it does not run them."""
+    return JobEntry(
+        id=job.id,
+        workspace=job.workspace,
+        instruction=job.instruction,
+        cadence=job.cadence,
+        next_run=job.next_run,
+        deliver_to=job.deliver_to,
+        paused=job.paused,
     )
 
 
@@ -429,6 +466,9 @@ class Daemon:
         data_dir: Path | None = None,
         provider: ProviderLike | None = None,
         parent_pid: int | None = None,
+        notify_send: NotifySendFn | None = None,
+        scheduler_tick: float = 15.0,
+        interfaces: InterfaceEnumerator | None = None,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
@@ -444,6 +484,7 @@ class Daemon:
         self._artifacts = ArtifactStore(self._session_persist)
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
+        self._clients: dict[str, ProviderLike] = {}
         self._pending_memory: dict[str, DistillEmit] = {}
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
@@ -460,14 +501,28 @@ class Daemon:
         self.skip_all_approvals = load_skip_all(self.data_dir)
         self.load_global_memory = load_global_memory(self.data_dir)
         self.coworker_enabled = load_coworker(self.data_dir)
+        self.remote_attach_enabled, self.remote_attach_last_bind = load_remote_attach(self.data_dir)
         self.cu_indicators = load_cu_indicators(self.data_dir)
         set_current_prefs(self.cu_indicators)
         self.workspace_pins = load_workspace_pins(self.data_dir)
         self.session_stars = load_session_stars(self.data_dir)
+        bind = ""
+        if self.remote_attach_enabled:
+            spec = bind_spec_when_enabled(self.remote_attach_last_bind, self.config.remote.bind)
+            self.config.remote.bind = spec
+            try:
+                if resolve_remote_bind(spec, interfaces) is not None:
+                    bind = spec
+            except ValueError:
+                bind = ""
+        else:
+            self.config.remote.bind = ""
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
             on_disconnect=self._on_connection_closed,
+            bind=bind,
+            interfaces=interfaces,
         )
         # Shared across sessions so the kill-switch is process-wide.
         # Empty computer_use.command is the mock; a command is stdio MCP.
@@ -477,33 +532,56 @@ class Daemon:
         # Browser CU (TD-1710): mock unless computer_use.browser is playwright
         # and Playwright is importable. Profile lives under the data dir.
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
+        self._notify_send = notify_send
+        self._scheduler_tick = scheduler_tick
+        self._scheduler_deliver = RecordingDeliver(send=notify_send)
 
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
         self.desktop_driver.set_killed(killed)
 
-    async def _brain_client(self) -> ProviderClient:
-        """Build a client for the active brain tier.
+    async def _build_client(self, tier_cfg: TierConfig) -> ProviderClient:
+        """Build a client for *tier_cfg*'s endpoint.
 
         A loopback base URL is on-box, so there is nothing to authenticate
         against: the keychain is never consulted and no key prompt can occur
         (TD-1801). Remote endpoints keep the keychain requirement unchanged —
         this removes a requirement, it never invents a credential.
         """
-        tier_cfg = self.config.tier("brain")
         if is_loopback_url(tier_cfg.base_url):
             return ProviderClient(base_url=tier_cfg.base_url, api_key=None)
         return await ProviderClient.from_keychain(tier_cfg.base_url)
 
+    async def _brain_client(self) -> ProviderClient:
+        """Build a client for the active brain tier."""
+        return await self._build_client(self.config.tier("brain"))
+
+    async def _client_for(self, tier_cfg: TierConfig) -> ProviderLike:
+        """The provider client for *tier_cfg*, cached by URL.
+
+        An injected constructor provider (tests) is returned for every
+        tier so a mock stays in front of the loop. Production caches one
+        client per ``base_url`` so a remapped local worker (TD-3903) does
+        not reuse the remote brain client.
+        """
+        if self._provider is not None:
+            return self._provider
+        url = tier_cfg.base_url
+        cached = self._clients.get(url)
+        if cached is not None:
+            return cached
+        client = await self._build_client(tier_cfg)
+        self._clients[url] = client
+        return client
+
     async def _ensure_provider(self) -> ProviderLike:
         """Create the shared provider client on first use.
 
-        Uses the brain tier's base URL for the OpenAI-compatible endpoint;
-        for a remote endpoint the API key comes from the OS keychain.
+        Distill and doctor stay on the active brain. Session turns pass
+        the effective tier into ``get_provider`` so a CU-heavy worker
+        can land on a different URL (TD-3903).
         """
-        if self._provider is None:
-            self._provider = await self._brain_client()
-        return self._provider
+        return await self._client_for(self.config.tier("brain"))
 
     async def _setup_state_event(self) -> SetupState:
         """Current onboarding state (TD-1101): key presence + preset choice.
@@ -533,6 +611,8 @@ class Daemon:
             cu_agent_cursor=self.cu_indicators.agent_cursor,
             cu_show_on_real_display=self.cu_indicators.show_on_real_display,
             pinned_workspaces=list(self.workspace_pins),
+            remote_attach_enabled=self.remote_attach_enabled,
+            remote_bind=self.ws_server.extra_host,
         )
 
     def _cu_permissions_session(self, event: DaemonEvent) -> str | None:
@@ -904,6 +984,7 @@ class Daemon:
             self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
             self._audit_writer.start()
         await self.ws_server.start()
+        self._tasks.append(asyncio.create_task(self._scheduler_loop()))
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:
@@ -988,6 +1069,35 @@ class Daemon:
                 },
             )
 
+    async def _scheduler_loop(self) -> None:
+        """On start (revive) and on a short tick, fire each due job once."""
+        while not self._shutdown_event.is_set():
+            try:
+                await self.run_due_jobs()
+            except Exception:
+                log.exception("scheduler tick failed")
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=self._scheduler_tick,
+                )
+            except TimeoutError:
+                continue
+
+    async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
+        """Wake due jobs against this daemon. Tests call this directly."""
+        when = now if now is not None else datetime.now(UTC)
+        return await run_due_jobs(
+            self.data_dir,
+            when,
+            run_turn=self._scheduled_run_turn,
+            deliver=self._scheduler_deliver,
+        )
+
+    async def _scheduled_run_turn(self, workspace: Path, message: str) -> str:
+        """In-process ``tst run``: one session, one message, no nested daemon."""
+        return await run_turn_on_daemon(self, workspace, message)
+
     async def _parent_watchdog(self, parent_pid: int) -> None:
         """Poll the host's liveness and shut down if it dies (TD-1002).
 
@@ -1017,6 +1127,12 @@ class Daemon:
             self._tasks.append(
                 asyncio.create_task(self._emit_cu_permissions(announce, first_run=first_run))
             )
+        task = schedule_slack_notify(self.config, event)
+        if task is not None:
+            self._tasks.append(task)
+        task = schedule_ntfy_notify(self.config, event)
+        if task is not None:
+            self._tasks.append(task)
 
     @staticmethod
     def _version() -> str:
@@ -1240,7 +1356,7 @@ class Daemon:
             )
             # ...then acknowledge with the new state so the title bar snaps
             # over even before the next turn starts (TD-1006).
-            await found.event_log.add(_tier_state_event(found.id, found.router, self.config))
+            await found.event_log.add(_tier_state_event(found, self.config))
             log.info(
                 "tier override set",
                 extra={
@@ -1372,6 +1488,9 @@ class Daemon:
             save_coworker(self.data_dir, msg.enabled)
             return (await self._setup_state_event()).model_dump_json()
 
+        if isinstance(msg, SetRemoteAttach):
+            return await self._handle_set_remote_attach(msg)
+
         if isinstance(msg, SetCuIndicators):
             self.cu_indicators = CuIndicatorPrefs(
                 glow=msg.glow,
@@ -1485,6 +1604,15 @@ class Daemon:
 
         if isinstance(msg, DesignHitTest):
             return await self._handle_design_hit_test(msg)
+
+        if isinstance(msg, ListJobs):
+            return await self._handle_list_jobs()
+
+        if isinstance(msg, SaveJob):
+            return await self._handle_save_job(msg)
+
+        if isinstance(msg, DeleteJob):
+            return await self._handle_delete_job(msg)
 
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
@@ -1714,8 +1842,9 @@ class Daemon:
                 extra={"extra_fields": {"workspace_path": sess.workspace_path, "error": str(e)}},
             )
 
-        async def get_provider() -> ProviderLike:
-            return await self._ensure_provider()
+        async def get_provider(tier_cfg: TierConfig | None = None) -> ProviderLike:
+            target = tier_cfg if tier_cfg is not None else self.config.tier("brain")
+            return await self._client_for(target)
 
         tool_registry = create_registry()
         tool_dispatcher = ToolDispatcher(tool_registry)
@@ -1726,6 +1855,7 @@ class Daemon:
             allowed_commands=sess.boundary_config.boundary.shell_allowlist(),
             desktop_driver=self.desktop_driver,
             browser_driver=self.browser_driver,
+            grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
         )
 
         sink = self._audit_writer
@@ -1769,7 +1899,7 @@ class Daemon:
             )
         )
         assert sess.router is not None
-        await sess.event_log.add(_tier_state_event(sess.id, sess.router, self.config))
+        await sess.event_log.add(_tier_state_event(sess, self.config))
 
     async def _start_session(self, workspace_path: str) -> str | None:
         """Create, wire, and start a session in ``workspace_path``.
@@ -1809,6 +1939,31 @@ class Daemon:
         if events:
             return events[0].model_dump_json()
         return None
+
+    async def _handle_set_remote_attach(self, msg: SetRemoteAttach) -> str:
+        """Persist the Settings toggle and rebind the extra listener only."""
+        if msg.enabled:
+            spec = bind_spec_when_enabled(self.remote_attach_last_bind, self.config.remote.bind)
+            self.remote_attach_last_bind = spec
+            self.config.remote.bind = spec
+            try:
+                await self.ws_server.apply_bind(spec)
+            except (ValueError, OSError):
+                # Flag stays on; the address appears once a Tailscale iface exists.
+                log.warning(
+                    "remote attach enabled but extra bind failed",
+                    extra={"extra_fields": {"bind": spec}},
+                )
+        else:
+            if self.config.remote.bind.strip():
+                self.remote_attach_last_bind = self.config.remote.bind.strip()
+            elif self.ws_server.extra_host:
+                self.remote_attach_last_bind = self.ws_server.extra_host
+            self.config.remote.bind = ""
+            await self.ws_server.apply_bind("")
+        self.remote_attach_enabled = msg.enabled
+        save_remote_attach(self.data_dir, msg.enabled, self.remote_attach_last_bind)
+        return (await self._setup_state_event()).model_dump_json()
 
     async def _handle_attach(self, msg: Attach, session: Session, connection: Any) -> str | None:
         """Handle an attach: replay events from from_seq, then stream live."""
@@ -2066,6 +2221,56 @@ class Daemon:
             mime=entry.mime,
             path=entry.path,
         ).model_dump_json()
+
+    async def _handle_list_jobs(self) -> str:
+        return await self._job_list_event()
+
+    async def _handle_save_job(self, msg: SaveJob) -> str:
+        try:
+            await asyncio.to_thread(self._save_job_record, msg)
+        except JobValidationError as exc:
+            return build_error("job_invalid", str(exc))
+        return await self._job_list_event()
+
+    async def _handle_delete_job(self, msg: DeleteJob) -> str:
+        removed = await asyncio.to_thread(delete_job, self.data_dir, msg.job_id)
+        if not removed:
+            return build_error("job_not_found", f"Job {msg.job_id!r} not found")
+        return await self._job_list_event()
+
+    async def _job_list_event(self) -> str:
+        jobs = await asyncio.to_thread(list_jobs, self.data_dir)
+        return JobList(jobs=[_job_entry(job) for job in jobs]).model_dump_json()
+
+    def _save_job_record(self, msg: SaveJob) -> Job:
+        """Persist a draft or an update. Does not run the job."""
+        existing = get_job(self.data_dir, msg.id) if msg.id else None
+        if existing is not None:
+            try:
+                updated = Job(
+                    id=existing.id,
+                    workspace=msg.workspace or existing.workspace,
+                    instruction=msg.instruction or existing.instruction,
+                    cadence=existing.cadence if msg.cadence is None else msg.cadence,
+                    next_run=existing.next_run if msg.next_run is None else msg.next_run,
+                    deliver_to=msg.deliver_to or existing.deliver_to,
+                    paused=msg.paused,
+                )
+            except (ValidationError, JobValidationError) as exc:
+                raise JobValidationError(str(exc)) from exc
+            return save_job(self.data_dir, updated)
+        return save_job(
+            self.data_dir,
+            JobDraft(
+                id=msg.id,
+                workspace=msg.workspace,
+                instruction=msg.instruction,
+                cadence=msg.cadence,
+                next_run=msg.next_run,
+                deliver_to=msg.deliver_to,
+                paused=msg.paused,
+            ),
+        )
 
     async def _handle_design_hit_test(self, msg: DesignHitTest) -> str:
         """Observe the session browser at a CSS-pixel point (TD-3403)."""

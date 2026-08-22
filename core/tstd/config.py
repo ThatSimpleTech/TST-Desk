@@ -27,7 +27,7 @@ TierName = Literal["brain", "worker", "validator"]
 TIER_NAMES: tuple[TierName, ...] = ("brain", "worker", "validator")
 
 # Presets shipped with the package. Users may add more.
-PRESETS: tuple[str, ...] = ("tst-default", "budget", "local")
+PRESETS: tuple[str, ...] = ("tst-default", "budget", "local", "vllm")
 
 DEFAULT_PRESET = "tst-default"
 
@@ -200,6 +200,69 @@ class EmbeddingsConfig(BaseModel):
         raise ValueError("command must be a string or a list of arguments")
 
 
+class SlackNotifyConfig(BaseModel):
+    """Slack incoming webhook (TD-3801). Off by default.
+
+    ``host`` is the only host ``tstd.notify.slack.send`` may reach. The
+    webhook URL itself is a keychain secret (account ``tst-slack-webhook``),
+    never this file, never a log, never the audit database. Empty ``host``
+    or ``enabled: false`` means no send.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class NtfyNotifyConfig(BaseModel):
+    """ntfy topic POST (TD-3802). Off by default.
+
+    ``host`` is the only host ``tstd.notify.ntfy.send`` may reach. The
+    topic URL itself is a keychain secret (account ``tst-ntfy-topic``),
+    never this file, never a log, never the audit database. Empty ``host``
+    or ``enabled: false`` means no send. Discord/Telegram are TD-4707.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class NotifyConfig(BaseModel):
+    """Outbound notification channels. Slack first, ntfy optional; no gateway."""
+
+    slack: SlackNotifyConfig = Field(default_factory=SlackNotifyConfig)
+    ntfy: NtfyNotifyConfig = Field(default_factory=NtfyNotifyConfig)
+
+
+class GroundingConfig(BaseModel):
+    """Local click-grounding model (TD-3902).
+
+    Empty ``base_url`` is off: desktop clicks use the intended (x, y)
+    (TD-3304). A filled URL must be loopback — off-box is a load error,
+    not a silent remote call. Optional ``slug`` is discovered from
+    ``/v1/models`` the same way a loopback tier is (TD-1805).
+    """
+
+    base_url: str = ""
+    slug: Annotated[str, Field(min_length=1)] | None = None
+    timeout_seconds: float = Field(default=8.0, gt=0)
+
+    @field_validator("base_url")
+    @classmethod
+    def _strip_base_url(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def _loopback_only(self) -> GroundingConfig:
+        if self.base_url and not is_loopback_url(self.base_url):
+            raise ValueError(
+                f"computer_use.grounding.base_url must be a loopback endpoint "
+                f"(got {self.base_url}); off-box grounding is not allowed"
+            )
+        return self
+
+
 class ComputerUseConfig(BaseModel):
     """Desktop computer-use sidecar (TD-3301) and browser (TD-1710).
 
@@ -210,10 +273,29 @@ class ComputerUseConfig(BaseModel):
     ``browser`` is ``mock`` (default, CI) or ``playwright``. Playwright
     missing always falls back to the mock. The live profile lives under
     the user data dir, not the workspace.
+
+    ``grounding`` is an optional local vision model for click targeting
+    (TD-3902). Empty ``grounding.base_url`` leaves the TD-3304 path.
+
+    ``local_worker_preset`` names the preset whose *worker* tier is used
+    for the worker client after a session has used a desktop_ or
+    browser_ tool (TD-3903). Default ``vllm``. Empty never remaps.
+    Brain stays on the active preset.
     """
 
     command: str | list[str] = ""
     browser: Literal["mock", "playwright"] = "mock"
+    grounding: GroundingConfig = Field(default_factory=GroundingConfig)
+    local_worker_preset: str = "vllm"
+
+    @field_validator("local_worker_preset", mode="before")
+    @classmethod
+    def _strip_local_worker_preset(cls, value: object) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("local_worker_preset must be a string")
+        return value.strip()
 
     @field_validator("command", mode="before")
     @classmethod
@@ -227,6 +309,17 @@ class ComputerUseConfig(BaseModel):
         raise ValueError("command must be a string or a list of arguments")
 
 
+class RemoteConfig(BaseModel):
+    """Opt-in Tailscale bind (TD-3601). Empty is off — loopback only."""
+
+    bind: str = ""
+
+    @field_validator("bind")
+    @classmethod
+    def _strip_bind(cls, value: str) -> str:
+        return value.strip()
+
+
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
@@ -237,6 +330,8 @@ class ModelConfig(BaseModel):
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
+    remote: RemoteConfig = Field(default_factory=RemoteConfig)
+    notify: NotifyConfig = Field(default_factory=NotifyConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -319,7 +414,15 @@ def load_config(path: Path | None = None) -> ModelConfig:
     # Fill from the shipped file so the destination exists without
     # rewriting theirs.
     shipped: dict[str, Any] | None = None
-    for key in ("search", "embeddings", "project_context", "session", "computer_use"):
+    for key in (
+        "search",
+        "embeddings",
+        "project_context",
+        "session",
+        "computer_use",
+        "remote",
+        "notify",
+    ):
         if key in data:
             continue
         if shipped is None:

@@ -4,7 +4,7 @@
 # The model landscape moves weekly. Update these values without a release.
 # Slugs, prices, and URLs live here, never in Python source code.
 #
-# Three presets are shipped. Customize any tier within a preset, or add
+# Four presets are shipped. Customize any tier within a preset, or add
 # your own presets below.
 #
 # A tier has:
@@ -131,6 +131,56 @@ presets:
       context_window: 32768
       max_output_tokens: 4096
 
+  # ── vllm ─────────────────────────────────────────────────────────────
+  # Zero-cost local models on this machine. Targets vLLM's OpenAI-
+  # compatible server (the default port). EZER serves the same /v1
+  # shape — attach it with this preset. If the process listens on
+  # another port, edit base_url here; never in Python.
+  # A loopback base_url needs no API key at all (TD-1801).
+  #
+  # No slug is named on purpose: the endpoint is a convention, the model
+  # tag is your machine. With slug left out, the model is read from the
+  # endpoint's /v1/models the first time a turn needs it. That requires
+  # the server to be serving exactly one model — pick one explicitly by
+  # uncommenting slug below, which always wins over discovery.
+  #
+  # One model serves all three tiers: a single local server usually has
+  # room for one loaded model, and swapping per tier would pay an unload
+  # and reload on every routing hop.
+  #
+  # context_window is a compaction budget, not a request parameter. It
+  # must be no larger than what the *server* actually serves. Shipping
+  # a model's architectural ceiling would keep compaction from ever
+  # firing and let the server silently truncate the oldest messages —
+  # the steering block goes first. 32768 is a conservative floor that
+  # local hardware can hold. Raise it here once the server's context
+  # matches.
+  vllm:
+    brain:
+      # slug: your-model-tag   # omitted → resolved from /v1/models
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    worker:
+      # slug: your-model-tag   # omitted → resolved from /v1/models
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    validator:
+      # slug: your-model-tag   # omitted → resolved from /v1/models
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+
 # Web search. The agent's web_search tool sends the query to this URL as
 # ?q=... — never a host written into Python. Empty base_url disables it.
 search:
@@ -166,6 +216,39 @@ session:
 # stdio (no socket). The daemon owns the child.
 # browser: mock (default, CI) or playwright (TD-1710). Missing Playwright
 # always falls back to the in-process mock.
+# grounding (TD-3902): local UI-TARS (or compatible) click targeting.
+# Empty base_url is off — clicks use the intended (x, y). A filled URL
+# must be loopback (the vllm preset's :8000/v1, or a dedicated sidecar).
+# Optional slug is discovered from /v1/models when omitted.
+# local_worker_preset (TD-3903): after this session has used a desktop_
+# or browser_ tool, the worker *client* uses that named preset's worker
+# tier (loopback URL + optional slug). Brain is unchanged. Empty = never
+# remap. The name is a preset key, not a model slug.
 computer_use:
   command: ""
   browser: mock
+  grounding:
+    base_url: ""
+    timeout_seconds: 8
+  local_worker_preset: vllm
+
+# Opt-in Tailscale bind (TD-3601). Empty is off: 127.0.0.1 only.
+# Settings → Allow remote attach (TD-3603) turns this on. The documented
+# default target is tailscale0 (or a CGNAT / ULA address 3601 already
+# accepts). Never 0.0.0.0 / ::. A non-Tailscale LAN address is refused.
+remote:
+  bind: ""
+
+# Slack incoming webhook (TD-3801) and ntfy topic POST (TD-3802). Off by
+# default. Destination URLs are keychain secrets (tst-slack-webhook,
+# tst-ntfy-topic), never this file. host is the only destination send()
+# may reach — set it to the URL's hostname when you enable a channel.
+notify:
+  slack:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  ntfy:
+    enabled: false
+    host: ""
+    timeout_seconds: 5

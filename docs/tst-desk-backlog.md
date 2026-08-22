@@ -5035,11 +5035,14 @@ one instruction, deliver.
 **Size:** 5 · **Depends on:** TD-202, TD-2902
 
 **Acceptance criteria:**
-- [ ] Config names an interface or a Tailscale IPv4; the server binds
+- [x] Config names an interface or a Tailscale IPv4; the server binds
       that address and loopback, never `0.0.0.0` / `::`
-- [ ] A bind to a non-Tailscale non-loopback address is refused
-- [ ] `test_outbound_hosts` / bind tests name the new path
-- [ ] Off by default
+- [x] A bind to a non-Tailscale non-loopback address is refused
+- [x] `test_outbound_hosts` / bind tests name the new path
+- [x] Off by default
+
+Done (2026-08-21): `remote.bind` dual-listens loopback + Tailscale;
+`0.0.0.0` / LAN refused; off by default.
 
 ---
 
@@ -5047,10 +5050,13 @@ one instruction, deliver.
 **Size:** 5 · **Depends on:** TD-3601, TD-203
 
 **Acceptance criteria:**
-- [ ] Loopback keeps the port-file token
-- [ ] A non-loopback hello requires a user-data-dir token with
+- [x] Loopback keeps the port-file token
+- [x] A non-loopback hello requires a user-data-dir token with
       rotation; a leaked port file is not enough
-- [ ] Failed auth is a typed close, not a session
+- [x] Failed auth is a typed close, not a session
+
+Done (2026-08-21): remote hello needs `{user_data_dir}/remote-token`;
+port-file token stays loopback-only; failed auth is `auth_failed`.
 
 ---
 
@@ -5058,8 +5064,12 @@ one instruction, deliver.
 **Size:** 2 · **Depends on:** TD-3602
 
 **Acceptance criteria:**
-- [ ] Toggle + the bound address shown (not a secret)
-- [ ] Off unbinds the Tailscale iface and leaves loopback
+- [x] Toggle + the bound address shown (not a secret)
+- [x] Off unbinds the Tailscale iface and leaves loopback
+
+Done (2026-08-21): Settings `Allow remote attach` sends `set_remote_attach`;
+`setup_state` reports `remote_attach_enabled` and `remote_bind` (address,
+never a token). Off drops the extra listener and leaves loopback.
 
 ---
 
@@ -5071,13 +5081,17 @@ one instruction, deliver.
 **Size:** 8 · **Depends on:** TD-3602, TD-1003
 
 **Acceptance criteria:**
-- [ ] The same protocol client works from a browser on the Tailscale
+- [x] The same protocol client works from a browser on the Tailscale
       address (read transcript, send, approve)
-- [ ] No account. No hosted relay
-- [ ] Layout degrades to one pane on a narrow viewport (chat +
+- [x] No account. No hosted relay
+- [x] Layout degrades to one pane on a narrow viewport (chat +
       approval). Inspector is optional
-- [ ] Size 8 because a second client surface will sprawl — split if
+- [x] Size 8 because a second client surface will sprawl — split if
       the mobile layout becomes its own product
+
+Done (2026-08-21): same AppShell + ProtocolClient without Tauri; form or
+`ws`+`token` query/hash; remote hello uses the 3602 token; <640px is
+chat + approval.
 
 ---
 
@@ -5085,9 +5099,14 @@ one instruction, deliver.
 **Size:** 3 · **Depends on:** TD-3701, TD-802
 
 **Acceptance criteria:**
-- [ ] Approve / deny / always-allow from the remote client resolve
+- [x] Approve / deny / always-allow from the remote client resolve
       the parked session
-- [ ] Two clients cannot double-resolve (TD-1014 contract)
+- [x] Two clients cannot double-resolve (TD-1014 contract)
+
+Done (2026-08-21): remote hello (3602 token) approve/deny/always-allow
+unparks the same session future; a second client gets
+`no_pending_approval` and cannot flip the outcome. Same ApprovalCard
+store dismisses on send (TD-1014).
 
 ---
 
@@ -5102,12 +5121,15 @@ the 20-platform gateway.
 **Size:** 3 · **Depends on:** TD-1702
 
 **Acceptance criteria:**
-- [ ] Config holds a webhook URL (user-data-dir, not the workspace,
+- [x] Config holds a webhook URL (user-data-dir, not the workspace,
       not the audit log in plaintext — treat as a secret, keychain or
       equivalent)
-- [ ] Approval-needed and turn-complete can deliver to Slack when
+- [x] Approval-needed and turn-complete can deliver to Slack when
       enabled
-- [ ] Destination is config-sourced (`test_outbound_hosts`)
+- [x] Destination is config-sourced (`test_outbound_hosts`)
+
+Done (2026-08-21): `send(config, message)`; URL in keychain
+`tst-slack-webhook`; host from `notify.slack.host`; off by default.
 
 ---
 
@@ -5115,8 +5137,11 @@ the 20-platform gateway.
 **Size:** 2 · **Depends on:** TD-3801
 
 **Acceptance criteria:**
-- [ ] Same `send` shape; topic URL from config; off by default
-- [ ] Discord/Telegram are TD-4707, not this story
+- [x] Same `send` shape; topic URL from config; off by default
+- [x] Discord/Telegram are TD-4707, not this story
+
+Done (2026-08-21): `send(config, message)`; topic URL in keychain
+`tst-ntfy-topic`; host from `notify.ntfy.host`; off by default.
 
 ---
 
@@ -5124,11 +5149,14 @@ the 20-platform gateway.
 **Size:** 5 · **Depends on:** TD-2901
 
 **Acceptance criteria:**
-- [ ] Jobs persist in the user data dir: id, workspace, instruction,
+- [x] Jobs persist in the user data dir: id, workspace, instruction,
       cadence or next-run, deliver-to (window / Slack / ntfy)
-- [ ] Natural-language create is a *worker* parse into that schema,
+- [x] Natural-language create is a *worker* parse into that schema,
       shown for edit before save
-- [ ] No job runs until M7's runner (TD-3804) exists
+- [x] No job runs until M7's runner (TD-3804) exists
+
+Done (2026-08-21): `{user_data_dir}/scheduler/jobs.json`; parse is a
+draft; save is a second call; no runner.
 
 ---
 
@@ -5136,11 +5164,14 @@ the 20-platform gateway.
 **Size:** 5 · **Depends on:** TD-3803, TD-3101
 
 **Acceptance criteria:**
-- [ ] Due jobs start a session (or `tst run`) in the named workspace,
+- [x] Due jobs start a session (or `tst run`) in the named workspace,
       then deliver a summary to the configured channel
-- [ ] Missed runs while the daemon was down fire once on revive, not
+- [x] Missed runs while the daemon was down fire once on revive, not
       in a stampede
-- [ ] Caps and the classifier still apply
+- [x] Caps and the classifier still apply
+
+Done (2026-08-21): daemon tick + in-process `_start_session` turn;
+one fire then cadence advances `next_run` (or pause if one-shot).
 
 ---
 
@@ -5148,9 +5179,14 @@ the 20-platform gateway.
 **Size:** 2 · **Depends on:** TD-3804, TD-1712
 
 **Acceptance criteria:**
-- [ ] Rail **Scheduled** becomes `ready` and lists jobs
-- [ ] Create / pause / delete
-- [ ] The invariant test (every `ready` entry activates) stays green
+- [x] Rail **Scheduled** becomes `ready` and lists jobs
+- [x] Create / pause / delete
+- [x] The invariant test (every `ready` entry activates) stays green
+
+Done (2026-08-21): Scheduled is `ready`/`current`; `list_jobs` /
+`save_job` / `delete_job` at the end of the protocol unions; pane
+lists and edits draft fields. The runner still ticks; the rail does
+not fire jobs.
 
 ---
 
@@ -5158,9 +5194,16 @@ the 20-platform gateway.
 **Size:** 3 · **Depends on:** TD-3601, TD-3801, TD-3804
 
 **Acceptance criteria:**
-- [ ] Headless: bind refused on `0.0.0.0`; a loopback job runs and
+- [x] Headless: bind refused on `0.0.0.0`; a loopback job runs and
       a mock Slack `send` is invoked
-- [ ] **This harness is the M7 exit criterion**
+- [x] **This harness is the M7 exit criterion**
+
+Done (2026-08-21): `tstd.e2e_m7` + `core/scripts/e2e_m7.py`,
+pinned in CI as `tests/test_e2e_m7.py`. Headless: `validate_interface`
+refuses `0.0.0.0` (never listens); a due `deliver_to: slack` job fires
+once through `run_due_jobs` on the in-process daemon; injected
+`notify_send` is called. Not `e2e_harness.run`. Not a live webhook.
+
 
 ---
 
@@ -5184,10 +5227,10 @@ after M1.5.** Prefer after M6 so CU has something to ground.
 **Size:** 5 · **Depends on:** TD-1805
 
 **Acceptance criteria:**
-- [ ] A shipped preset points at a documented EZER or vLLM loopback
+- [x] A shipped preset points at a documented EZER or vLLM loopback
       URL; slugs still optional on loopback
-- [ ] Docs: how to attach, what "unresolved" means
-- [ ] Doctor rows name the endpoint, not the developer's model list
+- [x] Docs: how to attach, what "unresolved" means
+- [x] Doctor rows name the endpoint, not the developer's model list
       (TD-1809)
 
 ---
@@ -5196,12 +5239,16 @@ after M1.5.** Prefer after M6 so CU has something to ground.
 **Size:** 8 · **Depends on:** TD-3304, TD-3901
 
 **Acceptance criteria:**
-- [ ] Computer-use click targeting can use a configured local grounding
+- [x] Computer-use click targeting can use a configured local grounding
       model instead of raw pixels + guess
-- [ ] Off / missing model falls back to TD-3304's path
-- [ ] Cost is zero on loopback; latency is measured and recorded
-- [ ] Size 8 — split if the grounding client and the driver glue
+- [x] Off / missing model falls back to TD-3304's path
+- [x] Cost is zero on loopback; latency is measured and recorded
+- [x] Size 8 — split if the grounding client and the driver glue
       diverge
+
+Done (2026-08-21): `computer_use.grounding` (empty `base_url` = off);
+`tstd/desktop/grounding_client.py` + click-path glue in
+`tstd/tools/desktop.py`. TD-3304 eval unchanged.
 
 ---
 
@@ -5209,10 +5256,17 @@ after M1.5.** Prefer after M6 so CU has something to ground.
 **Size:** 3 · **Depends on:** TD-3902, TD-303
 
 **Acceptance criteria:**
-- [ ] A CU-heavy turn can pin the worker to the local slug without
+- [x] A CU-heavy turn can pin the worker to the local slug without
       changing the brain
-- [ ] Title bar shows that honestly
-- [ ] Remote worker remains the default for non-CU turns
+- [x] Title bar shows that honestly
+- [x] Remote worker remains the default for non-CU turns
+
+Done (2026-08-21): `computer_use.local_worker_preset` (default `vllm`)
+remaps the worker *client* after a `desktop_` / `browser_` tool. Brain,
+lead-turns, `set_tier`, and escalation stay TD-303. `tier_state` carries
+the remapped worker slug or omits it if unresolved (TD-1805).
+
+
 
 ---
 
@@ -5220,9 +5274,13 @@ after M1.5.** Prefer after M6 so CU has something to ground.
 **Size:** 3 · **Depends on:** TD-3901
 
 **Acceptance criteria:**
-- [ ] Live harness against a loopback vLLM or EZER fixture (or skip
+- [x] Live harness against a loopback vLLM or EZER fixture (or skip
       with copy if the binary is absent — heading-match style)
-- [ ] **This harness is the M8 exit criterion**
+- [x] **This harness is the M8 exit criterion**
+
+Done (2026-08-21): `tstd.e2e_m8` probes the shipped `vllm` loopback;
+skip with heading-match copy if nothing is listening. Live turn is
+one keyless completion at cost 0. Not `e2e_harness.run`.
 
 ---
 

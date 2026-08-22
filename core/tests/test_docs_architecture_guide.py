@@ -399,7 +399,7 @@ def test_the_provider_factory_seam_is_a_closure_in_attach_session_runtime() -> N
     source = (ROOT / "core" / "tstd" / "daemon.py").read_text(encoding="utf-8")
     start = source.index("async def _attach_session_runtime")
     body = source[start : source.index("\n    async def ", start + 1)]
-    assert "async def get_provider()" in body, (
+    assert "async def get_provider(" in body, (
         "the provider factory closure has moved or changed shape"
     )
     assert "_attach_session_runtime" in _rows("seams")["Daemon"][-1]
