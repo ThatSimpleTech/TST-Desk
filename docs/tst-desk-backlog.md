@@ -2464,8 +2464,10 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 
 **Acceptance criteria:**
 - [ ] Tagged release builds all platforms and publishes artifacts
-      (release.yml fires on v*, reuses the package.yml matrix, publishes via
-      `gh release create` — verified end to end on the first tag push)
+      (release.yml fires on `tstdesk-v*` — namespaced in TD-4812 after the
+      tst-cu-mcp package's `v0.2.0` tag matched the old bare `v*` trigger and
+      fired a failed app-release run — reuses the package.yml matrix,
+      publishes via `gh release create`; still unverified end to end)
 - [x] Checksums published (SHA256SUMS.txt across all four artifacts)
 - [x] Changelog generated from commits (`core/scripts/changelog.py`, grouped
       by TD-### convention, merges excluded)
@@ -6232,14 +6234,34 @@ under-sells what the tests prove.
 **Size:** 2 · **Depends on:** none
 
 **Acceptance criteria:**
-- [ ] `DECISIONS.md` records who authorized starting M4 with M3's gate open, and why —
+- [x] `DECISIONS.md` records who authorized starting M4 with M3's gate open, and why —
       marked as a retroactive record
-- [ ] Spec §10's open decisions are marked answered with pointers to their `DECISIONS.md`
+- [x] Spec §10's open decisions are marked answered with pointers to their `DECISIONS.md`
       entries, and §9's phasing reflects the re-plan
-- [ ] The `v0.2.0` tag collision is closed — rename the `tst-cu-mcp` tag to
+- [x] The `v0.2.0` tag collision is closed — rename the `tst-cu-mcp` tag to
       `tst-cu-mcp-v0.2.0`, or narrow `release.yml`'s trigger pattern
-- [ ] `tst-desk-kickoff-prompt.md` is updated to the `docs/` paths or deleted; `AGENTS.md`
+- [x] `tst-desk-kickoff-prompt.md` is updated to the `docs/` paths or deleted; `AGENTS.md`
       §11's layout is refreshed (maintainer edit — steering files are read-only to agents)
+
+**Completed (2026-08-22):** The M4-gate record went in as a retroactive `DECISIONS.md`
+entry that states plainly what the evidence supports: no contemporaneous approval note
+exists anywhere, the call survives only in the backlog's own 2026-08-19 re-plan of the M4
+header (no gating language on M4; the earliest "do not start until" is M5's), attribution
+to the product owner follows from that document being his planning surface, and the entry
+asks to be corrected if that inference is wrong. The why is evidenced: every blocked box
+needs hardware this environment lacks, so feature lanes ran while the manual boxes stay
+visibly unticked. Spec §10 turned out to need no archaeology — all seven items were
+answered at kickoff by DECISIONS' TD-101 entry, and each now carries its inline pointer;
+§9 gained a re-plan note naming the three divergences (M1.5/M8 split, extensibility added
+as backlog M10/v0.8, project home joining M4). For the tag collision this lane took the
+narrow-trigger horn and left the published tag alone: renaming a pushed tag that a GitHub
+Release references is remote surgery on shared state, while namespacing app releases to
+`tstdesk-v*` costs nothing (no app tag exists yet) and closes the hazard class — package
+tags can never fire the app workflow again. release.yml's trigger and its version-strip,
+changelog.py's default range (which would otherwise diff across a package tag), TD-1303's
+note, and the README sentence all moved together. The kickoff prompt kept its provenance
+with a dated banner and corrected paths rather than deletion, and AGENTS.md §11's layout
+now shows docs/'s actual contents and tstd's load-bearing additions since kickoff.
 
 M4 started while M3's exit condition was open. That may have been the right call, but the
 decision is not in the log, and the log is the project's memory for exactly this kind of

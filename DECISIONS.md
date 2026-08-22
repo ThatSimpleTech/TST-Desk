@@ -7709,3 +7709,36 @@ informed-consent trade. `never` and the fs-tool wall stay.
 
 **Alternative rejected:** Leave C and caps as the remaining cards.
 The user already rejected that.
+
+---
+
+## 2026-08-22 — TD-4812: Feature milestones proceeded past M3 while M3's gate was open (retroactive record)
+
+**Decision:** M4 (memory and project home) started 2026-08-19 while M3's shippable gate was
+open, and later feature milestones continued on the same footing. The open boxes were and are
+the manual hardware steps: clean-VM installs (TD-1301 box 2, TD-1302 boxes 1–2) and a green
+four-artifact release run (TD-1302 box 1). Nothing was re-ticked to make the crossing look
+clean; those boxes are open in the backlog today and stay that way until real hardware
+verifies them.
+
+**Authorization:** Adam Crocker, product owner. Recorded retroactively on 2026-08-22 by the
+TD-4812 lane because no contemporaneous approval note exists anywhere in the repo — no
+`DECISIONS.md` entry, no commit message, no backlog note. The call survives only as the
+backlog's own re-plan: the M4 milestone header was rewritten on 2026-08-19 to add project
+home, and no "do not start until" gating language exists on M4 anywhere in the backlog (the
+earliest such gate is M5's, on M4 exiting). That re-plan is the product owner's planning
+document, so the authorization is attributed to him; correct this entry if that attribution
+is wrong.
+
+**Rationale:** Every blocked box needs a machine this environment does not have — TD-1301's
+own notes say "no clean VM available in this environment", and the local `.dmg` step fails on
+AppleEvent permissions the dev host lacks. Holding every feature lane hostage to manual steps
+no machine in the loop could execute would have idled the roadmap on paperwork while the
+actual product risk (does the thing work at all?) was answerable by the test suites. The gate
+stays honest by staying open: the README claims no release, nothing downloads, and packaging
+stories remain visibly unfinished rather than quietly absorbed.
+
+**Alternative rejected:** Pausing feature work until packaging closes, or ticking the manual
+boxes on partial evidence (the sidecar smoke-launch alone). The first trades all velocity for
+one external dependency; the second would falsify the one document a stranger acts on and
+launder an unverified claim into the release story.
