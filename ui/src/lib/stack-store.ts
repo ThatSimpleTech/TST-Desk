@@ -7,6 +7,7 @@ import type {
 	DaemonEventUnion,
 	InstructionStackEntry,
 	MemoryStackEntry,
+	SkillStackEntry,
 } from "./protocol";
 
 /** What the stack panel renders from. */
@@ -30,6 +31,8 @@ export interface StackState {
 	memory: MemoryStackEntry[];
 	memoryDropped: MemoryStackEntry[];
 	memoryPlaceholder: boolean;
+	/** Skill bodies loaded so far (TD-4502), newest load per name. */
+	skills: SkillStackEntry[];
 }
 
 export function createStackState(): StackState {
@@ -44,6 +47,7 @@ export function createStackState(): StackState {
 		memory: [],
 		memoryDropped: [],
 		memoryPlaceholder: true,
+		skills: [],
 	};
 }
 
@@ -58,6 +62,7 @@ export function clearStack(state: StackState): void {
 	state.memory = [];
 	state.memoryDropped = [];
 	state.memoryPlaceholder = true;
+	state.skills = [];
 }
 
 export interface StackStoreDeps {
@@ -86,6 +91,8 @@ export function createStackStore(deps: StackStoreDeps, state: StackState) {
 			state.memory = event.memory ?? [];
 			state.memoryDropped = event.memory_dropped ?? [];
 			state.memoryPlaceholder = event.memory_placeholder ?? true;
+			// Older daemons omit the field; an empty list is the honest read.
+			state.skills = event.skills ?? [];
 			state.loaded = true;
 			return true;
 		},

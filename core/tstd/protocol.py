@@ -1255,6 +1255,22 @@ class MemoryStackEntry(BaseModel):
     reason: Literal["always-index", "heading", "embedding"]
 
 
+class SkillStackEntry(BaseModel):
+    """One skill whose body was loaded this session (TD-4502).
+
+    Listed apart from steering because it is not part of the stack: the
+    body rode a single turn after the cache prefix, and only the fact of
+    the load persists.
+    """
+
+    name: str
+    source: Literal["workspace", "user"]
+    path: str
+    tokens: int = Field(ge=0)
+    token_method: str
+    fallback: bool = False
+
+
 class InstructionStack(DaemonEvent):
     """Response to ``get_instruction_stack``: the resolved stack with counts."""
 
@@ -1279,6 +1295,10 @@ class InstructionStack(DaemonEvent):
     memory: list[MemoryStackEntry] = Field(default_factory=list)
     memory_dropped: list[MemoryStackEntry] = Field(default_factory=list)
     memory_placeholder: bool = False
+    # Skills loaded this session (TD-4502). Empty means none — the
+    # catalog still lists what is available. Additive with a safe
+    # default, so no PROTOCOL_VERSION bump.
+    skills: list[SkillStackEntry] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):

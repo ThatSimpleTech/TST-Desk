@@ -344,7 +344,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |
-| `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state. |
+| `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state, and any loaded skills listed apart from steering (TD-4502) — a skill body arrives on demand via `load_skill` or an invoked `/name`, so it is not prompt furniture. |
 | `instruction_files` | connection | The workspace's Instructions column: root steering plus `.tst/rules/*` (TD-2802). |
 | `context_pins` | connection | The workspace's Context column: pinned files and folders (TD-2804). |
 | `memory_files` | connection | The workspace's Memory column: `.tst/memory/*.md` with contents (TD-2601). |

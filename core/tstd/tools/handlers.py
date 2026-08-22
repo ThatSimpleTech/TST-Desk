@@ -23,7 +23,17 @@ from functools import partial
 from pathlib import Path
 
 from ..browser import BrowserDriver, MockBrowserDriver
+from ..compaction import budget_threshold, estimate_tokens
+from ..config import ModelConfig, TierName
 from ..context.manifest import _FALLBACK_IGNORE
+from ..context.skills import (
+    FALLBACK_SKILL_BUDGET_TOKENS,
+    LoadedSkill,
+    discover_skills,
+    read_skill_body,
+    render_loaded_skill,
+)
+from ..context.tokens import HeuristicTokenCounter
 from ..desktop import DesktopDriver, MockDesktopDriver
 from .browser import register_browser_handlers
 from .desktop import register_desktop_handlers
@@ -146,11 +156,75 @@ async def fs_list(
     return await asyncio.to_thread(_list_dir, Path(path), pattern, recursive)
 
 
+async def load_skill(
+    session: object, name: str, tool_call_id: str = "", *, model_config: ModelConfig | None = None
+) -> str:
+    """Load a skill body by name, whole (TD-4502).
+
+    The catalog told the brain the skill exists; this delivers the prose.
+    An oversized body is refused with its size stated — never truncated,
+    because half a skill reads as a whole one. Successful loads are
+    recorded on the session so the inspector lists them apart from
+    steering.
+    """
+    workspace = getattr(session, "workspace_path", None)
+    if not workspace:
+        return "Error: load_skill needs an open workspace."
+    skills = await asyncio.to_thread(discover_skills, Path(workspace))
+    skill = next((s for s in skills if s.name == name), None)
+    if skill is None:
+        available = ", ".join(s.name for s in skills[:10]) or "(none)"
+        return f"Error: no skill named {name!r}. Available: {available}"
+    try:
+        body = await asyncio.to_thread(read_skill_body, skill.path)
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"Error: skill {name!r} is unreadable ({exc})."
+
+    tokens = HeuristicTokenCounter().count(body).count
+    remaining = _remaining_skill_budget(session, model_config)
+    if tokens > remaining:
+        return (
+            f"Error: skill {name!r} is about {tokens} tokens but only {remaining} "
+            f"remain in the context budget; refused rather than truncated. "
+            f"Free up context (finish or compact turns) and try again."
+        )
+    loaded_skills = getattr(session, "loaded_skills", None)
+    if isinstance(loaded_skills, dict):
+        loaded_skills[name] = LoadedSkill(
+            name=skill.name, source=skill.source, path=str(skill.path), tokens=tokens
+        )
+    return render_loaded_skill(skill, body)
+
+
+def _remaining_skill_budget(session: object, model_config: ModelConfig | None) -> int:
+    """Compaction-budget headroom for one more injected block.
+
+    The active tier's compaction threshold minus what the conversation
+    already estimates — the same arithmetic that gates a send, applied to
+    a single load so a skill cannot walk the window into compaction on
+    its own. Without a wired config (tests), a conservative floor holds.
+    """
+    tier_name: TierName = "brain"
+    router = getattr(session, "router", None)
+    if router is not None:
+        tier_name = router.active_tier
+    if model_config is None:
+        return FALLBACK_SKILL_BUDGET_TOKENS
+    try:
+        threshold = budget_threshold(model_config.tier(tier_name))
+    except KeyError:
+        return FALLBACK_SKILL_BUDGET_TOKENS
+    conversation = list(getattr(session, "conversation", []) or [])
+    used, _method = estimate_tokens(conversation, HeuristicTokenCounter())
+    return max(0, threshold - used)
+
+
 def register_builtin_handlers(
     dispatcher: ToolDispatcher,
     allowed_commands: tuple[str, ...] | None = None,
     desktop_driver: DesktopDriver | None = None,
     browser_driver: BrowserDriver | None = None,
+    model_config: ModelConfig | None = None,
 ) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
@@ -159,6 +233,8 @@ def register_builtin_handlers(
     is the process-wide computer-use backend (TD-3301); omitted means the
     in-process mock so every builtin still has a handler.  ``browser_driver``
     is the session browser (TD-1710); omitted is the in-process mock.
+    ``model_config`` sizes the load_skill budget from the active tier's
+    context window (TD-4502); omitted falls back to a fixed floor.
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
@@ -169,6 +245,7 @@ def register_builtin_handlers(
     dispatcher.register_handler(
         "shell", partial(run_shell, policy=ShellPolicy(allowed_commands=allowed_commands))
     )
+    dispatcher.register_handler("load_skill", partial(load_skill, model_config=model_config))
     register_desktop_handlers(
         dispatcher, desktop_driver if desktop_driver is not None else MockDesktopDriver()
     )

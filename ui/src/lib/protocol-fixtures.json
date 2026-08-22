@@ -629,7 +629,17 @@
     "cache_observed": false,
     "memory": [],
     "memory_dropped": [],
-    "memory_placeholder": false
+    "memory_placeholder": false,
+    "skills": [
+      {
+        "name": "deploy",
+        "source": "workspace",
+        "path": "/home/user/project/.tst/skills/deploy/SKILL.md",
+        "tokens": 420,
+        "token_method": "approximation (4 chars/token)",
+        "fallback": false
+      }
+    ]
   },
   "memory_files": {
     "type": "memory_files",

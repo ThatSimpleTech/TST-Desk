@@ -8,11 +8,21 @@ steering reloads mid-session (TD-509).
 
 from __future__ import annotations
 
-from tstd.protocol import ImportedFile, InstructionStack, InstructionStackEntry, MemoryStackEntry
+from collections.abc import Iterable
+
+from tstd.protocol import (
+    ImportedFile,
+    InstructionStack,
+    InstructionStackEntry,
+    MemoryStackEntry,
+    SkillStackEntry,
+)
 
 from .assembler import AssembledSteering
 from .imports import ImportDirective
 from .memory_loader import MemoryFile, MemoryLoad, memory_tokens
+from .skills import LoadedSkill
+from .tokens import APPROX_METHOD
 
 
 def _flatten_imports(directives: tuple[ImportDirective, ...]) -> list[ImportedFile]:
@@ -41,6 +51,25 @@ def _memory_entries(files: tuple[MemoryFile, ...]) -> list[MemoryStackEntry]:
     ]
 
 
+def _skill_entries(loaded: Iterable[LoadedSkill]) -> list[SkillStackEntry]:
+    """Loaded skills as stack rows, with the counting method stated.
+
+    The load paths record a heuristic count (bodies arrive as text, and
+    the method travels with every other figure on this event), so the
+    method is restated here rather than guessed per row.
+    """
+    return [
+        SkillStackEntry(
+            name=skill.name,
+            source=skill.source,
+            path=skill.path,
+            tokens=skill.tokens,
+            token_method=APPROX_METHOD,
+        )
+        for skill in loaded
+    ]
+
+
 def build_instruction_stack(
     session_id: str,
     steering: AssembledSteering,
@@ -49,6 +78,7 @@ def build_instruction_stack(
     last_cached_tokens: int | None = None,
     cache_observed: bool = False,
     memory: MemoryLoad | None = None,
+    loaded_skills: Iterable[LoadedSkill] | None = None,
 ) -> InstructionStack:
     """Build the ``instruction_stack`` event for *steering*.
 
@@ -90,4 +120,5 @@ def build_instruction_stack(
         memory=_memory_entries(memory.files) if memory is not None else [],
         memory_dropped=_memory_entries(memory.dropped) if memory is not None else [],
         memory_placeholder=memory is None or memory.block is None,
+        skills=_skill_entries(loaded_skills) if loaded_skills is not None else [],
     )

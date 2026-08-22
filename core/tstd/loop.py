@@ -750,6 +750,7 @@ async def agent_loop(
             while True:
                 memory_block: str | None = None
                 project_context: str | None = None
+                skills_catalog: str | None = None
                 if tier == "brain":
                     loaded = await load_memory_for_turn(
                         session.workspace_path,
@@ -767,12 +768,22 @@ async def agent_loop(
                         config.project_context.token_budget,
                     )
                     project_context = ctx.block
+                    # Re-discovered per turn like memory, so a newly
+                    # written skill is offered without a restart; the
+                    # catalog is names only, so the cost stays flat.
+                    from .context.skills import build_skills_catalog, discover_skills
+
+                    found_skills = await asyncio.to_thread(
+                        discover_skills, Path(session.workspace_path)
+                    )
+                    skills_catalog = build_skills_catalog(found_skills)
                 assembled = await assembler.assemble(
                     tier,
                     task=user_content if tier == "worker" else None,
                     matched_paths=set(session.touched_paths),
                     memory=memory_block,
                     project_context=project_context if tier == "brain" else None,
+                    skills_catalog=skills_catalog if tier == "brain" else None,
                     approved_imports=frozenset(approved_imports),
                     denied_imports=frozenset(denied_imports),
                 )
@@ -865,6 +876,7 @@ async def agent_loop(
                         last_cached_tokens=tracker.last_cached_prompt_tokens,
                         cache_observed=tracker.cache_observed,
                         memory=session.last_memory,
+                        loaded_skills=list(session.loaded_skills.values()),
                     )
                 )
                 log.info(
