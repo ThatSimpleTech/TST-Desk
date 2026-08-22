@@ -432,7 +432,17 @@ async fn wait_pid_gone(pid: u32) {
 /// (TD-2903): close keeps this process alive; force-quit is the orphan
 /// backstop.
 pub fn spawn_daemon(data_dir: &Path) -> Result<tokio::process::Child, String> {
-    let argv = resolve_command()?;
+    spawn_daemon_with(data_dir, &resolve_command()?)
+}
+
+/// Same spawn with the command chosen by the caller instead of resolved
+/// from the environment. Test seam (TD-4810): the onefile-shape test used
+/// to point process-wide `TSTD_PATH` at its wrapper around the spawn,
+/// which raced sibling tests' `spawn_daemon` under parallel threads.
+pub fn spawn_daemon_with(
+    data_dir: &Path,
+    argv: &[String],
+) -> Result<tokio::process::Child, String> {
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..])
         .arg("--data-dir")
