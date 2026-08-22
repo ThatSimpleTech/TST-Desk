@@ -6193,16 +6193,25 @@ call. Separately: `tst-cu-mcp` tagged `v0.2.0` in a repo whose `release.yml` fir
 **Size:** 2 · **Depends on:** TD-1102
 
 **Acceptance criteria:**
-- [ ] The macOS backend stops passing the secret as `security -w <argv>` (Security
+- [x] The macOS backend stops passing the secret as `security -w <argv>` (Security
       framework bindings, or another argv-free path)
-- [ ] A test or documented manual check asserts the secret does not appear in `ps` during
+- [x] A test or documented manual check asserts the secret does not appear in `ps` during
       `set_api_key`
-- [ ] Linux and Windows backends audited for the same exposure and cleared or fixed
+- [x] Linux and Windows backends audited for the same exposure and cleared or fixed
 
 `security add-generic-password -w <secret>` puts the key in the process's argument list,
 readable by any local process via `ps` for the lifetime of the call. Short window, real
 exposure — and prime directive §2.2's "no secret is ever written to a log" spirit covers
 the process table too. The Windows backend already uses proper bindings; macOS should too.
+
+Closed with `tstd/keychain_macos.py`: the write goes through `SecItemAdd` via raw ctypes
+against the system frameworks (the Windows backend's zero-dependency precedent), passing
+the secret as in-memory CFData — no subprocess on the write path at all. Reads and deletes
+stay on the CLI, whose argv carries only account/service names. The audit cleared both
+other backends: Linux pipes the secret to `secret-tool` over stdin, Windows hands a blob
+to `CredWriteW`; neither ever places it in argv. `test_no_spawned_argv_carries_the_secret`
+records the argv of every process the store flow spawns and fails if the key shows up —
+reverting to the CLI add trips it exactly where `ps` would have read.
 
 ### TD-4814 — web_fetch's SSRF check is a DNS-rebinding TOCTOU
 **Size:** 2 · **Depends on:** TD-610
