@@ -19,6 +19,7 @@ suite rather than quietly mislead you.
 | `config.yaml` in your user data directory | You | **Yes.** This is the one the daemon loads. |
 | `.tst/config.yaml` in a workspace | You, per project | **Yes.** Git-tracked if you want the team to share it. |
 | `.tst/memory/*.md` in a workspace | Distill writes; you correct | **Yes.** Git-tracked on purpose. Standing rules stay in `AGENTS.md`. |
+| `.tst/autonomy/CHARTER.md` | You, from the Charter column | **Yes.** Human path only — the agent cannot write it. Spec §12.4. |
 
 The packaged file is a seed, not a setting. On first load, if your user copy is missing, it is
 copied there verbatim — comments and all — and from then on nothing the daemon reads comes from

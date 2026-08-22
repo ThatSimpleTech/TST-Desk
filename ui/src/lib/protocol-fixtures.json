@@ -141,6 +141,42 @@
     "workspace_path": "/home/user/project",
     "name": "api"
   },
+  "get_charter": {
+    "type": "get_charter",
+    "workspace_path": "/home/user/project"
+  },
+  "save_charter": {
+    "type": "save_charter",
+    "workspace_path": "/home/user/project",
+    "charter": {
+      "objective": "Ship the CSV importer end to end.",
+      "definition_of_done": [
+        "cargo test passes"
+      ],
+      "source_of_truth": [
+        "docs/spec.md"
+      ],
+      "boundary": {
+        "writable_paths": [
+          "src/**",
+          "tests/**"
+        ],
+        "allowed_commands": [
+          "cargo"
+        ],
+        "network": "deny"
+      },
+      "caps": {
+        "spend_usd": 25.0,
+        "wall_clock_hours": 8.0,
+        "max_iterations": 200
+      },
+      "stop_conditions": [
+        "any Class C decision"
+      ]
+    },
+    "notes": "Human context."
+  },
   "list_pins": {
     "type": "list_pins",
     "workspace_path": "/home/user/project"
@@ -579,6 +615,40 @@
     "memory": [],
     "memory_dropped": [],
     "memory_placeholder": false
+  },
+  "charter": {
+    "type": "charter",
+    "seq": 1,
+    "workspace_path": "/home/user/project",
+    "present": true,
+    "charter": {
+      "objective": "Ship the CSV importer end to end.",
+      "definition_of_done": [
+        "cargo test passes"
+      ],
+      "source_of_truth": [
+        "docs/spec.md"
+      ],
+      "boundary": {
+        "writable_paths": [
+          "src/**",
+          "tests/**"
+        ],
+        "allowed_commands": [
+          "cargo"
+        ],
+        "network": "deny"
+      },
+      "caps": {
+        "spend_usd": 25.0,
+        "wall_clock_hours": 8.0,
+        "max_iterations": 200
+      },
+      "stop_conditions": [
+        "any Class C decision"
+      ]
+    },
+    "notes": "Human context."
   },
   "memory_files": {
     "type": "memory_files",
