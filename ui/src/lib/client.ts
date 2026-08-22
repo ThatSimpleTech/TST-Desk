@@ -7,7 +7,8 @@
 //   - automatic reconnect with exponential backoff
 //   - re-attach with `from_seq` on reconnect to replay missed events
 //   - gap/duplicate detection on the per-session event sequence
-//   - tolerant handling of unknown event types (warn, never crash)
+//   - tolerant handling of unknown event types (dropped and counted, never
+//     dispatched — see the trust-boundary note in handleMessage)
 //
 // The WebSocket constructor is injected so the client runs in a test under
 // vitest's node environment with a fake transport, and in the webview with
@@ -148,6 +149,9 @@ export class ProtocolClient {
   private readonly attachedSessions = new Set<string>();
   // True after the first handshake; distinguishes first connect from a reconnect.
   private hasConnectedOnce = false;
+  // Frames dispatch() dropped because their type is not in KNOWN_EVENT_TYPES.
+  // Read-only after construction, through the `unknownEventCount` getter.
+  private unknownEventsDropped = 0;
   // Epoch ms of the last frame this socket delivered — any frame, event or
   // ping. Read only by `resume()` (TD-1716); 0 until the socket opens.
   private lastFrameAt = 0;
@@ -165,6 +169,11 @@ export class ProtocolClient {
   /** Highest accepted seq for a session (or 0 if unattached). */
   lastSeq(sessionId: string): number {
     return this.lastSeqBySession.get(sessionId) ?? 0;
+  }
+
+  /** How many frames were dropped because their `type` is outside the union. */
+  get unknownEventCount(): number {
+    return this.unknownEventsDropped;
   }
 
   /**
@@ -372,6 +381,15 @@ export class ProtocolClient {
       return;
     }
 
+    // Trust boundary (TD-4816): this is the whole check. We have verified only
+    // that the frame is a JSON object naming a string `type`; every payload
+    // field below is cast from `protocol.ts`, not validated. That residual
+    // trust is placed in the socket's peer — the daemon we launched, reached
+    // over loopback or a token-authenticated attach — because both ends of the
+    // wire ship from this repo and the TS mirror is the shared contract. What
+    // IS enforced: a frame whose type is not in KNOWN_EVENT_TYPES never
+    // reaches a store; it is dropped and counted (see dispatch()).
+
     const type = msg.type as string;
 
     // Out-of-band handshake reply: no seq. If we previously held a connection
@@ -475,13 +493,14 @@ export class ProtocolClient {
 
   /**
    * Dispatch a validated event to the sink. Unknown event types (those not in
-   * the typed union) must never crash the client — warn and move on. Their seq
-   * still advanced above, so gap detection won't falsely fire afterwards.
+   * the typed union) must never crash the client — drop and count them. Their
+   * seq still advanced above, so gap detection won't falsely fire afterwards.
    */
   private dispatch(msg: DaemonEventUnion): void {
     // The daemon may emit future/unknown types the TS mirror doesn't know.
     // TypeScript casts here can't know the full future shape; runtime guard is
-    // the real tolerance. Unknown types are dropped with a warning.
+    // the real tolerance. Unknown types are dropped with a warning and counted,
+    // so a drift between the daemon's union and this mirror is observable.
     const type = (msg as { type?: string }).type;
     if (type === undefined) {
       console.warn(`[tstd client] dropped message without a type`);
@@ -489,6 +508,7 @@ export class ProtocolClient {
     }
     const known = KNOWN_EVENT_TYPES.has(type);
     if (!known) {
+      this.unknownEventsDropped += 1;
       console.warn(`[tstd client] ignored unknown event type "${type}"`);
       this.sink.onUnknownEvent?.(type);
       return;
