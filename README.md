@@ -201,11 +201,11 @@ below), headless runs via `tst run`, computer-use — a screenshot and clicks th
 same classifier, behind a kill switch — on macOS and Windows via `tst-cu-mcp` (browser
 path on any OS), remote attach over Tailscale (never `0.0.0.0`) with Slack/ntfy notify
 and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
-a validating `CHARTER.md` schema, plus the session rail, settings, diagnostics, and
-keyless local-model support.
+a validating `CHARTER.md` schema and the project-home charter editor, plus the
+session rail, settings, diagnostics, and keyless local-model support.
 
-What is not built yet, and is not claimed anywhere above: the autonomy engine (charter
-editor, unattended runner, supervisor, hard-required container), MCP loading, slash
+What is not built yet, and is not claimed anywhere above: the autonomy engine
+(unattended runner, supervisor, hard-required container), MCP loading, slash
 commands, `SKILL.md`, and plan lock, Linux desktop capture, and desktop Design-mode AX.
 Those are later stories — see [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) §9 for
 the phasing.
