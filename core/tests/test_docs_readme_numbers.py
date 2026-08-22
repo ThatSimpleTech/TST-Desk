@@ -236,6 +236,7 @@ _WORKS_IMPORTS: tuple[tuple[str, str], ...] = (
     ("tailscale", "tstd.tailscale_bind"),
     ("ui-tars", "tstd.desktop.grounding_client"),
     ("charter.md", "tstd.autonomy.charter"),
+    ("charter editor", "tstd.autonomy.charter_io"),
 )
 
 # Not-built leftovers that are stories, not milestone exits. If Status
