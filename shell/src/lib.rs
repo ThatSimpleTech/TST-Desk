@@ -15,6 +15,7 @@ use read_text::read_text_file;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
 
 /// Set at the start of [`request_quit`] so CloseRequested during Quit
 /// does not hide, and a second ExitRequested is allowed to finish.
@@ -42,25 +43,15 @@ fn get_daemon_info(state: tauri::State<DaemonHandle>) -> Option<serde_json::Valu
 }
 
 /// Open a local path with the OS default handler (TD-1202: the decisions
-/// pane links out to the workspace ledger file). Zero-dependency — three
-/// platform spellings of "default handler, please". Fire-and-forget: we
-/// spawn and report spawn failure only; the handler's own outcome is the
-/// OS's business.
+/// pane links out to the workspace ledger file). Goes through the opener
+/// plugin already registered on the app (TD-4809): its per-platform
+/// implementation never routes the path through a shell, so a path is
+/// always one argv element — nothing to inject, no quoting to get right.
 #[tauri::command]
-fn open_path(path: String) -> Result<(), String> {
-    let spawn = || -> std::io::Result<std::process::Child> {
-        #[cfg(target_os = "macos")]
-        return std::process::Command::new("open").arg(&path).spawn();
-        #[cfg(target_os = "windows")]
-        return std::process::Command::new("cmd")
-            .args(["/C", "start", "", &path])
-            .spawn();
-        #[cfg(all(unix, not(target_os = "macos")))]
-        return std::process::Command::new("xdg-open").arg(&path).spawn();
-    };
-    spawn()
-        .map(|_| ())
-        .map_err(|e| format!("no opener available: {e}"))
+fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| format!("open failed: {e}"))
 }
 
 /// Palette / menu **Quit TST Desk** (TD-2903). Same path as Cmd+Q.
