@@ -177,6 +177,38 @@
     },
     "notes": "Human context."
   },
+  "start_autonomy": {
+    "type": "start_autonomy",
+    "workspace_path": "/home/user/project",
+    "charter": {
+      "objective": "Ship the CSV importer end to end.",
+      "definition_of_done": [
+        "cargo test passes"
+      ],
+      "source_of_truth": [
+        "docs/spec.md"
+      ],
+      "boundary": {
+        "writable_paths": [
+          "src/**",
+          "tests/**"
+        ],
+        "allowed_commands": [
+          "cargo"
+        ],
+        "network": "deny"
+      },
+      "caps": {
+        "spend_usd": 25.0,
+        "wall_clock_hours": 8.0,
+        "max_iterations": 200
+      },
+      "stop_conditions": [
+        "any Class C decision"
+      ]
+    },
+    "notes": "Human context."
+  },
   "list_pins": {
     "type": "list_pins",
     "workspace_path": "/home/user/project"
@@ -667,6 +699,14 @@
       ]
     },
     "notes": "Human context."
+  },
+  "autonomy_start": {
+    "type": "autonomy_start",
+    "seq": 1,
+    "workspace_path": "/home/user/project",
+    "ready": true,
+    "signed": true,
+    "error": null
   },
   "memory_files": {
     "type": "memory_files",

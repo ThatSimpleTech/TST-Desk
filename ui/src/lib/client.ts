@@ -48,6 +48,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "instruction_files",
   "context_pins",
   "memory_files",
+  "charter",
+  "autonomy_start",
   "memory_proposal",
   "session_list",
   "policy_rules", // TD-803: was missing; settings events arrived as unknown

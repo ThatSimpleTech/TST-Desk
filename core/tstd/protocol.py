@@ -392,6 +392,20 @@ class SaveCharter(ClientMessage):
     notes: str = ""
 
 
+class StartAutonomy(ClientMessage):
+    """Sign the charter and start an autonomous run (TD-4003). Human path.
+
+    Optional ``charter`` is the same loose mapping ``save_charter``
+    takes: write, then commit, then refuse unless the charter gate and
+    the sandbox are both live. Does not open an interactive session.
+    """
+
+    type: Literal["start_autonomy"] = "start_autonomy"
+    workspace_path: str
+    charter: dict[str, Any] | None = None
+    notes: str = ""
+
+
 class ListPins(ClientMessage):
     """List a workspace's context pins (TD-2804). Human path."""
 
@@ -1220,6 +1234,21 @@ class CharterDocument(DaemonEvent):
     notes: str = ""
 
 
+class AutonomyStart(DaemonEvent):
+    """Reply to ``start_autonomy``. Connection-scoped.
+
+    ``ready`` is true only when the charter is signed and the sandbox
+    is live. The unattended loop is TD-4101 — this event is the gate.
+    """
+
+    type: Literal["autonomy_start"] = "autonomy_start"
+    seq: int = 1
+    workspace_path: str
+    ready: bool
+    signed: bool
+    error: str | None = None
+
+
 class ContextPinEntry(BaseModel):
     """One pinned path on the Context column (TD-2804)."""
 
@@ -1730,6 +1759,7 @@ ClientMessageT = Annotated[
     | CreateRule
     | GetCharter
     | SaveCharter
+    | StartAutonomy
     | ListPins
     | AddPin
     | RemovePin
@@ -1795,6 +1825,7 @@ DaemonEventT = Annotated[
     | ContextPins
     | MemoryFiles
     | CharterDocument
+    | AutonomyStart
     | MemoryProposal
     | SessionList
     | PolicyRules
@@ -1850,6 +1881,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "create_rule",
         "get_charter",
         "save_charter",
+        "start_autonomy",
         "list_pins",
         "add_pin",
         "remove_pin",
@@ -1915,6 +1947,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "context_pins",
         "memory_files",
         "charter",
+        "autonomy_start",
         "memory_proposal",
         "session_list",
         "policy_rules",

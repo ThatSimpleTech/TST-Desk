@@ -2,7 +2,14 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
-import { charterEmptyCopy, charterLedeCopy, charterPayload, previewCharterYaml } from "./charter";
+import {
+	charterEmptyCopy,
+	charterLedeCopy,
+	charterPayload,
+	containerCopy,
+	previewCharterYaml,
+	startConfirmCopy,
+} from "./charter";
 
 const mocks = vi.hoisted(() => ({
 	handler: null as ((e: DaemonEventUnion) => void) | null,
@@ -27,6 +34,9 @@ import {
 	charter,
 	loadCharter,
 	resetCharter,
+	beginStart,
+	cancelStart,
+	confirmStart,
 	saveCharter,
 	setListItem,
 	setObjective,
@@ -73,6 +83,11 @@ describe("copy", () => {
 
 	it("names spec §12.4 in the lede", () => {
 		expect(charterLedeCopy()).toMatch(/§12\.4/);
+	});
+
+	it("states that this runs in a container", () => {
+		expect(containerCopy()).toBe("this runs in a container");
+		expect(startConfirmCopy()).toMatch(/this runs in a container/i);
 	});
 });
 
@@ -203,5 +218,40 @@ describe("store", () => {
 		expect(charter.saving).toBe(false);
 		expect(charter.draft.objective).toBe("x");
 		expect(charter.error).toMatch(/source_of_truth/);
+	});
+
+	it("start is an explicit confirm that shows the wall", () => {
+		loadCharter("/ws");
+		emit({
+			type: "charter",
+			seq: 1,
+			workspace_path: "/ws",
+			present: true,
+			charter: sampleFields,
+		});
+		beginStart();
+		expect(charter.confirming).toBe(true);
+		expect(startConfirmCopy()).toMatch(/wall and caps/i);
+		cancelStart();
+		expect(charter.confirming).toBe(false);
+		beginStart();
+		expect(confirmStart()).toBe(true);
+		expect(mocks.sent.at(-1)).toEqual({
+			type: "start_autonomy",
+			workspace_path: "/ws",
+			charter: charterPayload(charter.draft),
+			notes: "",
+		});
+		emit({
+			type: "autonomy_start",
+			seq: 1,
+			workspace_path: "/ws",
+			ready: false,
+			signed: true,
+			error: "Install Podman",
+		});
+		expect(charter.starting).toBe(false);
+		expect(charter.ready).toBe(false);
+		expect(charter.error).toMatch(/Install Podman/);
 	});
 });

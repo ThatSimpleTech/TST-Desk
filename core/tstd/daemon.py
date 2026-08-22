@@ -31,6 +31,7 @@ from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
 from .audit_writer import AuditWriter
 from .autonomy.charter import CharterError
 from .autonomy.charter_io import read_charter_document, write_charter_document
+from .autonomy.start import run_autonomy_start
 from .boundary_config import (
     boundary_source,
     load_workspace_boundary,
@@ -132,6 +133,7 @@ from .protocol import (
     ArtifactList,
     ArtifactReady,
     Attach,
+    AutonomyStart,
     Cancel,
     CharterDocument,
     CheckCuPermissions,
@@ -212,6 +214,7 @@ from .protocol import (
     SetupState,
     SetWorkspacePin,
     Shutdown,
+    StartAutonomy,
     TierState,
     UsageExported,
     UsageReport,
@@ -1717,6 +1720,9 @@ class Daemon:
         if isinstance(msg, SaveCharter):
             return await self._handle_save_charter(msg)
 
+        if isinstance(msg, StartAutonomy):
+            return await self._handle_start_autonomy(msg)
+
         if isinstance(msg, ListPins):
             return await self._handle_list_pins(msg)
 
@@ -2549,6 +2555,30 @@ class Daemon:
         return await self._handle_get_charter(
             GetCharter(workspace_path=str(root)),
         )
+
+    async def _handle_start_autonomy(self, msg: StartAutonomy) -> str:
+        """Sign the charter and refuse unless the sandbox is live (TD-4003)."""
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        try:
+            result = await run_autonomy_start(
+                root,
+                config=cached_config(),
+                charter=msg.charter,
+                notes=msg.notes,
+            )
+        except CharterError as e:
+            return build_error("invalid_charter", str(e))
+        return AutonomyStart(
+            workspace_path=str(root),
+            ready=result.ready,
+            signed=result.signed,
+            error=result.error,
+        ).model_dump_json()
 
     async def _handle_create_rule(self, msg: CreateRule) -> str:
         """Create a ``.tst/rules/`` file on the human path (TD-2802)."""

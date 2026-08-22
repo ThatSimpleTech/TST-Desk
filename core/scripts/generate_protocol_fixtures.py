@@ -29,6 +29,7 @@ from tstd.protocol import (
     AssistantReasoning,
     Attach,
     Attachment,
+    AutonomyStart,
     BoundaryUpdate,
     Cancel,
     CharterDocument,
@@ -121,6 +122,7 @@ from tstd.protocol import (
     SetWorkspacePin,
     ShellOutput,
     Shutdown,
+    StartAutonomy,
     SteeringReloaded,
     TierState,
     TierSwitched,
@@ -181,6 +183,26 @@ FIXTURES = {
     "create_rule": CreateRule(workspace_path="/home/user/project", name="api"),
     "get_charter": GetCharter(workspace_path="/home/user/project"),
     "save_charter": SaveCharter(
+        workspace_path="/home/user/project",
+        charter={
+            "objective": "Ship the CSV importer end to end.",
+            "definition_of_done": ["cargo test passes"],
+            "source_of_truth": ["docs/spec.md"],
+            "boundary": {
+                "writable_paths": ["src/**", "tests/**"],
+                "allowed_commands": ["cargo"],
+                "network": "deny",
+            },
+            "caps": {
+                "spend_usd": 25.0,
+                "wall_clock_hours": 8.0,
+                "max_iterations": 200,
+            },
+            "stop_conditions": ["any Class C decision"],
+        },
+        notes="Human context.",
+    ),
+    "start_autonomy": StartAutonomy(
         workspace_path="/home/user/project",
         charter={
             "objective": "Ship the CSV importer end to end.",
@@ -461,6 +483,12 @@ FIXTURES = {
             "stop_conditions": ["any Class C decision"],
         },
         notes="Human context.",
+    ),
+    "autonomy_start": AutonomyStart(
+        workspace_path="/home/user/project",
+        ready=True,
+        signed=True,
+        error=None,
     ),
     "memory_files": MemoryFiles(
         workspace_path="/home/user/project",

@@ -306,6 +306,35 @@ class TestClientMessages:
         assert back.charter["objective"] == "x"
         assert back.notes == "pane notes"
 
+    def test_start_autonomy(self) -> None:
+        from tstd.protocol import StartAutonomy
+
+        msg = StartAutonomy(
+            workspace_path="/home/user/project",
+            charter={"objective": "x", "definition_of_done": ["done"]},
+            notes="sign",
+        )
+        back = _roundtrip(msg)
+        assert isinstance(back, StartAutonomy)
+        assert back.charter is not None
+        assert back.charter["objective"] == "x"
+        assert back.notes == "sign"
+
+    def test_autonomy_start(self) -> None:
+        from tstd.protocol import AutonomyStart
+
+        ev = AutonomyStart(
+            workspace_path="/home/user/project",
+            ready=False,
+            signed=True,
+            error="Install Podman",
+        )
+        back = _roundtrip(ev)
+        assert isinstance(back, AutonomyStart)
+        assert back.ready is False
+        assert back.signed is True
+        assert back.error == "Install Podman"
+
     def test_charter_document(self) -> None:
         from tstd.autonomy.charter import Charter
         from tstd.protocol import CharterDocument

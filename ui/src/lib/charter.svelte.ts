@@ -13,6 +13,9 @@ export const charter = $state({
 	draft: emptyCharterDraft(),
 	notes: "",
 	saving: false,
+	confirming: false,
+	starting: false,
+	ready: false,
 	error: null as string | null,
 });
 
@@ -35,6 +38,9 @@ export function resetCharter(): void {
 	charter.draft = emptyCharterDraft();
 	charter.notes = "";
 	charter.saving = false;
+	charter.confirming = false;
+	charter.starting = false;
+	charter.ready = false;
 	charter.error = null;
 }
 
@@ -50,15 +56,28 @@ function applyDocument(
 	charter.error = null;
 }
 
+function applyStart(ready: boolean, error: string | null | undefined): void {
+	charter.starting = false;
+	charter.confirming = false;
+	charter.ready = ready;
+	charter.error = ready ? null : (error ?? "Start refused");
+}
+
 function reduce(event: DaemonEventUnion): void {
 	if (event.type === "charter") {
 		if (charter.workspacePath !== event.workspace_path) return;
 		applyDocument(event.present, event.charter, event.notes);
 		return;
 	}
+	if (event.type === "autonomy_start") {
+		if (charter.workspacePath !== event.workspace_path) return;
+		applyStart(event.ready, event.error);
+		return;
+	}
 	if (event.type === "error" && event.code === "invalid_charter") {
 		charter.error = event.message;
 		charter.saving = false;
+		charter.starting = false;
 	}
 }
 
@@ -69,6 +88,9 @@ export function loadCharter(workspacePath: string): void {
 	charter.draft = emptyCharterDraft();
 	charter.notes = "";
 	charter.saving = false;
+	charter.confirming = false;
+	charter.starting = false;
+	charter.ready = false;
 	charter.error = null;
 	sendToDaemon({ type: "get_charter", workspace_path: workspacePath });
 }
@@ -173,6 +195,34 @@ export function saveCharter(): boolean {
 		return false;
 	}
 	charter.saving = true;
+	charter.error = null;
+	return true;
+}
+
+export function beginStart(): void {
+	charter.confirming = true;
+	charter.ready = false;
+	charter.error = null;
+}
+
+export function cancelStart(): void {
+	charter.confirming = false;
+}
+
+export function confirmStart(): boolean {
+	const workspacePath = charter.workspacePath;
+	if (workspacePath === null) return false;
+	if (
+		!sendToDaemon({
+			type: "start_autonomy",
+			workspace_path: workspacePath,
+			charter: charterPayload(charter.draft),
+			notes: charter.notes,
+		})
+	) {
+		return false;
+	}
+	charter.starting = true;
 	charter.error = null;
 	return true;
 }
