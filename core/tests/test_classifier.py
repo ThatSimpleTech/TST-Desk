@@ -293,6 +293,78 @@ class TestSteeringFileWrite:
         assert fired_as(decision, "memory-file-write")
 
 
+# ── Rule: the signed charter is read-only to the agent (TD-4001) ───────
+
+
+class TestCharterWriteIsSteering:
+    """spec §12.4: the signed charter is Class C like steering — but only
+    the single file; its sibling ledger ``DECISIONS.md`` stays writable."""
+
+    def test_fs_write_to_charter_is_c(self) -> None:
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "autonomy" / "CHARTER.md",),
+                is_mutation=True,
+            ),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "steering-file-write")
+
+    def test_shell_redirect_into_charter_is_c(self) -> None:
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="shell",
+                arguments={"command": "echo tampered > .tst/autonomy/CHARTER.md"},
+                is_mutation=True,
+            ),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "shell-steering-write")
+
+    def test_case_folded_charter_is_c(self) -> None:
+        # Case-folded guard (TD-4804): a case variant of the reserved name
+        # is refused on any filesystem.
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".TST" / "AUTONOMY" / "CHARTER.MD",),
+                is_mutation=True,
+            ),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "steering-file-write")
+
+    def test_decisions_ledger_is_not_steering(self) -> None:
+        # The loop appends to the ledger mid-run; it must stay writable.
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "autonomy" / "DECISIONS.md",),
+                is_mutation=True,
+            ),
+        )
+        assert not fired_as(decision, "steering-file-write")
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "in-workspace-edit")
+
+    def test_other_autonomy_files_are_not_steering(self) -> None:
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "autonomy" / "notes.md",),
+                is_mutation=True,
+            ),
+        )
+        assert not fired_as(decision, "steering-file-write")
+        assert decision.decision_class is DecisionClass.A
+
+
 # ── Rule: cap exceeded → C ─────────────────────────────────────────────
 
 

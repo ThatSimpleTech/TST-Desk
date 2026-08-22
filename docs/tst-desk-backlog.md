@@ -5318,10 +5318,29 @@ E40 Charter ─> E41 Runner ─┬─> E42 Supervisor
 **Size:** 3 · **Depends on:** TD-706
 
 **Acceptance criteria:**
-- [ ] `.tst/autonomy/CHARTER.md` validates the spec §12.4 shape
+- [x] `.tst/autonomy/CHARTER.md` validates the spec §12.4 shape
       (objective, DoD, source_of_truth, boundary, caps, stop_conditions)
-- [ ] Invalid charter refuses start with field names
-- [ ] Git-tracked; the agent cannot write it (Class C, same as steering)
+- [x] Invalid charter refuses start with field names
+- [x] Git-tracked; the agent cannot write it (Class C, same as steering)
+
+Closed in `tstd.autonomy.charter`. The parser takes YAML frontmatter (or a
+whole-file YAML mapping) into a strict model: unknown keys are refused at every
+level — including inside `boundary:`/`caps:`, whose shared models now forbid
+extras for `.tst/config.yaml` too — and duplicate YAML keys refuse instead of
+last-winning. `boundary` and `caps` are required: an omitted section must not
+default to the loosest wall on the shelf, and the charter may only narrow the
+workspace wall, never widen it (the runner enforces that from TD-4003 on; this
+module only answers "may a run start here?"). The git gate fails closed and
+verifies bytes rather than trusting status: it hashes the working file against
+`HEAD:<path>` so skip-worktree cannot hide a tamper, pops `GIT_DIR` and friends
+so ambient env can't bless the wrong repository, and accepts any-case tracked
+names. Adversarial-review hardening beyond the boxes: column-0-only frontmatter
+fences (an indented `---` is content), BOM tolerance, duplicate-key refusal,
+a 1 MiB size cap with parse off the event loop, and GIT_* repo-selection vars
+stripped from child env. Flagged, deliberately not done here: shell redirect
+targets still skip the TD-4820 unsafe-form checks (`> CHARTER.md.` classifies B
+— byte-for-byte the same gap as `> AGENTS.md.`, inherited, not introduced); and
+whether the editor needs a reserved `version:` field is TD-4002's call.
 
 ---
 
