@@ -16,8 +16,8 @@ network at all.
 
 ## Install
 
-v0.1 has not been tagged yet, so the release page below is empty until the first `v*` tag is
-pushed. When it lands, each platform gets these artifacts, built by
+v0.1 has not been tagged yet, so the release page below is empty until the first
+`tstdesk-v*` tag is pushed. When it lands, each platform gets these artifacts, built by
 [`.github/workflows/package.yml`](.github/workflows/package.yml):
 
 | Platform | Artifact |
@@ -186,9 +186,11 @@ model choice, the audit trail, and the code.
 
 ## Status
 
-v0.1 — **in development, not yet released.** No tag has been pushed, so there is nothing to
-download yet; packaging runs in CI but has not yet produced a green artifact set
-(`TD-1302`, `TD-1303`). Running it today means running it from source.
+v0.1 — **in development, not yet released.** No app tag has been pushed, so there is
+nothing to download yet; packaging runs in CI but has not yet produced a green artifact
+set (`TD-1302`, `TD-1303`). App releases now tag as `tstdesk-v*` (`TD-4812`) so a package
+tag like `v0.2.0` cannot fire the app workflow. Running it today means running it from
+source.
 
 What works: streaming chat, the three-tier router, the steering assembler and instruction
 inspector, filesystem and shell tools behind a decision classifier and approval cards, path

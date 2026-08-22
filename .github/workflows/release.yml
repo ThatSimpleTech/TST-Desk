@@ -1,11 +1,14 @@
 name: Release
 
-# TD-1303: pushing a vX.Y.Z tag bundles every platform (via package.yml's
-# reusable job), then publishes a GitHub release with the artifacts, their
-# SHA-256 checksums, and a changelog generated from story commits.
+# TD-1303: pushing a tstdesk-vX.Y.Z tag bundles every platform (via
+# package.yml's reusable job), then publishes a GitHub release with the
+# artifacts, their SHA-256 checksums, and a changelog generated from story
+# commits. App tags are namespaced (TD-4812): the tst-cu-mcp package cuts its
+# own plain v* tags, and v0.2.0 matched the old bare-v* trigger and fired a
+# failed app-release run.
 on:
   push:
-    tags: ["v*"]
+    tags: ["tstdesk-v*"]
 
 jobs:
   bundle:
@@ -26,7 +29,7 @@ jobs:
 
       - name: Tag must match the component versions
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${GITHUB_REF_NAME#tstdesk-v}"
           for f in shell/tauri.conf.json ui/package.json; do
             v=$(grep -m1 '"version"' "$f" | sed 's/[^0-9.]//g')
             [ "$v" = "$tag" ] || { echo "tag $tag != $f version $v"; exit 1; }

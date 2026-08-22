@@ -383,6 +383,13 @@ Rule of thumb: **borrow the plumbing, not the brain.**
 
 Ship the thinnest thing that already feels like Claude Desktop. Earn the rest.
 
+> **Re-plan note (2026-08-22):** shipped order diverged from this table in three ways, all
+> recorded in [`docs/tst-desk-backlog.md`](tst-desk-backlog.md), whose milestone headers are
+> the sequencing source of truth: local models split into an early keyless path (backlog
+> M1.5, shipped with v0.1) and a remainder (backlog M8, v0.6); extensibility was added as
+> its own milestone after this table was written (backlog M10, v0.8);
+> project home joined memory in the v0.2 milestone (backlog M4).
+
 **v0.1 — "It feels like Claude Desktop"** ← the only phase that matters right now
 Tauri shell, one window. Chat pane + activity timeline. Workspace picker. `tstd` daemon with
 tst-cua loop + 3-tier router. fs + shell tools. Approval cards. Steering file loading +
@@ -409,17 +416,27 @@ sessions) and v0.5 (notifications). See §12.
 
 ---
 
-## 10. Open decisions (answer before building)
+## 10. Open decisions (answer before building) — *all answered 2026-08-12*
+
+Every item below was resolved at kickoff and recorded binding in
+[`DECISIONS.md`](../DECISIONS.md), entry "2026-08-12 — TD-101: Seven open decisions".
+Pointers inline; the section is kept for the record.
 
 1. **Repo:** standalone `ThatSimpleTech/tst-desk`, or a module inside TSTOS?
+   — *Answered:* standalone (`DECISIONS.md` TD-101 #1).
 2. **`tst-cua` reuse:** vendor it into the repo, or depend on it as a package?
+   — *Answered:* vendor (`DECISIONS.md` TD-101 #2).
 3. **Goose:** keep it as an optional headless backend, or fully replace it with `tstd`?
+   — *Answered:* fully replace with `tstd` (`DECISIONS.md` TD-101 #3).
 4. **License:** MIT (maximum adoption) or Apache-2.0 (patent grant)?
+   — *Answered:* Apache-2.0 with a `NOTICE` file (`DECISIONS.md` TD-101 #4).
 5. **Frontend:** SvelteKit inside Tauri (matches TST skills) — confirm, or React for
-   contributor familiarity?
+   contributor familiarity? — *Answered:* SvelteKit confirmed (`DECISIONS.md` TD-101 #5).
 6. **Name:** "TST Desk" — locked, or still open?
+   — *Answered:* locked (`DECISIONS.md` TD-101 #6).
 7. **Autonomy isolation:** is unsandboxed autonomy allowed at all with a scary confirmation,
    or hard-required to run in a container? (Recommendation: hard-required. §12.5)
+   — *Answered:* hard-required container, no escape hatch (`DECISIONS.md` TD-101 #7).
 
 ---
 

@@ -1,7 +1,10 @@
 """Generate a release changelog from commit subjects (TD-1303).
 
-    git tag vX.Y.Z && uv run python scripts/changelog.py        # since previous tag
-    uv run python scripts/changelog.py v0.1.0..v0.2.0           # explicit range
+    git tag tstdesk-v0.1.0 && uv run python scripts/changelog.py  # since previous app tag
+    uv run python scripts/changelog.py tstdesk-v0.1.0..HEAD       # explicit range
+
+App tags are namespaced ``tstdesk-v*`` (TD-4812) so the tst-cu-mcp package's
+plain ``v*`` tags never land in an app release's diff.
 
 Lines are grouped by story id (``TD-123: subject`` convention); commits
 without one land under "Other".  Integration merges are skipped — the
@@ -18,7 +21,10 @@ from collections import defaultdict
 
 def default_range() -> str:
     tags = subprocess.run(
-        ["git", "tag", "--sort=-v:refname"], check=True, capture_output=True, text=True
+        ["git", "tag", "--list", "tstdesk-v*", "--sort=-v:refname"],
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.split()
     if len(tags) < 2:
         return ""  # first release: whole history
