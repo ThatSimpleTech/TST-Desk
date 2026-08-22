@@ -162,6 +162,12 @@ class DarwinBackend:
         for index, display_id in enumerate(list(ids)[:count]):
             bounds = CGDisplayBounds(display_id)
 
+            # Fallback scale: engages only when the display mode cannot be read
+            # (CGDisplayCopyDisplayMode returns None, or the point width is 0).
+            # Consequence: a HiDPI panel then reports scale 1.0. Nothing
+            # geometric consumes it — bounds stay in points and the image-pixel
+            # mapping is proportional over the captured region — so the cost is
+            # confined to an understated density figure in screen metadata.
             scale = 1.0
             mode = CGDisplayCopyDisplayMode(display_id)
             if mode is not None:
@@ -256,12 +262,21 @@ class DarwinBackend:
     def type_text(self, text: str) -> None:
         import Quartz
 
+        # Local import: no cycle — input_control pulls in this package for
+        # get_backend. The count is shared with the MAX_TEXT_LEN validation
+        # there: one definition of "how many keyboard events a string costs".
+        from ..input_control import utf16_length
+
         for char in text:
+            # The length argument counts UTF-16 units, not characters — see
+            # utf16_length. Under-declaring an astral character sends only its
+            # high surrogate, so the count is deliberate, never len(char).
+            units = utf16_length(char)
             down = Quartz.CGEventCreateKeyboardEvent(None, 0, True)
-            Quartz.CGEventKeyboardSetUnicodeString(down, len(char), char)
+            Quartz.CGEventKeyboardSetUnicodeString(down, units, char)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
             up = Quartz.CGEventCreateKeyboardEvent(None, 0, False)
-            Quartz.CGEventKeyboardSetUnicodeString(up, len(char), char)
+            Quartz.CGEventKeyboardSetUnicodeString(up, units, char)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
 
     def parse_key_combo(self, combo: str) -> tuple[int, int]:

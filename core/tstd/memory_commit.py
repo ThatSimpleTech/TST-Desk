@@ -11,7 +11,6 @@ failed commit never fails the write. The no-git notice is one-time.
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -130,8 +129,10 @@ class MemoryCommitter:
 
     @staticmethod
     def _identity_env() -> dict[str, str]:
+        from .tools.shell import sanitized_env  # local import: no cycle
+
         return {
-            **os.environ,
+            **sanitized_env(),
             "GIT_AUTHOR_NAME": _AGENT_NAME,
             "GIT_AUTHOR_EMAIL": _AGENT_EMAIL,
             "GIT_COMMITTER_NAME": _AGENT_NAME,
@@ -139,6 +140,15 @@ class MemoryCommitter:
         }
 
     async def _git(self, *args: str, env: dict[str, str] | None = None) -> tuple[int, str, str]:
+        """Run ``git -C <workspace> <args>``; returns (rc, stdout, stderr).
+
+        The child inherits the shell tool's ``sanitized_env()`` (TD-4816);
+        the agent identity rides on top of it.
+        """
+        if env is None:
+            from .tools.shell import sanitized_env
+
+            env = sanitized_env()
         proc = await asyncio.create_subprocess_exec(
             "git",
             "-C",

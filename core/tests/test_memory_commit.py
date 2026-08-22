@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests.test_checkpoint import _git, make_repo
 from tests.test_security_suite import make_dispatcher
 from tstd.autonomy import Checkpointer
@@ -118,3 +120,30 @@ class TestNoGit:
         assert first.memory_notice.code == MEMORY_NO_GIT
         assert "no commit" in first.memory_notice.message
         assert second.memory_notice is None
+
+
+class TestChildEnvSanitized:
+    """A planted secret-shaped variable never reaches a git child (TD-4816)."""
+
+    async def test_default_spawn_env_is_sanitized(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = make_repo(tmp_path)
+        monkeypatch.setenv("TST_SECRET_PROBE", "sk-test-probe-key")
+        monkeypatch.setenv("TST_PLAIN_PROBE", "visible-value")
+        committer = MemoryCommitter(repo)
+        # A ``!`` alias makes the git child print its own environment.
+        rc, out, err = await committer._git("-c", "alias.tstdump=!env", "tstdump")
+        assert rc == 0, err
+        assert "TST_SECRET_PROBE" not in out
+        assert "TST_PLAIN_PROBE=visible-value" in out
+
+    def test_identity_env_drops_secrets_keeps_identity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The agent identity rides on top of the sanitized base."""
+        monkeypatch.setenv("TST_SECRET_PROBE", "sk-test-probe-key")
+        env = MemoryCommitter._identity_env()
+        assert "TST_SECRET_PROBE" not in env
+        assert env["GIT_AUTHOR_NAME"] == "TST Desk"
+        assert env["GIT_COMMITTER_EMAIL"] == "tstdesk@localhost"

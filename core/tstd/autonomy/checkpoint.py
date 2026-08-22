@@ -17,6 +17,8 @@ Safety model — git plumbing only:
   written paths are neither captured nor disturbed.
 - Checkpoints respect ``.gitignore`` (plain ``git add``, never ``-f``),
   keeping runtime state (§8) out of the undo stack.
+- Git children inherit the shell tool's ``sanitized_env()`` — no API
+  keys, tokens, or keychain material reach git (TD-4816).
 
 Degradation (informed once per session, never fatal):
 
@@ -338,8 +340,10 @@ class Checkpointer:
 
     @staticmethod
     def _identity_env() -> dict[str, str]:
+        from ..tools.shell import sanitized_env  # local import: no cycle
+
         return {
-            **os.environ,
+            **sanitized_env(),
             "GIT_AUTHOR_NAME": _AGENT_NAME,
             "GIT_AUTHOR_EMAIL": _AGENT_EMAIL,
             "GIT_COMMITTER_NAME": _AGENT_NAME,
@@ -347,7 +351,16 @@ class Checkpointer:
         }
 
     async def _git(self, *args: str, env: dict[str, str] | None = None) -> tuple[int, str, str]:
-        """Run ``git -C <workspace> <args>``; returns (rc, stdout, stderr)."""
+        """Run ``git -C <workspace> <args>``; returns (rc, stdout, stderr).
+
+        The child inherits the shell tool's ``sanitized_env()`` — no API
+        keys, tokens, or keychain material reach git (TD-4816).  Callers
+        layer additions (the temp index, the agent identity) on top.
+        """
+        if env is None:
+            from ..tools.shell import sanitized_env
+
+            env = sanitized_env()
         proc = await asyncio.create_subprocess_exec(
             "git",
             "-C",
