@@ -29,6 +29,8 @@ from .attachments import AttachmentError, decode_attachments, render_user_conten
 from .audit import AuditStore
 from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
 from .audit_writer import AuditWriter
+from .autonomy.charter import CharterError
+from .autonomy.charter_io import read_charter_document, write_charter_document
 from .boundary_config import (
     boundary_source,
     load_workspace_boundary,
@@ -122,6 +124,7 @@ from .protocol import (
     ArtifactReady,
     Attach,
     Cancel,
+    CharterDocument,
     CheckCuPermissions,
     ClientMessageT,
     ContextPinEntry,
@@ -143,6 +146,7 @@ from .protocol import (
     EndSession,
     ExportUsage,
     ForkFrom,
+    GetCharter,
     GetInstructionStack,
     GetSetupState,
     GetUsage,
@@ -175,6 +179,7 @@ from .protocol import (
     Resume,
     RevokePolicyRule,
     RunDiagnostics,
+    SaveCharter,
     SaveJob,
     SaveMemory,
     SessionList,
@@ -1587,6 +1592,12 @@ class Daemon:
         if isinstance(msg, CreateRule):
             return await self._handle_create_rule(msg)
 
+        if isinstance(msg, GetCharter):
+            return await self._handle_get_charter(msg)
+
+        if isinstance(msg, SaveCharter):
+            return await self._handle_save_charter(msg)
+
         if isinstance(msg, ListPins):
             return await self._handle_list_pins(msg)
 
@@ -2345,6 +2356,41 @@ class Daemon:
                 MemoryFileEntry(path=str(f.path), name=f.name, content=f.content) for f in listed
             ],
         ).model_dump_json()
+
+    async def _handle_get_charter(self, msg: GetCharter) -> str:
+        """Load the workspace charter for the pane (TD-4002). Not a tool."""
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        try:
+            present, charter, notes = await asyncio.to_thread(read_charter_document, root)
+        except CharterError as e:
+            return build_error("invalid_charter", str(e))
+        return CharterDocument(
+            workspace_path=str(root),
+            present=present,
+            charter=charter,
+            notes=notes,
+        ).model_dump_json()
+
+    async def _handle_save_charter(self, msg: SaveCharter) -> str:
+        """Write CHARTER.md as the human (TD-4002). Does not commit."""
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        try:
+            await asyncio.to_thread(write_charter_document, root, msg.charter, msg.notes)
+        except CharterError as e:
+            return build_error("invalid_charter", str(e))
+        return await self._handle_get_charter(
+            GetCharter(workspace_path=str(root)),
+        )
 
     async def _handle_create_rule(self, msg: CreateRule) -> str:
         """Create a ``.tst/rules/`` file on the human path (TD-2802)."""

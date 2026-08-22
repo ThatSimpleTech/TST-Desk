@@ -133,6 +133,21 @@ def _frontmatter(text: str) -> str:
     return text
 
 
+def charter_notes(text: str) -> str:
+    """Free-form prose after a column-0 closing fence, or empty.
+
+    Whole-file YAML has no notes.  An opening fence with no closer is
+    also YAML, not a truncated body — same rule as :func:`_frontmatter`.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0] != "---":
+        return ""
+    for i in range(1, len(lines)):
+        if lines[i] == "---":
+            return "\n".join(lines[i + 1 :]).strip()
+    return ""
+
+
 class _UniqueKeyLoader(yaml.SafeLoader):
     """A SafeLoader that refuses duplicate mapping keys.
 
