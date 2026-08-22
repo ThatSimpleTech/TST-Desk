@@ -872,10 +872,25 @@ def test_loopback_bind_allowed(host: str) -> None:
 
 
 def test_server_start_exposes_no_host_parameter() -> None:
-    """Structural guard: the server hardcodes loopback. If a host parameter is
-    ever added, it must route through validate_interface — this test forces
-    that conversation instead of letting the parameter slip in."""
+    """start() takes no host. Opt-in Tailscale bind is __init__(bind=)
+    and still routes through validate_interface / resolve_remote_bind."""
     assert "host" not in inspect.signature(WebSocketServer.start).parameters
+    assert "bind" in inspect.signature(WebSocketServer.__init__).parameters
+
+
+def test_unspecified_refused_even_as_extra_allowed() -> None:
+    """0.0.0.0 / :: are never a legal extra Tailscale host (TD-3601)."""
+    with pytest.raises(ValueError, match="loopback only"):
+        validate_interface("0.0.0.0", extra_allowed="0.0.0.0")
+    with pytest.raises(ValueError, match="loopback only"):
+        validate_interface("::", extra_allowed="::")
+
+
+def test_tailscale_extra_allowed_is_exact_address() -> None:
+    """A resolved Tailscale host is allowed; a different LAN host is not."""
+    validate_interface("100.64.1.5", extra_allowed="100.64.1.5")
+    with pytest.raises(ValueError, match="loopback only"):
+        validate_interface("192.168.1.10", extra_allowed="100.64.1.5")
 
 
 # ── 6. Classifier bypass attempts (TD-702 chokepoint) ─────────────────────

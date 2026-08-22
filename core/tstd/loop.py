@@ -36,14 +36,20 @@ from .autonomy import (
     DecisionLedger,
 )
 from .compaction import maybe_compact
-from .config import ConfigError, ModelConfig, ModelDiscoveryError
+from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
-from .discovery import resolve_tier_slugs
+from .discovery import discover_model, resolve_tier_slugs
 from .keychain import KeychainError
+from .local_worker import (
+    effective_tier,
+    mark_cu_tool,
+    session_is_cu_heavy,
+    titlebar_slugs,
+)
 from .logging import get_logger
 from .memory_commit import MemoryCommitter
 from .policy import load_approved_imports, save_approved_imports
@@ -75,7 +81,7 @@ from .provider import (
 from .provider import (
     ToolDefinition as ProviderToolDefinition,
 )
-from .router import TIER_NAMES, TierName, TierRouter
+from .router import TierName, TierRouter
 from .session import Session
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
@@ -109,6 +115,17 @@ class ProviderLike(Protocol):
 
 
 log = get_logger("tstd.loop")
+
+
+async def _invoke_factory(
+    factory: Callable[..., Awaitable[ProviderLike]],
+    tier_cfg: TierConfig,
+) -> ProviderLike:
+    """Call *factory* with the effective tier; zero-arg factories still work."""
+    try:
+        return await factory(tier_cfg)
+    except TypeError:
+        return await factory()
 
 
 def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
@@ -378,6 +395,7 @@ async def _build_assistant_tool_call(
                 seq=1,
             )
         )
+        mark_cu_tool(session, tc_name)
 
     return provider_tool_calls
 
@@ -466,7 +484,7 @@ async def _dispatch_and_append_results(
 async def agent_loop(
     session: Session,
     router: TierRouter,
-    provider_factory: Callable[[], Awaitable[ProviderLike]],
+    provider_factory: Callable[..., Awaitable[ProviderLike]],
     config: ModelConfig,
     tool_registry: ToolRegistry | None = None,
     tool_dispatcher: ToolDispatcher | None = None,
@@ -487,8 +505,9 @@ async def agent_loop(
         session: The session this loop belongs to.
         router: Tier routing policy (brain → worker → validator).
         provider_factory: Async callable that returns a ``ProviderLike``
-            (network or mock).  Called once before the first turn so the
-            session can be opened without a provider being available.
+            (network or mock).  Receives the effective ``TierConfig`` for
+            the call so a CU-heavy worker can use a different URL than
+            the brain (TD-3903).  Zero-argument factories still work.
         config: Model configuration with tier pricing and slugs.
         tool_registry: Optional tool registry.  If provided, tool
             definitions are sent to the model.
@@ -543,7 +562,18 @@ async def agent_loop(
             audit_sink.record_model_call(session.id, rec, is_classifier)
 
         tracker.add_listener(_forward)
-    provider: ProviderLike | None = None  # resolved lazily before first use
+    # Clients keyed by base_url so a remapped local worker (TD-3903) does
+    # not reuse the remote brain client.  Resolved lazily on first use.
+    providers: dict[str, ProviderLike] = {}
+
+    async def client_for(tier_cfg: TierConfig) -> ProviderLike:
+        key = tier_cfg.base_url
+        existing = providers.get(key)
+        if existing is not None:
+            return existing
+        created = await _invoke_factory(provider_factory, tier_cfg)
+        providers[key] = created
+        return created
 
     # Decision classifier chokepoint (TD-702/703, prime §2.6).  Every tool
     # call routes through it: the static rule table first; ambiguous cases
@@ -560,16 +590,17 @@ async def agent_loop(
         if tool_dispatcher.classifier is None:
 
             async def _worker_classifier(prompt: str) -> str:
-                if provider is None:
-                    raise RuntimeError("classifier worker call before provider ready")
+                # Classifier stays on the active preset's worker, not the
+                # CU remapped client — it is not a pixel loop (TD-3903).
                 worker_cfg = config.tier("worker")
+                worker_client = await client_for(worker_cfg)
                 request = ChatCompletionRequest(
                     model=worker_cfg.require_slug(),
                     messages=[ChatMessage(role="user", content=prompt)],
                     max_tokens=8,
                     temperature=0.0,
                 )
-                resp = await provider.chat_completion(request)
+                resp = await worker_client.chat_completion(request)
                 if isinstance(resp, ProviderError):
                     raise RuntimeError(f"classifier worker call failed: {resp.message}")
                 if resp.usage is not None:
@@ -643,6 +674,7 @@ async def agent_loop(
     # model the daemon has not settled on.
     _model_slugs: dict[str, str] = {}
     _last_reported_tier: TierName | None = None
+    _last_reported_slugs: dict[str, str] | None = None
 
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:
@@ -717,7 +749,7 @@ async def agent_loop(
                 },
             )
             continue
-        _model_slugs = {name: config.tier(name).require_slug() for name in TIER_NAMES}
+        _model_slugs = titlebar_slugs(config, cu_heavy=session_is_cu_heavy(session))
 
         # 2. Tool-call round-trip loop
         #    Each iteration: call provider → execute tool calls → loop
@@ -725,11 +757,44 @@ async def agent_loop(
         while True:
             # 2a. Determine active tier via router
             tier = router.record_turn_start()
-            if tier != _last_reported_tier:
+            cu_heavy = session_is_cu_heavy(session)
+            tier_cfg = effective_tier(config, tier, cu_heavy=cu_heavy)
+            if tier == "worker" and cu_heavy and tier_cfg.slug is None:
+                # First use of the remapped worker: discover or fail the
+                # turn the same way an unresolved active-preset slug does.
+                try:
+                    tier_cfg.slug = await discover_model(tier_cfg.base_url, tier="worker")
+                except ModelDiscoveryError as e:
+                    messages.append(
+                        ChatMessage(role="assistant", content=f"I encountered an error: {e}")
+                    )
+                    await session.conversation_changed()
+                    await _emit_turn_complete(
+                        session,
+                        tier,
+                        turn_start,
+                        tracker,
+                        failed=True,
+                        error_code="model_unresolved",
+                    )
+                    log.warning(
+                        "turn failed: no model resolved for the local worker",
+                        extra={
+                            "extra_fields": {
+                                "session_id": session.id,
+                                "endpoint": e.endpoint,
+                            }
+                        },
+                    )
+                    break
+            _model_slugs = titlebar_slugs(config, cu_heavy=cu_heavy)
+            if tier != _last_reported_tier or _model_slugs != _last_reported_slugs:
                 _last_reported_tier = tier
+                _last_reported_slugs = _model_slugs
                 # TD-1006: tell the title bar which tier (and slug) is
                 # live — lead-turns handoffs and failure escalations
-                # included, not just manual set_tier overrides.
+                # included, not just manual set_tier overrides. Slug
+                # changes (TD-3903 remap) also emit so the chip stays honest.
                 await session.event_log.add(
                     TierState(
                         session_id=session.id,
@@ -739,7 +804,6 @@ async def agent_loop(
                         seq=1,
                     )
                 )
-            tier_cfg = config.tier(tier)
 
             # 2b. Assemble the per-tier system prompt in stable-prefix
             #     order (TD-305), gating external imports (TD-505): an
@@ -933,34 +997,33 @@ async def agent_loop(
                 },
             )
 
-            # 2c. Resolve provider lazily on first use. A missing keychain
+            # 2c. Resolve provider lazily per endpoint. A missing keychain
             #     entry fails the *turn*, not the session (TD-1008): the
             #     conversation survives, the user stores a key, and the next
-            #     message retries — _ensure_provider only caches on success.
-            if provider is None:
-                try:
-                    provider = await provider_factory()
-                except KeychainError as e:
-                    messages.append(
-                        ChatMessage(
-                            role="assistant",
-                            content=f"I encountered an error: {e}",
-                        )
+            #     message retries — client_for only caches on success.
+            try:
+                provider = await client_for(tier_cfg)
+            except KeychainError as e:
+                messages.append(
+                    ChatMessage(
+                        role="assistant",
+                        content=f"I encountered an error: {e}",
                     )
-                    await session.conversation_changed()
-                    await _emit_turn_complete(
-                        session,
-                        tier,
-                        turn_start,
-                        tracker,
-                        failed=True,
-                        error_code="missing_api_key",
-                    )
-                    log.warning(
-                        "turn failed: no API key in keychain",
-                        extra={"extra_fields": {"session_id": session.id}},
-                    )
-                    break
+                )
+                await session.conversation_changed()
+                await _emit_turn_complete(
+                    session,
+                    tier,
+                    turn_start,
+                    tracker,
+                    failed=True,
+                    error_code="missing_api_key",
+                )
+                log.warning(
+                    "turn failed: no API key in keychain",
+                    extra={"extra_fields": {"session_id": session.id}},
+                )
+                break
 
             # 2c.5 Cap enforcement (TD-707).  Before every model call,
             #     a declared cap that is exceeded parks the session in a

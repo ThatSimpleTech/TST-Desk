@@ -56,14 +56,21 @@ import pytest
 
 from tstd.config import (
     ModelConfig,
+    NotifyConfig,
+    NtfyNotifyConfig,
     Preset,
+    SlackNotifyConfig,
     TierConfig,
     cached_config,
     is_loopback_url,
 )
 from tstd.context.embeddings import EmbeddingsClient
 from tstd.daemon import Daemon
+from tstd.desktop.grounding_client import GroundingClient
+from tstd.desktop.protocol import TINY_PNG
 from tstd.discovery import resolve_tier_slugs
+from tstd.notify.ntfy import send as ntfy_send
+from tstd.notify.slack import send as slack_send
 from tstd.provider import ChatCompletionRequest, ChatMessage, ProviderClient, RetryConfig
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent / "tstd"
@@ -233,7 +240,11 @@ _ASYNCIO_NETWORK_CALLS = frozenset(
 _OUTBOUND_CAPABLE = {
     "provider.py": "the one chat client; base_url is a constructor argument from config",
     "discovery.py": "GET /v1/models, refused before sending unless the endpoint is loopback",
-    "ws.py": "the loopback WebSocket server; validate_interface() guards the interface",
+    "ws.py": (
+        "the loopback WebSocket server plus opt-in Tailscale bind "
+        "(remote.bind); validate_interface() and resolve_remote_bind() "
+        "guard the interface — never 0.0.0.0"
+    ),
     "daemon.py": "websockets.exceptions for typed disconnects; it serves, it never dials",
     "e2e_harness.py": "the headless harness, a protocol client of our own loopback daemon",
     "benchmarks.py": "the benchmark client, likewise loopback",
@@ -241,9 +252,21 @@ _OUTBOUND_CAPABLE = {
     "e2e_memory.py": "the M4 memory harness, a protocol client of our own loopback daemon",
     "e2e_m5.py": "the M5 coworker harness, a protocol client of our own loopback daemon",
     "e2e_m6.py": "the M6 exit harness, a protocol client of our own loopback daemon",
+    "e2e_m7.py": "the M7 exit harness, a protocol client of our own loopback daemon",
+    "e2e_m8.py": (
+        "the M8 exit harness; probes and dials only the shipped vllm "
+        "preset's loopback /v1 (or a loopback override); off-box is refused "
+        "before send"
+    ),
     "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
     "tools/web_search.py": "web_search; destination is search.base_url from config",
     "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
+    "desktop/grounding_client.py": (
+        "UI-TARS grounding; destination is computer_use.grounding.base_url "
+        "from config; loopback-only, empty disables"
+    ),
+    "notify/slack.py": "slack incoming webhook; destination host is notify.slack.host from config",
+    "notify/ntfy.py": "ntfy topic POST; destination host is notify.ntfy.host from config",
 }
 
 
@@ -460,6 +483,90 @@ async def test_embeddings_destination_traces_to_config(
     assert vectors == [[0.1, 0.2]]
     assert recorder.origins() == {"http://127.0.0.1:64111"}
     assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64111/v1/embeddings"}
+
+
+async def test_grounding_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """The grounding client lands where computer_use.grounding.base_url points."""
+    client = GroundingClient(
+        base_url="http://127.0.0.1:64113/v1",
+        slug="sentinel-model",
+        timeout_seconds=1,
+    )
+    await client.locate(TINY_PNG, "Save")
+    assert recorder.origins() == {"http://127.0.0.1:64113"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64113/v1/chat/completions"}
+
+
+async def test_slack_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """Slack notify lands where notify.slack.host points. The webhook URL
+    is injected (keychain in production); the host allowlist is config."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        slack=SlackNotifyConfig(enabled=True, host="127.0.0.1", timeout_seconds=1)
+    )
+    await slack_send(
+        config,
+        "hello",
+        webhook_url="http://127.0.0.1:64112/services/T/B/injected",
+    )
+    assert recorder.origins() == {"http://127.0.0.1:64112"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64112/services/T/B/injected"}
+
+
+async def test_moving_the_slack_host_moves_the_destination(
+    recorder: TransportRecorder,
+) -> None:
+    """Change notify.slack.host (and the injected URL's host) and the
+    request follows. A hardcoded Slack host would not."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        slack=SlackNotifyConfig(enabled=True, host="somewhere-else.invalid", timeout_seconds=1)
+    )
+    await slack_send(
+        config,
+        "hello",
+        webhook_url="https://somewhere-else.invalid/services/T/B/injected",
+    )
+    assert recorder.origins() == {"https://somewhere-else.invalid"}
+
+
+async def test_ntfy_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """ntfy notify lands where notify.ntfy.host points. The topic URL
+    is injected (keychain in production); the host allowlist is config."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        ntfy=NtfyNotifyConfig(enabled=True, host="127.0.0.1", timeout_seconds=1)
+    )
+    await ntfy_send(
+        config,
+        "hello",
+        topic_url="http://127.0.0.1:64112/desk-topic",
+    )
+    assert recorder.origins() == {"http://127.0.0.1:64112"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64112/desk-topic"}
+
+
+async def test_moving_the_ntfy_host_moves_the_destination(
+    recorder: TransportRecorder,
+) -> None:
+    """Change notify.ntfy.host (and the injected URL's host) and the
+    request follows. A hardcoded ntfy host would not."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        ntfy=NtfyNotifyConfig(enabled=True, host="somewhere-else.invalid", timeout_seconds=1)
+    )
+    await ntfy_send(
+        config,
+        "hello",
+        topic_url="https://somewhere-else.invalid/desk-topic",
+    )
+    assert recorder.origins() == {"https://somewhere-else.invalid"}
 
 
 async def test_moving_the_configured_endpoint_moves_every_destination(

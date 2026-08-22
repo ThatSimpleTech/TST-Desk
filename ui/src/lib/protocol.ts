@@ -127,6 +127,12 @@ export interface SetCuIndicators extends ClientMessage {
   show_on_real_display: boolean;
 }
 
+/** Turn Tailscale remote attach on or off (TD-3603). Machine-wide, no session. */
+export interface SetRemoteAttach extends ClientMessage {
+  type: "set_remote_attach";
+  enabled: boolean;
+}
+
 /** Pin or unpin a workspace on the Projects list (TD-2806). */
 export interface SetWorkspacePin extends ClientMessage {
   type: "set_workspace_pin";
@@ -394,6 +400,29 @@ export interface SetCuKill extends ClientMessage {
   killed: boolean;
 }
 
+/** List persisted scheduled jobs (TD-3805). Connection-scoped. */
+export interface ListJobs extends ClientMessage {
+  type: "list_jobs";
+}
+
+/** Create or replace a scheduled job from draft fields (TD-3805). Pause is this verb. */
+export interface SaveJob extends ClientMessage {
+  type: "save_job";
+  id?: string | null;
+  workspace?: string | null;
+  instruction?: string | null;
+  cadence?: string | null;
+  next_run?: string | null;
+  deliver_to?: "window" | "slack" | "ntfy" | null;
+  paused?: boolean;
+}
+
+/** Remove a scheduled job by id (TD-3805). */
+export interface DeleteJob extends ClientMessage {
+  type: "delete_job";
+  job_id: string;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -448,7 +477,11 @@ export type ClientMessageUnion =
   | OpenArtifact
   | DesignHitTest
   | CheckCuPermissions
-  | SetCuKill;
+  | SetCuKill
+  | SetRemoteAttach
+  | ListJobs
+  | SaveJob
+  | DeleteJob;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -820,6 +853,10 @@ export interface SetupState extends DaemonEvent {
   // TD-3402: host overlay on the real display. Additive, default off.
   cu_show_on_real_display?: boolean;
   pinned_workspaces?: string[];
+  // TD-3603: Allow remote attach. Additive, default off.
+  // remote_bind is the bound Tailscale address, never a token.
+  remote_attach_enabled?: boolean;
+  remote_bind?: string | null;
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the
@@ -1004,6 +1041,23 @@ export interface TierSwitched extends DaemonEvent {
   previous?: "brain" | "worker" | "validator" | null;
 }
 
+/** One persisted job on job_list (TD-3805). */
+export interface JobEntry {
+  id: string;
+  workspace: string;
+  instruction: string;
+  cadence: string | null;
+  next_run: string | null;
+  deliver_to: "window" | "slack" | "ntfy";
+  paused: boolean;
+}
+
+/** Response to list_jobs / save_job / delete_job (TD-3805). Connection-scoped. */
+export interface JobList extends DaemonEvent {
+  type: "job_list";
+  jobs: JobEntry[];
+}
+
 export type DaemonEventUnion =
   | Ready
   | SessionState
@@ -1045,4 +1099,5 @@ export type DaemonEventUnion =
   | ScreenFrame
   | CuKillState
   | DesignHit
-  | CuPermissions;
+  | CuPermissions
+  | JobList;

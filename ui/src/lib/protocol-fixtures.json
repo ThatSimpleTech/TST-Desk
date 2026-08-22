@@ -276,6 +276,10 @@
     "type": "set_cu_kill",
     "killed": true
   },
+  "set_remote_attach": {
+    "type": "set_remote_attach",
+    "enabled": true
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -702,7 +706,9 @@
     "cu_glow": true,
     "cu_agent_cursor": true,
     "cu_show_on_real_display": false,
-    "pinned_workspaces": []
+    "pinned_workspaces": [],
+    "remote_attach_enabled": false,
+    "remote_bind": null
   },
   "api_key_validated": {
     "type": "api_key_validated",
@@ -900,6 +906,38 @@
     "elevated": false,
     "uipi_applies": false,
     "secure_desktop_applies": false
+  },
+  "list_jobs": {
+    "type": "list_jobs"
+  },
+  "save_job": {
+    "type": "save_job",
+    "id": null,
+    "workspace": "/home/user/project",
+    "instruction": "summarize the inbox",
+    "cadence": "every 1 hour",
+    "next_run": null,
+    "deliver_to": "window",
+    "paused": false
+  },
+  "delete_job": {
+    "type": "delete_job",
+    "job_id": "job-1"
+  },
+  "job_list": {
+    "type": "job_list",
+    "seq": 1,
+    "jobs": [
+      {
+        "id": "job-1",
+        "workspace": "/home/user/project",
+        "instruction": "summarize the inbox",
+        "cadence": "every 1 hour",
+        "next_run": null,
+        "deliver_to": "window",
+        "paused": false
+      }
+    ]
   },
   "hello_ack": {
     "type": "hello_ack",

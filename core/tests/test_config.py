@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from pydantic import ValidationError
 
 from tstd.config import (
     DEFAULT_LOG_MAX_EVENTS,
@@ -17,7 +18,11 @@ from tstd.config import (
     ComputerUseConfig,
     ConfigError,
     EmbeddingsConfig,
+    GroundingConfig,
     ModelConfig,
+    NtfyNotifyConfig,
+    RemoteConfig,
+    SlackNotifyConfig,
     TierConfig,
     cached_config,
     default_config_yaml,
@@ -67,7 +72,7 @@ class TestLoading:
             load_config(path)
 
     def test_all_presets_are_present(self, tmp_path: Path) -> None:
-        """Shipped config has all 3 presets."""
+        """Shipped config has every name in ``PRESETS``."""
         cfg = _load_shipped(tmp_path)
         assert sorted(cfg.presets) == sorted(PRESETS)
 
@@ -148,6 +153,19 @@ class TestTiers:
         assert cfg.tier("brain").input_price == 0.0
         assert cfg.tier("worker").input_price == 0.0
 
+    def test_tier_vllm_preset(self, tmp_path: Path) -> None:
+        """TD-3901: the shipped ``vllm`` preset loads, leaves slugs to
+        discovery, and names the documented loopback port — not a model."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.active_preset == "tst-default"
+        assert "vllm" in cfg.presets
+        cfg.active_preset = "vllm"
+        for tier_name in ("brain", "worker", "validator"):
+            tier_cfg = cfg.tier(tier_name)
+            assert tier_cfg.slug is None
+            assert tier_cfg.input_price == 0.0
+            assert "127.0.0.1:8000" in tier_cfg.base_url
+
     def test_worker_max_output(self, tmp_path: Path) -> None:
         """Worker tier defaults to 16K max_output_tokens for edits."""
         cfg = _load_shipped(tmp_path)
@@ -164,6 +182,51 @@ class TestTiers:
         cfg = _load_shipped(tmp_path)
         assert cfg.computer_use.command == ""
         assert ComputerUseConfig().command == ""
+
+    def test_shipped_local_worker_preset_is_vllm(self, tmp_path: Path) -> None:
+        """TD-3903: CU-heavy worker remaps to the vllm preset unless emptied."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.computer_use.local_worker_preset == "vllm"
+        assert ComputerUseConfig().local_worker_preset == "vllm"
+        assert ComputerUseConfig(local_worker_preset="").local_worker_preset == ""
+        assert ComputerUseConfig(local_worker_preset="  local  ").local_worker_preset == "local"
+
+    def test_shipped_grounding_is_off(self, tmp_path: Path) -> None:
+        """TD-3902: packaged config leaves click targeting on the intended point."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.computer_use.grounding.base_url == ""
+        assert cfg.computer_use.grounding.slug is None
+        assert GroundingConfig().base_url == ""
+        assert GroundingConfig().slug is None
+
+    def test_grounding_rejects_off_box_url(self) -> None:
+        with pytest.raises(ValidationError, match="loopback"):
+            GroundingConfig(base_url="https://openrouter.ai/api/v1")
+
+    def test_grounding_accepts_loopback_url(self) -> None:
+        cfg = GroundingConfig(base_url="http://127.0.0.1:8000/v1")
+        assert cfg.base_url == "http://127.0.0.1:8000/v1"
+        assert cfg.slug is None
+
+    def test_shipped_remote_bind_is_empty(self, tmp_path: Path) -> None:
+        """TD-3601: packaged config is loopback-only."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.remote.bind == ""
+        assert RemoteConfig().bind == ""
+
+    def test_shipped_slack_notify_is_off(self, tmp_path: Path) -> None:
+        """TD-3801: packaged config does not send to Slack."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.notify.slack.enabled is False
+        assert cfg.notify.slack.host == ""
+        assert SlackNotifyConfig().enabled is False
+
+    def test_shipped_ntfy_notify_is_off(self, tmp_path: Path) -> None:
+        """TD-3802: packaged config does not send to ntfy."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.notify.ntfy.enabled is False
+        assert cfg.notify.ntfy.host == ""
+        assert NtfyNotifyConfig().enabled is False
 
     def test_computer_use_command_accepts_string_or_list(self) -> None:
         assert ComputerUseConfig(command="python -m tst_cu_mcp").command == ("python -m tst_cu_mcp")

@@ -276,6 +276,20 @@ class SetCuIndicators(ClientMessage):
     show_on_real_display: bool
 
 
+class SetRemoteAttach(ClientMessage):
+    """Turn Tailscale remote attach on or off (TD-3603).
+
+    Machine-wide, no session. Persists ``{user_data_dir}/remote-attach.yaml``.
+    On sets ``remote.bind`` to the last-known Tailscale target (default
+    ``tailscale0``) and starts the extra listener. Off clears the bind
+    and drops that listener; loopback stays. The daemon answers with
+    ``setup_state``. Default off. Never carries a token.
+    """
+
+    type: Literal["set_remote_attach"] = "set_remote_attach"
+    enabled: bool
+
+
 class Resume(ClientMessage):
     """Resume a session paused at a declared cap (TD-707).
 
@@ -677,6 +691,45 @@ class SetCuKill(ClientMessage):
 
     type: Literal["set_cu_kill"] = "set_cu_kill"
     killed: bool
+
+
+class ListJobs(ClientMessage):
+    """List persisted scheduled jobs (TD-3805).
+
+    Connection-scoped: jobs live in the user data dir, not a session.
+    The daemon answers with ``job_list``. Does not run anything.
+    """
+
+    type: Literal["list_jobs"] = "list_jobs"
+
+
+class SaveJob(ClientMessage):
+    """Create or replace a scheduled job (TD-3805).
+
+    Draft fields, not a natural-language parse. Pause is this verb with
+    ``paused`` set. The runner (TD-3804) is the only code that fires
+    jobs. Acked with ``job_list``.
+    """
+
+    type: Literal["save_job"] = "save_job"
+    id: str | None = None
+    workspace: str | None = None
+    instruction: str | None = None
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    paused: bool = False
+
+
+class DeleteJob(ClientMessage):
+    """Remove a scheduled job by id (TD-3805).
+
+    Acked with ``job_list``. Unknown id is a typed error. Does not run
+    anything.
+    """
+
+    type: Literal["delete_job"] = "delete_job"
+    job_id: str = Field(min_length=1)
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────
@@ -1256,6 +1309,10 @@ class SetupState(DaemonEvent):
     cu_show_on_real_display: bool = True
     # TD-2806: workspaces pinned on this machine. Not a workspace file.
     pinned_workspaces: list[str] = Field(default_factory=list)
+    # TD-3603: Settings "Allow remote attach". Additive, default off.
+    # ``remote_bind`` is the bound Tailscale address, never a token.
+    remote_attach_enabled: bool = False
+    remote_bind: str | None = None
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1528,6 +1585,29 @@ class CuPermissions(DaemonEvent):
     secure_desktop_applies: bool = False
 
 
+class JobEntry(BaseModel):
+    """One persisted job on ``job_list`` (TD-3805)."""
+
+    id: str
+    workspace: str
+    instruction: str
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"]
+    paused: bool = False
+
+
+class JobList(DaemonEvent):
+    """Response to ``list_jobs`` / ``save_job`` / ``delete_job`` (TD-3805).
+
+    Connection-scoped. Seq is fixed at 1 so it cannot rewind attach.
+    """
+
+    type: Literal["job_list"] = "job_list"
+    seq: int = 1
+    jobs: list[JobEntry] = Field(default_factory=list)
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -1584,7 +1664,11 @@ ClientMessageT = Annotated[
     | OpenArtifact
     | DesignHitTest
     | CheckCuPermissions
-    | SetCuKill,
+    | SetCuKill
+    | SetRemoteAttach
+    | ListJobs
+    | SaveJob
+    | DeleteJob,
     Field(discriminator="type"),
 ]
 
@@ -1630,7 +1714,8 @@ DaemonEventT = Annotated[
     | ScreenFrame
     | CuKillState
     | DesignHit
-    | CuPermissions,
+    | CuPermissions
+    | JobList,
     Field(discriminator="type"),
 ]
 
@@ -1694,6 +1779,10 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "design_hit_test",
         "check_cu_permissions",
         "set_cu_kill",
+        "set_remote_attach",
+        "list_jobs",
+        "save_job",
+        "delete_job",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -1740,6 +1829,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "cu_kill_state",
         "design_hit",
         "cu_permissions",
+        "job_list",
     }
 )
 

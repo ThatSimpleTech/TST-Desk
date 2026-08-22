@@ -76,6 +76,7 @@ import type {
   SetSkipAllApprovals,
   SetLoadGlobalMemory,
   SetCoworker,
+  SetRemoteAttach,
   SetCuIndicators,
   SetWorkspacePin,
   SetupState,
@@ -99,6 +100,10 @@ import type {
   DesignHit,
   CuPermissions,
   SetCuKill,
+  ListJobs,
+  SaveJob,
+  DeleteJob,
+  JobList,
   Ping,
   Error,
   Attachment,
@@ -205,6 +210,13 @@ describe("Client message fixtures match TypeScript types", () => {
   it("set_coworker", () => {
     const m = fixtures.set_coworker as SetCoworker;
     expect(m.type).toBe("set_coworker");
+    expect(isBoolean(m.enabled)).toBe(true);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("set_remote_attach", () => {
+    const m = fixtures.set_remote_attach as SetRemoteAttach;
+    expect(m.type).toBe("set_remote_attach");
     expect(isBoolean(m.enabled)).toBe(true);
     expect("session_id" in m).toBe(false);
   });
@@ -677,6 +689,8 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isBoolean(m.cu_glow)).toBe(true);
     expect(isBoolean(m.cu_agent_cursor)).toBe(true);
     expect(isBoolean(m.cu_show_on_real_display)).toBe(true);
+    expect(isBoolean(m.remote_attach_enabled)).toBe(true);
+    expect(m.remote_bind === null || typeof m.remote_bind === "string").toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
   });
@@ -805,6 +819,8 @@ describe("All fixtures have required shape", () => {
       "design_hit_test",
       "check_cu_permissions",
       "set_cu_kill",
+      "set_remote_attach",
+      "list_jobs", "save_job", "delete_job",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -827,6 +843,7 @@ describe("All fixtures have required shape", () => {
       "cu_kill_state",
       "design_hit",
       "cu_permissions",
+      "job_list",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -1053,6 +1070,25 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isBoolean(m.elevated)).toBe(true);
     expect(isBoolean(m.uipi_applies)).toBe(true);
     expect(isBoolean(m.secure_desktop_applies)).toBe(true);
+  });
+
+  it("list_jobs / save_job / delete_job / job_list (TD-3805)", () => {
+    const list = fixtures.list_jobs as ListJobs;
+    expect(list.type).toBe("list_jobs");
+    expect("session_id" in list).toBe(false);
+    const save = fixtures.save_job as SaveJob;
+    expect(save.type).toBe("save_job");
+    expect(isString(save.workspace)).toBe(true);
+    expect(isString(save.instruction)).toBe(true);
+    expect(save.deliver_to).toBe("window");
+    const del = fixtures.delete_job as DeleteJob;
+    expect(del.type).toBe("delete_job");
+    expect(isString(del.job_id)).toBe(true);
+    const jobs = fixtures.job_list as JobList;
+    expect(jobs.type).toBe("job_list");
+    expect(isNumber(jobs.seq)).toBe(true);
+    expect(isString(jobs.jobs[0]?.id)).toBe(true);
+    expect("session_id" in jobs).toBe(false);
   });
 
   it("session_list carries the auto-title field (TD-3001)", () => {

@@ -273,6 +273,9 @@ class Session:
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False
+        # TD-3903: this session has used a desktop_ / browser_ tool.
+        # Live flag; revive also scans the event log (same signal as Screen).
+        self.used_cu = False
 
     async def _observe_turn_end(self, event: DaemonEvent, _log: SessionEventLog) -> None:
         """Lower the open-turn count when the loop reports a turn complete."""
@@ -536,11 +539,17 @@ class Session:
         return outcome
 
     def get_pending_approval(self, tool_call_id: str) -> PendingApproval | None:
-        """Return the metadata for a parked approval, or ``None`` if none.
+        """Return the metadata for a still-parked approval, or ``None``.
 
         The daemon uses this to generate the always-allow rule (TD-803).
+        An already-resolved future still sits in the map until the waiter
+        pops it; treat that as gone so a second client cannot always-allow
+        after another client already won (TD-3702 / TD-1014).
         """
-        return self._pending_approvals.get(tool_call_id)
+        pending = self._pending_approvals.get(tool_call_id)
+        if pending is None or pending.future.done():
+            return None
+        return pending
 
     def resolve_approval(
         self, tool_call_id: str, approved: bool, detail: str | None = None

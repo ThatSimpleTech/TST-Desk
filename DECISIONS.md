@@ -7159,6 +7159,254 @@ and leaving chrome on side branches.
 
 ---
 
+## 2026-08-21 — TD-3601: opt-in Tailscale bind (Class B)
+
+**Decision:** `remote.bind` (empty string, off by default) names either a
+Tailscale IPv4/IPv6 or an interface. The daemon then serves on
+`127.0.0.1` **and** that address on the same port. The port file still
+describes loopback. `0.0.0.0` / `::` are never legal.
+
+A host is Tailscale when it is CGNAT `100.64.0.0/10`, Tailscale ULA
+`fd7a:115c:a1e0::/48`, or an address on an interface named `tailscale*`
+(or `utun*` that already has a Tailscale address). Classification uses
+an injectable ifaddrs table; the default enumerator calls `getifaddrs`,
+never `tailscale status`. `validate_interface` stays loopback-only
+unless `extra_allowed` is that exact resolved address.
+
+**Rationale:** Spec §8 is the documented exception to §2.1, and it is
+opt-in. Dual listeners keep the local host on loopback. Injecting the
+table keeps the suite offline.
+
+**Alternative rejected:** Calling `tailscale status` on the start path.
+Also rejected: binding `0.0.0.0` and filtering. Also rejected: adding a
+`host` parameter to `WebSocketServer.start`.
+
+---
+
+## 2026-08-21 — TD-3602: remote hello uses a rotating data-dir token (Class B)
+
+**Decision:** One `hello.token` field, two expected values. Loopback
+matches the port-file token. A connection whose server socket is the
+extra (non-loopback) host, or whose peer is not `127.0.0.1` / `::1`,
+must match `{user_data_dir}/remote-token`. That file is `0o600`, minted
+on remote-bind start, and replaced on every daemon restart. A
+`127.0.0.1` extra listener is not remote. Tests may inject
+`is_remote_connection` because a second loopback alias is not always
+bindable.
+
+**Rationale:** A leaked `port.json` must not authenticate on the
+Tailscale listener. A second hello field would fork the protocol for no
+gain. Classification prefers the server socket so a loopback client
+hitting the extra host is still remote.
+
+**Alternative rejected:** Reusing the port-file token on both listeners.
+Also rejected: adding `hello.remote_token`.
+
+---
+
+## 2026-08-21 — TD-3603: Settings owns the remote-attach switch (Class B)
+
+**Decision:** `set_remote_attach {enabled}` is the Settings verb. It
+persists `{user_data_dir}/remote-attach.yaml` `{enabled, last_bind}`,
+default off. On sets in-memory `remote.bind` to last-known, else a
+non-empty config bind, else `tailscale0`, and `apply_bind` starts the
+extra listener on the existing port. Off clears bind, remembers the
+spec, and drops only the extra server. `setup_state` reports
+`remote_attach_enabled` and `remote_bind` (the bound address). Never a
+token.
+
+**Rationale:** 3601's yaml bind is the target, not the switch. A
+user-data-dir flag matches coworker. Rebinding the extra server avoids
+a process restart that would drop the local window.
+
+**Alternative rejected:** Surgically rewriting `config.yaml` `remote.bind`
+on every toggle. Also rejected: restarting the daemon to drop the extra
+listener.
+
+---
+
+## 2026-08-21 — TD-3701: one AppShell attaches from a browser (Class B)
+
+**Decision:** Do not ship a second mobile app. The existing Svelte
+`ProtocolClient` runs without Tauri. A browser supplies `ws://host:port` +
+the TD-3602 `remote-token` (connect form, query, or hash). `port.json` stays
+a host/loopback rendezvous. The daemon does not grow an HTTP file server in
+this story — the SPA is the same build the window already loads; the
+WebSocket target is the Tailscale address. `0.0.0.0` / `::` are refused as
+connect targets. The token is stripped from the URL after read and may live
+in `sessionStorage` for the tab only, never in a config file or the audit
+log.
+
+Narrow layout is CSS on the same `AppShell`: below 640px the rail and
+inspector hide (chat + approval remain). Either pane is optional via a
+header toggle. Split into a second product only if that chrome becomes its
+own surface.
+
+**Rationale:** Size 8 is the sprawl risk. A second client would fork
+transcript/send/approve. Serving the SPA from the daemon is a later bind
+question (and would still not be `0.0.0.0`).
+
+**Alternative rejected:** A dedicated phone viewer. Also rejected: binding
+Vite/`preview` to `0.0.0.0` so a phone can load the UI.
+
+---
+
+## 2026-08-21 — TD-3801: Slack webhook URL is a keychain secret (Class B)
+
+**Decision:** Slack notify is one function, `tstd.notify.slack.send(config,
+message)`. `notify.slack.enabled` and `notify.slack.host` live in the user
+`config.yaml`. The incoming-webhook URL is a keychain secret
+(`tst-slack-webhook`), never yaml, never a log line, never the audit
+database. Tests inject the URL. `send` POSTs only when enabled and the
+URL's host matches the configured host. Approval-needed and turn-complete
+schedule a fire-and-forget send from the daemon event subscriber; errors
+are logged without the URL and never fail the turn. Off by default. No
+20-platform gateway.
+
+**Rationale:** Spec §8 is the Hermes `send(config, message)` shape, Slack
+first. Prime directive §2.2 forbids secrets in config, logs, and audit.
+`test_outbound_hosts` requires the destination host to come from
+configuration, not a Python literal.
+
+**Alternative rejected:** Putting the webhook URL in `config.yaml`. Also
+rejected: a multi-platform notify gateway. Also rejected: failing the
+turn when Slack is down.
+
+---
+
+## 2026-08-21 — TD-3802: ntfy topic URL is a keychain secret (Class B)
+
+**Decision:** ntfy is the same shape as Slack: `tstd.notify.ntfy.send(config,
+message)`. `notify.ntfy.enabled` and `notify.ntfy.host` live in the user
+`config.yaml` (host empty by default). The topic URL is a keychain secret
+(`tst-ntfy-topic`), never yaml, never a log line, never the audit
+database. Tests inject the URL. `send` POSTs the message body only when
+enabled and the URL's host matches the configured host. Approval-needed
+and turn-complete schedule a fire-and-forget send next to Slack; Slack
+is unchanged. Errors are logged without the URL and never fail the turn.
+Off by default. Discord/Telegram stay TD-4707.
+
+**Rationale:** Spec §8 extras after Slack. The backlog AC says "topic URL
+from config"; prime directive §2.2 forbids secrets in config, so the
+topic URL follows Slack into the keychain and only the host is yaml.
+`test_outbound_hosts` names `notify/ntfy.py` and requires the destination
+host to come from configuration.
+
+**Alternative rejected:** Putting the topic URL in `config.yaml`. Also
+rejected: a shared notify gateway. Also rejected: shipping Discord or
+Telegram in this story. Also rejected: defaulting `host` to a public
+ntfy instance in Python — destinations come from config, not a literal.
+
+---
+
+## 2026-08-21 — TD-3803: scheduler store is data-dir JSON, parse does not persist (Class B)
+
+**Decision:** Scheduled jobs live at `{user_data_dir}/scheduler/jobs.json`
+with envelope `{version: 1, jobs: [...]}`. Atomic temp-file replace,
+mode `0o600` on POSIX. Not the workspace, not git. The Pydantic `Job`
+is `id`, absolute `workspace` (filesystem path, no secrets),
+`instruction`, exactly one of `cadence` (5-field cron or
+`every N minutes|hours|days`) or `next_run` (ISO-8601),
+`deliver_to` (`window` | `slack` | `ntfy`), and `paused`.
+
+Natural-language create is `parse_job_request(text) -> JobDraft`. That
+function does not call a model and does not import the store: it is the
+schema a worker would fill (JSON, key-value lines, or a small
+deterministic phrase parse). `validate_draft` is a second, still
+in-memory step. `save_job` is a third call. No `list_jobs` /
+`save_job` / `delete_job` protocol verbs — the Scheduled rail is
+TD-3805. No runner, no asyncio loop, no Slack/ntfy send (TD-3804 /
+TD-3801 / TD-3802).
+
+**Rationale:** Hermes' cron is the reference (JSON, NL in, deliver
+anywhere) but must not be wired into the agent core. A data-dir store
+keeps jobs off clones and off the audit log. Splitting parse from save
+is the "shown for edit before save" AC without a window this story.
+Leaving the runner out is the third AC.
+
+**Alternative rejected:** YAML next to `coworker.yaml` — JSON matches
+`sessions.json` and the Hermes shape. Protocol verbs this story —
+no UI consumer yet; adding them would freeze a wire contract before
+the rail. Calling a worker model to parse — needs network/spend and
+is not required to ship the schema.
+
+---
+
+## 2026-08-21 — TD-3804: in-process one-shot wake, cadence stamps next_run (Class B)
+
+**Decision:** The daemon owns a short tick (15s) that, on start and each
+tick, arms cadence-only jobs (writes a future `next_run` without
+firing), then `due_jobs(now)` → for each due job run **once**. Execution
+is `_start_session` + `add_user_message` + wait for `turn_complete` —
+the in-process counterpart of `tst run`. No nested daemon, no
+self-WebSocket, no classifier/caps bypass.
+
+After a fire: a cadence job keeps `cadence` and stamps `next_run` to
+the next slot **after now** (interval add, or next 5-field cron). A
+one-shot (`next_run` only) is paused. A job whose `next_run` is three
+intervals in the past therefore fires once, not three times. Paused
+jobs never run.
+
+`Job` may now carry both `cadence` and `next_run`. Create
+(`validate_draft`) still requires exactly one. Window delivery is a
+recorded callback; `slack` / `ntfy` call an optional `send` hook, else
+log. No Slack HTTP (TD-3801). No new protocol event (the Scheduled
+rail is TD-3805).
+
+**Rationale:** Reusing the live session path keeps prime directive §2.6
+and caps on the same chokepoint as a window turn. Advancing from *now*
+is the anti-stampede rule. A protocol delivery event would freeze a
+wire contract before the rail has a consumer.
+
+**Alternative rejected:** Calling `cli.run_turn` over the daemon's own
+socket — stdout noise, stdin approvals, and a nested client. Catch-up
+loops from the missed `next_run` — that is the stampede. Adding
+`croniter` — the validated 5-field subset walks minutes without a
+dependency.
+
+---
+
+## 2026-08-21 — TD-3805: scheduled rail verbs; pause is save (Class B)
+
+**Decision:** `list_jobs`, `save_job`, and `delete_job` sit at the end
+of the client union. The only new event is connection-scoped `job_list`
+(seq fixed at 1). The daemon talks to the 3803 store; it does not run
+jobs. Pause is `save_job` with `paused` set. Create is draft fields on
+`save_job` (no NL parse, no model). Scheduled is `ready`/`current` like
+Artifacts.
+
+**Rationale:** 3803 left the verbs off the wire until a consumer
+existed. The rail is that consumer. One list event keeps the pane a
+viewer. Running from the rail would duplicate 3804's tick.
+
+**Alternative rejected:** A `pause_job` verb — paused is already a
+field. A `job_saved` / `job_deleted` pair — the pane only needs the
+list. NL create in the rail — 3803's parse is a worker draft, not this
+surface.
+
+---
+
+## 2026-08-21 — TD-3806: M7 exit is a protocol-client notify pass (Class B)
+
+**Decision:** `tstd.e2e_m7.run_m7` is a fifth protocol-client pass, not
+a branch of `e2e_harness.run`. The headless path asserts
+`validate_interface("0.0.0.0")` raises (no socket is opened), hellos
+the daemon on `127.0.0.1`, then fires one due `deliver_to: slack` job
+through `Daemon.run_due_jobs` against `MockProvider`. Delivery is an
+injected `notify_send` hook. CI's green is that mock send, not a Slack
+POST. Default `addopts` (`-m 'not live'`) keeps it in the default
+suite.
+
+**Rationale:** Folding remote/notify into `e2e_harness.run` would change
+a frozen signature (TD-1401). Binding `0.0.0.0` to prove a refuse would
+violate prime directive §2.1. A live webhook would write a secret into
+the fixture and leave the suite.
+
+**Alternative rejected:** Listening on `0.0.0.0` then closing. Also
+rejected: posting to a Slack incoming webhook from CI.
+
+---
+
 ## 2026-08-21 — E48: review findings filed as one epic under M5 (Class B)
 
 **Decision:** The findings from the 2026-08-21 full-repo security and
@@ -7294,6 +7542,98 @@ The floor's honesty is precisely that it does not pretend to see inside the stri
 **Follow-up:** TD-4822/TD-4823 (tst-cu-mcp findings from the same review) are
 filed, not yet staffed.
 
+## 2026-08-21 — TD-3901: a fourth shipped preset, not a retarget of `local` (Class B)
+
+**Decision:** Ship a `vllm` preset with every tier at `http://127.0.0.1:8000/v1`
+(vLLM's OpenAI server default; EZER attaches at the same `/v1` shape). Leave
+`local` on Ollama `http://127.0.0.1:11434/v1`. `active_preset` stays
+`tst-default`. A different EZER/vLLM port is a `base_url` edit in
+`config.yaml`, never a URL in Python (§2.7).
+
+**Rationale:** Spec §7 already treats a local vLLM/EZER server as the same
+OpenAI-compatible client. Retargeting `local` would break the Ollama
+convention TD-1802/TD-1805 documented. Two loopback presets, one port each,
+keeps both attach paths honest. Slugs stay omitted; discovery and
+`model_unresolved` are unchanged. Doctor `provider` rows keep naming
+`base_url`, not a model tag (TD-1809).
+
+**Alternative rejected:** Pointing `local` at 8000, or adding an `ezer`
+preset that duplicates `vllm`. The first silently moves every Ollama user.
+The second is two names for one URL.
+
+## 2026-08-21 — TD-3902: local grounding is loopback-only, miss is TD-3304 (Class B)
+
+**Decision:** Click grounding is a nested `computer_use.grounding` block.
+Empty `base_url` is off. A filled URL must be loopback (load error
+otherwise) — never an off-box vision call. Optional `slug` is discovered
+from `/v1/models` like TD-1805. The OpenAI-compatible vision client lives
+in `tstd/desktop/grounding_client.py`; the desktop click handler asks it
+when enabled and otherwise (or on miss / down / unresolved) clicks the
+intended (x, y). That intended path is still TD-3304's eval. Cost on
+this path is always 0 (loopback-only). Latency is on the tool result
+as `grounding.latency_ms`. No protocol event.
+
+**Rationale:** Size 8 split from the start so the eval helper stays
+untouched and CI never needs a live UI-TARS. Forcing loopback keeps
+§2.3 and "loopback prices 0" as structure, not a comment. Recording
+latency on the click JSON is visible to tests without a new event
+type or off-box telemetry.
+
+**Alternative rejected:** Rewriting `grounding.py` so the eval itself
+calls a model. Also rejected: failing the click when grounding misses.
+Also rejected: price keys on the grounding block — billed cost cannot
+be non-zero while the only legal destination is loopback.
+
+## 2026-08-21 — TD-3903: remap the worker client, not the router (Class B)
+
+**Decision:** CU-heavy pixel loops pin the *worker ProviderClient* to
+`computer_use.local_worker_preset` (default `vllm`) without touching
+TD-303. Lead-turns, `set_tier`, and escalation still pick the tier
+name. Only when that name is `worker` and the session has already
+emitted a `desktop_` / `browser_` `tool_call` (same signal as the
+Screen tab) does the loop build the client from the named preset's
+worker tier instead of `config.tier("worker")`. Brain always comes
+from the active preset. Empty preset name, or a name that is not a
+preset, never remaps. The classifier worker call stays on the active
+preset — it is not a pixel loop.
+
+`tier_state.model_slugs.worker` is the slug actually used after remap.
+If that slug is still unresolved, it is omitted (TD-1805). Title-bar
+chips already tooltip the slug they were given; no extra chip.
+
+The provider factory now receives the effective `TierConfig` so a
+remapped worker can land on a different URL than the brain. Zero-arg
+factories still work. The daemon caches clients by `base_url`.
+
+**Rationale:** Changing `active_tier` would lie about who is thinking
+and who is typing. A second client is the smallest honest split: same
+router, different endpoint, slugs still from yaml.
+
+**Alternative rejected:** A new router rule or `set_tier` side-effect.
+Also rejected: inventing a worker tag when the local slug is unset.
+
+---
+
+## 2026-08-21 — TD-3904: M8 exit is a live vLLM probe, skip not fail (Class B)
+
+**Decision:** `tstd.e2e_m8.run_m8` is a new module, not a branch of
+`e2e_harness.run`. It targets the shipped `vllm` preset's `base_url`
+(from yaml, never a Python literal). `GET /v1/models` is the probe;
+off-box is refused before send. Nothing listening — or a model list
+that is not exactly one id — skips with a fixed heading-match copy
+rather than failing. A live pass is one keyless `LiveProvider`
+completion, cost 0. Default CI is the skip path; `@pytest.mark.live`
+is the opt-in turn.
+
+**Rationale:** Folding this into `e2e_harness.run` would change a
+frozen signature (TD-1401) and require a tool-calling model. An
+absent vLLM/EZER is a fact about the machine, the same as a down
+embeddings sidecar. "Binary absent" is that failed probe: a
+docker-hosted server has no `vllm` on PATH and must still count.
+
+**Alternative rejected:** Requiring `vllm`/`ezer` on PATH before
+probing (false-skips a listening container). Also rejected: treating
+skip as a failed check.
 
 ## 2026-08-22 — TD-3402: real-display glow is a sidecar-owned helper process
 
