@@ -7294,3 +7294,30 @@ The floor's honesty is precisely that it does not pretend to see inside the stri
 **Follow-up:** TD-4822/TD-4823 (tst-cu-mcp findings from the same review) are
 filed, not yet staffed.
 
+
+## 2026-08-22 — TD-3402: real-display glow is a sidecar-owned helper process
+
+**Class:** B (structural — new process boundary and an env contract)
+
+**Decision:** The real-display "agent is driving" ring lives in tst-cu-mcp, not the
+host or daemon. The sidecar spawns `python -m tst_cu_mcp.overlay.darwin_helper`
+(same interpreter, so the same pyobjc-carrying venv; the child owns the AppKit
+runloop) and drives it over a stdin line protocol: `show`/`hide` ack on arrival,
+`grab_begin`/`grab_end` ack only after the helper's main thread has actually
+ordered the panels out/in — which is what lets `capture()` guarantee no ring pixel
+exists in a captured frame. The daemon threads the user's `show_on_real_display`
+pref to the sidecar as `TST_CU_MCP_OVERLAY=1|0` at spawn time; the env var beats
+the sidecar's `overlay.enabled` config, which beats the platform default (on for
+darwin, no-op elsewhere). Any overlay failure degrades permanently to a null
+overlay. `show_on_real_display` now defaults on, since the ring exists.
+
+**Rationale:** The sidecar is what actuates, so hide-for-capture stays two function
+calls in one process instead of a cross-process race through the daemon or host.
+AppKit wants a runloop the asyncio stdio server does not have; a child owning
+`NSApplication.run()` keeps both simple, and a painter crash cannot take computer
+use down with it. stdin EOF doubles as the orphan guard: a dead sidecar never
+leaves a halo on screen.
+
+**Alternative rejected:** Painting from the Tauri host — a daemon→host round trip
+before every screenshot to hide the ring, racing the grab; and painting in-process
+in the sidecar — interleaving an AppKit runloop with the asyncio stdio loop.

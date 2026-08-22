@@ -21,6 +21,7 @@ vi.mock("./connection-status.svelte.js", () => ({
 import {
 	cuIndicatorsLive,
 	cursorPercent,
+	cursorVisible,
 	pointFromArgs,
 	reducedMotionIndicators,
 } from "./screen-indicator";
@@ -42,8 +43,10 @@ describe("reduced motion", () => {
 });
 
 describe("cursor placement", () => {
-	it("centers when the frame size is unknown", () => {
-		expect(cursorPercent(10, 20, null, null)).toEqual({ left: 50, top: 50 });
+	it("stays hidden until a move or click has a point on a sized frame", () => {
+		expect(cursorVisible(10, 20, null, null)).toBe(false);
+		expect(cursorVisible(null, null, 100, 100)).toBe(false);
+		expect(cursorVisible(10, 20, 100, 100)).toBe(true);
 	});
 
 	it("maps image-space points onto the frame", () => {

@@ -363,7 +363,13 @@ def run() -> None:
     from tst_cu_mcp import safety
     from tst_cu_mcp.config import load_config
     from tst_cu_mcp.logging_setup import configure_logging
+    from tst_cu_mcp.overlay import get_overlay
 
     configure_logging()
     safety.set_config(load_config())
-    build_server().run(transport="stdio")
+    try:
+        build_server().run(transport="stdio")
+    finally:
+        # Release whatever the overlay holds (the darwin helper child); EOF
+        # already covers a crashed parent, this covers a graceful exit.
+        get_overlay().shutdown()

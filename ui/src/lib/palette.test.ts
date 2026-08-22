@@ -96,6 +96,7 @@ describe("rankEntries", () => {
 		expect(titles(ACTION_ENTRIES, "quit")[0]).toBe("Quit TST Desk");
 		expect(titles(ACTION_ENTRIES, "stop cu")[0]).toBe("Stop computer use");
 		expect(titles(ACTION_ENTRIES, "resume")[0]).toBe("Resume computer use");
+		expect(titles(ACTION_ENTRIES, "design")[0]).toBe("Toggle Design mode");
 	});
 
 	it("finds an entry by a word only its keywords carry", () => {
@@ -155,6 +156,7 @@ describe("icons", () => {
 			"show-stack",
 			"show-work",
 			"stop-computer-use",
+			"toggle-design",
 			"toggle-theme",
 		]);
 	});

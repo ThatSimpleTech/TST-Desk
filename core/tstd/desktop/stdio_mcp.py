@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 from ..logging import get_logger
@@ -30,10 +31,12 @@ _CALL_TIMEOUT = 30.0
 class StdioMcpClient:
     """One JSON-RPC session over a child process's stdio."""
 
-    def __init__(self, command: list[str]) -> None:
+    def __init__(self, command: list[str], *, env: dict[str, str] | None = None) -> None:
         if not command:
             raise ValueError("MCP sidecar command must be a non-empty argv")
         self._command = command
+        # Extra environment merged over the inherited one; None inherits all.
+        self._env = {**os.environ, **env} if env else None
         self._proc: asyncio.subprocess.Process | None = None
         self._next_id = 1
         self._lock = asyncio.Lock()
@@ -48,6 +51,7 @@ class StdioMcpClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=_STREAM_LIMIT,
+            env=self._env,
         )
         assert self._proc.stderr is not None
         self._stderr_task = asyncio.create_task(self._drain_stderr())

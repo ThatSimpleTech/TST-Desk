@@ -36,13 +36,14 @@ class McpDesktopDriver:
         *,
         platform: str | None = None,
         client: StdioMcpClient | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         import sys
 
         self._command = command
         self._platform = sys.platform if platform is None else platform
         self.platform = self._platform
-        self._client = client if client is not None else StdioMcpClient(command)
+        self._client = client if client is not None else StdioMcpClient(command, env=env)
         self.killed = False
 
     def set_killed(self, killed: bool) -> None:

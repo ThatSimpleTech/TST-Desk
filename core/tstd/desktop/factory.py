@@ -15,6 +15,14 @@ from .protocol import DesktopDriver
 
 if TYPE_CHECKING:
     from ..config import ModelConfig
+    from ..cu_indicators import CuIndicatorPrefs
+
+#: Sidecar env var that turns the real-display glow on or off. The daemon
+#: sets it from the user's ``show_on_real_display`` pref at spawn time, so
+#: the sidecar never has to guess (and an explicit value beats its own
+#: config default). Mirrors tst_cu_mcp.overlay.OVERLAY_ENV without a
+#: cross-package import.
+OVERLAY_ENV = "TST_CU_MCP_OVERLAY"
 
 
 def argv_from_command(command: str | list[str]) -> list[str]:
@@ -24,12 +32,19 @@ def argv_from_command(command: str | list[str]) -> list[str]:
     return [str(part) for part in command]
 
 
-def driver_for_command(command: str | list[str]) -> DesktopDriver:
+def driver_for_command(
+    command: str | list[str], env: dict[str, str] | None = None
+) -> DesktopDriver:
     argv = argv_from_command(command)
     if not argv:
         return MockDesktopDriver()
-    return McpDesktopDriver(argv)
+    return McpDesktopDriver(argv, env=env)
 
 
-def desktop_driver_from_config(config: ModelConfig) -> DesktopDriver:
-    return driver_for_command(config.computer_use.command)
+def desktop_driver_from_config(
+    config: ModelConfig, cu_prefs: CuIndicatorPrefs | None = None
+) -> DesktopDriver:
+    env: dict[str, str] | None = None
+    if cu_prefs is not None and argv_from_command(config.computer_use.command):
+        env = {OVERLAY_ENV: "1" if cu_prefs.show_on_real_display else "0"}
+    return driver_for_command(config.computer_use.command, env=env)

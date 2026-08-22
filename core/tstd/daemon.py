@@ -471,7 +471,9 @@ class Daemon:
         )
         # Shared across sessions so the kill-switch is process-wide.
         # Empty computer_use.command is the mock; a command is stdio MCP.
-        self.desktop_driver: DesktopDriver = desktop_driver_from_config(self.config)
+        self.desktop_driver: DesktopDriver = desktop_driver_from_config(
+            self.config, self.cu_indicators
+        )
         # Browser CU (TD-1710): mock unless computer_use.browser is playwright
         # and Playwright is importable. Profile lives under the data dir.
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)

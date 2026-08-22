@@ -118,12 +118,17 @@ def capture(
 ) -> ScreenshotResult:
     """Capture a display (or a region of it) and return a ScreenshotResult."""
     from tst_cu_mcp.backends import get_backend
+    from tst_cu_mcp.overlay import get_overlay
 
     displays = list_displays()
     display = select_display(displays, display_index)
     rect = resolve_region(display, region)
 
-    raw = get_backend().capture_png(rect)
+    # The real-display glow must never paint into the frame it signals for.
+    # grab_hidden orders the panels out and only returns once they are gone
+    # (acked by the helper's main thread), so the grab below is clean.
+    with get_overlay().grab_hidden():
+        raw = get_backend().capture_png(rect)
     png_bytes, image_w, image_h, downscaled = _encode(raw, max_long_edge)
     return ScreenshotResult(
         png_bytes=png_bytes,

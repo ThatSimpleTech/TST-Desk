@@ -41,9 +41,10 @@
 		>
 	</div>
 	<p class="hint">
-		Glow and the agent cursor sit on the Screen pane. The real-display toggle is off by
-		default; when on, a host overlay is hidden during every screenshot. This is not a
-		second hardware pointer.
+		Glow and the agent cursor sit on the Screen frame, not a second hardware pointer. The
+		real-display toggle lights a rust ring around your screen edges while the agent drives —
+		click-through, and hidden for the instant of each capture so it never paints into a
+		screenshot. Turning it on or off applies when the daemon next starts.
 	</p>
 </div>
 

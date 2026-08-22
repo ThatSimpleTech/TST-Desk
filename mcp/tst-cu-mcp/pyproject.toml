@@ -58,16 +58,27 @@ files = ["src", "tests"]
 # only, and on Windows they are not installed at all.
 [[tool.mypy.overrides]]
 module = [
+    "objc.*",
+    "objc",
     "Quartz.*",
     "Quartz",
     "AppKit.*",
     "AppKit",
+    "Foundation.*",
+    "Foundation",
     "ApplicationServices.*",
     "ApplicationServices",
     "CoreFoundation.*",
     "CoreFoundation",
 ]
 ignore_missing_imports = true
+
+# The glow helper subclasses AppKit classes at runtime, and with no stubs those
+# bases are Any, which strict mode refuses. It only ever runs inside the helper
+# child process, so the loosening stays contained there.
+[[tool.mypy.overrides]]
+module = ["tst_cu_mcp.overlay.darwin_helper"]
+disallow_subclassing_any = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
