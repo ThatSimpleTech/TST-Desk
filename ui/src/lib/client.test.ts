@@ -433,6 +433,41 @@ describe("unknown event tolerance", () => {
     warn.mockRestore();
   });
 
+  it("counts each dropped unknown type, and a known event neither bumps nor resets it (TD-4816)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const onEvent = vi.fn();
+    const onUnknownEvent = vi.fn();
+    const socket = new FakeSocket();
+    const client = new ProtocolClient(
+      {
+        async getDaemonInfo() {
+          return { port: 9000, token: "t" };
+        },
+        socketFactory: () => socket,
+      },
+      { onEvent, onUnknownEvent },
+    );
+    await client.start();
+    socket.onopen?.();
+    socket.onmessage?.({ data: JSON.stringify({ type: "hello_ack", version: 1 }) });
+    client.attach("sess-1");
+    expect(client.unknownEventCount).toBe(0);
+
+    // Two future event types the TS union doesn't know yet.
+    socket.onmessage?.({ data: JSON.stringify({ type: "fresh_payload", session_id: "sess-1", seq: 1 }) });
+    socket.onmessage?.({ data: JSON.stringify({ type: "future_thing", session_id: "sess-1", seq: 2 }) });
+    expect(client.unknownEventCount).toBe(2);
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(onUnknownEvent).toHaveBeenCalledTimes(2);
+
+    // A known event is dispatched and leaves the counter alone.
+    socket.onmessage?.({ data: JSON.stringify({ type: "assistant_delta", session_id: "sess-1", delta: "Hi", seq: 3 }) });
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(client.unknownEventCount).toBe(2);
+    client.stop();
+    warn.mockRestore();
+  });
+
   it("ignores non-JSON and malformed frames", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const h = buildClient();

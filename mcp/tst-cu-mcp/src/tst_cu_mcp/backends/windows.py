@@ -419,7 +419,16 @@ def _ensure_dpi_aware() -> None:
 
 
 def _dpi_for_monitor(handle: int) -> int:
-    """Effective DPI for a monitor handle, defaulting to 96 when unavailable."""
+    """Effective DPI for a monitor handle, defaulting to 96 when unavailable.
+
+    The default engages when ``shcore`` is absent (Windows 8 and older) or
+    ``GetDpiForMonitor`` fails or reports zero for this handle — i.e. whenever
+    the true DPI cannot be learned. Because ``order_displays`` derives scale
+    from DPI/96, such a monitor then reports scale 1.0 even if actually HiDPI.
+    Geometry and input are unaffected — rectangles come back in physical pixels
+    once PER_MONITOR_AWARE_V2 is set, and nothing else reads the scale — so the
+    consequence is limited to an understated density figure in metadata.
+    """
     ns = _win()
     if ns.shcore is None or not hasattr(ns.shcore, "GetDpiForMonitor"):
         return DEFAULT_DPI

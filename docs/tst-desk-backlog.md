@@ -6302,20 +6302,36 @@ dialects. Filed here rather than in E20, which owns the server's Linux port.
 **Size:** 3 · **Depends on:** none
 
 **Acceptance criteria:**
-- [ ] `events.jsonl` is created with restrictive permissions (no create-then-chmod window)
-- [ ] The git tool sanitizes its child environment the way the shell tool does
-- [ ] The audit schema docstring stops claiming `DROP TABLE` is impossible, or makes it true
-- [ ] Tauri `opener:allow-open-path` is scoped, or documented as intentionally unscoped
-- [ ] The UI validates inbound daemon events against the union before dispatch, or documents
+- [x] `events.jsonl` is created with restrictive permissions (no create-then-chmod window)
+- [x] The git tool sanitizes its child environment the way the shell tool does
+- [x] The audit schema docstring stops claiming `DROP TABLE` is impossible, or makes it true
+- [x] Tauri `opener:allow-open-path` is scoped, or documented as intentionally unscoped
+- [x] The UI validates inbound daemon events against the union before dispatch, or documents
       the trust it places in the socket
-- [ ] `serde_yaml` (deprecated) and `tokio-tungstenite` are replaced or bumped
-- [ ] MCP lows: astral-plane typing guard, DPI fallback documented, screenshot temp-file
+- [x] `serde_yaml` (deprecated) and `tokio-tungstenite` are replaced or bumped
+- [x] MCP lows: astral-plane typing guard, DPI fallback documented, screenshot temp-file
       lifecycle
-- [ ] `conversation.json`'s plaintext-at-rest posture is stated in the README's security
+- [x] `conversation.json`'s plaintext-at-rest posture is stated in the README's security
       section
 
 The grab-bag rule applies: each box is small, independently verifiable, and none deserves
 its own number. If any grows teeth in the doing, split it out per the sizing rules.
+
+Closed across core, shell, ui, mcp, and README in one pass. Both transcript writers —
+`events.jsonl` and `conversation.json`'s temp file — are now created 0600 in the same
+syscall; the reviewer caught that `_write_json` still had the window after the first fix.
+Checkpointer and MemoryCommitter reuse the shell tool's `sanitized_env()` for every git
+child (identity layered on after). The opener grant is documented-intentionally-unscoped:
+three surfaces need arbitrary user paths, static globs would break them all, and the
+host's own `open_path` command sits outside the capability system anyway. The UI already
+dropped unknown event types at the discriminant level; it now counts them
+(`unknownEventCount`) with the trust boundary written down at the parse site. serde_yaml
+migrated to its successor `serde_yml` 0.0.13 (single-maintainer republish of the archived
+crate — worth revisiting if it stalls) and tokio-tungstenite bumped 0.24 → 0.30. The mcp
+type-text cap and CGEvent length both count UTF-16 units now, so astral-plane text can't
+double-dip the cap or half-send emoji. Flagged for later, deliberately not done here:
+the remaining git spawns on dev/diagnostic paths (e2e_checks, e2e_harness, benchmarks,
+context manifest) still inherit full env, and the UI's drop counter has no surface yet.
 ### TD-4817 — Shell steering guard misses `>&` and `>|` redirect operators
 **Size:** 1 · **Depends on:** TD-4805
 

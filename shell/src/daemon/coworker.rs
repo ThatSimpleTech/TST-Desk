@@ -84,15 +84,15 @@ pub fn ensure_coworker_file(data_dir: &Path) {
 }
 
 fn coworker_enabled_from_yaml(text: &str) -> bool {
-    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(text) else {
+    let Ok(root) = serde_yml::from_str::<serde_yml::Value>(text) else {
         return true;
     };
     let Some(map) = root.as_mapping() else {
         return true;
     };
-    match map.get(serde_yaml::Value::from("enabled")) {
+    match map.get("enabled") {
         None => true,
-        Some(serde_yaml::Value::Bool(b)) => *b,
+        Some(serde_yml::Value::Bool(b)) => *b,
         _ => false,
     }
 }

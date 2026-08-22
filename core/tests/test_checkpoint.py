@@ -320,3 +320,34 @@ class TestRepoStates:
         again = await _checkpoint_file(cp, repo / "b.txt")
         assert again.status == "committed"
         assert again.notice is None
+
+
+# ── AC (TD-4816): git children inherit the shell tool's sanitized env ──
+
+
+class TestChildEnvSanitized:
+    """A planted secret-shaped variable never reaches a git child."""
+
+    async def test_default_spawn_env_is_sanitized(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The ``env=None`` path (probe/status/update-ref) is filtered."""
+        repo = make_repo(tmp_path)
+        monkeypatch.setenv("TST_SECRET_PROBE", "sk-test-probe-key")
+        monkeypatch.setenv("TST_PLAIN_PROBE", "visible-value")
+        cp = make_checkpointer(repo)
+        # A ``!`` alias makes the git child print its own environment.
+        rc, out, err = await cp._git("-c", "alias.tstdump=!env", "tstdump")
+        assert rc == 0, err
+        assert "TST_SECRET_PROBE" not in out
+        assert "TST_PLAIN_PROBE=visible-value" in out
+
+    def test_identity_env_drops_secrets_keeps_identity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The agent identity rides on top of the sanitized base."""
+        monkeypatch.setenv("TST_SECRET_PROBE", "sk-test-probe-key")
+        env = Checkpointer._identity_env()
+        assert "TST_SECRET_PROBE" not in env
+        assert env["GIT_AUTHOR_NAME"] == "TST Desk"
+        assert env["GIT_COMMITTER_EMAIL"] == "tstdesk@localhost"
