@@ -267,6 +267,34 @@ class TestSteeringFileWrite:
         assert decision.decision_class is DecisionClass.C
         assert fired_as(decision, "steering-file-write")
 
+    def test_commands_dir_write_is_c(self) -> None:
+        # Slash-command bodies reach the composer verbatim (TD-4501) —
+        # same Class C as any steering tree.
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "commands" / "deploy.md",),
+                is_mutation=True,
+            ),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "steering-file-write")
+
+    def test_claude_commands_dir_write_is_c(self) -> None:
+        # The .claude fallback tree is guarded even when unused — the
+        # loader may read it, so an agent must never write it.
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".claude" / "commands" / "review.md",),
+                is_mutation=True,
+            ),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "steering-file-write")
+
     def test_reading_agents_md_is_not_c(self) -> None:
         # Reading a steering file is fine; only a *write* is refused.
         decision = classify(boundary(), req(tool_name="fs_read", reads=(WS / "AGENTS.md",)))
@@ -285,6 +313,21 @@ class TestSteeringFileWrite:
             req(
                 tool_name="fs_write",
                 writes=(WS / ".tst" / "memory" / "MEMORY.md",),
+                is_mutation=True,
+            ),
+        )
+        assert not fired_as(decision, "steering-file-write")
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "memory-file-write")
+
+    def test_memory_subtree_beats_the_commands_trees(self) -> None:
+        # A commands dir nested inside memory is still memory (TD-2102):
+        # the carve-out returns before the commands check can fire.
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "memory" / "commands" / "note.md",),
                 is_mutation=True,
             ),
         )

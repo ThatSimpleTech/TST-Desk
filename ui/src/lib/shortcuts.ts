@@ -20,6 +20,9 @@ export interface ShortcutContext {
 	paletteOpen: boolean;
 	/** A modal pane (wizard, doctor, decisions, settings, palette) is open. */
 	modalOpen: boolean;
+	/** The composer's slash-command menu is showing (TD-4501) — an inline
+	 *  layer, below the modals but above a running turn. */
+	slashMenuOpen: boolean;
 	/** A turn is running or parked awaiting approval (chat-store showCancel). */
 	turnLive: boolean;
 }
@@ -28,6 +31,7 @@ export type ShortcutAction =
 	| "close-menu"
 	| "close-palette"
 	| "close-modal"
+	| "close-slash-menu"
 	| "cancel-turn"
 	| "open-settings"
 	| "open-palette"
@@ -47,6 +51,10 @@ export function resolveShortcut(
 		// A pane (wizard / doctor / decisions / settings) closes next, so
 		// Escape never reaches a running turn behind it (TD-1013).
 		if (context.modalOpen) return "close-modal";
+		// The slash menu dismisses before a turn behind it can cancel
+		// (TD-4501): Escape over the composer means "not this menu", not
+		// "stop the work".
+		if (context.slashMenuOpen) return "close-slash-menu";
 		return context.turnLive ? "cancel-turn" : null;
 	}
 	// ⌘, on macOS, Ctrl+, elsewhere — opens settings (TD-1703). It used to

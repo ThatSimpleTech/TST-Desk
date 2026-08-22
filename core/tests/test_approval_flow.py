@@ -608,3 +608,60 @@ class TestAlwaysAllow:
         finally:
             daemon._shutdown_event.set()
             await asyncio.wait_for(daemon_task, timeout=3)
+
+
+# ── Slash commands (TD-4501) ───────────────────────────────────────────
+
+
+def _plant_command(root: Path, relpath: str, text: str) -> None:
+    """Sync helper: write a command file (Path calls stay out of async)."""
+    path = root / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+class TestListCommands:
+    @pytest.mark.asyncio
+    async def test_list_commands_returns_bodies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _plant_command(
+            tmp_path,
+            ".tst/commands/deploy.md",
+            "---\ndescription: Ship it\n---\nDeploy the thing\n",
+        )
+        # A home of its own keeps the user level empty and the
+        # assertions below deterministic.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+
+        daemon = Daemon(data_dir=tmp_path / "data")
+        daemon_task = asyncio.create_task(daemon.run())
+        for _ in range(50):
+            if daemon.ws_server.port:
+                break
+            await asyncio.sleep(0.05)
+
+        try:
+            ws, session = await _open_workspace(daemon, tmp_path)
+
+            await ws.send(json.dumps({"type": "list_commands", "session_id": session.id}))
+            listed = await _recv_until(ws, "commands_list")
+            assert listed["seq"] == 1
+            assert "session_id" not in listed
+            by_name = {c["name"]: c for c in listed["commands"]}
+            assert set(by_name) == {"deploy"}
+            assert by_name["deploy"]["source"] == "workspace"
+            assert by_name["deploy"]["description"] == "Ship it"
+            assert by_name["deploy"]["body"] == "Deploy the thing\n"
+
+            # An unknown session refuses with the standard error shape.
+            await ws.send(json.dumps({"type": "list_commands", "session_id": "nope"}))
+            err = await _recv_until(ws, "error")
+            assert err["code"] == "session_not_found"
+
+            await ws.close()
+        finally:
+            daemon._shutdown_event.set()
+            await asyncio.wait_for(daemon_task, timeout=3)

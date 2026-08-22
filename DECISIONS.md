@@ -7294,3 +7294,31 @@ The floor's honesty is precisely that it does not pretend to see inside the stri
 **Follow-up:** TD-4822/TD-4823 (tst-cu-mcp findings from the same review) are
 filed, not yet staffed.
 
+---
+
+## 2026-08-21 — TD-4501: slash commands ride a dedicated wire pair, not SetupState
+
+**Class:** B (adds two protocol messages and fixes their sequencing shape)
+
+**Decision:** `list_commands` → `commands_list` is its own request/response pair,
+mirroring `list_policy_rules` → `policy_rules`. The request carries `session_id`
+(only to anchor the workspace — commands are workspace + user-home scoped); the
+reply is connection-scoped: `seq=1`, **no `session_id`**. Command bodies ride
+the listing. `PROTOCOL_VERSION` stays 1.
+
+**Rationale:** A reply with a `session_id` flows through the client's
+sequenced-accept path, where `seq <= last` drops it — a fixed `seq=1` reply
+carrying one would be swallowed by any session whose log has replayed past 1
+(the latent flaw `artifact_list` still has). Omitting the field routes the reply
+through the connection-scoped path, where it always lands. Bodies-in-listing
+keeps invoking a command at one insert instead of a fetch per keystroke, and
+keeps `SetupState` from growing a third unrelated payload.
+
+**Alternative rejected:** A `commands` field on `SetupState` (one fewer message,
+but the wizard/settings ack now carries composer data nothing else reads, and
+the reply would need the same no-session_id care anyway); lazy per-command
+fetches (a round trip inside a keystroke loop, for files that are already read).
+
+**Follow-up:** `artifact_list` still sends `seq` with a `session_id` and remains
+latent; filed here rather than fixed in a commands story.
+

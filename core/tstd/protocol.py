@@ -220,6 +220,18 @@ class RevokePolicyRule(ClientMessage):
     args: str
 
 
+class ListCommands(ClientMessage):
+    """List every slash command visible to the workspace (TD-4501).
+
+    The ``session_id`` anchors the workspace (commands are workspace +
+    user-home scoped); the reply is connection-scoped like
+    ``policy_rules`` and carries no ``session_id`` of its own.
+    """
+
+    type: Literal["list_commands"] = "list_commands"
+    session_id: str
+
+
 class SetSkipAllApprovals(ClientMessage):
     """Turn skip-all approvals on or off (TD-804).
 
@@ -817,6 +829,22 @@ class PolicyRuleSummary(BaseModel):
     effect: Literal["auto", "ask", "never"]
 
 
+class CommandSummary(BaseModel):
+    """One discovered slash command, surfaced to the composer (TD-4501).
+
+    ``source`` is ``workspace``, ``user``, ``workspace_fallback``, or
+    ``user_fallback`` — the last two mark ``.claude/commands`` reads.
+    The body rides the listing so invoking a command is one insert, not
+    a second round trip.  The on-disk path stays daemon-side.
+    """
+
+    name: str
+    source: str
+    description: str | None
+    body: str
+    line_count: int = Field(ge=0)
+
+
 class ApprovalRequest(DaemonEvent):
     """A request for user approval of a tool call (TD-802).
 
@@ -1215,6 +1243,20 @@ class PolicyRules(DaemonEvent):
     rules: list[PolicyRuleSummary] = Field(default_factory=list)
 
 
+class CommandsList(DaemonEvent):
+    """Response to ``list_commands`` (TD-4501): every discovered slash
+    command, bodies included, sorted by name.
+
+    Connection-scoped (like ``policy_rules``), so its seq is fixed at 1
+    and it carries no ``session_id`` — a sequenced event with one would
+    race the session log's replay cursor.
+    """
+
+    type: Literal["commands_list"] = "commands_list"
+    seq: int = 1
+    commands: list[CommandSummary] = Field(default_factory=list)
+
+
 class SetupState(DaemonEvent):
     """Response to ``get_setup_state``; also the ack for ``set_api_key`` and
     ``set_preset`` (TD-1101).
@@ -1584,7 +1626,8 @@ ClientMessageT = Annotated[
     | OpenArtifact
     | DesignHitTest
     | CheckCuPermissions
-    | SetCuKill,
+    | SetCuKill
+    | ListCommands,
     Field(discriminator="type"),
 ]
 
@@ -1616,6 +1659,7 @@ DaemonEventT = Annotated[
     | MemoryProposal
     | SessionList
     | PolicyRules
+    | CommandsList
     | SetupState
     | ApiKeyValidated
     | DiagnosticsReport
@@ -1648,6 +1692,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "always_allow",
         "list_policy_rules",
         "revoke_policy_rule",
+        "list_commands",
         "fork_from",
         "set_branch",
         "set_skip_all_approvals",
@@ -1725,6 +1770,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "memory_proposal",
         "session_list",
         "policy_rules",
+        "commands_list",
         "setup_state",
         "api_key_validated",
         "diagnostics_report",

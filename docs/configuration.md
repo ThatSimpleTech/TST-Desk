@@ -669,7 +669,32 @@ agent tools refuse a write that would go over, or that would replace a file alre
 
 ---
 
-## 6. When a config is wrong
+## 6. Slash commands — what `/` offers
+
+Type `/` at the start of the composer and a menu lists your saved commands; picking one inserts
+its text into the draft (Enter inserts, ⌘/Ctrl+Enter sends it straight away). A command is a
+short markdown file:
+
+```
+<workspace>/.tst/commands/deploy.md   ← workspace commands
+~/.tstdesk/commands/*.md              ← yours, every workspace
+<workspace>/.claude/commands/*.md     ← fallback when ours is empty at that level
+```
+
+Precedence: per level, `.claude/commands/` is read only when that level's own directory holds no
+commands; when the same name exists in both the workspace and `~/.tstdesk/`, the user-global file
+wins. The front matter may carry a `description:` — it shows in the menu. Bodies ride the listing,
+so invoking needs no second round trip.
+
+Commands are deliberately **not** steering: nothing here joins the prompt unless you invoke it,
+so a hundred command files cost nothing on an ordinary turn. The flip side is that a command body
+reaches the composer verbatim, which makes the trees steering-class for *writes* — the agent may
+read them but any write to `.tst/commands/**` or `.claude/commands/**` is refused like
+`AGENTS.md`. Edit them yourself, or ask the agent to print a draft into chat.
+
+---
+
+## 7. When a config is wrong
 
 Every loader fails loudly and names the offending key. Nothing falls back to a "safe" default on
 a malformed file — a config error stops the load rather than running you on settings you did not
@@ -692,7 +717,7 @@ the previous caps are kept rather than dropping the wall.
 
 ---
 
-## 7. How this document is kept honest
+## 8. How this document is kept honest
 
 `core/tests/test_docs_config_reference.py` runs on every suite run and enforces four things:
 

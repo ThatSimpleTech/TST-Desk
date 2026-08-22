@@ -263,6 +263,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
 | `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls. |
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
+| `list_commands` | yes | List every slash command visible to the workspace (TD-4501). |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_skip_all_approvals` | — | Turn skip-all approvals on or off. Machine-wide; Class C and `never` are unaffected. Acked with `setup_state`. |
 | `set_load_global_memory` | — | Turn global memory on or off. Machine-wide; off never reads `~/.tstdesk/memory/`. Acked with `setup_state` (TD-2603). |
@@ -345,6 +346,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |
+| `commands_list` | connection | Every discovered slash command, bodies included, sorted by name (TD-4501). |
 | `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin`. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |

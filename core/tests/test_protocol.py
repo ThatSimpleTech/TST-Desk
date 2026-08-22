@@ -22,6 +22,8 @@ from tstd.protocol import (
     Attach,
     Cancel,
     ClientMessageT,
+    CommandsList,
+    CommandSummary,
     CostUpdate,
     CuKillState,
     DaemonEvent,
@@ -37,6 +39,7 @@ from tstd.protocol import (
     GetUsage,
     HandshakeError,
     Hello,
+    ListCommands,
     ListPolicyRules,
     MemoryAccept,
     MemoryEdit,
@@ -132,6 +135,11 @@ class TestClientMessages:
         msg = ListPolicyRules(session_id="sess-1")
         back = _roundtrip(msg)
         assert isinstance(back, ListPolicyRules)
+
+    def test_list_commands(self) -> None:
+        msg = ListCommands(session_id="sess-1")
+        back = _roundtrip(msg)
+        assert isinstance(back, ListCommands)
 
     def test_revoke_policy_rule(self) -> None:
         msg = RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *")
@@ -591,6 +599,25 @@ class TestDaemonEvents:
         back = _roundtrip(evt)
         assert isinstance(back, PolicyRules)
         assert back.rules == [PolicyRuleSummary(tool="shell", args="npm test", effect="auto")]
+
+    def test_commands_list(self) -> None:
+        evt = CommandsList(
+            seq=1,
+            commands=[
+                CommandSummary(
+                    name="deploy",
+                    source="workspace",
+                    description="Ship it",
+                    body="# deploy\n",
+                    line_count=2,
+                )
+            ],
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, CommandsList)
+        assert back.seq == 1
+        assert back.commands[0].name == "deploy"
+        assert back.commands[0].body == "# deploy\n"
 
     def test_memory_files(self) -> None:
         from tstd.protocol import MemoryFileEntry, MemoryFiles

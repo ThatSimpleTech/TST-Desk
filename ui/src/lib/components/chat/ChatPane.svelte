@@ -112,6 +112,7 @@
 			running={showCancel(chat.turnState) || chat.awaitingFirstToken}
 			bind:value={draft}
 			limits={session.attachmentLimits}
+			sessionId={chat.sessionId}
 			onsubmit={(text, attachments) => {
 				sendUserMessage(text, attachments);
 			}}
