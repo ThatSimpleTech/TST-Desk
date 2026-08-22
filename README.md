@@ -186,20 +186,29 @@ model choice, the audit trail, and the code.
 
 ## Status
 
-v0.1 — **in development, not yet released.** No app tag has been pushed, so there is
-nothing to download yet; packaging runs in CI but has not yet produced a green artifact
+v0.1 — **in development, not yet released.** No Desk release has been published, so there
+is nothing to download yet; packaging runs in CI but has not yet produced a green artifact
 set (`TD-1302`, `TD-1303`). App releases now tag as `tstdesk-v*` (`TD-4812`) so a package
-tag like `v0.2.0` cannot fire the app workflow. Running it today means running it from
-source.
+tag like `v0.2.0` (the `tst-cu-mcp` server, not the app) cannot fire the app workflow.
+Running it today means running it from source.
 
 What works: streaming chat, the three-tier router, the steering assembler and instruction
 inspector, filesystem and shell tools behind a decision classifier and approval cards, path
-boundaries and spend/time/iteration caps, the live cost meter and usage export, the append-only
-audit log, the session rail, settings, diagnostics, and keyless local-model support.
+boundaries and spend/time/iteration caps, the live cost meter and usage export, the
+append-only audit log, agent memory that rides the brain prompt and accepts distilled
+updates, sessions that revive from disk after a restart or a closed window (close vs quit
+below), headless runs via `tst run`, computer-use — a screenshot and clicks through the
+same classifier, behind a kill switch — on macOS and Windows via `tst-cu-mcp` (browser
+path on any OS), remote attach over Tailscale (never `0.0.0.0`) with Slack/ntfy notify
+and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
+a validating `CHARTER.md` schema, plus the session rail, settings, diagnostics, and
+keyless local-model support.
 
-What is not built yet, and is not claimed anywhere above: computer-use, agent memory as a
-finished product surface, the autonomous runner, and remote attach. Those are later
-milestones — see [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) §9 for the phasing.
+What is not built yet, and is not claimed anywhere above: the autonomy engine (charter
+editor, unattended runner, supervisor, hard-required container), MCP loading, slash
+commands, `SKILL.md`, and plan lock, Linux desktop capture, and desktop Design-mode AX.
+Those are later stories — see [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) §9 for
+the phasing.
 
 ### Close vs Quit
 
