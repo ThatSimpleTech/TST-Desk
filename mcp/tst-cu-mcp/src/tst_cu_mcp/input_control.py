@@ -39,6 +39,10 @@ from tst_cu_mcp.overlay import get_overlay
 MOUSE_BUTTONS = ("left", "right")
 MAX_TEXT_LEN = 10000
 MAX_SCROLL_LINES = 10000
+# Real multi-click semantics end around triple-click; this bounds the worst
+# case (a model looping clicks at one point) far below harmful while leaving
+# every legitimate spelling room.
+MAX_CLICK_COUNT = 100
 
 
 def _display_bounds_union() -> tuple[int, int, int, int] | None:
@@ -99,6 +103,8 @@ def click(
         raise ValueError(f"unknown button {button!r}; use one of {MOUSE_BUTTONS}")
     if count < 1:
         raise ValueError("count must be >= 1")
+    if count > MAX_CLICK_COUNT:
+        raise ValueError(f"click count too large ({count} > {MAX_CLICK_COUNT})")
     assert_on_screen(x, y)
     assert_foreground(expect_window)
     get_backend().click(float(x), float(y), button, count)
