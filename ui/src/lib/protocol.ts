@@ -199,6 +199,44 @@ export interface CreateRule extends ClientMessage {
   name: string;
 }
 
+/** Load a workspace's signed charter (TD-4002). Human path. */
+export interface GetCharter extends ClientMessage {
+  type: "get_charter";
+  workspace_path: string;
+}
+
+/** Spec §12.4 charter fields. Same names as `tstd.autonomy.charter.Charter`. */
+export type CharterNetwork = "deny" | string[];
+
+export interface CharterBoundary {
+  writable_paths: string[];
+  allowed_commands: string[];
+  network: CharterNetwork;
+}
+
+export interface CharterCaps {
+  spend_usd: number;
+  wall_clock_hours: number;
+  max_iterations: number;
+}
+
+export interface CharterFields {
+  objective: string;
+  definition_of_done: string[];
+  source_of_truth: string[];
+  boundary: CharterBoundary;
+  caps: CharterCaps;
+  stop_conditions: string[];
+}
+
+/** Write the charter as the human (TD-4002). Never a tool. Does not commit. */
+export interface SaveCharter extends ClientMessage {
+  type: "save_charter";
+  workspace_path: string;
+  charter: Record<string, unknown>;
+  notes?: string;
+}
+
 export interface ListPins extends ClientMessage {
   type: "list_pins";
   workspace_path: string;
@@ -449,6 +487,8 @@ export type ClientMessageUnion =
   | ListMemory
   | SaveMemory
   | CreateRule
+  | GetCharter
+  | SaveCharter
   | ListPins
   | AddPin
   | RemovePin
@@ -743,6 +783,15 @@ export interface MemoryFiles extends DaemonEvent {
   type: "memory_files";
   workspace_path: string;
   files: MemoryFileEntry[];
+}
+
+/** Reply to get_charter / save_charter (TD-4002). Connection-scoped. */
+export interface CharterDocument extends DaemonEvent {
+  type: "charter";
+  workspace_path: string;
+  present: boolean;
+  charter?: CharterFields | null;
+  notes?: string;
 }
 
 export interface MemoryFileDiff {
@@ -1083,6 +1132,7 @@ export type DaemonEventUnion =
   | InstructionFiles
   | ContextPins
   | MemoryFiles
+  | CharterDocument
   | MemoryProposal
   | SessionList
   | PolicyRules

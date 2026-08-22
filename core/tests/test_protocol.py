@@ -285,6 +285,52 @@ class TestClientMessages:
         assert isinstance(back, CreateRule)
         assert back.name == "api"
 
+    def test_get_charter(self) -> None:
+        from tstd.protocol import GetCharter
+
+        msg = GetCharter(workspace_path="/home/user/project")
+        back = _roundtrip(msg)
+        assert isinstance(back, GetCharter)
+        assert back.workspace_path == "/home/user/project"
+
+    def test_save_charter(self) -> None:
+        from tstd.protocol import SaveCharter
+
+        msg = SaveCharter(
+            workspace_path="/home/user/project",
+            charter={"objective": "x", "definition_of_done": ["done"]},
+            notes="pane notes",
+        )
+        back = _roundtrip(msg)
+        assert isinstance(back, SaveCharter)
+        assert back.charter["objective"] == "x"
+        assert back.notes == "pane notes"
+
+    def test_charter_document(self) -> None:
+        from tstd.autonomy.charter import Charter
+        from tstd.protocol import CharterDocument
+
+        charter = Charter.model_validate(
+            {
+                "objective": "x",
+                "definition_of_done": ["done"],
+                "boundary": {"network": "deny"},
+                "caps": {"spend_usd": 1},
+            }
+        )
+        msg = CharterDocument(
+            workspace_path="/home/user/project",
+            present=True,
+            charter=charter,
+            notes="context",
+        )
+        back = _roundtrip(msg)
+        assert isinstance(back, CharterDocument)
+        assert back.present is True
+        assert back.charter is not None
+        assert back.charter.objective == "x"
+        assert back.notes == "context"
+
     def test_list_pins(self) -> None:
         from tstd.protocol import ListPins
 
