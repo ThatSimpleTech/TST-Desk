@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import contextlib
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -42,7 +43,13 @@ from .config import (
     is_loopback_url,
     load_config,
 )
-from .config_write import save_active_preset, save_tier_slug
+from .config_write import (
+    remove_mcp_server,
+    save_active_preset,
+    save_mcp_enabled,
+    save_mcp_server,
+    save_tier_slug,
+)
 from .context.assembler import ContextAssembler
 from .context.instructions import (
     InstructionNameError,
@@ -150,6 +157,7 @@ from .protocol import (
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    McpServerInfo,
     McpServerStatus,
     McpState,
     MemoryAccept,
@@ -163,6 +171,7 @@ from .protocol import (
     OpenWorkspace,
     PolicyRules,
     PolicyRuleSummary,
+    RemoveMcpServer,
     RemovePin,
     RenameSession,
     Resume,
@@ -177,6 +186,8 @@ from .protocol import (
     SetCuIndicators,
     SetCuKill,
     SetLoadGlobalMemory,
+    SetMcpEnabled,
+    SetMcpServer,
     SetPlanMode,
     SetPreset,
     SetSessionStar,
@@ -511,6 +522,30 @@ class Daemon:
             self._provider = await self._brain_client()
         return self._provider
 
+    async def _reload_mcp_config(self) -> str:
+        """Reload after an MCP settings write; reconcile and ack (TD-4403).
+
+        The reload is the same one a slug edit runs — the edit takes
+        effect on new sessions without a restart. ``reconcile`` closes
+        the processes of servers the edit removed, disabled, or changed,
+        so a removed server cannot keep running as a zombie.
+        """
+        try:
+            self.config = load_config().model_copy(
+                update={"active_preset": self.config.active_preset}
+            )
+            self._slug_snapshot = _snapshot_slugs(self.config)
+        except ConfigError as e:
+            # The write landed but the result will not load. Say so rather
+            # than serving a stale config that disagrees with the file.
+            return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+        await self.mcp_manager.reconcile(self.config.mcp)
+        log.info(
+            "mcp config changed",
+            extra={"extra_fields": {"servers": sorted(self.config.mcp.servers)}},
+        )
+        return (await self._setup_state_event()).model_dump_json()
+
     async def _setup_state_event(self) -> SetupState:
         """Current onboarding state (TD-1101): key presence + preset choice.
 
@@ -539,6 +574,21 @@ class Daemon:
             cu_agent_cursor=self.cu_indicators.agent_cursor,
             cu_show_on_real_display=self.cu_indicators.show_on_real_display,
             pinned_workspaces=list(self.workspace_pins),
+            mcp_servers=[
+                McpServerInfo(
+                    name=name,
+                    transport="stdio" if server.command else "http",
+                    destination=(
+                        server.url
+                        if server.url
+                        else shlex.join(
+                            server.command if isinstance(server.command, list) else [server.command]
+                        )
+                    ),
+                    enabled=server.enabled,
+                )
+                for name, server in sorted(self.config.mcp.servers.items())
+            ],
         )
 
     def _cu_permissions_session(self, event: DaemonEvent) -> str | None:
@@ -1632,6 +1682,19 @@ class Daemon:
                 extra={"extra_fields": {"preset": msg.preset, "tier": msg.tier}},
             )
             return (await self._setup_state_event()).model_dump_json()
+
+        # ── MCP server settings (TD-4403) ────────────────────────────
+        if isinstance(msg, SetMcpServer | SetMcpEnabled | RemoveMcpServer):
+            try:
+                if isinstance(msg, SetMcpServer):
+                    save_mcp_server(msg.name, msg.command)
+                elif isinstance(msg, SetMcpEnabled):
+                    save_mcp_enabled(msg.name, msg.enabled)
+                else:
+                    remove_mcp_server(msg.name)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            return await self._reload_mcp_config()
 
         # ── Diagnostics (TD-1104 doctor) ─────────────────────────────
         if isinstance(msg, RunDiagnostics):

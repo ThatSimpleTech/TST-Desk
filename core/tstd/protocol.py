@@ -597,6 +597,61 @@ class SetTierSlug(ClientMessage):
     slug: str = Field(min_length=1)
 
 
+class SetMcpServer(ClientMessage):
+    """Add or replace one stdio MCP server (TD-4403).
+
+    Same narrowness discipline as ``set_tier_slug``: the message carries a
+    name and a command argv and nothing else, so no key can ride it into a
+    config file — §2.2 by construction. There is deliberately no ``url``
+    field and no environment: loopback HTTP servers are hand-configured in
+    v0.8, and an env block is the smuggling route the criteria name.
+
+    Persisted to the user's ``config.yaml`` and acked with ``setup_state``.
+    Applied to new sessions; the replaced server's process is closed.
+    """
+
+    type: Literal["set_mcp_server"] = "set_mcp_server"
+    name: str = Field(min_length=1)
+    command: list[str] = Field(min_length=1)
+
+
+class SetMcpEnabled(ClientMessage):
+    """Enable or disable one configured MCP server (TD-4403).
+
+    A disabled server keeps its config entry but contributes no tools.
+    Acked with ``setup_state``; applied to new sessions.
+    """
+
+    type: Literal["set_mcp_enabled"] = "set_mcp_enabled"
+    name: str = Field(min_length=1)
+    enabled: bool
+
+
+class RemoveMcpServer(ClientMessage):
+    """Remove one configured MCP server's entry entirely (TD-4403).
+
+    Acked with ``setup_state``; the server's process is closed and its
+    tools stop appearing in new sessions.
+    """
+
+    type: Literal["remove_mcp_server"] = "remove_mcp_server"
+    name: str = Field(min_length=1)
+
+
+class McpServerInfo(BaseModel):
+    """One configured MCP server, as the settings screen lists it.
+
+    Config-level truth — what is declared and whether it is enabled — not
+    runtime state, which ``mcp_state`` and the doctor own. Carried on
+    ``setup_state`` (TD-4403).
+    """
+
+    name: str
+    transport: Literal["stdio", "http"]
+    destination: str = ""
+    enabled: bool = True
+
+
 class RunDiagnostics(ClientMessage):
     """Ask the daemon to run the doctor checks (TD-1104 diagnostics).
 
@@ -1299,6 +1354,9 @@ class SetupState(DaemonEvent):
     cu_show_on_real_display: bool = False
     # TD-2806: workspaces pinned on this machine. Not a workspace file.
     pinned_workspaces: list[str] = Field(default_factory=list)
+    # TD-4403: configured MCP servers, for the settings screen's section.
+    # Config-level truth, not runtime state — that is `mcp_state`'s job.
+    mcp_servers: list[McpServerInfo] = Field(default_factory=list)
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1620,6 +1678,9 @@ ClientMessageT = Annotated[
     | ValidateApiKey
     | SetPreset
     | SetTierSlug
+    | SetMcpServer
+    | SetMcpEnabled
+    | RemoveMcpServer
     | RunDiagnostics
     | GetUsage
     | ExportUsage
@@ -1732,6 +1793,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "delete_api_key",
         "set_preset",
         "set_tier_slug",
+        "set_mcp_server",
+        "set_mcp_enabled",
+        "remove_mcp_server",
         "run_diagnostics",
         "get_usage",
         "export_usage",

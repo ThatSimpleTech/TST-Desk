@@ -7318,3 +7318,28 @@ The prefix is a wire-facing convention for providers; gating on the
 structured provenance field keeps the security behavior off the naming
 scheme and generalizes to other contributed sources (TD-4601 plugins)
 without a string convention becoming load-bearing.
+
+
+## 2026-08-21 — TD-4403: MCP servers are managed through three narrow settings verbs (Class B)
+
+**Decision:** Settings edits MCP servers over the wire with three verbs —
+`set_mcp_server` (add or replace one stdio entry by name and argv),
+`set_mcp_enabled`, and `remove_mcp_server` — each acked with `setup_state`.
+The add verb carries no url or env field, and a save replaces the server's
+entry whole, so a hand-added `url:` or `env:` under that name does not
+survive the edit. The manager reconciles on every edit: removed, disabled,
+or changed servers are closed; unchanged ones keep their transport.
+
+**Rationale:** One general `update_config` verb would accept any config
+fragment, and then a secret has a ride into `config.yaml` (AGENTS §2.2)
+the day someone adds an env field for convenience. Narrow verbs make the
+config file's no-secrets property hold by construction rather than by
+review. Wholesale replacement keeps the writer's YAML surgical and the
+on-disk shape honest: what Settings shows is exactly what the file says.
+"Applies to new sessions" matches the tier-slug contract — live sessions
+keep their loaded tools rather than gaining mid-turn ones.
+
+**Alternative rejected:** Keying edits off a full config round-trip from
+the client. The client would echo back state it does not own (and fields
+this story deliberately does not model); the daemon owns the file, so the
+verbs name only what changes.

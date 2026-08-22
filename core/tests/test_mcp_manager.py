@@ -214,6 +214,69 @@ class TestManager:
         await manager.aclose()
 
 
+class TestReconcile:
+    """A settings edit adopts a fresh config without a daemon restart (TD-4403)."""
+
+    @pytest.mark.asyncio
+    async def test_removed_server_is_closed_and_dropped(self) -> None:
+        manager = McpManager(_config(git=McpServerConfig(command=fake_spec(ECHO_TOOLS))))
+        await manager.ensure_started()
+
+        await manager.reconcile(_config())
+
+        assert "git" not in manager._transports
+        assert manager.tools() == []
+        assert manager.statuses() == []
+        await manager.aclose()
+
+    @pytest.mark.asyncio
+    async def test_unchanged_server_keeps_its_process(self) -> None:
+        git = McpServerConfig(command=fake_spec(ECHO_TOOLS))
+        manager = McpManager(_config(git=git))
+        await manager.ensure_started()
+        transport = manager._transports["git"]
+
+        await manager.reconcile(
+            _config(
+                git=McpServerConfig(command=fake_spec(ECHO_TOOLS)),
+                docs=McpServerConfig(command=fake_spec(ECHO_TOOLS)),
+            )
+        )
+        await manager.ensure_started()
+
+        assert manager._transports["git"] is transport
+        assert {t.server for t in manager.tools()} == {"git", "docs"}
+        await manager.aclose()
+
+    @pytest.mark.asyncio
+    async def test_disabled_server_is_pruned(self) -> None:
+        manager = McpManager(_config(git=McpServerConfig(command=fake_spec(ECHO_TOOLS))))
+        await manager.ensure_started()
+
+        await manager.reconcile(
+            _config(git=McpServerConfig(command=fake_spec(ECHO_TOOLS), enabled=False))
+        )
+
+        assert "git" not in manager._transports
+        assert [s.status for s in manager.statuses()] == ["disabled"]
+        await manager.aclose()
+
+    @pytest.mark.asyncio
+    async def test_changed_server_restarts(self) -> None:
+        manager = McpManager(_config(git=McpServerConfig(command=fake_spec(ECHO_TOOLS))))
+        await manager.ensure_started()
+        old_transport = manager._transports["git"]
+
+        await manager.reconcile(
+            _config(git=McpServerConfig(command=fake_spec([ECHO_TOOLS[0]], name="other-fake")))
+        )
+        await manager.ensure_started()
+
+        assert manager._transports["git"] is not old_transport
+        assert manager.statuses()[0].status == "ready"
+        await manager.aclose()
+
+
 class TestCall:
     @pytest.mark.asyncio
     async def test_text_blocks_join_and_arguments_round_trip(self) -> None:
