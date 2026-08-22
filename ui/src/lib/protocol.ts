@@ -205,6 +205,13 @@ export interface ListPins extends ClientMessage {
   workspace_path: string;
 }
 
+/** List the workspace's slash commands (TD-4501). Keyed on the workspace,
+ * not a session — the user-global half exists before any session opens. */
+export interface ListCommands extends ClientMessage {
+  type: "list_commands";
+  workspace_path: string;
+}
+
 export interface AddPin extends ClientMessage {
   type: "add_pin";
   workspace_path: string;
@@ -459,6 +466,7 @@ export type ClientMessageUnion =
   | ListMemory
   | SaveMemory
   | CreateRule
+  | ListCommands
   | ListPins
   | AddPin
   | RemovePin
@@ -758,6 +766,24 @@ export interface InstructionFiles extends DaemonEvent {
   workspace_path: string;
   files: InstructionFileEntry[];
   created?: string | null;
+}
+
+/** One slash command offered after a `/` (TD-4501). */
+export interface CommandEntry {
+  name: string;
+  /** Which tree owns it. User-global wins a name over the workspace. */
+  source: "workspace" | "user";
+  path: string;
+  /** True when served from .claude/commands because ours had none. */
+  fallback: boolean;
+}
+
+/** Reply to list_commands. Connection-scoped; a listing, not pushed state
+ * — a client that reloads re-asks (TD-4501). */
+export interface Commands extends DaemonEvent {
+  type: "commands";
+  workspace_path: string;
+  commands: CommandEntry[];
 }
 
 export interface MemoryFileEntry {
@@ -1091,6 +1117,7 @@ export type DaemonEventUnion =
   | TierSwitched
   | InstructionStack
   | InstructionFiles
+  | Commands
   | ContextPins
   | MemoryFiles
   | MemoryProposal

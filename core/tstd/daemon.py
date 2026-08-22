@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import contextlib
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -51,6 +52,7 @@ from .config_write import (
     save_tier_slug,
 )
 from .context.assembler import ContextAssembler
+from .context.commands import discover_commands, expand_command
 from .context.instructions import (
     InstructionNameError,
     create_rule_file,
@@ -126,6 +128,8 @@ from .protocol import (
     Cancel,
     CheckCuPermissions,
     ClientMessageT,
+    CommandEntry,
+    Commands,
     ContextPinEntry,
     ContextPins,
     CreateRule,
@@ -151,6 +155,7 @@ from .protocol import (
     InstructionFileEntry,
     InstructionFiles,
     ListArtifacts,
+    ListCommands,
     ListInstructions,
     ListMemory,
     ListPins,
@@ -246,6 +251,11 @@ from .workspace_pins import load_workspace_pins, save_workspace_pins
 from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
+
+# A slash-command invocation: a leading /name, then free-form arguments
+# (which may span lines). Anything else that merely starts with / is the
+# user's text, not our grammar (TD-4501).
+_SLASH_COMMAND_RE = re.compile(r"\A/([A-Za-z0-9_-]+)(?:[ \t]+(.*))?\Z", re.DOTALL)
 
 # The doctor's api_key verdict when the active preset sends no key (TD-1801).
 _KEYLESS_KEY_ROW = DiagnosticCheck(
@@ -1209,7 +1219,11 @@ class Daemon:
                 )
                 return build_error(e.code, e.message, session_id=msg.session_id)
 
-            await found.add_user_message(render_user_content(msg.content, decoded))
+            await found.add_user_message(
+                render_user_content(
+                    await self._expand_slash(found.workspace_path, msg.content), decoded
+                )
+            )
             # Title from the user's text, not the rendered body — an
             # attachment-only message must stay untitled (TD-3001).
             await self._session_store.maybe_set_title(msg.session_id, msg.content)
@@ -1588,6 +1602,9 @@ class Daemon:
 
         if isinstance(msg, CreateRule):
             return await self._handle_create_rule(msg)
+
+        if isinstance(msg, ListCommands):
+            return await self._handle_list_commands(msg)
 
         if isinstance(msg, ListPins):
             return await self._handle_list_pins(msg)
@@ -2319,6 +2336,62 @@ class Daemon:
         except InstructionNameError as e:
             return build_error("invalid_rule_name", str(e))
         return await self._instruction_files_reply(workspace, created=created)
+
+    async def _handle_list_commands(self, msg: ListCommands) -> str:
+        """List a workspace's slash commands (TD-4501). Not a tool."""
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        listed = await asyncio.to_thread(discover_commands, root)
+        return Commands(
+            workspace_path=str(root),
+            commands=[
+                CommandEntry(name=c.name, source=c.source, path=c.display_path, fallback=c.fallback)
+                for c in listed
+            ],
+        ).model_dump_json()
+
+    async def _expand_slash(self, workspace_path: str, content: str) -> str:
+        """Expand a leading ``/command`` into its markdown body (TD-4501).
+
+        Only a leading slash naming a discovered command expands; every
+        other message — including a ``/name`` nothing answers to — is the
+        user's text and delivers verbatim. The splice happens here rather
+        than in the prompt assembler so the body rides this one turn's
+        user message and never enters the cache prefix.
+        """
+        match = _SLASH_COMMAND_RE.match(content)
+        if match is None:
+            return content
+        name, args = match.group(1), match.group(2)
+        commands = await asyncio.to_thread(discover_commands, workspace_path)
+        command = next((c for c in commands if c.name == name), None)
+        if command is None:
+            return content
+        try:
+            expanded = await asyncio.to_thread(expand_command, command, args)
+        except (OSError, UnicodeDecodeError) as exc:
+            log.warning(
+                "slash command unreadable, delivered verbatim",
+                extra={
+                    "extra_fields": {"name": name, "path": str(command.path), "error": str(exc)}
+                },
+            )
+            return content
+        log.info(
+            "slash command invoked",
+            extra={
+                "extra_fields": {
+                    "name": name,
+                    "source": command.source,
+                    "args": args is not None and args.strip() != "",
+                }
+            },
+        )
+        return expanded
 
     async def _instruction_files_reply(
         self, workspace: str | Path, created: Path | None = None

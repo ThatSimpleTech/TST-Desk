@@ -44,6 +44,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "tier_switched",
   "instruction_stack",
   "instruction_files",
+  "commands", // TD-4501: slash-command listing
   "context_pins",
   "memory_files",
   "memory_proposal",

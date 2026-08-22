@@ -63,6 +63,10 @@ _MEMORY_DIR_PARTS = (".tst", "memory")
 # but a write to it rewrites the guardrails — the self-escalation the
 # steering refusal exists to prevent (TD-4803).
 _POLICY_FILE_PARTS = (".tst", "config.yaml")
+# Slash-command files (TD-4501): human-written like steering, and a write
+# by the agent would let it author its own prompt for the next /invoke —
+# the same self-escalation, one step removed.
+_COMMANDS_DIR_PARTS = (".tst", "commands")
 
 
 def _fold(parts: Sequence[str]) -> tuple[str, ...]:
@@ -252,8 +256,9 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
     Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
-    ``.tst/rules/``, and the approval policy at ``.tst/config.yaml``
-    (TD-4803) — are read-only to the filesystem tool, unconditionally.
+    ``.tst/rules/``, the approval policy at ``.tst/config.yaml``
+    (TD-4803), and the slash-command tree ``.tst/commands/`` (TD-4501) —
+    are read-only to the filesystem tool, unconditionally.
     ``.tst/memory/`` is the carve-out (TD-2102); never fold it into
     ``.tst/**``.  Directory comparisons case-fold (TD-4804): see ``_fold``.
     """
@@ -267,7 +272,8 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
         return False
     if _fold(relative) == _POLICY_FILE_PARTS:
         return True
-    return _fold(relative[:2]) == _STEERING_RULES_DIR_PARTS
+    first_two = _fold(relative[:2])
+    return first_two in (_STEERING_RULES_DIR_PARTS, _COMMANDS_DIR_PARTS)
 
 
 def writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:
@@ -377,8 +383,32 @@ def _shell_write_targets(command: str) -> list[str]:
     return targets
 
 
+def _global_commands_write(target: Path) -> bool:
+    """Whether *target* lands in a user-global commands tree (TD-4501).
+
+    ``~/.tstdesk/commands`` and its Claude Code fallback live outside the
+    workspace, where ``is_steering_write`` cannot see them. Both sides are
+    realpathed so a symlink planted in the tree is judged by where it
+    points, not by where it sits.
+    """
+    home = Path.home()
+    for root in (home / ".tstdesk" / "commands", home / ".claude" / "commands"):
+        try:
+            canonical_path(target).relative_to(canonical_path(root))
+        except ValueError:
+            continue
+        return True
+    return False
+
+
 def _rule_shell_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
-    """A shell command redirects or tees into a steering path (TD-4805)."""
+    """A shell command redirects or tees into a steering path (TD-4805).
+
+    Targets that begin with ``~`` resolve against the real home before the
+    workspace join, so ``echo x > ~/.tstdesk/commands/f.md`` is judged as
+    the global-commands write it is rather than a relative path inside the
+    workspace (TD-4501).
+    """
     if req.tool_name != "shell" or boundary.workspace_root is None:
         return False
     command = req.arguments.get("command")
@@ -386,10 +416,10 @@ def _rule_shell_steering_write(req: DecisionRequest, boundary: Boundary) -> bool
         return False
     root = boundary.workspace_root
     for token in _shell_write_targets(command):
-        target = Path(token)
+        target = Path(os.path.expanduser(token)) if token.startswith("~") else Path(token)
         if not target.is_absolute():
             target = root / target
-        if is_steering_write(boundary, target):
+        if is_steering_write(boundary, target) or _global_commands_write(target):
             return True
     return False
 
