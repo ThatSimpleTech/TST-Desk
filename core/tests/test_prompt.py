@@ -177,6 +177,21 @@ class TestMemorySlot:
         assert "beta-memory" in second.text
         assert "alpha-memory" not in second.text
 
+    def test_skills_catalog_sits_after_the_cache_prefix(self, tmp_path: Path) -> None:
+        """TD-4502: the catalog changes nothing ahead of steering."""
+        home, ws = _build_workspace(tmp_path, root_file="root: steering")
+        assembler = PromptAssembler(ws, home_dir=home)
+        without = assembler.assemble_sync("brain")
+        with_catalog = assembler.assemble_sync(
+            "brain", skills_catalog="### Available skills\n- deploy: Ship it"
+        )
+        # Same prefix bytes; only the tail grew.
+        assert without.prefix_hash == with_catalog.prefix_hash
+        assert without.prefix == with_catalog.prefix
+        assert with_catalog.text.startswith(without.prefix)
+        assert "- deploy: Ship it" in with_catalog.text
+        assert "- deploy: Ship it" not in without.text
+
 
 # ── Prefix stability ────────────────────────────────────────────────────
 

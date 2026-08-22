@@ -232,6 +232,18 @@ class ListCommands(ClientMessage):
     session_id: str
 
 
+class ListSkills(ClientMessage):
+    """List every skill visible to the workspace (TD-4502).
+
+    Same shape as ``list_commands``: the ``session_id`` anchors the
+    workspace (skills are workspace + user-home scoped); the reply is
+    connection-scoped and carries no ``session_id`` of its own.
+    """
+
+    type: Literal["list_skills"] = "list_skills"
+    session_id: str
+
+
 class SetSkipAllApprovals(ClientMessage):
     """Turn skip-all approvals on or off (TD-804).
 
@@ -845,6 +857,22 @@ class CommandSummary(BaseModel):
     line_count: int = Field(ge=0)
 
 
+class SkillSummary(BaseModel):
+    """One discovered skill's catalog entry (TD-4502).
+
+    Deliberately body-less, unlike ``CommandSummary``: the brain's
+    catalog is name + description + when-to-use, and a body only enters
+    context through ``load_skill`` or a slash invocation.  The on-disk
+    path stays daemon-side.
+    """
+
+    name: str
+    source: str
+    description: str | None
+    when_to_use: str | None
+    line_count: int = Field(ge=0)
+
+
 class ApprovalRequest(DaemonEvent):
     """A request for user approval of a tool call (TD-802).
 
@@ -1160,6 +1188,14 @@ class MemoryStackEntry(BaseModel):
     reason: Literal["always-index", "heading", "embedding"]
 
 
+class LoadedSkillEntry(BaseModel):
+    """One skill whose body entered context this session (TD-4502)."""
+
+    name: str
+    source: str
+    tokens: int = Field(ge=0)
+
+
 class InstructionStack(DaemonEvent):
     """Response to ``get_instruction_stack``: the resolved stack with counts."""
 
@@ -1184,6 +1220,12 @@ class InstructionStack(DaemonEvent):
     memory: list[MemoryStackEntry] = Field(default_factory=list)
     memory_dropped: list[MemoryStackEntry] = Field(default_factory=list)
     memory_placeholder: bool = False
+    # Skills whose bodies entered context this session (TD-4502) — via
+    # load_skill or a slash invocation. Listed apart from steering
+    # because they are not steering: they arrived mid-conversation, and
+    # the inspector should show that. Additive with a default — no
+    # PROTOCOL_VERSION bump.
+    skills_loaded: list[LoadedSkillEntry] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):
@@ -1255,6 +1297,20 @@ class CommandsList(DaemonEvent):
     type: Literal["commands_list"] = "commands_list"
     seq: int = 1
     commands: list[CommandSummary] = Field(default_factory=list)
+
+
+class SkillsList(DaemonEvent):
+    """Response to ``list_skills`` (TD-4502): the skill catalog — names,
+    sources, and metadata, bodies excluded, sorted by name.
+
+    Connection-scoped like ``commands_list``: ``seq`` is fixed at 1 and
+    there is no ``session_id`` — a sequenced event with one would race
+    the session log's replay cursor.
+    """
+
+    type: Literal["skills_list"] = "skills_list"
+    seq: int = 1
+    skills: list[SkillSummary] = Field(default_factory=list)
 
 
 class SetupState(DaemonEvent):
@@ -1627,7 +1683,8 @@ ClientMessageT = Annotated[
     | DesignHitTest
     | CheckCuPermissions
     | SetCuKill
-    | ListCommands,
+    | ListCommands
+    | ListSkills,
     Field(discriminator="type"),
 ]
 
@@ -1660,6 +1717,7 @@ DaemonEventT = Annotated[
     | SessionList
     | PolicyRules
     | CommandsList
+    | SkillsList
     | SetupState
     | ApiKeyValidated
     | DiagnosticsReport
@@ -1693,6 +1751,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_policy_rules",
         "revoke_policy_rule",
         "list_commands",
+        "list_skills",
         "fork_from",
         "set_branch",
         "set_skip_all_approvals",
@@ -1771,6 +1830,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "session_list",
         "policy_rules",
         "commands_list",
+        "skills_list",
         "setup_state",
         "api_key_validated",
         "diagnostics_report",

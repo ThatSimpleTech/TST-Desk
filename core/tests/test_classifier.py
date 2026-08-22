@@ -335,6 +335,68 @@ class TestSteeringFileWrite:
         assert decision.decision_class is DecisionClass.A
         assert fired_as(decision, "memory-file-write")
 
+    def test_skill_md_write_is_c_at_any_depth(self) -> None:
+        # SKILL.md bodies feed the brain's catalog verbatim (TD-4502) —
+        # the protection is basename-scoped, so nesting depth is beside
+        # the point.
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "skills" / "deploy" / "SKILL.md",),
+                is_mutation=True,
+            ),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "steering-file-write")
+
+    def test_skill_md_outside_the_skills_tree_is_c(self) -> None:
+        decision = classify(
+            boundary(),
+            req(tool_name="fs_edit", writes=(WS / "docs" / "SKILL.md",), is_mutation=True),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "steering-file-write")
+
+    def test_skill_md_in_memory_stays_steering(self) -> None:
+        # Unlike a commands dir, the basename rule fires even under
+        # .tst/memory/ — steering basenames never fall into the memory
+        # carve-out (same posture as AGENTS.md there).
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "memory" / "SKILL.md",),
+                is_mutation=True,
+            ),
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "steering-file-write")
+
+    def test_skill_support_files_are_not_this_rule(self) -> None:
+        # The story scopes the refusal to **/SKILL.md exactly; other
+        # files in a skill directory are ordinary workspace files.
+        decision = classify(
+            boundary(),
+            req(
+                tool_name="fs_write",
+                writes=(WS / ".tst" / "skills" / "deploy" / "helper.sh",),
+                is_mutation=True,
+            ),
+        )
+        assert not fired_as(decision, "steering-file-write")
+
+    def test_reading_skill_md_is_not_c(self) -> None:
+        decision = classify(boundary(), req(tool_name="fs_read", reads=(WS / "SKILL.md",)))
+        assert not fired_as(decision, "steering-file-write")
+
+    def test_load_skill_is_a_static_a(self) -> None:
+        # Name-keyed and read-only by construction — no path fields means
+        # nothing for the ambiguous worker to weigh (TD-4502).
+        decision = classify(boundary(), req(tool_name="load_skill"))
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "skill-load")
+
 
 # ── Rule: cap exceeded → C ─────────────────────────────────────────────
 

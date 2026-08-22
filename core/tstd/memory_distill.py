@@ -31,7 +31,9 @@ log = get_logger("tstd.memory_distill")
 
 MemoryAction = Literal["create", "replace", "delete"]
 
-_STEERING_BASENAMES = frozenset({"AGENTS.MD", "CLAUDE.MD"})
+# SKILL.md joins the steering set (TD-4502): a steering basename never
+# becomes a memory candidate, wherever it is dropped.
+_STEERING_BASENAMES = frozenset({"AGENTS.MD", "CLAUDE.MD", "SKILL.MD"})
 
 DISTILL_SYSTEM_PROMPT = """\
 You distill a TST Desk session into workspace memory files.

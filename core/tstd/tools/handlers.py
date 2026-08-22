@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import logging
 import os
 from functools import partial
 from pathlib import Path
@@ -25,6 +26,7 @@ from pathlib import Path
 from ..browser import BrowserDriver, MockBrowserDriver
 from ..context.manifest import _FALLBACK_IGNORE
 from ..desktop import DesktopDriver, MockDesktopDriver
+from ..skills import discover_skills
 from .browser import register_browser_handlers
 from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
@@ -37,6 +39,8 @@ from .write import fs_edit, fs_write
 _MAX_READ_LINES = 2000
 # Bytes probed at the start of a file for binary detection (NUL).
 _BINARY_PROBE = 1024
+
+log = logging.getLogger(__name__)
 
 
 def _looks_binary(target: Path) -> bool:
@@ -146,6 +150,42 @@ async def fs_list(
     return await asyncio.to_thread(_list_dir, Path(path), pattern, recursive)
 
 
+async def load_skill(session: object, name: str, tool_call_id: str = "") -> str:
+    """Return the body of the named skill (TD-4502).
+
+    Name-keyed on purpose: no path fields means no guard canonicalization
+    of a bare name, and user-global skills stay reachable without poking a
+    hole in the workspace wall.  Discovery runs its own containment checks,
+    so this is the same trust posture as the catalog itself.
+    """
+    from tstd.skills import find_skill, record_load, skill_budget_refusal
+
+    raw = getattr(session, "workspace_path", None)
+    if not isinstance(raw, str) or not raw:
+        return "(load_skill failed: no workspace is open)"
+    skills = await asyncio.to_thread(discover_skills, Path(raw))
+    skill = find_skill(skills, name)
+    if skill is None:
+        available = ", ".join(s.name for s in skills) if skills else "(none discovered)"
+        return f"(no skill named {name!r}. Available skills: {available})"
+    refusal = skill_budget_refusal(skill)
+    if refusal is not None:
+        # Refused, not truncated (TD-4502): the model sees why and can
+        # tell the user, who is the only one who can fix a human-written
+        # file anyway.
+        log.warning(
+            "load_skill refused an over-budget skill",
+            extra={"extra_fields": {"skill": skill.name}},
+        )
+        return f"(load_skill refused: {refusal})"
+
+    loaded = getattr(session, "loaded_skills", None)
+    if isinstance(loaded, list):
+        record_load(loaded, skill)
+
+    return f"<!-- skill: {skill.name} ({skill.source}) -->\n{skill.body}"
+
+
 def register_builtin_handlers(
     dispatcher: ToolDispatcher,
     allowed_commands: tuple[str, ...] | None = None,
@@ -162,6 +202,7 @@ def register_builtin_handlers(
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
+    dispatcher.register_handler("load_skill", load_skill)
     dispatcher.register_handler("web_search", web_search)
     dispatcher.register_handler("web_fetch", web_fetch)
     dispatcher.register_handler("fs_write", fs_write)

@@ -30,7 +30,7 @@ vi.mock("./connection-status.svelte.js", () => ({
 	},
 }));
 
-import type { CommandSummary } from "./protocol";
+import type { CommandSummary, SkillSummary } from "./protocol";
 import {
 	commandMenu,
 	dismissSlashMenu,
@@ -54,6 +54,14 @@ function commandsList(commands: CommandSummary[]): DaemonEventUnion {
 	return { type: "commands_list", seq: 1, commands } as DaemonEventUnion;
 }
 
+function skill(name: string): SkillSummary {
+	return { name, source: "user", description: `${name} does things`, when_to_use: null, line_count: 1 };
+}
+
+function skillsList(skills: SkillSummary[]): DaemonEventUnion {
+	return { type: "skills_list", seq: 1, skills } as DaemonEventUnion;
+}
+
 beforeEach(() => {
 	resetCommandMenu();
 	mocks.sent.length = 0;
@@ -62,17 +70,21 @@ beforeEach(() => {
 });
 
 describe("fetching", () => {
-	it("asks the daemon once per session", () => {
+	it("asks for both lists once per session (TD-4502)", () => {
 		ensureCommands("sess-1");
 		ensureCommands("sess-1");
-		expect(mocks.sent).toEqual([{ type: "list_commands", session_id: "sess-1" }]);
+		expect(mocks.sent).toEqual([
+			{ type: "list_commands", session_id: "sess-1" },
+			{ type: "list_skills", session_id: "sess-1" },
+		]);
 	});
 
 	it("re-asks when the session changes", () => {
 		ensureCommands("sess-1");
 		emit(commandsList([command("a")]));
+		emit(skillsList([skill("b")]));
 		ensureCommands("sess-2");
-		expect(mocks.sent).toHaveLength(2);
+		expect(mocks.sent).toHaveLength(4);
 	});
 
 	it("stores the reply and clears the pending mark", () => {
@@ -81,7 +93,27 @@ describe("fetching", () => {
 		expect(commandMenu.commands.map((c) => c.name)).toEqual(["deploy", "review"]);
 		// The listing landed, so a later keystroke's ensure is a no-op.
 		ensureCommands("sess-1");
-		expect(mocks.sent).toHaveLength(1);
+		expect(mocks.sent).toHaveLength(2);
+	});
+});
+
+describe("the skills listing (TD-4502)", () => {
+	it("stores skills_list without un-marking the fetched session", () => {
+		ensureCommands("sess-1");
+		emit(commandsList([command("deploy")]));
+		emit(skillsList([skill("triage")]));
+		expect(commandMenu.skills.map((s) => s.name)).toEqual(["triage"]);
+		// Either reply completes the pair; the second must not clear the
+		// mark again or every keystroke refetches.
+		ensureCommands("sess-1");
+		expect(mocks.sent).toHaveLength(2);
+	});
+
+	it("skills_list alone still completes the fetch", () => {
+		ensureCommands("sess-1");
+		emit(skillsList([skill("triage")]));
+		ensureCommands("sess-1");
+		expect(mocks.sent).toHaveLength(2);
 	});
 });
 

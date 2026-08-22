@@ -463,6 +463,65 @@ async def _dispatch_and_append_results(
     await session.conversation_changed()
 
 
+async def _maybe_expand_skill(session: Session, text: str) -> str:
+    """Expand a leading ``/name`` into a discovered skill's body (TD-4502).
+
+    The transcript keeps what the user typed; the model sees the body.
+    An unknown token passes through untouched.  A name a slash command
+    owns never expands either — commands are the older habit and the menu
+    promises them ties, so a shadowed skill stays reachable via load_skill
+    only.  An over-budget skill is refused, not truncated: the raw draft
+    goes through with a visible note so the user learns why nothing
+    loaded, mirroring the marker comments truncation elsewhere in the
+    pipeline carries.
+    """
+    stripped = text.lstrip()
+    if not stripped.startswith("/") or session.workspace_path is None:
+        return text
+    token = stripped[1:].split(maxsplit=1)[0] if len(stripped) > 1 else ""
+    if not token:
+        return text
+
+    from .commands import discover_commands
+    from .skills import discover_skills, find_skill, record_load, skill_budget_refusal
+
+    # A command owns its name end to end: the menu ranks it first on a
+    # tie, so expansion must agree or choosing the command row would send
+    # the skill's body.
+    commands = await asyncio.to_thread(discover_commands, Path(session.workspace_path))
+    if any(c.name == token for c in commands):
+        return text
+
+    skills = await asyncio.to_thread(discover_skills, Path(session.workspace_path))
+    skill = find_skill(skills, token)
+    if skill is None:
+        return text
+
+    skills = await asyncio.to_thread(discover_skills, Path(session.workspace_path))
+    skill = find_skill(skills, token)
+    if skill is None:
+        return text
+
+    refusal = skill_budget_refusal(skill)
+    if refusal is not None:
+        log.warning(
+            "slash-invoked skill refused as over budget",
+            extra={"extra_fields": {"session_id": session.id, "skill": skill.name}},
+        )
+        return f"{text}\n\n[{refusal}]"
+
+    record_load(session.loaded_skills, skill)
+    # Slice from the token's real offset: split() skips leading
+    # whitespace, so "/ deploy" would otherwise duplicate the token's
+    # tail into the remainder and eat its head.
+    start = stripped.index(token, 1)
+    rest = stripped[start + len(token) :].strip()
+    expanded = f"<!-- skill: {skill.name} ({skill.source}) -->\n{skill.body}"
+    if rest:
+        expanded = f"{expanded}\n\n{rest}"
+    return expanded
+
+
 async def agent_loop(
     session: Session,
     router: TierRouter,
@@ -666,7 +725,10 @@ async def agent_loop(
             },
         )
 
-        messages.append(ChatMessage(role="user", content=user_content))
+        # Slash-invoked skills expand for the model here (TD-4502); the
+        # UserTurn below still records what the user actually typed.
+        effective_content = await _maybe_expand_skill(session, user_content)
+        messages.append(ChatMessage(role="user", content=effective_content))
         await session.event_log.add(
             UserTurn(
                 session_id=session.id,
@@ -750,6 +812,7 @@ async def agent_loop(
             while True:
                 memory_block: str | None = None
                 project_context: str | None = None
+                skills_catalog: str | None = None
                 if tier == "brain":
                     loaded = await load_memory_for_turn(
                         session.workspace_path,
@@ -767,12 +830,22 @@ async def agent_loop(
                         config.project_context.token_budget,
                     )
                     project_context = ctx.block
+                    # Skill catalog (TD-4502): names + descriptions only.
+                    # It sits after the cache prefix, so per-turn discovery
+                    # never disturbs prefix bytes, and a body enters the
+                    # conversation only when invoked (TD-4604's headless
+                    # check reads the same way).
+                    from .skills import discover_skills, render_catalog
+
+                    skills = await asyncio.to_thread(discover_skills, Path(session.workspace_path))
+                    skills_catalog = render_catalog(skills)
                 assembled = await assembler.assemble(
                     tier,
                     task=user_content if tier == "worker" else None,
                     matched_paths=set(session.touched_paths),
                     memory=memory_block,
                     project_context=project_context if tier == "brain" else None,
+                    skills_catalog=skills_catalog,
                     approved_imports=frozenset(approved_imports),
                     denied_imports=frozenset(denied_imports),
                 )
@@ -865,6 +938,7 @@ async def agent_loop(
                         last_cached_tokens=tracker.last_cached_prompt_tokens,
                         cache_observed=tracker.cache_observed,
                         memory=session.last_memory,
+                        skills_loaded=session.loaded_skills,
                     )
                 )
                 log.info(

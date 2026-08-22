@@ -25,7 +25,9 @@ log = get_logger("tstd.memory_loader")
 
 INDEX_NAME = "MEMORY.md"
 _INDEX_KEY = "MEMORY.MD"
-_STEERING_BASENAMES = frozenset({"AGENTS.MD", "CLAUDE.MD"})
+# SKILL.md joins the steering set (TD-4502): a steering basename never
+# becomes a memory candidate, wherever it is dropped.
+_STEERING_BASENAMES = frozenset({"AGENTS.MD", "CLAUDE.MD", "SKILL.MD"})
 
 # Tokens shorter than this are noise ("a", "to", "is") and would make
 # every file match every task. Recorded in DECISIONS.md (TD-2201).

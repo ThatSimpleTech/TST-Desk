@@ -101,6 +101,13 @@ export interface ListCommands extends ClientMessage {
   session_id: string;
 }
 
+/** TD-4502: list every skill visible to the workspace. Same shape as
+ *  list_commands; the reply is connection-scoped. */
+export interface ListSkills extends ClientMessage {
+  type: "list_skills";
+  session_id: string;
+}
+
 export interface RevokePolicyRule extends ClientMessage {
   type: "revoke_policy_rule";
   session_id: string;
@@ -412,6 +419,7 @@ export type ClientMessageUnion =
   | AlwaysAllow
   | ListPolicyRules
   | ListCommands
+  | ListSkills
   | RevokePolicyRule
   | SetSkipAllApprovals
   | SetLoadGlobalMemory
@@ -572,6 +580,17 @@ export interface CommandSummary {
   source: "workspace" | "user" | "workspace_fallback" | "user_fallback";
   description?: string | null;
   body: string;
+  line_count: number;
+}
+
+/** TD-4502: one discovered skill's catalog entry. Deliberately body-less
+ *  (unlike CommandSummary) — bodies load via the load_skill tool or a
+ *  slash invocation, never through this listing. */
+export interface SkillSummary {
+  name: string;
+  source: "workspace" | "user" | "workspace_fallback" | "user_fallback";
+  description?: string | null;
+  when_to_use?: string | null;
   line_count: number;
 }
 
@@ -754,6 +773,14 @@ export interface MemoryStackEntry {
   reason: "always-index" | "heading" | "embedding";
 }
 
+/** TD-4502: one skill whose body entered context this session, via
+ *  load_skill or a slash invocation. */
+export interface LoadedSkillEntry {
+  name: string;
+  source: "workspace" | "user" | "workspace_fallback" | "user_fallback";
+  tokens: number;
+}
+
 export interface InstructionStack extends DaemonEvent {
   type: "instruction_stack";
   session_id: string;
@@ -769,6 +796,9 @@ export interface InstructionStack extends DaemonEvent {
   memory?: MemoryStackEntry[];
   memory_dropped?: MemoryStackEntry[];
   memory_placeholder?: boolean;
+  // TD-4502, listed apart from steering — these arrived mid-conversation,
+  // after the cache prefix, and are not steering.
+  skills_loaded?: LoadedSkillEntry[];
 }
 
 export interface SessionSummary {
@@ -816,6 +846,14 @@ export interface CommandsList extends DaemonEvent {
   type: "commands_list";
   seq: number;
   commands: CommandSummary[];
+}
+
+/** TD-4502: response to list_skills — the skill catalog (metadata only,
+ *  bodies excluded), sorted by name. Connection-scoped like commands_list. */
+export interface SkillsList extends DaemonEvent {
+  type: "skills_list";
+  seq: number;
+  skills: SkillSummary[];
 }
 
 // TD-1101 first-run wizard: the daemon's reply to get_setup_state
@@ -1062,6 +1100,7 @@ export type DaemonEventUnion =
   | SessionList
   | PolicyRules
   | CommandsList
+  | SkillsList
   | SetupState
   | ApiKeyValidated
   | DiagnosticsReport

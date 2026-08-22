@@ -8,7 +8,15 @@ steering reloads mid-session (TD-509).
 
 from __future__ import annotations
 
-from tstd.protocol import ImportedFile, InstructionStack, InstructionStackEntry, MemoryStackEntry
+from collections.abc import Sequence
+
+from tstd.protocol import (
+    ImportedFile,
+    InstructionStack,
+    InstructionStackEntry,
+    LoadedSkillEntry,
+    MemoryStackEntry,
+)
 
 from .assembler import AssembledSteering
 from .imports import ImportDirective
@@ -49,6 +57,7 @@ def build_instruction_stack(
     last_cached_tokens: int | None = None,
     cache_observed: bool = False,
     memory: MemoryLoad | None = None,
+    skills_loaded: Sequence[LoadedSkillEntry] = (),
 ) -> InstructionStack:
     """Build the ``instruction_stack`` event for *steering*.
 
@@ -62,6 +71,11 @@ def build_instruction_stack(
     a cache figure from the stack it is describing is precisely the
     circular claim TD-1811 exists to prevent — a stable prefix is not
     evidence a provider reused it.
+
+    ``skills_loaded`` names the skills whose bodies entered context this
+    session (TD-4502).  They ride alongside steering but are listed
+    apart from it — they arrived mid-conversation via ``load_skill`` or
+    a slash invocation, after the cache prefix, and are not steering.
     """
     entries = [
         InstructionStackEntry(
@@ -90,4 +104,5 @@ def build_instruction_stack(
         memory=_memory_entries(memory.files) if memory is not None else [],
         memory_dropped=_memory_entries(memory.dropped) if memory is not None else [],
         memory_placeholder=memory is None or memory.block is None,
+        skills_loaded=list(skills_loaded),
     )

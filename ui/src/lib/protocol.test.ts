@@ -17,6 +17,7 @@ import type {
   AlwaysAllow,
   ListPolicyRules,
   ListCommands,
+  ListSkills,
   RevokePolicyRule,
   Resume,
   Cancel,
@@ -70,6 +71,7 @@ import type {
   RenameSession,
   PolicyRules,
   CommandsList,
+  SkillsList,
   PolicyRuleSummary,
   GetSetupState,
   SetApiKey,
@@ -193,6 +195,12 @@ describe("Client message fixtures match TypeScript types", () => {
   it("list_commands", () => {
     const m = fixtures.list_commands as ListCommands;
     expect(m.type).toBe("list_commands");
+    expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("list_skills", () => {
+    const m = fixtures.list_skills as ListSkills;
+    expect(m.type).toBe("list_skills");
     expect(isString(m.session_id)).toBe(true);
   });
 
@@ -544,6 +552,26 @@ describe("Daemon event fixtures match TypeScript types", () => {
     }
   });
 
+  it("skills_list (TD-4502)", () => {
+    const m = fixtures.skills_list as SkillsList;
+    expect(m.type).toBe("skills_list");
+    expect(m.seq).toBe(1); // connection-scoped, like commands_list
+    expect(Array.isArray(m.skills)).toBe(true);
+    expect(m.skills.length).toBeGreaterThan(0);
+    const sources = ["workspace", "user", "workspace_fallback", "user_fallback"];
+    for (const skill of m.skills) {
+      expect(isString(skill.name)).toBe(true);
+      expect(sources).toContain(skill.source);
+      // Catalog entries are metadata only — no body field exists.
+      expect(skill).not.toHaveProperty("body");
+      expect(typeof skill.line_count).toBe("number");
+      // The fields the menu and the brain catalog render: present,
+      // string-or-null, never undefined.
+      expect(skill.description === null || isString(skill.description)).toBe(true);
+      expect(skill.when_to_use === null || isString(skill.when_to_use)).toBe(true);
+    }
+  });
+
   it("decision_logged", () => {
     const m = fixtures.decision_logged as DecisionLogged;
     expect(m.type).toBe("decision_logged");
@@ -810,6 +838,7 @@ describe("All fixtures have required shape", () => {
       "hello", "open_workspace", "user_message", "fork_from", "set_branch", "approve", "deny",
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
       "list_commands",
+      "list_skills",
       "set_skip_all_approvals",
       "set_load_global_memory",
       "set_coworker",
@@ -843,7 +872,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "context_pins", "memory_files", "memory_proposal", "session_list", "policy_rules", "commands_list", "error",
+      "instruction_stack", "instruction_files", "context_pins", "memory_files", "memory_proposal", "session_list", "policy_rules", "commands_list", "skills_list", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",

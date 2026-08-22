@@ -22,6 +22,17 @@ def _names(root: Path) -> set[str]:
     return {p.name for p in root.iterdir() if p.is_file()}
 
 
+class TestPathIsMemoryFile:
+    def test_the_no_workspace_fallback_keeps_steering_basenames_out(self) -> None:
+        # The fallback branch keeps its own copy of the steering basenames;
+        # SKILL.md joined them in TD-4502 and this copy must not drift.
+        from tstd.memory_store import path_is_memory_file
+
+        probe = Path("/ws/.tst/memory/SKILL.md")
+        assert path_is_memory_file(probe, None) is False
+        assert path_is_memory_file(Path("/ws/.tst/memory/topic.md"), None) is True
+
+
 class TestScaffold:
     def test_plants_three_commented_templates(self, tmp_path: Path) -> None:
         written = scaffold_workspace_memory(tmp_path)

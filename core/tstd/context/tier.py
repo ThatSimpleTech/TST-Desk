@@ -153,6 +153,7 @@ def assemble_for_tier_sync(
     test_output: str | None = None,
     memory: str | None = None,
     project_context: str | None = None,
+    skills_catalog: str | None = None,
     config: TierContextConfig | None = None,
     approved_imports: frozenset[Path] = frozenset(),
     denied_imports: frozenset[Path] = frozenset(),
@@ -172,6 +173,9 @@ def assemble_for_tier_sync(
         diff: Diff text (validator).
         test_output: Test output text (validator).
         memory: Memory block content (brain).
+        skills_catalog: Rendered name + description catalog of discovered
+            skills (brain, TD-4502).  Bodies never ride it — they load on
+            demand via ``load_skill`` or a slash invocation.
         config: Tier config override.  Defaults to
             ``default_config_for_tier(tier)``.
 
@@ -211,6 +215,11 @@ def assemble_for_tier_sync(
             blocks["project_context"] = project_context
         if manifest_text is not None:
             blocks["manifest"] = manifest_text
+        # Last of the brain extras (TD-4502): like the manifest it
+        # changes only when files change, and sitting after steering
+        # keeps it out of the cache prefix entirely.
+        if skills_catalog is not None:
+            blocks["skills"] = skills_catalog
 
     elif tier == "worker":
         if task is not None:
@@ -239,6 +248,7 @@ async def assemble_for_tier(
     test_output: str | None = None,
     memory: str | None = None,
     project_context: str | None = None,
+    skills_catalog: str | None = None,
     config: TierContextConfig | None = None,
     approved_imports: frozenset[Path] = frozenset(),
     denied_imports: frozenset[Path] = frozenset(),
@@ -261,6 +271,7 @@ async def assemble_for_tier(
         test_output=test_output,
         memory=memory,
         project_context=project_context,
+        skills_catalog=skills_catalog,
         config=config,
         approved_imports=approved_imports,
         denied_imports=denied_imports,

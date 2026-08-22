@@ -152,6 +152,7 @@ from .protocol import (
     ListPins,
     ListPolicyRules,
     ListSessions,
+    ListSkills,
     LogTrimmed,
     MemoryAccept,
     MemoryEdit,
@@ -186,6 +187,8 @@ from .protocol import (
     SetupState,
     SetWorkspacePin,
     Shutdown,
+    SkillsList,
+    SkillSummary,
     TierState,
     UsageExported,
     UsageReport,
@@ -230,6 +233,7 @@ from .session_lifecycle import archive_session, delete_session, move_session, re
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
+from .skills import discover_skills
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .workspace_pins import load_workspace_pins, save_workspace_pins
 from .ws import WebSocketServer
@@ -1354,6 +1358,31 @@ class Daemon:
                 ],
             ).model_dump_json()
 
+        if isinstance(msg, ListSkills):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            # Same posture as list_commands: discovery is file IO, so it
+            # runs in a worker thread; home defaults to Path.home()
+            # inside.  Bodies stay behind — the catalog is metadata only.
+            skills = await asyncio.to_thread(discover_skills, Path(found.workspace_path))
+            return SkillsList(
+                seq=1,
+                skills=[
+                    SkillSummary(
+                        name=s.name,
+                        source=s.source,
+                        description=s.description,
+                        when_to_use=s.when_to_use,
+                        line_count=s.line_count,
+                    )
+                    for s in skills
+                ],
+            ).model_dump_json()
+
         if isinstance(msg, RevokePolicyRule):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -1954,6 +1983,7 @@ class Daemon:
             # "nothing observed yet" the tracker itself reports (TD-1811).
             cache_observed=(tracker.cache_observed if tracker is not None else False),
             memory=found.last_memory,
+            skills_loaded=found.loaded_skills,
         ).model_dump_json()
 
     async def _handle_list_instructions(self, msg: ListInstructions) -> str:

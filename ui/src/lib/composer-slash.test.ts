@@ -38,10 +38,9 @@ import { dismissSlashMenu, resetCommandMenu, startCommandMenu } from "./commands
 import type { AttachmentLimits } from "./protocol";
 
 const LIMITS: AttachmentLimits = {
-	max_files: 5,
-	max_bytes_per_file: 100_000,
+	max_count: 5,
+	max_file_bytes: 100_000,
 	max_total_bytes: 200_000,
-	allowed_extensions: [".txt", ".md"],
 };
 
 let app: ReturnType<typeof mount> | null = null;
@@ -98,9 +97,12 @@ function press(textarea: HTMLTextAreaElement, key: string, init: KeyboardEventIn
 }
 
 describe("Composer slash menu (TD-4501)", () => {
-	it("fetches the listing when a session is attached", async () => {
+	it("fetches both listings when a session is attached", async () => {
 		await renderComposer();
-		expect(mocks.sent).toEqual([{ type: "list_commands", session_id: "sess-1" }]);
+		expect(mocks.sent).toEqual([
+			{ type: "list_commands", session_id: "sess-1" },
+			{ type: "list_skills", session_id: "sess-1" },
+		]);
 	});
 
 	it("lists commands on / and inserts on Enter without sending", async () => {
@@ -204,5 +206,35 @@ describe("Composer slash menu (TD-4501)", () => {
 		await tick();
 
 		expect((textarea as unknown as { value: string }).value).toBe("/deploy ");
+	});
+
+	it("skills ride the same menu with a skill source tag (TD-4502)", async () => {
+		const textarea = await renderComposer();
+		emit({
+			type: "commands_list",
+			seq: 1,
+			commands: [
+				{ name: "deploy", source: "workspace", description: null, body: "Deploy\n", line_count: 1 },
+			],
+		} as DaemonEventUnion);
+		emit({
+			type: "skills_list",
+			seq: 1,
+			skills: [
+				{ name: "triage", source: "user", description: "Sort the queue", when_to_use: null, line_count: 3 },
+			],
+		} as DaemonEventUnion);
+
+		await type(textarea, "/tri");
+		const options = document.body.querySelectorAll('[role="option"]');
+		expect(options).toHaveLength(1);
+		expect(options[0].textContent).toContain("/triage");
+		expect(options[0].textContent).toContain("skill · global");
+
+		// Choosing one inserts like any command; the daemon expands the body.
+		press(textarea, "Enter");
+		await tick();
+		expect((textarea as unknown as { value: string }).value).toBe("/triage ");
+		expect(submitted).toEqual([]);
 	});
 });
