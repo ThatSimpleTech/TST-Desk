@@ -28,7 +28,9 @@ import type {
   SaveMemory,
   GetCharter,
   SaveCharter,
+  StartAutonomy,
   CharterDocument,
+  AutonomyStart,
   AddPin,
   ContextPins,
   CreateRule,
@@ -318,6 +320,13 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(isString(m.workspace_path)).toBe(true);
     expect(typeof m.charter).toBe("object");
     expect(m.notes).toBe("Human context.");
+  });
+
+  it("start_autonomy", () => {
+    const m = fixtures.start_autonomy as StartAutonomy;
+    expect(m.type).toBe("start_autonomy");
+    expect(isString(m.workspace_path)).toBe(true);
+    expect(typeof m.charter).toBe("object");
   });
 
   it("list_pins", () => {
@@ -853,7 +862,7 @@ describe("All fixtures have required shape", () => {
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",
-      "get_charter", "save_charter",
+      "get_charter", "save_charter", "start_autonomy",
       "list_pins", "add_pin", "remove_pin",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
@@ -880,7 +889,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "context_pins", "memory_files", "charter", "memory_proposal", "session_list", "policy_rules", "error",
+      "instruction_stack", "instruction_files", "context_pins", "memory_files", "charter", "autonomy_start", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",
@@ -958,6 +967,14 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(isString(m.workspace_path)).toBe(true);
     expect(m.present).toBe(true);
     expect(m.charter?.objective).toBeDefined();
+  });
+
+  it("autonomy_start", () => {
+    const m = fixtures.autonomy_start as AutonomyStart;
+    expect(m.type).toBe("autonomy_start");
+    expect(isString(m.workspace_path)).toBe(true);
+    expect(m.ready).toBe(true);
+    expect(m.signed).toBe(true);
   });
 
   it("instruction_files", () => {

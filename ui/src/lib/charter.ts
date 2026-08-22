@@ -16,6 +16,18 @@ export function charterLedeCopy(): string {
 	return "Signed before an autonomous run starts (spec §12.4). The agent cannot write this file.";
 }
 
+/** Start-button confirm. The exact phrase is an acceptance criterion. */
+export function containerCopy(): string {
+	return "this runs in a container";
+}
+
+export function startConfirmCopy(): string {
+	return (
+		"Sign this charter and start. The wall and caps below are what the run " +
+		"is bound to. This runs in a container."
+	);
+}
+
 export function emptyCharterDraft(): CharterFields {
 	return {
 		objective: "",

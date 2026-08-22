@@ -237,6 +237,14 @@ export interface SaveCharter extends ClientMessage {
   notes?: string;
 }
 
+/** Sign the charter and start an autonomous run (TD-4003). Human path. */
+export interface StartAutonomy extends ClientMessage {
+  type: "start_autonomy";
+  workspace_path: string;
+  charter?: Record<string, unknown> | null;
+  notes?: string;
+}
+
 export interface ListPins extends ClientMessage {
   type: "list_pins";
   workspace_path: string;
@@ -514,6 +522,7 @@ export type ClientMessageUnion =
   | CreateRule
   | GetCharter
   | SaveCharter
+  | StartAutonomy
   | ListPins
   | AddPin
   | RemovePin
@@ -820,6 +829,15 @@ export interface CharterDocument extends DaemonEvent {
   present: boolean;
   charter?: CharterFields | null;
   notes?: string;
+}
+
+/** Reply to start_autonomy (TD-4003). Connection-scoped. */
+export interface AutonomyStart extends DaemonEvent {
+  type: "autonomy_start";
+  workspace_path: string;
+  ready: boolean;
+  signed: boolean;
+  error?: string | null;
 }
 
 export interface MemoryFileDiff {
@@ -1171,6 +1189,7 @@ export type DaemonEventUnion =
   | ContextPins
   | MemoryFiles
   | CharterDocument
+  | AutonomyStart
   | MemoryProposal
   | SessionList
   | PolicyRules

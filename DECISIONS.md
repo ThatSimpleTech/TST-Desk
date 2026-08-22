@@ -7832,3 +7832,25 @@ base_url on the credential — the tier already has one. Also rejected:
 making loopback always keyless even when bound; the user asked for a
 local key, and some local servers require one. Also rejected: a
 `PROTOCOL_VERSION` bump for additive fields.
+
+---
+
+## 2026-08-22 — TD-4003: start signs the charter; it does not run the loop (Class B)
+
+**Decision:** `start_autonomy` is a connection-scoped human verb. It
+writes the optional charter mapping (same shape as `save_charter`),
+commits `.tst/autonomy/CHARTER.md` with subject `tst: sign charter`
+using the repo's git identity, then composes `charter_start_error` and
+`sandbox_start_error`. The reply is `autonomy_start` (`ready`,
+`signed`, `error`). It does not open a session and does not iterate
+(TD-4101). The Start button shows the wall, the caps, and the phrase
+"this runs in a container" before it sends the verb.
+
+**Rationale:** 4002 left the file unsigned on purpose. The start gate
+in 4001 is a hash against `HEAD`. The button is the sign. Opening a
+session here would collapse start into the interactive path the story
+forbids changing.
+
+**Alternative rejected:** Auto-starting the unattended loop from this
+verb. That is TD-4101. Also rejected: signing with the agent identity
+memory commits use — the start button is the human.

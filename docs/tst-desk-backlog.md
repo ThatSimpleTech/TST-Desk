@@ -5448,10 +5448,10 @@ would make one a schema change, and the committed file is the signature.
 **Size:** 3 · **Depends on:** TD-4002, TD-4301
 
 **Acceptance criteria:**
-- [ ] Start is an explicit human action: shows the wall, the caps, and
+- [x] Start is an explicit human action: shows the wall, the caps, and
       "this runs in a container"
-- [ ] Without a valid charter and a live sandbox, start is refused
-- [ ] Interactive sessions are unchanged
+- [x] Without a valid charter and a live sandbox, start is refused
+- [x] Interactive sessions are unchanged
 
 ---
 

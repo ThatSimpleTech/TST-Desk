@@ -43,6 +43,7 @@ _GIT_TIMEOUT = 30.0
 MAX_CHARTER_BYTES = 1024 * 1024
 
 CHARTER_RELATIVE_PARTS = (".tst", "autonomy", "CHARTER.md")
+CHARTER_COMMIT_SUBJECT = "tst: sign charter"
 
 
 def charter_path(workspace: str | Path) -> Path:
@@ -297,6 +298,39 @@ def _git_env() -> dict[str, str]:
     ):
         env.pop(var, None)
     return env
+
+
+async def sign_charter(workspace: str | Path) -> str | None:
+    """Commit ``CHARTER.md`` if it is dirty. ``None`` when it is signed.
+
+    This is the human sign (TD-4003). It uses the repo's own git
+    identity — not the agent identity memory commits use — because the
+    start button is the human. Already-clean is success, not an error.
+    """
+    ws = Path(workspace)
+    rel = "/".join(CHARTER_RELATIVE_PARTS)
+    if not charter_path(ws).is_file():
+        return f"{rel} is missing — write a charter before an autonomous run starts"
+    env = _git_env()
+    try:
+        rc, out, _ = await _git(ws, "rev-parse", "--is-inside-work-tree", env=env)
+        if rc != 0 or out.strip() != "true":
+            return (
+                f"{rel} must be committed before an autonomous run starts, "
+                f"but {ws} is not inside a git repository"
+            )
+        rc, _, err = await _git(ws, "add", "--", rel, env=env)
+        if rc != 0:
+            return err.strip() or f"git add failed for {rel}"
+        rc, _, _ = await _git(ws, "diff", "--cached", "--quiet", "--", rel, env=env)
+        if rc == 0:
+            return None
+        rc, out, err = await _git(ws, "commit", "-m", CHARTER_COMMIT_SUBJECT, "--", rel, env=env)
+        if rc != 0:
+            return (err or out).strip() or f"git commit failed for {rel}"
+    except (OSError, TimeoutError) as e:
+        return f"git unavailable ({e}); cannot sign {rel}"
+    return None
 
 
 async def charter_start_error(workspace: str | Path) -> str | None:

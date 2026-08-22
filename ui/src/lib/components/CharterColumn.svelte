@@ -6,14 +6,19 @@
 	import {
 		charterEmptyCopy,
 		charterLedeCopy,
+		containerCopy,
 		networkIsDeny,
 		previewCharterYaml,
+		startConfirmCopy,
 	} from '../charter';
 	import {
 		addBoundaryListItem,
 		addHostItem,
 		addListItem,
+		beginStart,
+		cancelStart,
 		charter,
+		confirmStart,
 		loadCharter,
 		removeBoundaryListItem,
 		removeHostItem,
@@ -252,7 +257,46 @@
 		</details>
 		<div class="actions">
 			<button class="save" type="submit" disabled={charter.saving}>Save charter</button>
+			<button
+				class="start"
+				type="button"
+				disabled={charter.starting}
+				onclick={() => beginStart()}>Start</button
+			>
 		</div>
+		{#if charter.confirming}
+			<div class="confirm" role="dialog" aria-label="Sign and start">
+				<p class="confirm-lede">{startConfirmCopy()}</p>
+				<dl class="wall">
+					<dt>Writable paths</dt>
+					<dd>{charter.draft.boundary.writable_paths.join(", ") || "—"}</dd>
+					<dt>Allowed commands</dt>
+					<dd>{charter.draft.boundary.allowed_commands.join(", ") || "—"}</dd>
+					<dt>Network</dt>
+					<dd
+						>{networkIsDeny(charter.draft.boundary.network)
+							? "deny"
+							: charter.draft.boundary.network.join(", ")}</dd
+					>
+					<dt>Spend cap</dt>
+					<dd>${charter.draft.caps.spend_usd}</dd>
+					<dt>Wall clock</dt>
+					<dd>{charter.draft.caps.wall_clock_hours} hours</dd>
+					<dt>Max iterations</dt>
+					<dd>{charter.draft.caps.max_iterations}</dd>
+				</dl>
+				<p class="container">{containerCopy()}</p>
+				<div class="actions">
+					<button class="start" type="button" disabled={charter.starting} onclick={() => confirmStart()}
+						>Sign and start</button
+					>
+					<button class="text-btn" type="button" onclick={() => cancelStart()}>Cancel</button>
+				</div>
+			</div>
+		{/if}
+		{#if charter.ready}
+			<p class="ready">Charter signed. Sandbox live. This runs in a container.</p>
+		{/if}
 		{#if charter.error !== null}
 			<p class="err">{charter.error}</p>
 		{/if}
@@ -364,7 +408,14 @@
 		flex-shrink: 0;
 	}
 
-	.save {
+	.actions {
+		display: flex;
+		gap: var(--space-2);
+		align-items: center;
+	}
+
+	.save,
+	.start {
 		border: none;
 		background: var(--color-accent);
 		color: var(--color-on-accent);
@@ -375,9 +426,46 @@
 		cursor: pointer;
 	}
 
-	.save:disabled {
+	.save:disabled,
+	.start:disabled {
 		background: var(--color-ink-muted);
 		cursor: default;
+	}
+
+	.confirm {
+		padding: var(--space-3);
+		border: var(--border-width) solid var(--color-hairline);
+		border-radius: var(--radius-md);
+		background: var(--color-sunken);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
+	.confirm-lede,
+	.container,
+	.ready {
+		margin: 0;
+		font-size: var(--text-sm);
+		color: var(--color-ink);
+	}
+
+	.wall {
+		margin: 0;
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: var(--space-1) var(--space-3);
+		font-size: var(--text-xs);
+	}
+
+	.wall dt {
+		color: var(--color-ink-secondary);
+		font-weight: var(--weight-medium);
+	}
+
+	.wall dd {
+		margin: 0;
+		color: var(--color-ink);
 	}
 
 	.preview {
