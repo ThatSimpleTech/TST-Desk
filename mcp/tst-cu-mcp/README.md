@@ -265,6 +265,15 @@ Two things to know before turning the gate off:
 The server is whole-desktop and autonomous — the model can click and type
 anywhere, with no per-action approval. This is powerful and blunt: whatever is on
 screen is a prompt-injection surface, and coordinate misfires click real buttons.
+
+State the trust model plainly: **anything that can reach this server can drive
+your machine.** That is the design, not an oversight. It runs in your desktop
+session with your granted permissions, has no approval gate of its own, and the
+only gates are the ones you set up around it — the kill-switch below, an
+unelevated host, and your choice of which client may load it. Installing and
+connecting it is the moment you decide to trust that whole pipeline: the client,
+the model, and everything the model reads.
+
 The **kill-switch** stops all actuation immediately (screenshots still work):
 
 - Create the stop-file: `~/.tst-cu-mcp/STOP` (delete it to resume), or

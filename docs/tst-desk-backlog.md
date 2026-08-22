@@ -6212,16 +6212,23 @@ and bypassable by a hostile DNS answer. Worth closing properly or labeling hones
 **Size:** 2 · **Depends on:** none
 
 **Acceptance criteria:**
-- [ ] The actuation-enabled config parses quoted YAML booleans (`"true"`/`"false"` strings)
+- [x] The actuation-enabled config parses quoted YAML booleans (`"true"`/`"false"` strings)
       fail-closed, not fail-open
-- [ ] `click` count is bounded; absurd counts are refused
-- [ ] The README documents the no-approval-gate trust model — any local process that can
+- [x] `click` count is bounded; absurd counts are refused
+- [x] The README documents the no-approval-gate trust model — any local process that can
       reach the server can drive input — as a stated posture, not an oversight
 
 The actuation kill-switch reads a config value that YAML can deliver as a string, and the
 comparison fails open: a quoted `"false"` still enables input actuation. The server is a
 developer tool with OS-level permissions; its safety switches have to survive config
 dialects. Filed here rather than in E20, which owns the server's Linux port.
+
+Closed in `config._actuation_flag`: real booleans pass through, recognized quoted
+spellings coerce to their literal meaning (a quoted `"false"` now disables), and an
+unrecognizable value stops startup instead of guessing at a safety setting.
+`MAX_CLICK_COUNT = 100` joins the text/scroll bounds; the README Safety section states
+the trust model — anything that can reach this server can drive your machine — as the
+design, with the gates listed as what you set up around it.
 
 ### TD-4816 — Low-severity review follow-ups
 **Size:** 3 · **Depends on:** none

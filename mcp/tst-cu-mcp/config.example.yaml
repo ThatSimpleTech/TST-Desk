@@ -7,7 +7,9 @@
 actuation:
   # The master switch for the hands. false refuses every mouse and keyboard
   # action while leaving screenshots working, so the model can still see but not
-  # touch. Checked before every action, on every platform.
+  # touch. Checked before every action, on every platform. Must be a boolean:
+  # quoted forms ("true"/"false") are read as their literal value, and anything
+  # else refuses to start the server rather than guess at a safety setting.
   enabled: true
 
 killswitch:
