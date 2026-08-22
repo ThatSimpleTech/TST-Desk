@@ -22,6 +22,7 @@ from tst_cu_mcp.coordinates import resolve_point
 from tst_cu_mcp.displays import screen_info
 from tst_cu_mcp.focus import foreground_window
 from tst_cu_mcp.permissions import check_permissions
+from tst_cu_mcp.stdio_transport import DrainingStdioServer
 from tst_cu_mcp.tools.health import health_report
 
 # The model reads these strings and acts on them, so they must describe the host
@@ -93,7 +94,10 @@ def build_server() -> MCPServer:
 
     Returns a fresh instance each call so tests get isolated servers.
     """
-    server: MCPServer = MCPServer(
+    # DrainingStdioServer swaps in a stdio transport that answers every
+    # request received before EOF; the stock one tears down on EOF and can
+    # cancel a just-spawned handler from a batched client mid-flight (TD-4822).
+    server: MCPServer = DrainingStdioServer(
         name="tst-cu-mcp",
         version=__version__,
         instructions=instructions(),

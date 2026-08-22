@@ -6343,22 +6343,35 @@ Found by the 2026-08-21 ox-alpha review (Bugs 2 and 4). The hook already knows t
 **Size:** 2 · **Depends on:** none
 
 **Acceptance criteria:**
-- [ ] initialize + `tools/list` written to stdin together both get answers; the server
+- [x] initialize + `tools/list` written to stdin together both get answers; the server
       does not exit silently at EOF
-- [ ] The four failing mcp tests pass
-- [ ] Regression test: batched stdin request completes
+- [x] The four failing mcp tests pass
+- [x] Regression test: batched stdin request completes
 
 Found by the 2026-08-21 ox-alpha review (Bug 3, reproduced 3/3 outside pytest).
 Accepted on the report's reproduction; the fix belongs to the package's protocol loop
 with its own test pass.
 
+Closed by `DrainingStdioServer` (`src/tst_cu_mcp/stdio_transport.py`): the stock
+mcp 2.0.0 stdio plumbing cancels the serving task group the instant stdin hits EOF,
+so a request spawned into a handler in the same scheduling quantum dies before its
+first step — pipelined clients get answers only to the earlier requests and the
+process exits 0. The subclass interposes relay streams, counts requests forwarded
+against answers written, and holds EOF until every pre-EOF request settles (wire
+answer, or the dispatcher's `on_request_unanswered` hook for peer-cancelled work).
+`mcp==2.0.0` is still the newest upstream release, so there was nothing to bump to.
+
 ### TD-4823 — tst-cu-mcp: mypy is platform-dependent
 **Size:** 1 · **Depends on:** none
 
 **Acceptance criteria:**
-- [ ] `mypy` on `mcp/tst-cu-mcp` passes on macOS (per-module overrides for the
+- [x] `mypy` on `mcp/tst-cu-mcp` passes on macOS (per-module overrides for the
       Windows-only ctypes names in `backends/windows.py`, or equivalent gating)
-- [ ] The override does not weaken checking on Windows itself
+- [x] The override does not weaken checking on Windows itself
 
 Found by the 2026-08-21 ox-alpha review (Bug 5 / Enhancement 3).
+
+Closed with a `[[tool.mypy.overrides]]` disabling only `attr-defined` for
+`tst_cu_mcp.backends.windows`: those ctypes names resolve only when mypy itself
+runs on Windows, where the override is a no-op and full checking still applies.
 
