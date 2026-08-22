@@ -140,12 +140,16 @@ def _cap_violation(
     tracker: CostTracker,
     session_start: float,
     iterations: int,
+    skip_all: bool = False,
 ) -> str | None:
     """The first declared cap that is exceeded, or ``None``.
 
     Returns a human-readable fault summary (TD-707) — checked before
     every model call so an over-cap session pauses instead of spending.
+    Skip-all (TD-806) is skip-everything: caps do not pause.
     """
+    if skip_all:
+        return None
     caps = session.boundary_config.caps
     if tracker.session_cost() >= caps.spend_usd:
         return f"spend cap exceeded: ${tracker.session_cost():.4f} >= ${caps.spend_usd:.2f}"
@@ -1030,8 +1034,15 @@ async def agent_loop(
             #     distinct fault state — a summary, not an approval
             #     request.  On resume the caps are re-checked; if the
             #     user raised them, the call proceeds.
+            skip_all = bool(
+                tool_dispatcher is not None
+                and tool_dispatcher.skip_all_fn is not None
+                and tool_dispatcher.skip_all_fn()
+            )
             while True:
-                violation = _cap_violation(session, tracker, _session_start, _iterations)
+                violation = _cap_violation(
+                    session, tracker, _session_start, _iterations, skip_all=skip_all
+                )
                 if violation is None:
                     break
                 log.warning(

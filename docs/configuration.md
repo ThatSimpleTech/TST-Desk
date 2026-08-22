@@ -548,15 +548,13 @@ Listed binaries can also re-exec others — `find -exec`, `xargs`, `make`, and a
 all walk through a basename match. Backticks are refused outright, and a binary that cannot be
 resolved is refused fail-closed. This is a policy rail, not a sandbox.
 
-**Shell commands always ask.** Every shell call is at least Class B: the static classifier
-cannot see inside a command string, so shell never auto-runs on the classifier's say-so
-(TD-4805) — and skip-all approvals does not promote it either (TD-4818); the floor is the
-only gate on an opaque string. The common scripted write forms — redirection (`>`, `>>`,
-`&>`, `&>>`, `>&`, `>|`, zsh `>!`) and `tee` — into a steering path are Class C. Write
-forms the parser does not model (`cp`, `mv`, `sed -i`, `eval`, command substitution) are
-not statically visible: they ask, every time. Automation trust belongs to your saved
-"always allow" rules, which still apply — including an explicit `shell: auto` rule, which
-is your deliberate opt-in, not the floor's default.
+**Shell commands ask unless you skip them.** Every shell call is at least Class B: the
+static classifier cannot see inside a command string, so shell never auto-runs on the
+classifier's say-so (TD-4805). Settings → Policy **Dangerously skip permissions**
+promotes every ask to auto, including shell and Class C (TD-806) — that is skip
+everything; turning it on accepts that unparsed write forms and Class C steering
+redirects will run. "Always allow this in this workspace" still writes a rule for the
+exact command, not a blanket `shell: **`. A `never` rule still refuses.
 
 ### 4.2 `caps` — when the agent stops and asks
 
@@ -638,10 +636,11 @@ call is downgraded to `class_c_default` — you can loosen approvals for ordinar
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
 in the approval card writes a rule here for you.
 
-**Skip all approvals** is not a key in this file. Settings → Policy has a machine-wide toggle
-that lives in the user data dir as `approvals.yaml`, so a clone cannot carry it. While it is
-on, a Class B call that would have asked runs as auto. Class C still parks or refuses. A
-`never` rule still refuses. The classifier still runs. `effect: yolo` is not a valid rule.
+**Dangerously skip permissions** (skip-all) is not a key in this file. Settings → Policy
+has a machine-wide toggle that lives in the user data dir as `approvals.yaml`, so a clone
+cannot carry it. While it is on, every `ask` runs as auto — including `shell` and Class C —
+and caps do not pause. A `never` rule still refuses. The fs-tool boundary still refuses
+steering-file writes. The classifier still runs. `effect: yolo` is not a valid rule.
 
 **Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the

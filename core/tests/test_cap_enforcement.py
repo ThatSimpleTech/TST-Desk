@@ -20,6 +20,7 @@ from tests.test_dispatch import (
 )
 from tstd.boundary_config import BoundaryConfig, CapsSection
 from tstd.daemon import Daemon
+from tstd.loop import _cap_violation
 from tstd.mock import MockProvider, Script
 from tstd.protocol import ApprovalRequest, TurnComplete
 from tstd.protocol import BoundaryUpdate as BoundaryUpdateEvent
@@ -200,6 +201,19 @@ class TestResume:
         assert results and "Echo: hi" in results[0].output
 
         await runner.cancel()
+
+
+class _Cost:
+    def session_cost(self) -> float:
+        return 999.0
+
+
+def test_skip_all_does_not_pause_at_cap(tmp_path: Path) -> None:
+    session = Session(str(tmp_path))
+    session.boundary_config = BoundaryConfig(caps=CapsSection(spend_usd=0.01, max_iterations=1))
+    tracker = _Cost()
+    assert _cap_violation(session, tracker, time.time(), 10_000, skip_all=True) is None
+    assert _cap_violation(session, tracker, time.time(), 1, skip_all=False) is not None
 
 
 # ── Daemon resume handler ───────────────────────────────────────────────

@@ -189,13 +189,11 @@ def resolve_explained(
     """Like :func:`resolve`, but carries the deciding rule and a
     human-readable reason for the approval gate (TD-802).
 
-    ``skip_all`` (TD-804) promotes a Class B ``ask`` to ``auto``. It
-    cannot make Class C automatic and cannot override a ``never`` rule.
-    Shell calls are exempt from the promotion (TD-4818): the shell's B
-    floor exists because the classifier cannot see inside the command
-    string, and promoting it would auto-run every write form the static
-    parser misses. An explicit workspace rule granting ``shell: auto``
-    still wins — that is a deliberate opt-in, not the floor default.
+    ``skip_all`` (TD-804 / TD-806) promotes any ``ask`` to ``auto``,
+    including ``shell`` and Class C. It cannot override a ``never``
+    rule. The filesystem boundary still refuses steering-file writes
+    through the fs tools; a Class C shell redirect will run. Turning
+    it on is skip-everything: the user accepted that.
     """
     summary = summarize_arguments(tool, arguments, workspace)
     matches = [
@@ -227,23 +225,18 @@ def resolve_explained(
         }[decision_class]
         decision = PolicyDecision(effect, reason, None)
 
-    if decision_class is DecisionClass.C and decision.effect == "auto":
-        # The wall: no rule may downgrade a class-C call to silent execution.
+    if decision_class is DecisionClass.C and decision.effect == "auto" and not skip_all:
+        # The wall stands unless skip-all is on (TD-806). A never rule
+        # still refuses either way.
         return PolicyDecision(
             config.class_c_default,
             f"{decision.reason}, but decision class C may not run automatically",
             decision.rule,
         )
-    # TD-804: skip-all takes the *ask*, not the wall. A never rule and
-    # Class C stay exactly as they resolved.  So does the shell (TD-4818):
-    # its B floor is the only gate on an opaque command string, and
-    # promoting it would auto-run every write form the parser misses.
-    if (
-        skip_all
-        and decision.effect == "ask"
-        and decision_class is not DecisionClass.C
-        and tool.name != "shell"
-    ):
+    # TD-806: skip-all takes every ask, including Class C and shell.
+    # never stays never. The fs-tool boundary still refuses before
+    # this function is consulted.
+    if skip_all and decision.effect == "ask":
         return PolicyDecision(
             "auto",
             "skip-all approvals is on",

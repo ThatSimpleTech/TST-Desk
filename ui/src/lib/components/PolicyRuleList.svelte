@@ -18,11 +18,12 @@
 
 <div class="skip-all">
 	<div>
-		<p class="skip-title">Skip all approvals</p>
+		<p class="skip-title">Dangerously skip permissions</p>
 		<p class="hint">
-			Class B calls run without asking. Class C and anything the
-			boundary forbids still stop. The classifier and the ledger still
-			run.
+			Skip everything. Every ask runs, including shell and Class C.
+			Caps do not pause. A never rule still refuses. The filesystem
+			boundary still blocks steering-file writes through the fs tools.
+			The classifier and the ledger still run.
 		</p>
 	</div>
 	<button
