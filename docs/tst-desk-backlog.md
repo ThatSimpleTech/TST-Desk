@@ -6343,48 +6343,35 @@ Found by the 2026-08-21 ox-alpha review (Bugs 2 and 4). The hook already knows t
 **Size:** 2 · **Depends on:** none
 
 **Acceptance criteria:**
-- [ ] initialize + `tools/list` written to stdin together both get answers; the server
+- [x] initialize + `tools/list` written to stdin together both get answers; the server
       does not exit silently at EOF
-- [ ] The four failing mcp tests pass
-- [ ] Regression test: batched stdin request completes
+- [x] The four failing mcp tests pass
+- [x] Regression test: batched stdin request completes
 
 Found by the 2026-08-21 ox-alpha review (Bug 3, reproduced 3/3 outside pytest).
 Accepted on the report's reproduction; the fix belongs to the package's protocol loop
 with its own test pass.
 
-Reviewer diagnostics (same day, ox-alpha — narrows the search):
-- Trigger is **burst arrival**: initialize + `tools/list` written to stdin in one
-  `write(2)` answers only id 1, then exits rc 0 at EOF with empty stderr —
-  deterministic, independent of notification placement or request order. The same
-  messages written with ≥100 ms pacing answer every id.
-- Ruled out: an EOF race (fails even with stdin held open 400 ms), and the
-  line-iterator itself — a standalone probe replicating the SDK's exact
-  construction (`os.fdopen(r,"rb")` → `TextIOWrapper` → `anyio.wrap_file` →
-  `async for line`) delivers all burst lines.
-- Remaining suspicion: the zero-buffer memory stream handshake
-  (`create_context_streams(...)(0)`) between `stdin_reader` and the session —
-  the drop happens above the iterator, at `read_stream_writer.send()` /
-  session receive. Suggest instrumenting `stdio_server`'s task group first.
+Closed by `DrainingStdioServer` (`src/tst_cu_mcp/stdio_transport.py`): the stock
+mcp 2.0.0 stdio plumbing cancels the serving task group the instant stdin hits EOF,
+so a request spawned into a handler in the same scheduling quantum dies before its
+first step — pipelined clients get answers only to the earlier requests and the
+process exits 0. The subclass interposes relay streams, counts requests forwarded
+against answers written, and holds EOF until every pre-EOF request settles (wire
+answer, or the dispatcher's `on_request_unanswered` hook for peer-cancelled work).
+`mcp==2.0.0` is still the newest upstream release, so there was nothing to bump to.
 
 ### TD-4823 — tst-cu-mcp: mypy is platform-dependent
 **Size:** 1 · **Depends on:** none
 
 **Acceptance criteria:**
-- [ ] `mypy` on `mcp/tst-cu-mcp` passes on macOS (per-module overrides for the
+- [x] `mypy` on `mcp/tst-cu-mcp` passes on macOS (per-module overrides for the
       Windows-only ctypes names in `backends/windows.py`, or equivalent gating)
-- [ ] The override does not weaken checking on Windows itself
+- [x] The override does not weaken checking on Windows itself
 
 Found by the 2026-08-21 ox-alpha review (Bug 5 / Enhancement 3).
 
-Recipe (from the review's mypy run — 5 `attr-defined` errors, all in
-`backends/windows.py` on `WinDLL`/`WINFUNCTYPE`): add to `pyproject.toml`
-
-```toml
-[[tool.mypy.overrides]]
-module = "tst_cu_mcp.backends.windows"
-disable_error_code = ["attr-defined"]
-```
-
-Scoped to the one module, so checking elsewhere (and the rest of this module)
-is unchanged on every platform.
+Closed with a `[[tool.mypy.overrides]]` disabling only `attr-defined` for
+`tst_cu_mcp.backends.windows`: those ctypes names resolve only when mypy itself
+runs on Windows, where the override is a no-op and full checking still applies.
 
