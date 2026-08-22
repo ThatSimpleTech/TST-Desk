@@ -4,8 +4,19 @@
 // reuses for scoring.
 
 import { describe, expect, it } from "vitest";
-import type { CommandSummary } from "./protocol";
-import { insertCommand, matchCommand, nextSlashIndex, rankCommands, slashQuery, sourceLabel } from "./slash";
+import type { CommandSummary, SkillSummary } from "./protocol";
+import {
+	entrySourceLabel,
+	insertCommand,
+	insertSlash,
+	matchCommand,
+	matchSkill,
+	nextSlashIndex,
+	rankCommands,
+	rankEntries,
+	slashQuery,
+	sourceLabel,
+} from "./slash";
 
 function command(name: string, description: string | null = null): CommandSummary {
 	return {
@@ -15,6 +26,14 @@ function command(name: string, description: string | null = null): CommandSummar
 		body: `${name}\n`,
 		line_count: 1,
 	};
+}
+
+function skill(
+	name: string,
+	description: string | null = null,
+	whenToUse: string | null = null,
+): SkillSummary {
+	return { name, source: "workspace", description, when_to_use: whenToUse, line_count: 1 };
 }
 
 describe("slashQuery", () => {
@@ -78,5 +97,60 @@ describe("insertCommand / nextSlashIndex / sourceLabel", () => {
 		expect(sourceLabel("user")).toBe("global");
 		expect(sourceLabel("workspace_fallback")).toContain(".claude");
 		expect(sourceLabel("user_fallback")).toContain(".claude");
+	});
+});
+
+describe("skills in the menu (TD-4502)", () => {
+	const commands = [command("deploy", "Ship it"), command("review")];
+	const skills = [skill("deploy", "Ship it by playbook"), skill("triage", null, "a bug lands")];
+
+	it("matchSkill scores a name above description and whenToUse", () => {
+		const named = matchSkill("ship", skill("ship", "ship it"));
+		const described = matchSkill("ship", skill("other", "ship it"));
+		expect(named).not.toBeNull();
+		expect(described).not.toBeNull();
+		expect(named! - described!).toBeGreaterThanOrEqual(40);
+	});
+
+	it("whenToUse is a match field of last resort", () => {
+		expect(matchSkill("bug", skill("triage", null, "when a bug lands"))).not.toBeNull();
+	});
+
+	it("rankEntries merges both lists; an empty query keeps discovery order", () => {
+		expect(rankEntries(commands, skills, "").map((e) => `${e.kind}:${e.name}`)).toEqual([
+			"command:deploy",
+			"command:review",
+			"skill:deploy",
+			"skill:triage",
+		]);
+	});
+
+	it("a query ranks across kinds and drops non-matches", () => {
+		expect(rankEntries(commands, skills, "tri").map((e) => e.name)).toEqual(["triage"]);
+		expect(rankEntries(commands, skills, "zzz")).toEqual([]);
+	});
+
+	it("an exact tie keeps the command ahead of the same-named skill", () => {
+		expect(
+			rankEntries([command("deploy")], [skill("deploy")], "deploy").map((e) => e.kind),
+		).toEqual(["command", "skill"]);
+	});
+
+	it("insertSlash is insertCommand for any row", () => {
+		const row = { kind: "skill", name: "triage", source: "user", description: null } as const;
+		expect(insertSlash(row)).toBe("/triage ");
+		expect(insertSlash({ ...row, kind: "command" })).toBe("/triage ");
+	});
+
+	it("the source tag says what a skill is; commands stay as they were", () => {
+		expect(entrySourceLabel({ kind: "command", name: "deploy", source: "workspace", description: null })).toBe(
+			"workspace",
+		);
+		expect(entrySourceLabel({ kind: "skill", name: "deploy", source: "workspace", description: null })).toBe(
+			"skill · workspace",
+		);
+		expect(entrySourceLabel({ kind: "skill", name: "x", source: "user_fallback", description: null })).toContain(
+			".claude",
+		);
 	});
 });

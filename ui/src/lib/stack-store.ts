@@ -6,6 +6,7 @@ import type {
 	ClientMessageUnion,
 	DaemonEventUnion,
 	InstructionStackEntry,
+	LoadedSkillEntry,
 	MemoryStackEntry,
 } from "./protocol";
 
@@ -30,6 +31,9 @@ export interface StackState {
 	memory: MemoryStackEntry[];
 	memoryDropped: MemoryStackEntry[];
 	memoryPlaceholder: boolean;
+	/** Skills whose bodies entered context this session (TD-4502). Listed
+	 *  apart from steering — they arrived after the cache prefix. */
+	skillsLoaded: LoadedSkillEntry[];
 }
 
 export function createStackState(): StackState {
@@ -44,6 +48,7 @@ export function createStackState(): StackState {
 		memory: [],
 		memoryDropped: [],
 		memoryPlaceholder: true,
+		skillsLoaded: [],
 	};
 }
 
@@ -58,6 +63,7 @@ export function clearStack(state: StackState): void {
 	state.memory = [];
 	state.memoryDropped = [];
 	state.memoryPlaceholder = true;
+	state.skillsLoaded = [];
 }
 
 export interface StackStoreDeps {
@@ -86,6 +92,8 @@ export function createStackStore(deps: StackStoreDeps, state: StackState) {
 			state.memory = event.memory ?? [];
 			state.memoryDropped = event.memory_dropped ?? [];
 			state.memoryPlaceholder = event.memory_placeholder ?? true;
+			// An older daemon omits the field; empty is the honest read.
+			state.skillsLoaded = event.skills_loaded ?? [];
 			state.loaded = true;
 			return true;
 		},

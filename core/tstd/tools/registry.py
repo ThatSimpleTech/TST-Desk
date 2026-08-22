@@ -352,6 +352,36 @@ def _register_builtins(registry: ToolRegistry) -> None:
 
     registry.register(
         Tool(
+            name="load_skill",
+            description=(
+                "Load a skill's full instructions by name. When your system "
+                "prompt carries an 'Available skills' catalog, names come "
+                "from there; a skill costs nothing until loaded, so call "
+                "this when the task matches one instead of guessing at its "
+                "contents."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The skill name exactly as the catalog lists it",
+                    },
+                },
+                "required": ["name"],
+            },
+            side_effect_class="auto",
+            parallel_safe=True,
+            # Deliberately NO path_fields: dispatch canonicalizes path
+            # fields against the workspace root, which would mangle a bare
+            # skill name, and a path-bearing read of ~/.tstdesk/skills
+            # would hit the outside-workspace wall. The handler resolves
+            # the name itself and owns containment (TD-4502).
+        )
+    )
+
+    registry.register(
+        Tool(
             name="fs_write",
             description="Write content to a file at the given path. "
             "Creates parent directories if they do not exist. "

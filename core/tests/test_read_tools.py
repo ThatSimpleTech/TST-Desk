@@ -14,12 +14,14 @@ import pytest
 
 from tests.test_dispatch import attach_auto_approver
 from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClassifier
+from tstd.skills import SKILL_MAX_TOKENS
 from tstd.tools import (
     Tool,
     ToolDispatcher,
     create_registry,
     fs_list,
     fs_read,
+    load_skill,
     register_builtin_handlers,
 )
 from tstd.tools.boundary import PathGuard
@@ -242,3 +244,88 @@ class TestDispatchIntegration:
         result = await dispatcher.dispatch("c1", "ghost_probe", {})
         assert result.status == "error"
         assert result.error_code == "no_handler"
+
+
+# ── load_skill (TD-4502) ───────────────────────────────────────────────
+
+
+class _StubSession:
+    """Just what the load_skill handler touches on a real session."""
+
+    def __init__(self, workspace: Path | None) -> None:
+        self.workspace_path = str(workspace) if workspace is not None else None
+        from tstd.protocol import LoadedSkillEntry
+
+        self.loaded_skills: list[LoadedSkillEntry] = []
+
+
+async def dispatcher_dispatch_load_skill(session: object, workspace: Path):
+    """Full dispatch pipeline for load_skill — classification included."""
+    dispatcher = make_dispatcher(workspace)
+    return await dispatcher.dispatch("c1", "load_skill", {"name": "huge"}, session=session)
+
+
+class TestLoadSkill:
+    async def test_returns_body_with_provenance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        skill_md = tmp_path / ".tst" / "skills" / "deploy" / "SKILL.md"
+        skill_md.parent.mkdir(parents=True)
+        skill_md.write_text("---\ndescription: Ship it\n---\nDeploy the thing\n")
+        session = _StubSession(tmp_path)
+        out = await load_skill(session, "deploy")
+        assert out == "<!-- skill: deploy (workspace) -->\nDeploy the thing\n"
+        assert [e.name for e in session.loaded_skills] == ["deploy"]
+
+    async def test_reloading_replaces_not_duplicates(self, tmp_path: Path) -> None:
+        skill_md = tmp_path / ".tst" / "skills" / "x" / "SKILL.md"
+        skill_md.parent.mkdir(parents=True)
+        skill_md.write_text("body\n")
+        session = _StubSession(tmp_path)
+        await load_skill(session, "x")
+        await load_skill(session, "x")
+        assert len(session.loaded_skills) == 1
+
+    async def test_unknown_name_lists_what_exists(self, tmp_path: Path) -> None:
+        skill_md = tmp_path / ".tst" / "skills" / "real" / "SKILL.md"
+        skill_md.parent.mkdir(parents=True)
+        skill_md.write_text("here\n")
+        out = await load_skill(_StubSession(tmp_path), "nope")
+        assert "no skill named 'nope'" in out
+        assert "real" in out
+
+    async def test_over_budget_body_is_refused_never_truncated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        skill_md = tmp_path / ".tst" / "skills" / "huge" / "SKILL.md"
+        skill_md.parent.mkdir(parents=True)
+        body = "x" * (SKILL_MAX_TOKENS * 4 + 4000)
+        skill_md.write_text(body)
+        session = _StubSession(tmp_path)
+        result = await dispatcher_dispatch_load_skill(session, tmp_path)
+        assert result.status == "success"
+        assert "refused, not truncated" in result.output
+        assert "xxxxx" not in result.output  # no body leaked, no truncation marker
+        assert session.loaded_skills == []
+
+    async def test_without_a_workspace_it_degrades_cleanly(self) -> None:
+        out = await load_skill(None, "anything")
+        assert "no workspace is open" in out
+
+    async def test_user_global_skill_is_reachable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The whole point of name-keying: ~/.tstdesk/skills is outside the
+        # workspace wall, yet its skills must load.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        skill_md = home / ".tstdesk" / "skills" / "global-thing" / "SKILL.md"
+        skill_md.parent.mkdir(parents=True)
+        skill_md.write_text("from the user level\n")
+        out = await load_skill(_StubSession(tmp_path), "global-thing")
+        assert "from the user level" in out

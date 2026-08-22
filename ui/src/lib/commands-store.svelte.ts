@@ -1,17 +1,18 @@
 // Slash-command store (TD-4501).
 //
-// Holds the workspace's command listing and the composer menu's state. The
-// listing comes from the daemon's `commands_list` — nothing is inferred
-// locally (AGENTS §6) — and the menu's visibility is derived from the draft
-// in Composer.svelte, mirrored here so the shell's Escape layer (shortcuts.ts)
-// sees one open flag instead of each component's opinion.
+// Holds the workspace's command and skill listings and the composer menu's
+// state. Both listings come from the daemon (`commands_list`, `skills_list`)
+// — nothing is inferred locally (AGENTS §6) — and the menu's visibility is
+// derived from the draft in Composer.svelte, mirrored here so the shell's
+// Escape layer (shortcuts.ts) sees one open flag instead of each component's
+// opinion.
 //
 // Wiring mirrors settings.svelte.ts: listens on the connection fan-out, sends
 // only via sendToDaemon — no client reference, no import cycle.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { nextIndex } from "./palette";
-import type { CommandSummary, DaemonEventUnion } from "./protocol";
+import type { CommandSummary, DaemonEventUnion, SkillSummary } from "./protocol";
 
 export const commandMenu = $state({
 	/** The composer's menu is showing (draft is a slash query, not dismissed). */
@@ -20,6 +21,9 @@ export const commandMenu = $state({
 	query: "",
 	/** The listing, from commands_list. Empty until the first reply lands. */
 	commands: [] as CommandSummary[],
+	/** Skills ride the same "/" menu (TD-4502): a chosen row inserts "/name "
+	 *  like any command, and the daemon expands the body on send. */
+	skills: [] as SkillSummary[],
 	/** Session the listing was fetched for; null = never. */
 	fetchedFor: null as string | null,
 	/** Session whose request is in flight (the reply carries no echo, so the
@@ -49,6 +53,7 @@ export function resetCommandMenu(): void {
 	commandMenu.open = false;
 	commandMenu.query = "";
 	commandMenu.commands = [];
+	commandMenu.skills = [];
 	commandMenu.fetchedFor = null;
 	commandMenu.pendingFor = null;
 	commandMenu.dismissedQuery = null;
@@ -57,10 +62,16 @@ export function resetCommandMenu(): void {
 }
 
 function reduce(event: DaemonEventUnion): void {
-	if (event.type !== "commands_list") return;
-	commandMenu.commands = event.commands;
-	commandMenu.fetchedFor = commandMenu.pendingFor;
-	commandMenu.pendingFor = null;
+	if (event.type === "commands_list") commandMenu.commands = event.commands;
+	else if (event.type === "skills_list") commandMenu.skills = event.skills;
+	else return;
+	// One fetch sends both requests; either reply completes the pair. The
+	// second reply finds pendingFor already null and just updates its list —
+	// clearing it again would un-mark the session and refetch forever.
+	if (commandMenu.pendingFor !== null) {
+		commandMenu.fetchedFor = commandMenu.pendingFor;
+		commandMenu.pendingFor = null;
+	}
 	commandMenu.selected = 0;
 }
 
@@ -78,11 +89,14 @@ export function dismissSlashMenu(): void {
 	commandMenu.selected = 0;
 }
 
-/** Fetch the listing for *sessionId* once; safe on every keystroke. */
+/** Fetch the listings for *sessionId* once; safe on every keystroke. One
+ *  fetch asks for both lists — the menu shows them merged, so they age
+ *  together. */
 export function ensureCommands(sessionId: string): void {
 	if (commandMenu.fetchedFor === sessionId || commandMenu.pendingFor === sessionId) return;
 	commandMenu.pendingFor = sessionId;
 	sendToDaemon({ type: "list_commands", session_id: sessionId });
+	sendToDaemon({ type: "list_skills", session_id: sessionId });
 }
 
 /** Where ↑/↓ lands; wraps both ways. */

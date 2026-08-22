@@ -266,15 +266,24 @@ STEERING_POSITIVE = [
     ".TST/COMMANDS/deploy.md",  # case-folded like the rules dir (TD-4804)
     ".tst/commands",  # the commands dir itself
     ".claude/commands/review.md",  # the fallback tree is guarded even unused
+    "SKILL.md",  # basename-scoped at any depth (TD-4502)
+    "skill.md",  # case-insensitive
+    ".tst/skills/deploy/SKILL.md",
+    "docs/nested/SKILL.MD",
+    ".claude/skills/review/SKILL.md",  # the fallback tree is guarded even unused
 ]
 
 STEERING_NEGATIVE = [
     "AGENTS.md.bak",
     "MYAGENTS.md",
     "notes.md",
+    "SKILL.md.bak",
+    "MYSKILL.md",
+    "skill-notes.md",
     ".tst/rules.md",  # a file named rules.md is not the rules dir
     ".tst/commands.md",  # a file named commands.md is not the commands dir
     ".claude/commands.md",
+    ".tst/skills/deploy/helper.sh",  # the refusal scopes to **/SKILL.md exactly
     ".tst/memory/MEMORY.md",  # memory is the carve-out (TD-2102)
     ".tst/memory/gotchas.md",
     ".tst/memory/commands/note.md",  # memory subtree beats the commands trees

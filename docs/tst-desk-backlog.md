@@ -5501,14 +5501,27 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 5 · **Depends on:** TD-4501, TD-508
 
 **Acceptance criteria:**
-- [ ] `.tst/skills/<name>/SKILL.md` (+ user-global). Frontmatter:
+- [x] `.tst/skills/<name>/SKILL.md` (+ user-global). Frontmatter:
       `description`, `whenToUse` only
-- [ ] Brain gets a name+description catalog; bodies load on
+- [x] Brain gets a name+description catalog; bodies load on
       `load_skill` or slash, after the cache prefix
-- [ ] Over-budget skill is refused, not truncated
-- [ ] Agent cannot write `**/SKILL.md`
-- [ ] Fallback: `.claude/skills/` when ours is empty
-- [ ] Inspector lists loaded skills separately from steering
+- [x] Over-budget skill is refused, not truncated
+- [x] Agent cannot write `**/SKILL.md`
+- [x] Fallback: `.claude/skills/` when ours is empty
+- [x] Inspector lists loaded skills separately from steering
+
+**Done (2026-08-21).** `core/tstd/skills.py` discovers one level of
+`<name>/SKILL.md` under `.tst/skills/`, `~/.tstdesk/skills/`, with the
+`.claude/skills/` fallback per level and user-global winning collisions —
+the exact TD-4501 command precedence. The brain's catalog block rides last
+in the tier extras, after the cache prefix; bodies load via the
+name-keyed `load_skill` tool (no path fields, static Class A) or a
+`/name` slash expansion in the loop, both in the conversation tail.
+`SKILL_MAX_TOKENS = 2000` refuses rather than truncates; `**/SKILL.md`
+writes are Class C everywhere via the steering basenames. The slash menu
+merges skills under a `skill ·` source tag and the Stack panel lists
+loaded skills apart from steering. Decisions in DECISIONS.md; layout in
+configuration.md §7.
 
 ---
 

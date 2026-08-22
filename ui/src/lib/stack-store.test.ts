@@ -128,6 +128,24 @@ describe("applyEvent", () => {
 		store.applyEvent(event, "s1");
 		expect(state.cacheObserved).toBe(false);
 	});
+
+	// TD-4502: skills ride the same event, listed apart from steering.
+	it("carries loaded skills; an older daemon's omission reads as none", () => {
+		const { state, store } = harness();
+		store.applyEvent(
+			stackEvent({
+				skills_loaded: [{ name: "deploy", source: "workspace", tokens: 120 }],
+			}),
+			"s1",
+		);
+		expect(state.skillsLoaded.map((e) => e.name)).toEqual(["deploy"]);
+		expect(state.skillsLoaded[0].tokens).toBe(120);
+
+		const older = stackEvent({ seq: 2 });
+		delete older.skills_loaded;
+		store.applyEvent(older, "s1");
+		expect(state.skillsLoaded).toEqual([]);
+	});
 });
 
 describe("refresh", () => {

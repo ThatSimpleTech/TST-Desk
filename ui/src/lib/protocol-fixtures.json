@@ -71,6 +71,10 @@
     "type": "list_commands",
     "session_id": "sess-1"
   },
+  "list_skills": {
+    "type": "list_skills",
+    "session_id": "sess-1"
+  },
   "revoke_policy_rule": {
     "type": "revoke_policy_rule",
     "session_id": "sess-1",
@@ -578,7 +582,10 @@
     "cache_observed": false,
     "memory": [],
     "memory_dropped": [],
-    "memory_placeholder": false
+    "memory_placeholder": false,
+    "skills_loaded": [
+      { "name": "deploy", "source": "workspace", "tokens": 120 }
+    ]
   },
   "memory_files": {
     "type": "memory_files",
@@ -705,6 +712,26 @@
         "description": null,
         "body": "Review the diff\n",
         "line_count": 1
+      }
+    ]
+  },
+  "skills_list": {
+    "type": "skills_list",
+    "seq": 1,
+    "skills": [
+      {
+        "name": "deploy",
+        "source": "workspace",
+        "description": "Ship it",
+        "when_to_use": "on release",
+        "line_count": 12
+      },
+      {
+        "name": "triage",
+        "source": "user_fallback",
+        "description": null,
+        "when_to_use": null,
+        "line_count": 4
       }
     ]
   },

@@ -665,3 +665,55 @@ class TestListCommands:
         finally:
             daemon._shutdown_event.set()
             await asyncio.wait_for(daemon_task, timeout=3)
+
+
+# ── Skills (TD-4502) ───────────────────────────────────────────────────
+
+
+class TestListSkills:
+    @pytest.mark.asyncio
+    async def test_list_skills_returns_catalog_without_bodies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _plant_command(
+            tmp_path,
+            ".tst/skills/deploy/SKILL.md",
+            "---\ndescription: Ship it\nwhenToUse: on release\n---\nDeploy the thing\n",
+        )
+        # A home of its own keeps the user level empty and the
+        # assertions below deterministic.
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+
+        daemon = Daemon(data_dir=tmp_path / "data")
+        daemon_task = asyncio.create_task(daemon.run())
+        for _ in range(50):
+            if daemon.ws_server.port:
+                break
+            await asyncio.sleep(0.05)
+
+        try:
+            ws, session = await _open_workspace(daemon, tmp_path)
+
+            await ws.send(json.dumps({"type": "list_skills", "session_id": session.id}))
+            listed = await _recv_until(ws, "skills_list")
+            assert listed["seq"] == 1
+            assert "session_id" not in listed
+            by_name = {s["name"]: s for s in listed["skills"]}
+            assert set(by_name) == {"deploy"}
+            assert by_name["deploy"]["source"] == "workspace"
+            assert by_name["deploy"]["description"] == "Ship it"
+            assert by_name["deploy"]["when_to_use"] == "on release"
+            # The catalog is metadata only — no body ever rides it.
+            assert "body" not in by_name["deploy"]
+
+            # An unknown session refuses with the standard error shape.
+            await ws.send(json.dumps({"type": "list_skills", "session_id": "nope"}))
+            err = await _recv_until(ws, "error")
+            assert err["code"] == "session_not_found"
+
+            await ws.close()
+        finally:
+            daemon._shutdown_event.set()
+            await asyncio.wait_for(daemon_task, timeout=3)

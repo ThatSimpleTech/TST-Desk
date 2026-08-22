@@ -130,6 +130,55 @@ class TestBrainTier:
         assert "secret output" not in result.text
         assert set(result.blocks) == {"steering"}
 
+    def test_brain_carries_the_skills_catalog(self, tmp_path: Path) -> None:
+        """The catalog rides as its own block, after the manifest (TD-4502)."""
+        home, ws = _build_workspace(tmp_path, root_file="steering")
+        result = assemble_for_tier_sync(
+            "brain",
+            workspace_path=ws,
+            home_dir=home,
+            memory="remember: ruff",
+            project_context="pinned: docs/architecture.md",
+            manifest_text="src/main.py",
+            skills_catalog="### Available skills\n- deploy: Ship it",
+        )
+        assert result.blocks["skills"] == "### Available skills\n- deploy: Ship it"
+        # Block order: steering → memory → project_context → manifest → skills.
+        assert list(result.blocks) == [
+            "steering",
+            "memory",
+            "project_context",
+            "manifest",
+            "skills",
+        ]
+        assert "- deploy: Ship it" in result.text
+
+    def test_skills_catalog_omitted_when_none(self, tmp_path: Path) -> None:
+        """No discovered skills means no block at all — no empty stub."""
+        home, ws = _build_workspace(tmp_path, root_file="steering")
+        result = assemble_for_tier_sync(
+            "brain",
+            workspace_path=ws,
+            home_dir=home,
+            memory="remember: ruff",
+            project_context="pinned: docs/architecture.md",
+            manifest_text="src/main.py",
+        )
+        assert "skills" not in result.blocks
+
+    def test_skills_catalog_never_reaches_worker_or_validator(self, tmp_path: Path) -> None:
+        """Brain-only (TD-4502): the other tiers get no catalog block."""
+        home, ws = _build_workspace(tmp_path, root_file="steering")
+        for tier in ("worker", "validator"):
+            result = assemble_for_tier_sync(
+                tier,
+                workspace_path=ws,
+                home_dir=home,
+                skills_catalog="### Available skills\n- deploy: Ship it",
+            )
+            assert "skills" not in result.blocks
+            assert "- deploy: Ship it" not in result.text
+
 
 # ── Worker tier ──────────────────────────────────────────────────────────
 

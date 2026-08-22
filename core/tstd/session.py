@@ -22,6 +22,7 @@ from .policy import ApprovalOutcome, PolicyConfig, propose_always_allow
 from .protocol import (
     ConversationReset,
     DaemonEvent,
+    LoadedSkillEntry,
     PolicyRuleSummary,
     ToolResult,
 )
@@ -270,6 +271,10 @@ class Session:
         # Last brain-turn memory selection (TD-2604). None until a brain
         # turn has run the loader.
         self.last_memory: MemoryLoad | None = None
+        # Skills whose bodies entered context this session (TD-4502),
+        # appended by the load_skill handler and the loop's slash
+        # expansion. The inspector lists them apart from steering.
+        self.loaded_skills: list[LoadedSkillEntry] = []
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False

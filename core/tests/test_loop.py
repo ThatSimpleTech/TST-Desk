@@ -913,3 +913,125 @@ class TestReasoningDeltas:
         assert "SECRET SCRATCHPAD" not in sent
         assert "Hello" in sent
         await runner.cancel()
+
+
+# ── Slash-invoked skills (TD-4502) ─────────────────────────────────────
+
+
+class TestSlashSkillExpansion:
+    @pytest.fixture
+    def skill_ws(self, tmp_path: Path) -> Path:
+        skills = tmp_path / ".tst" / "skills" / "deploy"
+        skills.mkdir(parents=True)
+        (skills / "SKILL.md").write_text(
+            "---\ndescription: Ship it\n---\nDEPLOY BODY\n", encoding="utf-8"
+        )
+        return tmp_path
+
+    async def test_leading_slash_expands_to_the_body(self, skill_ws: Path) -> None:
+        from tstd.loop import _maybe_expand_skill
+
+        session = Session(str(skill_ws))
+        out = await _maybe_expand_skill(session, "/deploy now")
+        assert "DEPLOY BODY" in out
+        assert "now" in out  # the remainder rides along
+        assert not out.startswith("/deploy")
+        # The load is on record for the inspector.
+        assert [e.name for e in session.loaded_skills] == ["deploy"]
+
+    async def test_expansion_writes_only_the_load_record(self, skill_ws: Path) -> None:
+        # The loop owns messages[] and the event log; expansion itself must
+        # reach into neither — its one side effect is the load record.
+        from tstd.loop import _maybe_expand_skill
+
+        session = Session(str(skill_ws))
+        events_before = len(session.event_log.all_events)
+        out = await _maybe_expand_skill(session, "/deploy now")
+        assert "DEPLOY BODY" in out
+        assert len(session.event_log.all_events) == events_before
+
+    async def test_whitespace_before_the_name_keeps_the_remainder_intact(
+        self, skill_ws: Path
+    ) -> None:
+        # "/ deploy now": split() skips leading whitespace, so slicing one
+        # char past the start duplicated the token's tail over the
+        # remainder's head — "y now" where the user typed "now".
+        from tstd.loop import _maybe_expand_skill
+
+        session = Session(str(skill_ws))
+        out = await _maybe_expand_skill(session, "/ deploy now")
+        assert "DEPLOY BODY" in out
+        assert out.endswith("now")
+        assert [e.name for e in session.loaded_skills] == ["deploy"]
+
+    async def test_a_command_owning_the_name_beats_expansion(self, skill_ws: Path) -> None:
+        # The menu promises commands ties; send-side semantics must agree,
+        # or choosing the command row would send the skill's body. A
+        # shadowed skill stays reachable via load_skill only.
+        from tstd.loop import _maybe_expand_skill
+
+        commands = skill_ws / ".tst" / "commands"
+        commands.mkdir(parents=True)
+        (commands / "deploy.md").write_text("echo deploy steps\n", encoding="utf-8")
+
+        session = Session(str(skill_ws))
+        out = await _maybe_expand_skill(session, "/deploy now")
+        assert out == "/deploy now"
+        assert session.loaded_skills == []
+
+    async def test_the_real_loop_carries_catalog_and_expansion(self, skill_ws: Path) -> None:
+        """The seam unit tests cannot see: agent_loop hands a discovered
+        catalog to the brain assembler, expands ``/name`` into the
+        provider's user message, and logs the raw draft as the UserTurn."""
+        session = Session(str(skill_ws))
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="ok")})
+        runner = await start_loop(session, TierRouter(), mock, make_config())
+        await session.add_user_message("/deploy now")
+        await wait_for_turn(session, 1)
+
+        request = mock.calls[0]
+        system = next(m.content for m in request.messages if m.role == "system")
+        user = next(m.content for m in request.messages if m.role == "user")
+        assert "### Available skills" in system  # catalog reached the brain
+        assert "SECRET-BODY" not in system  # ...names and descriptions only
+        assert "DEPLOY BODY" in user  # expansion reached the conversation
+        assert user.split("DEPLOY BODY")[-1].strip() == "now"  # args intact
+
+        turns = [e for e in session.event_log.all_events if isinstance(e, UserTurn)]
+        assert turns[-1].content == "/deploy now"  # transcript keeps the draft
+        await runner.cancel()
+
+    async def test_unknown_token_passes_through(self, skill_ws: Path) -> None:
+        from tstd.loop import _maybe_expand_skill
+
+        session = Session(str(skill_ws))
+        out = await _maybe_expand_skill(session, "/notaskill args")
+        assert out == "/notaskill args"
+        assert session.loaded_skills == []
+
+    async def test_non_slash_passes_through(self, skill_ws: Path) -> None:
+        from tstd.loop import _maybe_expand_skill
+
+        session = Session(str(skill_ws))
+        assert await _maybe_expand_skill(session, "plain text") == "plain text"
+
+    async def test_bare_slash_passes_through(self, skill_ws: Path) -> None:
+        from tstd.loop import _maybe_expand_skill
+
+        session = Session(str(skill_ws))
+        assert await _maybe_expand_skill(session, "/") == "/"
+        assert session.loaded_skills == []
+
+    async def test_over_budget_refuses_with_a_visible_note(self, tmp_path: Path) -> None:
+        from tstd.loop import _maybe_expand_skill
+        from tstd.skills import SKILL_MAX_TOKENS
+
+        skills = tmp_path / ".tst" / "skills" / "huge"
+        skills.mkdir(parents=True)
+        (skills / "SKILL.md").write_text("x" * (SKILL_MAX_TOKENS * 4 + 4000), encoding="utf-8")
+        session = Session(str(tmp_path))
+        out = await _maybe_expand_skill(session, "/huge")
+        assert out.startswith("/huge")  # the raw draft survives
+        assert "refused, not truncated" in out
+        assert "xxxxx" not in out  # no body, no truncation
+        assert session.loaded_skills == []

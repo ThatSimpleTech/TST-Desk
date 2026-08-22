@@ -54,7 +54,13 @@ class DecisionClass(StrEnum):
 
 # ── Boundary and request models ────────────────────────────────────────
 
-_STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
+# SKILL.md (TD-4502) rides the same set rather than a skills-dir tuple:
+# the story's protection is basename-scoped — ``**/SKILL.md`` at any
+# depth, including inside ``.tst/memory/``, where it must stay steering
+# and not fall into the memory carve-out. Skill bodies feed the brain's
+# catalog verbatim, so a write there is prompt injection with extra
+# steps, exactly like a command body.
+_STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md", "SKILL.md"})
 _STEERING_RULES_DIR_PARTS = (".tst", "rules")
 _MEMORY_DIR_PARTS = (".tst", "memory")
 # Slash-command trees (TD-4501): the workspace source and the Claude
@@ -247,8 +253,9 @@ def is_memory_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is under ``.tst/memory/`` (spec §5).
 
     Memory is git-tracked and reversible. It is not steering: the two
-    trees share ``.tst/`` and must not share a glob. ``AGENTS.md`` /
-    ``CLAUDE.md`` as a basename stay steering even if dropped here.
+    trees share ``.tst/`` and must not share a glob. Steering basenames
+    — ``AGENTS.md``, ``CLAUDE.md``, ``SKILL.md`` — stay steering even if
+    dropped here.
     """
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
     if len(relative) < 2 or _fold(relative[:2]) != _MEMORY_DIR_PARTS:
@@ -259,13 +266,13 @@ def is_memory_write(boundary: Boundary, path: Path) -> bool:
 def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
-    Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
-    ``.tst/rules/``, the command trees under ``.tst/commands/`` and
-    ``.claude/commands/`` (TD-4501), and the approval policy at
-    ``.tst/config.yaml`` (TD-4803) — are read-only to the filesystem
-    tool, unconditionally.  ``.tst/memory/`` is the carve-out (TD-2102);
-    never fold it into ``.tst/**``.  Directory comparisons case-fold
-    (TD-4804): see ``_fold``.
+    Steering files — ``AGENTS.md``, ``CLAUDE.md``, ``SKILL.md`` at any
+    depth (TD-4502), anything under ``.tst/rules/``, the command trees
+    under ``.tst/commands/`` and ``.claude/commands/`` (TD-4501), and the
+    approval policy at ``.tst/config.yaml`` (TD-4803) — are read-only to
+    the filesystem tool, unconditionally.  ``.tst/memory/`` is the
+    carve-out (TD-2102); never fold it into ``.tst/**``.  Directory
+    comparisons case-fold (TD-4804): see ``_fold``.
     """
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
     if not relative:
@@ -499,7 +506,7 @@ RULE_TABLE: tuple[Rule, ...] = (
     ),
     Rule(
         id="steering-file-write",
-        description="action writes a steering file (AGENTS.md/CLAUDE.md/.tst/rules)",
+        description="action writes a steering file (AGENTS.md/CLAUDE.md/SKILL.md/.tst/rules)",
         decision_class=DecisionClass.C,
         match=_rule_steering_write,
     ),
@@ -548,6 +555,16 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="in-workspace source edit within writable_paths",
         decision_class=DecisionClass.A,
         match=_rule_in_workspace_edit,
+    ),
+    # load_skill is read-only by construction and name-keyed: it declares
+    # no path fields, so there is nothing for the ambiguous worker tier to
+    # weigh, and the bodies it returns are human-written — a write to
+    # **/SKILL.md is Class C via steering-file-write (TD-4502).
+    Rule(
+        id="skill-load",
+        description="load_skill reads a human-written skill body by name",
+        decision_class=DecisionClass.A,
+        match=lambda req, _b: req.tool_name == "load_skill",
     ),
     Rule(
         id="desktop-capture",

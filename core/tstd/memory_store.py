@@ -74,7 +74,9 @@ def path_is_memory_file(path: Path, workspace_root: Path | None) -> bool:
     parts = path.parts
     for i in range(len(parts) - 1):
         if parts[i] == ".tst" and parts[i + 1] == "memory":
-            return path.name.upper() not in {"AGENTS.MD", "CLAUDE.MD"}
+            # Same set as the classifier's steering basenames — SKILL.md
+            # joined them in TD-4502 and this copy must not drift.
+            return path.name.upper() not in {"AGENTS.MD", "CLAUDE.MD", "SKILL.MD"}
     return False
 
 

@@ -16,6 +16,7 @@
 	// editor via tauri-plugin-opener.
 	import { stack } from '../stack-store.svelte.js';
 	import { cacheBadge, cacheLabel, formatTokens, memoryPlaceholderCopy, memoryReasonLabel } from '../stack-store';
+	import { sourceLabel } from '../slash';
 	import { openInEditor } from '../open-file';
 	import Icon from './Icon.svelte';
 
@@ -134,6 +135,28 @@
 				</ul>
 			{/if}
 		</section>
+		{#if stack.skillsLoaded.length > 0}
+			<!-- Skills whose bodies entered context this session (TD-4502).
+			     Listed apart from steering because that is where they sit in
+			     the prompt: after the cache prefix. No path on the wire, so
+			     no editor button — a skill is loaded by name, not opened. -->
+			<section class="memory" aria-label="Skills">
+				<h2 class="memory-head">Skills</h2>
+				<ul class="sources">
+					{#each stack.skillsLoaded as entry (entry.name)}
+						<li class="source">
+							<div class="skill-row">
+								<span class="name">/{entry.name}</span>
+								<span class="tokens">{formatTokens(entry.tokens)} tok</span>
+							</div>
+							<div class="meta">
+								<span class="chip chip-note">{sourceLabel(entry.source)}</span>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
 		<footer class="totals">
 			<span class="total">{formatTokens(stack.totalTokens)} tokens ({stack.tokenMethod})</span>
 			<span
@@ -199,6 +222,24 @@
 	}
 
 	.file .tokens {
+		color: var(--color-text-muted);
+		font-weight: var(--weight-normal);
+		white-space: nowrap;
+	}
+
+	/* A loaded skill has no path to open (TD-4502): the row reads like a
+	   file row but is not a button and takes no pointer affordance. */
+	.skill-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: var(--space-3);
+		font-size: var(--text-sm);
+		font-weight: var(--weight-semibold);
+		text-align: left;
+	}
+
+	.skill-row .tokens {
 		color: var(--color-text-muted);
 		font-weight: var(--weight-normal);
 		white-space: nowrap;

@@ -41,6 +41,7 @@ from tstd.protocol import (
     Hello,
     ListCommands,
     ListPolicyRules,
+    ListSkills,
     MemoryAccept,
     MemoryEdit,
     MemoryFileEdit,
@@ -65,6 +66,8 @@ from tstd.protocol import (
     SetTier,
     SetWorkspacePin,
     ShellOutput,
+    SkillsList,
+    SkillSummary,
     ToolCall,
     ToolResult,
     TurnComplete,
@@ -140,6 +143,11 @@ class TestClientMessages:
         msg = ListCommands(session_id="sess-1")
         back = _roundtrip(msg)
         assert isinstance(back, ListCommands)
+
+    def test_list_skills(self) -> None:
+        msg = ListSkills(session_id="sess-1")
+        back = _roundtrip(msg)
+        assert isinstance(back, ListSkills)
 
     def test_revoke_policy_rule(self) -> None:
         msg = RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *")
@@ -618,6 +626,52 @@ class TestDaemonEvents:
         assert back.seq == 1
         assert back.commands[0].name == "deploy"
         assert back.commands[0].body == "# deploy\n"
+
+    def test_skills_list(self) -> None:
+        evt = SkillsList(
+            seq=1,
+            skills=[
+                SkillSummary(
+                    name="deploy",
+                    source="workspace",
+                    description="Ship it",
+                    when_to_use="on release",
+                    line_count=12,
+                )
+            ],
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, SkillsList)
+        assert back.seq == 1
+        assert back.skills[0].name == "deploy"
+        assert back.skills[0].when_to_use == "on release"
+        # Bodies never ride the catalog — the field does not exist.
+        assert not hasattr(back.skills[0], "body")
+
+    def test_instruction_stack_carries_loaded_skills(self) -> None:
+        from tstd.protocol import InstructionStack, LoadedSkillEntry
+
+        evt = InstructionStack(
+            session_id="sess-1",
+            seq=1,
+            sources=[],
+            total_tokens=0,
+            token_method="heuristic",
+            skills_loaded=[LoadedSkillEntry(name="deploy", source="workspace", tokens=120)],
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, InstructionStack)
+        assert back.skills_loaded[0].name == "deploy"
+        # Additive default: an event without the field round-trips empty.
+        bare = InstructionStack(
+            session_id="sess-1",
+            seq=1,
+            sources=[],
+            total_tokens=0,
+            token_method="heuristic",
+        )
+        assert isinstance(_roundtrip(bare), InstructionStack)
+        assert _roundtrip(bare).skills_loaded == []
 
     def test_memory_files(self) -> None:
         from tstd.protocol import MemoryFileEntry, MemoryFiles

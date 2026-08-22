@@ -7322,3 +7322,54 @@ fetches (a round trip inside a keystroke loop, for files that are already read).
 **Follow-up:** `artifact_list` still sends `seq` with a `session_id` and remains
 latent; filed here rather than fixed in a commands story.
 
+
+---
+
+## 2026-08-21 — TD-4502: skills — catalog after the prefix, bodies on demand only
+
+**Class:** B (prompt-layout contract, a path-field-free tool, and a new budget posture)
+
+**Decision:** Five linked choices. (1) The brain's prompt carries a skills *catalog* — names,
+sources, descriptions, whenToUse — whenever discovery finds any; the body never rides it.
+Reconciled with TD-4604's "a skill appears in the recorded prompt only when invoked": the
+metadata block is always present, the body appears only via `load_skill` or `/name` expansion,
+and both land in the conversation tail. The catalog sits last among the brain extras
+(steering → memory → project_context → manifest → skills), so it is outside the provider cache
+prefix entirely and may change per turn without disturbing cached bytes. It is brain-tier only;
+worker and validator never see it. (2) `load_skill` is name-keyed and declares **no
+`path_fields`**: dispatch canonicalizes paths against the workspace root and would mangle a bare
+name, and a path-bearing read of `~/.tstdesk/skills/...` would hit the outside-workspace wall —
+so the handler resolves the name itself and owns containment (the discovery scanner already
+refuses symlinked skill dirs that escape their root). A static Class A rule keys on the tool
+name because the tool is read-only by construction: bodies are human-written files, and a write
+to `**/SKILL.md` is Class C via the steering basenames. (3) An over-budget skill is *refused*,
+not truncated (`SKILL_MAX_TOKENS = 2000`, the same default as memory/pins): steering's 200-line
+limit is advice-only and memory drops oldest, but silently clipping human instructions is how an
+agent follows half a procedure and calls it done. One enforcement point,
+`skill_budget_refusal`, serves both load paths; the tool result states the refusal so the model
+can tell the user, and a slash invocation passes the user's draft through untouched with a
+visible note appended. (4) Slash expansion happens in the loop before the message joins the
+conversation: `messages[]` gets the expanded body while the logged `UserTurn` keeps the raw
+draft — the transcript stays honest to what was typed, and memory selection/worker framing still
+see the raw text. A name a slash command already owns never expands (adversarial-review fix):
+the menu promises commands ties, so send-side semantics must agree or choosing the command row
+would send the skill's body; a shadowed skill stays reachable via `load_skill` only. (5) Protection is basename-scoped exactly to the AC: every `**/SKILL.md`
+write is Class C wherever it sits (including `.tst/memory/`, where the memory carve-out defers
+to steering basenames); sibling support files (`skills/deploy/helper.sh`) are deliberately
+ordinary workspace, not protected.
+
+**Alternative rejected:** Whole-tree protection for `.tst/skills/**` (beyond the AC, and it
+would make the agent unable to maintain a skill's own helper scripts without an approval);
+putting full bodies in the listing like commands (a catalog that heavy defeats the
+cost-nothing-until-loaded point); truncation with a marker (rejected above); discovering skills
+per keystroke client-side (the wire pair exists precisely so the UI infers nothing locally).
+
+**Follow-up:** Skills are not config-file driven (no budgets in `.tst/config.yaml`) — if a
+workspace needs a different cap, that is a schema addition with its own documentation test, not
+a constant to loosen quietly. Two more from the pre-commit adversarial review: the skills
+*catalog* is deliberately uncapped — descriptions come from Class C human-written files, the
+same trust posture as AGENTS.md (whose soft limit is advice-only), so inflating them is a repo
+choice, not an agent capability; revisit only if hostile-repo cost becomes a story. And the
+resolve-the-root-first containment pattern this review closed in `_scan_dir` also exists in
+TD-4501's `commands.py::_scan_dir` and `context/memory_loader.py` — same shape, same fix
+candidate, filed here rather than expanded into those stories.

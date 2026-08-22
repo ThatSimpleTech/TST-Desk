@@ -28,7 +28,7 @@
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
 	import type { AttachmentLimits } from "../../protocol";
-	import { insertCommand, rankCommands, slashQuery, sourceLabel } from "../../slash";
+	import { entrySourceLabel, insertSlash, rankEntries, slashQuery } from "../../slash";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
@@ -76,13 +76,16 @@
 		textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
 	});
 
-	// ── Slash commands (TD-4501) ──
+	// ── Slash menu (TD-4501, skills merged in TD-4502) ──
 	// A leading "/" with no whitespace after it is a query; the menu shows
-	// the ranked matches unless Escape dismissed exactly this query.
+	// the ranked matches — commands and skills together — unless Escape
+	// dismissed exactly this query.
 
 	const slashQueryText = $derived(disabled ? null : slashQuery(value));
 	const slashEntries = $derived(
-		slashQueryText === null ? [] : rankCommands(commandMenu.commands, slashQueryText),
+		slashQueryText === null
+			? []
+			: rankEntries(commandMenu.commands, commandMenu.skills, slashQueryText),
 	);
 	const slashOpen = $derived(
 		slashQueryText !== null &&
@@ -110,16 +113,16 @@
 		resetSelection();
 	});
 
-	function chooseSlash(command: (typeof slashEntries)[number], send: boolean): void {
-		value = insertCommand(command);
+	function chooseSlash(entry: (typeof slashEntries)[number], send: boolean): void {
+		value = insertSlash(entry);
 		if (!send) return;
 		submit();
 	}
 
 	function chooseSelected(send: boolean): void {
-		const command = slashEntries[commandMenu.selected] ?? slashEntries[0];
-		if (command === undefined) return;
-		chooseSlash(command, send);
+		const entry = slashEntries[commandMenu.selected] ?? slashEntries[0];
+		if (entry === undefined) return;
+		chooseSlash(entry, send);
 	}
 
 	/** Vet each file against the caps and the text test, one at a time so the
@@ -249,11 +252,12 @@
 				onremove={removeAttachment}
 			/>
 		{/if}
-		<!-- TD-4501: the slash menu overlays upward from the card; mousedown is
-		     swallowed so choosing with the mouse never steals the caret. -->
+		<!-- TD-4501, skills merged in TD-4502: the slash menu overlays upward
+		     from the card; mousedown is swallowed so choosing with the mouse
+		     never steals the caret. -->
 		{#if slashOpen}
-			<ul class="slash-menu" id="slash-menu" role="listbox" aria-label="Slash commands">
-				{#each slashEntries as command, i (command.name + command.source)}
+			<ul class="slash-menu" id="slash-menu" role="listbox" aria-label="Slash commands and skills">
+				{#each slashEntries as entry, i (entry.kind + entry.name + entry.source)}
 					<li role="presentation">
 						<button
 							type="button"
@@ -263,13 +267,13 @@
 							id={`slash-option-${i}`}
 							aria-selected={i === commandMenu.selected}
 							onmousedown={(e) => e.preventDefault()}
-							onclick={() => chooseSlash(command, false)}
+							onclick={() => chooseSlash(entry, false)}
 						>
-							<span class="slash-name">/{command.name}</span>
-							{#if command.description !== null && command.description !== undefined}
-								<span class="slash-desc">{command.description}</span>
+							<span class="slash-name">/{entry.name}</span>
+							{#if entry.description !== null && entry.description !== undefined}
+								<span class="slash-desc">{entry.description}</span>
 							{/if}
-							<span class="slash-source">{sourceLabel(command.source)}</span>
+							<span class="slash-source">{entrySourceLabel(entry)}</span>
 						</button>
 					</li>
 				{/each}

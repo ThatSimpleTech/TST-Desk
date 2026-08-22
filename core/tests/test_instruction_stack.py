@@ -298,6 +298,44 @@ class TestGetInstructionStackHandler:
                 await _stop_daemon(daemon, daemon_task)
 
     @pytest.mark.asyncio
+    async def test_get_instruction_stack_carries_loaded_skills(self, tmp_path: Path) -> None:
+        """skills_loaded rides the stack event (TD-4502): the handler must
+        pass the session's load record through — the field defaulting to
+        empty would silently swallow it."""
+        workspace = tmp_path / "ws"
+        _write(workspace / "AGENTS.md", "workspace rules\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, daemon_task = await _running_daemon(Path(tmp))
+            try:
+                ws = await _connect(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                await ws.send(json.dumps({"type": "open_workspace", "path": str(workspace)}))
+                opened = json.loads(await ws.recv())
+                session_id = opened["session_id"]
+
+                # White-box: pretend a skill loaded this session.
+                from tstd.protocol import LoadedSkillEntry
+
+                found = daemon.session_registry.get(session_id)
+                assert found is not None
+                found.loaded_skills.append(
+                    LoadedSkillEntry(name="deploy", source="workspace", tokens=120)
+                )
+
+                await ws.send(
+                    json.dumps({"type": "get_instruction_stack", "session_id": session_id})
+                )
+                resp = json.loads(await ws.recv())
+                assert resp["type"] == "instruction_stack"
+                assert resp["skills_loaded"] == [
+                    {"name": "deploy", "source": "workspace", "tokens": 120}
+                ]
+                await ws.close()
+            finally:
+                await _stop_daemon(daemon, daemon_task)
+
+    @pytest.mark.asyncio
     async def test_approved_external_import_shows_clean(self, tmp_path: Path) -> None:
         """The durable allowlist reaches the panel: an approved import no
         longer carries the "awaiting approval" issue (TD-505)."""
