@@ -76,6 +76,9 @@ import type {
   SetApiKey,
   ValidateApiKey,
   SetPreset,
+  SetCredential,
+  DeleteCredential,
+  SetTierCredential,
   SetSkipAllApprovals,
   SetLoadGlobalMemory,
   SetCoworker,
@@ -390,6 +393,25 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.set_preset as SetPreset;
     expect(m.type).toBe("set_preset");
     expect(isString(m.name)).toBe(true);
+  });
+
+  it("set_credential", () => {
+    const m = fixtures.set_credential as SetCredential;
+    expect(m.type).toBe("set_credential");
+    expect(isString(m.name)).toBe(true);
+  });
+
+  it("delete_credential", () => {
+    const m = fixtures.delete_credential as DeleteCredential;
+    expect(m.type).toBe("delete_credential");
+    expect(isString(m.credential)).toBe(true);
+  });
+
+  it("set_tier_credential", () => {
+    const m = fixtures.set_tier_credential as SetTierCredential;
+    expect(m.type).toBe("set_tier_credential");
+    expect(isString(m.preset)).toBe(true);
+    expect(isString(m.tier)).toBe(true);
   });
 
   // TD-1104 doctor
@@ -708,6 +730,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isBoolean(m.cu_show_on_real_display)).toBe(true);
     expect(isBoolean(m.remote_attach_enabled)).toBe(true);
     expect(m.remote_bind === null || typeof m.remote_bind === "string").toBe(true);
+    expect(Array.isArray(m.credentials)).toBe(true);
+    expect(m.credentials?.every((c) => isString(c.id) && isString(c.name) && isBoolean(c.stored))).toBe(
+      true,
+    );
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
   });
@@ -831,6 +857,7 @@ describe("All fixtures have required shape", () => {
       "list_pins", "add_pin", "remove_pin",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
+      "set_credential", "delete_credential", "set_tier_credential",
       "run_diagnostics",
       "get_usage", "export_usage",
       "list_artifacts", "open_artifact",

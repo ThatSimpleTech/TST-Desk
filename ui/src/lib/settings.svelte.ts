@@ -4,8 +4,8 @@
 // run only. Everything shown comes from the daemon's `setup_state` and
 // `policy_rules`; nothing is inferred locally (AGENTS §6).
 //
-// The key section reuses TD-1102's flows from the onboarding store rather
-// than repeating them. A credential should have one code path, not two.
+// Named keys (TD-1717) live on this store as {id, name, stored} only.
+// The wizard's first key still uses the onboarding store.
 //
 // Wiring mirrors doctor.svelte.ts: listens on the connection fan-out, sends
 // only via sendToDaemon — no client reference, no import cycle.
@@ -40,6 +40,14 @@ export const settings = $state({
 	/** Key section, from setup_state. */
 	hasApiKey: false,
 	keyRequired: true,
+	/** Named keys (TD-1717). Presence only — never the secret. */
+	credentials: [] as { id: string; name: string; stored: boolean }[],
+	/** Configured binding per tier; null = unbound. */
+	tierCredentials: {} as Record<string, string | null>,
+	/** Whether each active-preset tier is loopback (offers "no key"). */
+	tierLoopback: {} as Record<string, boolean>,
+	/** Tier whose credential save is in flight. */
+	savingCredentialTier: null as string | null,
 	/** Policy section. Rules are per-workspace, so they need a session. */
 	rules: [] as PolicyRuleSummary[],
 	rulesSessionId: null as string | null,
@@ -87,6 +95,10 @@ export function resetSettings(): void {
 	settings.savingTier = null;
 	settings.hasApiKey = false;
 	settings.keyRequired = true;
+	settings.credentials = [];
+	settings.tierCredentials = {};
+	settings.tierLoopback = {};
+	settings.savingCredentialTier = null;
 	settings.rules = [];
 	settings.rulesSessionId = null;
 	settings.skipAllApprovals = false;
@@ -109,8 +121,12 @@ function reduce(event: DaemonEventUnion): void {
 		settings.tierSlugs = event.tier_slugs ?? {};
 		settings.hasApiKey = event.has_api_key;
 		settings.keyRequired = event.key_required;
-		// setup_state is the ack for set_tier_slug, so it ends the save.
+		settings.credentials = event.credentials ?? [];
+		settings.tierCredentials = event.tier_credentials ?? {};
+		settings.tierLoopback = event.tier_loopback ?? {};
+		// setup_state is the ack for set_tier_slug / set_tier_credential.
 		settings.savingTier = null;
+		settings.savingCredentialTier = null;
 		settings.skipAllApprovals = event.skip_all_approvals ?? false;
 		settings.loadGlobalMemory = event.load_global_memory ?? false;
 		settings.coworkerEnabled = event.coworker_enabled ?? true;
@@ -188,6 +204,60 @@ export function saveSlug(tier: string, slug: string): void {
 	settings.savingTier = tier;
 	const sent = sendToDaemon({ type: "set_tier_slug", preset, tier, slug: trimmed });
 	if (!sent) settings.savingTier = null;
+}
+
+/** Persist a tier's named key. Empty string unbinds. */
+export function saveTierCredential(tier: string, credential: string): void {
+	const preset = settings.activePreset;
+	if (preset === null) return;
+	settings.savingCredentialTier = tier;
+	const sent = sendToDaemon({
+		type: "set_tier_credential",
+		preset,
+		tier,
+		credential,
+	});
+	if (!sent) settings.savingCredentialTier = null;
+}
+
+/** Selected catalog id for the picker: bound, else implicit openrouter on remote. */
+export function selectedCredential(tier: string): string {
+	const bound = settings.tierCredentials[tier];
+	if (bound) return bound;
+	if (settings.tierLoopback[tier]) return "";
+	return "openrouter";
+}
+
+export function storeNamedKey(name: string, apiKey: string, credential?: string): void {
+	const trimmedName = name.trim();
+	const trimmedKey = apiKey.trim();
+	if (trimmedName === "" || trimmedKey === "") return;
+	sendToDaemon({
+		type: "set_api_key",
+		api_key: trimmedKey,
+		name: trimmedName,
+		credential: credential ?? null,
+	});
+}
+
+export function renameCredential(credential: string, name: string): void {
+	const trimmed = name.trim();
+	if (trimmed === "") return;
+	sendToDaemon({ type: "set_credential", credential, name: trimmed });
+}
+
+export function deleteNamedKey(credential: string): void {
+	if (credential.trim() === "") return;
+	sendToDaemon({ type: "delete_credential", credential });
+}
+
+export function validateNamedKey(credential: string, apiKey?: string): void {
+	const typed = apiKey?.trim();
+	sendToDaemon(
+		typed
+			? { type: "validate_api_key", credential, api_key: typed }
+			: { type: "validate_api_key", credential },
+	);
 }
 
 // ── Policy ────────────────────────────────────────────────────────────

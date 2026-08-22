@@ -7792,3 +7792,43 @@ configuration so a landscape move does not require a code change.
 `--userns` story is not the same, and naming two engines would split
 the install copy. Also rejected: pulling the image during the start
 check, and requiring a container for interactive sessions.
+
+---
+
+## 2026-08-22 — TD-1717: named API keys bound per tier (Class B)
+
+**Decision:** API keys are a named catalog, not one slot. `config.yaml`
+holds `{id: {name}}` only. The secret stays in the OS keychain as
+`tst-{id}` — the account scheme `get_api_key` already used. Each tier
+may set `credential: <id>`. Resolution:
+
+- bound id → that keychain account, including on loopback
+- unbound + loopback → no key (TD-1801 unchanged)
+- unbound + remote → `openrouter`, so existing keychains keep working
+
+`has_api_key` means any catalog (or implicit `openrouter`) secret is
+present — the wizard's first-run signal — not "the active preset is
+fully keyed." Missing bindings for the active preset show in Settings
+and the doctor. `key_required` is true when any active tier will send
+a key (remote, or loopback with a binding).
+
+Protocol is additive, `PROTOCOL_VERSION` stays 1:
+`setup_state.credentials` (`id`, `name`, `stored`) and
+`tier_credentials`; `set_api_key` gains optional `credential` + `name`;
+`set_credential` / `delete_credential` / `set_tier_credential` are
+narrow writes, not a general `update_config`. A new name is slugified
+to the id; rename changes only the display name.
+
+**Rationale:** The keychain already stored `tst-{provider}`. The product
+never exposed more than one. People who run OpenRouter and a keyed
+local server (llama.cpp, vLLM `--api-key`) need both, and the model
+row has to say which name it uses. Names are not secrets, so they
+belong next to slugs. Scanning the OS keychain for a list is
+platform-fragile and would still need a display name.
+
+**Alternative rejected:** One key plus a provider enum. That cannot
+express two OpenAI-compatible remotes. Also rejected: putting a
+base_url on the credential — the tier already has one. Also rejected:
+making loopback always keyless even when bound; the user asked for a
+local key, and some local servers require one. Also rejected: a
+`PROTOCOL_VERSION` bump for additive fields.

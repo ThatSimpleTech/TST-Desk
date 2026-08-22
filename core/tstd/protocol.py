@@ -559,35 +559,43 @@ class GetSetupState(ClientMessage):
 
 
 class SetApiKey(ClientMessage):
-    """Store an API key in the OS keychain (TD-1101).
+    """Store an API key in the OS keychain (TD-1101, TD-1717).
 
     The key never appears in any event, log, or audit record — the ack is a
     refreshed ``setup_state`` event whose ``has_api_key`` flips true.
+    ``credential`` is the catalog id (default ``openrouter``). ``name``
+    creates or updates the display name; omitted keeps the existing name
+    or titles the id.
     """
 
     type: Literal["set_api_key"] = "set_api_key"
     api_key: str = Field(min_length=1)
+    credential: str | None = None
+    name: str | None = None
 
 
 class ValidateApiKey(ClientMessage):
-    """Probe a key with one cheap live call (TD-1101, TD-1106).
+    """Probe a key with one cheap live call (TD-1101, TD-1106, TD-1717).
 
     With ``api_key`` set, the key currently typed in the wizard is checked
     directly — validation never depends on keychain state.  Without it,
-    the stored key is probed.  The daemon answers with
+    the stored key is probed.  ``credential`` selects which stored key
+    when more than one exists.  The daemon answers with
     ``api_key_validated``; the key itself never appears in any event, log,
     or audit record.
     """
 
     type: Literal["validate_api_key"] = "validate_api_key"
     api_key: str | None = None
+    credential: str | None = None
 
 
 class DeleteApiKey(ClientMessage):
-    """Remove an API key from the OS keychain (TD-1102).
+    """Remove an API key from the OS keychain (TD-1102, TD-1717).
 
-    The daemon answers with a refreshed ``setup_state`` (``has_api_key``
-    flips false), same ack pattern as ``set_api_key``.
+    ``provider`` is the credential id (kept for the existing wire). The
+    catalog row stays so the name can be re-keyed. The daemon answers
+    with a refreshed ``setup_state``, same ack pattern as ``set_api_key``.
     """
 
     type: Literal["delete_api_key"] = "delete_api_key"
@@ -618,6 +626,38 @@ class SetTierSlug(ClientMessage):
     preset: str = Field(min_length=1)
     tier: str = Field(min_length=1)
     slug: str = Field(min_length=1)
+
+
+class SetCredential(ClientMessage):
+    """Create or rename a named API key without touching the secret (TD-1717).
+
+    ``credential`` omitted slugifies ``name`` into a new id. Present, it
+    renames that catalog row. Acked with ``setup_state``.
+    """
+
+    type: Literal["set_credential"] = "set_credential"
+    name: str = Field(min_length=1, max_length=40)
+    credential: str | None = None
+
+
+class DeleteCredential(ClientMessage):
+    """Remove a named key: catalog row, secret, and tier bindings (TD-1717)."""
+
+    type: Literal["delete_credential"] = "delete_credential"
+    credential: str = Field(min_length=1)
+
+
+class SetTierCredential(ClientMessage):
+    """Bind a named key to one tier of one preset (TD-1717).
+
+    Empty ``credential`` unbinds. Narrow like ``set_tier_slug``: this
+    cannot smuggle a secret into ``config.yaml``. Acked with ``setup_state``.
+    """
+
+    type: Literal["set_tier_credential"] = "set_tier_credential"
+    preset: str = Field(min_length=1)
+    tier: str = Field(min_length=1)
+    credential: str = ""
 
 
 class RunDiagnostics(ClientMessage):
@@ -1305,6 +1345,14 @@ class PolicyRules(DaemonEvent):
     rules: list[PolicyRuleSummary] = Field(default_factory=list)
 
 
+class CredentialSummary(BaseModel):
+    """One named API key as the UI may see it (TD-1717). Never the secret."""
+
+    id: str
+    name: str
+    stored: bool
+
+
 class SetupState(DaemonEvent):
     """Response to ``get_setup_state``; also the ack for ``set_api_key`` and
     ``set_preset`` (TD-1101).
@@ -1350,6 +1398,13 @@ class SetupState(DaemonEvent):
     # ``remote_bind`` is the bound Tailscale address, never a token.
     remote_attach_enabled: bool = False
     remote_bind: str | None = None
+    # TD-1717: named keys. Additive; an older client ignores them.
+    # ``stored`` is a keychain probe, never the secret. ``tier_credentials``
+    # is the configured binding (None = unbound). ``tier_loopback`` lets
+    # the model picker offer "no key" only on loopback tiers.
+    credentials: list[CredentialSummary] = Field(default_factory=list)
+    tier_credentials: dict[str, str | None] = Field(default_factory=dict)
+    tier_loopback: dict[str, bool] = Field(default_factory=dict)
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1695,6 +1750,9 @@ ClientMessageT = Annotated[
     | ValidateApiKey
     | SetPreset
     | SetTierSlug
+    | SetCredential
+    | DeleteCredential
+    | SetTierCredential
     | RunDiagnostics
     | GetUsage
     | ExportUsage
@@ -1813,6 +1871,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "delete_api_key",
         "set_preset",
         "set_tier_slug",
+        "set_credential",
+        "delete_credential",
+        "set_tier_credential",
         "run_diagnostics",
         "get_usage",
         "export_usage",

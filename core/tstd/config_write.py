@@ -22,7 +22,15 @@ import re
 import tempfile
 from pathlib import Path
 
-from .config import TIER_NAMES, ConfigError, ensure_user_config, load_config
+from .config import (
+    CREDENTIAL_ID_RE,
+    DEFAULT_CREDENTIAL_ID,
+    RESERVED_CREDENTIAL_IDS,
+    TIER_NAMES,
+    ConfigError,
+    ensure_user_config,
+    load_config,
+)
 
 
 def save_active_preset(name: str, path: Path | None = None) -> Path:
@@ -179,6 +187,137 @@ def save_tier_slug(preset: str, tier: str, slug: str, path: Path | None = None) 
         )
         if placeholder >= 0:
             lines[placeholder] = new_line
+        else:
+            lines.insert(tier_at + 1, new_line)
+
+    _atomic_write(config_path, "\n".join(lines))
+    return config_path
+
+
+def _ensure_credentials_header(lines: list[str]) -> tuple[int, int]:
+    """Index of ``credentials:`` and one past its block, creating the header if needed."""
+    at = _find_key(lines, 0, len(lines), "credentials", 0)
+    if at >= 0:
+        return at, _block_bounds(lines, at, 0)
+    if lines and lines[-1].strip():
+        lines.append("")
+    lines.append("credentials:")
+    return len(lines) - 1, len(lines)
+
+
+def save_credential(credential_id: str, name: str, path: Path | None = None) -> Path:
+    """Create or rename a catalog entry (TD-1717). Never writes the secret."""
+    cleaned_id = credential_id.strip()
+    cleaned_name = name.strip()
+    if not CREDENTIAL_ID_RE.match(cleaned_id):
+        raise ConfigError(
+            f"credential id {cleaned_id!r} must be a lowercase slug [a-z][a-z0-9-]{{0,31}}"
+        )
+    if cleaned_id in RESERVED_CREDENTIAL_IDS:
+        raise ConfigError(f"credential id {cleaned_id!r} is reserved for another keychain account")
+    if not cleaned_name:
+        raise ConfigError("A credential name cannot be blank")
+    if len(cleaned_name) > 40:
+        raise ConfigError("A credential name cannot be longer than 40 characters")
+
+    config_path = ensure_user_config(path)
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    cred_at, cred_end = _ensure_credentials_header(lines)
+    id_at = _find_key(lines, cred_at + 1, cred_end, cleaned_id, 2)
+    name_line = f"    name: {json.dumps(cleaned_name)}"
+    if id_at < 0:
+        lines.insert(cred_end, f"  {cleaned_id}:")
+        lines.insert(cred_end + 1, name_line)
+    else:
+        id_end = _block_bounds(lines, id_at, 2)
+        name_at = _find_key(lines, id_at + 1, id_end, "name", 4)
+        if name_at >= 0:
+            lines[name_at] = name_line
+        else:
+            lines.insert(id_at + 1, name_line)
+
+    _atomic_write(config_path, "\n".join(lines))
+    return config_path
+
+
+def delete_credential_entry(credential_id: str, path: Path | None = None) -> Path:
+    """Remove a catalog entry. The keychain secret is the caller's job."""
+    cleaned_id = credential_id.strip()
+    config_path = ensure_user_config(path)
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    cred_at = _find_key(lines, 0, len(lines), "credentials", 0)
+    if cred_at < 0:
+        raise ConfigError(f"{config_path} has no top-level `credentials:` block to edit")
+    cred_end = _block_bounds(lines, cred_at, 0)
+    id_at = _find_key(lines, cred_at + 1, cred_end, cleaned_id, 2)
+    if id_at < 0:
+        raise ConfigError(f"{config_path} declares no credential {cleaned_id!r}")
+    id_end = _block_bounds(lines, id_at, 2)
+    del lines[id_at:id_end]
+    _atomic_write(config_path, "\n".join(lines))
+    return config_path
+
+
+def save_tier_credential(
+    preset: str, tier: str, credential: str | None, path: Path | None = None
+) -> Path:
+    """Bind or unbind a named key on one tier (TD-1717). Empty unbinds."""
+    cleaned = (credential or "").strip() or None
+    if cleaned is not None and not CREDENTIAL_ID_RE.match(cleaned):
+        raise ConfigError(
+            f"credential id {cleaned!r} must be a lowercase slug [a-z][a-z0-9-]{{0,31}}"
+        )
+    if cleaned in RESERVED_CREDENTIAL_IDS:
+        raise ConfigError(f"credential id {cleaned!r} is reserved for another keychain account")
+
+    config_path = ensure_user_config(path)
+    config = load_config(config_path)
+    if preset not in config.presets:
+        raise ConfigError(
+            f"Unknown preset {preset!r}; declared presets: {', '.join(sorted(config.presets))}"
+        )
+    if tier not in TIER_NAMES:
+        raise ConfigError(f"Unknown tier {tier!r}; tiers are: {', '.join(TIER_NAMES)}")
+    if (
+        cleaned is not None
+        and cleaned not in config.credentials
+        and cleaned != DEFAULT_CREDENTIAL_ID
+    ):
+        raise ConfigError(
+            f"Unknown credential {cleaned!r}; declared: "
+            f"{', '.join(sorted(config.credentials)) or '(none)'}"
+        )
+
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    presets_at = _find_key(lines, 0, len(lines), "presets", 0)
+    if presets_at < 0:
+        raise ConfigError(f"{config_path} has no top-level `presets:` block to edit")
+
+    presets_end = _block_bounds(lines, presets_at, 0)
+    preset_at = _find_key(lines, presets_at + 1, presets_end, preset, 2)
+    if preset_at < 0:
+        raise ConfigError(f"{config_path} declares no `{preset}:` block under `presets:`")
+
+    preset_end = _block_bounds(lines, preset_at, 2)
+    tier_at = _find_key(lines, preset_at + 1, preset_end, tier, 4)
+    if tier_at < 0:
+        raise ConfigError(f"{config_path} declares no `{tier}:` block under `presets: {preset}:`")
+
+    tier_end = _block_bounds(lines, tier_at, 4)
+    body_indent = 6
+    for i in range(tier_at + 1, tier_end):
+        if lines[i].strip() and not lines[i].strip().startswith("#"):
+            body_indent = len(lines[i]) - len(lines[i].lstrip())
+            break
+
+    live_at = _find_key(lines, tier_at + 1, tier_end, "credential", body_indent)
+    if cleaned is None:
+        if live_at >= 0:
+            del lines[live_at]
+    else:
+        new_line = f"{' ' * body_indent}credential: {json.dumps(cleaned)}"
+        if live_at >= 0:
+            lines[live_at] = new_line
         else:
             lines.insert(tier_at + 1, new_line)
 

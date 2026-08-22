@@ -38,15 +38,24 @@ from .boundary_config import (
 )
 from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
 from .config import (
+    DEFAULT_CREDENTIAL_ID,
     ConfigError,
     ModelConfig,
     ModelDiscoveryError,
     TierConfig,
+    allocate_credential_id,
     cached_config,
     is_loopback_url,
     load_config,
+    resolve_credential_id,
 )
-from .config_write import save_active_preset, save_tier_slug
+from .config_write import (
+    delete_credential_entry,
+    save_active_preset,
+    save_credential,
+    save_tier_credential,
+    save_tier_slug,
+)
 from .context.assembler import ContextAssembler
 from .context.instructions import (
     InstructionNameError,
@@ -130,10 +139,12 @@ from .protocol import (
     ContextPinEntry,
     ContextPins,
     CreateRule,
+    CredentialSummary,
     CuKillState,
     CuPermissions,
     DaemonEvent,
     DeleteApiKey,
+    DeleteCredential,
     DeleteJob,
     DeleteSession,
     Deny,
@@ -187,6 +198,7 @@ from .protocol import (
     SetApiKey,
     SetBranch,
     SetCoworker,
+    SetCredential,
     SetCuIndicators,
     SetCuKill,
     SetLoadGlobalMemory,
@@ -195,6 +207,7 @@ from .protocol import (
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
+    SetTierCredential,
     SetTierSlug,
     SetupState,
     SetWorkspacePin,
@@ -489,7 +502,7 @@ class Daemon:
         self._artifacts = ArtifactStore(self._session_persist)
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
-        self._clients: dict[str, ProviderLike] = {}
+        self._clients: dict[tuple[str, str], ProviderLike] = {}
         self._pending_memory: dict[str, DistillEmit] = {}
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
@@ -548,35 +561,36 @@ class Daemon:
     async def _build_client(self, tier_cfg: TierConfig) -> ProviderClient:
         """Build a client for *tier_cfg*'s endpoint.
 
-        A loopback base URL is on-box, so there is nothing to authenticate
-        against: the keychain is never consulted and no key prompt can occur
-        (TD-1801). Remote endpoints keep the keychain requirement unchanged —
-        this removes a requirement, it never invents a credential.
+        A bound named key always wins, including on loopback (TD-1717).
+        Unbound loopback stays keyless (TD-1801). Unbound remote uses
+        the historical ``openrouter`` keychain account.
         """
-        if is_loopback_url(tier_cfg.base_url):
+        cred_id = resolve_credential_id(tier_cfg)
+        if cred_id is None:
             return ProviderClient(base_url=tier_cfg.base_url, api_key=None)
-        return await ProviderClient.from_keychain(tier_cfg.base_url)
+        return await ProviderClient.from_keychain(tier_cfg.base_url, provider_name=cred_id)
 
     async def _brain_client(self) -> ProviderClient:
         """Build a client for the active brain tier."""
         return await self._build_client(self.config.tier("brain"))
 
     async def _client_for(self, tier_cfg: TierConfig) -> ProviderLike:
-        """The provider client for *tier_cfg*, cached by URL.
+        """The provider client for *tier_cfg*, cached by URL and key.
 
         An injected constructor provider (tests) is returned for every
         tier so a mock stays in front of the loop. Production caches one
-        client per ``base_url`` so a remapped local worker (TD-3903) does
+        client per ``(base_url, credential)`` so two keys on one host do
+        not share a client, and a remapped local worker (TD-3903) does
         not reuse the remote brain client.
         """
         if self._provider is not None:
             return self._provider
-        url = tier_cfg.base_url
-        cached = self._clients.get(url)
+        cache_key = (tier_cfg.base_url, resolve_credential_id(tier_cfg) or "")
+        cached = self._clients.get(cache_key)
         if cached is not None:
             return cached
         client = await self._build_client(tier_cfg)
-        self._clients[url] = client
+        self._clients[cache_key] = client
         return client
 
     async def _ensure_provider(self) -> ProviderLike:
@@ -594,14 +608,12 @@ class Daemon:
         ``has_api_key`` is the wizard's first-run signal; presence is probed
         from the keychain, so it survives daemon restarts and never touches
         the key value itself.  ``key_required`` says whether the active preset
-        needs one at all, so a local-only workspace is never prompted for a
-        key it will never send (TD-1801).
+        will send a key at all, so a local-only workspace is never prompted
+        for a key it will never send (TD-1801).
         """
-        try:
-            await get_api_key()
-            has_api_key = True
-        except KeychainError:
-            has_api_key = False
+        credentials = await self._credential_summaries()
+        has_api_key = any(item.stored for item in credentials)
+        tiers = self.config.tiers()
         return SetupState(
             seq=1,
             has_api_key=has_api_key,
@@ -618,7 +630,94 @@ class Daemon:
             pinned_workspaces=list(self.workspace_pins),
             remote_attach_enabled=self.remote_attach_enabled,
             remote_bind=self.ws_server.extra_host,
+            credentials=credentials,
+            tier_credentials={name: tiers[name].credential for name in tiers},
+            tier_loopback={name: is_loopback_url(tiers[name].base_url) for name in tiers},
         )
+
+    async def _credential_is_stored(self, credential_id: str) -> bool:
+        try:
+            await get_api_key(credential_id)
+            return True
+        except KeychainError:
+            return False
+
+    async def _credential_summaries(self) -> list[CredentialSummary]:
+        """Catalog rows plus the implicit openrouter slot, never secrets."""
+        items: list[tuple[str, str]] = [
+            (cid, cfg.name) for cid, cfg in self.config.credentials.items()
+        ]
+        if DEFAULT_CREDENTIAL_ID not in self.config.credentials:
+            items.insert(0, (DEFAULT_CREDENTIAL_ID, "OpenRouter"))
+        return [
+            CredentialSummary(id=cid, name=name, stored=await self._credential_is_stored(cid))
+            for cid, name in items
+        ]
+
+    def _reload_user_config(self) -> None:
+        """Re-read config.yaml, keep the live preset, drop cached clients."""
+        self.config = load_config().model_copy(update={"active_preset": self.config.active_preset})
+        self._slug_snapshot = _snapshot_slugs(self.config)
+        self._clients.clear()
+
+    async def _store_named_key(self, api_key: str, credential: str | None, name: str | None) -> str:
+        """Store a secret and ensure its catalog row (TD-1717).
+
+        Wizard path: both optional → ``openrouter`` / "OpenRouter".
+        A new name with no id slugifies; a collision gets a numeric suffix.
+        """
+        existing = set(self.config.credentials)
+        display = (name or "").strip()
+        if credential:
+            cred_id = credential.strip()
+        elif display:
+            cred_id = allocate_credential_id(display, existing)
+        else:
+            cred_id = DEFAULT_CREDENTIAL_ID
+        if display:
+            catalog_name = display
+        elif cred_id in self.config.credentials:
+            catalog_name = self.config.credentials[cred_id].name
+        elif cred_id == DEFAULT_CREDENTIAL_ID:
+            catalog_name = "OpenRouter"
+        else:
+            catalog_name = cred_id
+        save_credential(cred_id, catalog_name)
+        await store_api_key(api_key, cred_id)
+        self._reload_user_config()
+        return cred_id
+
+    def _upsert_credential_name(self, credential: str | None, name: str) -> str:
+        """Create or rename a catalog row without touching the secret."""
+        cleaned = name.strip()
+        existing = set(self.config.credentials)
+        cred_id = credential.strip() if credential else allocate_credential_id(cleaned, existing)
+        save_credential(cred_id, cleaned)
+        self._reload_user_config()
+        return cred_id
+
+    async def _delete_named_credential(self, credential_id: str) -> None:
+        """Drop catalog row, secret, and tier bindings."""
+        cred_id = credential_id.strip()
+        bound: list[tuple[str, str]] = []
+        for preset_name, preset in self.config.presets.items():
+            for tier_name in ("brain", "worker", "validator"):
+                tier = getattr(preset, tier_name)
+                if tier.credential == cred_id:
+                    bound.append((preset_name, tier_name))
+        try:
+            await delete_api_key(cred_id)
+        except KeychainLockedError:
+            raise
+        except KeychainError:
+            # Catalog-only row (never stored a secret) is still removable.
+            if cred_id not in self.config.credentials:
+                raise
+        if cred_id in self.config.credentials:
+            delete_credential_entry(cred_id)
+        for preset_name, tier_name in bound:
+            save_tier_credential(preset_name, tier_name, None)
+        self._reload_user_config()
 
     def _cu_permissions_session(self, event: DaemonEvent) -> str | None:
         """Session to notify about computer-use permissions, or None.
@@ -654,11 +753,15 @@ class Daemon:
             with contextlib.suppress(websockets.exceptions.ConnectionClosed):
                 await conn.send(payload)
 
-    async def _provider_probe(self, api_key: str | None = None) -> ProviderError | None:
-        """One-token live call against the active brain (TD-1101).
+    async def _provider_probe(
+        self, api_key: str | None = None, credential: str | None = None
+    ) -> ProviderError | None:
+        """One-token live call against a tier (TD-1101, TD-1717).
 
         With *api_key* the probe authenticates with that key directly
         (TD-1106); otherwise the stored key is read from the keychain.
+        *credential* picks which stored key and prefers a tier bound to
+        it so the probe hits the host that key is meant for.
         Returns None on success, the ProviderError on failure.  Raises
         KeychainError only when the keychain is consulted and fails, and
         ModelDiscoveryError when a local tier names no model and the
@@ -667,10 +770,17 @@ class Daemon:
         """
         await resolve_tier_slugs(self.config)
         tier_cfg = self.config.tier("brain")
+        if credential:
+            for candidate in self.config.tiers().values():
+                if resolve_credential_id(candidate) == credential:
+                    tier_cfg = candidate
+                    break
         if api_key is not None:
             client = ProviderClient(base_url=tier_cfg.base_url, api_key=api_key)
+        elif credential:
+            client = await ProviderClient.from_keychain(tier_cfg.base_url, provider_name=credential)
         else:
-            client = await self._brain_client()
+            client = await self._build_client(tier_cfg)
         response = await client.chat_completion(
             ChatCompletionRequest(
                 model=tier_cfg.require_slug(),
@@ -681,17 +791,19 @@ class Daemon:
         )
         return response if isinstance(response, ProviderError) else None
 
-    async def _validate_api_key(self, api_key: str | None = None) -> ApiKeyValidated:
-        """Probe a key with one cheap live call (TD-1101, TD-1106).
+    async def _validate_api_key(
+        self, api_key: str | None = None, credential: str | None = None
+    ) -> ApiKeyValidated:
+        """Probe a key with one cheap live call (TD-1101, TD-1106, TD-1717).
 
         With *api_key*, the key typed in the wizard is checked directly,
         independent of keychain state; otherwise the stored key is probed.
-        A one-token completion against the active preset's brain tier: the
-        cheapest request that still proves the key authenticates.  The key
-        value never appears in the response.
+        A one-token completion against a matching tier: the cheapest
+        request that still proves the key authenticates.  The key value
+        never appears in the response.
         """
         try:
-            err = await self._provider_probe(api_key)
+            err = await self._provider_probe(api_key, credential)
         except KeychainError as e:
             return ApiKeyValidated(seq=1, ok=False, detail=str(e))
         except ModelDiscoveryError as e:
@@ -801,12 +913,14 @@ class Daemon:
         ]
 
         # API key presence first — presence is free, validity needs the probe.
-        try:
-            await get_api_key()
-            key_present = True
-        except KeychainError:
-            key_present = False
-        key_required = self.config.requires_api_key()
+        needed: list[str] = []
+        for tier in self.config.tiers().values():
+            cid = resolve_credential_id(tier)
+            if cid and cid not in needed:
+                needed.append(cid)
+        missing = [cid for cid in needed if not await self._credential_is_stored(cid)]
+        key_required = bool(needed)
+        key_present = key_required and not missing
         if key_present or not key_required:
             rows = await self._doctor_key_provider_rows()
             if not key_required:
@@ -815,12 +929,17 @@ class Daemon:
                 rows = [_KEYLESS_KEY_ROW if r.name == "api_key" else r for r in rows]
             checks.extend(rows)
         else:
+            names = [
+                self.config.credentials[cid].name if cid in self.config.credentials else cid
+                for cid in missing
+            ]
+            labeled = ", ".join(names)
             checks.append(
                 DiagnosticCheck(
                     name="api_key",
                     status="fail",
-                    detail="no API key stored",
-                    fix="Open the setup wizard (title-bar gear) and paste an API key.",
+                    detail=f"no API key stored for {labeled}",
+                    fix="Open Settings → API keys and store the missing key.",
                 )
             )
             checks.append(
@@ -1631,18 +1750,23 @@ class Daemon:
 
         if isinstance(msg, SetApiKey):
             try:
-                await store_api_key(msg.api_key)
+                cred_id = await self._store_named_key(msg.api_key, msg.credential, msg.name)
             except KeychainLockedError as e:
                 # TD-1105: unlock guidance, not raw `security` stderr.
                 return build_error("keychain_locked", str(e))
             except (KeychainError, NotImplementedError) as e:
                 return build_error("key_store_failed", f"Could not store the API key: {e}")
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
             # Never log the key; the ack is a refreshed setup_state.
-            log.info("api key stored in keychain")
+            log.info(
+                "api key stored in keychain",
+                extra={"extra_fields": {"credential": cred_id}},
+            )
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, ValidateApiKey):
-            return (await self._validate_api_key(msg.api_key)).model_dump_json()
+            return (await self._validate_api_key(msg.api_key, msg.credential)).model_dump_json()
 
         if isinstance(msg, DeleteApiKey):
             # TD-1102: key removable from settings. Same ack pattern as
@@ -1653,7 +1777,44 @@ class Daemon:
                 return build_error("keychain_locked", str(e))
             except (KeychainError, NotImplementedError) as e:
                 return build_error("key_delete_failed", f"Could not remove the API key: {e}")
-            log.info("api key removed from keychain")
+            self._clients.clear()
+            log.info(
+                "api key removed from keychain",
+                extra={"extra_fields": {"credential": msg.provider}},
+            )
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetCredential):
+            try:
+                self._upsert_credential_name(msg.credential, msg.name)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, DeleteCredential):
+            try:
+                await self._delete_named_credential(msg.credential)
+            except KeychainLockedError as e:
+                return build_error("keychain_locked", str(e))
+            except (KeychainError, NotImplementedError) as e:
+                return build_error("key_delete_failed", f"Could not remove the API key: {e}")
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetTierCredential):
+            try:
+                save_tier_credential(msg.preset, msg.tier, msg.credential or None)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            try:
+                self._reload_user_config()
+            except ConfigError as e:
+                return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+            log.info(
+                "tier credential changed",
+                extra={"extra_fields": {"preset": msg.preset, "tier": msg.tier}},
+            )
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetPreset):
@@ -1687,10 +1848,7 @@ class Daemon:
             # restart. Existing sessions keep the slug they opened with, the
             # same contract set_preset holds them to.
             try:
-                self.config = load_config().model_copy(
-                    update={"active_preset": self.config.active_preset}
-                )
-                self._slug_snapshot = _snapshot_slugs(self.config)
+                self._reload_user_config()
             except ConfigError as e:
                 # The write landed but the result will not load. Say so rather
                 # than serving a stale config that disagrees with the file.

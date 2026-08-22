@@ -108,7 +108,7 @@ class _FakeClient:
         self.api_key = api_key
 
     @classmethod
-    async def from_keychain(cls, base_url: str) -> _FakeClient:
+    async def from_keychain(cls, base_url: str, **kwargs: Any) -> _FakeClient:
         raise AssertionError("keychain consulted for a loopback endpoint")
 
     async def chat_completion(self, request: Any) -> Any:

@@ -42,7 +42,8 @@ TST Desk is a **local desktop application**. It does **not** require:
 - an account with TST
 - a subscription of any kind
 
-The only credential a user needs is **their own OpenRouter (or other provider) API key.**
+The only credentials a user needs are **their own provider API keys** — one
+or several, each stored under a local name. Secrets stay in the OS keychain.
 Every feature in this spec runs on the user's machine. Anything that would break that rule
 belongs in a different document.
 

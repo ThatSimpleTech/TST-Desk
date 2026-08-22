@@ -120,7 +120,7 @@ class FakeProviderClient:
         type(self).built_with.append(api_key)
 
     @classmethod
-    async def from_keychain(cls, base_url: str) -> FakeProviderClient:
+    async def from_keychain(cls, base_url: str, **kwargs: Any) -> FakeProviderClient:
         if cls.raise_on_build is not None:
             raise cls.raise_on_build
         return cls()

@@ -354,10 +354,14 @@ export interface GetSetupState extends ClientMessage {
 export interface SetApiKey extends ClientMessage {
   type: "set_api_key";
   api_key: string;
+  // TD-1717: catalog id (default openrouter) and optional display name.
+  credential?: string | null;
+  name?: string | null;
 }
 
 // TD-1102: key removable from settings. Acked with a fresh setup_state
 // (has_api_key flips false), same pattern as set_api_key.
+// `provider` is the credential id (kept for the existing wire).
 export interface DeleteApiKey extends ClientMessage {
   type: "delete_api_key";
   provider?: string;
@@ -368,6 +372,27 @@ export interface ValidateApiKey extends ClientMessage {
   // TD-1106: when present, the typed key is checked directly instead of
   // the stored one — validation never depends on keychain state.
   api_key?: string | null;
+  // TD-1717: which named key to probe when more than one is stored.
+  credential?: string | null;
+}
+
+// TD-1717: create or rename a catalog row without touching the secret.
+export interface SetCredential extends ClientMessage {
+  type: "set_credential";
+  name: string;
+  credential?: string | null;
+}
+
+export interface DeleteCredential extends ClientMessage {
+  type: "delete_credential";
+  credential: string;
+}
+
+export interface SetTierCredential extends ClientMessage {
+  type: "set_tier_credential";
+  preset: string;
+  tier: string;
+  credential: string;
 }
 
 // TD-1703: name the model one tier of one preset uses. Deliberately narrow
@@ -510,6 +535,9 @@ export type ClientMessageUnion =
   | ValidateApiKey
   | SetPreset
   | SetTierSlug
+  | SetCredential
+  | DeleteCredential
+  | SetTierCredential
   | RunDiagnostics
   | GetUsage
   | ExportUsage
@@ -906,6 +934,16 @@ export interface SetupState extends DaemonEvent {
   // remote_bind is the bound Tailscale address, never a token.
   remote_attach_enabled?: boolean;
   remote_bind?: string | null;
+  // TD-1717: named keys. Additive; an older daemon does not send them.
+  credentials?: CredentialSummary[];
+  tier_credentials?: Record<string, string | null>;
+  tier_loopback?: Record<string, boolean>;
+}
+
+export interface CredentialSummary {
+  id: string;
+  name: string;
+  stored: boolean;
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the
