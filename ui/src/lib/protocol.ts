@@ -212,6 +212,13 @@ export interface ListCommands extends ClientMessage {
   workspace_path: string;
 }
 
+/** List the workspace's skill catalog (TD-4502). Keyed like list_commands:
+ * the user-global half exists before any session opens. */
+export interface ListSkills extends ClientMessage {
+  type: "list_skills";
+  workspace_path: string;
+}
+
 export interface AddPin extends ClientMessage {
   type: "add_pin";
   workspace_path: string;
@@ -467,6 +474,7 @@ export type ClientMessageUnion =
   | SaveMemory
   | CreateRule
   | ListCommands
+  | ListSkills
   | ListPins
   | AddPin
   | RemovePin
@@ -786,6 +794,25 @@ export interface Commands extends DaemonEvent {
   commands: CommandEntry[];
 }
 
+/** One skill in the workspace's catalog (TD-4502). */
+export interface SkillSummary {
+  name: string;
+  /** Which tree owns it. User-global wins a name over the workspace. */
+  source: "workspace" | "user";
+  /** True when served from .claude/skills because ours had none. */
+  fallback: boolean;
+  description: string;
+  when_to_use: string;
+}
+
+/** Reply to list_skills (TD-4502). Mirrors Commands: connection-scoped, a
+ * listing rather than pushed state, so the menu re-asks each time it opens. */
+export interface Skills extends DaemonEvent {
+  type: "skills";
+  workspace_path: string;
+  skills: SkillSummary[];
+}
+
 export interface MemoryFileEntry {
   path: string;
   name: string;
@@ -848,7 +875,9 @@ export interface InstructionStack extends DaemonEvent {
   memory_dropped?: MemoryStackEntry[];
   memory_placeholder?: boolean;
   // Skill bodies loaded so far (TD-4502); absent on older daemons.
-  skills?: SkillStackEntry[];
+  // Named skills_loaded, not skills, so the field never reads as the
+  // catalog listing the `skills` event carries.
+  skills_loaded?: SkillStackEntry[];
 }
 
 export interface SessionSummary {
@@ -1132,6 +1161,7 @@ export type DaemonEventUnion =
   | InstructionStack
   | InstructionFiles
   | Commands
+  | Skills
   | ContextPins
   | MemoryFiles
   | MemoryProposal

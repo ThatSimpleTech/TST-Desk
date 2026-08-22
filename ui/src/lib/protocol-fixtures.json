@@ -173,6 +173,10 @@
     "type": "list_commands",
     "workspace_path": "/home/user/project"
   },
+  "list_skills": {
+    "type": "list_skills",
+    "workspace_path": "/home/user/project"
+  },
   "list_pins": {
     "type": "list_pins",
     "workspace_path": "/home/user/project"
@@ -630,7 +634,7 @@
     "memory": [],
     "memory_dropped": [],
     "memory_placeholder": false,
-    "skills": [
+    "skills_loaded": [
       {
         "name": "deploy",
         "source": "workspace",
@@ -638,6 +642,14 @@
         "tokens": 420,
         "token_method": "approximation (4 chars/token)",
         "fallback": false
+      },
+      {
+        "name": "review",
+        "source": "user",
+        "path": "~/.tstdesk/skills/review/SKILL.md",
+        "tokens": 96,
+        "token_method": "approximation (4 chars/token)",
+        "fallback": true
       }
     ]
   },
@@ -687,6 +699,27 @@
         "source": "user",
         "path": "~/.tstdesk/commands/review.md",
         "fallback": true
+      }
+    ]
+  },
+  "skills": {
+    "type": "skills",
+    "seq": 1,
+    "workspace_path": "/home/user/project",
+    "skills": [
+      {
+        "name": "deploy",
+        "source": "workspace",
+        "fallback": false,
+        "description": "Ship the service to staging",
+        "when_to_use": "before a release"
+      },
+      {
+        "name": "triage",
+        "source": "user",
+        "fallback": true,
+        "description": "Work a fresh bug report",
+        "when_to_use": ""
       }
     ]
   },

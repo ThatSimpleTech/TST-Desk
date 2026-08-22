@@ -389,6 +389,19 @@ class ListCommands(ClientMessage):
     workspace_path: str
 
 
+class ListSkills(ClientMessage):
+    """List the workspace's skill catalog (TD-4502). Human path.
+
+    Same keying as ``list_commands``: the trees merge across workspace
+    and user-global, so the listing is keyed on ``workspace_path``, not a
+    session. Catalog rows are names and one-line metadata only — bodies
+    ride ``load_skill`` or an invoked ``/name``, never this event.
+    """
+
+    type: Literal["list_skills"] = "list_skills"
+    workspace_path: str
+
+
 class AddPin(ClientMessage):
     """Pin a workspace file or folder (TD-2804). Human path."""
 
@@ -1296,9 +1309,11 @@ class InstructionStack(DaemonEvent):
     memory_dropped: list[MemoryStackEntry] = Field(default_factory=list)
     memory_placeholder: bool = False
     # Skills loaded this session (TD-4502). Empty means none — the
-    # catalog still lists what is available. Additive with a safe
-    # default, so no PROTOCOL_VERSION bump.
-    skills: list[SkillStackEntry] = Field(default_factory=list)
+    # catalog still lists what is available. ``skills_loaded`` rather
+    # than ``skills`` so the loaded-bodies listing never reads as the
+    # catalog (the ``skills`` reply lists names only). Additive with a
+    # safe default, so no PROTOCOL_VERSION bump.
+    skills_loaded: list[SkillStackEntry] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):
@@ -1370,6 +1385,36 @@ class Commands(DaemonEvent):
     seq: int = 1
     workspace_path: str
     commands: list[CommandEntry] = Field(default_factory=list)
+
+
+class SkillSummary(BaseModel):
+    """One catalog row offered after a ``/`` (TD-4502).
+
+    Metadata only, mirroring ``CommandEntry`` minus the path — the menu
+    needs a name, a description, and where the row came from; the body
+    arrives on invocation.
+    """
+
+    name: str
+    # Which tree owns it. User-global wins a name over the workspace.
+    source: Literal["workspace", "user"]
+    # True when served from .claude/skills because the tree had no
+    # skills of our own.
+    fallback: bool = False
+    description: str = ""
+    when_to_use: str = ""
+
+
+class Skills(DaemonEvent):
+    """Reply to ``list_skills`` (TD-4502). Connection-scoped like
+    ``commands``: seq fixed at 1 with no session_id — a session-scoped
+    reply with seq 1 is swallowed by the sequenced-accept path once the
+    log replays past 1."""
+
+    type: Literal["skills"] = "skills"
+    seq: int = 1
+    workspace_path: str
+    skills: list[SkillSummary] = Field(default_factory=list)
 
 
 class SetupState(DaemonEvent):
@@ -1718,6 +1763,7 @@ ClientMessageT = Annotated[
     | SaveMemory
     | CreateRule
     | ListCommands
+    | ListSkills
     | ListPins
     | AddPin
     | RemovePin
@@ -1783,6 +1829,7 @@ DaemonEventT = Annotated[
     | SessionList
     | PolicyRules
     | Commands
+    | Skills
     | SetupState
     | ApiKeyValidated
     | DiagnosticsReport
@@ -1834,6 +1881,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "save_memory",
         "create_rule",
         "list_commands",
+        "list_skills",
         "list_pins",
         "add_pin",
         "remove_pin",
@@ -1894,6 +1942,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "instruction_stack",
         "instruction_files",
         "commands",
+        "skills",
         "context_pins",
         "memory_files",
         "memory_proposal",

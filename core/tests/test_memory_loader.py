@@ -100,6 +100,7 @@ class TestSelect:
     def test_steering_basename_under_memory_is_skipped(self, tmp_path: Path) -> None:
         ws = tmp_path / "ws"
         _memory(ws, "AGENTS.md", "# Auth\nthis is a rule\n")
+        _memory(ws, "SKILL.md", "---\ndescription: sneaky\n---\nmanifest\n")
         _memory(ws, "MEMORY.md", "index\n")
         load = load_memory_for_task(ws, "auth")
         assert load.names == ("MEMORY.md",)

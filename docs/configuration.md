@@ -690,7 +690,48 @@ agent tools refuse a write that would go over, or that would replace a file alre
 
 ---
 
-## 6. When a config is wrong
+## 6. Skills — what the agent loads on purpose
+
+A skill is a directory holding one `SKILL.md`: reference material a human writes for the agent.
+Steering is always in the prompt; a slash command drops into the composer; a skill costs nothing
+until something asks for it. The brain sees a catalog of names with one-line descriptions, and
+the full body loads only when the agent calls its `load_skill` tool or you invoke `/name` in the
+composer.
+
+```
+<workspace>/.tst/skills/deploy/SKILL.md    ← workspace skills
+~/.tstdesk/skills/deploy/SKILL.md          ← yours, every workspace
+<workspace>/.claude/skills/deploy/SKILL.md ← fallback when ours is empty at that level
+```
+
+Precedence mirrors slash commands exactly: per level, `.claude/skills/` counts only when that
+level's own directory holds no skills; when the same name exists at both levels, the user-global
+skill wins; the directory name follows the same spellable-stem rule as a command file's. One
+exception keeps `/name` unambiguous: a name a slash *command* already owns stays a command —
+invoking it never expands a skill, and the shadowed skill remains reachable through the agent's
+`load_skill` tool. The front matter may carry two fields — `description:` (shown in the menu and
+the brain's catalog) and `whenToUse:` (when the agent should reach for it).
+
+Two budgets keep a loaded body honest. Past 200 lines it still loads but logs a warning — the
+same soft limit steering uses. And a load is *refused, not truncated*, when the body would eat
+the room the session still has: the daemon budgets against the active tier's context threshold
+minus what the conversation already holds, with a 20k-token floor so a large window never
+refuses a small reference skill. Silently clipping human instructions is how an agent follows
+half a procedure and calls it done — split an oversized skill into smaller ones, or move detail
+into ordinary files the skill can point at.
+
+Skills are steering-class for *writes*, like commands: the agent may read them, but a write to
+any `**/SKILL.md` — anywhere in the workspace, including under `.tst/memory/` — is refused like
+a write to `AGENTS.md`. The rest of a skill directory (`helper.sh`, reference files) is ordinary
+workspace, writable under the normal rules.
+
+When a skill's body enters context, the Stack panel lists it under **Skills** with its token
+cost, separate from steering — unlike steering it arrived after the cache prefix, this session,
+on purpose.
+
+---
+
+## 7. When a config is wrong
 
 Every loader fails loudly and names the offending key. Nothing falls back to a "safe" default on
 a malformed file — a config error stops the load rather than running you on settings you did not
@@ -713,7 +754,7 @@ the previous caps are kept rather than dropping the wall.
 
 ---
 
-## 7. How this document is kept honest
+## 8. How this document is kept honest
 
 `core/tests/test_docs_config_reference.py` runs on every suite run and enforces four things:
 

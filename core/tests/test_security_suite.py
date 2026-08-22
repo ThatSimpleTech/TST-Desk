@@ -264,6 +264,7 @@ STEERING_POSITIVE = [
     ".tst/config.yaml",  # the approval policy is steering-adjacent (TD-4803)
     ".tst/commands/deploy.md",  # slash-command files are human-written (TD-4501)
     ".tst/commands",  # the commands dir itself
+    ".claude/commands/review.md",  # the loader reads this fallback tree too (TD-4502)
     ".tst/skills/deploy/SKILL.md",  # skill manifests are human-written (TD-4502)
     "docs/SKILL.md",  # the NAME is protected anywhere, not one directory
     "skill.md",  # case-folded like every steering name (TD-4804)

@@ -685,6 +685,9 @@ class Session:
         self._branch_cursor[user_index] = len(siblings) - 1
         cut = positions[user_index]
         self.conversation[cut:] = []
+        # Loaded skill bodies rode the dropped turns; the inspector must
+        # not keep listing them as if their text were still in context.
+        self.loaded_skills.clear()
         self._drain_user_queue()
         await self.add_user_message(text)
         return self._emit_reset(user_index, text)
@@ -713,6 +716,9 @@ class Session:
         self._branch_cursor[user_index] = sibling_index
         restored = deepcopy(siblings[sibling_index])
         self.conversation[:] = restored
+        # Same reasoning as fork_from: the restored branch does not carry
+        # the abandoned branch's loaded bodies.
+        self.loaded_skills.clear()
         self._drain_user_queue()
         users = [m for m in self.conversation if m.role == "user"]
         text = users[user_index].content or "" if user_index < len(users) else ""

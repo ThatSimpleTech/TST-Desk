@@ -18,10 +18,15 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
-	import { matchCommands, requestCommands, slashCommands } from "../../commands.svelte.js";
+	import {
+		matchCommands,
+		matchSkills,
+		requestCommands,
+		slashCommands,
+	} from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
-	import type { AttachmentLimits, CommandEntry } from "../../protocol";
+	import type { AttachmentLimits, CommandEntry, SkillSummary } from "../../protocol";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
@@ -58,14 +63,22 @@
 	let dragging = $state(false);
 	let nextAttachmentId = 0;
 
-	// ── Slash commands (TD-4501) ────────────────────────────────────────
+	// ── Slash commands and skills (TD-4501, TD-4502) ────────────────────
 	//
-	// Typing "/" opens a menu of the workspace's command files. Enter or
-	// click inserts "/name " so arguments can follow (default insert);
-	// Alt+Enter sends the invocation as typed — expansion happens in the
-	// daemon either way. Not steering: the body splices only when invoked.
+	// Typing "/" opens a menu of the workspace's command files and skill
+	// catalog. Enter or click inserts "/name " so arguments can follow
+	// (default insert); Alt+Enter sends the invocation as typed — expansion
+	// happens in the daemon either way. Not steering: the body splices only
+	// when invoked. A skill row says what it is — choosing one sends its
+	// body instead of registering a command.
 
 	const SLASH_RE = /^\/([A-Za-z0-9_-]*)$/;
+
+	/** One flattened row of the menu. Commands and skills differ in what
+	 *  happens on send, not in how they're chosen. */
+	type MenuRow =
+		| { kind: "command"; entry: CommandEntry }
+		| { kind: "skill"; entry: SkillSummary };
 
 	let menuHighlight = $state(0);
 	// Escape closes until the query goes away; without this the very next
@@ -78,12 +91,20 @@
 		return match === null ? null : match[1];
 	});
 
-	let menuCommands = $derived(
-		slashQuery === null ? [] : matchCommands(slashCommands.items, slashQuery),
-	);
+	let menuRows = $derived.by<MenuRow[]>(() => {
+		if (slashQuery === null) return [];
+		return [
+			...matchCommands(slashCommands.items, slashQuery).map(
+				(entry): MenuRow => ({ kind: "command", entry }),
+			),
+			...matchSkills(slashCommands.skills, slashQuery).map(
+				(entry): MenuRow => ({ kind: "skill", entry }),
+			),
+		];
+	});
 
 	let menuOpen = $derived(
-		slashQuery !== null && !escaped && menuCommands.length > 0 && !disabled,
+		slashQuery !== null && !escaped && menuRows.length > 0 && !disabled,
 	);
 
 	// The listing is never pushed and may predate an edit to a command
@@ -98,8 +119,8 @@
 		if (slashQuery === null) escaped = false;
 	});
 
-	function pickCommand(command: CommandEntry): void {
-		value = `/${command.name} `;
+	function pickRow(row: MenuRow): void {
+		value = `/${row.entry.name} `;
 		menuHighlight = 0;
 		textarea?.focus();
 	}
@@ -109,13 +130,13 @@
 		if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 			event.preventDefault();
 			const delta = event.key === "ArrowDown" ? 1 : -1;
-			const count = menuCommands.length;
+			const count = menuRows.length;
 			menuHighlight = (menuHighlight + delta + count) % count;
 			return true;
 		}
 		if (event.key === "Enter" && !event.altKey) {
 			event.preventDefault();
-			pickCommand(menuCommands[menuHighlight]);
+			pickRow(menuRows[menuHighlight]);
 			return true;
 		}
 		if (event.key === "Escape") {
@@ -251,10 +272,10 @@
 			<ul
 				class="slash-menu"
 				role="listbox"
-				aria-label="Slash commands"
+				aria-label="Slash commands and skills"
 				id="slash-command-menu"
 			>
-				{#each menuCommands as command, i (command.source + ":" + command.path)}
+				{#each menuRows as row, i (row.kind + ":" + row.entry.name)}
 					<!-- svelte-ignore a11y_mouse_events_have_key_events -->
 					<li role="presentation" onmouseenter={() => (menuHighlight = i)}>
 						<button
@@ -263,11 +284,17 @@
 							class:active={i === menuHighlight}
 							role="option"
 							aria-selected={i === menuHighlight}
-							title={command.path}
-							onclick={() => pickCommand(command)}
+							title={row.kind === "command" ? row.entry.path : row.entry.description || row.entry.name}
+							onclick={() => pickRow(row)}
 						>
-							<span class="slash-name">/{command.name}</span>
-							<span class="slash-source">{command.fallback ? "claude" : command.source}</span>
+							<span class="slash-name">/{row.entry.name}</span>
+							<span class="slash-source">
+								{#if row.kind === "skill"}
+									skill · {row.entry.fallback ? "claude" : row.entry.source}
+								{:else}
+									{row.entry.fallback ? "claude" : row.entry.source}
+								{/if}
+							</span>
 						</button>
 					</li>
 				{/each}

@@ -14,6 +14,7 @@ from tstd.daemon import Daemon
 from tstd.memory_store import (
     MEMORY_FILENAMES,
     memory_dir,
+    path_is_memory_file,
     scaffold_workspace_memory,
 )
 
@@ -58,6 +59,22 @@ class TestScaffold:
         for original in first:
             assert original.read_text(encoding="utf-8").lstrip().startswith("<!--")
         assert _names(memory_dir(tmp_path)) == set(MEMORY_FILENAMES)
+
+
+class TestPathPredicate:
+    def test_memory_files_are_memory(self, tmp_path: Path) -> None:
+        for name in MEMORY_FILENAMES:
+            assert path_is_memory_file(memory_dir(tmp_path) / name, tmp_path)
+
+    def test_skill_manifest_is_not_memory(self, tmp_path: Path) -> None:
+        # TD-4502 convergence: SKILL.md joined the steering basenames in
+        # every copy of that set. A distill write to .tst/memory/SKILL.md
+        # must not pass as memory — it would ride the memory-write carve-out
+        # past the classifier and become self-persisting prompt material.
+        planted = memory_dir(tmp_path) / "SKILL.md"
+        planted.parent.mkdir(parents=True)
+        planted.write_text("---\ndescription: sneaky\n---\nno\n", encoding="utf-8")
+        assert not path_is_memory_file(planted, tmp_path)
 
 
 class TestDaemonPlantsMemory:

@@ -56,7 +56,14 @@ class DecisionClass(StrEnum):
 
 # ── Boundary and request models ────────────────────────────────────────
 
-_STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
+# SKILL.md joins the set in TD-4502: a skill manifest is prompt material
+# loaded on demand, so a write would let the agent author what the brain
+# later reads. One set, not a second constant — every copy of the
+# steering basenames must agree, and a split constant is how
+# is_memory_write drifted from is_steering_write. Supporting assets
+# inside a skill folder are ordinary files; only the NAME is protected,
+# anywhere (``**/SKILL.md``).
+_STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md", "SKILL.md"})
 _STEERING_RULES_DIR_PARTS = (".tst", "rules")
 _MEMORY_DIR_PARTS = (".tst", "memory")
 # The approval policy lives here (spec §6). Not a steering file by name,
@@ -65,13 +72,10 @@ _MEMORY_DIR_PARTS = (".tst", "memory")
 _POLICY_FILE_PARTS = (".tst", "config.yaml")
 # Slash-command files (TD-4501): human-written like steering, and a write
 # by the agent would let it author its own prompt for the next /invoke —
-# the same self-escalation, one step removed.
-_COMMANDS_DIR_PARTS = (".tst", "commands")
-# Skill manifests (TD-4502): the body is prompt material loaded on demand,
-# so a write would let the agent author what the brain later reads. The
-# NAME is protected anywhere (``**/SKILL.md``) rather than a directory —
-# supporting assets inside a skill folder are ordinary files.
-_SKILL_BASENAME = "SKILL.MD"
+# the same self-escalation, one step removed. Both trees are protected:
+# the loader reads ``.claude/commands`` as the fallback, so a write there
+# reaches the next /invoke exactly the same way.
+_COMMANDS_DIR_PARTS = frozenset({(".tst", "commands"), (".claude", "commands")})
 
 
 def _fold(parts: Sequence[str]) -> tuple[str, ...]:
@@ -272,14 +276,14 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     if not relative:
         return False
     basename = relative[-1].upper()
-    if basename == _SKILL_BASENAME or basename in {s.upper() for s in _STEERING_BASENAMES}:
+    if basename in {s.upper() for s in _STEERING_BASENAMES}:
         return True
     if is_memory_write(boundary, path):
         return False
     if _fold(relative) == _POLICY_FILE_PARTS:
         return True
     first_two = _fold(relative[:2])
-    return first_two in (_STEERING_RULES_DIR_PARTS, _COMMANDS_DIR_PARTS)
+    return first_two == _STEERING_RULES_DIR_PARTS or first_two in _COMMANDS_DIR_PARTS
 
 
 def writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:
@@ -412,9 +416,10 @@ def _global_commands_write(target: Path) -> bool:
             resolved.relative_to(canonical_path(root))
         except ValueError:
             continue
-        # Only the manifest is prompt material; a supporting asset inside
-        # a skill folder is an ordinary file (TD-4502).
-        return target.name.upper() == _SKILL_BASENAME
+        # Steering basenames stay steering anywhere; inside a skills tree
+        # only they are prompt material — a supporting asset is an
+        # ordinary file (TD-4502).
+        return target.name.upper() in {s.upper() for s in _STEERING_BASENAMES}
     return False
 
 
@@ -486,6 +491,18 @@ def _rule_desktop_capture(req: DecisionRequest, _boundary: Boundary) -> bool:
 def _rule_desktop_actuation(req: DecisionRequest, _boundary: Boundary) -> bool:
     """Desktop pointer/keyboard actuation is Class B (TD-3301)."""
     return req.actuates is True
+
+
+def _rule_skill_load(req: DecisionRequest, boundary: Boundary) -> bool:
+    """Loading a skill body is a static Class A read (TD-4502).
+
+    load_skill is read-only by construction — name-keyed, human-written
+    markdown, no path fields, so no guard ever runs on it. A write that
+    smuggles prompt material in is caught where it belongs, by the
+    steering-basename refusal; the load itself needs nothing but to be
+    cheap and deterministic.
+    """
+    return req.tool_name == "load_skill"
 
 
 def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
@@ -574,6 +591,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="action writes a memory file (.tst/memory)",
         decision_class=DecisionClass.A,
         match=_rule_memory_write,
+    ),
+    Rule(
+        id="skill-load",
+        description="load_skill reads human-written markdown, no side effects (TD-4502)",
+        decision_class=DecisionClass.A,
+        match=_rule_skill_load,
     ),
     Rule(
         id="in-workspace-edit",

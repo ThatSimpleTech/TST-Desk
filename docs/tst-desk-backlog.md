@@ -5578,6 +5578,18 @@ trees refuse except ordinary supporting assets. The stack panel lists
 loaded skills in their own section beside Memory, with source and
 fallback chips.
 
+**Converged (2026-08-21, branch `td/4502-skill-hardening`):** a second
+independent implementation was diffed against this one; its hardening
+ported on top rather than merging in parallel — symlinked roots fail
+closed before resolution (skills *and* commands), the compaction-headroom
+refusal also gates the `/name` path, `fallback` populates the stack row
+end-to-end, all steering-basename sets collapse into one including
+`SKILL.md` (closing the distill → `.tst/memory/SKILL.md` channel),
+`.claude/commands` joins the classifier's commands-tree set, `load_skill`
+is a static Class A rule, fork/set-branch drop loaded-skill entries whose
+bodies rode the dropped turns, and the catalog travels as
+`list_skills` → `skills`, connection-scoped like `commands`.
+
 ---
 
 ## Epic E46 — Plugins, subagent, plan lock

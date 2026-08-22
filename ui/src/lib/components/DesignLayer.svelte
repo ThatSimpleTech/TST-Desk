@@ -26,10 +26,13 @@
 	let shiftDrag = $state(false);
 
 	let selecting = $derived(design.enabled && !design.actuating && image !== null);
-	let overlaySize = $derived({
+	// $derived.by: the expression form is analyzed inline, where TS has
+	// layerEl narrowed to null (bind:this assignments are invisible to
+	// control-flow analysis) and reports clientWidth on `never`.
+	let overlaySize = $derived.by(() => ({
 		width: layerEl?.clientWidth ?? image?.width ?? 0,
 		height: layerEl?.clientHeight ?? image?.height ?? 0,
-	});
+	}));
 
 	function frameSize(): { width: number; height: number } {
 		if (image === null) return { width: 0, height: 0 };

@@ -1,16 +1,17 @@
 // @vitest-environment jsdom
 //
-// Tests for the composer's slash-command menu (TD-4501). The menu is real
+// Tests for the composer's slash menu (TD-4501, TD-4502). The menu is real
 // markup inside Composer, so the tests mount a harness and drive the
 // textarea's keydown handlers — the same path a keyboard takes.
 //
-// The commands store is stubbed at its module seam: items are fixed before
-// mount (a plain object, so no reactivity is promised) and requestCommands
-// is recorded rather than sent. matchCommands stays the real thing.
+// The commands store is stubbed at its module seam: items and skills are
+// fixed before mount (a plain object, so no reactivity is promised) and
+// requestCommands is recorded rather than sent. matchCommands/matchSkills
+// stay the real thing.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, tick, unmount } from "svelte";
-import type { CommandEntry } from "./protocol";
+import type { CommandEntry, SkillSummary } from "./protocol";
 
 const mocks = vi.hoisted(() => ({
 	requested: [] as (string | null)[],
@@ -18,6 +19,22 @@ const mocks = vi.hoisted(() => ({
 		{ name: "deploy", source: "workspace", path: "/w/.tst/commands/deploy.md", fallback: false },
 		{ name: "review", source: "user", path: "~/.tstdesk/commands/review.md", fallback: false },
 	] as CommandEntry[],
+	skills: [
+		{
+			name: "deep-dive",
+			source: "workspace",
+			fallback: false,
+			description: "read a module end to end",
+			when_to_use: "",
+		},
+		{
+			name: "triage",
+			source: "user",
+			fallback: true,
+			description: "",
+			when_to_use: "",
+		},
+	] as SkillSummary[],
 }));
 
 vi.mock("./connection-status.svelte.js", () => ({
@@ -32,6 +49,9 @@ vi.mock("./commands.svelte.js", async (importOriginal) => {
 		slashCommands: {
 			get items() {
 				return mocks.items;
+			},
+			get skills() {
+				return mocks.skills;
 			},
 		},
 		requestCommands: (workspacePath: string | null) => {
@@ -93,14 +113,15 @@ async function mounted(): Promise<void> {
 }
 
 describe("opening the menu", () => {
-	it('lists the commands once "/" is typed', async () => {
+	it('lists the commands and skills once "/" is typed', async () => {
 		await mounted();
 		harness().type("/");
 		await tick();
 		expect(menu()).not.toBeNull();
 		const names = [...items()].map((b) => b.querySelector(".slash-name")?.textContent);
-		expect(names).toEqual(["/deploy", "/review"]);
-		// The listing is pulled per-open, keyed on the open workspace.
+		expect(names).toEqual(["/deploy", "/review", "/deep-dive", "/triage"]);
+		// The listing is pulled per-open, keyed on the open workspace —
+		// one ask covers both halves of the menu.
 		expect(mocks.requested).toEqual(["/w"]);
 	});
 
@@ -116,6 +137,30 @@ describe("opening the menu", () => {
 		harness().type("/zz");
 		await tick();
 		expect(menu()).toBeNull();
+	});
+});
+
+describe("skills share the menu (TD-4502)", () => {
+	it("lists skills after the commands, tagged as skills", async () => {
+		await mounted();
+		harness().type("/");
+		await tick();
+		const names = [...items()].map((b) => b.querySelector(".slash-name")?.textContent);
+		expect(names).toEqual(["/deploy", "/review", "/deep-dive", "/triage"]);
+		const sources = [...items()].map((b) => b.querySelector(".slash-source")?.textContent?.trim());
+		expect(sources).toEqual(["workspace", "user", "skill · workspace", "skill · claude"]);
+	});
+
+	it("a skill query narrows to the skill; Enter inserts it like a command", async () => {
+		await mounted();
+		harness().type("/deep");
+		await tick();
+		const names = [...items()].map((b) => b.querySelector(".slash-name")?.textContent);
+		expect(names).toEqual(["/deep-dive"]);
+		const prevented = press("Enter");
+		await tick();
+		expect(prevented).toBe(true);
+		expect(harness().draft()).toBe("/deep-dive ");
 	});
 });
 
@@ -158,18 +203,22 @@ describe("Alt+Enter sends as typed", () => {
 describe("keyboard navigation", () => {
 	it("arrows move the highlight with wraparound; Enter picks the highlighted one", async () => {
 		await mounted();
-		harness().type("/");
+		harness().type("/"); // two commands, then two skills
 		await tick();
 		press("ArrowDown"); // 0 → 1
 		await tick();
 		expect(items()[1].classList.contains("active")).toBe(true);
-		press("ArrowDown"); // 1 → 0 (wraps)
+		press("ArrowUp"); // 1 → 0
 		await tick();
-		// The first item carries .active again.
 		expect(items()[0].classList.contains("active")).toBe(true);
-		press("ArrowUp"); // 0 → wraps to 1
+		press("ArrowUp"); // 0 → wraps to the last row, a skill
 		await tick();
-		expect(items()[1].classList.contains("active")).toBe(true);
+		expect(items()[3].classList.contains("active")).toBe(true);
+		press("ArrowDown"); // 3 → wraps to 0
+		await tick();
+		expect(items()[0].classList.contains("active")).toBe(true);
+		press("ArrowDown"); // 0 → 1
+		await tick();
 		press("Enter");
 		await tick();
 		expect(harness().draft()).toBe("/review ");

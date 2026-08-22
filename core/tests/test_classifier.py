@@ -389,6 +389,26 @@ class TestDesktopComputerUse:
 # ── Ambiguous cases → unclassified ─────────────────────────────────────
 
 
+class TestSkillLoad:
+    def test_load_skill_is_a_static_a(self) -> None:
+        # Read-only by construction: name-keyed, human-written markdown,
+        # no path fields. Without this rule every load burned a worker
+        # classification round-trip and landed on the ask path.
+        decision = classify(boundary(), req(tool_name="load_skill"))
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "skill-load")
+
+    def test_skill_load_beats_in_workspace_edit(self) -> None:
+        # Order pin: the load fires before the generic in-workspace rule
+        # could claim a mutation-less request shape.
+        decision = classify(
+            boundary(),
+            req(tool_name="load_skill", is_mutation=True),
+        )
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "skill-load")
+
+
 class TestAmbiguous:
     def test_unless_an_unambiguous_rule_fires_goes_unclassified(self) -> None:
         # A mutation with no recognized shape: no rule fires, must be
