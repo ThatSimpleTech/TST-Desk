@@ -1,9 +1,13 @@
 """Append-only audit store (TD-901).
 
 Every turn, tool call, decision, and model call is recorded in SQLite at
-``<user data dir>/audit.db``. The store is INSERT-only: no UPDATE or
-DELETE statements exist anywhere in the codebase, asserted by a
-source-level test in ``tests/test_audit.py``.
+``<user data dir>/audit.db``. INSERT-only is a property of this codebase,
+not of the file: no UPDATE or DELETE statements exist anywhere in tstd
+(asserted by a source-level test in ``tests/test_audit.py``), but the
+connection is read-write — inserts and migrations need it, and migration
+v2 below itself runs DROP TABLE — so anyone with write access to audit.db
+can alter or destroy any table. Parameterized statements keep recorded
+values from becoming SQL; they are not tamper protection.
 
 Secrets are scrubbed with the same redaction patterns as the logs
 (:func:`tstd.logging.redact_secrets`) before anything is written —

@@ -135,7 +135,11 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
 - **No server.** The daemon binds `127.0.0.1` by default.
   [`ws.py`](core/tstd/ws.py)'s `validate_interface()` refuses every other interface unless
   `remote.bind` names a Tailscale address (never `0.0.0.0`). `start()` takes no `host`
-  parameter. `core/tests/test_security_suite.py` asserts both.
+  parameter. `core/tests/test_security_suite.py` asserts both. The webview holds its end of
+  the same boundary: every inbound frame is validated down to its event type
+  ([`client.ts`](ui/src/lib/client.ts) drops and counts anything outside the known union),
+  while payload shapes are trusted to the token-authenticated daemon peer — the only writer
+  of that socket, and the other half of this repo.
 - **No subscription.** You pay your model provider per token and nobody else. There is no
   billing code in this repository because there is nothing to bill.
 - **No telemetry.** No analytics, no phone-home, no crash reporting. The only outbound HTTP the
@@ -152,6 +156,17 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
   `core/tests/test_credential_hygiene.py` drives a real daemon with a canary key and asserts it
   appears in no wire payload, no log record, and no byte of any file under the data directory —
   and in no audit row, where the credential flow produced a database to scan.
+- **Your conversation sits on disk unencrypted.** Each session writes its full model
+  conversation — your messages, the assistant's replies, and every tool call with its arguments
+  and result — as plaintext JSON to
+  `<user data dir>/sessions/<session id>/conversation.json`
+  ([`session_persist.py`](core/tstd/session_persist.py); e.g.
+  `~/Library/Application Support/com.thatsimpletech.tstdesk/sessions/` on macOS), written
+  owner-only and without passing through the credential redactor that guards logs and audit
+  rows. That is deliberate, not an oversight: reviving a session after a crash needs the actual
+  chat, and local-first means your OS user account is the boundary. There is no knob that turns
+  the file off or moves it on its own — start the daemon with a different `--data-dir` to
+  relocate it with the rest of the data directory, or delete the session to delete its copy.
 - **The agent cannot rewrite its own rules.** `AGENTS.md`, `CLAUDE.md` and `.tst/rules/**` are
   refused by the filesystem tool itself ([`tools/boundary.py`](core/tstd/tools/boundary.py)),
   ahead of the workspace check and ahead of any approval — so no `writable_paths` grant can open
