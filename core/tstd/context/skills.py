@@ -20,9 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-import yaml
-
 from ..logging import get_logger
+from .frontmatter import parse_frontmatter
 
 log = get_logger("tstd.skills")
 
@@ -35,7 +34,10 @@ FALLBACK_SKILL_BUDGET_TOKENS = 20_000
 # argument can spell without quoting tricks.
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 
-_FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.*?)\n(?:---|\.\.\.)[ \t]*\n?", re.DOTALL)
+# Over this many body lines a skill still loads, but says so — a warning,
+# never a refusal: silently clipping human instructions is how an agent
+# follows half a procedure and calls it done.
+SKILL_SOFT_LINE_LIMIT = 200
 
 _SKILL_FILE = "SKILL.md"
 
@@ -80,6 +82,9 @@ class LoadedSkill:
     source: Literal["workspace", "user"]
     path: str
     tokens: int
+    # True when served from .claude/skills because the tree had no
+    # skills of our own — mirrors SkillStackEntry.fallback on the wire.
+    fallback: bool = False
 
 
 def global_skills_dir(home: str | Path) -> Path:
@@ -87,30 +92,18 @@ def global_skills_dir(home: str | Path) -> Path:
     return Path(home) / ".tstdesk" / "skills"
 
 
-def _parse_frontmatter(text: str) -> dict[str, str]:
+def _skill_metadata(text: str) -> dict[str, str]:
     """The two metadata keys we read, from a leading YAML document.
 
-    Unknown keys are ignored rather than refused: the frontmatter exists
-    for the catalog, and a skill that carries an extra note about itself
-    still loads fine. What is NOT forgiven is unparseable YAML — that
-    turns into an empty mapping and the caller decides.
+    The shared steering parser does the YAML work so skills and rules
+    share one set of edge behaviors; unknown keys are ignored rather than
+    refused — a skill that carries an extra note about itself still
+    loads fine.
     """
-    match = _FRONTMATTER_RE.match(text)
-    if match is None:
-        return {}
-    try:
-        loaded = yaml.safe_load(match.group(1))
-    except yaml.YAMLError as exc:
-        log.warning(
-            "skill frontmatter is not valid YAML",
-            extra={"extra_fields": {"error": str(exc)}},
-        )
-        return {}
-    if not isinstance(loaded, dict):
-        return {}
+    metadata, _body = parse_frontmatter(text)
     out: dict[str, str] = {}
     for key in ("description", "whenToUse"):
-        value = loaded.get(key)
+        value = metadata.get(key)
         if isinstance(value, str):
             out[key] = value.strip()
     return out
@@ -123,6 +116,17 @@ def _discover_tree(root: Path) -> dict[str, Path]:
     resolved and checked like commands: a symlinked skill directory that
     escapes the tree is skipped rather than followed.
     """
+    if root.is_symlink():
+        # Fail closed on a symlinked root (TD-4502 convergence): resolving
+        # first would move the containment wall to wherever the link
+        # points, and every candidate inside would then pass by
+        # construction. A checkout can carry such a link, so repo content
+        # could aim the scanner at any directory the user can read.
+        log.warning(
+            "skills root is a symlink, skipped",
+            extra={"extra_fields": {"path": str(root)}},
+        )
+        return {}
     try:
         if not root.is_dir():
             return {}
@@ -185,7 +189,7 @@ def discover_skills(workspace: str | Path, home_dir: str | Path | None = None) -
     for names, source, fallback in layers:
         for name in sorted(names):
             try:
-                meta = _parse_frontmatter(names[name].read_text(encoding="utf-8"))
+                meta = _skill_metadata(names[name].read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError):
                 # Unreadable now means an error at load time; discovery
                 # still lists it so the refusal can name the file.
@@ -205,10 +209,19 @@ def read_skill_body(path: Path) -> str:
     """Read one SKILL.md, stripping the frontmatter.
 
     The frontmatter is catalog metadata; the brain reads prose, not
-    YAML (same reasoning as command bodies).
+    YAML (same reasoning as command bodies). A body over the soft line
+    limit still loads whole — the warning is for the transcript, and
+    clipping here is exactly the truncation the budget refusal exists
+    to prevent.
     """
-    text = path.read_text(encoding="utf-8")
-    return _FRONTMATTER_RE.sub("", text, count=1)
+    _metadata, body = parse_frontmatter(path.read_text(encoding="utf-8"))
+    lines = body.count("\n") + (0 if body.endswith("\n") or not body else 1)
+    if lines > SKILL_SOFT_LINE_LIMIT:
+        log.warning(
+            "skill body exceeds the soft line limit",
+            extra={"extra_fields": {"path": str(path), "lines": lines}},
+        )
+    return body
 
 
 def build_skills_catalog(skills: list[SkillFile]) -> str | None:

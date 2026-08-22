@@ -92,7 +92,8 @@ export function createStackStore(deps: StackStoreDeps, state: StackState) {
 			state.memoryDropped = event.memory_dropped ?? [];
 			state.memoryPlaceholder = event.memory_placeholder ?? true;
 			// Older daemons omit the field; an empty list is the honest read.
-			state.skills = event.skills ?? [];
+			// skills_loaded on the wire — `skills` names the catalog event.
+			state.skills = event.skills_loaded ?? [];
 			state.loaded = true;
 			return true;
 		},

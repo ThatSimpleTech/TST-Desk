@@ -127,6 +127,70 @@ class TestDiscoverSkills:
         (ws / ".tst" / "skills" / "sneaky").symlink_to(outside / "evil")
         assert [s.name for s in discover_skills(ws, home_dir=home)] == ["real"]
 
+    def test_symlinked_body_escaping_its_dir_is_skipped(self, tmp_path: Path, home: Path) -> None:
+        # The manifest itself is the link out — containment is checked on
+        # the resolved file, not just on directories.
+        ws = tmp_path / "ws"
+        outside = tmp_path / "outside.md"
+        outside.write_text("escaped\n", encoding="utf-8")
+        skill_dir = ws / ".tst" / "skills" / "escape"
+        skill_dir.mkdir(parents=True)
+        skill_dir.joinpath("SKILL.md").symlink_to(outside)
+        assert discover_skills(ws, home_dir=home) == []
+
+    def test_symlinked_skills_root_is_skipped(self, tmp_path: Path, home: Path) -> None:
+        # The root itself is the link: resolving first would move the
+        # containment wall to its target and everything inside would pass
+        # by construction. Fail closed instead.
+        ws = tmp_path / "ws"
+        vault = tmp_path / "vault"
+        _skill(vault, "secret", "---\ndescription: stolen\n---\nSECRET\n")
+        (ws / ".tst").mkdir(parents=True)
+        (ws / ".tst" / "skills").symlink_to(vault)
+        assert discover_skills(ws, home_dir=home) == []
+
+    def test_symlinked_user_root_is_skipped_too(self, tmp_path: Path, home: Path) -> None:
+        ws = tmp_path / "ws"
+        vault = tmp_path / "user-vault"
+        _skill(vault, "secret", "SECRET\n")
+        (home / ".tstdesk").mkdir(parents=True)
+        (home / ".tstdesk" / "skills").symlink_to(vault)
+        assert discover_skills(ws, home_dir=home) == []
+
+    def test_nested_dirs_and_loose_manifests_are_invisible(
+        self, tmp_path: Path, home: Path
+    ) -> None:
+        # One level only: a nested skills tree is not scanned, and a bare
+        # SKILL.md sitting in the root is not a skill.
+        ws = tmp_path / "ws"
+        skills = ws / ".tst" / "skills"
+        _skill(skills / "nested" / "inner", "deep")
+        skills.mkdir(parents=True, exist_ok=True)
+        (skills / "SKILL.md").write_text("loose\n", encoding="utf-8")
+        assert discover_skills(ws, home_dir=home) == []
+
+    def test_results_are_sorted_by_name(self, tmp_path: Path, home: Path) -> None:
+        ws = tmp_path / "ws"
+        _skill(ws / ".tst" / "skills", "zulu")
+        _skill(ws / ".tst" / "skills", "alpha")
+        assert [s.name for s in discover_skills(ws, home_dir=home)] == ["alpha", "zulu"]
+
+    def test_user_fallback_wins_the_fallback_collision(self, tmp_path: Path, home: Path) -> None:
+        # Both levels' own trees empty: each falls back to .claude, and a
+        # shared name still resolves user-first.
+        ws = tmp_path / "ws"
+        _skill(ws / ".claude" / "skills", "shared", "workspace copy\n")
+        _skill(home / ".claude" / "skills", "shared", "user copy\n")
+        (found,) = discover_skills(ws, home_dir=home)
+        assert (found.source, found.fallback) == ("user", True)
+
+    def test_workspace_fallback_loses_to_user_own(self, tmp_path: Path, home: Path) -> None:
+        ws = tmp_path / "ws"
+        _skill(ws / ".claude" / "skills", "deploy", "workspace fallback\n")
+        _skill(global_skills_dir(home), "deploy", "user own\n")
+        (found,) = discover_skills(ws, home_dir=home)
+        assert (found.source, found.fallback) == ("user", False)
+
     def test_missing_everything_is_empty(self, tmp_path: Path, home: Path) -> None:
         assert discover_skills(tmp_path / "nope", home_dir=home) == []
 
@@ -160,6 +224,16 @@ class TestFrontmatterRules:
         skill = discover_skills(ws, home_dir=home)[0]
         assert (skill.description, skill.when_to_use) == ("", "")
 
+    def test_blank_metadata_normalizes_to_empty(self, tmp_path: Path, home: Path) -> None:
+        ws = tmp_path / "ws"
+        _skill(
+            ws / ".tst" / "skills",
+            "x",
+            '---\ndescription: "   "\nwhenToUse: " \\n "\n---\nBody.\n',
+        )
+        skill = discover_skills(ws, home_dir=home)[0]
+        assert (skill.description, skill.when_to_use) == ("", "")
+
     def test_undecodable_file_still_listed_metadata_empty(self, tmp_path: Path, home: Path) -> None:
         ws = tmp_path / "ws"
         broken = ws / ".tst" / "skills" / "broken"
@@ -178,6 +252,29 @@ class TestBodiesAndRendering:
     def test_read_skill_body_without_frontmatter(self, tmp_path: Path) -> None:
         path = _skill(tmp_path, "deploy", "Just prose.\n")
         assert read_skill_body(path).strip() == "Just prose."
+
+    def test_oversized_body_still_loads_but_says_so(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The soft limit is a transcript warning, never a refusal — and
+        # it fires at load time only, since discovery re-runs per turn
+        # and would spam the log.
+        from tstd.context.skills import SKILL_SOFT_LINE_LIMIT
+
+        body = "\n".join(f"line {i}" for i in range(SKILL_SOFT_LINE_LIMIT + 10)) + "\n"
+        path = _skill(tmp_path, "long", body)
+        with caplog.at_level("WARNING", logger="tstd.skills"):
+            loaded = read_skill_body(path)
+        assert loaded == body  # whole body, nothing clipped
+        assert any("soft line limit" in r.getMessage() for r in caplog.records)
+
+    def test_within_soft_limit_does_not_warn(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        path = _skill(tmp_path, "short", "Tiny.\n")
+        with caplog.at_level("WARNING", logger="tstd.skills"):
+            read_skill_body(path)
+        assert not [r for r in caplog.records if "soft line limit" in r.getMessage()]
 
     def test_catalog_none_when_empty(self) -> None:
         assert build_skills_catalog([]) is None
@@ -333,6 +430,35 @@ class TestSlashSkills:
         assert result == "/broken args"
         assert sess.loaded_skills == {}
 
+    @pytest.mark.asyncio
+    async def test_over_budget_slash_invoke_is_refused_not_spliced(self, tmp_path: Path) -> None:
+        # The slash path is the way around the tool-path budget if nobody
+        # gates it: same arithmetic, draft delivered verbatim, nothing
+        # recorded.
+        ws = tmp_path / "ws"
+        body = "word " * 700  # ~875 estimated tokens
+        _skill(ws / ".tst" / "skills", "big", f"---\ndescription: d\n---\n{body}")
+        daemon = Daemon(data_dir=tmp_path / "data")
+        daemon.config = _config(window=2_000)  # threshold int((2000-1000)*0.8) = 800
+        sess = _sess(ws)
+        expanded = await daemon._expand_slash(sess, "/big now")  # type: ignore[arg-type]
+        assert expanded == "/big now"  # raw draft, no body bytes
+        assert "word word word" not in expanded
+        assert sess.loaded_skills == {}
+
+    @pytest.mark.asyncio
+    async def test_within_budget_slash_invoke_still_loads(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"
+        _skill(ws / ".tst" / "skills", "small", "Roll it out.\n")
+        daemon = Daemon(data_dir=tmp_path / "data")
+        daemon.config = _config(window=100_000)
+        sess = _sess(ws)
+        expanded = await daemon._expand_slash(sess, "/small prod")  # type: ignore[arg-type]
+        assert "Roll it out." in expanded
+        assert "--- skill: small (" in expanded  # truthful header
+        assert "prod" in expanded
+        assert sess.loaded_skills["small"].tokens > 0
+
 
 class TestStackPassthrough:
     def test_loaded_skills_become_stack_entries(self, tmp_path: Path, home: Path) -> None:
@@ -352,13 +478,29 @@ class TestStackPassthrough:
             ),
         ]
         stack = build_instruction_stack("s1", _assemble(home, ws), loaded_skills=loaded)
-        assert [(s.name, s.source, s.tokens) for s in stack.skills] == [
+        assert [(s.name, s.source, s.tokens) for s in stack.skills_loaded] == [
             ("deploy", "workspace", 42),
             ("review", "user", 7),
         ]
-        assert all(s.token_method for s in stack.skills)  # method always stated
+        assert all(s.token_method for s in stack.skills_loaded)  # method always stated
 
     def test_no_loads_is_an_empty_list(self, tmp_path: Path, home: Path) -> None:
         ws = tmp_path / "ws"
         stack = build_instruction_stack("s1", _assemble(home, ws))
-        assert stack.skills == []
+        assert stack.skills_loaded == []
+
+    def test_fallback_rides_the_stack_row(self, tmp_path: Path, home: Path) -> None:
+        # A .claude-served load reports fallback on the wire — the field
+        # was dead once (always False); this pins it live end to end.
+        ws = tmp_path / "ws"
+        loaded = [
+            LoadedSkill(
+                name="review",
+                source="user",
+                path="/home/u/.claude/skills/review/SKILL.md",
+                tokens=7,
+                fallback=True,
+            )
+        ]
+        stack = build_instruction_stack("s1", _assemble(home, ws), loaded_skills=loaded)
+        assert stack.skills_loaded[0].fallback is True

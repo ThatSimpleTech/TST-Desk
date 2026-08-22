@@ -191,7 +191,11 @@ async def load_skill(
     loaded_skills = getattr(session, "loaded_skills", None)
     if isinstance(loaded_skills, dict):
         loaded_skills[name] = LoadedSkill(
-            name=skill.name, source=skill.source, path=str(skill.path), tokens=tokens
+            name=skill.name,
+            source=skill.source,
+            path=str(skill.path),
+            tokens=tokens,
+            fallback=skill.fallback,
         )
     return render_loaded_skill(skill, body)
 

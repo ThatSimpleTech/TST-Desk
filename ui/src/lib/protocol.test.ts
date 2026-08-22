@@ -36,11 +36,14 @@ import type {
   CreateRule,
   ListPins,
   ListCommands,
+  ListSkills,
   RemovePin,
   EndSession,
   InstructionFiles,
   CommandEntry,
   Commands,
+  SkillSummary,
+  Skills,
   MemoryFiles,
   MemoryAccept,
   MemoryEdit,
@@ -344,6 +347,14 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(isString(m.workspace_path)).toBe(true);
   });
 
+  it("list_skills", () => {
+    const m = fixtures.list_skills as ListSkills;
+    expect(m.type).toBe("list_skills");
+    // TD-4502: keyed like list_commands — the user-global half exists
+    // before any session opens.
+    expect(isString(m.workspace_path)).toBe(true);
+  });
+
   it("add_pin", () => {
     const m = fixtures.add_pin as AddPin;
     expect(m.type).toBe("add_pin");
@@ -589,6 +600,24 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.commands.some((c) => c.fallback)).toBe(true);
   });
 
+  it("skills", () => {
+    const m = fixtures.skills as Skills;
+    expect(m.type).toBe("skills");
+    // TD-4502: connection-scoped like commands — seq pinned to 1.
+    expect(m.seq).toBe(1);
+    expect(isString(m.workspace_path)).toBe(true);
+    expect(Array.isArray(m.skills)).toBe(true);
+    for (const s of m.skills as SkillSummary[]) {
+      expect(isString(s.name)).toBe(true);
+      expect(["workspace", "user"]).toContain(s.source);
+      expect(isBoolean(s.fallback)).toBe(true);
+      expect(isString(s.description)).toBe(true);
+      expect(isString(s.when_to_use)).toBe(true);
+    }
+    expect(m.skills.some((s) => s.source === "user")).toBe(true);
+    expect(m.skills.some((s) => s.fallback)).toBe(true);
+  });
+
   it("decision_logged", () => {
     const m = fixtures.decision_logged as DecisionLogged;
     expect(m.type).toBe("decision_logged");
@@ -723,15 +752,17 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.total_tokens)).toBe(true);
     expect(isString(m.token_method)).toBe(true);
     // TD-4502: loaded skills ride the same event — name, provenance
-    // tree, token count and method; fallback flags a .claude/skills stand-in.
-    expect(Array.isArray(m.skills)).toBe(true);
-    const skill = (m.skills ?? [])[0];
+    // tree, token count and method; fallback flags a .claude/skills
+    // stand-in. The field is skills_loaded so it never reads as the
+    // catalog the `skills` event carries.
+    expect(Array.isArray(m.skills_loaded)).toBe(true);
+    const skill = (m.skills_loaded ?? [])[0];
     expect(isString(skill.name)).toBe(true);
     expect(skill.source === "workspace" || skill.source === "user").toBe(true);
     expect(isString(skill.path)).toBe(true);
     expect(isNumber(skill.tokens)).toBe(true);
     expect(isString(skill.token_method)).toBe(true);
-    if (skill.fallback !== undefined) expect(typeof skill.fallback).toBe("boolean");
+    expect(isBoolean(skill.fallback)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
   });
 

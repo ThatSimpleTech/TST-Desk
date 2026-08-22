@@ -45,6 +45,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "instruction_stack",
   "instruction_files",
   "commands", // TD-4501: slash-command listing
+  "skills", // TD-4502: skill catalog listing
   "context_pins",
   "memory_files",
   "memory_proposal",

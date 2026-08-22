@@ -69,6 +69,15 @@ def _discover_tree(root: Path) -> dict[str, Path]:
     the trees are human-written, and a link out is either a mistake or a
     way to feed the model something the tree's owner did not write.
     """
+    if root.is_symlink():
+        # Fail closed on a symlinked root: resolving first would move the
+        # containment wall to its target and every candidate inside would
+        # pass by construction (same reasoning as skills).
+        log.warning(
+            "commands root is a symlink, skipped",
+            extra={"extra_fields": {"path": str(root)}},
+        )
+        return {}
     try:
         if not root.is_dir():
             return {}

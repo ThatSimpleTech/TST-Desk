@@ -163,6 +163,7 @@ from .protocol import (
     ListPins,
     ListPolicyRules,
     ListSessions,
+    ListSkills,
     LogTrimmed,
     McpServerInfo,
     McpServerStatus,
@@ -204,6 +205,8 @@ from .protocol import (
     SetupState,
     SetWorkspacePin,
     Shutdown,
+    Skills,
+    SkillSummary,
     TierState,
     UsageExported,
     UsageReport,
@@ -249,6 +252,7 @@ from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
+from .tools.handlers import _remaining_skill_budget
 from .workspace_pins import load_workspace_pins, save_workspace_pins
 from .ws import WebSocketServer
 
@@ -1247,7 +1251,19 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
-            result = await found.fork_from(msg.user_index, msg.content)
+        if isinstance(msg, ForkFrom):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            # The fork's replacement text goes through the same slash
+            # expansion as a normal send: both paths enqueue user text,
+            # and only this one stop keeps '/deploy' meaning the same
+            # thing however it arrives.
+            expanded = await self._expand_slash(found, msg.content)
+            result = await found.fork_from(msg.user_index, expanded)
             if isinstance(result, str):
                 return build_error(result, result.replace("_", " "), session_id=msg.session_id)
             await found.event_log.add(result)
@@ -1605,6 +1621,9 @@ class Daemon:
 
         if isinstance(msg, ListCommands):
             return await self._handle_list_commands(msg)
+
+        if isinstance(msg, ListSkills):
+            return await self._handle_list_skills(msg)
 
         if isinstance(msg, ListPins):
             return await self._handle_list_pins(msg)
@@ -2357,6 +2376,29 @@ class Daemon:
             ],
         ).model_dump_json()
 
+    async def _handle_list_skills(self, msg: ListSkills) -> str:
+        """List a workspace's skill catalog (TD-4502). Not a tool."""
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {msg.workspace_path}",
+            )
+        listed = await asyncio.to_thread(discover_skills, root)
+        return Skills(
+            workspace_path=str(root),
+            skills=[
+                SkillSummary(
+                    name=s.name,
+                    source=s.source,
+                    fallback=s.fallback,
+                    description=s.description,
+                    when_to_use=s.when_to_use,
+                )
+                for s in listed
+            ],
+        ).model_dump_json()
+
     async def _expand_slash(self, sess: Session, content: str) -> str:
         """Expand a leading ``/name`` into its markdown body (TD-4501).
 
@@ -2418,11 +2460,29 @@ class Daemon:
                 extra={"extra_fields": {"name": name, "path": str(skill.path), "error": str(exc)}},
             )
             return None
+        # Same budget gate as the load_skill tool: the slash path must not
+        # become the way around it. The draft is delivered verbatim and
+        # nothing is recorded — the user sees their own message back.
+        tokens = heuristic_count(body).count
+        remaining = _remaining_skill_budget(sess, self.config)
+        if tokens > remaining:
+            log.warning(
+                "skill over budget on slash invoke, delivered verbatim",
+                extra={
+                    "extra_fields": {
+                        "name": name,
+                        "tokens": tokens,
+                        "remaining": remaining,
+                    }
+                },
+            )
+            return None
         sess.loaded_skills[name] = LoadedSkill(
             name=skill.name,
             source=skill.source,
             path=str(skill.path),
-            tokens=heuristic_count(body).count,
+            tokens=tokens,
+            fallback=skill.fallback,
         )
         log.info(
             "slash skill invoked",
@@ -2434,14 +2494,18 @@ class Daemon:
                 }
             },
         )
-        # Same wrapper as a command invocation: from the model's side of
-        # the splice they are one mechanism with different trees.
-        return expand_command(
-            CommandFile(
-                name=skill.name, path=skill.path, source=skill.source, fallback=skill.fallback
-            ),
-            args,
-        )
+        # The command wrapper's shape — delimiters, explicit args label —
+        # with a truthful header: the model should see that this prose
+        # came from a skill, not a slash command.
+        argument_line = args.strip() if args else ""
+        parts = [
+            f"--- skill: {skill.name} ({skill.display_path}) ---",
+            body.strip(),
+            "--- end of skill ---",
+        ]
+        if argument_line:
+            parts.append(f"Command arguments from the user:\n{argument_line}")
+        return "\n\n".join(parts)
 
     async def _instruction_files_reply(
         self, workspace: str | Path, created: Path | None = None

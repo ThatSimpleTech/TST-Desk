@@ -78,13 +78,14 @@ describe("applyEvent", () => {
 		const { state, store } = harness();
 		store.applyEvent(
 			stackEvent({
-				skills: [
+				skills_loaded: [
 					{
 						name: "deploy",
 						source: "workspace",
 						path: "/ws/.tst/skills/deploy/SKILL.md",
 						tokens: 420,
 						token_method: "approximation (4 chars/token)",
+						fallback: false,
 					},
 					{
 						name: "review",
@@ -100,6 +101,7 @@ describe("applyEvent", () => {
 		);
 		expect(state.skills.map((s) => s.name)).toEqual(["deploy", "review"]);
 		expect(state.skills[1]!.fallback).toBe(true);
+		expect(state.skills[0]!.fallback).toBe(false);
 		// Skills never leak into the steering list.
 		expect(state.sources.map((e) => e.path)).toEqual(["/ws/AGENTS.md"]);
 	});

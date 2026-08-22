@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tstd.context.skills import LoadedSkill
 from tstd.provider import ChatMessage
 from tstd.session import Session
 
@@ -62,6 +63,18 @@ class TestForkFrom:
         _seed(session)
         assert await session.fork_from(0, "   ") == "empty_content"
 
+    async def test_drops_loaded_skill_bodies_with_the_tail(self, tmp_path: Path) -> None:
+        # Loaded skill bodies rode the dropped turns (TD-4502): keeping the
+        # entry after a fork would advertise a body the conversation no
+        # longer carries.
+        session = Session(str(tmp_path))
+        _seed(session)
+        session.loaded_skills["deploy"] = LoadedSkill(
+            name="deploy", source="workspace", path="/x/SKILL.md", tokens=12
+        )
+        await session.fork_from(1, "second, edited")
+        assert session.loaded_skills == {}
+
 
 class TestSetBranch:
     async def test_restores_the_original_sibling(self, tmp_path: Path) -> None:
@@ -93,3 +106,21 @@ class TestSetBranch:
             "new answer",
         ]
         assert result.sibling_index == 1
+
+    async def test_drops_loaded_skill_bodies_on_switch(self, tmp_path: Path) -> None:
+        # Same reasoning as the fork case: the restored snapshot predates
+        # the load, so a stale entry would outlive its own body.
+        session = Session(str(tmp_path))
+        _seed(session)
+        await session.fork_from(1, "second, edited")
+        session.conversation.append(_user("second, edited"))
+        session.conversation.append(_assistant("new answer"))
+        session.snapshot_branches()
+        session._open_turns = 0
+        session.loaded_skills["deploy"] = LoadedSkill(
+            name="deploy", source="workspace", path="/x/SKILL.md", tokens=12
+        )
+
+        result = await session.set_branch(1, 0)
+        assert not isinstance(result, str)
+        assert session.loaded_skills == {}

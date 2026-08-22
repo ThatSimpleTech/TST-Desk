@@ -36,6 +36,15 @@ class TestPredicates:
         assert is_steering_write(b, planted)
         assert not is_memory_write(b, planted)
 
+    def test_skill_manifest_is_steering_and_not_memory(self, tmp_path: Path) -> None:
+        # SKILL.md joined the steering set in TD-4502; every copy of the
+        # basenames — including this exclusion here — must agree, or a
+        # .tst/memory/SKILL.md becomes indexable prompt material.
+        b = _boundary(tmp_path)
+        planted = tmp_path / ".tst" / "memory" / "SKILL.md"
+        assert is_steering_write(b, planted)
+        assert not is_memory_write(b, planted)
+
     def test_rules_dir_is_still_steering(self, tmp_path: Path) -> None:
         b = _boundary(tmp_path)
         rule = tmp_path / ".tst" / "rules" / "api.md"

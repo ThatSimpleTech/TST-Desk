@@ -65,6 +65,7 @@ def _skill_entries(loaded: Iterable[LoadedSkill]) -> list[SkillStackEntry]:
             path=skill.path,
             tokens=skill.tokens,
             token_method=APPROX_METHOD,
+            fallback=skill.fallback,
         )
         for skill in loaded
     ]
@@ -120,5 +121,5 @@ def build_instruction_stack(
         memory=_memory_entries(memory.files) if memory is not None else [],
         memory_dropped=_memory_entries(memory.dropped) if memory is not None else [],
         memory_placeholder=memory is None or memory.block is None,
-        skills=_skill_entries(loaded_skills) if loaded_skills is not None else [],
+        skills_loaded=_skill_entries(loaded_skills) if loaded_skills is not None else [],
     )

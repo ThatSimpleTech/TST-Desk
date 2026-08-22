@@ -7409,3 +7409,42 @@ prompt (or into the steering resolver). It would have made skills
 steering by another name — re-billed on edit, capped by the memory
 budget, and invisible to the inspector's loaded-skills list — for no
 gain over a catalog row that costs one line until something invokes it.
+
+
+## 2026-08-21 — TD-4502 convergence: the port hardened the merged skills design
+
+**Decision:** Where the two independent TD-4502 implementations disagreed,
+the merged spine's shape won and this branch ported only what it lacked.
+Concretely: a symlinked skills or commands *root* now fails closed before
+resolution (resolving first relocated the containment wall so every
+candidate passed it by construction); the compaction-headroom budget now
+gates the `/name` invoke path too, not just `load_skill`;
+`SkillStackEntry.fallback` is populated end-to-end instead of riding the
+wire dead; the three steering-basename sets collapse into one
+`_STEERING_BASENAMES` including `SKILL.md`, so a distill write to
+`.tst/memory/SKILL.md` can no longer pass as memory and self-persist;
+`.claude/commands` joins the classifier's commands-tree set;
+`load_skill` is a static Class A rule instead of a worker round-trip;
+fork and set-branch drop loaded-skill entries whose bodies rode the
+deleted turns; and the catalog travels as `list_skills` → `skills`,
+mirroring `list_commands` → `commands` — connection-scoped, `seq` pinned
+to 1, no session id, never replayed on attach, so a reloaded client
+re-asks rather than resurrecting a stale catalog. The instruction-stack
+field is `skills_loaded`, not `skills`, because `skills` already names
+the catalog event. Deferred, not dropped: moving slash expansion to the
+loop side so `UserTurn` logs the raw draft the user typed.
+
+**Rationale:** Each fix closes a path the merged version left open rather
+than a taste difference — the symlink wall, the budget bypass, the distill
+injection channel, and the dead wire field were all defects, and porting
+them respects lane ownership: one branch, the spine's conventions, no
+parallel merge. Connection-scoping the listing events follows the
+established pattern for workspace-keyed replies (policy_rules,
+setup_state): a session-scoped replay would hand a client rows for a
+workspace it is no longer attached to.
+
+**Alternative rejected:** A fixed 2000-token cap on skill loads. It is
+simple and predictable, but it refuses legitimate large reference skills
+on big windows and waves through small ones on windows too small to carry
+them; headroom against the active tier's threshold scales with the window
+and floors at 20k tokens, which serves both directions at once.

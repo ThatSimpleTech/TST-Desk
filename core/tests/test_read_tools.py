@@ -9,6 +9,7 @@ boundary guard.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -242,3 +243,33 @@ class TestDispatchIntegration:
         result = await dispatcher.dispatch("c1", "ghost_probe", {})
         assert result.status == "error"
         assert result.error_code == "no_handler"
+
+
+# ── load_skill dispatch (TD-4502): no path fields, no guard, one rule ──
+
+
+class TestLoadSkillDispatch:
+    async def test_load_skill_dispatched_without_path_fields(self, tmp_path: Path) -> None:
+        # The tool declares no path_fields, so the guard never runs and
+        # classification rides the static skill-load rule; dispatch just
+        # has to deliver the body.
+        skill_dir = tmp_path / ".tst" / "skills" / "deploy"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\ndescription: ship\n---\nRoll it out.\n", encoding="utf-8"
+        )
+        dispatcher = make_dispatcher(tmp_path)
+        session = SimpleNamespace(workspace_path=str(tmp_path), loaded_skills={})
+        result = await dispatcher.dispatch("c1", "load_skill", {"name": "deploy"}, session)
+        assert result.status == "success"
+        assert "Roll it out." in result.output
+        assert session.loaded_skills["deploy"].tokens > 0
+
+    async def test_unknown_skill_is_a_clear_error(self, tmp_path: Path) -> None:
+        # Handler refusals ride as "Error:" text for the model — the
+        # dispatch itself succeeded.
+        dispatcher = make_dispatcher(tmp_path)
+        session = SimpleNamespace(workspace_path=str(tmp_path), loaded_skills={})
+        result = await dispatcher.dispatch("c1", "load_skill", {"name": "nope"}, session)
+        assert result.status == "success"
+        assert result.output.startswith("Error: no skill named")

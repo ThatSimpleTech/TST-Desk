@@ -72,6 +72,7 @@ from tstd.protocol import (
     ListPins,
     ListPolicyRules,
     ListSessions,
+    ListSkills,
     LogTrimmed,
     McpServerStatus,
     McpState,
@@ -120,7 +121,9 @@ from tstd.protocol import (
     SetWorkspacePin,
     ShellOutput,
     Shutdown,
+    Skills,
     SkillStackEntry,
+    SkillSummary,
     SteeringReloaded,
     TierState,
     TierSwitched,
@@ -185,6 +188,7 @@ FIXTURES = {
     "set_mcp_enabled": SetMcpEnabled(name="git", enabled=False),
     "remove_mcp_server": RemoveMcpServer(name="git"),
     "list_commands": ListCommands(workspace_path="/home/user/project"),
+    "list_skills": ListSkills(workspace_path="/home/user/project"),
     "list_pins": ListPins(workspace_path="/home/user/project"),
     "add_pin": AddPin(workspace_path="/home/user/project", path="src/app.ts"),
     "remove_pin": RemovePin(workspace_path="/home/user/project", path="src/app.ts"),
@@ -437,15 +441,24 @@ FIXTURES = {
         token_method="cl100k_base",
         seq=17,
         # TD-4502: loaded skills ride the stack event, listed apart from
-        # steering.
-        skills=[
+        # steering. One row carries fallback=True so the TS side sees a
+        # .claude-served load too.
+        skills_loaded=[
             SkillStackEntry(
                 name="deploy",
                 source="workspace",
                 path="/home/user/project/.tst/skills/deploy/SKILL.md",
                 tokens=420,
                 token_method="approximation (4 chars/token)",
-            )
+            ),
+            SkillStackEntry(
+                name="review",
+                source="user",
+                path="~/.tstdesk/skills/review/SKILL.md",
+                tokens=96,
+                token_method="approximation (4 chars/token)",
+                fallback=True,
+            ),
         ],
     ),
     "memory_files": MemoryFiles(
@@ -484,6 +497,25 @@ FIXTURES = {
                 name="review",
                 source="user",
                 path="~/.tstdesk/commands/review.md",
+                fallback=True,
+            ),
+        ],
+    ),
+    # Skill catalog (TD-4502): metadata-only rows, one per shape —
+    # workspace-owned and .claude-fallback.
+    "skills": Skills(
+        workspace_path="/home/user/project",
+        skills=[
+            SkillSummary(
+                name="deploy",
+                source="workspace",
+                description="Ship the service to staging",
+                when_to_use="before a release",
+            ),
+            SkillSummary(
+                name="triage",
+                source="user",
+                description="Work a fresh bug report",
                 fallback=True,
             ),
         ],

@@ -31,7 +31,11 @@ log = get_logger("tstd.memory_distill")
 
 MemoryAction = Literal["create", "replace", "delete"]
 
-_STEERING_BASENAMES = frozenset({"AGENTS.MD", "CLAUDE.MD"})
+# Must not drift from the classifier's _STEERING_BASENAMES (TD-4502):
+# distill bypasses classifier/PathGuard entirely, so this set is the
+# only thing keeping a distilled change from creating
+# .tst/memory/SKILL.md — self-persisting prompt material.
+_STEERING_BASENAMES = frozenset({"AGENTS.MD", "CLAUDE.MD", "SKILL.MD"})
 
 DISTILL_SYSTEM_PROMPT = """\
 You distill a TST Desk session into workspace memory files.
@@ -40,7 +44,7 @@ Return JSON only, no prose, no tool calls:
 path is a basename under .tst/memory/ (or .tst/memory/<file.md>).
 content is the full file body for create and replace; omit it on delete.
 Propose only durable facts. Return {"changes":[]} if nothing is worth keeping.
-Never write AGENTS.md, CLAUDE.md, or a path outside .tst/memory/.
+Never write AGENTS.md, CLAUDE.md, SKILL.md, or a path outside .tst/memory/.
 """
 
 

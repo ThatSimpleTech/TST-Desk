@@ -93,6 +93,17 @@ class TestDiscoverCommands:
         (ws / ".tst" / "commands" / "sneaky.md").symlink_to(outside / "evil.md")
         assert [c.name for c in discover_commands(ws)] == ["real"]
 
+    def test_symlinked_root_is_skipped(self, tmp_path: Path) -> None:
+        # A symlinked root relocates every candidate before containment
+        # checks run (TD-4502 convergence) — fail closed on the root itself.
+        ws = tmp_path / "ws"
+        real = tmp_path / "elsewhere"
+        _plant(real, "evil.md")
+        root = ws / ".tst" / "commands"
+        root.parent.mkdir(parents=True)
+        root.symlink_to(real)
+        assert discover_commands(ws) == []
+
     def test_missing_everything_is_empty(self, tmp_path: Path, home: Path) -> None:
         assert discover_commands(tmp_path / "nope", home_dir=home) == []
 
