@@ -36,8 +36,78 @@
 		ROW_STATE_LABELS,
 		type SessionRow,
 	} from '../sessions.svelte.js';
+	import { DIVIDER_HIT_MIN_PX, attachDragListeners } from '../splitpane';
+	import {
+		DEFAULT_RAIL_PX,
+		MAX_RAIL_PX,
+		MIN_RAIL_PX,
+		RAIL_KEYBOARD_STEP_PX,
+		clampRailPx,
+		readPersistedRailPx,
+		writePersistedRailPx
+	} from '../rail-width';
 
 	onMount(() => startSessions());
+
+	// TD-4826: the rail's width is user-adjustable, so the conversation pane can
+	// be widened from its left edge too (the chat|activity divider already
+	// covers the right). The divider mirrors SplitPane's: window listeners are
+	// the mechanism, pointer capture only an optimisation (TD-1011).
+	let railPx = $state(DEFAULT_RAIL_PX);
+	let dragging = $state(false);
+
+	let railRoot: HTMLElement | undefined = $state();
+	let detachDrag: (() => void) | null = null;
+
+	function persist() {
+		writePersistedRailPx(window.localStorage, railPx);
+	}
+
+	function onDividerDown(e: PointerEvent) {
+		if (dragging) return;
+		dragging = true;
+		(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+		detachDrag = attachDragListeners(window, onDividerMove, onDividerUp);
+	}
+
+	function onDividerMove(e: PointerEvent) {
+		if (!dragging) return;
+		const next = clampRailPx(e.clientX - (railRoot?.getBoundingClientRect().left ?? 0));
+		railPx = next;
+	}
+
+	function onDividerUp() {
+		if (!dragging) return;
+		dragging = false;
+		detachDrag?.();
+		detachDrag = null;
+		// Persist once the drag settles.
+		persist();
+	}
+
+	function onDividerKeydown(e: KeyboardEvent) {
+		if (e.key === 'ArrowLeft') {
+			railPx = clampRailPx(railPx - RAIL_KEYBOARD_STEP_PX);
+		} else if (e.key === 'ArrowRight') {
+			railPx = clampRailPx(railPx + RAIL_KEYBOARD_STEP_PX);
+		} else {
+			return;
+		}
+		e.preventDefault();
+		persist();
+	}
+
+	// Restore the persisted width on mount; a drag still in flight when the
+	// rail unmounts must not leave window listeners behind.
+	$effect(() => {
+		railPx = readPersistedRailPx(window.localStorage);
+	});
+	$effect(() => {
+		return () => {
+			detachDrag?.();
+			detachDrag = null;
+		};
+	});
 
 	function activeTitle(row: SessionRow): string {
 		return `${workspaceName(row.workspacePath)} · ${ROW_STATE_LABELS[row.state]}`;
@@ -60,7 +130,14 @@
 	);
 </script>
 
-<aside class="rail" class:collapsed={sessions.collapsed} aria-label="Sessions">
+<aside
+	class="rail"
+	class:collapsed={sessions.collapsed}
+	class:dragging
+	aria-label="Sessions"
+	bind:this={railRoot}
+	style={!sessions.collapsed ? `flex-basis: ${railPx}px` : undefined}
+>
 	{#if sessions.collapsed}
 		<!-- Icon strip: expand, New, then one dot per session. -->
 		<button
@@ -167,11 +244,29 @@
 		</div>
 		<RailAccount />
 	{/if}
+	<!-- Width divider (TD-4826): same ARIA separator pattern as SplitPane. -->
+	{#if !sessions.collapsed}
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+		<div
+			class="resize-handle"
+			role="separator"
+			tabindex="0"
+			aria-orientation="vertical"
+			aria-label="Session rail width"
+			aria-valuenow={railPx}
+			aria-valuemin={MIN_RAIL_PX}
+			aria-valuemax={MAX_RAIL_PX}
+			style={`--divider-hit: ${DIVIDER_HIT_MIN_PX}px;`}
+			onpointerdown={onDividerDown}
+			onkeydown={onDividerKeydown}
+		></div>
+	{/if}
 </aside>
 
 <style>
 	.rail {
 		flex: 0 0 260px;
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
@@ -185,6 +280,43 @@
 		align-items: center;
 		gap: var(--space-1);
 		padding: var(--space-2) 0;
+	}
+
+	/* A drag must move 1:1 with the pointer — no basis transition mid-drag. */
+	.rail.dragging {
+		transition: none;
+	}
+
+	/* Width divider (TD-4826): invisible until hovered/focused, centered on
+	   the rail's right border; hit target at least DIVIDER_HIT_MIN_PX without
+	   widening the painted rule (mirrors SplitPane, TD-1011). */
+	.resize-handle {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		right: calc(var(--divider-hit) / -2);
+		width: var(--divider-hit);
+		cursor: col-resize;
+		touch-action: none;
+		z-index: 1;
+	}
+
+	.resize-handle::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 50%;
+		width: var(--border-width);
+		transform: translateX(-50%);
+		background: transparent;
+		transition: background var(--transition-fast);
+	}
+
+	.resize-handle:hover::after,
+	.resize-handle:focus-visible::after,
+	.rail.dragging .resize-handle::after {
+		background: var(--color-accent);
 	}
 
 	/* ── Section heading + count badge (TD-1712) ───────────────────── */
