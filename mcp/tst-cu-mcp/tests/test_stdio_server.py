@@ -48,6 +48,32 @@ def rpc(request_id: int | None, method: str, params: dict[str, Any] | None = Non
     return json.dumps(message)
 
 
+def run_session(requests: list[str]) -> dict[str, Any]:
+    """Write every request up front, close stdin, and return the parsed session."""
+    completed = subprocess.run(
+        [sys.executable, "-m", "tst_cu_mcp"],
+        input="\n".join(requests) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT_SECONDS,
+        check=False,
+    )
+    responses: dict[Any, dict[str, Any]] = {}
+    for line in completed.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        message = json.loads(line)
+        if isinstance(message, dict) and "id" in message:
+            responses[message["id"]] = message
+    return {
+        "responses": responses,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "returncode": completed.returncode,
+    }
+
+
 @pytest.fixture(scope="module")
 def session() -> dict[str, Any]:
     """Run one stdio session and return its parsed responses keyed by request id."""
@@ -165,3 +191,67 @@ class TestProtocolHygiene:
 
     def test_no_traceback_on_stderr(self, session: dict[str, Any]) -> None:
         assert "Traceback" not in session["stderr"], session["stderr"][-2000:]
+
+
+class TestBatchedStdin:
+    """The transport answers everything written before EOF (TD-4822).
+
+    The module fixture above already writes all three requests in one gulp;
+    these tests pin that contract explicitly rather than leaving it
+    incidental to whatever else an assertion happens to cover.
+    """
+
+    @staticmethod
+    def initialize() -> str:
+        return rpc(
+            1,
+            "initialize",
+            {
+                "protocolVersion": LATEST_HANDSHAKE_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "tst-cu-mcp-tests", "version": "0"},
+            },
+        )
+
+    def test_every_batched_request_gets_an_answer(self) -> None:
+        session = run_session(
+            [
+                self.initialize(),
+                rpc(None, "notifications/initialized"),
+                rpc(2, "tools/list"),
+            ]
+        )
+        assert set(session["responses"]) >= {1, 2}, session["stderr"][-2000:]
+
+    def test_batched_session_exits_cleanly_at_eof(self) -> None:
+        session = run_session(
+            [
+                self.initialize(),
+                rpc(None, "notifications/initialized"),
+                rpc(2, "tools/list"),
+            ]
+        )
+        assert session["returncode"] == 0, session["stderr"][-2000:]
+        assert "Traceback" not in session["stderr"], session["stderr"][-2000:]
+
+    def test_peer_cancelled_request_does_not_hang_shutdown(self) -> None:
+        # A peer-cancelled request never gets a wire answer, so the drain
+        # gate has to hear about settlement from the dispatcher's
+        # unanswered-settlement hook instead; otherwise EOF shutdown would
+        # wait on it forever.
+        session = run_session(
+            [
+                self.initialize(),
+                rpc(None, "notifications/initialized"),
+                rpc(2, "tools/list"),
+                rpc(None, "notifications/cancelled", {"requestId": 2}),
+            ]
+        )
+        # Whether id 2 was answered depends on whether the cancel landed
+        # before or after its handler spawned; either way the process owes us
+        # a clean exit and nothing but JSON-RPC envelopes on stdout.
+        assert session["returncode"] == 0, session["stderr"][-2000:]
+        assert "Traceback" not in session["stderr"], session["stderr"][-2000:]
+        for line in session["stdout"].splitlines():
+            if line.strip():
+                assert json.loads(line).get("jsonrpc") == "2.0"

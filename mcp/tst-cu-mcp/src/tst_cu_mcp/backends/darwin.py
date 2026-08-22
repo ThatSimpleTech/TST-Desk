@@ -281,9 +281,7 @@ class DarwinBackend:
         import Quartz
 
         # wheelCount=2: wheel1 is vertical (dy), wheel2 is horizontal (dx).
-        event = Quartz.CGEventCreateScrollWheelEvent(
-            None, Quartz.kCGScrollEventUnitLine, 2, dy, dx
-        )
+        event = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitLine, 2, dy, dx)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
 
     # --- state read-back ----------------------------------------------------
