@@ -18,9 +18,10 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
+	import { matchCommands, requestCommands, slashCommands } from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
-	import type { AttachmentLimits } from "../../protocol";
+	import type { AttachmentLimits, CommandEntry } from "../../protocol";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
@@ -30,6 +31,7 @@
 		running = false,
 		value = $bindable(""),
 		limits,
+		workspacePath = null,
 		onsubmit,
 		oncancel,
 	}: {
@@ -41,6 +43,8 @@
 		value?: string;
 		/** The workspace's caps, from `boundary_update` (TD-1709). */
 		limits: AttachmentLimits;
+		/** The open workspace, for the slash-command listing (TD-4501). */
+		workspacePath?: string | null;
 		onsubmit: (text: string, attachments: readonly AttachmentDraft[]) => void;
 		oncancel?: () => void;
 	} = $props();
@@ -53,6 +57,75 @@
 	let refusal: AttachmentRefusal | null = $state(null);
 	let dragging = $state(false);
 	let nextAttachmentId = 0;
+
+	// ── Slash commands (TD-4501) ────────────────────────────────────────
+	//
+	// Typing "/" opens a menu of the workspace's command files. Enter or
+	// click inserts "/name " so arguments can follow (default insert);
+	// Alt+Enter sends the invocation as typed — expansion happens in the
+	// daemon either way. Not steering: the body splices only when invoked.
+
+	const SLASH_RE = /^\/([A-Za-z0-9_-]*)$/;
+
+	let menuHighlight = $state(0);
+	// Escape closes until the query goes away; without this the very next
+	// keystroke would reopen the menu the user just dismissed.
+	let escaped = $state(false);
+
+	let slashQuery = $derived.by(() => {
+		if (value === "") return null;
+		const match = SLASH_RE.exec(value.trimStart());
+		return match === null ? null : match[1];
+	});
+
+	let menuCommands = $derived(
+		slashQuery === null ? [] : matchCommands(slashCommands.items, slashQuery),
+	);
+
+	let menuOpen = $derived(
+		slashQuery !== null && !escaped && menuCommands.length > 0 && !disabled,
+	);
+
+	// The listing is never pushed and may predate an edit to a command
+	// file, so each open asks again — one cheap directory read.
+	$effect(() => {
+		if (menuOpen) requestCommands(workspacePath ?? null);
+	});
+
+	// The query going away also clears an Escape, so dismissing the menu
+	// for "/de" doesn't stick when the user starts a different command.
+	$effect(() => {
+		if (slashQuery === null) escaped = false;
+	});
+
+	function pickCommand(command: CommandEntry): void {
+		value = `/${command.name} `;
+		menuHighlight = 0;
+		textarea?.focus();
+	}
+
+	function handleMenuKeydown(event: KeyboardEvent): boolean {
+		if (!menuOpen) return false;
+		if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+			event.preventDefault();
+			const delta = event.key === "ArrowDown" ? 1 : -1;
+			const count = menuCommands.length;
+			menuHighlight = (menuHighlight + delta + count) % count;
+			return true;
+		}
+		if (event.key === "Enter" && !event.altKey) {
+			event.preventDefault();
+			pickCommand(menuCommands[menuHighlight]);
+			return true;
+		}
+		if (event.key === "Escape") {
+			event.preventDefault();
+			escaped = true;
+			menuHighlight = 0;
+			return true;
+		}
+		return false;
+	}
 
 	// Re-measure on every edit; cap growth at MAX_ROWS lines.
 	$effect(() => {
@@ -137,7 +210,10 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent): void {
-		if (shouldSubmit(event.key, event.shiftKey)) {
+		if (handleMenuKeydown(event)) return;
+		// Over an open menu, Alt+Enter sends the invocation as typed — the
+		// "send" half of insert-or-send (insert is the default).
+		if (shouldSubmit(event.key, event.shiftKey) || (event.key === "Enter" && event.altKey)) {
 			event.preventDefault();
 			submit();
 		}
@@ -170,6 +246,34 @@
 				onremove={removeAttachment}
 			/>
 		{/if}
+		{#if menuOpen}
+			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+			<ul
+				class="slash-menu"
+				role="listbox"
+				aria-label="Slash commands"
+				id="slash-command-menu"
+			>
+				{#each menuCommands as command, i (command.source + ":" + command.path)}
+					<!-- svelte-ignore a11y_mouse_events_have_key_events -->
+					<li role="presentation" onmouseenter={() => (menuHighlight = i)}>
+						<button
+							type="button"
+							class="slash-item"
+							class:active={i === menuHighlight}
+							role="option"
+							aria-selected={i === menuHighlight}
+							title={command.path}
+							onclick={() => pickCommand(command)}
+						>
+							<span class="slash-name">/{command.name}</span>
+							<span class="slash-source">{command.fallback ? "claude" : command.source}</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
+			<p class="slash-hint">Enter inserts · Alt+Enter sends</p>
+		{/if}
 		<div class="row">
 			<textarea
 				bind:this={textarea}
@@ -178,6 +282,12 @@
 				{disabled}
 				placeholder={disabled ? "Waiting for a session…" : "Message the agent…"}
 				aria-label="Message composer"
+				// Combobox is the textbook role for "textbox with a popup", and
+				// the only one under which aria-expanded/controls are legal.
+				role="combobox"
+				aria-autocomplete="list"
+				aria-expanded={menuOpen}
+				aria-controls={menuOpen ? "slash-command-menu" : undefined}
 				onkeydown={handleKeydown}
 				onpaste={handlePaste}
 			></textarea>
@@ -265,6 +375,52 @@
 		display: flex;
 		align-items: flex-end;
 		gap: var(--space-2);
+	}
+
+	/* The slash-command menu sits between the chips and the input row, so
+	   the card grows upward around it instead of overlaying the page. */
+	.slash-menu {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-bottom: 1px solid var(--color-hairline);
+	}
+
+	.slash-item {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		width: 100%;
+		padding: var(--space-2) var(--space-2);
+		background: transparent;
+		border: none;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		text-align: left;
+		font-size: var(--text-sm);
+		color: var(--color-ink);
+	}
+
+	.slash-item.active,
+	.slash-item:hover {
+		background: var(--color-sunken);
+	}
+
+	.slash-name {
+		font-family: var(--font-mono);
+	}
+
+	.slash-source {
+		margin-left: auto;
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
+	}
+
+	.slash-hint {
+		margin: 0;
+		padding-top: var(--space-1);
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
 	}
 
 	textarea {

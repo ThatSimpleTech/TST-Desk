@@ -376,6 +376,19 @@ class ListPins(ClientMessage):
     workspace_path: str
 
 
+class ListCommands(ClientMessage):
+    """List the workspace's slash commands (TD-4501). Human path.
+
+    Workspace ``.tst/commands/`` merged with user-global
+    ``~/.tstdesk/commands/`` — which is why this is keyed on
+    ``workspace_path``, not a session: the user-global half exists
+    before any session opens.
+    """
+
+    type: Literal["list_commands"] = "list_commands"
+    workspace_path: str
+
+
 class AddPin(ClientMessage):
     """Pin a workspace file or folder (TD-2804). Human path."""
 
@@ -1152,6 +1165,18 @@ class InstructionFileEntry(BaseModel):
     kind: Literal["agents", "claude", "rule"]
 
 
+class CommandEntry(BaseModel):
+    """One slash command offered after a ``/`` (TD-4501)."""
+
+    name: str
+    # Which tree owns it. User-global wins a name over the workspace.
+    source: Literal["workspace", "user"]
+    path: str
+    # True when served from .claude/commands because the tree had no
+    # commands of our own (TD-4501).
+    fallback: bool = False
+
+
 class MemoryFileDiff(BaseModel):
     """One file in a ``memory_proposal`` (TD-2401)."""
 
@@ -1311,6 +1336,20 @@ class PolicyRules(DaemonEvent):
     type: Literal["policy_rules"] = "policy_rules"
     seq: int = 1
     rules: list[PolicyRuleSummary] = Field(default_factory=list)
+
+
+class Commands(DaemonEvent):
+    """Reply to ``list_commands`` (TD-4501). Connection-scoped.
+
+    A listing, not state: nothing pushes it, so a client that reloads
+    re-asks. Command bodies ride only inside the turn that invokes them —
+    never in this event, never in the cache prefix.
+    """
+
+    type: Literal["commands"] = "commands"
+    seq: int = 1
+    workspace_path: str
+    commands: list[CommandEntry] = Field(default_factory=list)
 
 
 class SetupState(DaemonEvent):
@@ -1658,6 +1697,7 @@ ClientMessageT = Annotated[
     | ListMemory
     | SaveMemory
     | CreateRule
+    | ListCommands
     | ListPins
     | AddPin
     | RemovePin
@@ -1722,6 +1762,7 @@ DaemonEventT = Annotated[
     | MemoryProposal
     | SessionList
     | PolicyRules
+    | Commands
     | SetupState
     | ApiKeyValidated
     | DiagnosticsReport
@@ -1772,6 +1813,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_memory",
         "save_memory",
         "create_rule",
+        "list_commands",
         "list_pins",
         "add_pin",
         "remove_pin",
@@ -1831,6 +1873,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tier_switched",
         "instruction_stack",
         "instruction_files",
+        "commands",
         "context_pins",
         "memory_files",
         "memory_proposal",

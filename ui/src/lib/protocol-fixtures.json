@@ -146,6 +146,33 @@
     "workspace_path": "/home/user/project",
     "name": "api"
   },
+  "set_tier_slug": {
+    "type": "set_tier_slug",
+    "preset": "tst-default",
+    "tier": "brain",
+    "slug": "claude-opus-4"
+  },
+  "set_mcp_server": {
+    "type": "set_mcp_server",
+    "name": "git",
+    "command": [
+      "uvx",
+      "mcp-server-git"
+    ]
+  },
+  "set_mcp_enabled": {
+    "type": "set_mcp_enabled",
+    "name": "git",
+    "enabled": false
+  },
+  "remove_mcp_server": {
+    "type": "remove_mcp_server",
+    "name": "git"
+  },
+  "list_commands": {
+    "type": "list_commands",
+    "workspace_path": "/home/user/project"
+  },
   "list_pins": {
     "type": "list_pins",
     "workspace_path": "/home/user/project"
@@ -634,6 +661,25 @@
     ],
     "created": null
   },
+  "commands": {
+    "type": "commands",
+    "seq": 1,
+    "workspace_path": "/home/user/project",
+    "commands": [
+      {
+        "name": "deploy",
+        "source": "workspace",
+        "path": "/home/user/project/.tst/commands/deploy.md",
+        "fallback": false
+      },
+      {
+        "name": "review",
+        "source": "user",
+        "path": "~/.tstdesk/commands/review.md",
+        "fallback": true
+      }
+    ]
+  },
   "context_pins": {
     "type": "context_pins",
     "seq": 1,
@@ -730,7 +776,8 @@
     "cu_glow": true,
     "cu_agent_cursor": true,
     "cu_show_on_real_display": false,
-    "pinned_workspaces": []
+    "pinned_workspaces": [],
+    "mcp_servers": []
   },
   "api_key_validated": {
     "type": "api_key_validated",
