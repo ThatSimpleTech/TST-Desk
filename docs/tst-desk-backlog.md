@@ -5518,12 +5518,30 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 5 · **Depends on:** TD-1004, TD-501
 
 **Acceptance criteria:**
-- [ ] `.tst/commands/*.md` and `~/.tstdesk/commands/*.md` (user-global
+- [x] `.tst/commands/*.md` and `~/.tstdesk/commands/*.md` (user-global
       wins on name)
-- [ ] `/` in the composer lists them; insert or send (default insert)
-- [ ] Not steering — not in the cache prefix unless invoked
-- [ ] Agent writes to those trees are Class C
-- [ ] Fallback: `.claude/commands/` when ours is empty
+- [x] `/` in the composer lists them; insert or send (default insert)
+- [x] Not steering — not in the cache prefix unless invoked
+- [x] Agent writes to those trees are Class C
+- [x] Fallback: `.claude/commands/` when ours is empty
+
+**Completed (2026-08-21):** discovery lives in
+`tstd/context/commands.py` — four layers merged best-name-first
+(workspace fallback < workspace < user fallback < user), stems filtered
+to `[A-Za-z0-9_-]+`, symlink escapes skipped. The daemon answers
+`list_commands` with a connection-scoped `commands` event keyed on the
+workspace, so the menu works before any session exists; nothing pushes
+it and it is never replayed on attach, and the composer re-asks each
+time the menu opens rather than trusting a stale listing. Invocation is
+a daemon-side splice in the UserMessage handler: a `/name args` prefix
+expands to delimited command body + arguments in that one turn's user
+message, never touching the cache prefix; an unknown name is delivered
+verbatim, not an error. Steering enforcement reuses one predicate:
+`is_steering_write` now covers both rules directories, which lights the
+fs Class C rule, the shell Class C rule (redirects and `tee` into either
+tree, `~`-paths expanded first), and PathGuard's refusal together.
+Writes into the user-global trees from shell are Class C too — a blind
+spot closed while the predicate was open on the table.
 
 ---
 

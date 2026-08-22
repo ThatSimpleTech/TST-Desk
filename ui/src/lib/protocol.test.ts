@@ -23,6 +23,10 @@ import type {
   Detach,
   SetPlanMode,
   SetTier,
+  SetTierSlug,
+  SetMcpServer,
+  SetMcpEnabled,
+  RemoveMcpServer,
   GetInstructionStack,
   ListInstructions,
   ListMemory,
@@ -31,9 +35,12 @@ import type {
   ContextPins,
   CreateRule,
   ListPins,
+  ListCommands,
   RemovePin,
   EndSession,
   InstructionFiles,
+  CommandEntry,
+  Commands,
   MemoryFiles,
   MemoryAccept,
   MemoryEdit,
@@ -257,6 +264,35 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(m.tier).toBe("brain");
   });
 
+  it("set_tier_slug", () => {
+    const m = fixtures.set_tier_slug as SetTierSlug;
+    expect(m.type).toBe("set_tier_slug");
+    expect(isString(m.preset)).toBe(true);
+    expect(m.tier).toBe("brain");
+    expect(isString(m.slug)).toBe(true);
+  });
+
+  it("set_mcp_server", () => {
+    const m = fixtures.set_mcp_server as SetMcpServer;
+    expect(m.type).toBe("set_mcp_server");
+    expect(isString(m.name)).toBe(true);
+    expect(Array.isArray(m.command)).toBe(true);
+    expect(m.command.length).toBeGreaterThan(0);
+  });
+
+  it("set_mcp_enabled", () => {
+    const m = fixtures.set_mcp_enabled as SetMcpEnabled;
+    expect(m.type).toBe("set_mcp_enabled");
+    expect(isString(m.name)).toBe(true);
+    expect(isBoolean(m.enabled)).toBe(true);
+  });
+
+  it("remove_mcp_server", () => {
+    const m = fixtures.remove_mcp_server as RemoveMcpServer;
+    expect(m.type).toBe("remove_mcp_server");
+    expect(isString(m.name)).toBe(true);
+  });
+
   it("set_plan_mode", () => {
     const m = fixtures.set_plan_mode as SetPlanMode;
     expect(m.type).toBe("set_plan_mode");
@@ -298,6 +334,14 @@ describe("Client message fixtures match TypeScript types", () => {
   it("list_pins", () => {
     const m = fixtures.list_pins as ListPins;
     expect(m.type).toBe("list_pins");
+  });
+
+  it("list_commands", () => {
+    const m = fixtures.list_commands as ListCommands;
+    expect(m.type).toBe("list_commands");
+    // TD-4501: keyed on the workspace, no session needed — user-global
+    // commands must list before any session exists.
+    expect(isString(m.workspace_path)).toBe(true);
   });
 
   it("add_pin", () => {
@@ -526,6 +570,23 @@ describe("Daemon event fixtures match TypeScript types", () => {
       expect(isString(rule.args)).toBe(true);
       expect(["auto", "ask", "never"]).toContain(rule.effect);
     }
+  });
+
+  it("commands", () => {
+    const m = fixtures.commands as Commands;
+    expect(m.type).toBe("commands");
+    // TD-4501: connection-scoped like policy_rules — seq pinned to 1.
+    expect(m.seq).toBe(1);
+    expect(isString(m.workspace_path)).toBe(true);
+    expect(Array.isArray(m.commands)).toBe(true);
+    for (const c of m.commands as CommandEntry[]) {
+      expect(isString(c.name)).toBe(true);
+      expect(["workspace", "user"]).toContain(c.source);
+      expect(isString(c.path)).toBe(true);
+      expect(isBoolean(c.fallback)).toBe(true);
+    }
+    expect(m.commands.some((c) => c.source === "user")).toBe(true);
+    expect(m.commands.some((c) => c.fallback)).toBe(true);
   });
 
   it("decision_logged", () => {
@@ -804,6 +865,8 @@ describe("All fixtures have required shape", () => {
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",
       "list_pins", "add_pin", "remove_pin",
+      "set_tier_slug", "set_mcp_server", "set_mcp_enabled", "remove_mcp_server",
+      "list_commands",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
       "run_diagnostics",
@@ -827,6 +890,7 @@ describe("All fixtures have required shape", () => {
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "instruction_files", "context_pins", "memory_files", "memory_proposal", "session_list", "policy_rules", "error",
+      "commands",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",
