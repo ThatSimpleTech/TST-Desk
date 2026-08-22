@@ -276,9 +276,10 @@ Directly ported from the WARDEN design.
 
 - **Approval gates.** Tool calls classify as `auto` / `ask` / `never`. Policy is per-workspace
   in `.tst/config.yaml`, overridable per-session in the UI. "Always allow this command in this
-  workspace" writes back to policy. Settings → Policy also has a machine-wide Skip all
-  approvals toggle (user data dir, not the workspace file). It skips the ask for Class B;
-  Class C and the boundary still win.
+  workspace" writes back to policy. Settings → Policy also has a machine-wide
+  Dangerously skip permissions toggle (user data dir, not the workspace file). It
+  skips every ask, including shell and Class C, and does not pause at caps. A
+  never rule and the fs-tool boundary still win.
 - **Append-only audit log** in SQLite: turn, tool, args, result hash, model, tokens, cost,
   timestamp. Never mutated. Exportable.
 - **Cost ceilings.** Per-session and per-day spend caps that pause the session and raise a card

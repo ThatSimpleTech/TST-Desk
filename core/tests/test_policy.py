@@ -327,31 +327,36 @@ class TestSkipAll:
         cfg = PolicyConfig(rules=[_rule("fs_write", "**", "ask")])
         assert resolve(cfg, FS_WRITE, {"path": "src/x.py"}, B, skip_all=True) == "auto"
 
-    def test_shell_is_exempt_from_promotion(self) -> None:
-        # TD-4818: the shell's B floor is the only gate on an opaque
-        # command string; skip-all must not auto-run it.
+    def test_promotes_shell_class_b(self) -> None:
+        # TD-805: skip-all is the yolo bit. Shell B is included.
         decision = resolve_explained(PolicyConfig(), SHELL, {"command": "ls"}, B, skip_all=True)
-        assert decision.effect == "ask"
+        assert decision.effect == "auto"
+        assert decision.reason == "skip-all approvals is on"
 
-    def test_shell_ask_rule_is_not_promoted_either(self) -> None:
+    def test_promotes_a_shell_ask_rule(self) -> None:
         cfg = PolicyConfig(rules=[_rule("shell", "**", "ask")])
-        assert resolve(cfg, SHELL, {"command": "ls"}, B, skip_all=True) == "ask"
+        assert resolve(cfg, SHELL, {"command": "ls"}, B, skip_all=True) == "auto"
 
     def test_shell_explicit_auto_rule_still_runs(self) -> None:
-        # The escape hatch: a deliberate workspace rule, not the floor.
         cfg = PolicyConfig(rules=[_rule("shell", "git status", "auto")])
         assert resolve(cfg, SHELL, {"command": "git status"}, B, skip_all=True) == "auto"
 
-    def test_class_c_still_asks(self) -> None:
-        assert resolve(PolicyConfig(), SHELL, {"command": "ls"}, C, skip_all=True) == "ask"
+    def test_promotes_class_c_ask(self) -> None:
+        decision = resolve_explained(PolicyConfig(), SHELL, {"command": "ls"}, C, skip_all=True)
+        assert decision.effect == "auto"
+        assert decision.reason == "skip-all approvals is on"
 
     def test_class_c_configured_never_still_never(self) -> None:
         cfg = PolicyConfig(class_c_default="never")
         assert resolve(cfg, SHELL, {"command": "ls"}, C, skip_all=True) == "never"
 
-    def test_auto_rule_still_cannot_downgrade_class_c(self) -> None:
+    def test_auto_rule_for_class_c_runs_under_skip_all(self) -> None:
         cfg = PolicyConfig(rules=[_rule("shell", "**", "auto")])
-        assert resolve(cfg, SHELL, {"command": "ls"}, C, skip_all=True) == "ask"
+        assert resolve(cfg, SHELL, {"command": "ls"}, C, skip_all=True) == "auto"
+
+    def test_class_c_wall_stands_when_skip_all_is_off(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("shell", "**", "auto")])
+        assert resolve(cfg, SHELL, {"command": "ls"}, C, skip_all=False) == "ask"
 
     def test_never_rule_still_refuses(self) -> None:
         cfg = PolicyConfig(rules=[_rule("shell", "**", "never")])

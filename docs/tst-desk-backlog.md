@@ -1200,6 +1200,44 @@ on `setup_state`, and `resolve()` promotes Class B `ask` to `auto` when
 the bit is on. Class C and `never` are unchanged. Turning it on approves
 every parked non-C call.
 
+### TD-805 — Skip-all includes shell (yolo)
+**Size:** 2 · **Depends on:** TD-804, TD-4818
+
+The 2026-08-18 ask was YOLO / `--dangerously-skip-permissions`. TD-4818
+then exempted `shell` from skip-all after a review found unparsed write
+forms auto-ran. That left the toggle lying: Always-allow still writes
+the exact command, so a computer-use worker that shells `limactl` asks
+on every new line.
+
+**Acceptance criteria:**
+- [x] `resolve_explained` promotes Class B `shell` ask→auto when skip-all is on
+- [x] Class C and `never` still stop — this is not a wall bypass
+- [x] Settings → Policy names the toggle honestly and says shell is included
+- [x] Tests: skip-all + shell B auto-runs; skip-all + shell C still asks
+
+Completed 2026-08-22 (branch `td/805-dangerously-skip-permissions`): the
+TD-4818 tool-name exemption is removed. The same machine-wide bit is
+the yolo switch; `effect: yolo` stays invalid. Copy and configuration.md
+updated. Class B decision recorded in DECISIONS.md.
+
+### TD-806 — Skip-all is skip everything
+**Size:** 2 · **Depends on:** TD-805
+
+The packaged app still asked on every new `limactl` line: skip-all
+was on, TD-805 was only in source, and Always-allow is exact-match.
+The user asked for skip everything with no cap pause.
+
+**Acceptance criteria:**
+- [x] `resolve_explained` promotes Class C `ask`→auto when skip-all is on
+- [x] A `never` rule still refuses
+- [x] Turning skip-all on releases parked Class C as well as B
+- [x] Cap checks return no violation while skip-all is on
+- [x] Settings copy says shell, Class C, and caps are included
+
+Completed 2026-08-22 (branch `td/805-dangerously-skip-permissions`).
+The fs-tool boundary still refuses steering-file writes; a Class C
+shell redirect will run. Class C decision recorded in DECISIONS.md.
+
 ---
 
 ## Epic E9 — Audit and cost
@@ -6291,6 +6329,10 @@ Found by the 2026-08-21 ox-alpha review (Vuln 2). The B floor exists because the
 classifier cannot see inside a command string; promoting it under skip-all makes every
 unparsed write form (`eval`, `sh -c`, `cp`, command substitution) a silent steering
 write. This also falsifies the TD-4805 DECISIONS rationale — repaired, not relitigated.
+
+**Superseded in part by TD-805 (2026-08-22):** the skip-all exemption for
+`shell` is removed. The configuration.md wording for what the static
+table actually catches still stands.
 
 ### TD-4819 — Credential-URL env filter misses password-only form
 **Size:** 1 · **Depends on:** TD-4805

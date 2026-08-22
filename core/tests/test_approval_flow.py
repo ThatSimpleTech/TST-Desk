@@ -405,7 +405,7 @@ class TestSkipAll:
         assert results[0].error_code == "policy_denied"
 
     @pytest.mark.asyncio
-    async def test_turning_on_releases_parked_b_and_leaves_c(self, tmp_path: Path) -> None:
+    async def test_turning_on_releases_parked_b_and_c(self, tmp_path: Path) -> None:
         daemon = Daemon(data_dir=tmp_path / "data")
         daemon_task = asyncio.create_task(daemon.run())
         for _ in range(50):
@@ -448,14 +448,10 @@ class TestSkipAll:
             ack = await _recv_until(ws, "setup_state")
             assert ack["skip_all_approvals"] is True
 
-            outcome = await asyncio.wait_for(parked_b, timeout=2)
-            assert outcome.approved
-            await asyncio.sleep(0.1)
-            assert not parked_c.done()
-            assert session.get_pending_approval("tc-c") is not None
-
-            assert session.resolve_approval("tc-c", False)
-            await asyncio.wait_for(parked_c, timeout=2)
+            outcome_b = await asyncio.wait_for(parked_b, timeout=2)
+            outcome_c = await asyncio.wait_for(parked_c, timeout=2)
+            assert outcome_b.approved
+            assert outcome_c.approved
             await ws.close()
         finally:
             daemon._shutdown_event.set()

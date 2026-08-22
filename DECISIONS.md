@@ -7661,3 +7661,51 @@ leaves a halo on screen.
 **Alternative rejected:** Painting from the Tauri host — a daemon→host round trip
 before every screenshot to hide the ring, racing the grab; and painting in-process
 in the sidecar — interleaving an AppKit runloop with the asyncio stdio loop.
+
+---
+
+## 2026-08-22 — TD-805: skip-all includes shell again (Class B)
+
+**Decision:** Remove the TD-4818 exemption that kept `shell` from skip-all
+promotion. The existing machine-wide bit is the yolo /
+`--dangerously-skip-permissions` mode: Class B `ask` becomes `auto` for
+every tool, including `shell`. Class C, `never`, and the boundary still
+win. The Settings label is **Dangerously skip permissions** so the copy
+matches the gate. `effect: yolo` stays invalid.
+
+**Rationale:** TD-804 was asked for as YOLO. TD-4818 then made the toggle
+lie — Always-allow still writes the exact command summary, so a
+computer-use worker that shells a new `limactl …` line asked on every
+call. The user asked again, by name, for the dangerous mode. A second
+toggle would be two bits for one intent. Restoring promotion on the
+existing bit, and naming it honestly, is the smaller surface.
+
+**What this reopens:** unparsed shell write forms that classify B
+(`eval`, `sh -c`, `cp` into a steering path) auto-run while the toggle
+is on. That is the informed-consent trade. Class C forms the static
+table *does* see still stop.
+
+**Alternative rejected:** A second "even more dangerous" bit next to
+skip-all. The user already has skip-all on and thinks it is yolo.
+Splitting them keeps the lie.
+
+---
+
+## 2026-08-22 — TD-806: skip-all is skip everything (Class C)
+
+**Decision:** While skip-all is on, every `ask` becomes `auto`, including
+Class C and `shell`. Turning it on releases parked C as well as B. Cap
+checks are skipped. A `never` rule still refuses. The fs-tool boundary
+still refuses steering-file writes before policy is consulted.
+
+**Rationale:** TD-805 still asked in the running packaged app, and the
+user asked again, by name, for skip everything with no limit. The
+toggle they already have on is that switch. A second bit, or leaving
+C/caps as cards, is the same lie as TD-4818.
+
+**What this reopens:** Class C shell redirects into steering paths
+auto-run. Spend/time/iteration caps do not pause. That is the
+informed-consent trade. `never` and the fs-tool wall stay.
+
+**Alternative rejected:** Leave C and caps as the remaining cards.
+The user already rejected that.

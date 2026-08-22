@@ -567,14 +567,14 @@ class Session:
         return True
 
     def resolve_skippable_approvals(self) -> int:
-        """Approve every parked call skip-all is allowed to take (TD-804).
+        """Approve every parked call (TD-804 / TD-806).
 
-        Class C stays parked.  Returns how many calls were released.
+        Skip-all is skip-everything: Class C is released too. A
+        ``never`` rule never parks, so it is not in this map. Returns
+        how many calls were released.
         """
         released = 0
-        for tool_call_id, pending in list(self._pending_approvals.items()):
-            if pending.decision_class is DecisionClass.C:
-                continue
+        for tool_call_id, _pending in list(self._pending_approvals.items()):
             if self.resolve_approval(tool_call_id, True):
                 released += 1
         return released

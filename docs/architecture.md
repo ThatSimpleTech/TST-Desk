@@ -288,7 +288,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls. |
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
-| `set_skip_all_approvals` | — | Turn skip-all approvals on or off. Machine-wide; Class C and `never` are unaffected. Acked with `setup_state`. |
+| `set_skip_all_approvals` | — | Turn skip-all (dangerously skip permissions) on or off. Machine-wide; every ask including shell and Class C runs as auto; caps do not pause; `never` still refuses. Acked with `setup_state`. |
 | `set_load_global_memory` | — | Turn global memory on or off. Machine-wide; off never reads `~/.tstdesk/memory/`. Acked with `setup_state` (TD-2603). |
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
 | `set_cu_indicators` | — | Computer-use glow, agent cursor, and real-display overlay. Machine-wide; persists `{user_data_dir}/cu-indicators.yaml`. Acked with `setup_state` (TD-3402). |
