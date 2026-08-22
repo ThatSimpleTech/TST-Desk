@@ -53,6 +53,7 @@ from tstd.config import (
     AutonomyConfig,
     ComputerUseConfig,
     ConfigError,
+    CredentialConfig,
     EmbeddingsConfig,
     GroundingConfig,
     ModelConfig,
@@ -213,6 +214,7 @@ _AUTONOMY_FIELDS = frozenset(AutonomyConfig.model_fields)
 _SLACK_NOTIFY_FIELDS = frozenset(SlackNotifyConfig.model_fields)
 _NTFY_NOTIFY_FIELDS = frozenset(NtfyNotifyConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
+_CREDENTIAL_FIELDS = frozenset(CredentialConfig.model_fields)
 _SECTION_FIELDS = frozenset(BoundarySection.model_fields)
 _CAPS_FIELDS = frozenset(CapsSection.model_fields)
 _MEMORY_FIELDS = frozenset(MemorySection.model_fields)
@@ -287,6 +289,9 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                 _check_keys(data["notify"]["ntfy"], _NTFY_NOTIFY_FIELDS, f"{where} notify.ntfy")
         if "autonomy" in data:
             _check_keys(data["autonomy"], _AUTONOMY_FIELDS, f"{where} autonomy")
+        if "credentials" in data:
+            for cid, body in data["credentials"].items():
+                _check_keys(body, _CREDENTIAL_FIELDS, f"{where} credentials.{cid}")
         for name, preset in data.get("presets", {}).items():
             _check_keys(preset, _PRESET_FIELDS, f"{where} presets.{name}")
             for tier, body in preset.items():
@@ -316,6 +321,7 @@ def test_every_config_key_is_documented() -> None:
         | _SLACK_NOTIFY_FIELDS
         | _NTFY_NOTIFY_FIELDS
         | _PRESET_FIELDS
+        | _CREDENTIAL_FIELDS
         | _TIER_FIELDS
         | WORKSPACE_SECTIONS
         | _SECTION_FIELDS

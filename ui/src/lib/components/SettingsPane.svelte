@@ -12,54 +12,31 @@
 		setTheme,
 		setCoworker,
 		setRemoteAttach,
-		isDiscovered,
-		saveSlug,
 		loadRules,
 		SETTINGS_SECTIONS,
 		THEMES,
 		type SettingsSection,
 	} from '../settings.svelte.js';
-	import { storeKey, validateKey, removeKey, onboarding } from '../onboarding.svelte.js';
 	import { session } from '../session-status.svelte.js';
 	import PolicyRuleList from './PolicyRuleList.svelte';
+	import SettingsKeys from './SettingsKeys.svelte';
+	import SettingsModels from './SettingsModels.svelte';
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
 	import CuPermissionsPane from './CuPermissionsPane.svelte';
 	import Icon from './Icon.svelte';
-
-	const TIERS = ['brain', 'worker', 'validator'] as const;
 
 	const SECTION_LABEL: Record<SettingsSection, string> = {
 		appearance: 'Appearance',
 		model: 'Model',
 		policy: 'Policy',
-		key: 'API key',
+		key: 'API keys',
 	};
-
-	/** Draft slug per tier. Empty means "unchanged" — never "clear it". */
-	let drafts = $state<Record<string, string>>({});
-	let keyDraft = $state('');
-
-	function slugValue(tier: string): string {
-		return drafts[tier] ?? settings.tierSlugs[tier] ?? '';
-	}
-
-	function commitSlug(tier: string): void {
-		const next = slugValue(tier).trim();
-		if (next === '' || next === settings.tierSlugs[tier]) return;
-		saveSlug(tier, next);
-	}
 
 	function pick(next: SettingsSection): void {
 		setSection(next);
 		// Rules are per-workspace, so they are fetched on entry rather than
 		// held across workspace switches.
 		if (next === 'policy') loadRules(session.sessionId);
-	}
-
-	function submitKey(): void {
-		if (keyDraft.trim() === '') return;
-		storeKey(keyDraft.trim());
-		keyDraft = '';
 	}
 </script>
 
@@ -155,71 +132,11 @@
 					<CuIndicatorToggles />
 					<CuPermissionsPane variant="settings" />
 				{:else if settings.section === 'model'}
-					<p class="hint">
-						Preset <strong>{settings.activePreset ?? '—'}</strong>. Edits are saved to your
-						config.yaml and apply to new sessions.
-					</p>
-					{#each TIERS as tier (tier)}
-						<label class="field">
-							<span class="field-name">{tier}</span>
-							<input
-								class="input"
-								type="text"
-								value={slugValue(tier)}
-								placeholder={isDiscovered(tier) ? 'discovered from the endpoint' : ''}
-								disabled={settings.savingTier === tier}
-								oninput={(e) => (drafts[tier] = e.currentTarget.value)}
-								onblur={() => commitSlug(tier)}
-							/>
-						</label>
-					{/each}
-					{#if TIERS.some((t) => isDiscovered(t))}
-						<p class="hint">
-							A tier left blank asks the endpoint for its model each run. Naming one here pins it.
-						</p>
-					{/if}
+					<SettingsModels />
 				{:else if settings.section === 'policy'}
 					<PolicyRuleList sessionId={session.sessionId} />
 				{:else}
-					{#if !settings.keyRequired}
-						<p class="hint">
-							The active preset runs on a local endpoint, so no key is sent. You can still store one
-							for other presets.
-						</p>
-					{/if}
-					<p class="hint">
-						{settings.hasApiKey ? 'A key is stored in your OS keychain.' : 'No key stored.'}
-					</p>
-					<label class="field">
-						<span class="field-name">New key</span>
-						<input
-							class="input"
-							type="password"
-							autocomplete="off"
-							bind:value={keyDraft}
-							placeholder="sk-…"
-						/>
-					</label>
-					<div class="actions">
-						<button class="btn" type="button" disabled={keyDraft.trim() === ''} onclick={submitKey}
-							>Save key</button
-						>
-						<button
-							class="btn"
-							type="button"
-							disabled={onboarding.validating}
-							onclick={() => validateKey()}>Test</button
-						>
-						<button
-							class="btn btn--danger"
-							type="button"
-							disabled={!settings.hasApiKey}
-							onclick={removeKey}>Remove</button
-						>
-					</div>
-					{#if onboarding.validation}
-						<p class="hint" aria-live="polite">{onboarding.validation.detail}</p>
-					{/if}
+					<SettingsKeys />
 				{/if}
 			</div>
 		</div>
@@ -359,62 +276,5 @@
 		font-weight: var(--weight-medium);
 		color: var(--color-ink);
 		margin: 0;
-	}
-
-	.field {
-		display: grid;
-		grid-template-columns: 6rem 1fr;
-		align-items: center;
-		gap: var(--space-3);
-		margin-top: var(--space-3);
-	}
-
-	.field-name {
-		font-size: var(--text-sm);
-		color: var(--color-ink-secondary);
-	}
-
-	.input {
-		font-family: var(--font-mono);
-		font-size: var(--text-sm);
-		color: var(--color-ink);
-		background: var(--color-ground);
-		border: 1px solid var(--color-hairline);
-		border-radius: var(--radius-sm);
-		padding: var(--space-2);
-	}
-
-	.input:disabled {
-		opacity: 0.6;
-	}
-
-	.actions {
-		display: flex;
-		gap: var(--space-2);
-		margin-top: var(--space-3);
-	}
-
-	.btn {
-		font-size: var(--text-sm);
-		color: var(--color-ink);
-		background: transparent;
-		border: 1px solid var(--color-hairline);
-		border-radius: var(--radius-sm);
-		padding: var(--space-1) var(--space-3);
-		cursor: pointer;
-	}
-
-	.btn:hover:not(:disabled) {
-		border-color: var(--color-accent);
-	}
-
-	.btn:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-
-	.btn--danger:hover:not(:disabled) {
-		border-color: var(--color-err);
-		color: var(--color-err);
 	}
 </style>

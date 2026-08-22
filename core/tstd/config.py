@@ -10,6 +10,7 @@ actionable error messages that name the offending key.
 
 from __future__ import annotations
 
+import re
 import shutil
 from functools import lru_cache
 from importlib import resources
@@ -31,7 +32,51 @@ PRESETS: tuple[str, ...] = ("tst-default", "budget", "local", "vllm")
 
 DEFAULT_PRESET = "tst-default"
 
+# Implicit keychain account for an unbound remote tier (TD-1717).
+DEFAULT_CREDENTIAL_ID = "openrouter"
+RESERVED_CREDENTIAL_IDS = frozenset({"slack-webhook", "ntfy-topic"})
+CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
 _DEFAULT_CONFIG_RESOURCE = "config.yaml"
+
+
+def slugify_credential_name(name: str) -> str:
+    """Turn a display name into a keychain-safe credential id."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")[:32]
+    if not slug or not slug[0].isalpha():
+        slug = ("key-" + slug).strip("-")[:32]
+    if not slug or not slug[0].isalpha():
+        slug = "key"
+    return slug
+
+
+def allocate_credential_id(name: str, existing: set[str]) -> str:
+    """Pick an unused id for *name*, skipping reserved keychain accounts."""
+    base = slugify_credential_name(name)
+    candidates = [base, *[f"{base}-{n}" for n in range(2, 100)]]
+    for candidate in candidates:
+        trimmed = candidate[:32]
+        if (
+            CREDENTIAL_ID_RE.match(trimmed)
+            and trimmed not in existing
+            and trimmed not in RESERVED_CREDENTIAL_IDS
+        ):
+            return trimmed
+    raise ConfigError(f"Could not allocate a credential id for {name!r}")
+
+
+def resolve_credential_id(tier: TierConfig) -> str | None:
+    """Keychain account a tier will send, or None when it sends no key.
+
+    A bound id always wins, including on loopback (a local server can
+    require ``--api-key``). Unbound loopback stays keyless (TD-1801).
+    Unbound remote keeps the historical ``openrouter`` account.
+    """
+    if tier.credential:
+        return tier.credential
+    if is_loopback_url(tier.base_url):
+        return None
+    return DEFAULT_CREDENTIAL_ID
 
 
 def is_loopback_url(url: str) -> bool:
@@ -96,6 +141,17 @@ class TierConfig(BaseModel):
     cache_read_price: float = Field(ge=0)
     context_window: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
+    # Named key from the credentials catalog (TD-1717). None / omitted /
+    # blank means unbound: loopback sends no key, remote uses openrouter.
+    credential: str | None = None
+
+    @field_validator("credential")
+    @classmethod
+    def _blank_credential_is_unbound(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
     @model_validator(mode="after")
     def _slug_required_off_box(self) -> TierConfig:
@@ -134,6 +190,16 @@ class Preset(BaseModel):
     brain: TierConfig
     worker: TierConfig
     validator: TierConfig
+
+
+class CredentialConfig(BaseModel):
+    """Display name for one keychain-backed API key (TD-1717).
+
+    The secret is never here. The mapping key is the id; this holds the
+    name the Settings screen shows.
+    """
+
+    name: str = Field(min_length=1, max_length=40)
 
 
 class SearchConfig(BaseModel):
@@ -347,6 +413,7 @@ class ModelConfig(BaseModel):
 
     presets: dict[str, Preset]
     active_preset: str = DEFAULT_PRESET
+    credentials: dict[str, CredentialConfig] = Field(default_factory=dict)
     search: SearchConfig = Field(default_factory=SearchConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
@@ -355,6 +422,38 @@ class ModelConfig(BaseModel):
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
+
+    @field_validator("credentials")
+    @classmethod
+    def _valid_credential_ids(
+        cls, value: dict[str, CredentialConfig]
+    ) -> dict[str, CredentialConfig]:
+        reserved = sorted(RESERVED_CREDENTIAL_IDS & set(value))
+        if reserved:
+            raise ValueError(
+                f"credential id(s) reserved for other keychain accounts: {', '.join(reserved)}"
+            )
+        bad = sorted(cid for cid in value if not CREDENTIAL_ID_RE.match(cid))
+        if bad:
+            raise ValueError(
+                f"credential id(s) must be a lowercase slug "
+                f"[a-z][a-z0-9-]{{0,31}}: {', '.join(bad)}"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _bound_credentials_exist(self) -> ModelConfig:
+        known = set(self.credentials) | {DEFAULT_CREDENTIAL_ID}
+        for preset_name, preset in self.presets.items():
+            for tier_name in TIER_NAMES:
+                tier = getattr(preset, tier_name)
+                cid = tier.credential
+                if cid is not None and cid not in known:
+                    raise ValueError(
+                        f"presets.{preset_name}.{tier_name}.credential "
+                        f"{cid!r} is not a declared credential"
+                    )
+        return self
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -366,13 +465,14 @@ class ModelConfig(BaseModel):
         return {name: preset.__getattribute__(name) for name in TIER_NAMES}
 
     def requires_api_key(self) -> bool:
-        """Whether the active preset needs a stored key (TD-1801).
+        """Whether the active preset will send at least one key (TD-1801, TD-1717).
 
-        False only when every tier is a loopback endpoint. Conservative on
-        purpose: one off-box tier means the workspace still needs a key, so a
-        mixed preset never degrades into an unauthenticated remote call.
+        True when any tier is off-box (unbound remotes still use
+        ``openrouter``) or a loopback tier is bound to a named key.
+        Conservative on purpose: a mixed preset never degrades into an
+        unauthenticated remote call.
         """
-        return not all(is_loopback_url(t.base_url) for t in self.tiers().values())
+        return any(resolve_credential_id(t) is not None for t in self.tiers().values())
 
 
 class ConfigError(Exception):
@@ -446,6 +546,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "remote",
         "notify",
         "autonomy",
+        "credentials",
     ):
         if key in data:
             continue

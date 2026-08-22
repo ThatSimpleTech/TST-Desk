@@ -25,10 +25,13 @@ from tstd.config import (
     RemoteConfig,
     SlackNotifyConfig,
     TierConfig,
+    allocate_credential_id,
     cached_config,
     default_config_yaml,
     ensure_user_config,
     load_config,
+    resolve_credential_id,
+    slugify_credential_name,
 )
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -407,6 +410,67 @@ presets:
         path = _write_config(tmp_path, "just a string\n")
         with pytest.raises(ConfigError, match="mapping"):
             load_config(path)
+
+
+# ── Named credentials (TD-1717) ──────────────────────────────────────────
+
+
+class TestCredentials:
+    def test_shipped_catalog_names_openrouter(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
+        assert cfg.credentials["openrouter"].name == "OpenRouter"
+        assert cfg.tier("brain").credential == "openrouter"
+
+    def test_local_preset_stays_unbound(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path).model_copy(update={"active_preset": "local"})
+        for tier in cfg.tiers().values():
+            assert tier.credential is None
+            assert resolve_credential_id(tier) is None
+
+    def test_unbound_remote_uses_openrouter(self) -> None:
+        tier = TierConfig(
+            slug="demo/brain",
+            base_url="https://example.com/v1",
+            input_price=0,
+            output_price=0,
+            cache_read_price=0,
+            context_window=100,
+            max_output_tokens=10,
+        )
+        assert resolve_credential_id(tier) == "openrouter"
+
+    def test_bound_loopback_needs_a_key(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
+        local = cfg.presets["local"].brain.model_copy(update={"credential": "openrouter"})
+        cfg.presets["local"].brain = local
+        cfg = cfg.model_copy(update={"active_preset": "local"})
+        assert resolve_credential_id(cfg.tier("brain")) == "openrouter"
+        assert cfg.requires_api_key() is True
+
+    def test_reserved_id_is_rejected(self, tmp_path: Path) -> None:
+        path = _write_config(tmp_path, default_config_yaml())
+        data = path.read_text()
+        data = data.replace(
+            "  openrouter:\n    name: OpenRouter\n",
+            "  openrouter:\n    name: OpenRouter\n  slack-webhook:\n    name: Slack\n",
+        )
+        path.write_text(data)
+        with pytest.raises(ConfigError, match="reserved"):
+            load_config(path)
+
+    def test_unknown_binding_is_rejected(self, tmp_path: Path) -> None:
+        path = _write_config(tmp_path, default_config_yaml())
+        text = path.read_text().replace(
+            "      credential: openrouter\n      input_price: 2.80",
+            "      credential: nope\n      input_price: 2.80",
+        )
+        path.write_text(text)
+        with pytest.raises(ConfigError, match="not a declared credential"):
+            load_config(path)
+
+    def test_slugify_and_allocate(self) -> None:
+        assert slugify_credential_name("Open Router") == "open-router"
+        assert allocate_credential_id("Local", {"local"}) == "local-2"
 
 
 # ─ Slug detection in source code ───────────────────────────────────────────

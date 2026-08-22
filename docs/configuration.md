@@ -57,6 +57,7 @@ no effect.
 |---|---|---|---|
 | `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, `local`, and `vllm`. |
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
+| `credentials` | mapping of id → `{ name }` | empty | Named API keys. The `name` is what Settings shows. The secret is never here — it lives in the OS keychain as `tst-<id>`. Omitted in an older user copy is filled from the shipped file at load. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
@@ -64,6 +65,55 @@ no effect.
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 | `autonomy` | mapping | see below | Rootless container used only for autonomous runs (TD-4301). Interactive sessions ignore this block. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
+
+### `credentials`
+
+Named API keys (TD-1717). Each entry is an id (the keychain account suffix) and a
+`name` the Settings screen shows. Add as many as you need — OpenRouter, a keyed
+local server, a second remote. A tier's `credential` field picks which one that
+model sends.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `name` | string, 1–40 chars | *required* | The local given name. Shown in Settings → Model. Never a secret. |
+
+Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook` and
+`ntfy-topic` are reserved for other keychain accounts.
+
+<!-- verify: model -->
+```yaml
+presets:
+  demo:
+    brain:
+      slug: demo/brain
+      base_url: https://openrouter.ai/api/v1
+      credential: openrouter
+      input_price: 1
+      output_price: 2
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    worker:
+      slug: demo/worker
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    validator:
+      slug: demo/validator
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+active_preset: demo
+credentials:
+  openrouter:
+    name: OpenRouter
+```
 
 ### `search`
 
@@ -247,6 +297,9 @@ presets:
       context_window: 8192
       max_output_tokens: 256
 active_preset: demo
+credentials:
+  openrouter:
+    name: OpenRouter
 search:
   base_url: http://127.0.0.1:8888/search
   timeout_seconds: 15
@@ -303,7 +356,8 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `slug` | string, non-empty | none | The model identifier sent as `model` on every request. Optional **only** when `base_url` is on loopback — see §3.4. `slug:` with no value means the same as leaving it out; `slug: ""` is an error. |
-| `base_url` | string | *required* | The OpenAI-compatible endpoint. Requests go to `{base_url}/chat/completions`. Also decides credentials: a loopback URL is called with no `Authorization` header at all, anything else is called with your stored key. |
+| `base_url` | string | *required* | The OpenAI-compatible endpoint. Requests go to `{base_url}/chat/completions`. |
+| `credential` | string | none | Named key from `credentials`. A bound id is sent even on loopback. Unbound loopback sends no key. Unbound remote uses `openrouter`. |
 | `input_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens that were not served from cache. |
 | `output_price` | float ≥ 0 | *required* | Dollars per **million** completion tokens. |
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
@@ -437,8 +491,10 @@ What that buys you, and what it costs you:
 - Nothing is written back. Swap the model on the server and the next run picks it up.
 - A `slug` you write always wins and suppresses the request entirely. That is the fix for a
   server hosting more than one model.
-- No API key is read or sent for a loopback endpoint. A preset whose tiers are all loopback
-  needs no key at all; one off-box tier and the workspace needs one again.
+- No API key is read or sent for an unbound loopback endpoint. Bind a named key
+  (`credential`) when the local server requires one. A preset whose tiers are all
+  unbound loopback needs no key at all; one off-box tier and the workspace needs
+  one again.
 
 An **off-box** endpoint with no slug is a load error, because discovery would never run to fill
 it in:

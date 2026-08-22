@@ -102,7 +102,7 @@ class FakeProviderClient:
     raise_on_build: Exception | None = None
 
     @classmethod
-    async def from_keychain(cls, base_url: str) -> FakeProviderClient:
+    async def from_keychain(cls, base_url: str, **kwargs: object) -> FakeProviderClient:
         if cls.raise_on_build is not None:
             raise cls.raise_on_build
         return cls()

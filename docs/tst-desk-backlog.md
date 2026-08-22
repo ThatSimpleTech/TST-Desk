@@ -3849,6 +3849,49 @@ unfired. 8 daemon tests cover ping shape, cadence, handshake gating, shutdown, a
 superseding its predecessor.
 
 
+### TD-1717 — Named API keys, bound per model
+**Size:** 5 · **Depends on:** TD-1703, TD-1801
+
+A single keychain slot is not enough: people keep an OpenRouter key and a
+local-server key (and often a third). Names live in `config.yaml`; secrets
+stay in the OS keychain. Each tier picks which named key it sends. A
+loopback tier with no binding still sends nothing (TD-1801). Binding a
+named key to a loopback tier is how a local server that requires `--api-key`
+authenticates.
+
+**Acceptance criteria:**
+- [x] Settings → API keys lists every named key by the user-given name,
+      never the secret; add / rename / test / remove work through the
+      keychain
+- [x] Settings → Model lets each tier pick a named key (shown by given
+      name) or none
+- [x] An off-box tier with no binding still uses the existing
+      `openrouter` keychain account, so current installs keep working
+- [x] A loopback tier with no binding sends no `Authorization` header
+- [x] A loopback tier bound to a named key sends that key
+- [x] Secrets never appear in `config.yaml`, `setup_state`, logs, or the
+      audit database
+- [x] The first-run wizard still stores one key as `openrouter` /
+      "OpenRouter"
+
+**Done (2026-08-22).** Catalog is `credentials:` in the user `config.yaml`
+(id → name). Secrets stay in the OS keychain as `tst-{id}`. Each tier
+may set `credential:`. Unbound loopback is still keyless; unbound remote
+still uses `openrouter`. Settings → API keys lists given names; Model
+picks a key per tier by that name, or none on loopback. Wizard path
+unchanged. Class B in `DECISIONS.md`.
+
+**Notes:** Catalog is `credentials:` in the user `config.yaml` (`id` →
+`name`). Keychain account remains `tst-{id}`. Reserved ids:
+`slack-webhook`, `ntfy-topic`. Additive protocol: `setup_state.credentials`
+and `tier_credentials`; `set_api_key` gains optional `credential` + `name`;
+new `set_credential`, `delete_credential`, `set_tier_credential`. No
+`PROTOCOL_VERSION` bump.
+
+User ask 2026-08-22.
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 

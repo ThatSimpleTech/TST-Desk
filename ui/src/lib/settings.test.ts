@@ -53,6 +53,12 @@ import {
 	setCoworker,
 	setRemoteAttach,
 	setCuIndicators,
+	storeNamedKey,
+	deleteNamedKey,
+	renameCredential,
+	saveTierCredential,
+	selectedCredential,
+	validateNamedKey,
 } from "./settings.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -451,5 +457,52 @@ describe("key section", () => {
 		startSettings();
 		emit(setupState({ has_api_key: true }));
 		expect(JSON.stringify(settings)).not.toMatch(/sk-|api_key/);
+	});
+
+	it("lists named keys from setup_state and never the secret (TD-1717)", () => {
+		startSettings();
+		emit(
+			setupState({
+				credentials: [
+					{ id: "openrouter", name: "OpenRouter", stored: true },
+					{ id: "local", name: "Local", stored: false },
+				],
+				tier_credentials: { brain: "openrouter", worker: null, validator: null },
+				tier_loopback: { brain: false, worker: true, validator: true },
+			}),
+		);
+		expect(settings.credentials.map((c) => c.name)).toEqual(["OpenRouter", "Local"]);
+		expect(selectedCredential("brain")).toBe("openrouter");
+		expect(selectedCredential("worker")).toBe("");
+		expect(JSON.stringify(settings)).not.toMatch(/sk-/);
+	});
+
+	it("storeNamedKey sends name and key, not a guessed id", () => {
+		startSettings();
+		storeNamedKey("Local", "  sk-lab-1  ");
+		expect(mocks.sent).toEqual([
+			{ type: "set_api_key", api_key: "sk-lab-1", name: "Local", credential: null },
+		]);
+	});
+
+	it("saveTierCredential writes the given name's id", () => {
+		startSettings();
+		emit(setupState({ active_preset: "local" }));
+		saveTierCredential("brain", "local");
+		expect(mocks.sent).toEqual([
+			{ type: "set_tier_credential", preset: "local", tier: "brain", credential: "local" },
+		]);
+	});
+
+	it("deleteNamedKey and rename stay on the catalog, never a secret", () => {
+		startSettings();
+		renameCredential("local", "Home lab");
+		deleteNamedKey("local");
+		validateNamedKey("local");
+		expect(mocks.sent).toEqual([
+			{ type: "set_credential", credential: "local", name: "Home lab" },
+			{ type: "delete_credential", credential: "local" },
+			{ type: "validate_api_key", credential: "local" },
+		]);
 	});
 });
