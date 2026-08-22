@@ -5,8 +5,10 @@ API keys live in the OS keychain, never in config files or environment variables
 reading and writing secrets.
 
 Supported platforms:
-- macOS: `security` CLI to the system keychain
-- Linux: `secret-tool` CLI (libsecret)
+- macOS: `security` CLI to the system keychain; writes go through the
+  Security framework instead (keychain_macos, TD-4813) so the secret never
+  rides in a process's argument list
+- Linux: `secret-tool` CLI (libsecret); the secret travels over stdin
 - Windows: Credential Manager via ctypes (keychain_windows, TD-1102)
 
 The service name is always ``com.thatsimpletech.tstdesk``.
@@ -133,21 +135,14 @@ class MacOSKeychain(KeychainBackend):
         with contextlib.suppress(KeychainError):
             await self.delete_secret(account, service)
 
-        proc = await asyncio.create_subprocess_exec(
-            "security",
-            "add-generic-password",
-            "-a",
-            account,
-            "-s",
-            service,
-            "-w",
-            secret,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise _classify_cli_failure(stderr.decode().strip(), "Failed to store keychain secret")
+        # TD-4813: the write goes through the Security framework, not the CLI.
+        # `add-generic-password -w <secret>` puts the key in argv, where any
+        # same-user process can read it with ps for the lifetime of the call;
+        # SecItemAdd passes it as in-memory CFData instead. Reads and deletes
+        # stay on the CLI — their argv carries only names, not secrets.
+        from . import keychain_macos
+
+        await asyncio.to_thread(keychain_macos._sec_add, service, account, secret)
 
     async def delete_secret(
         self, account: str, service: str = "com.thatsimpletech.tstdesk"
