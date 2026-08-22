@@ -225,8 +225,9 @@ class PathGuard:
             raise RefusalError(
                 "steering_file",
                 target,
-                "steering files (AGENTS.md/CLAUDE.md/.tst/rules) and the "
-                "approval policy (.tst/config.yaml) are read-only",
+                "steering files (AGENTS.md/CLAUDE.md/.tst/rules), the slash-command "
+                "tree (.tst/commands), and the approval policy (.tst/config.yaml) "
+                "are read-only",
             )
         root = self.boundary.workspace_root
         if root is None or not is_in_workspace(self.boundary, target):

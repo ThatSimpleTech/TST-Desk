@@ -33,6 +33,8 @@ from tstd.protocol import (
     Cancel,
     CheckCuPermissions,
     CheckpointNotice,
+    CommandEntry,
+    Commands,
     ContextCompacted,
     ContextPinEntry,
     ContextPins,
@@ -62,7 +64,9 @@ from tstd.protocol import (
     InstructionFileEntry,
     InstructionFiles,
     InstructionStack,
+    InstructionStackEntry,
     ListArtifacts,
+    ListCommands,
     ListInstructions,
     ListMemory,
     ListPins,
@@ -86,6 +90,7 @@ from tstd.protocol import (
     PolicyRules,
     PolicyRuleSummary,
     Ready,
+    RemoveMcpServer,
     RemovePin,
     RenameSession,
     Resume,
@@ -96,17 +101,21 @@ from tstd.protocol import (
     ScreenFrame,
     SessionList,
     SessionState,
+    SessionSummary,
     SetApiKey,
     SetBranch,
     SetCoworker,
     SetCuIndicators,
     SetCuKill,
     SetLoadGlobalMemory,
+    SetMcpEnabled,
+    SetMcpServer,
     SetPlanMode,
     SetPreset,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
+    SetTierSlug,
     SetupState,
     SetWorkspacePin,
     ShellOutput,
@@ -170,6 +179,11 @@ FIXTURES = {
         content="durable: ruff\n",
     ),
     "create_rule": CreateRule(workspace_path="/home/user/project", name="api"),
+    "set_tier_slug": SetTierSlug(preset="tst-default", tier="brain", slug="claude-opus-4"),
+    "set_mcp_server": SetMcpServer(name="git", command=["uvx", "mcp-server-git"]),
+    "set_mcp_enabled": SetMcpEnabled(name="git", enabled=False),
+    "remove_mcp_server": RemoveMcpServer(name="git"),
+    "list_commands": ListCommands(workspace_path="/home/user/project"),
     "list_pins": ListPins(workspace_path="/home/user/project"),
     "add_pin": AddPin(workspace_path="/home/user/project", path="src/app.ts"),
     "remove_pin": RemovePin(workspace_path="/home/user/project", path="src/app.ts"),
@@ -411,12 +425,12 @@ FIXTURES = {
     "instruction_stack": InstructionStack(
         session_id="sess-1",
         sources=[
-            {
-                "path": "CLAUDE.md",
-                "precedence": "project",
-                "tokens": 500,
-                "token_method": "cl100k_base",
-            }
+            InstructionStackEntry(
+                path="CLAUDE.md",
+                precedence="project",
+                tokens=500,
+                token_method="cl100k_base",
+            )
         ],
         total_tokens=500,
         token_method="cl100k_base",
@@ -444,6 +458,24 @@ FIXTURES = {
         ],
         created=None,
     ),
+    # Slash commands (TD-4501): one workspace-owned entry and the fallback
+    # flag, so the TS side sees both shapes.
+    "commands": Commands(
+        workspace_path="/home/user/project",
+        commands=[
+            CommandEntry(
+                name="deploy",
+                source="workspace",
+                path="/home/user/project/.tst/commands/deploy.md",
+            ),
+            CommandEntry(
+                name="review",
+                source="user",
+                path="~/.tstdesk/commands/review.md",
+                fallback=True,
+            ),
+        ],
+    ),
     "context_pins": ContextPins(
         workspace_path="/home/user/project",
         pins=[
@@ -466,26 +498,26 @@ FIXTURES = {
     ),
     "session_list": SessionList(
         sessions=[
-            {
-                "session_id": "sess-1",
-                "workspace_path": "/home/user/project",
-                "state": "interrupted",
-                "created_at": "2026-08-13T10:00:00Z",
-                "updated_at": "2026-08-13T10:00:00Z",
-                "event_count": 0,
-                "title": "hello world",
-            },
+            SessionSummary(
+                session_id="sess-1",
+                workspace_path="/home/user/project",
+                state="interrupted",
+                created_at="2026-08-13T10:00:00Z",
+                updated_at="2026-08-13T10:00:00Z",
+                event_count=0,
+                title="hello world",
+            ),
             # TD-1715: the list stays complete and marks what is filed away.
-            {
-                "session_id": "sess-2",
-                "workspace_path": "/home/user/project",
-                "state": "complete",
-                "created_at": "2026-08-13T09:00:00Z",
-                "updated_at": "2026-08-13T09:30:00Z",
-                "event_count": 12,
-                "archived": True,
-                "starred": True,
-            },
+            SessionSummary(
+                session_id="sess-2",
+                workspace_path="/home/user/project",
+                state="complete",
+                created_at="2026-08-13T09:00:00Z",
+                updated_at="2026-08-13T09:30:00Z",
+                event_count=12,
+                archived=True,
+                starred=True,
+            ),
         ]
     ),
     "policy_rules": PolicyRules(

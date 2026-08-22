@@ -281,6 +281,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `save_memory` | — | Save an edit from the Memory pane through the memory commit path. Never a tool (TD-2602). |
 | `create_rule` | — | Create a `.tst/rules/` file on the human path. Never a tool call (TD-2802). |
 | `list_pins` | — | List `.tst/context/pins.yaml` for the project home Context column (TD-2804). |
+| `list_commands` | — | List a workspace's slash commands: `.tst/commands/*.md`, with user-global `~/.tstdesk/commands/*.md` winning a shared name; each tree falls back to its `.claude/commands` twin when it holds none of ours. Keyed on the workspace so the composer's `/` menu works before any session exists (TD-4501). Acked with `commands`. |
 | `add_pin` | — | Pin a workspace file or folder. Outside the wall is refused. |
 | `remove_pin` | — | Unpin a path. The file stays. |
 | `memory_accept` | yes | Accept a distill proposal as proposed (TD-2401). |
@@ -350,6 +351,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |
+| `commands` | connection | The slash commands `list_commands` asked for (TD-4501). Never pushed and never replayed on attach; the menu re-asks when it opens, so an edited file is reflected on the next keystroke. |
 | `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_mcp_server` / `set_mcp_enabled` / `remove_mcp_server`. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |

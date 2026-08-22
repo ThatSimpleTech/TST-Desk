@@ -41,6 +41,7 @@
 	import Icon from './Icon.svelte';
 	import { start as startOnboarding, onboarding, closeWizard } from '../onboarding.svelte.js';
 	import { startSettings, openSettings, closeSettings, settings } from '../settings.svelte.js';
+	import { startSlashCommands } from '../commands.svelte.js';
 	import {
 		startCuPermissions,
 		closeCuPermissions,
@@ -139,6 +140,9 @@
 		const offDesign = startDesign();
 		const offCoworker = startCoworkerIndicator();
 		const offCuKill = startCuKill();
+		// TD-4501: the composer's "/" menu reads the commands store; the
+		// listing itself is pulled per-open, this only catches the replies.
+		const offSlashCommands = startSlashCommands();
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
 			offCloseHint = off;
@@ -159,6 +163,7 @@
 			offDesign();
 			offCoworker();
 			offCuKill();
+			offSlashCommands();
 			offCloseHint();
 		};
 	});

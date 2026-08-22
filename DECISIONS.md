@@ -7343,3 +7343,32 @@ keep their loaded tools rather than gaining mid-turn ones.
 the client. The client would echo back state it does not own (and fields
 this story deliberately does not model); the daemon owns the file, so the
 verbs name only what changes.
+
+
+## 2026-08-21 — TD-4501: Slash commands splice into one turn, and their trees ride steering's read-only rule
+
+**Decision:** A command is human-written markdown discovered from two
+trees — workspace `.tst/commands/*.md` and user-global
+`~/.tstdesk/commands/*.md` — merged best-name-first with **user-global
+winning**, the inverse of steering's precedence. Typing `/` lists them;
+Enter inserts `/name ` (Alt+Enter sends as typed). Invocation happens in
+the daemon's UserMessage handler: the body is spliced into that one
+turn's message between plain delimiter lines, never added to the cache
+prefix. Enforcement reuses `is_steering_write` for both trees, which
+lights the fs Class C rule, the shell Class C rule, and PathGuard's
+refusal from one predicate; shell write-targets into either tree are
+Class C too, with `~`-paths expanded before judging.
+
+**Rationale:** Splice-not-prefix copies what memory already does — loaded
+content that must not re-bill the whole prefix when edited. User-global
+wins because a personal override should beat a checked-in default, the
+same way local config beats an installed one; steering inverts this only
+because its files define the project, while commands express taste.
+One shared predicate instead of bespoke rules keeps the three enforcement
+points (fs, shell, PathGuard) from drifting apart the next time a tree
+is added.
+
+**Alternative rejected:** Registering commands as a system-prompt
+section resolved per turn. It would put every command body into every
+request the moment one exists, billing tokens for prose nobody invoked,
+and would make editing a command file a prefix invalidation.
