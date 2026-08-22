@@ -18,6 +18,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 
 from .attachments import AttachmentLimits
+from .autonomy.charter import Charter
 from .logging import redact_secrets, redact_structure
 from .router import TierName
 
@@ -368,6 +369,27 @@ class CreateRule(ClientMessage):
     type: Literal["create_rule"] = "create_rule"
     workspace_path: str
     name: str = Field(min_length=1)
+
+
+class GetCharter(ClientMessage):
+    """Load a workspace's signed charter (TD-4002). Human path."""
+
+    type: Literal["get_charter"] = "get_charter"
+    workspace_path: str
+
+
+class SaveCharter(ClientMessage):
+    """Write the charter as the human (TD-4002). Never a tool.
+
+    ``charter`` is a mapping, not a second schema: the daemon renders
+    YAML and runs :func:`tstd.autonomy.charter.parse_charter` so unknown
+    keys and missing fields fail with the field name.  Does not commit.
+    """
+
+    type: Literal["save_charter"] = "save_charter"
+    workspace_path: str
+    charter: dict[str, Any]
+    notes: str = ""
 
 
 class ListPins(ClientMessage):
@@ -1143,6 +1165,21 @@ class MemoryFiles(DaemonEvent):
     files: list[MemoryFileEntry] = Field(default_factory=list)
 
 
+class CharterDocument(DaemonEvent):
+    """Reply to ``get_charter`` / ``save_charter``. Connection-scoped.
+
+    ``charter`` reuses :class:`tstd.autonomy.charter.Charter` — one
+    schema.  Absent file: ``present`` is false and ``charter`` is null.
+    """
+
+    type: Literal["charter"] = "charter"
+    seq: int = 1
+    workspace_path: str
+    present: bool
+    charter: Charter | None = None
+    notes: str = ""
+
+
 class ContextPinEntry(BaseModel):
     """One pinned path on the Context column (TD-2804)."""
 
@@ -1636,6 +1673,8 @@ ClientMessageT = Annotated[
     | ListMemory
     | SaveMemory
     | CreateRule
+    | GetCharter
+    | SaveCharter
     | ListPins
     | AddPin
     | RemovePin
@@ -1697,6 +1736,7 @@ DaemonEventT = Annotated[
     | InstructionFiles
     | ContextPins
     | MemoryFiles
+    | CharterDocument
     | MemoryProposal
     | SessionList
     | PolicyRules
@@ -1750,6 +1790,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_memory",
         "save_memory",
         "create_rule",
+        "get_charter",
+        "save_charter",
         "list_pins",
         "add_pin",
         "remove_pin",
@@ -1811,6 +1853,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "instruction_files",
         "context_pins",
         "memory_files",
+        "charter",
         "memory_proposal",
         "session_list",
         "policy_rules",

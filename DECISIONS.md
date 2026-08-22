@@ -7742,3 +7742,29 @@ stories remain visibly unfinished rather than quietly absorbed.
 boxes on partial evidence (the sidecar smoke-launch alone). The first trades all velocity for
 one external dependency; the second would falsify the one document a stranger acts on and
 launder an unverified claim into the release story.
+
+---
+
+## 2026-08-22 — TD-4002: charter editor is a human verb, not a tool (Class B)
+
+**Decision:** `get_charter` and `save_charter` are connection-scoped
+client messages (`workspace_path`; save carries a `charter` mapping and
+optional `notes`). The reply is `charter` (`present`, the §12.4 fields,
+`notes`). `save_charter` renders YAML and runs `parse_charter` — that is
+the schema, not a second model — then walls `source_of_truth` with
+`PathGuard.check_read` and writes `.tst/autonomy/CHARTER.md`. It does
+not commit. The mapping is loose on the wire so unknown keys and missing
+fields fail as `invalid_charter` naming the field, not a generic
+`bad_request`. No reserved `version:` key: the charter already forbids
+extras, and the signature is the git commit (TD-4003).
+
+**Rationale:** Same family as `save_memory` / `create_rule`. The agent
+already cannot write the path (Class C, TD-4001). A tool that wrote it
+would be a bypass. Memory-pane save commits because TD-2602 required the
+memory commit path; the charter start gate requires a *signed* (committed)
+file, which is the sign-and-start story.
+
+**Alternative rejected:** Auto-committing on save. That would collapse
+edit and sign into one click and steal TD-4003's explicit start. Also
+rejected: a reserved `version:` field — it would be a schema fork for a
+number the start gate does not read.

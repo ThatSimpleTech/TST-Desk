@@ -26,6 +26,9 @@ import type {
   ListInstructions,
   ListMemory,
   SaveMemory,
+  GetCharter,
+  SaveCharter,
+  CharterDocument,
   AddPin,
   ContextPins,
   CreateRule,
@@ -298,6 +301,20 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.create_rule as CreateRule;
     expect(m.type).toBe("create_rule");
     expect(isString(m.name)).toBe(true);
+  });
+
+  it("get_charter", () => {
+    const m = fixtures.get_charter as GetCharter;
+    expect(m.type).toBe("get_charter");
+    expect(isString(m.workspace_path)).toBe(true);
+  });
+
+  it("save_charter", () => {
+    const m = fixtures.save_charter as SaveCharter;
+    expect(m.type).toBe("save_charter");
+    expect(isString(m.workspace_path)).toBe(true);
+    expect(typeof m.charter).toBe("object");
+    expect(m.notes).toBe("Human context.");
   });
 
   it("list_pins", () => {
@@ -810,6 +827,7 @@ describe("All fixtures have required shape", () => {
       "cancel", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",
+      "get_charter", "save_charter",
       "list_pins", "add_pin", "remove_pin",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
@@ -835,7 +853,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "context_pins", "memory_files", "memory_proposal", "session_list", "policy_rules", "error",
+      "instruction_stack", "instruction_files", "context_pins", "memory_files", "charter", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",
@@ -905,6 +923,14 @@ describe("Session lifecycle messages match TypeScript types", () => {
     const m = fixtures.memory_files as MemoryFiles;
     expect(m.type).toBe("memory_files");
     expect(Array.isArray(m.files)).toBe(true);
+  });
+
+  it("charter", () => {
+    const m = fixtures.charter as CharterDocument;
+    expect(m.type).toBe("charter");
+    expect(isString(m.workspace_path)).toBe(true);
+    expect(m.present).toBe(true);
+    expect(m.charter?.objective).toBeDefined();
   });
 
   it("instruction_files", () => {

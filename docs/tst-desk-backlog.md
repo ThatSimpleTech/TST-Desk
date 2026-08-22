@@ -5388,10 +5388,16 @@ whether the editor needs a reserved `version:` field is TD-4002's call.
 **Size:** 5 · **Depends on:** TD-4001, TD-1001
 
 **Acceptance criteria:**
-- [ ] A pane edits the charter as structured fields, writes the file
+- [x] A pane edits the charter as structured fields, writes the file
       as the human (not via tools)
-- [ ] `source_of_truth` paths are workspace-walled
-- [ ] Empty state points at spec §12.4
+- [x] `source_of_truth` paths are workspace-walled
+- [x] Empty state points at spec §12.4
+
+Closed as `get_charter` / `save_charter` (human path, never a tool) plus
+the project-home Charter column. The write validates with `parse_charter`
+and walls `source_of_truth` through `PathGuard.check_read`. It does not
+commit — signing is TD-4003. No reserved `version:` field: `extra="forbid"`
+would make one a schema change, and the committed file is the signature.
 
 ---
 
