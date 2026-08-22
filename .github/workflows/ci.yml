@@ -87,6 +87,19 @@ jobs:
             shell/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('shell/Cargo.lock') }}
 
+      # tauri-build validates bundle.externalBin (TD-4809) at compile time,
+      # so the sidecar path must exist even for clippy/test. CI never
+      # bundles; an empty sentinel satisfies the existence check. The real,
+      # smoke-tested binary comes from core/scripts/build_sidecar.py in the
+      # package workflow.
+      - name: Sentinel for externalBin validation
+        shell: bash
+        run: |
+          triple=$(rustc -vV | sed -n 's/^host: *//p')
+          case "$RUNNER_OS" in Windows) suffix=.exe ;; *) suffix= ;; esac
+          mkdir -p binaries
+          : > "binaries/tstd-${triple}${suffix}"
+
       - name: Clippy
         run: cargo clippy -- -D warnings
 

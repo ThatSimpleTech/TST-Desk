@@ -280,13 +280,18 @@ fn crash_backoff(restart: u32) -> Duration {
     Duration::from_millis(500 * restart as u64)
 }
 
-/// Resolve the `tstd` command. Order: `$TSTD_PATH`, the bundled sidecar
-/// (TD-1301), `tstd` on PATH, and, in debug (dev) builds, `uv run
-/// --directory <repo>/core tstd` as a fallback.
+/// Resolve the `tstd` command.
+///
+/// Dev (`dev_overrides`): `$TSTD_PATH`, then the core venv / `uv run`.
+/// Release: the bundled sidecar (TD-1301), then `tstd` on PATH. `$TSTD_PATH`
+/// is ignored — a release binary must not run whatever the environment
+/// names (TD-4809). Dev never falls through to the sidecar so `tauri
+/// dev` keeps tracking the checkout rather than latching onto a stale
+/// packaged binary once externalBin ships one next to the dev executable.
 fn resolve_command() -> Result<Vec<String>, String> {
     let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
     let which = |name: &str| which::which(name).ok();
-    resolve_with(env, which, bundled_sidecar)
+    resolve_with(env, which, bundled_sidecar, cfg!(debug_assertions))
 }
 
 /// The PyInstaller-built daemon shipped inside the app bundle (TD-1301).
@@ -300,13 +305,44 @@ fn bundled_sidecar() -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
+/// `dev_overrides` mirrors `cfg!(debug_assertions)` at the real call site
+/// and is a plain argument so tests can exercise release semantics from
+/// the debug toolchain. Dev-only resolution (`$TSTD_PATH`, the core venv,
+/// `uv run`) is additionally compiled out of release builds.
 fn resolve_with(
     env: impl Fn(&str) -> Option<String>,
     which: impl Fn(&str) -> Option<PathBuf>,
     sidecar: impl Fn() -> Option<PathBuf>,
+    dev_overrides: bool,
 ) -> Result<Vec<String>, String> {
-    if let Some(p) = env("TSTD_PATH") {
-        return Ok(vec![p]);
+    if dev_overrides {
+        if let Some(p) = env("TSTD_PATH") {
+            return Ok(vec![p]);
+        }
+        #[cfg(debug_assertions)]
+        {
+            // Dev fallback: the core workspace's own venv. Prefer the
+            // shebang script over `uv run` so we skip a wrapper, but
+            // TD-1304 accepts a descendant either way (the packaged
+            // onefile sidecar is one). This arm always resolves, so dev
+            // never falls through to the sidecar or PATH.
+            let core = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("core");
+            let venv_tstd = core.join(".venv").join("bin").join("tstd");
+            if venv_tstd.exists() {
+                return Ok(vec![venv_tstd.display().to_string()]);
+            }
+            return Ok(vec![
+                "uv".into(),
+                "run".into(),
+                "-q".into(),
+                "--directory".into(),
+                core.display().to_string(),
+                "tstd".into(),
+            ]);
+        }
     }
     if let Some(p) = sidecar() {
         return Ok(vec![p.display().to_string()]);
@@ -314,30 +350,7 @@ fn resolve_with(
     if let Some(p) = which("tstd") {
         return Ok(vec![p.display().to_string()]);
     }
-    #[cfg(debug_assertions)]
-    {
-        // Dev fallback: the core workspace's own venv. Prefer the shebang
-        // script over `uv run` so we skip a wrapper, but TD-1304 accepts a
-        // descendant either way (the packaged onefile sidecar is one).
-        let core = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("core");
-        let venv_tstd = core.join(".venv").join("bin").join("tstd");
-        if venv_tstd.exists() {
-            return Ok(vec![venv_tstd.display().to_string()]);
-        }
-        Ok(vec![
-            "uv".into(),
-            "run".into(),
-            "-q".into(),
-            "--directory".into(),
-            core.display().to_string(),
-            "tstd".into(),
-        ])
-    }
-    #[cfg(not(debug_assertions))]
-    Err("tstd not found; set TSTD_PATH or add it to PATH".into())
+    Err("tstd not found; the bundled daemon is missing and nothing named tstd is on PATH".into())
 }
 
 /// How the host is watching a live `tstd`: a child it spawned, or a
@@ -593,35 +606,68 @@ mod tests {
     }
 
     #[test]
-    fn tstd_path_env_wins_resolution() {
+    fn tstd_path_env_wins_dev_resolution() {
         let argv = resolve_with(
             |name| (name == "TSTD_PATH").then(|| "/custom/tstd".into()),
             |_| None,
             || Some(PathBuf::from("/bundle/tstd")),
+            true,
         )
         .unwrap();
         assert_eq!(argv, vec!["/custom/tstd".to_string()]);
     }
 
     #[test]
-    fn bundled_sidecar_wins_over_path() {
-        // The version-locked binary inside the bundle beats whatever a
-        // user happens to have installed on PATH (TD-1301).
+    fn dev_prefers_source_environment_over_sidecar() {
+        // Once externalBin ships, `tauri dev` finds a packaged binary next
+        // to the dev executable. Dev must keep tracking the checkout, not
+        // latch onto it (TD-4809).
         let argv = resolve_with(
             |_| None,
+            |_| None,
+            || Some(PathBuf::from("/bundle/tstd")),
+            true,
+        )
+        .unwrap();
+        assert_ne!(argv, vec!["/bundle/tstd".to_string()]);
+    }
+
+    #[test]
+    fn bundled_sidecar_wins_over_path_in_release() {
+        // The version-locked binary inside the bundle beats whatever a
+        // user happens to have installed on PATH (TD-1301) — and beats a
+        // TSTD_PATH pointing elsewhere (TD-4809).
+        let argv = resolve_with(
+            |name| (name == "TSTD_PATH").then(|| "/custom/tstd".into()),
             |name| (name == "tstd").then(|| PathBuf::from("/usr/local/bin/tstd")),
             || Some(PathBuf::from("/bundle/tstd")),
+            false,
         )
         .unwrap();
         assert_eq!(argv, vec!["/bundle/tstd".to_string()]);
     }
 
     #[test]
-    fn which_wins_over_uv_fallback() {
+    fn release_build_refuses_tstd_path() {
+        // A release binary runs its bundled daemon or PATH, never whatever
+        // the environment names (TD-4809). Nothing resolvable but
+        // TSTD_PATH → refuse rather than honor it.
+        let result = resolve_with(
+            |name| (name == "TSTD_PATH").then(|| "/custom/tstd".into()),
+            |_| None,
+            || None,
+            false,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn release_build_falls_back_to_path_without_sidecar() {
         let argv = resolve_with(
             |_| None,
             |name| (name == "tstd").then(|| PathBuf::from("/usr/local/bin/tstd")),
             || None,
+            false,
         )
         .unwrap();
         assert_eq!(argv, vec!["/usr/local/bin/tstd".to_string()]);
@@ -633,7 +679,7 @@ mod tests {
         // or `uv run ... tstd`. Either way the last token names tstd.
         #[cfg(debug_assertions)]
         {
-            let argv = resolve_with(|_| None, |_| None, || None).unwrap();
+            let argv = resolve_with(|_| None, |_| None, || None, true).unwrap();
             assert!(!argv.is_empty());
             assert!(argv.last().unwrap().ends_with("tstd"));
         }

@@ -6184,19 +6184,46 @@ configuration.md §4.6. Browser CU tools keep their `actuates` rail unchanged.
 **Size:** 2 · **Depends on:** TD-1301
 
 **Acceptance criteria:**
-- [ ] `TSTD_PATH` is honored in debug builds only (or renamed `TSTD_DEV_…`) — a release
+- [x] `TSTD_PATH` is honored in debug builds only (or renamed `TSTD_DEV_…`) — a release
       binary must run its bundled sidecar, not whatever the environment names
-- [ ] Windows `open_path` no longer builds a `cmd /C start` command line from an
+- [x] Windows `open_path` no longer builds a `cmd /C start` command line from an
       unsanitized path (opener plugin's path API, or validate and refuse metacharacters)
-- [ ] `externalBin` is declared in `tauri.conf.json` so the sidecar bundling cannot drift
+- [x] `externalBin` is declared in `tauri.conf.json` so the sidecar bundling cannot drift
       between the npm script and CI
-- [ ] A Rust test pins the release-build refusal; the Windows change is verified by review
+- [x] A Rust test pins the release-build refusal; the Windows change is verified by review
       and noted (no Windows CI)
 
 An environment variable that swaps the daemon binary is a dev convenience; honored in a
 release build it is a local-privilege hook into every session. The `cmd /C start` path
 concatenation is injectable with `&`-class metacharacters. The `externalBin` injection
 works today but lives in a quoted npm flag — invisible to anyone reading the Tauri config.
+
+**Completed (2026-08-22).** `resolve_with` gained a `dev_overrides` flag
+(`resolve_command` passes `cfg!(debug_assertions)`); dev-only resolution is also compiled
+out of release via cfg. Dev order: `$TSTD_PATH` → core venv → `uv run` (TD-1304 kept:
+dev always resolves) and deliberately *ahead* of the sidecar, so once externalBin ships a
+packaged binary next to `target/debug`, `tauri dev` still tracks the checkout instead of
+latching onto a stale sidecar. Release order: sidecar → `tstd` on PATH → refuse, with the
+error no longer advertising `TSTD_PATH`. Tests: five existing call sites pass the flag;
+new pins are the release refusal with `TSTD_PATH` set, sidecar-over-env precedence in
+release, and the release PATH fallback (absorbing old `which_wins_over_uv_fallback`,
+whose ordering no longer exists in dev).
+`open_path` now calls the opener plugin already registered on the app
+(`app.opener().open_path(path, None::<&str>)`); the hand-rolled three-platform spawn,
+including Windows' injectable `cmd /C start "" <path>`, is deleted. Review-verified only
+(no Windows CI): the plugin's path API hands the OS opener the path as a single argument,
+never through a shell.
+`bundle.externalBin: ["binaries/tstd"]` now lives in shell/tauri.conf.json; tauri:build
+dropped its `--config` override. Discovery worth keeping: tauri-build validates
+externalBin paths at compile time, so **every** `cargo` build of the shell crate needs
+`shell/binaries/tstd-<host triple>` to exist — that is why the declaration could only live
+in a flag `tauri build` saw before. Coverage: beforeBuildCommand builds it;
+beforeDevCommand runs `build_sidecar.py --if-missing` (first `tauri:dev` pays a one-time
+PyInstaller build); ci.yml's rust job creates an empty sentinel in `binaries/` (the job's
+working-directory is already `shell/`) before clippy/test; bare
+`cargo` in a fresh clone needs one sidecar build or the same sentinel (gitignored path,
+never dirties the tree). `build_sidecar.py` grew `--if-missing` plus a `target_path()`
+helper. Owed: a human `npm run tauri:dev` and packaged-launch pass.
 
 ### TD-4810 — daemon_supervision tests race on process-wide TSTD_PATH
 **Size:** 1 · **Depends on:** TD-1301
