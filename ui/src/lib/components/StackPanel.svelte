@@ -134,6 +134,32 @@
 				</ul>
 			{/if}
 		</section>
+		<section class="memory" aria-label="Skills">
+			<!-- TD-4502: loaded skill bodies, listed apart from steering —
+			     a skill arrives on demand (load_skill or /name), it is not
+			     prompt furniture, so it never joins the sources list. -->
+			<h2 class="memory-head">Skills</h2>
+			{#if stack.skills.length === 0}
+				<p class="memory-empty">no skills loaded yet</p>
+			{:else}
+				<ul class="sources">
+					{#each stack.skills as entry (entry.name)}
+						<li class="source">
+							<button class="file" onclick={() => open(entry.path)} title={entry.path}>
+								<span class="name">/{entry.name}</span>
+								<span class="tokens">{formatTokens(entry.tokens)} tok</span>
+							</button>
+							<div class="meta">
+								<span class="chip chip-note">{entry.source}</span>
+								{#if entry.fallback}
+									<span class="chip chip-note">fallback</span>
+								{/if}
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
 		<footer class="totals">
 			<span class="total">{formatTokens(stack.totalTokens)} tokens ({stack.tokenMethod})</span>
 			<span

@@ -30,6 +30,7 @@ from .provider import ChatMessage
 
 if TYPE_CHECKING:
     from .context.memory_loader import MemoryLoad
+    from .context.skills import LoadedSkill
     from .cost import CostTracker
     from .router import TierRouter
     from .tools.registry import Tool
@@ -270,6 +271,10 @@ class Session:
         # Last brain-turn memory selection (TD-2604). None until a brain
         # turn has run the loader.
         self.last_memory: MemoryLoad | None = None
+        # Skills whose bodies were loaded this session (TD-4502), by the
+        # load_skill tool or an invoked /name. The inspector lists them
+        # apart from steering; a reload of a name overwrites its entry.
+        self.loaded_skills: dict[str, LoadedSkill] = {}
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False

@@ -11,6 +11,7 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -123,13 +124,20 @@ class TestDaemonSplice:
         ws = tmp_path / "ws"
         _plant(ws / ".tst" / "commands", "deploy.md", "---\nhidden: true\n---\nShip it.\n")
         daemon = Daemon(data_dir=tmp_path / "data")
-        expanded = await daemon._expand_slash(str(ws), "/deploy prod now")
+        # TD-4502: expansion resolves against the session (skills record
+        # loads there); tests stand in a session-shaped namespace.
+        sess = SimpleNamespace(workspace_path=str(ws), loaded_skills={})
+        expanded = await daemon._expand_slash(sess, "/deploy prod now")  # type: ignore[arg-type]
         assert "Ship it." in expanded
         assert "prod now" in expanded
         assert "hidden" not in expanded
-        # Not a command: verbatim, slash and all.
-        assert await daemon._expand_slash(str(ws), "/nope args") == "/nope args"
-        assert await daemon._expand_slash(str(ws), "plain question?") == "plain question?"
+        # Not a command or skill: verbatim, slash and all.
+        assert (
+            await daemon._expand_slash(sess, "/nope args") == "/nope args"  # type: ignore[arg-type]
+        )
+        assert (
+            await daemon._expand_slash(sess, "plain question?") == "plain question?"  # type: ignore[arg-type]
+        )
 
 
 async def _start_daemon(tmp: str) -> tuple[Daemon, asyncio.Task[Any]]:

@@ -7372,3 +7372,40 @@ is added.
 section resolved per turn. It would put every command body into every
 request the moment one exists, billing tokens for prose nobody invoked,
 and would make editing a command file a prefix invalidation.
+
+
+## 2026-08-21 — TD-4502: Skills disclose progressively, and the SKILL.md name is read-only everywhere
+
+**Decision:** A skill is `<skills-dir>/<name>/SKILL.md` with YAML
+frontmatter limited to `description` and `whenToUse`, discovered from
+the same four layers as commands — workspace `.tst/skills`, user-global
+`~/.tstdesk/skills` winning a name, each falling back to its
+`.claude/skills` twin only when it holds none of ours. The brain tier's
+prompt carries a post-prefix catalog block of names and one-line
+metadata; bodies travel only through the `load_skill` tool or an
+invoked `/name` (commands answer first), spliced into the one turn that
+asked. A body larger than the active tier's compaction headroom is
+refused whole with both numbers stated. The `SKILL.md` basename is
+protected anywhere under the workspace and in the home skills trees —
+supporting assets inside a skill folder stay ordinary writable files.
+
+**Rationale:** Progressive disclosure keeps the cache prefix stable: a
+workspace can carry twenty skills and editing any of them re-bills only
+post-prefix blocks, the same property commands and memory already have.
+The catalog rides after the prefix rather than in it because skills are
+taste, not project law — losing them from the cached region costs a few
+hundred tokens per turn, while putting them in would make every skill
+edit a full-prefix re-bill. Refusing an over-budget load instead of
+truncating follows the command rule that half a document reads as a
+whole one; stating both numbers lets the model free context and retry.
+Protecting the basename rather than the directory is what makes the
+fallback story work — `.claude/skills` packages ship assets next to
+their manifest, and walling the whole folder would break every imported
+skill — while still denying the model any path to rewrite the prose it
+is told to follow.
+
+**Alternative rejected:** Preloading every skill body into the brain
+prompt (or into the steering resolver). It would have made skills
+steering by another name — re-billed on edit, capped by the memory
+budget, and invisible to the inspector's loaded-skills list — for no
+gain over a catalog row that costs one line until something invokes it.

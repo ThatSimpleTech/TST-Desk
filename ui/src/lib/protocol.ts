@@ -820,6 +820,18 @@ export interface MemoryStackEntry {
   reason: "always-index" | "heading" | "embedding";
 }
 
+// A skill whose body was loaded into the session this turn set
+// (TD-4502) — via load_skill or an invoked /name. Listed apart from
+// steering because a body arrives on demand; it is not prompt furniture.
+export interface SkillStackEntry {
+  name: string;
+  source: "workspace" | "user";
+  path: string;
+  tokens: number;
+  token_method: string;
+  fallback?: boolean;
+}
+
 export interface InstructionStack extends DaemonEvent {
   type: "instruction_stack";
   session_id: string;
@@ -835,6 +847,8 @@ export interface InstructionStack extends DaemonEvent {
   memory?: MemoryStackEntry[];
   memory_dropped?: MemoryStackEntry[];
   memory_placeholder?: boolean;
+  // Skill bodies loaded so far (TD-4502); absent on older daemons.
+  skills?: SkillStackEntry[];
 }
 
 export interface SessionSummary {
