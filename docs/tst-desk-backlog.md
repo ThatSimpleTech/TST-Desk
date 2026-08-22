@@ -5514,11 +5514,11 @@ TD-101: hard-required container. No unsandboxed autonomy.
 **Size:** 8 · **Depends on:** TD-4001
 
 **Acceptance criteria:**
-- [ ] Autonomous runs exec in rootless Podman (or documented
+- [x] Autonomous runs exec in rootless Podman (or documented
       equivalent) with only the workspace mounted
-- [ ] Missing runtime refuses start with install copy
-- [ ] Interactive mode does not require a container
-- [ ] Size 8 — Firecracker/EZER is a follow-up, not this story
+- [x] Missing runtime refuses start with install copy
+- [x] Interactive mode does not require a container
+- [x] Size 8 — Firecracker/EZER is a follow-up, not this story
 
 ---
 

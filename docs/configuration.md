@@ -63,6 +63,7 @@ no effect.
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
+| `autonomy` | mapping | see below | Rootless container used only for autonomous runs (TD-4301). Interactive sessions ignore this block. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
 
 ### `search`
 
@@ -202,6 +203,21 @@ macOS. A URL of the form `?ws=ws://…&token=…` (or the same pair in the hash)
 fills the form. No account, no relay. TD-3603 will copy address + token from
 Settings; this branch still types them.
 
+### `autonomy`
+
+Rootless container isolation for autonomous runs (TD-4301, spec §12.5).
+Interactive sessions do not require this. The start button (TD-4003)
+refuses without a live sandbox. `runtime` and `image` live here, never
+in Python — same rule as model slugs. The named runtime is Podman;
+another binary is accepted only if it speaks the same `run` argv
+(`--network=none`, `--userns=keep-id`, one bind mount of the workspace
+at `/workspace`). Firecracker / EZER is a follow-up, not this key.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `runtime` | string | `podman` | Argv0 probed on PATH, or an absolute path to an executable. Empty is a load error. |
+| `image` | string | `docker.io/library/alpine:3.21` | Image the container execs. Empty is a load error. Pre-pull it; the argv passes `--pull=never` so a start check cannot phone a registry. |
+
 <!-- verify: model -->
 ```yaml
 presets:
@@ -264,6 +280,9 @@ notify:
     enabled: false
     host: ""
     timeout_seconds: 5
+autonomy:
+  runtime: podman
+  image: docker.io/library/alpine:3.21
 ```
 
 ### A preset

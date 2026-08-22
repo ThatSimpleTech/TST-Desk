@@ -19,7 +19,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .logging import user_data_dir
 
@@ -320,6 +320,28 @@ class RemoteConfig(BaseModel):
         return value.strip()
 
 
+class AutonomyConfig(BaseModel):
+    """Rootless container used only for autonomous runs (TD-4301).
+
+    Interactive sessions ignore this block. ``runtime`` is the argv0
+    probed on PATH (or an absolute path). ``image`` is configuration,
+    never a Python literal — same rule as model slugs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    runtime: str = Field(default="podman", min_length=1)
+    image: str = Field(default="docker.io/library/alpine:3.21", min_length=1)
+
+    @field_validator("runtime", "image")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be empty")
+        return stripped
+
+
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
@@ -332,6 +354,7 @@ class ModelConfig(BaseModel):
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
+    autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -422,6 +445,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "computer_use",
         "remote",
         "notify",
+        "autonomy",
     ):
         if key in data:
             continue
