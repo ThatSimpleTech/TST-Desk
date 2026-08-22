@@ -4941,6 +4941,15 @@ pointer). The real-display host path is a no-op; screenshot tools raise
 `prefers-reduced-motion` is a static border and no trail. The store
 clears on `turn_complete`, cancel, and `cu_kill_state`.
 
+**Addendum (2026-08-22):** The real-display path is no longer a no-op: the
+sidecar paints a rust ring on every display while the agent drives
+(`tst_cu_mcp/overlay`, helper AppKit child; DECISIONS.md 2026-08-22). The
+toggle now defaults **on** and reaches the sidecar as `TST_CU_MCP_OVERLAY`
+at spawn; captures hide the ring with an acked `grab_begin`/`grab_end`
+bracket instead of the old `real_display_overlay_hidden` error. Verified
+end to end on macOS: ring pulses through the 8s linger, absent from every
+server-path capture, dark under the kill-switch.
+
 ---
 
 ### TD-3403 — Design mode
