@@ -5488,9 +5488,9 @@ would make one a schema change, and the committed file is the signature.
 **Size:** 5 · **Depends on:** TD-4101
 
 **Acceptance criteria:**
-- [ ] DoD commands run on the worker (or shell through the gate)
-- [ ] All green is a stop condition: run completes, summary fires
-- [ ] A red DoD is not an instant stop (that's TD-4203's N-in-a-row)
+- [x] DoD commands run on the worker (or shell through the gate)
+- [x] All green is a stop condition: run completes, summary fires
+- [x] A red DoD is not an instant stop (that's TD-4203's N-in-a-row)
 
 ---
 

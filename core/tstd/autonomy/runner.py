@@ -1,10 +1,10 @@
-"""Unattended autonomy scheduler (TD-4101).
+"""Unattended autonomy scheduler (TD-4101 / TD-4103).
 
 After the sign-and-start gate, a daemon-owned session iterates against
 the signed charter without waiting on a user message. This module is
-the scheduler: prompts, stop reasons, and the M7 notify. Tool
-execution stays on the existing dispatcher (the act seam).
-Interactive sessions never set ``Session.autonomy``.
+the scheduler: prompts, stop reasons, definition-of-done polling, and
+the M7 notify. Tool execution stays on the existing dispatcher (the
+act seam). Interactive sessions never set ``Session.autonomy``.
 """
 
 from __future__ import annotations
@@ -12,12 +12,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..config import ModelConfig
+from ..logging import get_logger
 from .charter import Charter
 
 if TYPE_CHECKING:
     from ..session import Session
 
+log = get_logger("tstd.autonomy.runner")
+
 CLASS_C_STOP = "Class C decision — autonomy stops"
+DOD_MET = "definition of done met"
 CONTINUE_PREFIX = "Continue the autonomous run."
 
 
@@ -51,8 +55,9 @@ def stop_reason(
 ) -> str | None:
     """Why the scheduler should stop, or ``None`` to enqueue another turn.
 
-    Definition-of-done polling is TD-4103. Drift / circuit breakers are
-    E42. This story stops on Class C and the signed iteration cap.
+    Definition-of-done is polled in ``advance_autonomy`` (TD-4103) and
+    wins over the iteration cap on the same turn. Drift / circuit
+    breakers are E42.
     """
     if class_c:
         return CLASS_C_STOP
@@ -62,9 +67,13 @@ def stop_reason(
 
 
 def should_notify(reason: str) -> bool:
-    """Class C and cap faults notify (spec §12.2 / §12.7). Clean complete does not."""
+    """Class C, cap faults, and a met definition of done notify.
+
+    A met DoD is the short complete summary (TD-4103). The richer
+    wake-up is TD-4303. Other clean stops still do not notify.
+    """
     return (
-        reason == CLASS_C_STOP
+        reason in (CLASS_C_STOP, DOD_MET)
         or reason.startswith("iteration cap")
         or reason.startswith("spend cap")
         or reason.startswith("wall-clock cap")
@@ -80,15 +89,24 @@ async def advance_autonomy(session: Session) -> bool:
         session.autonomy_stop_reason = CLASS_C_STOP
     elif session.autonomy_stop_reason is None:
         session.autonomy_turns += 1
-        reason = stop_reason(
-            charter=charter,
-            finished_turns=session.autonomy_turns,
-            class_c=session.autonomy_class_c,
-        )
-        if reason is None:
-            await session.add_user_message(continue_prompt(charter, session.autonomy_turns))
-            return True
-        session.autonomy_stop_reason = reason
+        if session.dod_poller is not None:
+            try:
+                poll = await session.dod_poller()
+            except Exception:
+                log.exception("definition-of-done poll failed")
+                poll = None
+            if poll is not None and poll.all_green:
+                session.autonomy_stop_reason = DOD_MET
+        if session.autonomy_stop_reason is None:
+            reason = stop_reason(
+                charter=charter,
+                finished_turns=session.autonomy_turns,
+                class_c=session.autonomy_class_c,
+            )
+            if reason is None:
+                await session.add_user_message(continue_prompt(charter, session.autonomy_turns))
+                return True
+            session.autonomy_stop_reason = reason
     reason = session.autonomy_stop_reason
     if session.autonomy_notify is not None and should_notify(reason):
         await session.autonomy_notify(reason)
@@ -100,6 +118,7 @@ async def notify_autonomy_stop(config: ModelConfig, message: str) -> None:
     from ..notify.ntfy import send as ntfy_send
     from ..notify.slack import send as slack_send
 
-    text = f"Autonomy stopped: {message}"
+    prefix = "Autonomy complete" if message == DOD_MET else "Autonomy stopped"
+    text = f"{prefix}: {message}"
     await slack_send(config, text)
     await ntfy_send(config, text)

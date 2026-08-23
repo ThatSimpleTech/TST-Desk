@@ -7913,3 +7913,29 @@ charter sign.
 reusing `tst/session/<id>` for autonomy (the spec names the auto
 prefix). Also rejected: letting autonomy degrade on a non-git
 workspace the way interactive does.
+
+---
+
+## 2026-08-22 — TD-4103: `$` is shell; prose is a worker verdict (Class B)
+
+**Decision:** After each finished autonomy turn, `advance_autonomy`
+polls every `definition_of_done` item before the iteration-cap check.
+An item that starts with `$` is an explicit shell command and runs
+through `ToolDispatcher.dispatch` (classifier + policy). Everything
+else is prose and is judged GREEN or RED by a worker-tier call. All
+green sets `autonomy_stop_reason` to `definition of done met` and
+notifies (`Autonomy complete: …`). Any red continues; a red streak is
+TD-4203. A poll is the scheduler asking, not an agent decision: Class
+C on a DoD command is treated as red and does not mark the run, and
+the ledger is not appended. Interactive sessions never attach a
+poller. The richer wake-up summary stays TD-4303.
+
+**Rationale:** Spec §12.4 examples are English (`"cargo test
+passes"`), not argv. Auto-shelling anything that looks like a command
+would execute that English as a binary. The `$` prefix is the one
+opt-in the charter author can write without a new config key.
+
+**Alternative rejected:** Treating every DoD item as a shell command.
+Also rejected: counting consecutive reds here (TD-4203). Also
+rejected: a new protocol event — notify is the summary this story
+asked for.
