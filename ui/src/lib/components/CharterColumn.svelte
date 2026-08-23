@@ -295,7 +295,7 @@
 			</div>
 		{/if}
 		{#if charter.ready}
-			<p class="ready">Charter signed. Sandbox live. This runs in a container.</p>
+			<p class="ready">Charter signed. The run is live. This runs in a container.</p>
 		{/if}
 		{#if charter.error !== null}
 			<p class="err">{charter.error}</p>

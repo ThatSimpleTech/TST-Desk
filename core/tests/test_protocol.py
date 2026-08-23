@@ -334,6 +334,14 @@ class TestClientMessages:
         assert back.ready is False
         assert back.signed is True
         assert back.error == "Install Podman"
+        assert back.session_id is None
+        ready = AutonomyStart(
+            workspace_path="/home/user/project",
+            ready=True,
+            signed=True,
+            session_id="sess-autonomy",
+        )
+        assert _roundtrip(ready).session_id == "sess-autonomy"
 
     def test_charter_document(self) -> None:
         from tstd.autonomy.charter import Charter

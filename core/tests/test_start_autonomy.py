@@ -115,6 +115,11 @@ class TestDaemonStartAutonomy:
         cfg_path = tmp_path / "cfg.yaml"
         cfg_path.write_text(default_config_yaml(), encoding="utf-8")
         monkeypatch.setattr("tstd.daemon.cached_config", lambda: load_config(cfg_path))
+
+        async def _no_launch(_self: object, _workspace: Path, _charter: object) -> str:
+            raise AssertionError("invalid charter must not launch a run")
+
+        monkeypatch.setattr("tstd.daemon.Daemon._launch_autonomy_run", _no_launch)
         daemon = Daemon(data_dir=tmp_path / "data")
         bad = dict(_VALID)
         bad["version"] = 1
@@ -142,6 +147,11 @@ class TestDaemonStartAutonomy:
             return RuntimeState.ROOTLESS
 
         monkeypatch.setattr("tstd.autonomy.sandbox.inspect_runtime", _rootless)
+
+        async def _fake_launch(_self: object, _workspace: Path, _charter: object) -> str:
+            return "sess-autonomy"
+
+        monkeypatch.setattr("tstd.daemon.Daemon._launch_autonomy_run", _fake_launch)
         daemon = Daemon(data_dir=tmp_path / "data")
         raw = await daemon._handle_message(_start(repo, _VALID), None)
         assert raw is not None
@@ -150,6 +160,32 @@ class TestDaemonStartAutonomy:
         assert payload["ready"] is True
         assert payload["signed"] is True
         assert payload["error"] is None
+        assert payload["session_id"] == "sess-autonomy"
+        await daemon._shutdown()
+
+    async def test_sandbox_refusal_does_not_launch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tstd.config import default_config_yaml, load_config
+
+        repo = make_repo(tmp_path)
+        _write_charter(repo, VALID_FRONTMATTER)
+        cfg_path = tmp_path / "cfg.yaml"
+        cfg_path.write_text(default_config_yaml(), encoding="utf-8")
+        monkeypatch.setattr("tstd.daemon.cached_config", lambda: load_config(cfg_path))
+        monkeypatch.setattr("tstd.autonomy.sandbox.shutil.which", _which_none)
+
+        async def _no_launch(_self: object, _workspace: Path, _charter: object) -> str:
+            raise AssertionError("a refused start must not launch a run")
+
+        monkeypatch.setattr("tstd.daemon.Daemon._launch_autonomy_run", _no_launch)
+        daemon = Daemon(data_dir=tmp_path / "data")
+        raw = await daemon._handle_message(_start(repo), None)
+        assert raw is not None
+        payload = json.loads(raw)
+        assert payload["type"] == "autonomy_start"
+        assert payload["ready"] is False
+        assert payload["session_id"] is None
         await daemon._shutdown()
 
     async def test_save_still_does_not_commit(self, tmp_path: Path) -> None:
@@ -166,7 +202,7 @@ class TestDaemonStartAutonomy:
 
 
 class TestInteractiveUnchanged:
-    def test_loop_and_session_do_not_start_autonomy(self) -> None:
+    def test_loop_and_session_do_not_own_the_start_verb(self) -> None:
         for name in ("loop.py", "session.py"):
             text = (CORE / name).read_text(encoding="utf-8")
             assert "start_autonomy" not in text

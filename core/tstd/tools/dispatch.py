@@ -191,7 +191,16 @@ class ToolDispatcher:
         # so toggling the setting mid-session does not require rewiring
         # every dispatcher.  Tests leave it None (off).
         self.skip_all_fn: Callable[[], bool] | None = None
+        # TD-4101: live read of the session's autonomy bit. Class C
+        # marks the run to stop after this call.
+        self.autonomy_fn: Callable[[], bool] | None = None
+        self.on_class_c: Callable[[str], None] | None = None
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
+
+    def _record_class_c(self, reason: str) -> None:
+        """Tell an unattended run that this call is Class C (stop)."""
+        if self.autonomy_fn is not None and self.autonomy_fn() and self.on_class_c is not None:
+            self.on_class_c(reason)
 
     # ── Handler registration ──────────────────────────────────────────
 
@@ -322,6 +331,7 @@ class ToolDispatcher:
                 # "anything the charter forbids"), even when the static
                 # table classified the call differently (e.g. hardlinks).
                 decision_class = DecisionClass.C
+                self._record_class_c(e.reason)
                 return ToolResult(
                     tool_call_id=tool_call_id,
                     name=name,
@@ -340,6 +350,7 @@ class ToolDispatcher:
         # a missing class here fails toward asking, never acting.
         gate_class = decision_class if decision_class is not None else DecisionClass.B
         skip_all = self.skip_all_fn() if self.skip_all_fn is not None else False
+        autonomy = self.autonomy_fn() if self.autonomy_fn is not None else False
         decision = resolve_explained(
             self.policy if self.policy is not None else PolicyConfig(),
             tool,
@@ -347,7 +358,10 @@ class ToolDispatcher:
             gate_class,
             self.workspace,
             skip_all=skip_all,
+            autonomy=autonomy,
         )
+        if autonomy and gate_class is DecisionClass.C:
+            self._record_class_c(decision.reason)
         if decision.effect == "never":
             log.warning(
                 "policy refusal",

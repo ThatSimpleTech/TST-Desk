@@ -2,9 +2,9 @@
 
 The start button is a human verb: write the charter if the pane sent
 one, commit it (the sign), then refuse unless both ``charter_start_error``
-and ``sandbox_start_error`` are clean. This does not open a session and
-does not run the unattended loop (TD-4101). Interactive sessions never
-call this module.
+and ``sandbox_start_error`` are clean. The daemon launches the
+unattended loop (TD-4101) only after this gate returns ready.
+Interactive sessions never call this module.
 """
 
 from __future__ import annotations

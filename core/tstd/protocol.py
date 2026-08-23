@@ -1238,7 +1238,9 @@ class AutonomyStart(DaemonEvent):
     """Reply to ``start_autonomy``. Connection-scoped.
 
     ``ready`` is true only when the charter is signed and the sandbox
-    is live. The unattended loop is TD-4101 — this event is the gate.
+    is live. When ready, ``session_id`` is the daemon-owned unattended
+    run (TD-4101). Interactive sessions are not this event. Seq stays
+    connection-scoped (fixed at 1); ``session_id`` is the run to attach.
     """
 
     type: Literal["autonomy_start"] = "autonomy_start"
@@ -1247,6 +1249,7 @@ class AutonomyStart(DaemonEvent):
     ready: bool
     signed: bool
     error: str | None = None
+    session_id: str | None = None
 
 
 class ContextPinEntry(BaseModel):

@@ -706,7 +706,8 @@
     "workspace_path": "/home/user/project",
     "ready": true,
     "signed": true,
-    "error": null
+    "error": null,
+    "session_id": "sess-autonomy"
   },
   "memory_files": {
     "type": "memory_files",

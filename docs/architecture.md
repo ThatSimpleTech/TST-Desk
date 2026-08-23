@@ -314,7 +314,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `create_rule` | — | Create a `.tst/rules/` file on the human path. Never a tool call (TD-2802). |
 | `get_charter` | — | Load `.tst/autonomy/CHARTER.md` for the project home Charter column. Human path (TD-4002). |
 | `save_charter` | — | Write the charter as structured fields, as the human. Never a tool. Does not commit (TD-4002). |
-| `start_autonomy` | — | Sign the charter (commit) and refuse unless the sandbox is live. Human path. Does not open an interactive session (TD-4003). |
+| `start_autonomy` | — | Sign the charter (commit), refuse unless the sandbox is live, then launch the unattended run. Human path. Does not open an interactive chat session (TD-4003, TD-4101). |
 | `list_pins` | — | List `.tst/context/pins.yaml` for the project home Context column (TD-2804). |
 | `add_pin` | — | Pin a workspace file or folder. Outside the wall is refused. |
 | `remove_pin` | — | Unpin a path. The file stays. |
@@ -386,7 +386,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `context_pins` | connection | The workspace's Context column: pinned files and folders (TD-2804). |
 | `memory_files` | connection | The workspace's Memory column: `.tst/memory/*.md` with contents (TD-2601). |
 | `charter` | connection | The workspace's Charter column: parsed §12.4 fields, or absent (TD-4002). |
-| `autonomy_start` | connection | Reply to `start_autonomy`: signed, ready, or the refusal (TD-4003). |
+| `autonomy_start` | connection | Reply to `start_autonomy`: signed, ready, optional `session_id` of the daemon-owned run, or the refusal (TD-4003, TD-4101). |
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |

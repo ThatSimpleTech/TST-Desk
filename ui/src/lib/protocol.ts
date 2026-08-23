@@ -831,13 +831,14 @@ export interface CharterDocument extends DaemonEvent {
   notes?: string;
 }
 
-/** Reply to start_autonomy (TD-4003). Connection-scoped. */
+/** Reply to start_autonomy (TD-4003 / TD-4101). Connection-scoped. */
 export interface AutonomyStart extends DaemonEvent {
   type: "autonomy_start";
   workspace_path: string;
   ready: boolean;
   signed: boolean;
   error?: string | null;
+  session_id?: string | null;
 }
 
 export interface MemoryFileDiff {

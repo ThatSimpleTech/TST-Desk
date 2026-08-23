@@ -489,6 +489,7 @@ FIXTURES = {
         ready=True,
         signed=True,
         error=None,
+        session_id="sess-autonomy",
     ),
     "memory_files": MemoryFiles(
         workspace_path="/home/user/project",

@@ -5463,12 +5463,12 @@ would make one a schema change, and the committed file is the signature.
 **Size:** 8 · **Depends on:** TD-4003, TD-401, TD-2902
 
 **Acceptance criteria:**
-- [ ] A run does not wait on a user message; it iterates against the
+- [x] A run does not wait on a user message; it iterates against the
       objective until a stop condition
-- [ ] Class A never prompts. Class B logs. Class C stops and notifies
+- [x] Class A never prompts. Class B logs. Class C stops and notifies
       (M7 channel)
-- [ ] Window may be closed (M5)
-- [ ] Size 8 — this is the engine. Split only at a real seam
+- [x] Window may be closed (M5)
+- [x] Size 8 — this is the engine. Split only at a real seam
       (scheduler vs act)
 
 ---

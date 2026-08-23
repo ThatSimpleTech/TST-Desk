@@ -7854,3 +7854,36 @@ forbids changing.
 **Alternative rejected:** Auto-starting the unattended loop from this
 verb. That is TD-4101. Also rejected: signing with the agent identity
 memory commits use — the start button is the human.
+
+---
+
+## 2026-08-22 — TD-4101: unattended loop is the scheduler, not the act (Class B)
+
+**Decision:** After `start_autonomy` is ready, the daemon opens a
+`Session` with `autonomy=True`, stamps the signed charter's wall and
+caps onto that session, seeds `first_prompt`, and lets the existing
+agent loop iterate. Continue turns are queued by
+`advance_autonomy` — the loop does not park in
+`wait_for_user_message` for a human. Stop this story: Class C, the
+signed iteration cap, and the existing spend / wall-clock checks.
+Class A/B resolve to `auto` (B still ledgers). Class C is `never`
+even under skip-all, marks the run, notifies on the M7 channels, and
+returns. Cap faults notify and complete; they do not `pause_at_cap`.
+Skip-all does not disable caps on an unattended run. Tool execution
+stays on the existing dispatcher — this story does not wrap calls in
+`sandbox_exec`. DoD polling is TD-4103. The checkpoint branch is
+TD-4102. `autonomy_start.session_id` is additive; `PROTOCOL_VERSION`
+stays 1.
+
+**Rationale:** The backlog's size-8 note is the seam: scheduler vs act.
+The loop already owns turns, routing, and cap checks. Inventing a
+second loop would fork the classifier chokepoint. Applying the signed
+charter as the session wall is the contract the human just signed;
+intersecting it with workspace config is a later tightening. Pause-at-cap
+waits for a human, which an unattended run does not have.
+
+**Alternative rejected:** Wrapping every tool in `sandbox_exec` here
+(the act seam). Also rejected: treating skip-all as a cap bypass on
+autonomy (that is the interactive yolo bit). Also rejected: a
+`PROTOCOL_VERSION` bump for an optional `session_id`. Also rejected:
+notifying on a clean complete — that is TD-4303 / TD-4103.
