@@ -1,8 +1,8 @@
 """Sign-and-start gate for autonomous runs (TD-4003).
 
 The start button is a human verb: write the charter if the pane sent
-one, commit it (the sign), then refuse unless both ``charter_start_error``
-and ``sandbox_start_error`` are clean. The daemon launches the
+one, commit it (the sign), then refuse unless the charter, the
+sandbox, and a git repo (TD-4102) are clean. The daemon launches the
 unattended loop (TD-4101) only after this gate returns ready.
 Interactive sessions never call this module.
 """
@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from ..config import AutonomyConfig, ModelConfig
-from .charter import Charter, CharterError, charter_start_error, sign_charter
+from .charter import Charter, CharterError, charter_path, charter_start_error, sign_charter
 from .charter_io import read_charter_document, write_charter_document
+from .checkpoint import checkpoint_start_error
 from .sandbox import InspectFn, WhichFn, sandbox_start_error
 
 
@@ -50,6 +51,12 @@ async def run_autonomy_start(
     ws = Path(workspace)
     if charter is not None:
         await asyncio.to_thread(write_charter_document, ws, charter, notes)
+    if charter_path(ws).is_file():
+        git_err = await checkpoint_start_error(ws)
+        if git_err is not None:
+            return AutonomyStartResult(
+                ready=False, signed=False, error=git_err, charter=None, notes=""
+            )
     sign_err = await sign_charter(ws)
     if sign_err is not None:
         return AutonomyStartResult(

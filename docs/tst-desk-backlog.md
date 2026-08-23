@@ -5477,10 +5477,10 @@ would make one a schema change, and the committed file is the signature.
 **Size:** 5 · **Depends on:** TD-705, TD-4101
 
 **Acceptance criteria:**
-- [ ] Every iteration commits on `tst/auto/<charter-slug>`, never
+- [x] Every iteration commits on `tst/auto/<charter-slug>`, never
       `main` / default branch
-- [ ] Revert of a commit is the undo the ledger prints
-- [ ] Non-git workspace refuses the run with copy
+- [x] Revert of a commit is the undo the ledger prints
+- [x] Non-git workspace refuses the run with copy
 
 ---
 

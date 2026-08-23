@@ -5,8 +5,8 @@ immediately — the classifier makes interactive mode better right away
 (spec §12.9).
 """
 
-from .charter import Charter, CharterError, charter_path
-from .checkpoint import Checkpointer, CheckpointOutcome, Notice
+from .charter import Charter, CharterError, charter_path, charter_slug
+from .checkpoint import Checkpointer, CheckpointOutcome, Notice, auto_branch, session_branch
 from .classifier import (
     Boundary,
     Classification,
@@ -33,9 +33,12 @@ __all__ = [
     "LedgerEntry",
     "Notice",
     "Rule",
+    "auto_branch",
     "build_classifier_prompt",
     "charter_path",
+    "charter_slug",
     "format_entry",
     "parse_decision",
     "parse_ledger",
+    "session_branch",
 ]

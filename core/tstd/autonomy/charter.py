@@ -26,6 +26,7 @@ The start flow itself arrives with TD-4003; this module only answers
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -112,6 +113,28 @@ class Charter(BaseModel):
         if any(not isinstance(entry, str) or not entry.strip() for entry in v):
             raise ValueError("entries must be non-empty strings")
         return v
+
+    @property
+    def slug(self) -> str:
+        """Branch-safe slug of the objective (``tst/auto/<slug>``, TD-4102)."""
+        return charter_slug(self.objective)
+
+
+def charter_slug(objective: str) -> str:
+    """Turn a charter objective into a git-ref-safe slug.
+
+    Always a non-empty ``[a-z][a-z0-9-]*`` that is never ``main`` or
+    ``master``, so :func:`tstd.autonomy.checkpoint.auto_branch` cannot
+    name a primary branch.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", objective.strip().lower()).strip("-")[:48]
+    if not slug or not slug[0].isalpha():
+        slug = ("run-" + slug).strip("-")[:48]
+    if not slug or not slug[0].isalpha():
+        slug = "run"
+    if slug in {"main", "master"}:
+        slug = f"run-{slug}"
+    return slug
 
 
 def _frontmatter(text: str) -> str:

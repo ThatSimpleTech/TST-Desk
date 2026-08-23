@@ -35,6 +35,7 @@ from .autonomy import (
     DecisionClassifier,
     DecisionLedger,
 )
+from .autonomy.checkpoint import auto_branch
 from .autonomy.runner import advance_autonomy, should_notify
 from .compaction import maybe_compact
 from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
@@ -626,12 +627,20 @@ async def agent_loop(
         if tool_dispatcher.path_guard is None:
             tool_dispatcher.path_guard = PathGuard(boundary)
 
-        # Checkpoint commits (TD-705): successful path-bearing mutations
-        # commit to the session branch ``tst/session/<id>`` — the undo
-        # stack.  Non-git workspaces degrade gracefully inside the
-        # checkpointer.
+        # Checkpoint commits (TD-705 / TD-4102): successful path-bearing
+        # mutations commit to ``tst/session/<id>`` interactively, or
+        # ``tst/auto/<charter-slug>`` on an unattended run.  Interactive
+        # non-git workspaces degrade inside the checkpointer; autonomy
+        # refuses at start instead.
         if tool_dispatcher.checkpointer is None:
-            tool_dispatcher.checkpointer = Checkpointer(Path(session.workspace_path), session.id)
+            branch = None
+            if session.autonomy and session.charter is not None:
+                branch = auto_branch(session.charter.slug)
+            tool_dispatcher.checkpointer = Checkpointer(
+                Path(session.workspace_path),
+                session.id,
+                branch=branch,
+            )
 
         # Memory HEAD commits (TD-2104): accepted memory writes land on
         # the workspace repo as ``tst: memory update``. Not the
