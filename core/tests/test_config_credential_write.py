@@ -72,3 +72,18 @@ class TestSaveTierCredential:
         dumped = yaml.safe_load(path.read_text())
         assert "sk-" not in path.read_text()
         assert dumped["credentials"]["local"] == {"name": "Local"}
+
+    def test_writes_and_keeps_a_url(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        save_credential("local", "Local", path, base_url="http://127.0.0.1:8000/v1")
+        cfg = load_config(path)
+        assert cfg.credentials["local"].base_url == "http://127.0.0.1:8000/v1"
+        save_credential("local", "Lab", path)
+        cfg = load_config(path)
+        assert cfg.credentials["local"].name == "Lab"
+        assert cfg.credentials["local"].base_url == "http://127.0.0.1:8000/v1"
+
+    def test_rejects_a_non_http_url(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        with pytest.raises(ConfigError, match="http"):
+            save_credential("local", "Local", path, base_url="ftp://example.invalid")

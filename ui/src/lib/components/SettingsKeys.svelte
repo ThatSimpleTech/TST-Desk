@@ -5,19 +5,23 @@
 		settings,
 		storeNamedKey,
 		renameCredential,
+		saveCredentialUrl,
 		deleteNamedKey,
 		validateNamedKey,
 	} from "../settings.svelte.js";
 	import { onboarding } from "../onboarding.svelte.js";
 
 	let newName = $state("");
+	let newUrl = $state("");
 	let newKey = $state("");
 	let drafts = $state<Record<string, string>>({});
+	let urlDrafts = $state<Record<string, string>>({});
 
 	function addKey(): void {
-		if (newName.trim() === "" || newKey.trim() === "") return;
-		storeNamedKey(newName, newKey);
+		if (newName.trim() === "" || newUrl.trim() === "" || newKey.trim() === "") return;
+		storeNamedKey(newName, newKey, undefined, newUrl);
 		newName = "";
+		newUrl = "";
 		newKey = "";
 	}
 
@@ -26,6 +30,14 @@
 		const current = settings.credentials.find((c) => c.id === id)?.name;
 		if (next === "" || next === current) return;
 		renameCredential(id, next);
+	}
+
+	function commitUrl(id: string): void {
+		const cred = settings.credentials.find((c) => c.id === id);
+		if (cred === undefined) return;
+		const next = (urlDrafts[id] ?? cred.base_url).trim();
+		if (next === cred.base_url) return;
+		saveCredentialUrl(id, drafts[id] ?? cred.name, next);
 	}
 </script>
 
@@ -48,6 +60,17 @@
 				onblur={() => commitName(cred.id)}
 			/>
 		</label>
+		<label class="field">
+			<span class="field-name">URL</span>
+			<input
+				class="input"
+				type="url"
+				value={urlDrafts[cred.id] ?? cred.base_url}
+				placeholder="https://…/v1"
+				oninput={(e) => (urlDrafts[cred.id] = e.currentTarget.value)}
+				onblur={() => commitUrl(cred.id)}
+			/>
+		</label>
 		<p class="status">{cred.stored ? "Stored in the OS keychain." : "No key stored."}</p>
 		<div class="actions">
 			<button
@@ -63,10 +86,22 @@
 	</div>
 {/each}
 
-<p class="hint">Add another key — the name is what Model settings will show.</p>
+<p class="hint">
+	Add another key — the name is what Model settings will show. Any model bound to this key
+	sends requests to this URL.
+</p>
 <label class="field">
 	<span class="field-name">Name</span>
 	<input class="input" type="text" bind:value={newName} placeholder="OpenRouter, Local, …" />
+</label>
+<label class="field">
+	<span class="field-name">URL</span>
+	<input
+		class="input"
+		type="url"
+		bind:value={newUrl}
+		placeholder="https://openrouter.ai/api/v1"
+	/>
 </label>
 <label class="field">
 	<span class="field-name">Key</span>
@@ -82,7 +117,7 @@
 	<button
 		class="btn"
 		type="button"
-		disabled={newName.trim() === "" || newKey.trim() === ""}
+		disabled={newName.trim() === "" || newUrl.trim() === "" || newKey.trim() === ""}
 		onclick={addKey}>Save key</button
 	>
 </div>

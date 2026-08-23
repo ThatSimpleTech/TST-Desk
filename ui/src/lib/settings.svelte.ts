@@ -40,8 +40,8 @@ export const settings = $state({
 	/** Key section, from setup_state. */
 	hasApiKey: false,
 	keyRequired: true,
-	/** Named keys (TD-1717). Presence only — never the secret. */
-	credentials: [] as { id: string; name: string; stored: boolean }[],
+	/** Named keys (TD-1717). Presence and URL only — never the secret. */
+	credentials: [] as { id: string; name: string; stored: boolean; base_url: string }[],
 	/** Configured binding per tier; null = unbound. */
 	tierCredentials: {} as Record<string, string | null>,
 	/** Whether each active-preset tier is loopback (offers "no key"). */
@@ -121,7 +121,12 @@ function reduce(event: DaemonEventUnion): void {
 		settings.tierSlugs = event.tier_slugs ?? {};
 		settings.hasApiKey = event.has_api_key;
 		settings.keyRequired = event.key_required;
-		settings.credentials = event.credentials ?? [];
+		settings.credentials = (event.credentials ?? []).map((c) => ({
+			id: c.id,
+			name: c.name,
+			stored: c.stored,
+			base_url: c.base_url ?? "",
+		}));
 		settings.tierCredentials = event.tier_credentials ?? {};
 		settings.tierLoopback = event.tier_loopback ?? {};
 		// setup_state is the ack for set_tier_slug / set_tier_credential.
@@ -228,22 +233,50 @@ export function selectedCredential(tier: string): string {
 	return "openrouter";
 }
 
-export function storeNamedKey(name: string, apiKey: string, credential?: string): void {
+export function storeNamedKey(
+	name: string,
+	apiKey: string,
+	credential?: string,
+	baseUrl?: string,
+): void {
 	const trimmedName = name.trim();
 	const trimmedKey = apiKey.trim();
 	if (trimmedName === "" || trimmedKey === "") return;
-	sendToDaemon({
+	const msg: {
+		type: "set_api_key";
+		api_key: string;
+		name: string;
+		credential: string | null;
+		base_url?: string;
+	} = {
 		type: "set_api_key",
 		api_key: trimmedKey,
 		name: trimmedName,
 		credential: credential ?? null,
-	});
+	};
+	if (baseUrl !== undefined) {
+		const url = baseUrl.trim();
+		if (url !== "") msg.base_url = url;
+	}
+	sendToDaemon(msg);
 }
 
 export function renameCredential(credential: string, name: string): void {
 	const trimmed = name.trim();
 	if (trimmed === "") return;
 	sendToDaemon({ type: "set_credential", credential, name: trimmed });
+}
+
+/** Persist a named key's endpoint without touching the secret (TD-1718). */
+export function saveCredentialUrl(credential: string, name: string, baseUrl: string): void {
+	const trimmedName = name.trim();
+	if (credential.trim() === "" || trimmedName === "") return;
+	sendToDaemon({
+		type: "set_credential",
+		credential,
+		name: trimmedName,
+		base_url: baseUrl.trim(),
+	});
 }
 
 export function deleteNamedKey(credential: string): void {

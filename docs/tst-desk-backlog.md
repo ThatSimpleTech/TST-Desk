@@ -3892,6 +3892,42 @@ User ask 2026-08-22.
 
 ---
 
+### TD-1718 — A named API key owns its endpoint
+**Size:** 5 · **Depends on:** TD-1717
+
+Picking a key in Settings looked like picking a provider. It was not: the
+dropdown only chose the secret. The host stayed on the preset tier's
+`base_url`, so a local worker bound to an OpenRouter key still called
+Ollama. Put the URL on the key. A bound tier calls that URL.
+
+**Acceptance criteria:**
+- [x] Settings → API keys shows and edits a base URL per named key; the
+      secret stays in the OS keychain
+- [x] A tier bound to a named key sends requests to that key's URL, not
+      the preset tier URL
+- [x] A tier with no key still uses the preset tier URL
+- [x] An `openrouter` key with no URL in an older config still uses the
+      shipped OpenRouter endpoint
+- [x] Secrets never appear in `config.yaml`, `setup_state`, logs, or the
+      audit database
+- [x] The first-run wizard still stores one key as `openrouter` /
+      "OpenRouter"
+
+**Done (2026-08-22).** A named key owns its endpoint. Settings → API keys
+edits name + URL + secret. Binding a key to a local-preset worker now
+calls that key's host (OpenRouter for the shipped `openrouter` row), not
+Ollama. Unbound local tiers are unchanged. Class B in `DECISIONS.md`.
+
+**Notes:** Catalog is now `{id: {name, base_url}}`. Empty `base_url`
+inherits the tier URL. The implicit / older `openrouter` row reads the
+shipped endpoint from `config.yaml`, never a Python literal. Additive
+protocol: `CredentialSummary.base_url`; `set_api_key` / `set_credential`
+gain optional `base_url`. No `PROTOCOL_VERSION` bump.
+
+User ask 2026-08-22.
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 

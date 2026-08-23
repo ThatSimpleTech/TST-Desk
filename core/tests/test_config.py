@@ -18,6 +18,7 @@ from tstd.config import (
     AutonomyConfig,
     ComputerUseConfig,
     ConfigError,
+    CredentialConfig,
     EmbeddingsConfig,
     GroundingConfig,
     ModelConfig,
@@ -30,7 +31,9 @@ from tstd.config import (
     default_config_yaml,
     ensure_user_config,
     load_config,
+    resolve_base_url,
     resolve_credential_id,
+    shipped_credential_base_url,
     slugify_credential_name,
 )
 
@@ -471,6 +474,36 @@ class TestCredentials:
     def test_slugify_and_allocate(self) -> None:
         assert slugify_credential_name("Open Router") == "open-router"
         assert allocate_credential_id("Local", {"local"}) == "local-2"
+
+    def test_bound_key_url_overrides_the_tier(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
+        worker = cfg.presets["local"].worker.model_copy(update={"credential": "openrouter"})
+        assert "11434" in worker.base_url
+        assert resolve_base_url(worker, cfg.credentials) == shipped_credential_base_url()
+        assert resolve_base_url(worker, cfg.credentials) != worker.base_url
+
+    def test_unbound_keeps_the_tier_url(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path).model_copy(update={"active_preset": "local"})
+        brain = cfg.tier("brain")
+        assert resolve_base_url(brain, cfg.credentials) == brain.base_url
+
+    def test_older_openrouter_row_inherits_shipped_url(self) -> None:
+        credentials = {"openrouter": CredentialConfig(name="OpenRouter", base_url="")}
+        tier = TierConfig(
+            slug="demo/brain",
+            base_url="http://127.0.0.1:11434/v1",
+            credential="openrouter",
+            input_price=0,
+            output_price=0,
+            cache_read_price=0,
+            context_window=100,
+            max_output_tokens=10,
+        )
+        assert resolve_base_url(tier, credentials) == shipped_credential_base_url()
+
+    def test_bad_credential_url_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="http"):
+            CredentialConfig(name="Nope", base_url="not-a-url")
 
 
 # ─ Slug detection in source code ───────────────────────────────────────────

@@ -331,12 +331,12 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `move_session` | yes | Reassign a session to another workspace, keeping its id and log. |
 | `rename_session` | yes | Set a session's display title, or restore the auto-title when empty. Metadata only. |
 | `get_setup_state` | — | Ask for the onboarding state: key presence, presets, active preset. |
-| `set_api_key` | — | Store an API key in the OS keychain. |
+| `set_api_key` | — | Store an API key in the OS keychain. Optional `base_url` is the endpoint that key talks to (TD-1718). |
 | `validate_api_key` | — | Probe a key with one cheap live call. |
 | `delete_api_key` | — | Remove an API key from the OS keychain. |
 | `set_preset` | — | Choose the active model preset. |
 | `set_tier_slug` | — | Set the model slug for one tier of one preset. |
-| `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). |
+| `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). Optional `base_url` sets the endpoint that key owns (TD-1718). |
 | `delete_credential` | — | Remove a named key, its secret, and tier bindings (TD-1717). |
 | `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). |
 | `run_diagnostics` | — | Run the doctor checks. |

@@ -365,6 +365,8 @@ export interface SetApiKey extends ClientMessage {
   // TD-1717: catalog id (default openrouter) and optional display name.
   credential?: string | null;
   name?: string | null;
+  // TD-1718: endpoint this key talks to.
+  base_url?: string | null;
 }
 
 // TD-1102: key removable from settings. Acked with a fresh setup_state
@@ -389,6 +391,8 @@ export interface SetCredential extends ClientMessage {
   type: "set_credential";
   name: string;
   credential?: string | null;
+  // TD-1718: endpoint this key talks to. Omitted leaves the current URL.
+  base_url?: string | null;
 }
 
 export interface DeleteCredential extends ClientMessage {
@@ -963,6 +967,8 @@ export interface CredentialSummary {
   id: string;
   name: string;
   stored: boolean;
+  // TD-1718: endpoint this key owns. Empty inherits the tier URL.
+  base_url?: string;
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the

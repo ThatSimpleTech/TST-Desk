@@ -586,6 +586,9 @@ class SetApiKey(ClientMessage):
     api_key: str = Field(min_length=1)
     credential: str | None = None
     name: str | None = None
+    # TD-1718: endpoint this key talks to. Omitted leaves an existing
+    # URL (or seeds the shipped openrouter URL on first create).
+    base_url: str | None = None
 
 
 class ValidateApiKey(ClientMessage):
@@ -646,12 +649,14 @@ class SetCredential(ClientMessage):
     """Create or rename a named API key without touching the secret (TD-1717).
 
     ``credential`` omitted slugifies ``name`` into a new id. Present, it
-    renames that catalog row. Acked with ``setup_state``.
+    renames that catalog row. ``base_url`` (TD-1718) sets the endpoint
+    that key owns; omitted leaves it. Acked with ``setup_state``.
     """
 
     type: Literal["set_credential"] = "set_credential"
     name: str = Field(min_length=1, max_length=40)
     credential: str | None = None
+    base_url: str | None = None
 
 
 class DeleteCredential(ClientMessage):
@@ -1383,6 +1388,8 @@ class CredentialSummary(BaseModel):
     id: str
     name: str
     stored: bool
+    # TD-1718: endpoint this key owns. Empty means inherit the tier URL.
+    base_url: str = ""
 
 
 class SetupState(DaemonEvent):

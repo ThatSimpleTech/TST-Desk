@@ -24,11 +24,14 @@
 #                        uses `openrouter` so existing keychains keep
 #                        working.
 
-# Named API keys (TD-1717). Names live here; secrets live in the OS
-# keychain under tst-<id>. Settings shows the name, never the secret.
+# Named API keys (TD-1717 / TD-1718). Names and the endpoint live here;
+# secrets live in the OS keychain under tst-<id>. A tier bound to a key
+# sends requests to that key's base_url. Settings shows the name and
+# URL, never the secret.
 credentials:
   openrouter:
     name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
 
 presets:
   # ── tst-default ──────────────────────────────────────────────────

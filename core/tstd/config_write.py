@@ -30,6 +30,8 @@ from .config import (
     ConfigError,
     ensure_user_config,
     load_config,
+    normalize_credential_base_url,
+    shipped_credential_base_url,
 )
 
 
@@ -205,8 +207,20 @@ def _ensure_credentials_header(lines: list[str]) -> tuple[int, int]:
     return len(lines) - 1, len(lines)
 
 
-def save_credential(credential_id: str, name: str, path: Path | None = None) -> Path:
-    """Create or rename a catalog entry (TD-1717). Never writes the secret."""
+def save_credential(
+    credential_id: str,
+    name: str,
+    path: Path | None = None,
+    *,
+    base_url: str | None = None,
+) -> Path:
+    """Create or update a catalog entry (TD-1717, TD-1718). Never writes the secret.
+
+    ``base_url`` of ``None`` leaves an existing URL alone. A new
+    ``openrouter`` row without an explicit URL gets the shipped endpoint
+    so the wizard stays one field. ``""`` clears the URL (the tier URL
+    is used until the user sets one).
+    """
     cleaned_id = credential_id.strip()
     cleaned_name = name.strip()
     if not CREDENTIAL_ID_RE.match(cleaned_id):
@@ -219,6 +233,10 @@ def save_credential(credential_id: str, name: str, path: Path | None = None) -> 
         raise ConfigError("A credential name cannot be blank")
     if len(cleaned_name) > 40:
         raise ConfigError("A credential name cannot be longer than 40 characters")
+    try:
+        cleaned_url = None if base_url is None else normalize_credential_base_url(base_url)
+    except ValueError as e:
+        raise ConfigError(str(e)) from e
 
     config_path = ensure_user_config(path)
     lines = config_path.read_text(encoding="utf-8").split("\n")
@@ -226,8 +244,13 @@ def save_credential(credential_id: str, name: str, path: Path | None = None) -> 
     id_at = _find_key(lines, cred_at + 1, cred_end, cleaned_id, 2)
     name_line = f"    name: {json.dumps(cleaned_name)}"
     if id_at < 0:
+        url_to_write = cleaned_url
+        if url_to_write is None and cleaned_id == DEFAULT_CREDENTIAL_ID:
+            url_to_write = shipped_credential_base_url()
         lines.insert(cred_end, f"  {cleaned_id}:")
         lines.insert(cred_end + 1, name_line)
+        if url_to_write:
+            lines.insert(cred_end + 2, f"    base_url: {json.dumps(url_to_write)}")
     else:
         id_end = _block_bounds(lines, id_at, 2)
         name_at = _find_key(lines, id_at + 1, id_end, "name", 4)
@@ -235,6 +258,18 @@ def save_credential(credential_id: str, name: str, path: Path | None = None) -> 
             lines[name_at] = name_line
         else:
             lines.insert(id_at + 1, name_line)
+            id_end += 1
+        if cleaned_url is not None:
+            url_at = _find_key(lines, id_at + 1, id_end, "base_url", 4)
+            url_line = f"    base_url: {json.dumps(cleaned_url)}"
+            if cleaned_url == "":
+                if url_at >= 0:
+                    del lines[url_at]
+            elif url_at >= 0:
+                lines[url_at] = url_line
+            else:
+                insert_at = (name_at + 1) if name_at >= 0 else id_at + 1
+                lines.insert(insert_at, url_line)
 
     _atomic_write(config_path, "\n".join(lines))
     return config_path

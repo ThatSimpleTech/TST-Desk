@@ -79,6 +79,68 @@ def resolve_credential_id(tier: TierConfig) -> str | None:
     return DEFAULT_CREDENTIAL_ID
 
 
+def normalize_credential_base_url(url: str) -> str:
+    """Empty, or an http(s) endpoint. Raises ``ValueError`` otherwise."""
+    cleaned = url.strip()
+    if not cleaned:
+        return ""
+    try:
+        parts = urlsplit(cleaned)
+    except ValueError as e:
+        raise ValueError("base_url must be an http(s) endpoint") from e
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ValueError("base_url must be an http(s) endpoint")
+    return cleaned
+
+
+@lru_cache(maxsize=8)
+def shipped_credential_base_url(credential_id: str = DEFAULT_CREDENTIAL_ID) -> str:
+    """Endpoint declared on a shipped catalog row. Never a source literal."""
+    loaded = yaml.safe_load(default_config_yaml())
+    if not isinstance(loaded, dict):
+        return ""
+    catalog = loaded.get("credentials")
+    if not isinstance(catalog, dict):
+        return ""
+    entry = catalog.get(credential_id)
+    if not isinstance(entry, dict):
+        return ""
+    raw = entry.get("base_url")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+def credential_base_url(
+    credential_id: str | None,
+    credentials: dict[str, CredentialConfig] | None = None,
+) -> str:
+    """URL a named key owns (TD-1718), or empty if it has none.
+
+    An older ``openrouter`` row with no URL still inherits the shipped
+    OpenRouter endpoint so existing installs keep working.
+    """
+    if not credential_id:
+        return ""
+    if credentials and credential_id in credentials:
+        cleaned = credentials[credential_id].base_url.strip()
+        if cleaned:
+            return cleaned
+    if credential_id == DEFAULT_CREDENTIAL_ID:
+        return shipped_credential_base_url()
+    return ""
+
+
+def resolve_base_url(
+    tier: TierConfig,
+    credentials: dict[str, CredentialConfig] | None = None,
+) -> str:
+    """Endpoint a tier will call.
+
+    A bound key with a URL *is* the connection (TD-1718). Unbound tiers
+    and keys that have no URL yet keep the preset's ``base_url``.
+    """
+    return credential_base_url(tier.credential, credentials) or tier.base_url
+
+
 def is_loopback_url(url: str) -> bool:
     """True when *url* points at this machine (127.0.0.0/8, ``::1``, ``localhost``).
 
@@ -193,13 +255,19 @@ class Preset(BaseModel):
 
 
 class CredentialConfig(BaseModel):
-    """Display name for one keychain-backed API key (TD-1717).
+    """One named API key (TD-1717) and the endpoint it talks to (TD-1718).
 
     The secret is never here. The mapping key is the id; this holds the
-    name the Settings screen shows.
+    name Settings shows and the URL any bound tier will call.
     """
 
     name: str = Field(min_length=1, max_length=40)
+    base_url: str = ""
+
+    @field_validator("base_url")
+    @classmethod
+    def _http_endpoint(cls, value: str) -> str:
+        return normalize_credential_base_url(value)
 
 
 class SearchConfig(BaseModel):

@@ -54,6 +54,7 @@ import {
 	setRemoteAttach,
 	setCuIndicators,
 	storeNamedKey,
+	saveCredentialUrl,
 	deleteNamedKey,
 	renameCredential,
 	saveTierCredential,
@@ -464,14 +465,20 @@ describe("key section", () => {
 		emit(
 			setupState({
 				credentials: [
-					{ id: "openrouter", name: "OpenRouter", stored: true },
-					{ id: "local", name: "Local", stored: false },
+					{
+						id: "openrouter",
+						name: "OpenRouter",
+						stored: true,
+						base_url: "https://example.invalid/v1",
+					},
+					{ id: "local", name: "Local", stored: false, base_url: "" },
 				],
 				tier_credentials: { brain: "openrouter", worker: null, validator: null },
 				tier_loopback: { brain: false, worker: true, validator: true },
 			}),
 		);
 		expect(settings.credentials.map((c) => c.name)).toEqual(["OpenRouter", "Local"]);
+		expect(settings.credentials[0]?.base_url).toBe("https://example.invalid/v1");
 		expect(selectedCredential("brain")).toBe("openrouter");
 		expect(selectedCredential("worker")).toBe("");
 		expect(JSON.stringify(settings)).not.toMatch(/sk-/);
@@ -503,6 +510,33 @@ describe("key section", () => {
 			{ type: "set_credential", credential: "local", name: "Home lab" },
 			{ type: "delete_credential", credential: "local" },
 			{ type: "validate_api_key", credential: "local" },
+		]);
+	});
+
+	it("saveCredentialUrl writes the endpoint without a secret (TD-1718)", () => {
+		startSettings();
+		saveCredentialUrl("openrouter", "OpenRouter", "https://example.invalid/v1");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_credential",
+				credential: "openrouter",
+				name: "OpenRouter",
+				base_url: "https://example.invalid/v1",
+			},
+		]);
+	});
+
+	it("storeNamedKey can send the endpoint with the secret", () => {
+		startSettings();
+		storeNamedKey("Local", "sk-lab-1", undefined, "http://127.0.0.1:8000/v1");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_api_key",
+				api_key: "sk-lab-1",
+				name: "Local",
+				credential: null,
+				base_url: "http://127.0.0.1:8000/v1",
+			},
 		]);
 	});
 });

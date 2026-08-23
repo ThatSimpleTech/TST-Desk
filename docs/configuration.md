@@ -57,7 +57,7 @@ no effect.
 |---|---|---|---|
 | `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, `local`, and `vllm`. |
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
-| `credentials` | mapping of id → `{ name }` | empty | Named API keys. The `name` is what Settings shows. The secret is never here — it lives in the OS keychain as `tst-<id>`. Omitted in an older user copy is filled from the shipped file at load. |
+| `credentials` | mapping of id → `{ name, base_url }` | empty | Named API keys. The `name` is what Settings shows. `base_url` is the endpoint any bound tier will call (TD-1718). The secret is never here — it lives in the OS keychain as `tst-<id>`. Omitted in an older user copy is filled from the shipped file at load. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
@@ -68,14 +68,16 @@ no effect.
 
 ### `credentials`
 
-Named API keys (TD-1717). Each entry is an id (the keychain account suffix) and a
-`name` the Settings screen shows. Add as many as you need — OpenRouter, a keyed
-local server, a second remote. A tier's `credential` field picks which one that
-model sends.
+Named API keys (TD-1717, TD-1718). Each entry is an id (the keychain account
+suffix), a `name` the Settings screen shows, and the `base_url` that key talks
+to. Add as many as you need — OpenRouter, a keyed local server, a second remote.
+A tier's `credential` field picks which one that model sends **and** which host
+it calls.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `name` | string, 1–40 chars | *required* | The local given name. Shown in Settings → Model. Never a secret. |
+| `base_url` | http(s) URL | empty | Endpoint this key owns. Bound tiers use it instead of the preset URL. Empty inherits the tier URL. An older `openrouter` row with no URL still uses the shipped OpenRouter endpoint. |
 
 Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook` and
 `ntfy-topic` are reserved for other keychain accounts.
@@ -113,6 +115,7 @@ active_preset: demo
 credentials:
   openrouter:
     name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
 ```
 
 ### `search`
@@ -300,6 +303,7 @@ active_preset: demo
 credentials:
   openrouter:
     name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
 search:
   base_url: http://127.0.0.1:8888/search
   timeout_seconds: 15
