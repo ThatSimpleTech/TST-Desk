@@ -366,7 +366,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
-| `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. |
+| `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. OpenRouter `reasoning_details` flatten into this event for the UI; the raw array is echoed on the next assistant message after tools, not as speech. |
 | `tool_call` | session | A tool call about to execute, with its decision class. |
 | `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |

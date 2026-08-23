@@ -77,6 +77,8 @@ from .provider import (
     ProviderError,
     StreamChunk,
     Usage,
+    _flatten_reasoning_details,
+    merge_reasoning_details,
 )
 from .provider import (
     ToolCall as ProviderToolCall,
@@ -263,16 +265,26 @@ async def _stream_and_parse(
     tracker: CostTracker,
     tier: TierName,
     tier_cfg: Any,
-) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None]:
+) -> tuple[
+    str,
+    dict[int, dict[str, str | int]],
+    bool,
+    str,
+    str | None,
+    list[dict[str, Any]] | None,
+]:
     """Call the provider, stream deltas, and accumulate tool calls.
 
     Returns:
         A tuple of ``(collected_content, tool_calls, failed, error_msg,
-        error_code)``. ``error_code`` is the provider's typed code (e.g.
-        ``auth_failed``) so clients can key tailored copy off it (TD-1008).
+        error_code, reasoning_details)``. ``error_code`` is the provider's
+        typed code (e.g. ``auth_failed``) so clients can key tailored copy
+        off it (TD-1008). ``reasoning_details`` is the OpenRouter array to
+        echo on the next assistant message (TD-1903).
     """
     collected_content = ""
     tool_calls: dict[int, dict[str, str | int]] = {}
+    collected_details: list[dict[str, Any]] = []
     failed = False
     error_msg = ""
     error_code: str | None = None
@@ -298,17 +310,21 @@ async def _stream_and_parse(
             failed, error_msg, error_code = True, chunk.message, chunk.code
             break
 
-        # Stream reasoning delta (TD-1901).  Emitted, never accumulated:
-        # `collected_content` becomes the assistant message replayed to the
-        # provider on the next round trip, and feeding a model its own
-        # scratchpad back as something it said is both wrong and paid for.
-        # A reasoning model spends minutes here, so this is also the only
-        # sign of life the window gets before the answer starts.
-        if chunk.delta.reasoning:
+        # Stream reasoning delta (TD-1901).  The plaintext is emitted,
+        # never folded into `collected_content` — that string is replayed
+        # as assistant speech.  `reasoning_details` is different: OpenRouter
+        # requires the raw array on the next assistant message after tools
+        # (TD-1903), so we accumulate it separately.
+        if chunk.delta.reasoning_details:
+            merge_reasoning_details(collected_details, chunk.delta.reasoning_details)
+        thinking = chunk.delta.reasoning
+        if thinking is None and chunk.delta.reasoning_details:
+            thinking = _flatten_reasoning_details(chunk.delta.reasoning_details)
+        if thinking:
             await session.event_log.add(
                 AssistantReasoning(
                     session_id=session.id,
-                    delta=chunk.delta.reasoning,
+                    delta=thinking,
                     seq=1,
                 )
             )
@@ -340,7 +356,14 @@ async def _stream_and_parse(
         # cost_update per recorded call, not one per turn.
         await session.event_log.add(tracker.emit_cost_update(session.id))
 
-    return collected_content, tool_calls, failed, error_msg, error_code
+    return (
+        collected_content,
+        tool_calls,
+        failed,
+        error_msg,
+        error_code,
+        collected_details or None,
+    )
 
 
 async def _build_assistant_tool_call(
@@ -1089,7 +1112,14 @@ async def agent_loop(
             _iterations += 1
 
             # 2d. Call provider (streaming)
-            collected_content, tool_calls, failed, error_msg, error_code = await _stream_and_parse(
+            (
+                collected_content,
+                tool_calls,
+                failed,
+                error_msg,
+                error_code,
+                reasoning_details,
+            ) = await _stream_and_parse(
                 provider,
                 model_slug,
                 messages,
@@ -1184,6 +1214,7 @@ async def agent_loop(
                         role="assistant",
                         content=None,
                         tool_calls=provider_tool_calls,
+                        reasoning_details=reasoning_details,
                     )
                 )
                 await session.conversation_changed()
@@ -1210,7 +1241,13 @@ async def agent_loop(
                     continue
                 # Without a dispatcher, fall through to emit turn_complete
             else:
-                messages.append(ChatMessage(role="assistant", content=collected_content or ""))
+                messages.append(
+                    ChatMessage(
+                        role="assistant",
+                        content=collected_content or "",
+                        reasoning_details=reasoning_details,
+                    )
+                )
                 await session.conversation_changed()
 
             # 2h. No tool calls (or no dispatcher) — turn is complete

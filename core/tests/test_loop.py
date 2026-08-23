@@ -913,3 +913,78 @@ class TestReasoningDeltas:
         assert "SECRET SCRATCHPAD" not in sent
         assert "Hello" in sent
         await runner.cancel()
+
+    async def test_reasoning_details_echo_on_tool_loop(self) -> None:
+        """OpenRouter's array is replayed on the assistant tool-call message."""
+        session = Session("/tmp/ws")
+        details = [
+            {
+                "type": "reasoning.text",
+                "text": "I should echo",
+                "format": "anthropic-claude-v1",
+                "index": 0,
+            }
+        ]
+        registry = ToolRegistry()
+        registry.register(
+            Tool(
+                name="echo",
+                description="Echo",
+                parameters={
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                },
+                side_effect_class="auto",
+                parallel_safe=True,
+            )
+        )
+        dispatcher = attach_auto_approver(ToolDispatcher(registry))
+
+        async def echo_handler(session, message, tool_call_id=""):
+            return f"Echo: {message}"
+
+        dispatcher.register_handler("echo", echo_handler)
+        mock = MockProvider(
+            sequences={
+                "test-brain": [
+                    Script(
+                        kind="tool_call",
+                        tool_name="echo",
+                        tool_arguments='{"message": "hi"}',
+                        reasoning_details=details,
+                    ),
+                    Script(kind="stream", content="Done"),
+                ]
+            }
+        )
+        factory = mock_factory(mock)
+        runner = SessionRunner(
+            session,
+            loop_factory=lambda s: agent_loop(
+                s,
+                TierRouter(),
+                factory,
+                make_config(),
+                tool_registry=registry,
+                tool_dispatcher=dispatcher,
+            ),
+        )
+        await runner.start()
+        await session.add_user_message("Say hi")
+        await wait_for_turn(session, 1)
+        await runner.cancel()
+
+        thinking = "".join(
+            e.delta for e in session.event_log.all_events if isinstance(e, AssistantReasoning)
+        )
+        assert thinking == "I should echo"
+        follow = next(
+            req
+            for req in mock.calls
+            if any(m.role == "assistant" and m.tool_calls for m in req.messages)
+        )
+        assistant = next(m for m in follow.messages if m.role == "assistant" and m.tool_calls)
+        assert assistant.reasoning_details == details
+        echoed = "".join(str(m.content or "") for m in follow.messages)
+        assert "I should echo" not in echoed

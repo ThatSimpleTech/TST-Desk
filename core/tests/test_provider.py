@@ -28,6 +28,9 @@ from tstd.provider import (
     ToolCall,
     ToolDefinition,
     Usage,
+    _canonical_error_code,
+    _flatten_reasoning_details,
+    merge_reasoning_details,
 )
 
 # ── Mock ASGI server ───────────────────────────────────────────────────
@@ -62,6 +65,12 @@ async def _mock_chat_app(scope: dict[str, Any], receive: Any, send: Any) -> None
     req_body = json.loads(body_bytes) if body_bytes else {}
     model = req_body.get("model", "mock-model")
     stream = req_body.get("stream", False)
+
+    # OpenRouter-shaped 429: HTTP 429 and error.code is the string "429".
+    if model == "err-openrouter-429":
+        data = {"error": {"message": "Rate limit exceeded", "code": "429"}}
+        await _send_response(send, 429, data)
+        return
 
     # Error simulation: model name "err-{status_code}"
     if model.startswith("err-"):
@@ -791,3 +800,106 @@ class TestReasoningDeltas:
         """``reasoning: ""`` normalises to None rather than an empty event."""
         chunk = self._chunk(client, {"content": "x", "reasoning": ""})
         assert chunk.delta.reasoning is None
+
+
+# ── Tests: OpenRouter reasoning_details (TD-1903) ──────────────────────
+
+
+class TestReasoningDetails:
+    @staticmethod
+    def _chunk(client: ProviderClient, delta: dict[str, Any]) -> StreamChunk:
+        parsed = client._parse_stream_chunk(
+            json.dumps({"id": "c1", "choices": [{"index": 0, "delta": delta}]})
+        )
+        assert parsed is not None
+        return parsed
+
+    def test_details_flatten_to_reasoning(self, client: ProviderClient) -> None:
+        chunk = self._chunk(
+            client,
+            {
+                "content": "",
+                "reasoning_details": [
+                    {
+                        "type": "reasoning.text",
+                        "text": "Let me think",
+                        "format": "anthropic-claude-v1",
+                        "index": 0,
+                    }
+                ],
+            },
+        )
+        assert chunk.delta.reasoning == "Let me think"
+        assert chunk.delta.reasoning_details is not None
+        assert chunk.delta.reasoning_details[0]["text"] == "Let me think"
+        assert not chunk.delta.content
+
+    def test_summary_and_encrypted_flatten(self, client: ProviderClient) -> None:
+        chunk = self._chunk(
+            client,
+            {
+                "reasoning_details": [
+                    {"type": "reasoning.summary", "summary": "Plan", "index": 0},
+                    {"type": "reasoning.encrypted", "data": "abc", "index": 1},
+                ]
+            },
+        )
+        assert chunk.delta.reasoning == "Plan[REDACTED]"
+
+    def test_encrypted_only_is_still_a_reasoning_chunk(self, client: ProviderClient) -> None:
+        chunk = self._chunk(
+            client,
+            {"reasoning_details": [{"type": "reasoning.encrypted", "data": "x", "index": 0}]},
+        )
+        assert chunk.delta.reasoning == "[REDACTED]"
+
+    def test_string_reasoning_wins_for_ui(self, client: ProviderClient) -> None:
+        chunk = self._chunk(
+            client,
+            {
+                "reasoning": "shown",
+                "reasoning_details": [{"type": "reasoning.text", "text": "hidden", "index": 0}],
+            },
+        )
+        assert chunk.delta.reasoning == "shown"
+        assert chunk.delta.reasoning_details is not None
+
+    def test_merge_same_index_concatenates_text(self) -> None:
+        acc: list[dict[str, Any]] = []
+        merge_reasoning_details(acc, [{"type": "reasoning.text", "text": "Let ", "index": 0}])
+        merge_reasoning_details(acc, [{"type": "reasoning.text", "text": "me think", "index": 0}])
+        assert acc == [{"type": "reasoning.text", "text": "Let me think", "index": 0}]
+        assert _flatten_reasoning_details(acc) == "Let me think"
+
+    def test_message_to_dict_echoes_details(self) -> None:
+        details = [{"type": "reasoning.text", "text": "x", "index": 0}]
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                ChatMessage(role="assistant", content=None, reasoning_details=details),
+            ],
+        )
+        body = req.to_dict()
+        assert body["messages"][0]["reasoning_details"] == details
+        assert "content" not in body["messages"][0]
+
+
+class TestCanonicalErrorCode:
+    def test_numeric_string_429_is_rate_limited(self) -> None:
+        assert _canonical_error_code(429, "429") == "rate_limited"
+
+    def test_named_provider_code_on_known_status_is_kept(self) -> None:
+        assert _canonical_error_code(429, "rate_limited") == "rate_limited"
+
+    def test_unknown_status_keeps_provider_code(self) -> None:
+        assert _canonical_error_code(418, "teapot") == "teapot"
+
+    async def test_openrouter_429_body(self, client: ProviderClient) -> None:
+        request = ChatCompletionRequest(
+            model="err-openrouter-429", messages=[ChatMessage(role="user", content="Hi")]
+        )
+        result = await client.chat_completion(request)
+        assert isinstance(result, ProviderError)
+        assert result.code == "rate_limited"
+        assert result.status_code == 429
+        assert result.retryable
