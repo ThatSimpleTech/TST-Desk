@@ -7887,3 +7887,29 @@ waits for a human, which an unattended run does not have.
 autonomy (that is the interactive yolo bit). Also rejected: a
 `PROTOCOL_VERSION` bump for an optional `session_id`. Also rejected:
 notifying on a clean complete — that is TD-4303 / TD-4103.
+
+---
+
+## 2026-08-22 — TD-4102: autonomy checkpoints use tst/auto/<slug> (Class B)
+
+**Decision:** `Checkpointer` still commits one snapshot per mutating
+write (TD-705). On an unattended session the loop passes
+`branch=auto_branch(charter.slug)` so those commits land on
+`tst/auto/<charter-slug>`. Interactive sessions keep
+`tst/session/<id>`. The ledger's undo stays `git revert <sha>` — a
+per-write commit is what makes that revert the undo for that
+decision. `run_autonomy_start` refuses a non-git workspace (or a
+missing git binary) with copy that names `tst/auto/<charter-slug>`
+before it signs. Interactive non-git still degrades inside the
+checkpointer.
+
+**Rationale:** Spec §12.8 is the branch, not a new commit cadence.
+Squashing a turn into one commit would make the ledger's revert undo
+every decision in the turn. The start-gate copy is why git is
+required for autonomy: the branch is the undo stack, not only the
+charter sign.
+
+**Alternative rejected:** One commit per iteration. Also rejected:
+reusing `tst/session/<id>` for autonomy (the spec names the auto
+prefix). Also rejected: letting autonomy degrade on a non-git
+workspace the way interactive does.

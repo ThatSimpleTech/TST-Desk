@@ -46,6 +46,16 @@ from .classifier import DecisionClass
 log = get_logger("tstd.checkpoint")
 
 SESSION_BRANCH_PREFIX = "tst/session/"
+AUTO_BRANCH_PREFIX = "tst/auto/"
+
+# Start-gate copy (TD-4102). Interactive sessions still degrade (TD-705).
+NO_GIT_FOR_AUTONOMY = (
+    "Autonomous runs need a git repository so every iteration can commit "
+    "on tst/auto/<charter-slug>. This workspace is not one."
+)
+GIT_MISSING_FOR_AUTONOMY = (
+    "Autonomous runs need git so every iteration can commit on tst/auto/<charter-slug>."
+)
 
 # Notice codes surfaced to the user via the ``checkpoint_notice`` event.
 NO_GIT = "no_git"
@@ -103,18 +113,93 @@ def session_branch(session_id: str) -> str:
     return branch
 
 
+def auto_branch(slug: str) -> str:
+    """Return the autonomy checkpoint branch for a charter *slug*.
+
+    Always under ``tst/auto/``. Raises ``ValueError`` for slugs that
+    could name a primary branch or an unsafe ref.
+    """
+    if not slug or slug.startswith("-") or "/" in slug:
+        raise ValueError(f"invalid charter slug for checkpoint branch: {slug!r}")
+    branch = AUTO_BRANCH_PREFIX + slug
+    if not branch.startswith(AUTO_BRANCH_PREFIX) or branch.removeprefix(AUTO_BRANCH_PREFIX) in {
+        "main",
+        "master",
+    }:
+        raise ValueError(f"refusing checkpoint branch name: {branch!r}")
+    return branch
+
+
+async def checkpoint_start_error(workspace: str | Path) -> str | None:
+    """Why an autonomous run may not checkpoint here, or ``None``.
+
+    Interactive sessions degrade when git is missing (TD-705). An
+    unattended run refuses: the branch is the undo stack (spec §12.8).
+    """
+    from ..tools.shell import sanitized_env
+
+    env = sanitized_env()
+    for var in (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_COMMON_DIR",
+    ):
+        env.pop(var, None)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "-C",
+            str(workspace),
+            "rev-parse",
+            "--is-inside-work-tree",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+    except FileNotFoundError:
+        return GIT_MISSING_FOR_AUTONOMY
+    except OSError:
+        return GIT_MISSING_FOR_AUTONOMY
+    try:
+        out_b, _err_b = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return GIT_MISSING_FOR_AUTONOMY
+    rc = proc.returncode if proc.returncode is not None else -1
+    if rc != 0 or out_b.decode("utf-8", errors="replace").strip() != "true":
+        return NO_GIT_FOR_AUTONOMY
+    return None
+
+
 class Checkpointer:
-    """Commits agent-written paths to the session branch.
+    """Commits agent-written paths to the session (or autonomy) branch.
 
     One instance per session.  Degradation state (disabled, notices
     already delivered) is tracked per instance so "informed once" holds
-    for the session's lifetime.
+    for the session's lifetime.  Interactive runs use
+    ``tst/session/<id>``.  Autonomous runs pass ``branch=`` from
+    :func:`auto_branch` (TD-4102).
     """
 
-    def __init__(self, workspace: Path, session_id: str) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        session_id: str,
+        branch: str | None = None,
+    ) -> None:
         self._workspace = workspace
         self._session_id = session_id
-        self._branch = session_branch(session_id)
+        if branch is None:
+            self._branch = session_branch(session_id)
+        else:
+            if not branch.startswith(AUTO_BRANCH_PREFIX):
+                raise ValueError(
+                    f"autonomy checkpoint branch must start with {AUTO_BRANCH_PREFIX!r}"
+                )
+            self._branch = branch
         self._probed = False
         self._disabled = False
         self._disabled_reason = ""
