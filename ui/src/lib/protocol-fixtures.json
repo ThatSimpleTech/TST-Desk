@@ -300,7 +300,8 @@
     "type": "set_api_key",
     "api_key": "sk-or-test-key",
     "credential": null,
-    "name": null
+    "name": null,
+    "base_url": null
   },
   "delete_api_key": {
     "type": "delete_api_key",
@@ -318,7 +319,8 @@
   "set_credential": {
     "type": "set_credential",
     "name": "Local",
-    "credential": null
+    "credential": null,
+    "base_url": null
   },
   "delete_credential": {
     "type": "delete_credential",
@@ -842,7 +844,8 @@
       {
         "id": "openrouter",
         "name": "OpenRouter",
-        "stored": false
+        "stored": false,
+        "base_url": "http://127.0.0.1:9/v1"
       }
     ],
     "tier_credentials": {

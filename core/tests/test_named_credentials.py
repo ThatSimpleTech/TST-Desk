@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import yaml
 
-from tstd.config import ModelConfig, default_config_yaml
+from tstd.config import ModelConfig, default_config_yaml, shipped_credential_base_url
 from tstd.daemon import Daemon
 from tstd.keychain import KeychainError
 from tstd.protocol import parse_client_message
@@ -89,7 +89,12 @@ class TestCatalog:
         monkeypatch.setattr("tstd.daemon.load_config", lambda: _config())
         writes: list[tuple[str, str]] = []
 
-        def _save(credential_id: str, name: str, path: Path | None = None) -> Path:
+        def _save(
+            credential_id: str,
+            name: str,
+            path: Path | None = None,
+            **_kwargs: object,
+        ) -> Path:
             writes.append((credential_id, name))
             return Path("/unused")
 
@@ -131,6 +136,34 @@ class TestCatalog:
             await client.close()
         assert fake_keychain.stored == {}
 
+    async def test_bound_key_calls_its_own_url(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        fake_keychain.stored["openrouter"] = _TAG
+        cfg = _config()
+        cfg.presets["local"].worker = cfg.presets["local"].worker.model_copy(
+            update={"credential": "openrouter", "slug": "demo/worker"}
+        )
+        cfg = cfg.model_copy(update={"active_preset": "local"})
+        monkeypatch.setattr("tstd.daemon.cached_config", lambda: cfg)
+        daemon = Daemon(data_dir=tmp_path)
+        client = await daemon._build_client(cfg.tier("worker"))
+        try:
+            assert client.api_key == _TAG
+            assert client.base_url == shipped_credential_base_url()
+            assert "11434" not in client.base_url
+        finally:
+            await client.close()
+
+    async def test_setup_state_includes_the_key_url(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        daemon = _daemon(monkeypatch, tmp_path)
+        reply = await daemon._setup_state_event()
+        openrouter = next(c for c in reply.credentials if c.id == "openrouter")
+        assert openrouter.base_url == shipped_credential_base_url()
+        assert _TAG not in openrouter.base_url
+
 
 class TestParse:
     def test_new_messages_parse(self) -> None:
@@ -143,3 +176,9 @@ class TestParse:
         )
         assert bind.type == "set_tier_credential"
         assert bind.credential == ""
+        with_url = parse_client_message(
+            '{"type": "set_credential", "name": "OpenRouter",'
+            ' "credential": "openrouter", "base_url": "http://127.0.0.1:9/v1"}'
+        )
+        assert with_url.type == "set_credential"
+        assert with_url.base_url == "http://127.0.0.1:9/v1"

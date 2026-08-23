@@ -7913,3 +7913,29 @@ charter sign.
 reusing `tst/session/<id>` for autonomy (the spec names the auto
 prefix). Also rejected: letting autonomy degrade on a non-git
 workspace the way interactive does.
+
+---
+
+## 2026-08-22 — TD-1718: a named API key owns its endpoint (Class B)
+
+**Decision:** `credentials.<id>` now holds `{name, base_url}`. The secret
+stays in the keychain. A tier bound to that id calls the key's URL
+when one is set. Unbound tiers keep the preset `base_url`. An older
+`openrouter` row with no URL inherits the shipped OpenRouter endpoint
+by reading `config.yaml`, not a Python literal.
+
+This reverses the TD-1717 rejection of putting `base_url` on the
+credential. The Settings key picker was being read as "use this
+provider"; without a URL on the key it could not mean that.
+
+**Rationale:** People bind a named key to a local-preset worker because
+they want that host, not because they want Ollama to receive a
+foreign `Authorization` header. One key, many slugs, one URL is the
+common shape (OpenRouter). Keyless local tiers still need the preset
+URL, so the tier `base_url` stays.
+
+**Alternative rejected:** Editing `base_url` on the Model row only.
+That is honest and smaller, but it is not what the key picker
+communicated. Also rejected: a separate "connection" object — the
+catalog row already is that object once it has a URL. Also rejected:
+hardcoding the OpenRouter URL in Python (§2.7).

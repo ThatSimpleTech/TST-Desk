@@ -64,6 +64,13 @@
 			{/if}
 		</select>
 	</label>
+	{#if selectedCredential(tier)}
+		{@const url =
+			settings.credentials.find((c) => c.id === selectedCredential(tier))?.base_url ?? ""}
+		{#if url}
+			<p class="hint">Requests go to {url}</p>
+		{/if}
+	{/if}
 {/each}
 {#if TIERS.some((t) => isDiscovered(t))}
 	<p class="hint">

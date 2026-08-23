@@ -38,7 +38,14 @@ from .autonomy import (
 from .autonomy.checkpoint import auto_branch
 from .autonomy.runner import advance_autonomy, should_notify
 from .compaction import maybe_compact
-from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
+from .config import (
+    ConfigError,
+    ModelConfig,
+    ModelDiscoveryError,
+    TierConfig,
+    resolve_base_url,
+    resolve_credential_id,
+)
 from .context import PromptAssembler
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
 from .context.stack import build_instruction_stack
@@ -575,7 +582,10 @@ async def agent_loop(
     providers: dict[str, ProviderLike] = {}
 
     async def client_for(tier_cfg: TierConfig) -> ProviderLike:
-        key = tier_cfg.base_url
+        key = (
+            f"{resolve_base_url(tier_cfg, config.credentials)}|"
+            f"{resolve_credential_id(tier_cfg) or ''}"
+        )
         existing = providers.get(key)
         if existing is not None:
             return existing
@@ -781,7 +791,9 @@ async def agent_loop(
                 # First use of the remapped worker: discover or fail the
                 # turn the same way an unresolved active-preset slug does.
                 try:
-                    tier_cfg.slug = await discover_model(tier_cfg.base_url, tier="worker")
+                    tier_cfg.slug = await discover_model(
+                        resolve_base_url(tier_cfg, config.credentials), tier="worker"
+                    )
                 except ModelDiscoveryError as e:
                     messages.append(
                         ChatMessage(role="assistant", content=f"I encountered an error: {e}")

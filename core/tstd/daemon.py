@@ -47,8 +47,10 @@ from .config import (
     TierConfig,
     allocate_credential_id,
     cached_config,
+    credential_base_url,
     is_loopback_url,
     load_config,
+    resolve_base_url,
     resolve_credential_id,
 )
 from .config_write import (
@@ -570,9 +572,10 @@ class Daemon:
         the historical ``openrouter`` keychain account.
         """
         cred_id = resolve_credential_id(tier_cfg)
+        url = resolve_base_url(tier_cfg, self.config.credentials)
         if cred_id is None:
-            return ProviderClient(base_url=tier_cfg.base_url, api_key=None)
-        return await ProviderClient.from_keychain(tier_cfg.base_url, provider_name=cred_id)
+            return ProviderClient(base_url=url, api_key=None)
+        return await ProviderClient.from_keychain(url, provider_name=cred_id)
 
     async def _brain_client(self) -> ProviderClient:
         """Build a client for the active brain tier."""
@@ -589,7 +592,10 @@ class Daemon:
         """
         if self._provider is not None:
             return self._provider
-        cache_key = (tier_cfg.base_url, resolve_credential_id(tier_cfg) or "")
+        cache_key = (
+            resolve_base_url(tier_cfg, self.config.credentials),
+            resolve_credential_id(tier_cfg) or "",
+        )
         cached = self._clients.get(cache_key)
         if cached is not None:
             return cached
@@ -654,7 +660,12 @@ class Daemon:
         if DEFAULT_CREDENTIAL_ID not in self.config.credentials:
             items.insert(0, (DEFAULT_CREDENTIAL_ID, "OpenRouter"))
         return [
-            CredentialSummary(id=cid, name=name, stored=await self._credential_is_stored(cid))
+            CredentialSummary(
+                id=cid,
+                name=name,
+                stored=await self._credential_is_stored(cid),
+                base_url=credential_base_url(cid, self.config.credentials),
+            )
             for cid, name in items
         ]
 
@@ -664,7 +675,13 @@ class Daemon:
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._clients.clear()
 
-    async def _store_named_key(self, api_key: str, credential: str | None, name: str | None) -> str:
+    async def _store_named_key(
+        self,
+        api_key: str,
+        credential: str | None,
+        name: str | None,
+        base_url: str | None = None,
+    ) -> str:
         """Store a secret and ensure its catalog row (TD-1717).
 
         Wizard path: both optional → ``openrouter`` / "OpenRouter".
@@ -686,17 +703,19 @@ class Daemon:
             catalog_name = "OpenRouter"
         else:
             catalog_name = cred_id
-        save_credential(cred_id, catalog_name)
+        save_credential(cred_id, catalog_name, base_url=base_url)
         await store_api_key(api_key, cred_id)
         self._reload_user_config()
         return cred_id
 
-    def _upsert_credential_name(self, credential: str | None, name: str) -> str:
+    def _upsert_credential_name(
+        self, credential: str | None, name: str, base_url: str | None = None
+    ) -> str:
         """Create or rename a catalog row without touching the secret."""
         cleaned = name.strip()
         existing = set(self.config.credentials)
         cred_id = credential.strip() if credential else allocate_credential_id(cleaned, existing)
-        save_credential(cred_id, cleaned)
+        save_credential(cred_id, cleaned, base_url=base_url)
         self._reload_user_config()
         return cred_id
 
@@ -779,10 +798,13 @@ class Daemon:
                 if resolve_credential_id(candidate) == credential:
                     tier_cfg = candidate
                     break
+        url = (
+            credential_base_url(credential, self.config.credentials) if credential else ""
+        ) or resolve_base_url(tier_cfg, self.config.credentials)
         if api_key is not None:
-            client = ProviderClient(base_url=tier_cfg.base_url, api_key=api_key)
+            client = ProviderClient(base_url=url, api_key=api_key)
         elif credential:
-            client = await ProviderClient.from_keychain(tier_cfg.base_url, provider_name=credential)
+            client = await ProviderClient.from_keychain(url, provider_name=credential)
         else:
             client = await self._build_client(tier_cfg)
         response = await client.chat_completion(
@@ -1757,7 +1779,9 @@ class Daemon:
 
         if isinstance(msg, SetApiKey):
             try:
-                cred_id = await self._store_named_key(msg.api_key, msg.credential, msg.name)
+                cred_id = await self._store_named_key(
+                    msg.api_key, msg.credential, msg.name, msg.base_url
+                )
             except KeychainLockedError as e:
                 # TD-1105: unlock guidance, not raw `security` stderr.
                 return build_error("keychain_locked", str(e))
@@ -1793,7 +1817,7 @@ class Daemon:
 
         if isinstance(msg, SetCredential):
             try:
-                self._upsert_credential_name(msg.credential, msg.name)
+                self._upsert_credential_name(msg.credential, msg.name, msg.base_url)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
             return (await self._setup_state_event()).model_dump_json()
