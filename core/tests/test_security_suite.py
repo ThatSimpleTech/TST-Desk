@@ -990,7 +990,7 @@ def test_dispatch_call_sites_confined() -> None:
     """Calls into the dispatcher are confined to the known set; a new call
     site is a new chokepoint risk and must be added deliberately."""
     source_root = Path(__file__).resolve().parent.parent / "tstd"
-    allowed = {"loop.py", "dispatch.py"}
+    allowed = {"loop.py", "dispatch.py", "dod.py"}
     callers = set()
     for py_file in source_root.rglob("*.py"):
         # utf-8 explicitly: the platform default is cp1252 on Windows, which

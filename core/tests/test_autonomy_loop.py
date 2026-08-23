@@ -28,6 +28,7 @@ from tstd.autonomy.ledger import DecisionLedger
 from tstd.autonomy.runner import (
     CLASS_C_STOP,
     CONTINUE_PREFIX,
+    DOD_MET,
     advance_autonomy,
     first_prompt,
     should_notify,
@@ -50,15 +51,17 @@ def make_charter(
     max_iterations: int = 2,
     spend_usd: float = 25.0,
     wall_clock_hours: float = 8.0,
+    definition_of_done: list[str] | None = None,
+    allowed_commands: list[str] | None = None,
 ) -> Charter:
     return Charter.model_validate(
         {
             "objective": "Ship the CSV importer",
-            "definition_of_done": ["The suite is green"],
+            "definition_of_done": definition_of_done or ["The suite is green"],
             "source_of_truth": [],
             "boundary": {
                 "writable_paths": ["**"],
-                "allowed_commands": ["echo"],
+                "allowed_commands": allowed_commands or ["echo"],
                 "network": "deny",
             },
             "caps": {
@@ -105,6 +108,7 @@ class TestScheduler:
 
     def test_class_c_notifies_and_clean_complete_does_not(self) -> None:
         assert should_notify(CLASS_C_STOP)
+        assert should_notify(DOD_MET)
         assert not should_notify("definition of done")
 
     async def test_advance_queues_then_stops(self) -> None:
@@ -126,7 +130,12 @@ class TestUnattendedLoop:
         session = Session(str(tmp_path))
         charter = make_charter(max_iterations=2)
         notified = _wire_autonomy(session, charter)
-        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Working")})
+        mock = MockProvider(
+            scripts={
+                "test-brain": Script(kind="stream", content="Working"),
+                "test-worker": Script(kind="text", content="RED"),
+            }
+        )
         runner = await start_text_loop(session, TierRouter(), mock, make_config())
         await session.add_user_message(first_prompt(charter))
         await wait_for_turn(session, 2)
@@ -134,8 +143,9 @@ class TestUnattendedLoop:
         assert not runner.is_running
         completes = [e for e in session.event_log.all_events if isinstance(e, TurnComplete)]
         assert len(completes) == 2
-        assert len(mock.calls) == 2
-        follow = [m.content for m in mock.calls[1].messages if m.role == "user"]
+        brain = [c for c in mock.calls if c.model == "test-brain"]
+        assert len(brain) == 2
+        follow = [m.content for m in brain[1].messages if m.role == "user"]
         assert any(c is not None and CONTINUE_PREFIX in c for c in follow)
         assert notified  # iteration cap notifies
         assert session.autonomy_stop_reason is not None

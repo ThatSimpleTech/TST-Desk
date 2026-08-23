@@ -245,6 +245,7 @@ _LEFTOVER_STORIES: dict[str, str] = {
     "linux desktop": "TD-2001",
     "design-mode": "TD-3406",
     "charter editor": "TD-4002",
+    "definition-of-done polling": "TD-4103",
 }
 
 

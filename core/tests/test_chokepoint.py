@@ -351,12 +351,13 @@ def test_no_bypass_enumerates_dispatch_call_sites() -> None:
     """Tool execution is possible only in guarded modules.
 
     Every call to ``dispatch``/``dispatch_many`` in the production package
-    is confined to ``loop.py`` (the orchestrator that wires the classifier)
-    and ``dispatch.py`` (where the classifier guard lives).  Any other
+    is confined to ``loop.py`` (the orchestrator that wires the classifier),
+    ``dispatch.py`` (where the classifier guard lives), and ``dod.py``
+    (TD-4103: the scheduler polls DoD through the same gate).  Any other
     module getting a tool to execution is a bypass and fails this test.
     """
     pkg = Path(tstd.__file__).parent
-    allowed = {"loop.py", "dispatch.py"}
+    allowed = {"loop.py", "dispatch.py", "dod.py"}
     offenders: list[tuple[str, int, str]] = []
 
     for path in pkg.rglob("*.py"):

@@ -36,6 +36,7 @@ from .autonomy import (
     DecisionLedger,
 )
 from .autonomy.checkpoint import auto_branch
+from .autonomy.dod import make_dod_poller
 from .autonomy.runner import advance_autonomy, should_notify
 from .compaction import maybe_compact
 from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
@@ -583,6 +584,26 @@ async def agent_loop(
         providers[key] = created
         return created
 
+    async def _worker_completion(prompt: str) -> str:
+        # Classifier and DoD polls stay on the active preset's worker,
+        # not the CU remapped client — they are not a pixel loop (TD-3903).
+        worker_cfg = config.tier("worker")
+        worker_client = await client_for(worker_cfg)
+        request = ChatCompletionRequest(
+            model=worker_cfg.require_slug(),
+            messages=[ChatMessage(role="user", content=prompt)],
+            max_tokens=8,
+            temperature=0.0,
+        )
+        resp = await worker_client.chat_completion(request)
+        if isinstance(resp, ProviderError):
+            raise RuntimeError(f"worker call failed: {resp.message}")
+        if resp.usage is not None:
+            tracker.record_classifier("worker", resp.usage, worker_cfg)
+            # Classifier / DoD cost shows up in the meter too (TD-1006).
+            await session.event_log.add(tracker.emit_cost_update(session.id))
+        return resp.message.content or ""
+
     # Decision classifier chokepoint (TD-702/703, prime §2.6).  Every tool
     # call routes through it: the static rule table first; ambiguous cases
     # go to a worker-tier call (TD-703) that defaults to B, never A.  The
@@ -596,30 +617,9 @@ async def agent_loop(
             allowed_hosts=session.boundary_config.allowed_hosts,
         )
         if tool_dispatcher.classifier is None:
-
-            async def _worker_classifier(prompt: str) -> str:
-                # Classifier stays on the active preset's worker, not the
-                # CU remapped client — it is not a pixel loop (TD-3903).
-                worker_cfg = config.tier("worker")
-                worker_client = await client_for(worker_cfg)
-                request = ChatCompletionRequest(
-                    model=worker_cfg.require_slug(),
-                    messages=[ChatMessage(role="user", content=prompt)],
-                    max_tokens=8,
-                    temperature=0.0,
-                )
-                resp = await worker_client.chat_completion(request)
-                if isinstance(resp, ProviderError):
-                    raise RuntimeError(f"classifier worker call failed: {resp.message}")
-                if resp.usage is not None:
-                    tracker.record_classifier("worker", resp.usage, worker_cfg)
-                    # Classifier cost shows up in the meter too (TD-1006).
-                    await session.event_log.add(tracker.emit_cost_update(session.id))
-                return resp.message.content or ""
-
             tool_dispatcher.classifier = AmbiguousClassifier(
                 static=DecisionClassifier(boundary),
-                call_worker=_worker_classifier,
+                call_worker=_worker_completion,
             )
 
         # Path boundary enforcement (TD-602): the same workspace boundary
@@ -663,6 +663,15 @@ async def agent_loop(
             tool_dispatcher.workspace = Path(session.workspace_path)
         if tool_dispatcher.approval_handler is None:
             tool_dispatcher.approval_handler = session.request_approval
+
+    # TD-4103: unattended runs poll definition-of-done after each turn.
+    # Interactive sessions never attach a poller.
+    if session.autonomy and session.charter is not None and session.dod_poller is None:
+        session.dod_poller = make_dod_poller(
+            session,
+            dispatcher=tool_dispatcher,
+            ask_worker=_worker_completion,
+        )
 
     # Pre-compute tool definitions if we have a registry
     tool_definitions: list[ProviderToolDefinition] | None = None
