@@ -112,7 +112,8 @@ class TestHideFlag:
         driver.screenshot = _watch  # type: ignore[method-assign]
         raw = await desktop_screenshot(object(), driver)
         body = json.loads(raw)
-        assert body["png_base64"]
+        assert "png_base64" not in body
+        assert body["width"] > 0
         assert seen == [True]
         assert real_display_overlay_hidden() is False
 

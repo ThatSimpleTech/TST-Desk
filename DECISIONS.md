@@ -7939,3 +7939,47 @@ opt-in the charter author can write without a new config key.
 Also rejected: counting consecutive reds here (TD-4203). Also
 rejected: a new protocol event — notify is the summary this story
 asked for.
+
+---
+
+## 2026-08-22 — TD-1903: echo OpenRouter `reasoning_details` (Class B)
+
+**Decision:** `ChatMessage` and `Delta` carry an opaque
+`reasoning_details` list. The stream parser flattens `text` / `summary`
+into `Delta.reasoning` for the existing UI and watchdog. The loop
+accumulates the raw array and puts it on the assistant message of the
+next request. Persist writes it through the same `_message_to_dict`
+path. The plaintext scratchpad still never enters `collected_content`.
+
+**Rationale:** TD-1901 said accept `reasoning` or `reasoning_content`
+and do not invent a third spelling. OpenRouter standardized a third:
+`reasoning_details`. Live `stealth/ox-alpha` streamed that array and
+nothing Desk parsed, so a 200 became `empty_completion`. Tool loops
+require the array echoed unmodified. This is the OpenRouter agent
+dialect, not a local-only quirk.
+
+**Alternative rejected:** Sending `reasoning: {enabled: true}` and
+hoping a string field appears. The array is what the next request
+must carry. Also rejected: stuffing the flattened string into
+`content` — that is the TD-1901 defect.
+
+---
+
+## 2026-08-22 — TD-1903: desktop screenshot returns path, not base64 (Class B)
+
+**Decision:** Reverse the TD-3401 keep-`png_base64` choice.
+`desktop_screenshot` now returns the persist metadata
+(`path`, `width`, `height`, `mime`) the way `browser_screenshot`
+already does. The PNG still lands in `sessions/<id>/screens/` for
+the Screen pane.
+
+**Rationale:** TD-3401 kept the driver JSON because "the model still
+needs the image." Dispatch then truncates tool results at 50k
+characters, so the model received a broken prefix, not a picture.
+That blob also bloated the next OpenRouter call. Path metadata is
+honest: the model cannot see pixels from a truncated string.
+
+**Alternative rejected:** Attaching a multimodal `image_url` on the
+tool result in this story. `ChatMessage.content` is still a string;
+vision is Later. Also rejected: raising the 50k cap so a full
+desktop PNG fits — that is the 429 we were feeding.

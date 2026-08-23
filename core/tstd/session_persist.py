@@ -92,11 +92,20 @@ def chat_message_from_dict(data: dict[str, Any]) -> ChatMessage:
     tool_call_id = data.get("tool_call_id")
     if tool_call_id is not None and not isinstance(tool_call_id, str):
         raise ValueError("tool_call_id must be a string")
+    raw_details = data.get("reasoning_details")
+    reasoning_details: list[dict[str, Any]] | None = None
+    if raw_details is not None:
+        if not isinstance(raw_details, list) or any(
+            not isinstance(item, dict) for item in raw_details
+        ):
+            raise ValueError("reasoning_details must be a list of objects")
+        reasoning_details = raw_details
     return ChatMessage(
         role=role,
         content=content,
         tool_calls=tool_calls,
         tool_call_id=tool_call_id,
+        reasoning_details=reasoning_details,
     )
 
 

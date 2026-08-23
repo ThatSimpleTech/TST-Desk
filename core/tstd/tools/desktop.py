@@ -35,8 +35,9 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
         Tool(
             name="desktop_screenshot",
             description=(
-                "Capture the desktop and return a PNG as base64. This cannot "
-                "move the pointer or type. Optional display is a 0-based index."
+                "Capture the desktop. Returns the PNG path, width, and height "
+                "written for the Screen pane. This cannot move the pointer or "
+                "type. Optional display is a 0-based index."
             ),
             parameters={
                 "type": "object",
@@ -180,9 +181,10 @@ async def desktop_screenshot(
     with hide_real_display_for_screenshot():
         raw = await driver.screenshot(display=display)
     png = _png_from_driver_json(raw)
-    if png is not None:
-        await persist_screen_frame(session, png, tool_call_id=tool_call_id or None)
-    return raw
+    if png is None:
+        return raw
+    body = await persist_screen_frame(session, png, tool_call_id=tool_call_id or None)
+    return json.dumps(body)
 
 
 async def desktop_move(

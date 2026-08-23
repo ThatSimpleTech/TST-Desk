@@ -39,6 +39,89 @@ _STATUS_CODE_MAP: dict[int, str] = {
     504: "gateway_timeout",
 }
 
+_KNOWN_ERROR_CODES = frozenset(_STATUS_CODE_MAP.values())
+
+
+def _coerce_reasoning_details(raw: Any) -> list[dict[str, Any]] | None:
+    """Keep only object items from an OpenRouter ``reasoning_details`` array."""
+    if not isinstance(raw, list) or not raw:
+        return None
+    items = [item for item in raw if isinstance(item, dict)]
+    return items or None
+
+
+def _flatten_reasoning_details(details: list[dict[str, Any]]) -> str | None:
+    """Turn OpenRouter detail objects into the string the UI already streams.
+
+    ``reasoning.text`` / ``reasoning.summary`` become visible thinking.
+    Encrypted-only details still yield a non-empty marker so the first-token
+    watchdog (TD-1713) does not treat a thinking model as hung.
+    """
+    parts: list[str] = []
+    for item in details:
+        typ = str(item.get("type", ""))
+        if typ.endswith(".text") or typ == "text":
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+        elif typ.endswith(".summary") or typ == "summary":
+            summary = item.get("summary")
+            if isinstance(summary, str) and summary:
+                parts.append(summary)
+        elif typ.endswith(".encrypted"):
+            parts.append("[REDACTED]")
+    if parts:
+        return "".join(parts)
+    return "[REDACTED]" if details else None
+
+
+def merge_reasoning_details(acc: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> None:
+    """Reassemble streamed ``reasoning_details`` in chunk order.
+
+    Same ``index`` extends ``text`` / ``summary`` so a split thought becomes
+    one object. That assembled array is what the next request must echo.
+    """
+    for item in incoming:
+        idx = item.get("index")
+        if isinstance(idx, int):
+            for existing in acc:
+                if existing.get("index") == idx:
+                    for key in ("text", "summary"):
+                        add = item.get(key)
+                        if isinstance(add, str) and add:
+                            prev = existing.get(key)
+                            existing[key] = prev + add if isinstance(prev, str) else add
+                    for key, value in item.items():
+                        if key not in existing:
+                            existing[key] = value
+                    break
+            else:
+                acc.append(dict(item))
+        else:
+            acc.append(dict(item))
+
+
+def _canonical_error_code(status: int, provider_code: str) -> str:
+    """Map HTTP status and provider ``error.code`` to a Desk error code.
+
+    OpenRouter sends ``error.code`` as the string ``"429"``. Keeping that
+    string made the toast "unrecognised error (429)" even though the
+    status was already a rate limit.
+    """
+    mapped = _STATUS_CODE_MAP.get(status)
+    if mapped is not None:
+        if provider_code in _KNOWN_ERROR_CODES:
+            return provider_code
+        return mapped
+    if provider_code.isdigit():
+        by_code = _STATUS_CODE_MAP.get(int(provider_code))
+        if by_code is not None:
+            return by_code
+    if provider_code and not provider_code.startswith("http_"):
+        return provider_code
+    return f"http_{status}"
+
+
 # ── Data models ────────────────────────────────────────────────────────
 
 
@@ -84,6 +167,8 @@ class ChatMessage:
     content: str | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
+    # OpenRouter tool-loop echo (TD-1903). Opaque; pass back unmodified.
+    reasoning_details: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -156,6 +241,8 @@ class ChatCompletionRequest:
             ]
         if msg.tool_call_id is not None:
             d["tool_call_id"] = msg.tool_call_id
+        if msg.reasoning_details:
+            d["reasoning_details"] = msg.reasoning_details
         return d
 
 
@@ -200,11 +287,14 @@ class Delta:
     ``reasoning`` is a reasoning model's visible scratchpad, carried
     separately from ``content`` because it is not part of the answer: it
     is shown to the user but must never be replayed to the provider as
-    something the assistant said (TD-1901).
+    something the assistant said (TD-1901). ``reasoning_details`` is the
+    OpenRouter array that *must* be echoed on the next assistant
+    message after tools (TD-1903).
     """
 
     content: str | None = None
     reasoning: str | None = None
+    reasoning_details: list[dict[str, Any]] | None = None
     tool_calls: list[DeltaToolCall] | None = None
 
 
@@ -265,6 +355,7 @@ class ChatCompletionResponse:
                 role=msg_data.get("role", "assistant"),
                 content=msg_data.get("content"),
                 tool_calls=tool_calls,
+                reasoning_details=_coerce_reasoning_details(msg_data.get("reasoning_details")),
             ),
             finish_reason=choice.get("finish_reason"),
             usage=Usage.from_api_dict(data.get("usage")),
@@ -855,10 +946,7 @@ class ProviderClient:
         if not provider_msg:
             provider_msg = body_text[:300]
 
-        # Determine code: use provider code if meaningful, else map from status
-        code = provider_code
-        if not code or code.startswith("http_"):
-            code = _STATUS_CODE_MAP.get(status, f"http_{status}")
+        code = _canonical_error_code(status, provider_code)
 
         # Override for known status codes that carry specific semantics
         if status == 401:
@@ -935,14 +1023,18 @@ class ProviderClient:
         # Parse content delta
         content = delta_data.get("content")
 
-        # Reasoning delta (TD-1901).  Two spellings are in the wild and
-        # neither is in the OpenAI schema: Ollama emits ``reasoning``,
-        # DeepSeek and several OpenRouter passthroughs emit
-        # ``reasoning_content``.  Accept both, prefer neither — a provider
-        # sending one sends only one.  Empty strings normalise to None so
-        # a chunk carrying nothing but ``content: ""`` cannot be mistaken
-        # for a reasoning chunk.
-        reasoning = delta_data.get("reasoning") or delta_data.get("reasoning_content")
+        # Reasoning delta (TD-1901 / TD-1903).  Three spellings are in
+        # the wild and none is in the OpenAI schema: Ollama emits
+        # ``reasoning``, DeepSeek emits ``reasoning_content``, OpenRouter
+        # streams ``reasoning_details`` (array).  A string field wins for
+        # the UI when present; details still ride along for the tool-loop
+        # echo.  Empty strings normalise to None so a chunk carrying
+        # nothing but ``content: ""`` cannot be mistaken for thinking.
+        reasoning_raw = delta_data.get("reasoning") or delta_data.get("reasoning_content")
+        reasoning = reasoning_raw if isinstance(reasoning_raw, str) and reasoning_raw else None
+        reasoning_details = _coerce_reasoning_details(delta_data.get("reasoning_details"))
+        if reasoning is None and reasoning_details:
+            reasoning = _flatten_reasoning_details(reasoning_details)
 
         # Parse tool call deltas
         tool_calls = None
@@ -959,7 +1051,12 @@ class ProviderClient:
 
         return StreamChunk(
             id=data.get("id", ""),
-            delta=Delta(content=content, reasoning=reasoning, tool_calls=tool_calls),
+            delta=Delta(
+                content=content,
+                reasoning=reasoning,
+                reasoning_details=reasoning_details,
+                tool_calls=tool_calls,
+            ),
             finish_reason=finish_reason,
             usage=usage,
         )

@@ -4026,8 +4026,9 @@ already takes (`session._redact_event` does not scrub assistant prose).
 The chat store ends the first-token wait on reasoning.
 
 **Notes:** the field name is from a live capture, not from documentation. Ollama emits
-`reasoning`; some OpenAI-compatible providers emit `reasoning_content`. Accept both and do not
-invent a third. This is not local-only plumbing — remote reasoning models reach the same
+`reasoning`; some OpenAI-compatible providers emit `reasoning_content`. Accept both. A third
+spelling, OpenRouter's `reasoning_details` array, is TD-1903 — do not flatten it into
+`content`. This is not local-only plumbing — remote reasoning models reach the same
 parser through OpenRouter.
 
 Do not conflate this with TD-1716. That was a twenty-minute "Whittling…" caused by WKWebView
@@ -4065,6 +4066,46 @@ clears the map (`onUnbind`) because ids restart at m1.
 measured throughput a 27B thinker will out-produce its own answer several times over, so
 rendering reasoning inline and unfolded would bury the reply — which is the failure mode this
 story exists to avoid, not a smaller version of the one TD-1901 fixes.
+
+---
+
+### TD-1903 — OpenRouter reasoning_details
+**Size:** 5 · **Depends on:** TD-1901
+
+**Bugfix.** TD-1901 accepted string `reasoning` / `reasoning_content` and
+said not to invent a third spelling. OpenRouter invented one:
+`delta.reasoning_details` (array). Desk dropped it, so a thinking API
+model produced no `assistant_reasoning`, then `empty_completion`. After
+tools, the next request must echo that array unmodified or the provider
+cannot continue the thought. Measured 2026-08-22 against
+`stealth/ox-alpha` on OpenRouter.
+
+**Acceptance criteria:**
+- [x] Stream chunks with `delta.reasoning_details` flatten `text` /
+      `summary` into `Delta.reasoning` so the UI and first-token watchdog
+      see thinking
+- [x] Encrypted-only details still count as a first token
+- [x] Accumulated `reasoning_details` are stored on the assistant
+      `ChatMessage` and serialized unmodified on the next request
+- [x] Persist/revive round-trips the array
+- [x] Provider `error.code` `"429"` (numeric status string) maps to
+      `rate_limited`
+- [x] `desktop_screenshot` returns persist metadata (`path`, `width`,
+      `height`) like `browser_screenshot` — not truncated `png_base64`
+- [x] Scripted tests cover details-only chunks, split-index merge,
+      echo-back on a tool-loop assistant message, and the OpenRouter 429
+      body
+
+**Completed (2026-08-22):** `_parse_stream_chunk` accepts the OpenRouter
+array; the loop accumulates it and `_message_to_dict` echoes it.
+`error.code: "429"` maps to `rate_limited`. `desktop_screenshot` returns
+the same persist metadata as the browser tool.
+
+**Notes:** the plaintext scratchpad still must not enter
+`collected_content`. The array is not speech; it is provider state.
+Dropping `png_base64` from the desktop tool result reverses TD-3401 —
+dispatch already truncated it to 50k, so the model never saw a usable
+image. Vision `image_url` stays Later.
 
 ---
 

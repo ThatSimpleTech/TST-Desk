@@ -6,7 +6,6 @@ the live driver talks JSON-RPC without binding a socket.
 
 from __future__ import annotations
 
-import base64
 import json
 import sys
 from pathlib import Path
@@ -163,7 +162,9 @@ class TestScreenFrame:
         result = await dispatcher.dispatch("c1", "desktop_screenshot", {}, session=session)
         assert result.status == "success"
         body = json.loads(result.output)
-        assert body["png_base64"]
+        assert body["path"].startswith("screens/")
+        assert body["path"].endswith(".png")
+        assert "png_base64" not in body
         frames = [e for e in session.event_log.events if isinstance(e, ScreenFrame)]
         assert len(frames) == 1
         assert frames[0].path.startswith("screens/")
@@ -204,9 +205,9 @@ class TestScreenshotClassA:
         assert result.decision_class is DecisionClass.A
         assert worker == []
         body = json.loads(result.output)
-        assert body["png_base64"]
-        raw = base64.b64decode(body["png_base64"])
-        assert raw.startswith(b"\x89PNG")
+        assert "png_base64" not in body
+        assert body["width"] > 0
+        assert body["height"] > 0
         assert driver.actuations == []
 
 

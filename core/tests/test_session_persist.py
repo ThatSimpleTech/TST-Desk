@@ -206,6 +206,16 @@ class TestChatMessageCodec:
         msg = ChatMessage(role="user", content="hi")
         assert chat_message_from_dict(chat_message_to_dict(msg)).content == "hi"
 
+    def test_reasoning_details_round_trip(self) -> None:
+        details = [{"type": "reasoning.text", "text": "plan", "index": 0}]
+        msg = ChatMessage(role="assistant", content=None, reasoning_details=details)
+        back = chat_message_from_dict(chat_message_to_dict(msg))
+        assert back.reasoning_details == details
+
+    def test_reasoning_details_must_be_objects(self) -> None:
+        with pytest.raises(ValueError, match="reasoning_details"):
+            chat_message_from_dict({"role": "assistant", "reasoning_details": ["nope"]})
+
 
 class TestSessionLogWindow:
     def test_zero_or_missing_cap_is_the_default(self, tmp_path: Path) -> None:
