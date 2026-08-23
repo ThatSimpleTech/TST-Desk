@@ -975,6 +975,7 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(isString(m.workspace_path)).toBe(true);
     expect(m.ready).toBe(true);
     expect(m.signed).toBe(true);
+    expect(isString(m.session_id)).toBe(true);
   });
 
   it("instruction_files", () => {

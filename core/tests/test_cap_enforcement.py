@@ -216,6 +216,16 @@ def test_skip_all_does_not_pause_at_cap(tmp_path: Path) -> None:
     assert _cap_violation(session, tracker, time.time(), 1, skip_all=False) is not None
 
 
+def test_skip_all_does_not_waive_autonomy_caps(tmp_path: Path) -> None:
+    session = Session(str(tmp_path))
+    session.autonomy = True
+    session.boundary_config = BoundaryConfig(caps=CapsSection(spend_usd=0.01, max_iterations=1))
+    tracker = _Cost()
+    reason = _cap_violation(session, tracker, time.time(), 10_000, skip_all=True)
+    assert reason is not None
+    assert reason.startswith("spend cap")
+
+
 # ── Daemon resume handler ───────────────────────────────────────────────
 
 

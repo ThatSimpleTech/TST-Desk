@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 
+from .autonomy.charter import Charter
 from .autonomy.classifier import DecisionClass
 from .boundary_config import BoundaryConfig
 from .logging import get_logger, redact_structure
@@ -276,6 +277,20 @@ class Session:
         # TD-3903: this session has used a desktop_ / browser_ tool.
         # Live flag; revive also scans the event log (same signal as Screen).
         self.used_cu = False
+        # TD-4101: unattended runs iterate without a user message.
+        # Interactive sessions leave this false and wait on the queue.
+        self.autonomy = False
+        self.charter: Charter | None = None
+        self.autonomy_turns = 0
+        self.autonomy_class_c = False
+        self.autonomy_stop_reason: str | None = None
+        self.autonomy_notify: Callable[[str], Awaitable[None]] | None = None
+
+    def mark_class_c(self, reason: str) -> None:
+        """A Class C call on an autonomous run — stop after this turn."""
+        self.autonomy_class_c = True
+        if self.autonomy_stop_reason is None:
+            self.autonomy_stop_reason = reason
 
     async def _observe_turn_end(self, event: DaemonEvent, _log: SessionEventLog) -> None:
         """Lower the open-turn count when the loop reports a turn complete."""

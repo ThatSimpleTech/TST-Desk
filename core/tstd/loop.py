@@ -35,6 +35,7 @@ from .autonomy import (
     DecisionClassifier,
     DecisionLedger,
 )
+from .autonomy.runner import advance_autonomy, should_notify
 from .compaction import maybe_compact
 from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
@@ -148,7 +149,9 @@ def _cap_violation(
     every model call so an over-cap session pauses instead of spending.
     Skip-all (TD-806) is skip-everything: caps do not pause.
     """
-    if skip_all:
+    # Skip-all is an interactive escape (TD-806). An unattended run
+    # still stops on the signed caps (spec §12.7).
+    if skip_all and not session.autonomy:
         return None
     caps = session.boundary_config.caps
     if tracker.session_cost() >= caps.spend_usd:
@@ -752,6 +755,8 @@ async def agent_loop(
                     }
                 },
             )
+            if session.autonomy:
+                return
             continue
         _model_slugs = titlebar_slugs(config, cu_heavy=session_is_cu_heavy(session))
 
@@ -1027,6 +1032,8 @@ async def agent_loop(
                     "turn failed: no API key in keychain",
                     extra={"extra_fields": {"session_id": session.id}},
                 )
+                if session.autonomy:
+                    return
                 break
 
             # 2c.5 Cap enforcement (TD-707).  Before every model call,
@@ -1045,6 +1052,11 @@ async def agent_loop(
                 )
                 if violation is None:
                     break
+                if session.autonomy:
+                    session.autonomy_stop_reason = violation
+                    if session.autonomy_notify is not None and should_notify(violation):
+                        await session.autonomy_notify(violation)
+                    return
                 log.warning(
                     "cap pause",
                     extra={
@@ -1099,6 +1111,8 @@ async def agent_loop(
                         }
                     },
                 )
+                if session.autonomy:
+                    return
                 break  # exit tool-call loop, wait for next user message
 
             if not tool_calls and not (collected_content or "").strip():
@@ -1135,6 +1149,8 @@ async def agent_loop(
                         }
                     },
                 )
+                if session.autonomy:
+                    return
                 break
 
             # 2e. Record success
@@ -1166,6 +1182,12 @@ async def agent_loop(
                     # If cancelled during dispatch, exit the tool-call loop
                     if session.cancel_requested:
                         break
+                    if session.autonomy and session.autonomy_class_c:
+                        await _emit_turn_complete(session, tier, turn_start, tracker)
+                        session.snapshot_branches()
+                        if not await advance_autonomy(session):
+                            return
+                        break
                     # Loop back to call the provider again with tool results
                     continue
                 # Without a dispatcher, fall through to emit turn_complete
@@ -1176,6 +1198,8 @@ async def agent_loop(
             # 2h. No tool calls (or no dispatcher) — turn is complete
             await _emit_turn_complete(session, tier, turn_start, tracker)
             session.snapshot_branches()
+            if session.autonomy and not await advance_autonomy(session):
+                return
             log.info(
                 "turn complete",
                 extra={

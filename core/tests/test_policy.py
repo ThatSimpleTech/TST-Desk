@@ -367,6 +367,27 @@ class TestSkipAll:
         assert resolve(PolicyConfig(), SHELL, {"command": "ls"}, B, skip_all=False) == "ask"
 
 
+class TestAutonomy:
+    def test_class_a_stays_auto(self) -> None:
+        assert resolve(PolicyConfig(), FS_WRITE, {"path": "src/x.py"}, A, autonomy=True) == "auto"
+
+    def test_class_b_never_prompts(self) -> None:
+        decision = resolve_explained(PolicyConfig(), SHELL, {"command": "ls"}, B, autonomy=True)
+        assert decision.effect == "auto"
+        assert "autonomy" in decision.reason
+
+    def test_class_c_never_even_under_skip_all(self) -> None:
+        decision = resolve_explained(
+            PolicyConfig(), SHELL, {"command": "ls"}, C, skip_all=True, autonomy=True
+        )
+        assert decision.effect == "never"
+        assert "Class C" in decision.reason
+
+    def test_class_c_auto_rule_still_stops(self) -> None:
+        cfg = PolicyConfig(rules=[_rule("shell", "**", "auto")])
+        assert resolve(cfg, SHELL, {"command": "ls"}, C, skip_all=True, autonomy=True) == "never"
+
+
 class TestSkipAllPersist:
     def test_absent_is_off(self, tmp_path: Path) -> None:
         assert load_skip_all(tmp_path) is False

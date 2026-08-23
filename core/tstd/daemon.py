@@ -29,8 +29,9 @@ from .attachments import AttachmentError, decode_attachments, render_user_conten
 from .audit import AuditStore
 from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
 from .audit_writer import AuditWriter
-from .autonomy.charter import CharterError
+from .autonomy.charter import Charter, CharterError
 from .autonomy.charter_io import read_charter_document, write_charter_document
+from .autonomy.runner import first_prompt, notify_autonomy_stop
 from .autonomy.start import run_autonomy_start
 from .boundary_config import (
     boundary_source,
@@ -2008,6 +2009,9 @@ class Daemon:
                 "workspace boundary config invalid; using defaults",
                 extra={"extra_fields": {"workspace_path": sess.workspace_path, "error": str(e)}},
             )
+        if sess.charter is not None:
+            sess.boundary_config.boundary = sess.charter.boundary
+            sess.boundary_config.caps = sess.charter.caps
 
         try:
             sess.policy = load_policy(sess.workspace_path)
@@ -2024,6 +2028,8 @@ class Daemon:
         tool_registry = create_registry()
         tool_dispatcher = ToolDispatcher(tool_registry)
         tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals
+        tool_dispatcher.autonomy_fn = lambda: sess.autonomy
+        tool_dispatcher.on_class_c = sess.mark_class_c
         sess.persist_dir = self._session_persist.dir_for(sess.id)
         register_builtin_handlers(
             tool_dispatcher,
@@ -2557,7 +2563,7 @@ class Daemon:
         )
 
     async def _handle_start_autonomy(self, msg: StartAutonomy) -> str:
-        """Sign the charter and refuse unless the sandbox is live (TD-4003)."""
+        """Sign the charter, refuse unless the sandbox is live, then launch."""
         root = Path(msg.workspace_path)
         if not await asyncio.to_thread(root.is_dir):
             return build_error(
@@ -2573,12 +2579,34 @@ class Daemon:
             )
         except CharterError as e:
             return build_error("invalid_charter", str(e))
+        session_id: str | None = None
+        if result.ready and result.charter is not None:
+            session_id = await self._launch_autonomy_run(root, result.charter)
         return AutonomyStart(
             workspace_path=str(root),
             ready=result.ready,
             signed=result.signed,
             error=result.error,
+            session_id=session_id,
         ).model_dump_json()
+
+    async def _launch_autonomy_run(self, workspace: Path, charter: Charter) -> str:
+        """Open a daemon-owned session that iterates without a viewer."""
+        await asyncio.to_thread(scaffold_workspace_memory, str(workspace))
+        sess = await self.session_registry.create(str(workspace))
+        sess.autonomy = True
+        sess.charter = charter
+
+        async def _notify(message: str) -> None:
+            await notify_autonomy_stop(self.config, message)
+
+        sess.autonomy_notify = _notify
+        await self._session_store.upsert(sess.id, str(workspace), sess.state)
+        self._session_persist.prepare(sess.id)
+        await self._attach_session_runtime(sess)
+        await self._emit_working_context(sess, "charter")
+        await sess.add_user_message(first_prompt(charter))
+        return sess.id
 
     async def _handle_create_rule(self, msg: CreateRule) -> str:
         """Create a ``.tst/rules/`` file on the human path (TD-2802)."""

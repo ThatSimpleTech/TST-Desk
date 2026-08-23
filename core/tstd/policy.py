@@ -165,6 +165,7 @@ def resolve(
     decision_class: DecisionClass,
     workspace: Path | None = None,
     skip_all: bool = False,
+    autonomy: bool = False,
 ) -> PolicyEffect:
     """Resolve the policy effect for a classified tool call.
 
@@ -174,7 +175,13 @@ def resolve(
     forbids.  Thin wrapper over :func:`resolve_explained` (TD-802).
     """
     return resolve_explained(
-        config, tool, arguments, decision_class, workspace, skip_all=skip_all
+        config,
+        tool,
+        arguments,
+        decision_class,
+        workspace,
+        skip_all=skip_all,
+        autonomy=autonomy,
     ).effect
 
 
@@ -185,6 +192,7 @@ def resolve_explained(
     decision_class: DecisionClass,
     workspace: Path | None = None,
     skip_all: bool = False,
+    autonomy: bool = False,
 ) -> PolicyDecision:
     """Like :func:`resolve`, but carries the deciding rule and a
     human-readable reason for the approval gate (TD-802).
@@ -237,9 +245,23 @@ def resolve_explained(
     # never stays never. The fs-tool boundary still refuses before
     # this function is consulted.
     if skip_all and decision.effect == "ask":
-        return PolicyDecision(
+        decision = PolicyDecision(
             "auto",
             "skip-all approvals is on",
+            decision.rule,
+        )
+    # TD-4101: autonomy never prompts A/B and never auto-runs C.
+    # Applied after skip-all so a Class C skip-all grant still stops.
+    if autonomy and decision_class is DecisionClass.C:
+        return PolicyDecision(
+            "never",
+            "autonomy: Class C stops the run",
+            decision.rule,
+        )
+    if autonomy and decision.effect == "ask":
+        return PolicyDecision(
+            "auto",
+            "autonomy: Class A/B never prompts",
             decision.rule,
         )
     return decision
