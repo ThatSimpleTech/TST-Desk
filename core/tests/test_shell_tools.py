@@ -47,7 +47,7 @@ from tstd.tools import (
     run_shell,
 )
 from tstd.tools.boundary import PathGuard
-from tstd.tools.shell import sanitized_env
+from tstd.tools.shell import check_allowed, sanitized_env
 
 # A command that names its own process group, then parks an escapee in it:
 # the shell (the group leader) writes its pid — the test's spawn-ack and
@@ -505,7 +505,9 @@ class TestOutputCap:
         session = make_session(tmp_path)
         result = await run_shell(
             session,
-            "head -c 1000 /dev/zero | tr '\\0' a",
+            # Portable: /dev/zero, head, and tr are POSIX-only and are
+            # not on a stock Windows PATH (Git usr/bin is not a given).
+            _python("import sys; sys.stdout.write('a' * 1000)"),
             timeout_secs=10,
             tool_call_id="tc-cap",
             policy=ShellPolicy(max_stream_chars=200),
@@ -565,7 +567,16 @@ class TestEnvSanitized:
 
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
-        result = await dispatcher.dispatch("c1", "shell", {"command": "env"}, session)
+        result = await dispatcher.dispatch(
+            "c1",
+            "shell",
+            {
+                "command": _python(
+                    "import os; [print('%s=%s' % (k, v)) for k, v in os.environ.items()]"
+                )
+            },
+            session,
+        )
         assert result.status == "success"
         for leaked in (
             "OPENAI_API_KEY",
@@ -600,7 +611,9 @@ class TestEnvSanitized:
 class TestAllowlist:
     async def test_allowed_binary_runs(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
-        dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("echo", "cat"))
+        # echo is a cmd.exe internal on Windows (no file for which());
+        # the allowlist must still accept it when listed (TD-1406).
+        dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("echo",))
         result = await dispatcher.dispatch("c1", "shell", {"command": "echo hi"}, session)
         assert result.status == "success"
         assert "hi" in result.output
@@ -710,6 +723,35 @@ class TestAllowlist:
         )
         assert result.status == "success"
         assert "ok" in result.output
+
+    def test_cmd_internal_is_allowed_when_which_misses(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("tstd.tools.shell.shutil.which", lambda _name: None)
+        check_allowed("echo hi", ShellPolicy(allowed_commands=("echo",)))
+
+    def test_cmd_internal_must_still_be_listed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("tstd.tools.shell.shutil.which", lambda _name: None)
+        with pytest.raises(ValueError, match="not in allowed_commands"):
+            check_allowed("dir", ShellPolicy(allowed_commands=("echo",)))
+
+    def test_unknown_unresolvable_still_refused_on_windows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("tstd.tools.shell.shutil.which", lambda _name: None)
+        with pytest.raises(ValueError, match="cannot resolve"):
+            check_allowed(
+                "definitely_not_a_real_binary_605", ShellPolicy(allowed_commands=("echo",))
+            )
+
+    def test_path_shaped_echo_is_not_an_internal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("tstd.tools.shell.shutil.which", lambda _name: None)
+        with pytest.raises(ValueError, match="cannot resolve"):
+            check_allowed("C:/evil/echo hi", ShellPolicy(allowed_commands=("echo",)))
 
 
 # ── TD-1406: Windows tree-kill helper (mockable on every host) ─────────

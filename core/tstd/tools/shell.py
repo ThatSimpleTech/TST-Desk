@@ -18,7 +18,10 @@ workspace as the working directory.  Three safety rails surround it:
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
-  refused fail-closed.  Only the leading binary of each segment is
+  refused fail-closed.  On Windows, ``cmd.exe`` internals (``echo``,
+  ``dir``, ``type``, …) have no file for ``which`` to find; they are
+  matched by name because the tool always runs through ``cmd /c``.
+  Only the leading binary of each segment is
   checked: wrappers such as ``sh -c``, ``sudo``, or ``env`` match as
   themselves, so list them deliberately — and know that listed binaries
   can re-exec others: ``find -exec``, ``xargs``, ``make``, and every
@@ -72,6 +75,59 @@ _TASKKILL_GONE_MARKERS = ("not found", "no running instance")
 # 0 means "no extra flags", which is what Popen requires off Windows.
 _CREATE_NEW_PROCESS_GROUP: int = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 _CREATE_NO_WINDOW: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# cmd.exe internals are not files. ``shutil.which`` misses them on a
+# stock Windows PATH (no Git ``usr/bin/echo.exe``), but
+# ``create_subprocess_shell`` always runs through ``cmd /c``, so the
+# name is available. Path-shaped tokens are never internals.
+_CMD_INTERNALS = frozenset(
+    {
+        "assoc",
+        "break",
+        "call",
+        "cd",
+        "chdir",
+        "cls",
+        "color",
+        "copy",
+        "date",
+        "del",
+        "dir",
+        "dpath",
+        "echo",
+        "endlocal",
+        "erase",
+        "exit",
+        "for",
+        "ftype",
+        "goto",
+        "if",
+        "keys",
+        "md",
+        "mkdir",
+        "mklink",
+        "move",
+        "path",
+        "pause",
+        "popd",
+        "prompt",
+        "pushd",
+        "rd",
+        "rem",
+        "ren",
+        "rename",
+        "rmdir",
+        "set",
+        "setlocal",
+        "shift",
+        "start",
+        "time",
+        "title",
+        "type",
+        "ver",
+        "verify",
+        "vol",
+    }
+)
 
 _log = logging.getLogger(__name__)
 
@@ -179,12 +235,30 @@ def _resolved_name(resolved: str) -> str:
     return name
 
 
+def _windows_cmd_internal(binary: str) -> str | None:
+    """Allowlist name if *binary* is a ``cmd.exe`` internal on Windows.
+
+    Internals are not files, so ``shutil.which`` cannot verify them.
+    Absolute or drive-shaped tokens are not internals — those must
+    resolve as real paths or they are refused.
+    """
+    if sys.platform != "win32":
+        return None
+    if any(sep in binary for sep in ("/", "\\", ":")):
+        return None
+    name = Path(binary).stem.lower()
+    return name if name in _CMD_INTERNALS else None
+
+
 def check_allowed(command: str, policy: ShellPolicy) -> None:
     """Enforce the allowlist on *command*.
 
     Resolves each segment's binary with ``shutil.which`` and matches the
     basename of the resolved path, so ``git`` and ``/usr/bin/git`` both
     match ``git``.  Unresolvable binaries are refused fail-closed.
+    On Windows, a ``cmd.exe`` internal that ``which`` cannot see is
+    matched by name (TD-1406): the shell tool always runs through
+    ``cmd /c``.
 
     Raises:
         ValueError: When any binary is not allowed (or cannot be resolved).
@@ -198,8 +272,11 @@ def check_allowed(command: str, policy: ShellPolicy) -> None:
     for binary in _binaries(command):
         resolved = shutil.which(binary)
         if resolved is None:
-            raise ValueError(f"cannot resolve binary {binary!r}; refusing to run unverified")
-        name = _resolved_name(resolved)
+            name = _windows_cmd_internal(binary)
+            if name is None:
+                raise ValueError(f"cannot resolve binary {binary!r}; refusing to run unverified")
+        else:
+            name = _resolved_name(resolved)
         if name not in allowed:
             raise ValueError(
                 f"{binary!r} (resolved to {name!r}) is not in allowed_commands {sorted(allowed)}"
