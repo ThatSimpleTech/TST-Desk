@@ -31,6 +31,7 @@ from tests.test_dispatch import (
     start_loop,
     wait_for_turn,
 )
+from tests.test_shell_tools import _python
 from tstd.audit import AuditStore
 from tstd.audit_writer import AuditWriter
 from tstd.autonomy import (
@@ -370,7 +371,14 @@ async def test_shell_child_never_sees_daemon_secrets(
     monkeypatch.setenv("TSTD_PLANTED_API_KEY", secret_value)
     monkeypatch.setenv("TSTD_PLANTED_VISIBLE", "still-here")
     session = Session(str(tmp_path))
-    out = await run_shell(session, "printenv TSTD_PLANTED_API_KEY; printenv TSTD_PLANTED_VISIBLE")
+    # printenv is POSIX-only; dump the child env through this interpreter.
+    out = await run_shell(
+        session,
+        _python(
+            "import os; print(os.environ.get('TSTD_PLANTED_API_KEY', '')); "
+            "print(os.environ.get('TSTD_PLANTED_VISIBLE', ''))"
+        ),
+    )
     assert secret_value not in out
     assert "still-here" in out
 

@@ -7,13 +7,14 @@ item is not an instant stop.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from tests.test_autonomy_loop import _wire_autonomy, make_charter
 from tests.test_cap_enforcement import wait_for_state
 from tests.test_dispatch import make_config, wait_for_turn
 from tests.test_loop import start_loop as start_text_loop
-from tests.test_shell_tools import make_shell_dispatcher
+from tests.test_shell_tools import _python, make_shell_dispatcher
 from tstd.autonomy.dod import (
     DodItemResult,
     DodPoll,
@@ -135,13 +136,18 @@ class TestDodPoller:
         assert poll.results[0].via == "shell"
 
     async def test_nonzero_shell_is_red(self, tmp_path: Path) -> None:
+        # `false` is not a stock Windows binary. This interpreter exiting
+        # 1 is the same DoD shape on every host (TD-1406).
+        fail = _python("import sys; sys.exit(1)")
+        exe = Path(sys.executable)
+        name = exe.stem.lower() if sys.platform == "win32" else exe.name
         session = Session(str(tmp_path))
         session.autonomy = True
         session.charter = make_charter(
-            definition_of_done=["$ false"],
-            allowed_commands=["false"],
+            definition_of_done=[f"$ {fail}"],
+            allowed_commands=[name],
         )
-        dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("false",))
+        dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=(name,))
         dispatcher.autonomy_fn = lambda: True
         session.dod_poller = make_dod_poller(session, dispatcher=dispatcher, ask_worker=None)
         poll = await session.dod_poller()
