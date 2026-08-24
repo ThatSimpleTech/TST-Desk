@@ -14,6 +14,7 @@ that is the point.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -110,7 +111,9 @@ class TestAPopulatedAllowlistStillRestricts:
     async def test_an_unlisted_binary_is_refused(self, tmp_path: Path) -> None:
         _write_config(tmp_path, "boundary:\n  allowed_commands: [echo]\n")
 
-        status, output = await _run(tmp_path, "ls")
+        # `ls` is not a stock Windows binary; this interpreter is, and
+        # it is never named `echo`.
+        status, output = await _run(tmp_path, f'"{sys.executable}" -c pass')
 
         assert status == "error"
         assert "not in allowed_commands" in output
@@ -119,7 +122,7 @@ class TestAPopulatedAllowlistStillRestricts:
         """An allowlist that only guards the first binary is not a wall."""
         _write_config(tmp_path, "boundary:\n  allowed_commands: [echo]\n")
 
-        status, output = await _run(tmp_path, "echo hi | ls")
+        status, output = await _run(tmp_path, f'echo hi | "{sys.executable}" -c pass')
 
         assert status == "error"
         assert "not in allowed_commands" in output

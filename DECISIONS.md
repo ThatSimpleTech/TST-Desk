@@ -8004,3 +8004,23 @@ input desktop is the OS signal; inferring from a black frame is not
 **Alternative rejected:** Treating an all-black capture as
 `secure_desktop`. Also rejected: waiting for a reviewer's UAC click
 to discover the gap.
+
+---
+
+## 2026-08-24 — TD-1406: cmd.exe internals match the allowlist by name (Class B)
+
+**Decision:** On win32, when `shutil.which` cannot resolve a segment's
+leading binary, `check_allowed` accepts a closed set of `cmd.exe`
+internals (`echo`, `dir`, `type`, …) by name. Path-shaped tokens
+(`C:\…`, `\\`, `/`) are never internals.
+
+**Rationale:** The shell tool always runs through `create_subprocess_shell`
+(`cmd /c`). `echo` is the most common allowlist example in docs and
+tests, and it is not a file on a stock Windows PATH. Treating a miss as
+"cannot resolve" made `allowed_commands: [echo]` refuse the one command
+every Windows user can actually run.
+
+**Alternative rejected:** Shipping a tiny `echo.exe` next to the sidecar.
+Also rejected: requiring Git for Windows so `usr/bin/echo.exe` exists.
+Also rejected: rewriting every test to avoid `echo` and leaving the
+product broken for the same command.

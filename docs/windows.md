@@ -122,6 +122,11 @@ has no `$$` / `&` / `wait` that parks a child the way a POSIX job does, and that
 `OpenProcess` + `GetExitCodeProcess` instead of `killpg`. The Windows CI pytest leg is what
 settles the claim; ticking TD-1406's last box waits on that leg, not on a green Linux run.
 
+The same `cmd /c` path is why `allowed_commands: [echo]` works on a stock Windows PATH.
+`echo` is a `cmd.exe` internal, not a file, so `which` cannot see it. The allowlist matches
+that closed set of internals by name. A path-shaped token (`C:\evil\echo`) is not an
+internal and is still refused unless it resolves to a real file on the list.
+
 ---
 
 ## 5. Things that are not different

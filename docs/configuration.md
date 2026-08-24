@@ -618,11 +618,14 @@ enforced in the tool, not by configuration.
 **`allowed_commands` matching.** The command is split into top-level segments on pipes,
 semicolons, and the like; each segment's leading binary — after skipping `VAR=value` prefixes —
 is resolved with `which` and matched on the basename, so `git` and `/usr/bin/git` both match
-`git`. Only the leading binary of each segment is checked, so `sh`, `sudo`, and `env` match as
-themselves: list them deliberately, because listing `sh` allows anything `sh -c` can run.
-Listed binaries can also re-exec others — `find -exec`, `xargs`, `make`, and any interpreter
-all walk through a basename match. Backticks are refused outright, and a binary that cannot be
-resolved is refused fail-closed. This is a policy rail, not a sandbox.
+`git`. On Windows, `cmd.exe` internals (`echo`, `dir`, `type`, …) have no file for `which` to
+find; they are matched by name because the shell tool always runs through `cmd /c`. Path-shaped
+tokens are never treated as internals. Only the leading binary of each segment is checked, so
+`sh`, `sudo`, and `env` match as themselves: list them deliberately, because listing `sh`
+allows anything `sh -c` can run. Listed binaries can also re-exec others — `find -exec`,
+`xargs`, `make`, and any interpreter all walk through a basename match. Backticks are refused
+outright, and a binary that cannot be resolved is refused fail-closed. This is a policy rail,
+not a sandbox.
 
 **Shell commands ask unless you skip them.** Every shell call is at least Class B: the
 static classifier cannot see inside a command string, so shell never auto-runs on the
