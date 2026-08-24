@@ -103,6 +103,12 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
+      # TD-1406 / TD-1304: daemon_pid parent-walk unit tests (CIM parser,
+      # descendant matching). `--lib` only — tests/ spawn tstd via uv,
+      # which this job does not install.
+      - name: Test
+        run: cargo test --lib
+
   # ── TypeScript ──────────────────────────────────────────────────────
 
   typescript:

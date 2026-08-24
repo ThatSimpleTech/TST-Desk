@@ -2628,15 +2628,16 @@ product-semantics work the skips point at.
       Written up in `docs/windows.md`
 - [ ] Shell-tool process-group kill semantics verified on Windows
       (CREATE_NEW_PROCESS_GROUP + taskkill/TerminateJobObject), skipped
-      cancel/timeout tests unskipped — **implemented, unverified.**
-      `CREATE_NEW_PROCESS_GROUP` at the spawn and `taskkill /T /F /PID` after
-      the direct-child kill have landed, replacing a `proc.kill()` whose own
-      docstring admitted grandchildren escape. Not ticked: no Windows host has
-      run it, and a process-tree kill is a claim about an OS that only that OS
-      can settle. Ticking it from a green macOS suite, where the code is
-      `sys.platform`-gated out, would be this backlog's eighth "green suite,
-      dead feature". Unskipping also needs a cmd/PowerShell equivalent of the
-      POSIX escape probe (`$$`, `&`, `wait`) the cancel tests use
+      cancel/timeout tests unskipped — **tests unskipped; Windows CI
+      pending.** `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW` at the spawn
+      and `taskkill /T /F /PID` after the direct-child kill have landed.
+      The escape probe on win32 is a Python parent plus grandchild waiting
+      on `release.txt` (cmd has no POSIX `$$`/`&`/`wait` job), and
+      `_assert_group_gone` uses `OpenProcess` rather than `killpg`. The
+      helper's refusal / timeout / missing-taskkill paths are unit-tested
+      on every host. Not ticked: a process-tree kill is a claim about an
+      OS that only that OS can settle — the windows-latest pytest leg is
+      the tick, not a green Linux run of the mocked helper.
 - [x] Parent-watchdog liveness probe works on Windows (OpenProcess) — first pass:
       OpenProcess plus `GetExitCodeProcess != STILL_ACTIVE` (a dead process with an
       open handle otherwise reports alive); `test_parent_watchdog` green on the

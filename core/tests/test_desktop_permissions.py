@@ -115,6 +115,14 @@ class TestMcpPermissionMapping:
         err = map_mcp_error("The secure desktop cannot be captured or driven. Nothing was sent.")
         assert err.code == DesktopError.SECURE_DESKTOP
 
+    def test_sidecar_secure_desktop_string_is_typed(self) -> None:
+        # Exact wording raised by tst_cu_mcp.backends.windows._raise_if_secure_desktop.
+        err = map_mcp_error(
+            "UAC consent prompt on the secure desktop — capture and input cannot "
+            "reach that session. There is no workaround."
+        )
+        assert err.code == DesktopError.SECURE_DESKTOP
+
     def test_is_permission_failure_is_narrow(self) -> None:
         assert is_permission_failure("TCC deny")
         assert not is_permission_failure("expected the foreground window")
