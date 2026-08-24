@@ -7950,7 +7950,9 @@ Python parent that writes both pids and a grandchild waiting on
 `release.txt`. `_assert_group_gone` then checks every written pid with
 `_parent_alive` (OpenProcess + GetExitCodeProcess) instead of `killpg`.
 The spawn also ORs `CREATE_NO_WINDOW` so each shell call does not flash a
-console.
+console. The tree walk runs **before** `TerminateProcess`: killing the
+leader first reparents grandchildren and `taskkill /T` on a dead PID
+returns "not found".
 
 **Rationale:** cmd.exe has no `$$` / `&` / `wait` that parks a child the
 way a POSIX job does. PowerShell `Start-Process` through
