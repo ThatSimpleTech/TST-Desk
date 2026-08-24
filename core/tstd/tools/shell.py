@@ -11,12 +11,17 @@ workspace as the working directory.  Three safety rails surround it:
 - **Process-group kill.**  The child starts a new session
   (``start_new_session``), so it leads its own process group.  On timeout
   or cancel the whole group is SIGKILLed — backgrounded children cannot
-  outlive the command.  Windows has no process-group kill; the direct
-  child is terminated instead.
+  outlive the command.  Windows has no ``killpg``: the child is spawned
+  with ``CREATE_NEW_PROCESS_GROUP`` (and ``CREATE_NO_WINDOW``, so a
+  console does not flash per command) and the kill path runs
+  ``taskkill /T /F`` first, then ``TerminateProcess`` as a backstop.
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
-  refused fail-closed.  Only the leading binary of each segment is
+  refused fail-closed.  On Windows, ``cmd.exe`` internals (``echo``,
+  ``dir``, ``type``, …) have no file for ``which`` to find; they are
+  matched by name because the tool always runs through ``cmd /c``.
+  Only the leading binary of each segment is
   checked: wrappers such as ``sh -c``, ``sudo``, or ``env`` match as
   themselves, so list them deliberately — and know that listed binaries
   can re-exec others: ``find -exec``, ``xargs``, ``make``, and every
@@ -60,12 +65,69 @@ _READ_CHUNK = 4096
 _KILL_GRACE_SECS = 5.0
 # Cap on how long the Windows taskkill helper may stall the event loop.
 _TASKKILL_TIMEOUT_SECS = 2.0
-# taskkill's "the process is not running" exit code.
+# taskkill's "the process is not running" exit code (common, not documented).
 _TASKKILL_NOT_FOUND = 128
+# Stderr phrases that also mean the PID is already gone. Exit code 1 plus
+# "not found" is what some Windows builds return; treating that as a
+# refusal would skip the grandchild-gone assertion via `_KILL_REFUSED`.
+_TASKKILL_GONE_MARKERS = ("not found", "no running instance")
 # Windows-only creation flags, absent from `subprocess` on other platforms.
 # 0 means "no extra flags", which is what Popen requires off Windows.
 _CREATE_NEW_PROCESS_GROUP: int = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 _CREATE_NO_WINDOW: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# cmd.exe internals are not files. ``shutil.which`` misses them on a
+# stock Windows PATH (no Git ``usr/bin/echo.exe``), but
+# ``create_subprocess_shell`` always runs through ``cmd /c``, so the
+# name is available. Path-shaped tokens are never internals.
+_CMD_INTERNALS = frozenset(
+    {
+        "assoc",
+        "break",
+        "call",
+        "cd",
+        "chdir",
+        "cls",
+        "color",
+        "copy",
+        "date",
+        "del",
+        "dir",
+        "dpath",
+        "echo",
+        "endlocal",
+        "erase",
+        "exit",
+        "for",
+        "ftype",
+        "goto",
+        "if",
+        "keys",
+        "md",
+        "mkdir",
+        "mklink",
+        "move",
+        "path",
+        "pause",
+        "popd",
+        "prompt",
+        "pushd",
+        "rd",
+        "rem",
+        "ren",
+        "rename",
+        "rmdir",
+        "set",
+        "setlocal",
+        "shift",
+        "start",
+        "time",
+        "title",
+        "type",
+        "ver",
+        "verify",
+        "vol",
+    }
+)
 
 _log = logging.getLogger(__name__)
 
@@ -173,12 +235,30 @@ def _resolved_name(resolved: str) -> str:
     return name
 
 
+def _windows_cmd_internal(binary: str) -> str | None:
+    """Allowlist name if *binary* is a ``cmd.exe`` internal on Windows.
+
+    Internals are not files, so ``shutil.which`` cannot verify them.
+    Absolute or drive-shaped tokens are not internals — those must
+    resolve as real paths or they are refused.
+    """
+    if sys.platform != "win32":
+        return None
+    if any(sep in binary for sep in ("/", "\\", ":")):
+        return None
+    name = Path(binary).stem.lower()
+    return name if name in _CMD_INTERNALS else None
+
+
 def check_allowed(command: str, policy: ShellPolicy) -> None:
     """Enforce the allowlist on *command*.
 
     Resolves each segment's binary with ``shutil.which`` and matches the
     basename of the resolved path, so ``git`` and ``/usr/bin/git`` both
     match ``git``.  Unresolvable binaries are refused fail-closed.
+    On Windows, a ``cmd.exe`` internal that ``which`` cannot see is
+    matched by name (TD-1406): the shell tool always runs through
+    ``cmd /c``.
 
     Raises:
         ValueError: When any binary is not allowed (or cannot be resolved).
@@ -192,8 +272,11 @@ def check_allowed(command: str, policy: ShellPolicy) -> None:
     for binary in _binaries(command):
         resolved = shutil.which(binary)
         if resolved is None:
-            raise ValueError(f"cannot resolve binary {binary!r}; refusing to run unverified")
-        name = _resolved_name(resolved)
+            name = _windows_cmd_internal(binary)
+            if name is None:
+                raise ValueError(f"cannot resolve binary {binary!r}; refusing to run unverified")
+        else:
+            name = _resolved_name(resolved)
         if name not in allowed:
             raise ValueError(
                 f"{binary!r} (resolved to {name!r}) is not in allowed_commands {sorted(allowed)}"
@@ -270,12 +353,18 @@ def _kill_windows_tree(pid: int) -> str | None:
         return "taskkill not found; only the direct child was terminated"
     except subprocess.TimeoutExpired:
         return "taskkill timed out; the process tree may still be running"
-    if completed.returncode == _TASKKILL_NOT_FOUND:
-        return None  # already gone
-    if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", errors="replace").strip()
-        return f"process tree kill refused by the OS ({detail or completed.returncode})"
-    return None
+    if completed.returncode == 0 or _taskkill_already_gone(completed.returncode, completed.stderr):
+        return None
+    detail = completed.stderr.decode("utf-8", errors="replace").strip()
+    return f"process tree kill refused by the OS ({detail or completed.returncode})"
+
+
+def _taskkill_already_gone(returncode: int, stderr: bytes) -> bool:
+    """True when taskkill's failure means the PID is already dead, not a veto."""
+    if returncode == _TASKKILL_NOT_FOUND:
+        return True
+    text = stderr.decode("utf-8", errors="replace").casefold()
+    return any(marker in text for marker in _TASKKILL_GONE_MARKERS)
 
 
 def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
@@ -285,8 +374,11 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
     SIGKILL to the group takes backgrounded grandchildren with it.
     Windows has no ``killpg``; the child leads its own process group
     (``CREATE_NEW_PROCESS_GROUP``) and ``taskkill /T /F`` walks the tree
-    from it.  ``proc.kill()`` still runs first there, so the direct child
-    dies even if the helper cannot (TD-1406).
+    from it.  The tree walk MUST run while the leader is still alive —
+    ``TerminateProcess`` first would reap ``cmd.exe`` and reparent the
+    grandchildren, after which ``taskkill /T /PID`` on a dead leader
+    returns "not found" and the escapee survives (TD-1406).  ``proc.kill()``
+    is the backstop so a missing ``taskkill`` still kills the direct child.
 
     Returns None when the kill was delivered (or the processes were
     already gone).  macOS occasionally vetoes same-uid kills with EPERM —
@@ -295,13 +387,14 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
     so a short note comes back for honest reporting instead.
     """
     if sys.platform == "win32":
+        tree_note = _kill_windows_tree(proc.pid)
         try:
             proc.kill()
         except ProcessLookupError:
-            return None
+            pass
         except OSError:
-            return "process kill refused by the OS; it may still be running"
-        return _kill_windows_tree(proc.pid)
+            return tree_note or "process kill refused by the OS; it may still be running"
+        return tree_note
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -437,7 +530,9 @@ async def run_shell(
             # the daemon's own group and a tree walk from its pid has no
             # defined edge (TD-1406).
             start_new_session=True,
-            creationflags=_CREATE_NEW_PROCESS_GROUP,
+            # OR is a no-op off Windows: both flags are 0 there.
+            # CREATE_NO_WINDOW stops cmd.exe flashing a console per call.
+            creationflags=_CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW,
         )
     )
     try:

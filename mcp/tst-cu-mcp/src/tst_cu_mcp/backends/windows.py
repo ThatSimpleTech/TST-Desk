@@ -70,6 +70,15 @@ DEFAULT_DPI = 96
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 MAX_PROCESS_PATH = 32768
 
+# OpenInputDesktop: enough to read the desktop's name, not to switch onto it.
+DESKTOP_READOBJECTS = 0x0001
+UOI_NAME = 2
+
+_SECURE_DESKTOP_ERROR = (
+    "UAC consent prompt on the secure desktop — capture and input cannot "
+    "reach that session. There is no workaround."
+)
+
 MOUSE_BUTTONS = ("left", "right")
 
 # --- key vocabulary (pure) --------------------------------------------------
@@ -542,6 +551,86 @@ def is_elevated() -> bool:
         return False
 
 
+def input_desktop_is_ours(
+    opened_input: bool, input_name: str | None, thread_name: str | None
+) -> bool:
+    """Pure: whether the input desktop is this process's desktop.
+
+    ``False`` is the secure-desktop (or unreadable-input-desktop) case:
+    UAC, the lock screen, and Ctrl+Alt+Del switch input away from us.
+    """
+    if not opened_input or not input_name or not thread_name:
+        return False
+    return input_name == thread_name
+
+
+def _desktop_name(ns: Any, handle: Any) -> str | None:
+    """Name of a desktop handle via ``GetUserObjectInformationW``, or None."""
+    if not handle:
+        return None
+    size = ns.wintypes.DWORD(0)
+    ns.user32.GetUserObjectInformationW(handle, UOI_NAME, None, 0, ns.ctypes.byref(size))
+    if size.value == 0:
+        return None
+    buf = ns.ctypes.create_unicode_buffer(max(size.value // 2, 1))
+    ok = ns.user32.GetUserObjectInformationW(
+        handle, UOI_NAME, buf, size.value, ns.ctypes.byref(size)
+    )
+    if not ok:
+        return None
+    return buf.value or None
+
+
+def is_secure_desktop() -> bool:
+    """True when the input desktop is not this process's desktop.
+
+    ``OpenInputDesktop`` returning NULL is the common case: a medium-IL
+    process cannot open Winlogon. A successful open whose name differs
+    from our thread desktop is the same situation with a readable handle.
+    """
+    ns = _win()
+    if ns.user32 is None or ns.kernel32 is None:
+        return False
+    user32 = ns.user32
+    if not hasattr(user32, "OpenInputDesktop"):
+        return False
+    if getattr(user32.OpenInputDesktop, "argtypes", None) is None:
+        user32.OpenInputDesktop.argtypes = (
+            ns.wintypes.DWORD,
+            ns.wintypes.BOOL,
+            ns.wintypes.DWORD,
+        )
+        user32.OpenInputDesktop.restype = ns.wintypes.HANDLE
+        user32.GetThreadDesktop.argtypes = (ns.wintypes.DWORD,)
+        user32.GetThreadDesktop.restype = ns.wintypes.HANDLE
+        user32.CloseDesktop.argtypes = (ns.wintypes.HANDLE,)
+        user32.CloseDesktop.restype = ns.wintypes.BOOL
+        user32.GetUserObjectInformationW.argtypes = (
+            ns.wintypes.HANDLE,
+            ns.ctypes.c_int,
+            ns.wintypes.LPVOID,
+            ns.wintypes.DWORD,
+            ns.ctypes.POINTER(ns.wintypes.DWORD),
+        )
+        user32.GetUserObjectInformationW.restype = ns.wintypes.BOOL
+        ns.kernel32.GetCurrentThreadId.argtypes = ()
+        ns.kernel32.GetCurrentThreadId.restype = ns.wintypes.DWORD
+    handle = user32.OpenInputDesktop(0, False, DESKTOP_READOBJECTS)
+    if not handle:
+        return True
+    try:
+        thread = user32.GetThreadDesktop(ns.kernel32.GetCurrentThreadId())
+        return not input_desktop_is_ours(True, _desktop_name(ns, handle), _desktop_name(ns, thread))
+    finally:
+        user32.CloseDesktop(handle)
+
+
+def _raise_if_secure_desktop() -> None:
+    """Refuse capture and input when the secure desktop owns the session."""
+    if is_secure_desktop():
+        raise RuntimeError(_SECURE_DESKTOP_ERROR)
+
+
 def _send(*inputs: Any) -> None:
     """Send a batch of INPUT records, raising if the OS accepted fewer than all.
 
@@ -549,6 +638,7 @@ def _send(*inputs: Any) -> None:
     the foreground window runs at a higher integrity level than we do. Raising
     keeps that from looking like a successful click that simply did nothing.
     """
+    _raise_if_secure_desktop()
     ns = _win()
     count = len(inputs)
     array = (ns.INPUT * count)(*inputs)
@@ -633,6 +723,7 @@ class WindowsBackend:
         Never touches the filesystem — unlike the macOS path, which has to go
         through ``screencapture`` and a temp file.
         """
+        _raise_if_secure_desktop()
         _ensure_dpi_aware()
         from PIL import ImageGrab
 
@@ -655,6 +746,7 @@ class WindowsBackend:
     # --- hands --------------------------------------------------------------
 
     def move_mouse(self, x: float, y: float) -> None:
+        _raise_if_secure_desktop()
         nx, ny = normalize_to_virtual_desktop(x, y, virtual_desktop())
         _send(
             _mouse_input(

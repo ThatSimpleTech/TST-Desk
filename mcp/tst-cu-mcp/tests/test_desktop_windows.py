@@ -28,6 +28,7 @@ from tst_cu_mcp.backends.windows import (
     WindowsBackend,
     cursor_position,
     is_elevated,
+    is_secure_desktop,
     virtual_desktop,
 )
 from tst_cu_mcp.displays import DisplayInfo, screen_info
@@ -312,6 +313,11 @@ class TestRealEnvironment:
     def test_uipi_is_reported_as_live_when_unelevated(self, backend: WindowsBackend) -> None:
         report = backend.check_permissions()
         assert report["limits_apply"]["uipi"] is not is_elevated()
+
+    def test_a_normal_session_is_not_the_secure_desktop(self) -> None:
+        # These tests cannot run on Winlogon. If this is ever True, every
+        # capture/input test above would have raised already.
+        assert is_secure_desktop() is False
 
 
 class TestDisplayInfoShape:

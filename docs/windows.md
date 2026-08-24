@@ -109,18 +109,23 @@ On POSIX the child is started with `setsid`, so it leads its own process group a
 `SIGKILL` to the group takes backgrounded grandchildren with it.
 
 Windows has no `killpg`. The child is spawned with `CREATE_NEW_PROCESS_GROUP` so it is a group
-leader, and the kill path runs `TerminateProcess` on the direct child followed by
-`taskkill /T /F /PID`, which walks the parent chain the OS already records and kills the tree.
-`taskkill` ships with Windows, so this adds no dependency. The direct child dies first and
-independently, so a `taskkill` that cannot run still leaves the immediate command dead.
+leader, and `CREATE_NO_WINDOW` so each command does not flash a console. The kill path runs
+`taskkill /T /F /PID` **first** — while the leader is still alive, so the parent-chain walk
+can see the grandchildren — and `TerminateProcess` on the direct child as a backstop. Killing
+the leader first would reparent its children; `taskkill /T` on a dead PID then returns "not
+found" and the escapee survives. `taskkill` ships with Windows, so this adds no dependency.
 
-**This is implemented and unverified.** No Windows host has executed it. A process-tree kill is
-a claim about an operating system's behaviour and the only evidence that counts is a Windows
-machine performing one, so the cancel and timeout tests in
-`core/tests/test_shell_tools.py` remain skipped on `win32` and the corresponding backlog
-criterion (TD-1406) remains unticked. Unskipping needs two things: a Windows CI leg, and a
-cmd or PowerShell equivalent of the POSIX escape probe those tests use, which is currently
-written with `$$`, `&` and `wait`.
+The cancel and timeout tests in `core/tests/test_shell_tools.py` run on every platform. On
+Windows the escape probe is a Python parent plus a grandchild waiting on `release.txt` — cmd
+has no `$$` / `&` / `wait` that parks a child the way a POSIX job does, and that tree is what
+`taskkill /T` has to walk. `_assert_group_gone` then checks every written pid with
+`OpenProcess` + `GetExitCodeProcess` instead of `killpg`. The Windows CI pytest leg is what
+settles the claim; ticking TD-1406's last box waits on that leg, not on a green Linux run.
+
+The same `cmd /c` path is why `allowed_commands: [echo]` works on a stock Windows PATH.
+`echo` is a `cmd.exe` internal, not a file, so `which` cannot see it. The allowlist matches
+that closed set of internals by name. A path-shaped token (`C:\evil\echo`) is not an
+internal and is still refused unless it resolves to a real file on the list.
 
 ---
 
@@ -182,9 +187,12 @@ arrives. There is no workaround; that is the boundary that makes UAC meaningful.
 tool error is `secure_desktop`.
 
 Neither is a permission the user can grant in Settings. A hang waiting for a prompt that will
-not appear is a defect. The first desktop computer-use attempt on Windows emits `cu_permissions`
-with this explanation (`platform: "windows"`). Settings reopens the same pane. macOS first-run
-is unchanged (Screen Recording + Accessibility).
+not appear is a defect. The sidecar detects the secure desktop with `OpenInputDesktop` (a
+NULL handle, or a handle whose name is not this process's desktop) and raises the typed
+`secure_desktop` error **before** capture or input, so a UAC prompt does not come back as a
+black screenshot that looks like success. The first desktop computer-use attempt on Windows
+emits `cu_permissions` with this explanation (`platform: "windows"`). Settings reopens the same
+pane. macOS first-run is unchanged (Screen Recording + Accessibility).
 
 The report itself is `tst_cu_mcp.permissions.build_windows_report`. The daemon parses it; it
 does not grow a second Windows backend.

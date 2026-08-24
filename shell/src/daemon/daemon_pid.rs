@@ -60,32 +60,46 @@ fn parent_pid_impl(pid: u32) -> Option<u32> {
     (parsed > 0).then_some(parsed)
 }
 
+/// First integer token in `text` that is greater than 0.
+///
+/// CIM stdout is a bare number. The old WMIC shape (`ParentProcessId`
+/// header, then the value) is still accepted so a mixed-host install
+/// cannot fail closed on leftover WMIC-shaped text.
+#[cfg(any(windows, test))]
+fn parse_parent_pid_output(text: &str) -> Option<u32> {
+    for token in text.split_whitespace() {
+        if let Ok(parsed) = token.parse::<u32>() {
+            return (parsed > 0).then_some(parsed);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn hide_window(cmd: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
 #[cfg(windows)]
 fn parent_pid_impl(pid: u32) -> Option<u32> {
-    // wmic is the no-dependency parent lookup on Windows. The format is
-    // a header line then the number. Fail closed on anything we don't parse.
-    let output = std::process::Command::new("wmic")
-        .args([
-            "process",
-            &format!("where processid={pid}"),
-            "get",
-            "parentprocessid",
-        ])
-        .output()
-        .ok()?;
+    // WMIC is deprecated and removed as an on-demand feature on
+    // Windows 11 24H2 / newer Server. PowerShell CIM is the
+    // no-dependency replacement. Fail closed on anything we don't parse.
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        &format!("(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId"),
+    ]);
+    hide_window(&mut cmd);
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("ParentProcessId") {
-            continue;
-        }
-        let parsed = trimmed.parse::<u32>().ok()?;
-        return (parsed > 0).then_some(parsed);
-    }
-    None
+    parse_parent_pid_output(&String::from_utf8_lossy(&output.stdout))
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -120,9 +134,10 @@ fn pid_is_alive_impl(pid: u32) -> bool {
 
 #[cfg(windows)]
 fn pid_is_alive_impl(pid: u32) -> bool {
-    let output = std::process::Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-        .output();
+    let mut cmd = std::process::Command::new("tasklist");
+    cmd.args(["/FI", &format!("PID eq {pid}"), "/NH"]);
+    hide_window(&mut cmd);
+    let output = cmd.output();
     let Ok(output) = output else {
         return false;
     };
@@ -165,9 +180,10 @@ pub fn kill_spawned_group(leader_pid: u32) {
     }
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &leader_pid.to_string(), "/T", "/F"])
-            .status();
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/PID", &leader_pid.to_string(), "/T", "/F"]);
+        hide_window(&mut cmd);
+        let _ = cmd.status();
     }
 }
 
@@ -228,6 +244,40 @@ mod tests {
             11,
             parents(&[(11, 12), (12, 11)]),
         ));
+    }
+
+    #[test]
+    fn windows_parent_lookup_is_cim_not_wmic() {
+        // TD-1304 / TD-1406: the Windows impl is cfg-gated, so Linux CI
+        // cannot execute it. This pins the command the host will run.
+        let src = include_str!("daemon_pid.rs");
+        assert!(
+            src.contains("Get-CimInstance Win32_Process"),
+            "Windows parent_pid must use PowerShell CIM",
+        );
+        assert!(
+            !src.contains("Command::new(\"wmic\")"),
+            "WMIC is deprecated and must not be invoked",
+        );
+    }
+
+    #[test]
+    fn parse_parent_pid_output_table() {
+        let cases: &[(&str, Option<u32>)] = &[
+            ("123\n", Some(123)),
+            ("ParentProcessId\n456\n", Some(456)),
+            ("", None),
+            ("ParentProcessId\n", None),
+            ("0\n", None),
+            ("not-a-number\n", None),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(
+                parse_parent_pid_output(text),
+                *expected,
+                "parse_parent_pid_output({text:?})",
+            );
+        }
     }
 
     #[test]
