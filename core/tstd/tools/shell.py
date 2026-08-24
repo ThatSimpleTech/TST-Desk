@@ -11,8 +11,10 @@ workspace as the working directory.  Three safety rails surround it:
 - **Process-group kill.**  The child starts a new session
   (``start_new_session``), so it leads its own process group.  On timeout
   or cancel the whole group is SIGKILLed — backgrounded children cannot
-  outlive the command.  Windows has no process-group kill; the direct
-  child is terminated instead.
+  outlive the command.  Windows has no ``killpg``: the child is spawned
+  with ``CREATE_NEW_PROCESS_GROUP`` (and ``CREATE_NO_WINDOW``, so a
+  console does not flash per command) and the kill path runs
+  ``TerminateProcess`` on the direct child plus ``taskkill /T /F``.
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
@@ -437,7 +439,9 @@ async def run_shell(
             # the daemon's own group and a tree walk from its pid has no
             # defined edge (TD-1406).
             start_new_session=True,
-            creationflags=_CREATE_NEW_PROCESS_GROUP,
+            # OR is a no-op off Windows: both flags are 0 there.
+            # CREATE_NO_WINDOW stops cmd.exe flashing a console per call.
+            creationflags=_CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW,
         )
     )
     try:

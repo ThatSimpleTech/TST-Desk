@@ -7939,3 +7939,66 @@ opt-in the charter author can write without a new config key.
 Also rejected: counting consecutive reds here (TD-4203). Also
 rejected: a new protocol event — notify is the summary this story
 asked for.
+
+---
+
+## 2026-08-24 — TD-1406: Windows tree-kill tests use a Python grandchild (Class B)
+
+**Decision:** The POSIX escape probe (`echo $$`; backgrounded `wait` on
+`release.txt`) stays the macOS/Linux probe. On win32 the same tests run a
+Python parent that writes both pids and a grandchild waiting on
+`release.txt`. `_assert_group_gone` then checks every written pid with
+`_parent_alive` (OpenProcess + GetExitCodeProcess) instead of `killpg`.
+The spawn also ORs `CREATE_NO_WINDOW` so each shell call does not flash a
+console.
+
+**Rationale:** cmd.exe has no `$$` / `&` / `wait` that parks a child the
+way a POSIX job does. PowerShell `Start-Process` through
+`create_subprocess_shell` (which is `cmd /c`) is a second quoting layer
+on the same tree. A Python grandchild is the shape `taskkill /T` must
+walk, and `_python()` was already the cross-platform command helper.
+
+**Alternative rejected:** Leaving the tests skipped until a human ran
+them on a laptop. The Windows CI pytest leg is the host the backlog
+asked for. Also rejected: rewriting the POSIX probe to Python — those
+tests already proved `killpg` against shell job control (TD-1407 /
+TD-1409).
+
+---
+
+## 2026-08-24 — TD-1304: parent-pid lookup is PowerShell CIM, not WMIC (Class B)
+
+**Decision:** `shell/src/daemon/daemon_pid.rs` `parent_pid_impl` on
+Windows runs `Get-CimInstance Win32_Process` via PowerShell and parses
+the first integer token `> 0`. Every Windows `Command` in that file
+sets `CREATE_NO_WINDOW`. WMIC remains accepted as leftover stdout
+shape in the parser only.
+
+**Rationale:** WMIC is deprecated and removed as an on-demand feature
+on Windows 11 24H2 / newer Server. Packaged-app attach (descendant
+matching of the PyInstaller onefile grandchild) would fail closed on
+those hosts. PowerShell CIM ships with the OS; no new crate.
+
+**Alternative rejected:** `windows-sys` Toolhelp32 — a new dependency
+for a once-per-attach lookup. Also rejected: keeping WMIC until a
+runner actually dropped it.
+
+---
+
+## 2026-08-24 — TD-3303: live secure-desktop refuse via OpenInputDesktop (Class B)
+
+**Decision:** `tst_cu_mcp.backends.windows` probes `OpenInputDesktop` +
+desktop-name comparison before capture and input. A NULL handle, or a
+handle whose name is not this thread's desktop, raises
+`_SECURE_DESKTOP_ERROR` (wording the daemon already maps to the typed
+`secure_desktop` code). The mock path is unchanged.
+
+**Rationale:** TD-3303 and `docs/windows.md` §7 promised a typed refuse,
+but only the in-process mock raised it. A UAC prompt or lock screen
+then came back as a black PNG that looked like success. Detecting the
+input desktop is the OS signal; inferring from a black frame is not
+(black wallpaper is not UAC).
+
+**Alternative rejected:** Treating an all-black capture as
+`secure_desktop`. Also rejected: waiting for a reviewer's UAC click
+to discover the gap.
