@@ -14,7 +14,7 @@ workspace as the working directory.  Three safety rails surround it:
   outlive the command.  Windows has no ``killpg``: the child is spawned
   with ``CREATE_NEW_PROCESS_GROUP`` (and ``CREATE_NO_WINDOW``, so a
   console does not flash per command) and the kill path runs
-  ``TerminateProcess`` on the direct child plus ``taskkill /T /F``.
+  ``taskkill /T /F`` first, then ``TerminateProcess`` as a backstop.
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
@@ -62,8 +62,12 @@ _READ_CHUNK = 4096
 _KILL_GRACE_SECS = 5.0
 # Cap on how long the Windows taskkill helper may stall the event loop.
 _TASKKILL_TIMEOUT_SECS = 2.0
-# taskkill's "the process is not running" exit code.
+# taskkill's "the process is not running" exit code (common, not documented).
 _TASKKILL_NOT_FOUND = 128
+# Stderr phrases that also mean the PID is already gone. Exit code 1 plus
+# "not found" is what some Windows builds return; treating that as a
+# refusal would skip the grandchild-gone assertion via `_KILL_REFUSED`.
+_TASKKILL_GONE_MARKERS = ("not found", "no running instance")
 # Windows-only creation flags, absent from `subprocess` on other platforms.
 # 0 means "no extra flags", which is what Popen requires off Windows.
 _CREATE_NEW_PROCESS_GROUP: int = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -272,12 +276,18 @@ def _kill_windows_tree(pid: int) -> str | None:
         return "taskkill not found; only the direct child was terminated"
     except subprocess.TimeoutExpired:
         return "taskkill timed out; the process tree may still be running"
-    if completed.returncode == _TASKKILL_NOT_FOUND:
-        return None  # already gone
-    if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", errors="replace").strip()
-        return f"process tree kill refused by the OS ({detail or completed.returncode})"
-    return None
+    if completed.returncode == 0 or _taskkill_already_gone(completed.returncode, completed.stderr):
+        return None
+    detail = completed.stderr.decode("utf-8", errors="replace").strip()
+    return f"process tree kill refused by the OS ({detail or completed.returncode})"
+
+
+def _taskkill_already_gone(returncode: int, stderr: bytes) -> bool:
+    """True when taskkill's failure means the PID is already dead, not a veto."""
+    if returncode == _TASKKILL_NOT_FOUND:
+        return True
+    text = stderr.decode("utf-8", errors="replace").casefold()
+    return any(marker in text for marker in _TASKKILL_GONE_MARKERS)
 
 
 def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
