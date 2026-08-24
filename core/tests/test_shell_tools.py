@@ -716,6 +716,54 @@ class TestAllowlist:
 
 
 class TestWindowsTreeKill:
+    def test_tree_walk_runs_while_the_leader_is_alive(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TerminateProcess-first reparents grandchildren; taskkill must go first."""
+        from tstd.tools import shell as shell_mod
+
+        order: list[str] = []
+
+        class _Proc:
+            pid = 4242
+
+            def kill(self) -> None:
+                order.append("terminate")
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(
+            shell_mod,
+            "_kill_windows_tree",
+            lambda pid: order.append(f"tree:{pid}") or None,
+        )
+        assert shell_mod._kill_process_group(_Proc()) is None  # type: ignore[arg-type]
+        assert order == ["tree:4242", "terminate"]
+
+    def test_terminate_still_runs_when_the_tree_walk_refuses(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tstd.tools import shell as shell_mod
+
+        killed = False
+
+        class _Proc:
+            pid = 7
+
+            def kill(self) -> None:
+                nonlocal killed
+                killed = True
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(
+            shell_mod,
+            "_kill_windows_tree",
+            lambda pid: "process tree kill refused by the OS (mocked)",
+        )
+        note = shell_mod._kill_process_group(_Proc())  # type: ignore[arg-type]
+        assert killed is True
+        assert note is not None
+        assert "refused" in note
+
     def test_missing_taskkill_reports_partial_kill(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from tstd.tools import shell as shell_mod
 

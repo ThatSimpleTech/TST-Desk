@@ -110,10 +110,10 @@ On POSIX the child is started with `setsid`, so it leads its own process group a
 
 Windows has no `killpg`. The child is spawned with `CREATE_NEW_PROCESS_GROUP` so it is a group
 leader, and `CREATE_NO_WINDOW` so each command does not flash a console. The kill path runs
-`TerminateProcess` on the direct child followed by `taskkill /T /F /PID`, which walks the
-parent chain the OS already records and kills the tree. `taskkill` ships with Windows, so this
-adds no dependency. The direct child dies first and independently, so a `taskkill` that cannot
-run still leaves the immediate command dead.
+`taskkill /T /F /PID` **first** — while the leader is still alive, so the parent-chain walk
+can see the grandchildren — and `TerminateProcess` on the direct child as a backstop. Killing
+the leader first would reparent its children; `taskkill /T` on a dead PID then returns "not
+found" and the escapee survives. `taskkill` ships with Windows, so this adds no dependency.
 
 The cancel and timeout tests in `core/tests/test_shell_tools.py` run on every platform. On
 Windows the escape probe is a Python parent plus a grandchild waiting on `release.txt` — cmd
