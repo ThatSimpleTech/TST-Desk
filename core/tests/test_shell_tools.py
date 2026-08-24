@@ -758,6 +758,32 @@ class TestAllowlist:
 
 
 class TestWindowsTreeKill:
+    async def test_spawn_ors_new_process_group_and_no_window(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CREATE_NEW_PROCESS_GROUP is the walk's edge; CREATE_NO_WINDOW
+        stops a console flash. Both must reach the spawn (TD-1406)."""
+        from tstd.tools import shell as shell_mod
+
+        captured: dict[str, object] = {}
+        real = asyncio.create_subprocess_shell
+
+        async def _spy(*args: object, **kwargs: object) -> object:
+            captured.update(kwargs)
+            safe = dict(kwargs)
+            # POSIX Popen ignores creationflags; keep the real spawn at 0
+            # so this contract still runs on Linux.
+            safe["creationflags"] = 0
+            return await real(*args, **safe)
+
+        monkeypatch.setattr(shell_mod, "_CREATE_NEW_PROCESS_GROUP", 0x200)
+        monkeypatch.setattr(shell_mod, "_CREATE_NO_WINDOW", 0x08000000)
+        monkeypatch.setattr(asyncio, "create_subprocess_shell", _spy)
+        session = make_session(tmp_path)
+        await run_shell(session, "echo hi")
+        assert captured["creationflags"] == 0x200 | 0x08000000
+        assert captured["start_new_session"] is True
+
     @pytest.mark.parametrize(
         ("code", "stderr", "gone"),
         [
