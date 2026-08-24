@@ -716,6 +716,21 @@ class TestAllowlist:
 
 
 class TestWindowsTreeKill:
+    @pytest.mark.parametrize(
+        ("code", "stderr", "gone"),
+        [
+            (128, b"", True),
+            (1, b'ERROR: The process "cmd.exe" (PID 9) not found.', True),
+            (1, b"There is no running instance of the task.", True),
+            (1, b"Access denied", False),
+            (0, b"", False),
+        ],
+    )
+    def test_already_gone_is_not_a_veto(self, code: int, stderr: bytes, gone: bool) -> None:
+        from tstd.tools import shell as shell_mod
+
+        assert shell_mod._taskkill_already_gone(code, stderr) is gone
+
     def test_tree_walk_runs_while_the_leader_is_alive(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -799,6 +814,41 @@ class TestWindowsTreeKill:
             lambda *_a, **_k: SimpleNamespace(returncode=shell_mod._TASKKILL_NOT_FOUND, stderr=b""),
         )
         assert shell_mod._kill_windows_tree(1234) is None
+
+    def test_not_found_stderr_is_already_gone_even_on_exit_1(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from tstd.tools import shell as shell_mod
+
+        monkeypatch.setattr(
+            shell_mod.subprocess,
+            "run",
+            lambda *_a, **_k: SimpleNamespace(
+                returncode=1, stderr=b'ERROR: The process "cmd.exe" (PID 1234) not found.'
+            ),
+        )
+        assert shell_mod._kill_windows_tree(1234) is None
+
+    def test_taskkill_argv_is_tree_force_pid(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from types import SimpleNamespace
+
+        from tstd.tools import shell as shell_mod
+
+        captured: dict[str, object] = {}
+
+        def _run(argv: object, **kwargs: object) -> object:
+            captured["argv"] = argv
+            captured["kwargs"] = kwargs
+            return SimpleNamespace(returncode=0, stderr=b"")
+
+        monkeypatch.setattr(shell_mod.subprocess, "run", _run)
+        assert shell_mod._kill_windows_tree(99) is None
+        assert captured["argv"] == ["taskkill", "/T", "/F", "/PID", "99"]
+        kwargs = captured["kwargs"]
+        assert isinstance(kwargs, dict)
+        assert kwargs["creationflags"] == shell_mod._CREATE_NO_WINDOW
 
     def test_nonzero_exit_is_a_refusal(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from types import SimpleNamespace
