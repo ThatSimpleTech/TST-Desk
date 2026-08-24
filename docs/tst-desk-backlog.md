@@ -2630,7 +2630,8 @@ product-semantics work the skips point at.
       (CREATE_NEW_PROCESS_GROUP + taskkill/TerminateJobObject), skipped
       cancel/timeout tests unskipped — **tests unskipped; Windows CI
       pending.** `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW` at the spawn
-      and `taskkill /T /F /PID` after the direct-child kill have landed.
+      and `taskkill /T /F /PID` **before** `TerminateProcess` (killing the
+      leader first reparents grandchildren) have landed.
       The escape probe on win32 is a Python parent plus grandchild waiting
       on `release.txt` (cmd has no POSIX `$$`/`&`/`wait` job), and
       `_assert_group_gone` uses `OpenProcess` rather than `killpg`. The
