@@ -247,6 +247,21 @@ mod tests {
     }
 
     #[test]
+    fn windows_parent_lookup_is_cim_not_wmic() {
+        // TD-1304 / TD-1406: the Windows impl is cfg-gated, so Linux CI
+        // cannot execute it. This pins the command the host will run.
+        let src = include_str!("daemon_pid.rs");
+        assert!(
+            src.contains("Get-CimInstance Win32_Process"),
+            "Windows parent_pid must use PowerShell CIM",
+        );
+        assert!(
+            !src.contains("Command::new(\"wmic\")"),
+            "WMIC is deprecated and must not be invoked",
+        );
+    }
+
+    #[test]
     fn parse_parent_pid_output_table() {
         let cases: &[(&str, Option<u32>)] = &[
             ("123\n", Some(123)),
