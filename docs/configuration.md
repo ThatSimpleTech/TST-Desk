@@ -62,7 +62,7 @@ no effect.
 |---|---|---|---|
 | `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, `local`, and `vllm`. |
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
-| `credentials` | mapping of id → `{ name }` | empty | Named API keys. The `name` is what Settings shows. The secret is never here — it lives in the OS keychain as `tst-<id>`. Omitted in an older user copy is filled from the shipped file at load. |
+| `credentials` | mapping of id → `{ name, base_url? }` | empty | Named API keys. The `name` is what Settings shows. Optional `base_url` is the host that key talks to (TD-1718). The secret is never here — it lives in the OS keychain as `tst-<id>`. Omitted in an older user copy is filled from the shipped file at load. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
@@ -74,13 +74,16 @@ no effect.
 ### `credentials`
 
 Named API keys (TD-1717). Each entry is an id (the keychain account suffix) and a
-`name` the Settings screen shows. Add as many as you need — OpenRouter, a keyed
-local server, a second remote. A tier's `credential` field picks which one that
-model sends.
+`name` the Settings screen shows. Optional `base_url` is the host that key talks
+to (TD-1718): selecting the key uses that host even when the active preset is
+local. Omit it for a keyed local server so the tier URL stays in charge. Add as
+many as you need — OpenRouter, a keyed local server, a second remote. A tier's
+`credential` field picks which one that model sends.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `name` | string, 1–40 chars | *required* | The local given name. Shown in Settings → Model. Never a secret. |
+| `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. |
 
 Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook` and
 `ntfy-topic` are reserved for other keychain accounts.
@@ -118,6 +121,7 @@ active_preset: demo
 credentials:
   openrouter:
     name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
 ```
 
 ### `search`
@@ -364,8 +368,8 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `slug` | string, non-empty | none | The model identifier sent as `model` on every request. Optional **only** when `base_url` is on loopback — see §3.4. `slug:` with no value means the same as leaving it out; `slug: ""` is an error. |
-| `base_url` | string | *required* | The OpenAI-compatible endpoint. Requests go to `{base_url}/chat/completions`. |
-| `credential` | string | none | Named key from `credentials`. A bound id is sent even on loopback. Unbound loopback sends no key. Unbound remote uses `openrouter`. |
+| `base_url` | string | *required* | The OpenAI-compatible endpoint when the bound credential has no host of its own. Requests go to `{base_url}/chat/completions`. A credential `base_url` wins (TD-1718). |
+| `credential` | string | none | Named key from `credentials`. A bound id is sent even on loopback, and that key's host is used when set. Unbound loopback sends no key. Unbound remote uses `openrouter`. |
 | `input_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens that were not served from cache. |
 | `output_price` | float ≥ 0 | *required* | Dollars per **million** completion tokens. |
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |

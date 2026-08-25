@@ -41,7 +41,7 @@ export const settings = $state({
 	hasApiKey: false,
 	keyRequired: true,
 	/** Named keys (TD-1717). Presence only — never the secret. */
-	credentials: [] as { id: string; name: string; stored: boolean }[],
+	credentials: [] as { id: string; name: string; stored: boolean; base_url?: string | null }[],
 	/** Configured binding per tier; null = unbound. */
 	tierCredentials: {} as Record<string, string | null>,
 	/** Whether each active-preset tier is loopback (offers "no key"). */
@@ -204,6 +204,12 @@ export function saveSlug(tier: string, slug: string): void {
 	settings.savingTier = tier;
 	const sent = sendToDaemon({ type: "set_tier_slug", preset, tier, slug: trimmed });
 	if (!sent) settings.savingTier = null;
+}
+
+/** Host the selected named key talks to, or null to keep the tier URL. */
+export function credentialHost(credentialId: string): string | null {
+	const row = settings.credentials.find((c) => c.id === credentialId);
+	return row?.base_url ?? null;
 }
 
 /** Persist a tier's named key. Empty string unbinds. */

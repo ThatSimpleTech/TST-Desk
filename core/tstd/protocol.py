@@ -1378,11 +1378,16 @@ class PolicyRules(DaemonEvent):
 
 
 class CredentialSummary(BaseModel):
-    """One named API key as the UI may see it (TD-1717). Never the secret."""
+    """One named API key as the UI may see it (TD-1717). Never the secret.
+
+    ``base_url`` is the host this key talks to (TD-1718). Additive; an
+    older client ignores it. ``None`` means the tier URL stays in charge.
+    """
 
     id: str
     name: str
     stored: bool
+    base_url: str | None = None
 
 
 class SetupState(DaemonEvent):
@@ -1434,6 +1439,7 @@ class SetupState(DaemonEvent):
     # ``stored`` is a keychain probe, never the secret. ``tier_credentials``
     # is the configured binding (None = unbound). ``tier_loopback`` lets
     # the model picker offer "no key" only on loopback tiers.
+    # ``credentials[].base_url`` is the key's host (TD-1718).
     credentials: list[CredentialSummary] = Field(default_factory=list)
     tier_credentials: dict[str, str | None] = Field(default_factory=dict)
     tier_loopback: dict[str, bool] = Field(default_factory=dict)
