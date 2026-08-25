@@ -963,6 +963,8 @@ export interface CredentialSummary {
   id: string;
   name: string;
   stored: boolean;
+  /** Host this key talks to (TD-1718). Null keeps the tier URL. */
+  base_url?: string | null;
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the
@@ -1093,6 +1095,13 @@ export interface CuKillState extends DaemonEvent {
   killed: boolean;
 }
 
+/** Computer-use episode open/close (TD-3407). Glow follows this tag. */
+export interface CuSession extends DaemonEvent {
+  type: "cu_session";
+  session_id: string;
+  active: boolean;
+}
+
 /** Reply to design_hit_test (TD-3403). Connection-scoped; seq is 1. */
 export interface DesignHitBox {
   x: number;
@@ -1122,13 +1131,20 @@ export interface CuPermissions extends DaemonEvent {
   screen_recording_url: string;
   accessibility_url: string;
   first_run: boolean;
-  platform: "macos" | "windows";
+  platform: "macos" | "windows" | "linux";
   no_gate: string;
   uipi: string;
   secure_desktop: string;
   elevated: boolean;
   uipi_applies: boolean;
   secure_desktop_applies: boolean;
+  session_type: string;
+  wayland: string;
+  wayland_applies: boolean;
+  xtest: string;
+  xtest_applies: boolean;
+  no_display: string;
+  no_display_applies: boolean;
 }
 
 export interface ContextCompacted extends DaemonEvent {
@@ -1206,6 +1222,7 @@ export type DaemonEventUnion =
   | Error
   | ScreenFrame
   | CuKillState
+  | CuSession
   | DesignHit
   | CuPermissions
   | JobList;

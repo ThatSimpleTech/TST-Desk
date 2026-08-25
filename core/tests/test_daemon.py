@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import tempfile
 from pathlib import Path
 
@@ -202,6 +203,43 @@ class TestLogging:
         path = user_data_dir()
         assert isinstance(path, Path)
         assert str(path)  # non-empty
+
+    def test_linux_user_data_dir_is_tst_desk(self, tmp_path: Path) -> None:
+        from tstd.logging import linux_user_data_dir
+
+        assert linux_user_data_dir(tmp_path) == tmp_path / "tst-desk"
+
+    def test_linux_user_data_dir_renames_reverse_dns_leftover(self, tmp_path: Path) -> None:
+        from tstd.logging import linux_user_data_dir
+
+        legacy = tmp_path / "com.thatsimpletech.tstdesk"
+        legacy.mkdir()
+        (legacy / "port.json").write_text("{}", encoding="utf-8")
+        resolved = linux_user_data_dir(tmp_path)
+        assert resolved == tmp_path / "tst-desk"
+        assert (resolved / "port.json").is_file()
+        assert not legacy.exists()
+
+    def test_linux_user_data_dir_does_not_merge_two_live_trees(self, tmp_path: Path) -> None:
+        from tstd.logging import linux_user_data_dir
+
+        canonical = tmp_path / "tst-desk"
+        legacy = tmp_path / "com.thatsimpletech.tstdesk"
+        canonical.mkdir()
+        legacy.mkdir()
+        (canonical / "config.yaml").write_text("canonical: true\n", encoding="utf-8")
+        (legacy / "port.json").write_text("{}", encoding="utf-8")
+        resolved = linux_user_data_dir(tmp_path)
+        assert resolved == canonical
+        assert (canonical / "config.yaml").is_file()
+        assert (legacy / "port.json").is_file()
+
+    def test_linux_user_data_dir_follows_xdg_data_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        assert user_data_dir() == tmp_path / "tst-desk"
 
 
 class TestSignalHandling:

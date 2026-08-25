@@ -309,12 +309,13 @@ class TestLinuxAndLivePath:
         driver = driver_for_command("python -m tst_cu_mcp")
         assert isinstance(driver, McpDesktopDriver)
         assert "darwin" in LIVE_PLATFORMS and "win32" in LIVE_PLATFORMS
-        assert len(LIVE_PLATFORMS) == 2
+        assert "linux" in LIVE_PLATFORMS
+        assert len(LIVE_PLATFORMS) == 3
         assert MCP_TOOLS["move"] == "move_mouse"
         assert MCP_TOOLS["type"] == "type_text"
 
-    async def test_linux_live_actuation_is_e20(self) -> None:
-        driver = McpDesktopDriver(["/bin/false"], platform="linux")
+    async def test_unknown_os_live_actuation_is_e20(self) -> None:
+        driver = McpDesktopDriver(["/bin/false"], platform="freebsd")
         with pytest.raises(DesktopError) as exc:
             await driver.click(1, 2)
         assert exc.value.code == "e20"
@@ -323,8 +324,8 @@ class TestLinuxAndLivePath:
         out = await mock.click(1, 2)
         assert json.loads(out)["clicked"]["x"] == 1
 
-    async def test_linux_live_screenshot_is_e20(self, tmp_path: Path) -> None:
-        driver = McpDesktopDriver(["/bin/false"], platform="linux")
+    async def test_unknown_os_live_screenshot_is_e20(self, tmp_path: Path) -> None:
+        driver = McpDesktopDriver(["/bin/false"], platform="freebsd")
         dispatcher, _ = _dispatcher(tmp_path, MockDesktopDriver())
         # Swap in the live driver after wiring so we exercise the handler.
         register_builtin_handlers(dispatcher, desktop_driver=driver)
@@ -332,7 +333,7 @@ class TestLinuxAndLivePath:
         assert result.status == "error"
         assert result.error_code == "e20"
 
-    @pytest.mark.parametrize("platform", ["darwin", "win32"])
+    @pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
     async def test_live_path_speaks_stdio_mcp(self, tmp_path: Path, platform: str) -> None:
         script = tmp_path / "fake_cu_mcp.py"
         script.write_text(_FAKE_MCP, encoding="utf-8")

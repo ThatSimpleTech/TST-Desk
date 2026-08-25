@@ -31,6 +31,10 @@ class TestHealthReport:
         self, platform: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(sys, "platform", platform)
+        if platform == "linux":
+            monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+            monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+            monkeypatch.setenv("DISPLAY", ":0")
         assert health_report()["supported"] is True
 
     def test_unsupported_platform_reports_rather_than_raises(
@@ -38,16 +42,34 @@ class TestHealthReport:
     ) -> None:
         # health has to answer everywhere; it is what a client calls to find out
         # that the platform is wrong.
-        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(sys, "platform", "freebsd")
         report = health_report()
         assert report["supported"] is False
         assert report["backend"] is None
 
-    @pytest.mark.parametrize(("platform", "expected"), [("darwin", "darwin"), ("win32", "windows")])
+    def test_wayland_session_is_named_and_unsupported(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+        monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+        report = health_report()
+        assert report["supported"] is False
+        assert report["session_type"] == "wayland"
+        assert report["backend"] is None
+
+    @pytest.mark.parametrize(
+        ("platform", "expected"),
+        [("darwin", "darwin"), ("win32", "windows"), ("linux", "linux")],
+    )
     def test_active_backend_is_named(
         self, platform: str, expected: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(sys, "platform", platform)
+        if platform == "linux":
+            monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+            monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+            monkeypatch.setenv("DISPLAY", ":0")
         assert health_report()["backend"] == expected
 
     def test_supported_platforms_are_listed(self) -> None:
@@ -92,8 +114,14 @@ class TestInstructions:
         # If the model is not told, it cannot know why cmd+c worked.
         assert "alias for ctrl" in server.instructions("win32")
 
+    def test_linux_instructions_require_x11(self) -> None:
+        text = server.instructions("linux")
+        assert "X11" in text
+        assert "Wayland" in text
+        assert "ctrl" in text
+
     def test_unsupported_platform_is_stated_plainly(self) -> None:
-        assert "not supported" in server.instructions("linux")
+        assert "not supported" in server.instructions("freebsd")
 
     def test_no_platform_argument_uses_the_running_host(self) -> None:
         assert server.instructions() == server.instructions(sys.platform)
@@ -115,8 +143,13 @@ class TestPermissionHint:
         assert "No permission needed" in hint
         assert "elevated" in hint
 
+    def test_linux_hint_names_x11_and_wayland(self) -> None:
+        hint = server._permission_hint("linux")
+        assert "X11" in hint
+        assert "Wayland" in hint
+
     def test_unknown_platform_defers_to_the_tool(self) -> None:
-        assert "check_permissions" in server._permission_hint("linux")
+        assert "check_permissions" in server._permission_hint("freebsd")
 
 
 class TestComboHelp:
@@ -137,6 +170,11 @@ class TestComboHelp:
     def test_windows_does_not_advertise_fn_as_usable(self) -> None:
         text = server._combo_help("win32")
         assert "does not exist" in text
+
+    def test_linux_leads_with_ctrl_and_refuses_fn(self) -> None:
+        text = server._combo_help("linux")
+        assert "'ctrl+c'" in text
+        assert "refused" in text
 
 
 class TestServerConstruction:

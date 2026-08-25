@@ -26,9 +26,13 @@
 
 # Named API keys (TD-1717). Names live here; secrets live in the OS
 # keychain under tst-<id>. Settings shows the name, never the secret.
+# base_url is the host this key talks to (TD-1718). Selecting the key
+# uses that host even when the active preset is local. Omit it on a
+# keyed local server so the tier URL stays in charge.
 credentials:
   openrouter:
     name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
 
 presets:
   # ── tst-default ──────────────────────────────────────────────────
@@ -227,6 +231,20 @@ project_context:
 # is an event count so from_seq stays honest; 0 is invalid, not unbounded.
 session:
   log_max_events: 10000
+
+# How stubbornly to retry a retryable provider failure (429, 5xx, transport).
+# The defaults spend 4 attempts in roughly 8 seconds — fine for a blip, and
+# too short for a gateway that answers "temporarily rate-limited upstream,
+# retry shortly" with no Retry-After. Free and preview models served from a
+# shared pool do exactly that, and the turn dies waiting 8 seconds for
+# capacity that was a minute away. Delays back off exponentially from
+# initial_delay and are capped at max_delay, so max_retries: 8 is about
+# three minutes of patience. Raise it if your model is popular and free;
+# leave it if you would rather fail fast and resend by hand.
+provider_retry:
+  max_retries: 3
+  initial_delay: 1.0
+  max_delay: 60.0
 
 # Desktop computer-use (TD-3301). Empty command is mock-only — no sidecar,
 # no pointer motion. A non-empty command is argv for mcp/tst-cu-mcp over

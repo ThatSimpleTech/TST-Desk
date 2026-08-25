@@ -15,9 +15,11 @@ the model takes a screenshot, reasons about the pixels, and acts.
 - **Standalone.** Works with any MCP client — Kiro, Claude Desktop, Goose. It does
   not modify any other project.
 
-**macOS and Windows.** Both are first-class; the platform-specific code lives in
-`backends/` behind one interface. Each platform has its own setup step and its own
-limits — see [Platform notes](#platform-notes).
+**macOS, Windows, and Linux (X11).** Each is first-class; the platform-specific
+code lives in `backends/` behind one interface. A Wayland session reports
+unsupported (`health.session_type`). Portal support was assessed (TD-2002)
+and is not in the current milestones.
+See [Platform notes](#platform-notes).
 
 ## Install
 
@@ -69,6 +71,18 @@ fail **silently** rather than with an error, so the tool reports them up front:
 
 Call **`check_permissions`** on either platform at any time; it reports what is
 granted, what is missing or unavailable, and the fix steps.
+
+### Linux — X11 only, no permission gate
+
+An X11 session is required. `health` reports `supported: true` and
+`session_type: "x11"` there. A Wayland session reports `supported: false` —
+Wayland does not let an unprivileged client capture the screen or inject
+global input, and an XWayland `DISPLAY` is not a substitute (it would only
+drive X11 clients). Portal-based Wayland support was assessed in TD-2002
+and is not in the current milestones.
+
+X11 itself has no grant dialog. `check_permissions` says so, and names a
+missing XTEST extension if input synthesis cannot work.
 
 ## Connect it to your client
 

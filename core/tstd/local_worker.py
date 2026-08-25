@@ -10,7 +10,7 @@ empty so a test config without ``vllm`` does not crash.
 
 from __future__ import annotations
 
-from .config import ModelConfig, TierConfig
+from .config import ModelConfig, TierConfig, apply_credential_host
 from .protocol import ToolCall
 from .router import TIER_NAMES, TierName
 from .session import Session
@@ -57,8 +57,8 @@ def effective_tier(config: ModelConfig, tier: TierName, *, cu_heavy: bool) -> Ti
     if tier == "worker" and cu_heavy:
         remapped = local_worker_tier(config)
         if remapped is not None:
-            return remapped
-    return config.tier(tier)
+            return apply_credential_host(config, remapped)
+    return apply_credential_host(config, config.tier(tier))
 
 
 def titlebar_slugs(config: ModelConfig, *, cu_heavy: bool) -> dict[str, str]:

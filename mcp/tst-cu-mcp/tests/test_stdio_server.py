@@ -34,6 +34,7 @@ TOOL_NAMES = {
     "get_cursor_position",
     "wait",
     "wait_for_window",
+    "overlay_session",
 }
 
 TIMEOUT_SECONDS = 60

@@ -26,6 +26,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "DeveloperTool",
     "externalBin": ["binaries/tstd"],
     "macOS": {
       "signingIdentity": "tst-desk-dev",

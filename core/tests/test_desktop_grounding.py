@@ -2,7 +2,8 @@
 
 Default mock lands exactly. A scripted offset whose hypot is over the
 stated tolerance fails the eval — that miss does not ship as "it works".
-Rows are mock only; live pointer accuracy is not claimed. Linux is E20.
+Rows are mock only; live pointer accuracy is not claimed. Linux is live
+CU (TD-2001) but has no fixture row in this eval.
 """
 
 from __future__ import annotations
@@ -73,10 +74,12 @@ class TestRecordedMockEval:
 
 
 class TestHonestyBounds:
-    def test_eval_platforms_match_live_cu_and_exclude_linux(self) -> None:
-        assert set(EVAL_PLATFORMS) == set(LIVE_PLATFORMS)
+    def test_eval_platforms_are_the_recorded_mock_rows(self) -> None:
+        assert EVAL_PLATFORMS == ("darwin", "win32")
+        assert set(EVAL_PLATFORMS) <= set(LIVE_PLATFORMS)
+        assert "linux" in LIVE_PLATFORMS
         assert "linux" not in EVAL_PLATFORMS
-        with pytest.raises(ValueError, match="E20"):
+        with pytest.raises(ValueError, match="no eval fixture"):
             RecordingMockDesktop(platform="linux")
 
     def test_tolerance_is_four_points(self) -> None:

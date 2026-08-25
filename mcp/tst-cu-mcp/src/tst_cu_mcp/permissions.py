@@ -1,6 +1,6 @@
 """Permission and capability reporting, per platform.
 
-The two platforms differ in kind, not degree:
+The platforms differ in kind, not degree:
 
 * **macOS** gates capture and input behind TCC permissions the user must grant,
   and attaches the grant to the *host* process rather than to this server.
@@ -8,6 +8,8 @@ The two platforms differ in kind, not degree:
   succeeds and does nothing at all. Reporting an unqualified "granted" there
   would be technically true and practically a lie, so the Windows report names
   both limits explicitly.
+* **Linux / X11** gates nothing either. A Wayland session cannot be driven
+  (TD-2002); that is reported rather than silently using XWayland.
 
 The report builders are pure functions taking the probed state as arguments, so
 every wording and branch is testable on any host. Probing itself lives in the
@@ -124,6 +126,74 @@ def build_windows_report(*, elevated: bool) -> dict[str, Any]:
         "secure_desktop": True,
     }
     return report
+
+
+# --- Linux -----------------------------------------------------------------
+
+LINUX_NO_GATE = (
+    "X11 has no equivalent of macOS TCC for screen capture or input synthesis, "
+    "so there is nothing to grant and no prompt to raise. Any client of this "
+    "X session can see the screen and inject input."
+)
+
+WAYLAND_LIMIT = (
+    "This is a Wayland session. Wayland does not let an unprivileged client "
+    "capture the screen or synthesize global input. Use an X11 session. Portal "
+    "support was assessed (TD-2002) and is not in the current milestones. An "
+    "XWayland DISPLAY is not enough — it would only drive X11 clients, not "
+    "native Wayland apps."
+)
+
+XTEST_LIMIT = (
+    "The XTEST extension is not present on this display. Capture may still "
+    "work; mouse and keyboard synthesis will not. A nested or hardened X "
+    "server sometimes omits it."
+)
+
+NO_DISPLAY_LIMIT = (
+    "No X11 display is open (DISPLAY unset or the server refused the "
+    "connection). Capture and input are unavailable."
+)
+
+
+def build_linux_report(
+    *,
+    session: str,
+    display: bool,
+    xtest: bool,
+) -> dict[str, Any]:
+    """Assemble the Linux capability report. Pure and side-effect free."""
+    wayland = session == "wayland"
+    usable = session == "x11" and display and xtest
+    limits: dict[str, str] = {}
+    limits_apply: dict[str, bool] = {}
+    if wayland:
+        limits["wayland"] = WAYLAND_LIMIT
+        limits_apply["wayland"] = True
+    if session == "x11" and not display:
+        limits["no_display"] = NO_DISPLAY_LIMIT
+        limits_apply["no_display"] = True
+    if session == "x11" and display and not xtest:
+        limits["xtest"] = XTEST_LIMIT
+        limits_apply["xtest"] = True
+    return {
+        "platform": "linux",
+        "session_type": session,
+        "screen_capture": {
+            "granted": display and not wayland,
+            "gate": "none" if session == "x11" else "wayland",
+            "required_for": _REQUIRED_FOR[SCREEN_RECORDING],
+        },
+        "input_control": {
+            "granted": usable,
+            "gate": "none" if usable else ("wayland" if wayland else "xtest"),
+            "required_for": _REQUIRED_FOR[ACCESSIBILITY],
+        },
+        "all_granted": usable,
+        "no_gate": LINUX_NO_GATE,
+        "limits": limits,
+        "limits_apply": limits_apply,
+    }
 
 
 def check_permissions(*, request: bool = False) -> dict[str, Any]:

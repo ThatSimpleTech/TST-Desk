@@ -1378,11 +1378,16 @@ class PolicyRules(DaemonEvent):
 
 
 class CredentialSummary(BaseModel):
-    """One named API key as the UI may see it (TD-1717). Never the secret."""
+    """One named API key as the UI may see it (TD-1717). Never the secret.
+
+    ``base_url`` is the host this key talks to (TD-1718). Additive; an
+    older client ignores it. ``None`` means the tier URL stays in charge.
+    """
 
     id: str
     name: str
     stored: bool
+    base_url: str | None = None
 
 
 class SetupState(DaemonEvent):
@@ -1434,6 +1439,7 @@ class SetupState(DaemonEvent):
     # ``stored`` is a keychain probe, never the secret. ``tier_credentials``
     # is the configured binding (None = unbound). ``tier_loopback`` lets
     # the model picker offer "no key" only on loopback tiers.
+    # ``credentials[].base_url`` is the key's host (TD-1718).
     credentials: list[CredentialSummary] = Field(default_factory=list)
     tier_credentials: dict[str, str | None] = Field(default_factory=dict)
     tier_loopback: dict[str, bool] = Field(default_factory=dict)
@@ -1651,6 +1657,21 @@ class CuKillState(DaemonEvent):
     killed: bool
 
 
+class CuSession(DaemonEvent):
+    """Computer-use episode open/close (TD-3407).
+
+    ``active=true`` on the first ``desktop_*`` / ``browser_*`` tool of a
+    turn. ``active=false`` on turn end, cancel, or kill-switch. The
+    real-display ring and Screen-pane glow follow this tag, not an
+    actuation linger.
+    """
+
+    type: Literal["cu_session"] = "cu_session"
+    session_id: str
+    active: bool
+    seq: int = 1
+
+
 class DesignHitBox(BaseModel):
     """Computed box of a Design-mode hit, in frame CSS pixels."""
 
@@ -1689,7 +1710,9 @@ class CuPermissions(DaemonEvent):
     macOS carries granted/denied for Screen Recording and Accessibility
     plus System Settings deep links.  Windows has no grant dialog — the
     same event names the two silent failure modes (UIPI, secure desktop)
-    with empty settings URLs.
+    with empty settings URLs.  Linux X11 is the same kind of honesty
+    (no TCC analog); Wayland and missing XTEST are named limits, not a
+    grant dialog (TD-2001).
     """
 
     type: Literal["cu_permissions"] = "cu_permissions"
@@ -1700,13 +1723,20 @@ class CuPermissions(DaemonEvent):
     screen_recording_url: str
     accessibility_url: str
     first_run: bool = False
-    platform: Literal["macos", "windows"] = "macos"
+    platform: Literal["macos", "windows", "linux"] = "macos"
     no_gate: str = ""
     uipi: str = ""
     secure_desktop: str = ""
     elevated: bool = False
     uipi_applies: bool = False
     secure_desktop_applies: bool = False
+    session_type: str = ""
+    wayland: str = ""
+    wayland_applies: bool = False
+    xtest: str = ""
+    xtest_applies: bool = False
+    no_display: str = ""
+    no_display_applies: bool = False
 
 
 class JobEntry(BaseModel):
@@ -1845,6 +1875,7 @@ DaemonEventT = Annotated[
     | Error
     | ScreenFrame
     | CuKillState
+    | CuSession
     | DesignHit
     | CuPermissions
     | JobList,
@@ -1967,6 +1998,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "error",
         "screen_frame",
         "cu_kill_state",
+        "cu_session",
         "design_hit",
         "cu_permissions",
         "job_list",

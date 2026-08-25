@@ -4,7 +4,8 @@
 // in reply to `check_cu_permissions`. This store opens the same panel
 // either way — Settings reopens the explanation; Retry re-probes.
 // macOS copy is TCC. Windows copy is the missing grant dialog plus UIPI
-// and the secure desktop. The pane branches on `platform` from the event.
+// and the secure desktop. Linux copy is X11 no-gate honesty plus named
+// Wayland / XTEST / display limits. The pane branches on `platform`.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { isTauri } from "./open-file";
@@ -21,13 +22,20 @@ export const cuPermissions = $state({
 	accessibilityUrl: "",
 	firstRun: false,
 	probing: false,
-	platform: "" as "" | "macos" | "windows",
+	platform: "" as "" | "macos" | "windows" | "linux",
 	noGate: "",
 	uipi: "",
 	secureDesktop: "",
 	elevated: false,
 	uipiApplies: false,
 	secureDesktopApplies: false,
+	sessionType: "",
+	wayland: "",
+	waylandApplies: false,
+	xtest: "",
+	xtestApplies: false,
+	noDisplay: "",
+	noDisplayApplies: false,
 });
 
 let started = false;
@@ -60,6 +68,13 @@ export function resetCuPermissions(): void {
 	cuPermissions.elevated = false;
 	cuPermissions.uipiApplies = false;
 	cuPermissions.secureDesktopApplies = false;
+	cuPermissions.sessionType = "";
+	cuPermissions.wayland = "";
+	cuPermissions.waylandApplies = false;
+	cuPermissions.xtest = "";
+	cuPermissions.xtestApplies = false;
+	cuPermissions.noDisplay = "";
+	cuPermissions.noDisplayApplies = false;
 	started = false;
 }
 
@@ -77,6 +92,13 @@ function applyReport(event: CuPermissions): void {
 	cuPermissions.elevated = event.elevated;
 	cuPermissions.uipiApplies = event.uipi_applies;
 	cuPermissions.secureDesktopApplies = event.secure_desktop_applies;
+	cuPermissions.sessionType = event.session_type;
+	cuPermissions.wayland = event.wayland;
+	cuPermissions.waylandApplies = event.wayland_applies;
+	cuPermissions.xtest = event.xtest;
+	cuPermissions.xtestApplies = event.xtest_applies;
+	cuPermissions.noDisplay = event.no_display;
+	cuPermissions.noDisplayApplies = event.no_display_applies;
 	cuPermissions.probing = false;
 	cuPermissions.open = true;
 }

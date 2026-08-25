@@ -44,6 +44,7 @@ from tstd.protocol import (
     CredentialSummary,
     CuKillState,
     CuPermissions,
+    CuSession,
     DecisionLogged,
     DeleteApiKey,
     DeleteCredential,
@@ -576,7 +577,12 @@ FIXTURES = {
         remote_attach_enabled=False,
         remote_bind=None,
         credentials=[
-            CredentialSummary(id="openrouter", name="OpenRouter", stored=False),
+            CredentialSummary(
+                id="openrouter",
+                name="OpenRouter",
+                stored=False,
+                base_url=None,
+            ),
         ],
         tier_credentials={"brain": "openrouter", "worker": None, "validator": None},
         tier_loopback={"brain": False, "worker": True, "validator": True},
@@ -702,6 +708,7 @@ FIXTURES = {
     ),
     # TD-3404: process-wide kill-switch. Connection-scoped; no session_id.
     "cu_kill_state": CuKillState(killed=True),
+    "cu_session": CuSession(session_id="sess-1", active=True),
     "design_hit": DesignHit(
         session_id="sess-1",
         x=12.0,
@@ -723,6 +730,13 @@ FIXTURES = {
             "x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility"
         ),
         first_run=True,
+        session_type="",
+        wayland="",
+        wayland_applies=False,
+        xtest="",
+        xtest_applies=False,
+        no_display="",
+        no_display_applies=False,
     ),
     "list_jobs": ListJobs(),
     "save_job": SaveJob(

@@ -58,6 +58,13 @@ function report(over: Partial<CuPermissions> = {}): CuPermissions {
 		elevated: false,
 		uipi_applies: false,
 		secure_desktop_applies: false,
+		session_type: "",
+		wayland: "",
+		wayland_applies: false,
+		xtest: "",
+		xtest_applies: false,
+		no_display: "",
+		no_display_applies: false,
 		...over,
 	};
 }
@@ -137,6 +144,49 @@ describe("cu_permissions event", () => {
 		});
 		expect(cuPermissions.open).toBe(true);
 		expect(cuPermissions.platform).toBe("windows");
+	});
+
+	it("opens Linux copy on a first-run linux event", () => {
+		startCuPermissions();
+		emit(
+			report({
+				platform: "linux",
+				granted: true,
+				screen_recording: true,
+				accessibility: true,
+				screen_recording_url: "",
+				accessibility_url: "",
+				no_gate: "X11 has no equivalent of macOS TCC",
+				session_type: "x11",
+			}),
+		);
+		expect(cuPermissions.open).toBe(true);
+		expect(cuPermissions.platform).toBe("linux");
+		expect(cuPermissions.granted).toBe(true);
+		expect(cuPermissions.noGate).toContain("TCC");
+		expect(cuPermissions.sessionType).toBe("x11");
+		expect(cuPermissions.waylandApplies).toBe(false);
+	});
+
+	it("keeps Wayland limits on a linux event", () => {
+		startCuPermissions();
+		emit(
+			report({
+				platform: "linux",
+				granted: false,
+				screen_recording_url: "",
+				accessibility_url: "",
+				no_gate: "X11 has no equivalent of macOS TCC",
+				session_type: "wayland",
+				wayland: "This is a Wayland session",
+				wayland_applies: true,
+			}),
+		);
+		expect(cuPermissions.platform).toBe("linux");
+		expect(cuPermissions.granted).toBe(false);
+		expect(cuPermissions.sessionType).toBe("wayland");
+		expect(cuPermissions.waylandApplies).toBe(true);
+		expect(cuPermissions.wayland).toContain("Wayland");
 	});
 
 	it("opens on a typed secure_desktop tool result", () => {

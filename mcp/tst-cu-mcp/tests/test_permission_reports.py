@@ -123,6 +123,47 @@ class TestDispatch:
         permissions.check_permissions(request=True)
         assert seen == [True]
 
+
+class TestLinuxReport:
+    def test_x11_usable_is_granted(self) -> None:
+        report = permissions.build_linux_report(session="x11", display=True, xtest=True)
+        assert report["all_granted"] is True
+        assert report["platform"] == "linux"
+        assert report["session_type"] == "x11"
+        assert report["limits"] == {}
+
+    def test_wayland_is_not_granted(self) -> None:
+        report = permissions.build_linux_report(session="wayland", display=False, xtest=False)
+        assert report["all_granted"] is False
+        assert "wayland" in report["limits"]
+        assert "TD-2002" in report["limits"]["wayland"]
+
+    def test_missing_xtest_is_named(self) -> None:
+        report = permissions.build_linux_report(session="x11", display=True, xtest=False)
+        assert report["all_granted"] is False
+        assert "xtest" in report["limits"]
+
+    def test_no_macos_copy_leaks_in(self) -> None:
+        report = permissions.build_linux_report(session="x11", display=True, xtest=True)
+        assert "host_caveat" not in report
+        assert "TCC" in report["no_gate"]
+
+
+class TestLinuxDispatch:
+    def test_linux_backend_accepts_and_ignores_request(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tst_cu_mcp.backends.linux import LinuxBackend
+
+        monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+        monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+        without = LinuxBackend().check_permissions(request=False)
+        with_request = LinuxBackend().check_permissions(request=True)
+        assert without == with_request
+        assert with_request["session_type"] == "wayland"
+
+
+class TestWindowsBackendRequest:
     def test_windows_backend_accepts_and_ignores_request(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

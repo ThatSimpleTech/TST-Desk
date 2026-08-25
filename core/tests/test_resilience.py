@@ -29,11 +29,42 @@ from tstd.provider import (
     retry_call,
     retry_delay,
     retry_stream,
+    worst_case_retry_seconds,
 )
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Unit tests: retry_delay
 # ═══════════════════════════════════════════════════════════════════════
+
+
+class TestWorstCaseRetrySeconds:
+    """The bound a waiting client uses to outlast the daemon's retries."""
+
+    def test_sums_every_delay(self) -> None:
+        cfg = RetryConfig(initial_delay=1.0, max_delay=60.0, jitter_factor=0.0, max_retries=4)
+        # 1 + 2 + 4 + 8
+        assert worst_case_retry_seconds(cfg) == 15.0
+
+    def test_respects_the_cap(self) -> None:
+        cfg = RetryConfig(initial_delay=1.0, max_delay=5.0, jitter_factor=0.0, max_retries=5)
+        # 1 + 2 + 4 + 5 + 5
+        assert worst_case_retry_seconds(cfg) == 17.0
+
+    def test_includes_jitter_headroom(self) -> None:
+        """Jitter can only extend a wait, so the bound has to carry it."""
+        plain = RetryConfig(initial_delay=1.0, jitter_factor=0.0, max_retries=3)
+        jittered = RetryConfig(initial_delay=1.0, jitter_factor=0.25, max_retries=3)
+        assert worst_case_retry_seconds(jittered) > worst_case_retry_seconds(plain)
+
+    def test_no_retries_costs_nothing(self) -> None:
+        assert worst_case_retry_seconds(RetryConfig(max_retries=0)) == 0.0
+
+    def test_bound_actually_covers_real_delays(self) -> None:
+        """The bound must not undercut what retry_delay can produce."""
+        cfg = RetryConfig(initial_delay=1.0, max_delay=8.0, jitter_factor=0.25, max_retries=5)
+        for _ in range(50):
+            drawn = sum(retry_delay(a, cfg) for a in range(1, cfg.max_retries + 1))
+            assert drawn <= worst_case_retry_seconds(cfg) + 1e-9
 
 
 class TestRetryDelay:

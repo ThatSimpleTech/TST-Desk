@@ -57,6 +57,9 @@ class DesktopDriver(Protocol):
     def set_killed(self, killed: bool) -> None:
         """Engage or clear the kill-switch. Screenshot still runs."""
 
+    async def set_overlay_session(self, active: bool) -> None:
+        """Open or close the real-display computer-use ring (TD-3407)."""
+
     async def screenshot(self, display: int | None = None) -> str:
         """Return a JSON object with ``png_base64`` (and size if known)."""
 
