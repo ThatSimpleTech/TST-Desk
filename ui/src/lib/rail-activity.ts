@@ -65,7 +65,7 @@ function activityFromBound(bound: BoundTurn, state: SessionSummary["state"]): Ro
 	if (bound.turnState === "running" || bound.awaitingFirstToken) return "working";
 	// A null turnState is "no turn" (TD-1714), even if the list still says
 	// running. Fall through to the row's parked/terminal state only.
-	if (bound.turnState === null || bound.turnState === "idle" || bound.turnState === "running") {
+	if (bound.turnState === null || bound.turnState === "idle") {
 		if (state === "awaiting_approval") return "waiting";
 		if (state === "paused") return "paused";
 		if (state === "failed") return "failed";
