@@ -576,7 +576,12 @@ FIXTURES = {
         remote_attach_enabled=False,
         remote_bind=None,
         credentials=[
-            CredentialSummary(id="openrouter", name="OpenRouter", stored=False),
+            CredentialSummary(
+                id="openrouter",
+                name="OpenRouter",
+                stored=False,
+                base_url=None,
+            ),
         ],
         tier_credentials={"brain": "openrouter", "worker": None, "validator": None},
         tier_loopback={"brain": False, "worker": True, "validator": True},

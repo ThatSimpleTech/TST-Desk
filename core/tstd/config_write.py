@@ -205,8 +205,18 @@ def _ensure_credentials_header(lines: list[str]) -> tuple[int, int]:
     return len(lines) - 1, len(lines)
 
 
-def save_credential(credential_id: str, name: str, path: Path | None = None) -> Path:
-    """Create or rename a catalog entry (TD-1717). Never writes the secret."""
+def save_credential(
+    credential_id: str,
+    name: str,
+    path: Path | None = None,
+    *,
+    base_url: str | None = None,
+) -> Path:
+    """Create or rename a catalog entry (TD-1717). Never writes the secret.
+
+    ``base_url`` is optional (TD-1718). ``None`` leaves an existing host
+    line alone. A string writes or inserts it. An empty string removes it.
+    """
     cleaned_id = credential_id.strip()
     cleaned_name = name.strip()
     if not CREDENTIAL_ID_RE.match(cleaned_id):
@@ -225,9 +235,13 @@ def save_credential(credential_id: str, name: str, path: Path | None = None) -> 
     cred_at, cred_end = _ensure_credentials_header(lines)
     id_at = _find_key(lines, cred_at + 1, cred_end, cleaned_id, 2)
     name_line = f"    name: {json.dumps(cleaned_name)}"
+    cleaned_host = None if base_url is None else base_url.strip()
+    host_line = None if not cleaned_host else f"    base_url: {json.dumps(cleaned_host)}"
     if id_at < 0:
         lines.insert(cred_end, f"  {cleaned_id}:")
         lines.insert(cred_end + 1, name_line)
+        if host_line:
+            lines.insert(cred_end + 2, host_line)
     else:
         id_end = _block_bounds(lines, id_at, 2)
         name_at = _find_key(lines, id_at + 1, id_end, "name", 4)
@@ -235,6 +249,16 @@ def save_credential(credential_id: str, name: str, path: Path | None = None) -> 
             lines[name_at] = name_line
         else:
             lines.insert(id_at + 1, name_line)
+            id_end += 1
+        if base_url is not None:
+            host_at = _find_key(lines, id_at + 1, id_end, "base_url", 4)
+            if host_line:
+                if host_at >= 0:
+                    lines[host_at] = host_line
+                else:
+                    lines.insert(id_at + 2, host_line)
+            elif host_at >= 0:
+                del lines[host_at]
 
     _atomic_write(config_path, "\n".join(lines))
     return config_path
