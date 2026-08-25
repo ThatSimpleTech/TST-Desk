@@ -7964,3 +7964,29 @@ the key is the provider, and the provider knows its host.
 the tier `base_url` on `set_tier_credential` — that would destroy the
 local preset's URL when you bind a remote key. Also rejected: a Python
 literal for the OpenRouter URL (§2.7).
+
+---
+
+## 2026-08-25 — TD-1719: retry budget lives in config (Class B)
+
+**Decision:** How long a turn waits on a retryable provider failure
+(`429`, `5xx`, transport, empty stream, `200`+error envelope) is
+`provider_retry` in `config.yaml`, not a constant in `provider.py`.
+The shipped default stays four attempts / ~eight seconds. Raise
+`max_retries` for shared-pool preview slugs. The CLI deadline is
+base allowance plus `worst_case_retry_seconds`, so a longer budget
+cannot look like a client timeout.
+
+A `200` whose JSON is `{"error": {"code": 429, ...}}` with no
+`choices`, and a `200` event-stream that yields no events, are
+retryable failures. Trusting the status line made both look like
+an empty completion.
+
+**Rationale:** The ox-alpha turns died after eight seconds on
+"temporarily rate-limited upstream, please retry shortly" with no
+`Retry-After`. Hardcoding a longer wait punishes every model. The
+user already has a config file; the patience belongs there.
+
+**Alternative rejected:** Inferring patience from the slug. Also
+rejected: raising the shipped default to three minutes. Also
+rejected: treating a `200` error envelope as a parse error.

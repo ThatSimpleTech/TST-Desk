@@ -3915,6 +3915,34 @@ must call OpenRouter, not `127.0.0.1`.
 
 ---
 
+### TD-1719 — Configurable retry for shared-pool 429s
+**Size:** 3 · **Depends on:** TD-1718
+
+*(Filed after the fact. The work landed with the ox-alpha / OpenRouter
+session that produced TD-1718. These criteria describe what shipped.)*
+
+A free or preview slug on a shared upstream pool answers `429` with
+"temporarily rate-limited upstream, please retry shortly" and no
+`Retry-After`. The old four-attempt budget died in eight seconds. A
+`200` whose body is an error envelope, or an SSE stream that closes
+with no events, was reported as an empty completion and did not retry.
+
+**Acceptance criteria:**
+- [x] `provider_retry` (`max_retries`, `initial_delay`, `max_delay`) is
+      optional in `config.yaml` and documented
+- [x] The configured budget reaches the provider client for keyed and
+      keyless tiers
+- [x] A `200` body that is an error envelope (no `choices`, embedded
+      status) is a retryable failure, not a parse error
+- [x] An accepted SSE stream that yields no events is retryable
+      `empty_stream`, not an empty completion
+- [x] The CLI turn deadline covers the daemon's worst-case retry budget
+- [x] A failed turn writes an `assistant_delta` so the pane is not blank
+
+**Done (2026-08-25).** User ask 2026-08-25.
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 
