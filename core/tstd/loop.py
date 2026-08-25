@@ -1031,10 +1031,18 @@ async def agent_loop(
             try:
                 provider = await client_for(tier_cfg)
             except KeychainError as e:
+                keychain_msg = f"I encountered an error: {e}"
                 messages.append(
                     ChatMessage(
                         role="assistant",
-                        content=f"I encountered an error: {e}",
+                        content=keychain_msg,
+                    )
+                )
+                await session.event_log.add(
+                    AssistantDelta(
+                        session_id=session.id,
+                        delta=keychain_msg,
+                        seq=1,
                     )
                 )
                 await session.conversation_changed()
@@ -1108,10 +1116,22 @@ async def agent_loop(
                     break
 
                 router.record_failure()
+                failure_msg = f"I encountered an error: {error_msg}"
                 messages.append(
                     ChatMessage(
                         role="assistant",
-                        content=f"I encountered an error: {error_msg}",
+                        content=failure_msg,
+                    )
+                )
+                # The message has to reach the event log too, not just the
+                # persisted conversation: without a delta the chat pane shows
+                # nothing at all on a failed turn — live or on replay — and a
+                # turn that answers with silence reads as a hung app.
+                await session.event_log.add(
+                    AssistantDelta(
+                        session_id=session.id,
+                        delta=failure_msg,
+                        seq=1,
                     )
                 )
                 await session.conversation_changed()
