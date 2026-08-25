@@ -5041,6 +5041,33 @@ server-path capture, dark under the kill-switch.
 
 ---
 
+### TD-3407 — Cross-platform CU session glow
+**Size:** 5 · **Depends on:** TD-3402, TD-2001
+
+The real-display rust ring is the same signal on every live desktop
+path, and it stays up for the whole computer-use episode — not eight
+seconds after the last click. An internal `cu_session` tag opens when
+the agent first takes a `desktop_*` / `browser_*` tool this turn, and
+a matching close tag ends it.
+
+**Acceptance criteria:**
+- [x] `cu_session { active: true }` is emitted on the first computer-use
+      tool of a turn; `{ active: false }` on turn end, cancel, and
+      kill-switch
+- [x] The real-display ring stays lit from open until close (no linger
+      timeout). Screenshots still hide it for the grab
+- [x] macOS, Windows, and Linux X11 paint the same rust ring (inset,
+      pulse, click-through). Wayland stays unlit (TD-2002)
+- [x] **Show indicators on the real display** still turns the ring off
+- [x] Screen-pane glow uses the same open/close tags
+- [x] An overlay failure never breaks capture or actuation
+
+**Completed (2026-08-25):** `cu_session` is the tag. Sidecar
+`overlay_session` drives macOS / Windows / Linux X11 painters. Linger
+removed. Wayland stays `NullOverlay`.
+
+---
+
 ### TD-3403 — Design mode
 **Size:** 8 · **Depends on:** TD-3401, TD-1704, TD-1709
 

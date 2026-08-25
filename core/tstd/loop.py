@@ -216,6 +216,7 @@ async def _emit_turn_complete(
             seq=1,  # overwritten by event log
         )
     )
+    await session.close_cu_session()
 
 
 def _rule_rel_path(session: Session, path: Path) -> str:
@@ -405,6 +406,7 @@ async def _build_assistant_tool_call(
             )
         )
         mark_cu_tool(session, tc_name)
+        await session.open_cu_session(tc_name)
 
     return provider_tool_calls
 

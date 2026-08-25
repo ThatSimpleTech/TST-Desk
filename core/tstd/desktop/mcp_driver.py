@@ -50,6 +50,13 @@ class McpDesktopDriver:
     def set_killed(self, killed: bool) -> None:
         self.killed = bool(killed)
 
+    async def set_overlay_session(self, active: bool) -> None:
+        """Tell the sidecar the computer-use episode opened or closed."""
+        try:
+            await self._client.call_tool("overlay_session", {"active": bool(active)})
+        except Exception:
+            return
+
     def _refuse_if_no_live_path(self) -> None:
         if self._platform in LIVE_PLATFORMS or self._platform.startswith("linux"):
             return

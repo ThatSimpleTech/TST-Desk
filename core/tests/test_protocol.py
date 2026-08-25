@@ -24,6 +24,7 @@ from tstd.protocol import (
     ClientMessageT,
     CostUpdate,
     CuKillState,
+    CuSession,
     DaemonEvent,
     DaemonEventT,
     DecisionLogged,
@@ -833,6 +834,13 @@ class TestDaemonEvents:
         assert back.killed is True
         assert back.seq == 1
         assert "session_id" not in CuKillState.model_fields
+
+    def test_cu_session(self) -> None:
+        evt = CuSession(session_id="sess-1", active=True)
+        back = _roundtrip(evt)
+        assert isinstance(back, CuSession)
+        assert back.active is True
+        assert back.session_id == "sess-1"
 
 
 # ── Discriminated union dispatch ───────────────────────────────────────

@@ -1928,6 +1928,10 @@ class Daemon:
 
         if isinstance(msg, SetCuKill):
             self.set_computer_use_killed(msg.killed)
+            if msg.killed:
+                for sess in await self.session_registry.list_sessions():
+                    await sess.close_cu_session()
+                await self.desktop_driver.set_overlay_session(False)
             # Connection-scoped: the switch is process-wide, so this is
             # not written to any session log (TD-3404).
             return CuKillState(killed=msg.killed).model_dump_json()
@@ -1999,6 +2003,7 @@ class Daemon:
             )
 
         sess._conversation_hook = _snap
+        sess._overlay_session = self.desktop_driver.set_overlay_session
         router = sess.router if sess.router is not None else TierRouter()
         sess.router = router
 

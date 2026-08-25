@@ -159,6 +159,7 @@ class TestToolCatalogue:
             "get_cursor_position",
             "wait",
             "wait_for_window",
+            "overlay_session",
         }
 
     async def test_instructions_reach_the_client(self) -> None:

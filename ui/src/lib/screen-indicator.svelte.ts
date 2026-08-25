@@ -114,6 +114,17 @@ function reduce(event: DaemonEventUnion): void {
 		if (sameSession(event.session_id)) cuIndicators.sessionId = event.session_id;
 		return;
 	}
+	if (event.type === "cu_session") {
+		if (!sameSession(event.session_id)) return;
+		cuIndicators.sessionId = event.session_id;
+		cuTurnActive = event.active;
+		if (!event.active) {
+			inFlight.clear();
+			toolNames.clear();
+		}
+		recompute();
+		return;
+	}
 	if (event.type === "turn_complete") {
 		if (sameSession(event.session_id)) clearLive();
 		return;

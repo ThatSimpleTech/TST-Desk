@@ -1093,6 +1093,13 @@ export interface CuKillState extends DaemonEvent {
   killed: boolean;
 }
 
+/** Computer-use episode open/close (TD-3407). Glow follows this tag. */
+export interface CuSession extends DaemonEvent {
+  type: "cu_session";
+  session_id: string;
+  active: boolean;
+}
+
 /** Reply to design_hit_test (TD-3403). Connection-scoped; seq is 1. */
 export interface DesignHitBox {
   x: number;
@@ -1213,6 +1220,7 @@ export type DaemonEventUnion =
   | Error
   | ScreenFrame
   | CuKillState
+  | CuSession
   | DesignHit
   | CuPermissions
   | JobList;

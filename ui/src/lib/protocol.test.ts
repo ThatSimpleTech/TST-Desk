@@ -104,6 +104,7 @@ import type {
   Artifact,
   ScreenFrame,
   CuKillState,
+  CuSession,
   DesignHitTest,
   DesignHit,
   CuPermissions,
@@ -895,6 +896,7 @@ describe("All fixtures have required shape", () => {
       "artifact_ready", "artifact_list", "artifact",
       "screen_frame",
       "cu_kill_state",
+      "cu_session",
       "design_hit",
       "cu_permissions",
       "job_list",
@@ -1101,6 +1103,13 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isBoolean(m.killed)).toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
+  });
+
+  it("cu_session is the open/close tag (TD-3407)", () => {
+    const m = fixtures.cu_session as CuSession;
+    expect(m.type).toBe("cu_session");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isBoolean(m.active)).toBe(true);
   });
 
   it("design_hit_test is a CSS-pixel point (TD-3403)", () => {

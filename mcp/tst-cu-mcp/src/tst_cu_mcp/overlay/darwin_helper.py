@@ -5,8 +5,8 @@ ring around the screen edges while computer use is active — same accent
 as tst-desk's Screen-pane glow, so "the agent is driving" reads the same
 in both places. The ring pulses like ``GlowLayer``'s CSS animation, sits
 at the screen-saver window level so it floats above everything, ignores
-mouse events so it can never eat input, and fades out after a linger
-period with no activity.
+mouse events so it can never eat input, and stays up until an explicit hide
+(computer-use session close), not a linger timeout.
 
 Why a separate process: AppKit wants a runloop and the MCP server's loop
 is asyncio over stdio. A child that owns ``NSApplication.run()`` keeps
@@ -46,9 +46,6 @@ INSET_POINTS = 4.0
 CORE_WIDTH = 6.0
 HALO_WIDTH = 16.0
 CORNER_RADIUS = 18.0
-
-#: Glow stays lit this long after the last ``show``, then fades out.
-LINGER_SECONDS = 8.0
 
 #: Main-loop cadence: drains commands, drives pulse and fade.
 TICK_SECONDS = 1.0 / 30.0
@@ -192,8 +189,6 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
             self.last_tick = now
 
             self._drain_commands()
-            if self.visible and (now - self.last_activity) > LINGER_SECONDS:
-                self.visible = False
             self._advance_fade(elapsed)
             self._apply_alpha(elapsed)
 
