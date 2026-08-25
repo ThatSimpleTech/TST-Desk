@@ -1689,7 +1689,9 @@ class CuPermissions(DaemonEvent):
     macOS carries granted/denied for Screen Recording and Accessibility
     plus System Settings deep links.  Windows has no grant dialog — the
     same event names the two silent failure modes (UIPI, secure desktop)
-    with empty settings URLs.
+    with empty settings URLs.  Linux X11 is the same kind of honesty
+    (no TCC analog); Wayland and missing XTEST are named limits, not a
+    grant dialog (TD-2001).
     """
 
     type: Literal["cu_permissions"] = "cu_permissions"
@@ -1700,13 +1702,20 @@ class CuPermissions(DaemonEvent):
     screen_recording_url: str
     accessibility_url: str
     first_run: bool = False
-    platform: Literal["macos", "windows"] = "macos"
+    platform: Literal["macos", "windows", "linux"] = "macos"
     no_gate: str = ""
     uipi: str = ""
     secure_desktop: str = ""
     elevated: bool = False
     uipi_applies: bool = False
     secure_desktop_applies: bool = False
+    session_type: str = ""
+    wayland: str = ""
+    wayland_applies: bool = False
+    xtest: str = ""
+    xtest_applies: bool = False
+    no_display: str = ""
+    no_display_applies: bool = False
 
 
 class JobEntry(BaseModel):

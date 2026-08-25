@@ -1,7 +1,8 @@
 """Live desktop driver: ``mcp/tst-cu-mcp`` over stdio (TD-3301).
 
-macOS and Windows are the live platforms (the sidecar's own backends).
-Linux has no live path — that is E20. The mock still works on any OS.
+macOS, Windows, and Linux X11 are the live platforms (the sidecar's own
+backends). Other OS values still refuse with ``e20``. The mock works on
+any host.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from .permissions import parse_mcp_permissions_result
 from .protocol import DesktopError
 from .stdio_mcp import StdioMcpClient, map_mcp_error
 
-LIVE_PLATFORMS = frozenset({"darwin", "win32"})
+LIVE_PLATFORMS = frozenset({"darwin", "win32", "linux"})
 
 # Product tools → existing MCP tool names. Points, not last-screenshot
 # image space: tstd does not yet thread capture metadata between calls.
@@ -50,18 +51,12 @@ class McpDesktopDriver:
         self.killed = bool(killed)
 
     def _refuse_if_no_live_path(self) -> None:
-        if self._platform in LIVE_PLATFORMS:
+        if self._platform in LIVE_PLATFORMS or self._platform.startswith("linux"):
             return
-        if self._platform.startswith("linux"):
-            raise DesktopError(
-                "e20",
-                "Linux desktop computer-use is E20; there is no live path. "
-                "Use an empty computer_use.command (the mock driver).",
-            )
         raise DesktopError(
             "e20",
             f"no live desktop computer-use path for {self._platform!r}; "
-            "supported live platforms: darwin, win32",
+            "supported live platforms: darwin, win32, linux",
         )
 
     def _refuse_if_killed(self) -> None:

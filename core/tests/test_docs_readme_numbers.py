@@ -242,7 +242,6 @@ _WORKS_IMPORTS: tuple[tuple[str, str], ...] = (
 # Not-built leftovers that are stories, not milestone exits. If Status
 # names the gap, the story must still have an open box on this checkout.
 _LEFTOVER_STORIES: dict[str, str] = {
-    "linux desktop": "TD-2001",
     "design-mode": "TD-3406",
     "charter editor": "TD-4002",
     "definition-of-done polling": "TD-4103",

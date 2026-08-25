@@ -2,14 +2,17 @@
 
 macOS first-run is a TCC explanation. Windows first-run is honesty: there
 is no grant dialog, and two silent failure modes (UIPI, secure desktop).
+Linux X11 is the same kind of honesty; Wayland / missing XTEST are named
+limits (TD-2001).
 
 The first-run flag lives in the user data dir, not the workspace — same
 shape as ``close-is-not-quit.yaml``. Probes never raise a TCC prompt
-(``request=True`` is forbidden here). Windows has nothing to prompt.
+(``request=True`` is forbidden here). Windows and X11 have nothing to
+prompt.
 
-Windows copy matches ``tst_cu_mcp.permissions.build_windows_report`` so
-the live sidecar and the mock stay on one wording. The daemon parses that
-report; it does not grow a second Windows backend.
+Windows and Linux copy match the sidecar report builders so the live
+path and the mock stay on one wording. The daemon parses that report; it
+does not grow a second backend.
 """
 
 from __future__ import annotations
@@ -23,8 +26,9 @@ from typing import Any, Literal
 import yaml
 
 from ..protocol import CuPermissions
+from .permissions_linux import LINUX_FLAG_NAME, build_linux_cu_permissions
 
-CuPlatform = Literal["macos", "windows"]
+CuPlatform = Literal["macos", "windows", "linux"]
 
 # Current macOS 15+ / Tahoe deep links (``x-apple.systemsettings``).
 # Older ``x-apple.systempreferences:com.apple.preference.security?Privacy_*``
@@ -34,6 +38,17 @@ ACCESSIBILITY_URL = "x-apple.systemsettings:com.apple.preferences.privacy-securi
 
 FLAG_NAME = "cu-macos-permissions.yaml"
 WINDOWS_FLAG_NAME = "cu-windows-permissions.yaml"
+
+_FLAG_FILES: dict[CuPlatform, str] = {
+    "macos": FLAG_NAME,
+    "windows": WINDOWS_FLAG_NAME,
+    "linux": LINUX_FLAG_NAME,
+}
+_FLAG_PREFIXES: dict[CuPlatform, str] = {
+    "macos": ".cu-macos-permissions.",
+    "windows": ".cu-windows-permissions.",
+    "linux": ".cu-linux-permissions.",
+}
 
 _PERMISSION_MARKERS = (
     "screen recording",
@@ -75,6 +90,8 @@ def normalize_cu_platform(raw: str | None) -> CuPlatform:
     """Map ``sys.platform`` / report labels onto the protocol platform."""
     if raw in ("win32", "windows"):
         return "windows"
+    if raw is not None and (raw == "linux" or raw.startswith("linux")):
+        return "linux"
     return "macos"
 
 
@@ -88,7 +105,7 @@ def driver_cu_platform(driver: Any) -> CuPlatform:
 
 def flag_name(platform: str = "macos") -> str:
     """User-data filename for this platform's first-run stamp."""
-    return WINDOWS_FLAG_NAME if normalize_cu_platform(platform) == "windows" else FLAG_NAME
+    return _FLAG_FILES[normalize_cu_platform(platform)]
 
 
 def flag_path(data_dir: str | Path, platform: str = "macos") -> Path:
@@ -112,11 +129,7 @@ def mark_shown(data_dir: str | Path, platform: str = "macos") -> None:
     """Stamp the first-run flag atomically in the user data dir."""
     path = flag_path(data_dir, platform)
     path.parent.mkdir(parents=True, exist_ok=True)
-    prefix = (
-        ".cu-windows-permissions."
-        if normalize_cu_platform(platform) == "windows"
-        else ".cu-macos-permissions."
-    )
+    prefix = _FLAG_PREFIXES[normalize_cu_platform(platform)]
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=prefix, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -175,11 +188,23 @@ def parse_probe(raw: Any) -> tuple[bool, bool]:
 
 
 def cu_platform_from_report(raw: dict[str, Any]) -> CuPlatform:
-    """Read the report's platform; ``limits`` / ``no_gate`` imply Windows."""
+    """Read the report's platform.
+
+    Linux and Windows both send ``no_gate`` / ``limits``. The platform
+    label wins; a ``session_type`` is Linux; otherwise those keys are the
+    Windows shape. Never map a Linux report onto Windows UIPI copy.
+    """
     raw_platform = raw.get("platform")
-    labelled = normalize_cu_platform(raw_platform if isinstance(raw_platform, str) else None)
-    if labelled == "windows":
-        return "windows"
+    if isinstance(raw_platform, str):
+        if raw_platform in ("win32", "windows"):
+            return "windows"
+        if raw_platform == "linux" or raw_platform.startswith("linux"):
+            return "linux"
+        if raw_platform in ("darwin", "macos"):
+            return "macos"
+    session = raw.get("session_type")
+    if isinstance(session, str) and session:
+        return "linux"
     if "no_gate" in raw or "limits" in raw:
         return "windows"
     return "macos"
@@ -269,9 +294,12 @@ def build_windows_cu_permissions(
 
 
 def cu_permissions_from_report(raw: dict[str, Any], *, first_run: bool) -> CuPermissions:
-    """Build the event the UI already knows, for either platform."""
-    if cu_platform_from_report(raw) == "windows":
+    """Build the event the UI already knows, for the report's platform."""
+    platform = cu_platform_from_report(raw)
+    if platform == "windows":
         return build_windows_cu_permissions(raw, first_run=first_run)
+    if platform == "linux":
+        return build_linux_cu_permissions(raw, first_run=first_run)
     screen, access = parse_probe(raw)
     return build_cu_permissions(
         screen_recording=screen,
@@ -286,9 +314,10 @@ def parse_mcp_permissions_result(result: Any) -> dict[str, Any]:
         "screen_recording" in result
         or "all_granted" in result
         or "accessibility" in result
-        or result.get("platform") == "windows"
+        or result.get("platform") in ("windows", "linux")
         or "limits" in result
         or "no_gate" in result
+        or "session_type" in result
     ):
         return result
     content: list[Any] = []

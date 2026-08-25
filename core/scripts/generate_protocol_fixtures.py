@@ -723,6 +723,13 @@ FIXTURES = {
             "x-apple.systemsettings:com.apple.preferences.privacy-security.accessibility"
         ),
         first_run=True,
+        session_type="",
+        wayland="",
+        wayland_applies=False,
+        xtest="",
+        xtest_applies=False,
+        no_display="",
+        no_display_applies=False,
     ),
     "list_jobs": ListJobs(),
     "save_job": SaveJob(

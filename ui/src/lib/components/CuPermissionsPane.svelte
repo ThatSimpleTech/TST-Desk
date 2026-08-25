@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Computer-use permission / integrity explanation (TD-3302, TD-3303).
 	// Same panel for first-run and Settings reopen. macOS is TCC; Windows
-	// is the missing grant dialog plus UIPI and the secure desktop.
+	// is the missing grant dialog plus UIPI and the secure desktop; Linux
+	// is X11 no-gate honesty plus named Wayland / XTEST / display limits.
 	import {
 		cuPermissions,
 		closeCuPermissions,
@@ -18,15 +19,18 @@
 	let { variant = 'dialog' }: Props = $props();
 
 	const isWindows = $derived(cuPermissions.platform === 'windows');
+	const isLinux = $derived(cuPermissions.platform === 'linux');
 	const screenOk = $derived(cuPermissions.screenRecording);
 	const accessOk = $derived(cuPermissions.accessibility);
 
 	const settingsHint = $derived(
 		isWindows
 			? 'Reopens the UIPI and secure-desktop explanation.'
-			: cuPermissions.platform === 'macos'
-				? 'Reopens the Screen Recording and Accessibility explanation.'
-				: 'Reopens the computer-use explanation for this OS.',
+			: isLinux
+				? 'Reopens the X11 / Wayland computer-use explanation.'
+				: cuPermissions.platform === 'macos'
+					? 'Reopens the Screen Recording and Accessibility explanation.'
+					: 'Reopens the computer-use explanation for this OS.',
 	);
 </script>
 
@@ -57,7 +61,73 @@
 					<Icon name="x" size={14} />
 				</button>
 			</div>
-			{#if isWindows}
+			{#if isLinux}
+				<p class="body">
+					Linux will not prompt for a computer-use permission — there is nothing to click and
+					nothing to grant. Native X11 can capture and inject input. A Wayland session cannot.
+				</p>
+				<ul class="perms">
+					<li>
+						<strong>No grant dialog</strong>
+						— {cuPermissions.noGate ||
+							'X11 has no Screen Recording or Accessibility analog.'}
+					</li>
+					<li>
+						<strong>Session</strong>
+						— {cuPermissions.sessionType || 'unknown'}
+						<span
+							class="status"
+							class:status--ok={cuPermissions.sessionType === 'x11' && cuPermissions.granted}
+							class:status--bad={cuPermissions.sessionType !== 'x11' || !cuPermissions.granted}
+						>
+							{cuPermissions.granted ? 'usable' : 'not usable'}
+						</span>
+					</li>
+					{#if cuPermissions.waylandApplies || cuPermissions.wayland}
+						<li>
+							<strong>Wayland</strong>
+							— {cuPermissions.wayland ||
+								'This session cannot be captured or driven. Use X11.'}
+							<span class="status status--bad">unsupported</span>
+						</li>
+					{/if}
+					{#if cuPermissions.xtestApplies || cuPermissions.xtest}
+						<li>
+							<strong>XTEST</strong>
+							— {cuPermissions.xtest ||
+								'The XTEST extension is missing; mouse and keyboard synthesis will not work.'}
+							<span class="status status--bad">missing</span>
+						</li>
+					{/if}
+					{#if cuPermissions.noDisplayApplies || cuPermissions.noDisplay}
+						<li>
+							<strong>Display</strong>
+							— {cuPermissions.noDisplay ||
+								'No X11 display is open. Capture and input are unavailable.'}
+							<span class="status status--bad">unavailable</span>
+						</li>
+					{/if}
+				</ul>
+				<div class="actions">
+					<button
+						class="btn btn--primary"
+						type="button"
+						disabled={cuPermissions.probing}
+						onclick={() => retryCuPermissions()}>Retry</button
+					>
+				</div>
+				{#if cuPermissions.probing}
+					<p class="hint" aria-live="polite">Checking session…</p>
+				{:else if cuPermissions.granted}
+					<p class="hint" aria-live="polite">
+						There is no permission to grant. This X11 session can capture and inject input.
+					</p>
+				{:else}
+					<p class="hint" aria-live="polite">
+						Switch to a native X11 session. An XWayland DISPLAY on Wayland is not enough.
+					</p>
+				{/if}
+			{:else if isWindows}
 				<p class="body">
 					Windows will not prompt for a computer-use permission — there is nothing to click and
 					nothing to grant. Capture and input are allowed. Two conditions still fail silently if

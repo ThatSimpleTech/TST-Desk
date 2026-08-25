@@ -2457,6 +2457,12 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 - [x] Signing decision recorded in `DECISIONS.md` — cost and benefit stated, deferral is
       acceptable for v0.1 (deferred, 2026-08-14)
 
+**Local (2026-08-24):** Ubuntu 26.04 XFCE built AppImage (101 MB), `.deb`
+(27 MB), and `.rpm`. Extracted-deb `tstd` served `port.json` on this
+host, with `PATH` empty, and inside `ubuntu:22.04` (no system Python).
+The two open ACs still need the first green `package.yml` run on main
+(four artifacts) and the other matrix legs.
+
 ---
 
 ### TD-1303 — Release workflow
@@ -5885,10 +5891,10 @@ of it. Filed so the reconnaissance below is not repeated, not so it can be start
 
 ### Current behaviour on Linux
 
-`backends/__init__.py` declares `SUPPORTED_PLATFORMS = ("darwin", "win32")`. On Linux,
-`get_backend()` raises `UnsupportedPlatformError` naming what is supported, and `health` reports
-`supported: false` rather than raising. So the failure is clean and diagnostic by design — but
-there is no functionality whatsoever.
+`backends/__init__.py` includes `"linux"`. Under a native X11 session `health` reports
+`supported: true` and `session_type: "x11"`. A Wayland session reports `supported: false`
+with `session_type: "wayland"` (TD-2002). The Desk live path accepts Linux; first-run
+onboarding is platform `"linux"`.
 
 **One rough edge worth fixing regardless of whether the backend gets built:** the wheel
 *installs* on Linux. It is pure-Python `py3-none-any`, the PyObjC dependencies are gated behind
@@ -5947,30 +5953,37 @@ structure the Windows backend established: platform code confined to the backend
 cannot skip it.
 
 **Acceptance criteria:**
-- [ ] `docs/REUSE.md`'s AT-SPI driver read and assessed first, with a written statement of what
+- [x] `docs/REUSE.md`'s AT-SPI driver read and assessed first, with a written statement of what
       it can supply that raw X11 cannot — before any code is written
-- [ ] Every `Backend` protocol method implemented; `mypy --strict` clean
-- [ ] Display enumeration reports true pixel bounds on a multi-monitor layout, including a
+- [x] Every `Backend` protocol method implemented; `mypy --strict` clean
+- [x] Display enumeration reports true pixel bounds on a multi-monitor layout, including a
       display at a negative origin
-- [ ] Capture returns a valid PNG for a full display and for a sub-region, without writing to disk
-- [ ] Coordinate round-trip verified: `move_mouse` then `cursor_position` agree within tolerance
+- [x] Capture returns a valid PNG for a full display and for a sub-region, without writing to disk
+- [x] Coordinate round-trip verified: `move_mouse` then `cursor_position` agree within tolerance
       at several points across every display
-- [ ] `foreground_window` returns a title and a process name for a real window
-- [ ] `expect_window` refuses on a mismatch **without actuating** — the same assertion the
+- [x] `foreground_window` returns a title and a process name for a real window
+- [x] `expect_window` refuses on a mismatch **without actuating** — the same assertion the
       Windows suite makes, since a guard that refuses after acting is worse than none
-- [ ] Kill-switch halts actuation while capture and state reads keep working
-- [ ] A `test_desktop_linux.py` tier mirroring `test_desktop_windows.py`, marked `desktop`, that
+- [x] Kill-switch halts actuation while capture and state reads keep working
+- [x] A `test_desktop_linux.py` tier mirroring `test_desktop_windows.py`, marked `desktop`, that
       moves the pointer and restores it and **does not type**
-- [ ] Keystroke tests live in their own module behind `TST_CU_MCP_ALLOW_INTRUSIVE_TESTS`, never
+- [x] Keystroke tests live in their own module behind `TST_CU_MCP_ALLOW_INTRUSIVE_TESTS`, never
       reachable by marker selection alone (see the 2026-08-18 correction in `DECISIONS.md`)
-- [ ] `health` reports `supported: true` under X11
-- [ ] Behaviour under Wayland is explicit, not accidental — either a clean refusal or whatever
+- [x] `health` reports `supported: true` under X11
+- [x] Behaviour under Wayland is explicit, not accidental — either a clean refusal or whatever
       TD-2002 decides
 
 **Notes:** The Windows port's two live-use findings are likely to have X11 analogues worth
 checking early: a key that only works with the right flag set (`VK_LWIN` needed the extended
 flag), and input silently discarded by a window that has focus but is not yet ready. Neither was
 found by review.
+
+**Completed (2026-08-24):** AT-SPI assessment recorded in `DECISIONS.md` first.
+`LinuxBackend` implements the full `Backend` protocol via ctypes against
+libX11/libXrandr/libXtst and Pillow `ImageGrab`. Negative-origin layouts are
+pinned in `test_linux_geometry.py`; live capture/cursor/foreground ran on an
+X11 XFCE host (`pytest -m desktop`). Wayland is an explicit health refusal.
+The Desk live path accepts Linux; `cu_permissions.platform` is `"linux"`.
 
 ---
 
@@ -5981,18 +5994,26 @@ A decision story, not an implementation one. Wayland cannot be served by extendi
 backend, and the choice affects what safety guarantees the server can honestly claim.
 
 **Acceptance criteria:**
-- [ ] Portal-based capture (`xdg-desktop-portal` ScreenCast over PipeWire) and input (portal
+- [x] Portal-based capture (`xdg-desktop-portal` ScreenCast over PipeWire) and input (portal
       RemoteDesktop or libei) each assessed for feasibility, with the consent flow described
-- [ ] A definite answer on whether `foreground_window` is obtainable under Wayland — via AT-SPI,
+- [x] A definite answer on whether `foreground_window` is obtainable under Wayland — via AT-SPI,
       via a compositor-specific protocol, or not at all
-- [ ] If it is not obtainable: a stated position on whether `expect_window` degrades, refuses, or
+- [x] If it is not obtainable: a stated position on whether `expect_window` degrades, refuses, or
       is unavailable there, since silently weakening a safety guard is not an option
-- [ ] Recommendation recorded in `DECISIONS.md` as a Class B or C decision with rationale
-- [ ] Scope and size for the implementation work, or an explicit decision not to support Wayland
+- [x] Recommendation recorded in `DECISIONS.md` as a Class B or C decision with rationale
+- [x] Scope and size for the implementation work, or an explicit decision not to support Wayland
       and what `health` should then report
 
 **Notes:** Resist implementing while investigating. The output of this story is a decision and a
 size, and the honest answer may be "X11 only, Wayland reports unsupported".
+
+**Completed (2026-08-24):** Class B in `DECISIONS.md`. Portals are
+feasible on GNOME/KDE (ScreenCast + PipeWire; RemoteDesktop + libei);
+wlr ScreenCast is common and RemoteDesktop is not. `foreground_window`
+is not compositor-neutral. `expect_window` refuses when focus cannot
+be read — never degrades. Wayland stays unsupported;
+`health` reports `supported: false` / `session_type: "wayland"`. A
+later epic, if any, is size 13 and is not filed now.
 
 ---
 

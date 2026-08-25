@@ -1141,6 +1141,13 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isBoolean(m.elevated)).toBe(true);
     expect(isBoolean(m.uipi_applies)).toBe(true);
     expect(isBoolean(m.secure_desktop_applies)).toBe(true);
+    expect(isString(m.session_type)).toBe(true);
+    expect(isString(m.wayland)).toBe(true);
+    expect(isBoolean(m.wayland_applies)).toBe(true);
+    expect(isString(m.xtest)).toBe(true);
+    expect(isBoolean(m.xtest_applies)).toBe(true);
+    expect(isString(m.no_display)).toBe(true);
+    expect(isBoolean(m.no_display_applies)).toBe(true);
   });
 
   it("list_jobs / save_job / delete_job / job_list (TD-3805)", () => {

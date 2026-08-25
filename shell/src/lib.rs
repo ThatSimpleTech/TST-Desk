@@ -87,6 +87,7 @@ fn emit_window_visibility(app: &tauri::AppHandle, visible: bool) {
     let _ = app.emit(WINDOW_VISIBILITY_EVENT, visible);
 }
 
+#[cfg(target_os = "macos")]
 fn show_main_window(app: &tauri::AppHandle) {
     let window = app
         .get_webview_window("main")

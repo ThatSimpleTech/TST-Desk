@@ -85,6 +85,35 @@ describe("error copy", () => {
     expect(spec?.body).toMatch(/diagnostics/i);
   });
 
+  it("running out of credits is a banner naming the top-up, not the fallback", () => {
+    // A 402 blocks every turn until the user acts, so it earns a banner —
+    // and it must not read as an unrecognised code, which is what the user
+    // saw while the provider's numeric code shadowed the status map.
+    const spec = turnFailureCopy("insufficient_credits");
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.title).not.toBe("Turn failed");
+    expect(spec?.body).not.toContain("insufficient_credits");
+    expect(spec?.body).toMatch(/credit/i);
+  });
+
+  it("a bare numeric code never reaches the copy table", () => {
+    // Regression guard for the shadowing bug: the daemon classifies 429 as
+    // rate_limited, so "429" arriving here at all means the mapping broke
+    // upstream and the user gets "unrecognised error" for a plain throttle.
+    expect(turnFailureCopy("rate_limited")?.title).toBe("Rate limited");
+    expect(turnFailureCopy("429")?.title).toBe("Turn failed");
+  });
+
+  it("an empty stream blames the provider, not the model", () => {
+    // The turn used to surface as "the model finished without a reply" for
+    // output the provider never sent. The copy has to say who went quiet.
+    const spec = turnFailureCopy("empty_stream");
+    expect(spec?.severity).toBe("toast");
+    expect(spec?.title).not.toBe("Turn failed");
+    expect(spec?.body).toMatch(/provider/i);
+    expect(spec?.body).not.toMatch(/\bthe model (finished|spent)\b/i);
+  });
+
   it("transient provider failures are toasts", () => {
     for (const code of ["rate_limited", "server_error", "bad_gateway", "service_unavailable", "gateway_timeout"]) {
       expect(turnFailureCopy(code)?.severity).toBe("toast");

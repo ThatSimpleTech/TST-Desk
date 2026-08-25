@@ -45,6 +45,14 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		title: "API key rejected",
 		body: "The provider rejected the stored key (401). Re-enter a valid key: title-bar gear → Provider API key. Check the base_url in config.yaml matches the key's provider, and resend.",
 	},
+	// A banner, not a toast: the key is valid and the request well-formed, but
+	// nothing will succeed until the account is topped up, so this blocks work
+	// exactly the way a missing key does.
+	insufficient_credits: {
+		severity: "banner",
+		title: "Out of provider credits",
+		body: "The provider refused the request for lack of credit (402). Top up your account with the provider that issued the key — for OpenRouter, https://openrouter.ai/settings/credits — then resend. The conversation is preserved.",
+	},
 	forbidden: {
 		severity: "banner",
 		title: "Access denied",
@@ -91,6 +99,15 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		severity: "toast",
 		title: "Unreadable provider response",
 		body: "The provider's response couldn't be parsed. If this repeats, copy diagnostics and report it — it usually means a provider-side change.",
+	},
+	// Distinct from stream_interrupted: nothing arrived at all, so there is no
+	// partial answer to explain away. Naming the provider matters — the turn
+	// used to surface as "the model finished without a reply", which blames
+	// the model for output the provider never sent.
+	empty_stream: {
+		severity: "toast",
+		title: "Provider sent nothing",
+		body: "The provider accepted the request, then closed the stream without sending any output. Nothing was generated and nothing was charged. Resend to retry.",
 	},
 	stream_interrupted: {
 		severity: "toast",

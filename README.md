@@ -213,7 +213,7 @@ boundaries and spend/time/iteration caps, the live cost meter and usage export, 
 append-only audit log, agent memory that rides the brain prompt and accepts distilled
 updates, sessions that revive from disk after a restart or a closed window (close vs quit
 below), headless runs via `tst run`, computer-use — a screenshot and clicks through the
-same classifier, behind a kill switch — on macOS and Windows via `tst-cu-mcp` (browser
+same classifier, behind a kill switch — on macOS, Windows, and Linux X11 via `tst-cu-mcp` (browser
 path on any OS), remote attach over Tailscale (never `0.0.0.0`) with Slack/ntfy notify
 and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
 a validating `CHARTER.md` schema and the project-home charter editor, plus the
@@ -221,7 +221,7 @@ session rail, settings, diagnostics, and keyless local-model support.
 
 What is not built yet, and is not claimed anywhere above: the autonomy engine
 (supervisor, hard-required container act), MCP loading, slash
-commands, `SKILL.md`, and plan lock, Linux desktop capture, and desktop Design-mode AX.
+commands, `SKILL.md`, and plan lock, Wayland desktop capture, and desktop Design-mode AX.
 Those are later stories — see [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) §9 for
 the phasing.
 
@@ -263,6 +263,17 @@ differently — path forms, 8.3 short names, file permissions, killing a command
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - Rust 1.77+ (for the Tauri host)
 - Node.js 24+ (for the frontend)
+- Linux only — WebKit/GTK headers for the Tauri host, plus `secret-tool` for the
+  keychain:
+
+  ```bash
+  sudo apt-get install -y \
+    libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+    patchelf pkgconf libsecret-tools
+  ```
+
+  On Ubuntu 26.04, install `libayatana-appindicator3-dev` (not
+  `libappindicator3-dev`): the older name removes `network-manager-applet`.
 
 ### Setup
 
