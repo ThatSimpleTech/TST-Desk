@@ -52,6 +52,10 @@ export const session = $state({
   tier: "brain" as "brain" | "worker" | "validator",
   tierOverride: null as "brain" | "worker" | "validator" | null,
   modelSlugs: {} as Record<string, string>,
+  /** Preset this session opened with (TD-1720). Empty until tier_state. */
+  preset: "" as string,
+  /** Tier → hostname:port the daemon will call (TD-1720). */
+  hosts: {} as Record<string, string>,
 });
 
 let client: ProtocolClient | null = null;
@@ -75,6 +79,8 @@ export function resetSession(): void {
   session.tier = "brain";
   session.tierOverride = null;
   session.modelSlugs = {};
+  session.preset = "";
+  session.hosts = {};
   pendingPath = null;
 }
 
@@ -121,6 +127,8 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.tier = event.tier;
       session.tierOverride = event.override ?? null;
       session.modelSlugs = event.model_slugs;
+      session.preset = event.preset ?? "";
+      session.hosts = event.hosts ?? {};
       break;
     case "cost_update":
       session.cost = {
@@ -165,6 +173,8 @@ export function focusSession(
   session.tier = "brain";
   session.tierOverride = null;
   session.modelSlugs = {};
+  session.preset = "";
+  session.hosts = {};
   pendingPath = null;
 }
 
@@ -182,6 +192,18 @@ export function retargetWorkspace(sessionId: string, workspacePath: string): voi
 export function setTier(tier: "brain" | "worker" | "validator"): void {
   if (session.sessionId === null) return;
   client?.setTier(session.sessionId, tier);
+}
+
+/** Active slug and host for the title-bar pill (TD-1720). */
+export function liveModelLabel(
+  tier: string,
+  slugs: Record<string, string>,
+  hosts: Record<string, string>,
+): string {
+  const slug = slugs[tier] ?? "";
+  const host = hosts[tier] ?? "";
+  if (slug && host) return `${slug} · ${host}`;
+  return slug || host;
 }
 
 /** Display name for the workspace row: basename of the path. */

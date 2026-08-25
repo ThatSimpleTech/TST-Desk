@@ -51,6 +51,7 @@ from .local_worker import (
     effective_tier,
     mark_cu_tool,
     session_is_cu_heavy,
+    titlebar_hosts,
     titlebar_slugs,
 )
 from .logging import get_logger
@@ -702,6 +703,7 @@ async def agent_loop(
     _model_slugs: dict[str, str] = {}
     _last_reported_tier: TierName | None = None
     _last_reported_slugs: dict[str, str] | None = None
+    _last_reported_hosts: dict[str, str] | None = None
 
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:
@@ -817,19 +819,26 @@ async def agent_loop(
                     )
                     break
             _model_slugs = titlebar_slugs(config, cu_heavy=cu_heavy)
-            if tier != _last_reported_tier or _model_slugs != _last_reported_slugs:
+            _hosts = titlebar_hosts(config, cu_heavy=cu_heavy)
+            if (
+                tier != _last_reported_tier
+                or _model_slugs != _last_reported_slugs
+                or _hosts != _last_reported_hosts
+            ):
                 _last_reported_tier = tier
                 _last_reported_slugs = _model_slugs
-                # TD-1006: tell the title bar which tier (and slug) is
-                # live — lead-turns handoffs and failure escalations
-                # included, not just manual set_tier overrides. Slug
-                # changes (TD-3903 remap) also emit so the chip stays honest.
+                _last_reported_hosts = _hosts
+                # TD-1006 / TD-1720: tell the title bar which tier, slug,
+                # and host are live. Host changes (credential remap, CU
+                # worker) also emit so the pill stays honest.
                 await session.event_log.add(
                     TierState(
                         session_id=session.id,
                         tier=tier,
                         override=router.override,
                         model_slugs=_model_slugs,
+                        preset=config.active_preset,
+                        hosts=_hosts,
                         seq=1,
                     )
                 )

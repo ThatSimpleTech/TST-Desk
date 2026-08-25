@@ -98,7 +98,7 @@ from .keychain import (
     get_api_key,
     store_api_key,
 )
-from .local_worker import session_is_cu_heavy, titlebar_slugs
+from .local_worker import session_is_cu_heavy, titlebar_hosts, titlebar_slugs
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .memory_commit import MemoryCommitter
@@ -458,11 +458,14 @@ def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
     local-worker preset's worker, not the active preset's remote worker.
     """
     assert session.router is not None
+    cu_heavy = session_is_cu_heavy(session)
     return TierState(
         session_id=session.id,
         tier=session.router.active_tier,
         override=session.router.override,
-        model_slugs=titlebar_slugs(config, cu_heavy=session_is_cu_heavy(session)),
+        model_slugs=titlebar_slugs(config, cu_heavy=cu_heavy),
+        preset=config.active_preset,
+        hosts=titlebar_hosts(config, cu_heavy=cu_heavy),
         seq=1,  # overwritten by the event log
     )
 

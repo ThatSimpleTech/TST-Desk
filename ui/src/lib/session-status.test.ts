@@ -12,6 +12,7 @@ import {
   session,
   bindClient,
   ingestEvent,
+  liveModelLabel,
   openWorkspace,
   resetSession,
   setTier,
@@ -82,12 +83,16 @@ describe("tier state", () => {
       tier: "worker",
       override: null,
       model_slugs: { brain: "b-slug", worker: "w-slug", validator: "v-slug" },
+      preset: "vllm",
+      hosts: { brain: "openrouter.ai", worker: "127.0.0.1:8002", validator: "openrouter.ai" },
       seq: 2,
     } as DaemonEventUnion);
 
     expect(session.tier).toBe("worker");
     expect(session.tierOverride).toBeNull();
     expect(session.modelSlugs.worker).toBe("w-slug");
+    expect(session.preset).toBe("vllm");
+    expect(session.hosts.worker).toBe("127.0.0.1:8002");
 
     setTier("validator");
     expect(sent).toEqual(["tier:s1:validator"]);
@@ -102,6 +107,36 @@ describe("tier state", () => {
     } as DaemonEventUnion);
     expect(session.tier).toBe("validator");
     expect(session.tierOverride).toBe("validator");
+  });
+
+  it("keeps hosts empty when an older daemon omits them", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent({
+      type: "tier_state",
+      session_id: "s1",
+      tier: "brain",
+      override: null,
+      model_slugs: { brain: "b-slug" },
+      seq: 2,
+    } as DaemonEventUnion);
+    expect(session.preset).toBe("");
+    expect(session.hosts).toEqual({});
+  });
+});
+
+describe("liveModelLabel", () => {
+  it("joins slug and host for the active tier", () => {
+    expect(
+      liveModelLabel("brain", { brain: "stealth/ox-alpha" }, { brain: "openrouter.ai" }),
+    ).toBe("stealth/ox-alpha · openrouter.ai");
+  });
+
+  it("shows the host alone when the slug is still unresolved", () => {
+    expect(liveModelLabel("brain", {}, { brain: "127.0.0.1:8002" })).toBe("127.0.0.1:8002");
+  });
+
+  it("does not invent a host from the slug", () => {
+    expect(liveModelLabel("brain", { brain: "stealth/ox-alpha" }, {})).toBe("stealth/ox-alpha");
   });
 });
 
