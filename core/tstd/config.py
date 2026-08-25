@@ -36,6 +36,8 @@ DEFAULT_PRESET = "tst-default"
 DEFAULT_CREDENTIAL_ID = "openrouter"
 RESERVED_CREDENTIAL_IDS = frozenset({"slack-webhook", "ntfy-topic"})
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+# A second OpenRouter key slugifies to openrouter-2 (TD-1718). Same host.
+_OPENROUTER_FAMILY_RE = re.compile(r"^openrouter(?:-\d+)?$")
 
 _DEFAULT_CONFIG_RESOURCE = "config.yaml"
 
@@ -77,6 +79,47 @@ def resolve_credential_id(tier: TierConfig) -> str | None:
     if is_loopback_url(tier.base_url):
         return None
     return DEFAULT_CREDENTIAL_ID
+
+
+def is_openrouter_family(credential_id: str) -> bool:
+    """True for ``openrouter`` and ``openrouter-<n>`` (TD-1718)."""
+    return _OPENROUTER_FAMILY_RE.fullmatch(credential_id) is not None
+
+
+def credential_base_url(config: ModelConfig, credential_id: str | None) -> str | None:
+    """Host this named key talks to, or None to keep the tier URL.
+
+    A catalog row with ``base_url`` wins. ``openrouter`` / ``openrouter-2``
+    without one inherit the shipped OpenRouter host so a second key named
+    OPENROUTER still leaves the machine (TD-1718). A keyed local server
+    omits ``base_url`` and stays on the tier.
+    """
+    if not credential_id:
+        return None
+    cred = config.credentials.get(credential_id)
+    if cred is not None and cred.base_url:
+        return cred.base_url
+    if is_openrouter_family(credential_id):
+        default = config.credentials.get(DEFAULT_CREDENTIAL_ID)
+        if default is not None and default.base_url:
+            return default.base_url
+    return None
+
+
+def resolve_base_url(config: ModelConfig, tier: TierConfig) -> str:
+    """Endpoint a turn actually calls (TD-1718).
+
+    Bound (or implicit) credential host first; otherwise the tier URL.
+    """
+    return credential_base_url(config, resolve_credential_id(tier)) or tier.base_url
+
+
+def apply_credential_host(config: ModelConfig, tier: TierConfig) -> TierConfig:
+    """Return *tier* with the credential host applied when it differs."""
+    url = resolve_base_url(config, tier)
+    if url == tier.base_url:
+        return tier
+    return tier.model_copy(update={"base_url": url})
 
 
 def is_loopback_url(url: str) -> bool:
@@ -193,13 +236,37 @@ class Preset(BaseModel):
 
 
 class CredentialConfig(BaseModel):
-    """Display name for one keychain-backed API key (TD-1717).
+    """Display name and optional host for one keychain-backed API key.
 
-    The secret is never here. The mapping key is the id; this holds the
-    name the Settings screen shows.
+    The secret is never here. The mapping key is the id. ``name`` is what
+    Settings shows. ``base_url`` is the host this key talks to (TD-1718):
+    a bound tier uses it instead of the preset URL, so picking OpenRouter
+    on a local preset does not send an OpenRouter slug to localhost.
+    Omit it for a keyed local server — the tier URL stays in charge.
     """
 
     name: str = Field(min_length=1, max_length=40)
+    base_url: str | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _blank_base_url_is_unset(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip().rstrip("/")
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def _base_url_is_http(self) -> CredentialConfig:
+        if self.base_url is None:
+            return self
+        try:
+            parts = urlsplit(self.base_url)
+        except ValueError as e:
+            raise ValueError(f"credential base_url is not a URL: {e}") from e
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError("credential base_url must be an http(s) OpenAI-compatible endpoint")
+        return self
 
 
 class SearchConfig(BaseModel):
@@ -479,6 +546,33 @@ class ConfigError(Exception):
     """Raised when the model configuration is invalid or missing."""
 
 
+def _merge_shipped_credential_hosts(data: dict[str, Any], shipped: dict[str, Any]) -> None:
+    """Fill missing credential hosts from the shipped catalog (TD-1718).
+
+    A user ``credentials:`` block is not replaced — that would drop their
+    names. Missing shipped ids are added; a shipped id with no ``base_url``
+    inherits the shipped host so a rename of OpenRouter keeps the endpoint.
+    """
+    shipped_creds = shipped.get("credentials")
+    if not isinstance(shipped_creds, dict):
+        return
+    user_creds = data.get("credentials")
+    if not isinstance(user_creds, dict):
+        data["credentials"] = {
+            cid: dict(row) if isinstance(row, dict) else row for cid, row in shipped_creds.items()
+        }
+        return
+    for cid, row in shipped_creds.items():
+        if not isinstance(row, dict):
+            continue
+        existing = user_creds.get(cid)
+        if not isinstance(existing, dict):
+            user_creds[cid] = dict(row)
+            continue
+        if not str(existing.get("base_url") or "").strip() and row.get("base_url"):
+            existing["base_url"] = row["base_url"]
+
+
 def _load_yaml(path: Path) -> dict[str, Any]:
     """Load and parse a YAML file, raising ConfigError on failure."""
     try:
@@ -537,6 +631,14 @@ def load_config(path: Path | None = None) -> ModelConfig:
     # Fill from the shipped file so the destination exists without
     # rewriting theirs.
     shipped: dict[str, Any] | None = None
+
+    def _shipped() -> dict[str, Any]:
+        nonlocal shipped
+        if shipped is None:
+            loaded = yaml.safe_load(default_config_yaml())
+            shipped = loaded if isinstance(loaded, dict) else {}
+        return shipped
+
     for key in (
         "search",
         "embeddings",
@@ -550,12 +652,11 @@ def load_config(path: Path | None = None) -> ModelConfig:
     ):
         if key in data:
             continue
-        if shipped is None:
-            loaded = yaml.safe_load(default_config_yaml())
-            shipped = loaded if isinstance(loaded, dict) else {}
-        value = shipped.get(key)
+        value = _shipped().get(key)
         if isinstance(value, dict):
             data[key] = value
+
+    _merge_shipped_credential_hosts(data, _shipped())
 
     try:
         config = ModelConfig.model_validate(data)

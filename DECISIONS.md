@@ -8180,3 +8180,28 @@ of tags is the source of truth for pane and glass.
 **Alternative rejected:** Inferring close from "no tool for N
 seconds". Also rejected: a model-visible open/close tool. Also
 rejected: a Wayland layer-shell painter in this story.
+
+---
+
+## 2026-08-25 — TD-1718: the named key owns the host (Class B)
+
+**Decision:** `credentials.<id>.base_url` is the host that key talks to.
+A bound (or implicit) credential with a host wins over the tier's
+`base_url`. Unbound loopback and a keyed local server with no host keep
+the tier URL (TD-1801 unchanged). The shipped `openrouter` row carries
+OpenRouter's endpoint in `config.yaml`, never in Python. `openrouter-2`
+without its own host inherits that shipped URL so a second key named
+OPENROUTER still leaves the machine. Settings → Model shows the host
+under the key picker. Protocol is additive: `CredentialSummary.base_url`.
+
+**Rationale:** TD-1717 rejected putting a host on the credential because
+the tier already had one. That made Settings a trap: typing an
+OpenRouter slug and picking the OpenRouter key on the `vllm` preset
+wrote the slug onto `127.0.0.1:8002`. Local + API is a common setup;
+the key is the provider, and the provider knows its host.
+
+**Alternative rejected:** Inferring the host from the slug (`vendor/model`
+→ OpenRouter). Local tags can contain slashes. Also rejected: rewriting
+the tier `base_url` on `set_tier_credential` — that would destroy the
+local preset's URL when you bind a remote key. Also rejected: a Python
+literal for the OpenRouter URL (§2.7).

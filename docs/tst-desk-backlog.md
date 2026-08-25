@@ -3898,6 +3898,29 @@ User ask 2026-08-22.
 
 ---
 
+### TD-1718 — Named key owns the host
+**Size:** 3 · **Depends on:** TD-1717
+
+Settings lets you pick a model slug and a named key. The key is the
+provider; the provider has a host. Picking OpenRouter on a local preset
+must call OpenRouter, not `127.0.0.1`.
+
+**Acceptance criteria:**
+- [x] `credentials.<id>.base_url` is optional in `config.yaml`; the shipped
+      `openrouter` entry has OpenRouter's endpoint
+- [x] A bound key with a host is the URL the provider client calls, even
+      when the tier's own `base_url` is loopback
+- [x] A keyed local server with no host still uses the tier URL
+- [x] `openrouter-2` without its own host inherits the shipped OpenRouter
+      URL
+- [x] Settings → Model shows the selected key's host
+- [x] Secrets never appear in `config.yaml`, `setup_state`, or logs
+- [x] No provider URL is hardcoded in Python
+
+**Done (2026-08-25).** User ask 2026-08-25.
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 

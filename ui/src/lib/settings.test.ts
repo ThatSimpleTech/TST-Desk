@@ -58,6 +58,7 @@ import {
 	renameCredential,
 	saveTierCredential,
 	selectedCredential,
+	credentialHost,
 	validateNamedKey,
 } from "./settings.svelte.js";
 
@@ -475,6 +476,26 @@ describe("key section", () => {
 		expect(selectedCredential("brain")).toBe("openrouter");
 		expect(selectedCredential("worker")).toBe("");
 		expect(JSON.stringify(settings)).not.toMatch(/sk-/);
+	});
+
+	it("exposes a named key's host from setup_state (TD-1718)", () => {
+		startSettings();
+		emit(
+			setupState({
+				credentials: [
+					{
+						id: "openrouter",
+						name: "OpenRouter",
+						stored: true,
+						base_url: "https://example.test/v1",
+					},
+					{ id: "local", name: "Local", stored: false },
+				],
+				tier_credentials: { brain: "openrouter", worker: "local", validator: null },
+			}),
+		);
+		expect(credentialHost("openrouter")).toBe("https://example.test/v1");
+		expect(credentialHost("local")).toBeNull();
 	});
 
 	it("storeNamedKey sends name and key, not a guessed id", () => {

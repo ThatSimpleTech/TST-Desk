@@ -338,7 +338,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_tier_slug` | — | Set the model slug for one tier of one preset. |
 | `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). |
 | `delete_credential` | — | Remove a named key, its secret, and tier bindings (TD-1717). |
-| `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). |
+| `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). That key's `base_url` is the host the tier calls when set (TD-1718). |
 | `run_diagnostics` | — | Run the doctor checks. |
 | `get_usage` | — | Ask for token and cost rollups by session, day and week (TD-1706). |
 | `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
