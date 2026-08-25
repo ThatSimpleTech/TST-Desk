@@ -125,6 +125,23 @@ describe("screen-indicator store", () => {
 		expect(cuIndicators.live).toBe(false);
 	});
 
+	it("follows an explicit cu_session close (TD-3407)", () => {
+		emit({
+			type: "cu_session",
+			seq: 1,
+			session_id: "s1",
+			active: true,
+		});
+		expect(cuIndicators.live).toBe(true);
+		emit({
+			type: "cu_session",
+			seq: 2,
+			session_id: "s1",
+			active: false,
+		});
+		expect(cuIndicators.live).toBe(false);
+	});
+
 	it("clears on turn_complete", () => {
 		emit({
 			type: "tool_call",

@@ -140,6 +140,12 @@ class DarwinOverlay:
             with contextlib.suppress(Exception):
                 transport.close()
 
+    def begin_session(self) -> None:
+        self.activity()
+
+    def end_session(self) -> None:
+        self._send(CMD_HIDE)
+
     def activity(self) -> None:
         from tst_cu_mcp import safety
 

@@ -728,11 +728,13 @@ steering-file writes. The classifier still runs. `effect: yolo` is not a valid r
 
 **Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the
-user data dir (glow and cursor default on; the real-display overlay defaults off). Glow and
-the agent cursor are drawn on the Screen pane. When the real-display toggle is on, screenshot
-tools hide that overlay for the duration of the capture so it cannot appear in the frame.
-The host overlay path is a no-op in this release; the hide flag is the contract. This is not
-a second hardware pointer.
+user data dir (glow and cursor default on; the real-display ring defaults on). Glow and
+the agent cursor are drawn on the Screen pane. The rust ring on the real display
+follows the same `cu_session` open/close tags (TD-3407) on macOS, Windows, and
+Linux X11 — it stays up until the turn ends, you cancel, or the kill-switch
+fires, not for eight seconds after the last click. Wayland has no real-display
+ring. Screenshots hide the ring for the grab so it cannot appear in the frame.
+This is not a second hardware pointer.
 
 ### 4.5 `approved_external_imports`
 

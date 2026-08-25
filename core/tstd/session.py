@@ -277,6 +277,10 @@ class Session:
         # TD-3903: this session has used a desktop_ / browser_ tool.
         # Live flag; revive also scans the event log (same signal as Screen).
         self.used_cu = False
+        # TD-3407: computer-use episode is open this turn. The overlay
+        # callback is the sidecar ring; None on a tombstone or mock-only.
+        self.cu_session_active = False
+        self._overlay_session: Callable[[bool], Awaitable[None]] | None = None
         # TD-4101: unattended runs iterate without a user message.
         # Interactive sessions leave this false and wait on the queue.
         self.autonomy = False
@@ -294,6 +298,33 @@ class Session:
         self.autonomy_class_c = True
         if self.autonomy_stop_reason is None:
             self.autonomy_stop_reason = reason
+
+    async def open_cu_session(self, tool_name: str) -> None:
+        """Open the computer-use episode on the first CU tool of a turn."""
+        from .local_worker import is_cu_tool
+        from .protocol import CuSession
+
+        if self.cu_session_active or not is_cu_tool(tool_name):
+            return
+        self.cu_session_active = True
+        await self.event_log.add(
+            CuSession(session_id=self.id, active=True, seq=1)
+        )
+        if self._overlay_session is not None:
+            await self._overlay_session(True)
+
+    async def close_cu_session(self) -> None:
+        """Close the computer-use episode. Idempotent."""
+        from .protocol import CuSession
+
+        if not self.cu_session_active:
+            return
+        self.cu_session_active = False
+        await self.event_log.add(
+            CuSession(session_id=self.id, active=False, seq=1)
+        )
+        if self._overlay_session is not None:
+            await self._overlay_session(False)
 
     async def _observe_turn_end(self, event: DaemonEvent, _log: SessionEventLog) -> None:
         """Lower the open-turn count when the loop reports a turn complete."""
@@ -404,6 +435,7 @@ class Session:
             pending.future.cancel()
         if self._state in ("running", "awaiting_approval", "paused"):
             await self.set_state("cancelled", reason="cancelled by user")
+        await self.close_cu_session()
         # Wake a loop parked in wait_for_resume so it observes cancellation.
         self._resume_event.set()
 

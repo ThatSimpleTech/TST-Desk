@@ -54,6 +54,9 @@ class MockDesktopDriver:
     def set_killed(self, killed: bool) -> None:
         self.killed = bool(killed)
 
+    async def set_overlay_session(self, active: bool) -> None:
+        self.calls.append(("overlay_session", {"active": bool(active)}))
+
     def _refuse_if_denied(self) -> None:
         if self.secure_desktop_blocked:
             raise DesktopError(

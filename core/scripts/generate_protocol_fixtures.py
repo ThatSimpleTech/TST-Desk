@@ -44,6 +44,7 @@ from tstd.protocol import (
     CredentialSummary,
     CuKillState,
     CuPermissions,
+    CuSession,
     DecisionLogged,
     DeleteApiKey,
     DeleteCredential,
@@ -702,6 +703,7 @@ FIXTURES = {
     ),
     # TD-3404: process-wide kill-switch. Connection-scoped; no session_id.
     "cu_kill_state": CuKillState(killed=True),
+    "cu_session": CuSession(session_id="sess-1", active=True),
     "design_hit": DesignHit(
         session_id="sess-1",
         x=12.0,

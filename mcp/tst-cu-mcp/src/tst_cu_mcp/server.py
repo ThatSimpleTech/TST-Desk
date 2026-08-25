@@ -375,6 +375,23 @@ def build_server() -> MCPServer:
         input_control.scroll(dx, dy, expect_window=expect_window)
         return {"scrolled": {"dx": dx, "dy": dy}}
 
+    @server.tool(
+        name="overlay_session",
+        description=(
+            "Internal TST Desk signal: computer-use episode open/close. "
+            "Not a model tool. Lights or darkens the real-display ring."
+        ),
+        structured_output=False,
+    )
+    def overlay_session(active: bool) -> dict[str, Any]:
+        from tst_cu_mcp.overlay import get_overlay
+
+        if active:
+            get_overlay().begin_session()
+        else:
+            get_overlay().end_session()
+        return {"active": bool(active)}
+
     return server
 
 

@@ -1015,6 +1015,12 @@
     "seq": 1,
     "killed": true
   },
+  "cu_session": {
+    "type": "cu_session",
+    "seq": 1,
+    "session_id": "sess-1",
+    "active": true
+  },
   "design_hit": {
     "type": "design_hit",
     "seq": 1,

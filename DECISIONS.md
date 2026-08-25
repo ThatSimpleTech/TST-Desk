@@ -8151,3 +8151,32 @@ CLI the same store.
 move the documented path and this machine's existing
 `~/.local/share/tst-desk`). Also rejected: auto-merging two live
 trees.
+
+---
+
+## 2026-08-25 — TD-3407: CU glow is a session, not a linger (Class B)
+
+**Decision:** Computer-use on the real display is an open/close
+session, not an 8-second linger after the last actuation. The daemon
+emits `cu_session` (`active: true`) on the first `desktop_*` /
+`browser_*` tool of a turn and `active: false` on turn complete,
+cancel, or kill-switch. The sidecar paints while the session is open
+(`overlay_session` MCP tool plus `Overlay.begin_session` /
+`end_session`). Capture still brackets the ring with `grab_begin` /
+`grab_end`.
+
+The same rust (inset, pulse, click-through, `--color-accent`) is the
+painter on macOS, Windows, and Linux X11. macOS keeps the rounded
+AppKit stroke; Windows and Linux X11 use four click-through edge
+bars of the same thickness and pulse. Wayland has no real-display
+ring — CU itself is unsupported there (TD-2002). The existing
+**Show indicators on the real display** toggle remains the off switch.
+
+**Rationale:** The Screen pane already stayed live for the CU turn.
+The monitor ring dying after eight seconds of thinking made Linux
+and Windows look unlit and macOS look like a click flash. One pair
+of tags is the source of truth for pane and glass.
+
+**Alternative rejected:** Inferring close from "no tool for N
+seconds". Also rejected: a model-visible open/close tool. Also
+rejected: a Wayland layer-shell painter in this story.

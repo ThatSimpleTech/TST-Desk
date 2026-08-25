@@ -81,6 +81,12 @@ class RecordingOverlay:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
+    def begin_session(self) -> None:
+        self.calls.append("begin")
+
+    def end_session(self) -> None:
+        self.calls.append("end")
+
     def activity(self) -> None:
         self.calls.append("activity")
 
@@ -132,9 +138,22 @@ class TestResolution:
         monkeypatch.delenv(OVERLAY_ENV, raising=False)
         assert overlay_enabled(platform="darwin") is True
 
-    def test_other_platform_default_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_win32_default_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(OVERLAY_ENV, raising=False)
-        assert overlay_enabled(platform="win32") is False
+        monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        assert overlay_enabled(platform="win32") is True
+
+    def test_linux_x11_default_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(OVERLAY_ENV, raising=False)
+        monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        assert overlay_enabled(platform="linux") is True
+
+    def test_wayland_default_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(OVERLAY_ENV, raising=False)
+        monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+        assert overlay_enabled(platform="linux") is False
 
 
 class TestGetOverlay:
@@ -163,6 +182,14 @@ class TestDarwinGating:
         overlay = DarwinOverlay(spawn=lambda: transport)
         overlay.activity()
         assert transport.commands == ["show"]
+
+    def test_session_stays_until_end(self) -> None:
+        transport = RecordingTransport()
+        overlay = DarwinOverlay(spawn=lambda: transport)
+        overlay.begin_session()
+        overlay.begin_session()
+        overlay.end_session()
+        assert transport.commands == ["show", "show", "hide"]
 
     def test_killswitch_forces_hide(self, tmp_path: Path) -> None:
         stop = tmp_path / "STOP"
@@ -291,5 +318,4 @@ def test_platform_resolution_uses_sys_platform_when_unspecified(
 ) -> None:
     """overlay_enabled() with no argument reads the running platform."""
     monkeypatch.delenv(OVERLAY_ENV, raising=False)
-    expected = sys.platform == "darwin"
-    assert overlay_enabled() is expected
+    assert overlay_enabled() is overlay_enabled(platform=sys.platform)

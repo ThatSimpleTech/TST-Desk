@@ -1651,6 +1651,21 @@ class CuKillState(DaemonEvent):
     killed: bool
 
 
+class CuSession(DaemonEvent):
+    """Computer-use episode open/close (TD-3407).
+
+    ``active=true`` on the first ``desktop_*`` / ``browser_*`` tool of a
+    turn. ``active=false`` on turn end, cancel, or kill-switch. The
+    real-display ring and Screen-pane glow follow this tag, not an
+    actuation linger.
+    """
+
+    type: Literal["cu_session"] = "cu_session"
+    session_id: str
+    active: bool
+    seq: int = 1
+
+
 class DesignHitBox(BaseModel):
     """Computed box of a Design-mode hit, in frame CSS pixels."""
 
@@ -1854,6 +1869,7 @@ DaemonEventT = Annotated[
     | Error
     | ScreenFrame
     | CuKillState
+    | CuSession
     | DesignHit
     | CuPermissions
     | JobList,
@@ -1976,6 +1992,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "error",
         "screen_frame",
         "cu_kill_state",
+        "cu_session",
         "design_hit",
         "cu_permissions",
         "job_list",
