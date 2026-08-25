@@ -15,11 +15,13 @@
 	import { workspaceName } from '../session-status.svelte.js';
 	import {
 		closeRowMenus,
-		ROW_STATE_LABELS,
+		ACTIVITY_LABELS,
+		liveActivity,
 		rowSubtitle,
 		rowTitle,
+		rowTitleFull,
 		sessions,
-		stateTone,
+		activityTone,
 		type SessionRow
 	} from '../sessions.svelte.js';
 	import {
@@ -44,6 +46,7 @@
 	let confirming = $derived(sessions.confirmDeleteFor === row.sessionId);
 	let moving = $derived(sessions.moveFor === row.sessionId);
 	let renaming = $derived(sessions.renameFor === row.sessionId);
+	let activity = $derived(liveActivity(row));
 	let targets = $derived(moving ? moveTargets(row.sessionId) : []);
 	let draft = $state('');
 	let inputEl = $state<HTMLInputElement | undefined>(undefined);
@@ -55,7 +58,7 @@
 			return;
 		}
 		if (renameSeed === row.sessionId) return;
-		draft = rowTitle(row);
+		draft = rowTitleFull(row);
 		renameSeed = row.sessionId;
 	});
 
@@ -101,10 +104,14 @@
 			aria-current={active ? 'true' : undefined}
 			onclick={onselect}
 		>
-			<span class="dot dot-{stateTone(row.state)}" aria-hidden="true"></span>
+			<span
+				class="dot dot-{activityTone(activity)}"
+				class:dot-live={activity === 'working'}
+				aria-hidden="true"
+			></span>
 			<span class="row-text">
-				<span class="row-title">{rowTitle(row)}</span>
-				<span class="row-sub">{rowSubtitle(row)} · {ROW_STATE_LABELS[row.state]}</span>
+				<span class="row-title" title={rowTitleFull(row)}>{rowTitle(row)}</span>
+				<span class="row-sub">{rowSubtitle(row)} · {ACTIVITY_LABELS[activity]}</span>
 			</span>
 		</button>
 		<button
@@ -112,14 +119,14 @@
 			class:more-open={menuOpen}
 			type="button"
 			title="Session actions"
-			aria-label={`Actions for session ${rowTitle(row)}`}
+			aria-label={`Actions for session ${rowTitleFull(row)}`}
 			aria-expanded={menuOpen}
 			onclick={() => toggleRowMenu(row.sessionId)}><Icon name="ellipsis" size={14} /></button
 		>
 	</div>
 
 	{#if menuOpen}
-		<div class="menu" role="group" aria-label={`Actions for session ${rowTitle(row)}`}>
+		<div class="menu" role="group" aria-label={`Actions for session ${rowTitleFull(row)}`}>
 			{#each rowActions(row.archived, row.starred) as action (action.id)}
 				<button
 					class="action"
@@ -233,6 +240,49 @@
 		flex-direction: column;
 		min-width: 0;
 		line-height: var(--leading-tight);
+	}
+
+	.dot {
+		width: var(--space-2);
+		height: var(--space-2);
+		border-radius: var(--radius-full);
+		flex-shrink: 0;
+	}
+
+	.dot-info {
+		background: var(--color-accent);
+	}
+	.dot-warning {
+		background: var(--color-warn);
+	}
+	.dot-danger {
+		background: var(--color-err);
+	}
+	.dot-success {
+		background: var(--color-ok);
+	}
+	.dot-muted {
+		background: var(--color-ink-muted);
+	}
+
+	.dot-live {
+		animation: dot-pulse 1.4s ease-in-out infinite;
+	}
+
+	@keyframes dot-pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.4;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.dot-live {
+			animation: none;
+		}
 	}
 
 	.row-title {

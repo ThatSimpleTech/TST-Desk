@@ -31,8 +31,9 @@ import {
 	selectRow,
 	sessions,
 	rowSubtitle,
-	rowTitle,
-	ROW_STATE_LABELS,
+	rowTitleFull,
+	liveActivity,
+	ACTIVITY_LABELS,
 } from "./sessions.svelte.js";
 
 export const palette = $state({
@@ -47,8 +48,8 @@ export const palette = $state({
 function sessionEntries(): PaletteEntry[] {
 	return sessions.rows.map((row) => ({
 		id: `session:${row.sessionId}`,
-		title: `Attach to ${rowTitle(row)}`,
-		subtitle: `${rowSubtitle(row)} · ${ROW_STATE_LABELS[row.state]}`,
+		title: `Attach to ${rowTitleFull(row)}`,
+		subtitle: `${rowSubtitle(row)} · ${ACTIVITY_LABELS[liveActivity(row)]}`,
 		icon: "message-square" as const,
 		keywords: `${row.sessionId} ${row.workspacePath} session switch`,
 		command: { kind: "attach", sessionId: row.sessionId },

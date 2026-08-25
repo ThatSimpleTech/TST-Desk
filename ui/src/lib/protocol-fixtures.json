@@ -906,7 +906,8 @@
         "archived": false,
         "starred": false,
         "title": "hello world",
-        "preset": "tst-default"
+        "preset": "tst-default",
+        "busy": false
       },
       {
         "session_id": "sess-2",
@@ -918,7 +919,8 @@
         "archived": true,
         "starred": true,
         "title": null,
-        "preset": ""
+        "preset": "",
+        "busy": false
       }
     ]
   },

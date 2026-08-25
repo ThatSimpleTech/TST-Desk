@@ -1031,6 +1031,9 @@ export interface SessionSummary {
   title?: string | null;
   /** Catalog preset this session opened with, or last switched to (TD-1721). */
   preset?: string;
+  /** A turn is in flight (TD-1720). Distinct from `state: "running"`,
+   *  which is loop liveness (TD-1714). Additive. */
+  busy?: boolean;
 }
 
 export interface SessionList extends DaemonEvent {

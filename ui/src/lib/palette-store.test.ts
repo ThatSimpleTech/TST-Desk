@@ -16,7 +16,11 @@ const mocks = vi.hoisted(() => {
 		stateHandlers: new Set<(s: string) => void>(),
 		sent: [] as ClientMessageUnion[],
 		wsState: { state: "connected" },
-		chatState: { sessionId: null as string | null },
+		chatState: {
+			sessionId: null as string | null,
+			turnState: null as string | null,
+			awaitingFirstToken: false,
+		},
 		statusState: { sessionId: null as string | null, workspacePath: null as string | null },
 		chatSelects: [] as string[],
 		inTauri: false,
