@@ -30,6 +30,7 @@ from websockets.exceptions import ConnectionClosed
 from .cli_approvals import prompt_approval
 from .logging import user_data_dir
 from .protocol import PROTOCOL_VERSION
+from .provider import RetryConfig, worst_case_retry_seconds
 from .ws import read_port_file
 
 # A healthy mock turn finishes in milliseconds; a live one should not
@@ -258,9 +259,34 @@ async def _run_session(ws: Any, workspace: Path, message: str) -> int:
     return await _stream_turn(ws, session_id)
 
 
+def _turn_timeout_secs() -> float:
+    """How long to wait on a turn, given what the daemon may spend retrying.
+
+    The base allowance covers a slow first token. On top of it goes the
+    daemon's whole retry budget: raising ``provider_retry.max_retries`` moves
+    the moment a turn can legitimately still be working, and a fixed deadline
+    here would report "timed out" while the daemon was mid-backoff — blaming
+    the turn for patience the config asked for. A config that cannot be read
+    falls back to the base allowance rather than failing the command.
+    """
+    try:
+        from .config import load_config
+
+        retry = load_config().provider_retry
+        return _TURN_TIMEOUT_SECS + worst_case_retry_seconds(
+            RetryConfig(
+                max_retries=retry.max_retries,
+                initial_delay=retry.initial_delay,
+                max_delay=retry.max_delay,
+            )
+        )
+    except Exception:  # a bad config must not break the command outright
+        return _TURN_TIMEOUT_SECS
+
+
 async def _stream_turn(ws: Any, session_id: str) -> int:
     printed = False
-    deadline = time.monotonic() + _TURN_TIMEOUT_SECS
+    deadline = time.monotonic() + _turn_timeout_secs()
     while time.monotonic() < deadline:
         remaining = max(0.1, deadline - time.monotonic())
         try:

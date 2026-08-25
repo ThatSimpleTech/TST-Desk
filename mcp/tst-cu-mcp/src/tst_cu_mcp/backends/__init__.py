@@ -13,7 +13,9 @@ import sys
 from tst_cu_mcp.backends.base import Backend
 
 #: ``sys.platform`` values with a real implementation.
-SUPPORTED_PLATFORMS = ("darwin", "win32")
+#: Linux is X11; a Wayland session still selects this backend but ``health``
+#: reports ``supported: false`` (TD-2001 / TD-2002).
+SUPPORTED_PLATFORMS = ("darwin", "win32", "linux")
 
 
 class UnsupportedPlatformError(RuntimeError):
@@ -38,6 +40,11 @@ def get_backend(platform: str | None = None) -> Backend:
         from tst_cu_mcp.backends.windows import WindowsBackend
 
         return WindowsBackend()
+
+    if target.startswith("linux"):
+        from tst_cu_mcp.backends.linux import LinuxBackend
+
+        return LinuxBackend()
 
     raise UnsupportedPlatformError(
         f"no computer-use backend for platform {target!r}; "

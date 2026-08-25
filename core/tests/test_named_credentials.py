@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import yaml
 
-from tstd.config import ModelConfig, default_config_yaml
+from tstd.config import ModelConfig, ProviderRetryConfig, default_config_yaml, resolve_base_url
 from tstd.daemon import Daemon
 from tstd.keychain import KeychainError
 from tstd.protocol import parse_client_message
@@ -89,7 +89,9 @@ class TestCatalog:
         monkeypatch.setattr("tstd.daemon.load_config", lambda: _config())
         writes: list[tuple[str, str]] = []
 
-        def _save(credential_id: str, name: str, path: Path | None = None) -> Path:
+        def _save(
+            credential_id: str, name: str, path: Path | None = None, **_kwargs: object
+        ) -> Path:
             writes.append((credential_id, name))
             return Path("/unused")
 
@@ -131,6 +133,58 @@ class TestCatalog:
             await client.close()
         assert fake_keychain.stored == {}
 
+    async def test_openrouter_on_vllm_calls_the_credential_host(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        fake_keychain.stored["openrouter"] = _TAG
+        cfg = _config()
+        host = cfg.credentials["openrouter"].base_url
+        assert host
+        cfg.presets["vllm"].brain = cfg.presets["vllm"].brain.model_copy(
+            update={"credential": "openrouter", "slug": "demo/brain"}
+        )
+        cfg = cfg.model_copy(update={"active_preset": "vllm"})
+        assert resolve_base_url(cfg, cfg.tier("brain")) == host
+        monkeypatch.setattr("tstd.daemon.cached_config", lambda: cfg)
+        daemon = Daemon(data_dir=tmp_path)
+        client = await daemon._build_client(cfg.tier("brain"))
+        try:
+            assert client.base_url == host
+            assert client.api_key == _TAG
+        finally:
+            await client.close()
+
+    async def test_second_openrouter_key_inherits_the_shipped_host(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        fake_keychain.stored["openrouter-2"] = _TAG
+        cfg = _config()
+        host = cfg.credentials["openrouter"].base_url
+        assert host
+        cfg = cfg.model_copy(
+            update={
+                "active_preset": "vllm",
+                "credentials": {
+                    **cfg.credentials,
+                    "openrouter-2": cfg.credentials["openrouter"].model_copy(
+                        update={"name": "OPENROUTER", "base_url": None}
+                    ),
+                },
+            }
+        )
+        cfg.presets["vllm"].brain = cfg.presets["vllm"].brain.model_copy(
+            update={"credential": "openrouter-2", "slug": "demo/brain"}
+        )
+        assert resolve_base_url(cfg, cfg.tier("brain")) == host
+        monkeypatch.setattr("tstd.daemon.cached_config", lambda: cfg)
+        daemon = Daemon(data_dir=tmp_path)
+        client = await daemon._build_client(cfg.tier("brain"))
+        try:
+            assert client.base_url == host
+            assert client.api_key == _TAG
+        finally:
+            await client.close()
+
 
 class TestParse:
     def test_new_messages_parse(self) -> None:
@@ -143,3 +197,67 @@ class TestParse:
         )
         assert bind.type == "set_tier_credential"
         assert bind.credential == ""
+
+
+class TestProviderRetryWiring:
+    """The configured retry budget has to reach the client that does the work.
+
+    A budget that stops at the config object is the same as no budget: the
+    turn still gives up after the hardcoded four attempts, which is what
+    fails a turn against a shared-pool gateway saying "retry shortly".
+    """
+
+    async def test_configured_budget_reaches_a_keyless_client(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        daemon = _daemon(monkeypatch, tmp_path)
+        daemon.config = daemon.config.model_copy(
+            update={
+                "active_preset": "local",
+                "provider_retry": ProviderRetryConfig(
+                    max_retries=9, initial_delay=2.5, max_delay=45.0
+                ),
+            }
+        )
+        client = await daemon._build_client(daemon.config.tier("brain"))
+        try:
+            assert client.api_key is None  # loopback stays keyless
+            assert client.retry_config.max_retries == 9
+            assert client.retry_config.initial_delay == 2.5
+            assert client.retry_config.max_delay == 45.0
+        finally:
+            await client.close()
+
+    async def test_configured_budget_reaches_a_keyed_client(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        fake_keychain.stored["local"] = _TAG
+        cfg = _config()
+        cfg.presets["local"].brain = cfg.presets["local"].brain.model_copy(
+            update={"credential": "local"}
+        )
+        cfg = cfg.model_copy(
+            update={
+                "active_preset": "local",
+                "provider_retry": ProviderRetryConfig(max_retries=7),
+            }
+        )
+        monkeypatch.setattr("tstd.daemon.cached_config", lambda: cfg)
+        daemon = Daemon(data_dir=tmp_path)
+        client = await daemon._build_client(cfg.tier("brain"))
+        try:
+            assert client.api_key == _TAG
+            assert client.retry_config.max_retries == 7
+        finally:
+            await client.close()
+
+    async def test_default_budget_is_the_shipped_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        daemon = _daemon(monkeypatch, tmp_path)
+        daemon.config = daemon.config.model_copy(update={"active_preset": "local"})
+        client = await daemon._build_client(daemon.config.tier("brain"))
+        try:
+            assert client.retry_config.max_retries == ProviderRetryConfig().max_retries
+        finally:
+            await client.close()

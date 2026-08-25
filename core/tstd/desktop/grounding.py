@@ -18,7 +18,9 @@ from .mock import MockDesktopDriver
 # "it works".
 CLICK_MISS_TOLERANCE_POINTS = 4.0
 
-# Supported live CU platforms (TD-3301). Linux is E20 — no live row.
+# Recorded mock-eval rows (TD-3304). Linux is a live CU platform
+# (TD-2001) but has no click-target fixture page here — live accuracy
+# is the sidecar desktop suite, not this table.
 EVAL_PLATFORMS: tuple[str, ...] = ("darwin", "win32")
 
 FIXTURE_PAGES: dict[str, str] = {
@@ -85,9 +87,7 @@ class RecordingMockDesktop(MockDesktopDriver):
         )
         if fixture is None:
             if platform not in FIXTURE_PAGES:
-                raise ValueError(
-                    f"no eval fixture for {platform!r}; linux is E20 and has no live row"
-                )
+                raise ValueError(f"no eval fixture for {platform!r}")
             fixture = FIXTURE_PAGES[platform]
         self.landing_offset = landing_offset
         self.platform = platform

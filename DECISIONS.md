@@ -7939,3 +7939,295 @@ opt-in the charter author can write without a new config key.
 Also rejected: counting consecutive reds here (TD-4203). Also
 rejected: a new protocol event — notify is the summary this story
 asked for.
+
+---
+
+## 2026-08-24 — TD-2001: X11 backend, AT-SPI is not the primary path (Class B)
+
+**Decision:** `mcp/tst-cu-mcp` on Linux is a Windows-shaped raw X11
+backend (`libX11` / `libXrandr` / `libXtst` via stdlib `ctypes`,
+Pillow for PNG). AT-SPI is not on the TD-2001 critical path.
+`foreground_window` uses EWMH (`_NET_ACTIVE_WINDOW`, `_NET_WM_PID`,
+`_NET_WM_NAME`). A Wayland session reports `supported: false` with
+`session_type: "wayland"` (env only — health stays free of X calls).
+Native Wayland capture/input is TD-2002. The real-display overlay
+stays `NullOverlay`, same as Windows.
+
+**What AT-SPI can supply that raw X11 cannot:** element roles, names,
+states, semantic actions, and a best-effort focused application on
+both X11 and Wayland for toolkits that speak AT-SPI. That is the
+right substrate for Design-mode hit-test (TD-3406) and the Wayland
+`foreground_window` question (TD-2002). It cannot enumerate displays,
+capture pixels, or synthesize global pointer/keyboard events.
+
+**What is not in this tree:** `docs/REUSE.md` describes tst-cua's
+`AtspiDriver` as an 80-line stdio client of a separate
+`computer-use-linux` MCP. That driver was never vendored and was
+never run against a real AT-SPI bus. It implements tst-cua's
+`snapshot` / `act` / `close` contract, not `tst-cu-mcp`'s `Backend`.
+
+**Rationale:** The MCP `Backend` protocol is pixels and global
+coordinates. Making AT-SPI primary would either rewrite that surface
+or nest a second MCP server. Policy (kill-switch, `expect_window`)
+stays in `input_control`. ctypes adds no dependency, matching
+Windows. Health must not claim support for a Wayland session just
+because `DISPLAY` is set (XWayland would only drive X clients).
+
+**Alternative rejected:** AT-SPI as the primary backend. Also
+rejected: `python-xlib` (new dependency for a port that ctypes
+already covers). Also rejected: treating XWayland as a supported
+desktop. Also rejected: implementing portal ScreenCast / libei in
+this story.
+
+---
+
+## 2026-08-24 — Linux `cu_permissions` platform and live Desk path (Class B)
+
+**Decision:** `CuPermissions.platform` includes `"linux"`. `LIVE_PLATFORMS`
+includes `"linux"`. First-run / Settings reuse the existing
+`cu_permissions` event with Linux-specific fields (`session_type`,
+`wayland`, `xtest`, `no_display` and their `_applies` flags) rather
+than a new message type.
+
+A Linux sidecar report has `no_gate` and `limits`, same as Windows.
+`cu_platform_from_report` reads the `platform` / `session_type` label
+first so those keys never become Windows UIPI copy.
+
+**Rationale:** TD-2001 shipped the sidecar backend; the Desk window
+still refused a live spawn (`e20`) and would have mapped a Linux
+`no_gate` report onto the Windows pane. The UI must not invent
+session limits the daemon did not send. Empty settings URLs match
+Windows: there is nothing to grant.
+
+**Alternative rejected:** Reusing the Windows `uipi` / `secure_desktop`
+fields for Wayland / XTEST (the field names would lie). Also
+rejected: leaving `LIVE_PLATFORMS` as darwin+win32 after the sidecar
+already supports Linux. Also rejected: adding a Linux click-target
+row to the TD-3304 mock eval — live accuracy stays the sidecar
+`desktop` suite.
+
+---
+
+## 2026-08-24 — TD-2002: Wayland stays unsupported (Class B)
+
+**Decision:** Do not implement native Wayland desktop computer-use in
+the current milestones. `health` already reports `supported: false`,
+`session_type: "wayland"`, `backend: null`. Keep that. An XWayland
+`DISPLAY` on a Wayland session is still not support. Revisit only as
+a new epic (size 13), not by extending `LinuxBackend`.
+
+This is Class B (strategy; reversible by a later epic). It does not
+change the milestone: E20 already parked Wayland on this story.
+
+### Capture — ScreenCast + PipeWire
+
+Feasible on compositors that ship a ScreenCast portal backend (GNOME,
+KDE, xdg-desktop-portal-wlr / hyprland). The flow is not a global
+grab:
+
+1. The client calls `org.freedesktop.portal.ScreenCast` `CreateSession`.
+2. `SelectSources` names what may be shared (monitor, window, virtual)
+   and may request a restore token (`persist_mode`).
+3. `Start` raises a user-visible picker (GNOME/KDE dialog; wlr often
+   `slurp` / wofi / first output if no chooser).
+4. The portal returns PipeWire node ids; the client opens
+   `OpenPipeWireRemote` and pulls frames from the stream.
+
+Consent is per session (or per restore token on portal ≥ 1.21, DE
+support varies). Scope is the sources the user picked, not "the
+desktop." Cursor may be a separate stream. This is a different
+architecture from X11 `ImageGrab` / XTest: async PipeWire, D-Bus, and
+a portal backend that must exist for that compositor.
+
+### Input — RemoteDesktop + libei
+
+Feasible on compositors that implement the RemoteDesktop portal and
+EIS. The portal negotiates the session; libei is the transport
+(`ConnectToEIS` since xdg-desktop-portal 1.17, mid-2023). Older
+`NotifyPointerMotion` / `NotifyKeyboardKeysym` D-Bus methods are
+mutually exclusive with an EIS connection.
+
+Consent is a second, explicit "control" grant, separate from viewing.
+Persistence exists since portal 1.21. Peter Hutterer (libei author,
+2026-07): a client that speaks the portal works with any compositor
+that implements it — there is no GNOME-only input API once the portal
+is there.
+
+The matrix is not uniform. `xdg-desktop-portal-wlr` historically
+implements ScreenCast and Screenshot and **not** RemoteDesktop. Sway /
+Hyprland users can share a screen and still have no portal input path
+unless a newer generic backend (EIS or virtual-pointer fallback) is
+installed. GNOME and KDE do implement RemoteDesktop. Xwayland 23.2+
+can translate XTEST into a portal+libei session — the user can refuse
+it — which is another reason XWayland-as-supported is a lie: it would
+drive some X clients after a prompt and ignore native Wayland apps.
+
+New dependencies if this is ever built: D-Bus, PipeWire, libei (or
+ctypes equivalents). That is a new stack, not ctypes against libX11.
+
+### `foreground_window` — not compositor-neutral
+
+**Definite answer: not obtainable in a compositor-neutral,
+unprivileged way.**
+
+- **AT-SPI** can name a focused *accessible* on toolkits that speak
+  the bus (GTK/Qt with a11y enabled). It is not the compositor
+  foreground. Electron and many native Wayland clients are missing or
+  incomplete. That is the same assessment as the TD-2001 note: right
+  substrate for Design-mode (TD-3406), not a substitute for EWMH
+  `_NET_ACTIVE_WINDOW`.
+- **`wlr-foreign-toplevel-management`** can list toplevels and
+  activated state on Sway / some wlroots compositors. GNOME does not
+  implement it.
+- **`ext-foreign-toplevel-list-v1`** lists title / app_id /
+  identifier and deliberately omits focus and management. It cannot
+  answer "what is foreground."
+- **GNOME** needs a Shell-internal D-Bus or an extension; that breaks
+  across versions.
+- **Hyprland** mixes protocols with its IPC socket.
+
+There is no Wayland equivalent of EWMH that every compositor we care
+about implements.
+
+### `expect_window` — refuse, never degrade
+
+When `expect_window` is set and foreground cannot be read: **refuse
+without actuating**. Do not treat a missing title as a match. Do not
+drop the argument.
+
+As a capability, compositor-neutral `expect_window` is **unavailable**
+on Wayland. Health / the Linux report already names the session as
+unsupported, so the product does not offer a weaker guard. If a later
+epic implements portals, it must keep this refuse; a compositor-
+specific foreground path (wlr activated state, GNOME-only D-Bus) may
+enable the guard on that DE only, and must say so.
+
+Omitting `expect_window` is already allowed on X11. That is not a
+silent weakening of a parameter the caller set.
+
+### What `health` reports (unchanged)
+
+On a Wayland session: `supported: false`, `session_type: "wayland"`,
+`backend: null`. `check_permissions` keeps `all_granted: false` and
+the Wayland limit string. The Desk first-run pane shows that copy.
+
+### Implementation size if revisited
+
+**13**, a new epic, after current milestones. Not filed now. It is
+not an X11 follow-up: portal ScreenCast + PipeWire, portal
+RemoteDesktop + libei, a per-DE portal matrix, first-run consent UX
+(picker + restore tokens), and a foreground story that is either
+AT-SPI best-effort (insufficient for `expect_window`) or
+compositor-specific. Overlay / Design-mode AX stay TD-3406.
+
+**Alternative rejected:** Treating XWayland as supported. Also
+rejected: implementing portals in this story. Also rejected:
+silently skipping `expect_window` when foreground is missing. Also
+rejected: claiming AT-SPI is `foreground_window`.
+
+---
+
+## 2026-08-24 — Linux data dir is `tst-desk`, not the Tauri identifier (Class B)
+
+**Decision:** On Linux / BSD the product data directory is
+`$XDG_DATA_HOME/tst-desk` (or `~/.local/share/tst-desk`). That is what
+`core/tstd/logging.user_data_dir` and `docs/configuration.md` already
+said. The host now joins the same leaf. The Tauri identifier
+`com.thatsimpletech.tstdesk` stays the bundle id and the keychain
+service; it is not the XDG directory name.
+
+If only `…/com.thatsimpletech.tstdesk` exists, rename it once to
+`tst-desk`. If both exist, `tst-desk` wins and the leftover is left
+alone — two live stores are not merged.
+
+**Rationale:** The host passed `--data-dir` from `dirs::data_dir()` +
+the identifier, so a GUI daemon stored sessions and `port.json` in a
+different tree from `tst run` / `tstd`. Config still loaded from
+`user_data_dir()` (documented: `--data-dir` does not move
+`config.yaml`). Sharing the leaf makes the default GUI spawn and the
+CLI the same store.
+
+**Alternative rejected:** Changing Python to the identifier (would
+move the documented path and this machine's existing
+`~/.local/share/tst-desk`). Also rejected: auto-merging two live
+trees.
+
+---
+
+## 2026-08-25 — TD-3407: CU glow is a session, not a linger (Class B)
+
+**Decision:** Computer-use on the real display is an open/close
+session, not an 8-second linger after the last actuation. The daemon
+emits `cu_session` (`active: true`) on the first `desktop_*` /
+`browser_*` tool of a turn and `active: false` on turn complete,
+cancel, or kill-switch. The sidecar paints while the session is open
+(`overlay_session` MCP tool plus `Overlay.begin_session` /
+`end_session`). Capture still brackets the ring with `grab_begin` /
+`grab_end`.
+
+The same rust (inset, pulse, click-through, `--color-accent`) is the
+painter on macOS, Windows, and Linux X11. macOS keeps the rounded
+AppKit stroke; Windows and Linux X11 use four click-through edge
+bars of the same thickness and pulse. Wayland has no real-display
+ring — CU itself is unsupported there (TD-2002). The existing
+**Show indicators on the real display** toggle remains the off switch.
+
+**Rationale:** The Screen pane already stayed live for the CU turn.
+The monitor ring dying after eight seconds of thinking made Linux
+and Windows look unlit and macOS look like a click flash. One pair
+of tags is the source of truth for pane and glass.
+
+**Alternative rejected:** Inferring close from "no tool for N
+seconds". Also rejected: a model-visible open/close tool. Also
+rejected: a Wayland layer-shell painter in this story.
+
+---
+
+## 2026-08-25 — TD-1718: the named key owns the host (Class B)
+
+**Decision:** `credentials.<id>.base_url` is the host that key talks to.
+A bound (or implicit) credential with a host wins over the tier's
+`base_url`. Unbound loopback and a keyed local server with no host keep
+the tier URL (TD-1801 unchanged). The shipped `openrouter` row carries
+OpenRouter's endpoint in `config.yaml`, never in Python. `openrouter-2`
+without its own host inherits that shipped URL so a second key named
+OPENROUTER still leaves the machine. Settings → Model shows the host
+under the key picker. Protocol is additive: `CredentialSummary.base_url`.
+
+**Rationale:** TD-1717 rejected putting a host on the credential because
+the tier already had one. That made Settings a trap: typing an
+OpenRouter slug and picking the OpenRouter key on the `vllm` preset
+wrote the slug onto `127.0.0.1:8002`. Local + API is a common setup;
+the key is the provider, and the provider knows its host.
+
+**Alternative rejected:** Inferring the host from the slug (`vendor/model`
+→ OpenRouter). Local tags can contain slashes. Also rejected: rewriting
+the tier `base_url` on `set_tier_credential` — that would destroy the
+local preset's URL when you bind a remote key. Also rejected: a Python
+literal for the OpenRouter URL (§2.7).
+
+---
+
+## 2026-08-25 — TD-1719: retry budget lives in config (Class B)
+
+**Decision:** How long a turn waits on a retryable provider failure
+(`429`, `5xx`, transport, empty stream, `200`+error envelope) is
+`provider_retry` in `config.yaml`, not a constant in `provider.py`.
+The shipped default stays four attempts / ~eight seconds. Raise
+`max_retries` for shared-pool preview slugs. The CLI deadline is
+base allowance plus `worst_case_retry_seconds`, so a longer budget
+cannot look like a client timeout.
+
+A `200` whose JSON is `{"error": {"code": 429, ...}}` with no
+`choices`, and a `200` event-stream that yields no events, are
+retryable failures. Trusting the status line made both look like
+an empty completion.
+
+**Rationale:** The ox-alpha turns died after eight seconds on
+"temporarily rate-limited upstream, please retry shortly" with no
+`Retry-After`. Hardcoding a longer wait punishes every model. The
+user already has a config file; the patience belongs there.
+
+**Alternative rejected:** Inferring patience from the slug. Also
+rejected: raising the shipped default to three minutes. Also
+rejected: treating a `200` error envelope as a parse error.

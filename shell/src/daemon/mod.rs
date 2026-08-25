@@ -174,12 +174,77 @@ pub fn start(app: AppHandle, data_dir: PathBuf) -> DaemonHandle {
 }
 
 /// Default platform data directory, matching `core/tstd/logging.user_data_dir`.
+///
+/// Linux / BSD use the XDG leaf `tst-desk`. macOS and Windows use the
+/// Tauri identifier. A host that joined the identifier on Linux split
+/// GUI state from `tst run` / `tstd`.
 pub fn data_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    #[cfg(not(target_os = "macos"))]
-    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join("com.thatsimpletech.tstdesk")
+    resolve_data_dir(&base)
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+const DATA_DIR_NAME: &str = "tst-desk";
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+)))]
+const DATA_DIR_NAME: &str = "com.thatsimpletech.tstdesk";
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+const LINUX_LEGACY_DATA_DIR_NAME: &str = "com.thatsimpletech.tstdesk";
+
+/// Resolve the product data dir under *base*. Linux renames the reverse-DNS
+/// leftover once when `tst-desk` is absent.
+pub(crate) fn resolve_data_dir(base: &Path) -> PathBuf {
+    let canonical = base.join(DATA_DIR_NAME);
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    {
+        migrate_linux_data_dir(base, &canonical)
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )))]
+    {
+        canonical
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+fn migrate_linux_data_dir(base: &Path, canonical: &Path) -> PathBuf {
+    let legacy = base.join(LINUX_LEGACY_DATA_DIR_NAME);
+    if canonical.exists() || !legacy.exists() {
+        return canonical.to_path_buf();
+    }
+    match std::fs::rename(&legacy, canonical) {
+        Ok(()) => canonical.to_path_buf(),
+        Err(_) => legacy,
+    }
 }
 
 /// Continuous spawn → connect → watch → restart loop, until asked to stop.
@@ -736,5 +801,77 @@ mod tests {
         .unwrap();
         assert!(live_port_file(&dir).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn data_dir_leaf_matches_python() {
+        let base = std::env::temp_dir().join(format!(
+            "tstd-data-leaf-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let resolved = resolve_data_dir(&base);
+        assert_eq!(resolved, base.join(DATA_DIR_NAME));
+        assert!(!resolved.exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    #[test]
+    fn linux_data_dir_renames_reverse_dns_leftover() {
+        let base = std::env::temp_dir().join(format!(
+            "tstd-data-mig-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let legacy = base.join("com.thatsimpletech.tstdesk");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("port.json"), "{}").unwrap();
+        let resolved = resolve_data_dir(&base);
+        assert_eq!(resolved, base.join("tst-desk"));
+        assert!(resolved.join("port.json").is_file());
+        assert!(!legacy.exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
+    #[test]
+    fn linux_data_dir_does_not_merge_two_live_trees() {
+        let base = std::env::temp_dir().join(format!(
+            "tstd-data-both-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let canonical = base.join("tst-desk");
+        let legacy = base.join("com.thatsimpletech.tstdesk");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(canonical.join("config.yaml"), "canonical: true\n").unwrap();
+        std::fs::write(legacy.join("port.json"), "{}").unwrap();
+        let resolved = resolve_data_dir(&base);
+        assert_eq!(resolved, canonical);
+        assert!(canonical.join("config.yaml").is_file());
+        assert!(legacy.join("port.json").is_file());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

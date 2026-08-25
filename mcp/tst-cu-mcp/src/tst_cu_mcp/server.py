@@ -49,6 +49,13 @@ _PLATFORM_INSTRUCTIONS = {
         "secure desktop (UAC prompt, lock screen) can be neither captured nor "
         "driven."
     ),
+    "linux": (
+        " Host: Linux. An X11 session is required. Wayland cannot be captured or "
+        "driven (TD-2002, not in current milestones); call `health` — if "
+        "session_type is wayland, stop. "
+        "No permissions to grant on X11. Shortcut modifiers: ctrl, shift, alt, "
+        "win/super — `cmd` is accepted as an alias for ctrl. `fn` is refused."
+    ),
 }
 
 
@@ -67,6 +74,8 @@ def _permission_hint(platform: str | None = None) -> str:
         return "Requires Screen Recording (capture) or Accessibility (input) permission."
     if target == "win32":
         return "No permission needed; elevated windows silently discard input."
+    if target.startswith("linux"):
+        return "X11 only; Wayland is unsupported. No permission grant on X11."
     return "Call check_permissions for this platform's status."
 
 
@@ -85,6 +94,13 @@ def _combo_help(platform: str | None = None) -> str:
             "Modifiers: ctrl/control, shift, alt/option, win/super. 'cmd'/'command' are "
             "accepted as aliases for ctrl, so mac-style combos work. 'fn' does not exist "
             "on Windows and is refused. Separate with '+'. "
+        )
+    if target.startswith("linux"):
+        return (
+            "Press a key combo, e.g. 'ctrl+c', 'ctrl+shift+t', 'return', 'escape', 'up'. "
+            "Modifiers: ctrl/control, shift, alt/option, win/super. 'cmd'/'command' are "
+            "accepted as aliases for ctrl, so mac-style combos work. 'fn' does not exist "
+            "on X11 and is refused. Separate with '+'. "
         )
     return "Press a key combo, separating tokens with '+'. "
 
@@ -358,6 +374,23 @@ def build_server() -> MCPServer:
             input_control.move_mouse(gx, gy, expect_window=expect_window)
         input_control.scroll(dx, dy, expect_window=expect_window)
         return {"scrolled": {"dx": dx, "dy": dy}}
+
+    @server.tool(
+        name="overlay_session",
+        description=(
+            "Internal TST Desk signal: computer-use episode open/close. "
+            "Not a model tool. Lights or darkens the real-display ring."
+        ),
+        structured_output=False,
+    )
+    def overlay_session(active: bool) -> dict[str, Any]:
+        from tst_cu_mcp.overlay import get_overlay
+
+        if active:
+            get_overlay().begin_session()
+        else:
+            get_overlay().end_session()
+        return {"active": bool(active)}
 
     return server
 

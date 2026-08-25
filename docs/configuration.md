@@ -37,6 +37,11 @@ the packaged file. Two consequences worth knowing:
 | Windows | `%APPDATA%\com.thatsimpletech.tstdesk\config.yaml` |
 | Linux / BSD | `$XDG_DATA_HOME/tst-desk/config.yaml`, or `~/.local/share/tst-desk/config.yaml` |
 
+The Linux leaf is `tst-desk`, not the Tauri identifier
+`com.thatsimpletech.tstdesk`. The host and `tstd` / `tst run` share that
+path. If only the reverse-DNS leftover exists, it is renamed once; if
+both exist, `tst-desk` wins and the leftover is left alone.
+
 There is no dedicated environment variable for this path and no CLI flag for it. On Linux and
 Windows it moves with the platform's own data-directory variable, as the table shows; on macOS
 the path is fixed. Note that the daemon's `--data-dir` moves the session store and the audit
@@ -57,7 +62,7 @@ no effect.
 |---|---|---|---|
 | `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, `local`, and `vllm`. |
 | `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
-| `credentials` | mapping of id → `{ name }` | empty | Named API keys. The `name` is what Settings shows. The secret is never here — it lives in the OS keychain as `tst-<id>`. Omitted in an older user copy is filled from the shipped file at load. |
+| `credentials` | mapping of id → `{ name, base_url? }` | empty | Named API keys. The `name` is what Settings shows. Optional `base_url` is the host that key talks to (TD-1718). The secret is never here — it lives in the OS keychain as `tst-<id>`. Omitted in an older user copy is filled from the shipped file at load. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
@@ -69,13 +74,16 @@ no effect.
 ### `credentials`
 
 Named API keys (TD-1717). Each entry is an id (the keychain account suffix) and a
-`name` the Settings screen shows. Add as many as you need — OpenRouter, a keyed
-local server, a second remote. A tier's `credential` field picks which one that
-model sends.
+`name` the Settings screen shows. Optional `base_url` is the host that key talks
+to (TD-1718): selecting the key uses that host even when the active preset is
+local. Omit it for a keyed local server so the tier URL stays in charge. Add as
+many as you need — OpenRouter, a keyed local server, a second remote. A tier's
+`credential` field picks which one that model sends.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `name` | string, 1–40 chars | *required* | The local given name. Shown in Settings → Model. Never a secret. |
+| `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. |
 
 Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook` and
 `ntfy-topic` are reserved for other keychain accounts.
@@ -113,6 +121,7 @@ active_preset: demo
 credentials:
   openrouter:
     name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
 ```
 
 ### `search`
@@ -152,7 +161,10 @@ is set (TD-2204). A filled `base_url` with no `command` is attach-only.
 Desktop screenshot / move / click / type / scroll (TD-3301). Empty
 `command` is the in-process mock (CI, no display). A non-empty value is
 the argv for `mcp/tst-cu-mcp` over stdio — the daemon owns the child and
-does not bind a socket. Linux has no live path (E20).
+does not bind a socket. Linux X11 is a live path (TD-2001): first-run
+onboarding is the same kind of honesty as Windows (no grant dialog). A
+Wayland session is unsupported (TD-2002); `health` reports
+`supported: false` and `session_type: "wayland"`.
 
 Browser computer-use (TD-1710): `browser` selects the in-process mock
 (CI, never launches Chrome) or Playwright with a persistent profile
@@ -228,6 +240,26 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
+
+### `provider_retry`
+
+How stubbornly a retryable provider failure (429, 5xx, transport) is
+retried before the turn is failed. Delays back off exponentially from
+`initial_delay`, are capped per-wait at `max_delay`, and honour a
+`Retry-After` header when the provider sends one.
+
+The defaults spend four attempts in roughly eight seconds. That covers a
+blip. It does not cover a gateway serving a shared upstream pool, which
+answers `429` with "temporarily rate-limited upstream, please retry
+shortly" and no `Retry-After` — free and preview model slugs do this
+routinely, and the turn dies eight seconds into a wait that needed a
+minute. `max_retries: 8` is roughly three minutes of patience.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn. |
+| `initial_delay` | float > 0 | `1.0` | Base delay before the first retry, in seconds. Each subsequent wait doubles. |
+| `max_delay` | float > 0 | `60.0` | Ceiling on any single wait, in seconds. Bounds the worst case when `max_retries` is high. |
 
 ### `remote`
 
@@ -315,6 +347,10 @@ project_context:
   token_budget: 2000
 session:
   log_max_events: 10000
+provider_retry:
+  max_retries: 3
+  initial_delay: 1.0
+  max_delay: 60.0
 computer_use:
   command: ""
   browser: mock
@@ -356,8 +392,8 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `slug` | string, non-empty | none | The model identifier sent as `model` on every request. Optional **only** when `base_url` is on loopback — see §3.4. `slug:` with no value means the same as leaving it out; `slug: ""` is an error. |
-| `base_url` | string | *required* | The OpenAI-compatible endpoint. Requests go to `{base_url}/chat/completions`. |
-| `credential` | string | none | Named key from `credentials`. A bound id is sent even on loopback. Unbound loopback sends no key. Unbound remote uses `openrouter`. |
+| `base_url` | string | *required* | The OpenAI-compatible endpoint when the bound credential has no host of its own. Requests go to `{base_url}/chat/completions`. A credential `base_url` wins (TD-1718). |
+| `credential` | string | none | Named key from `credentials`. A bound id is sent even on loopback, and that key's host is used when set. Unbound loopback sends no key. Unbound remote uses `openrouter`. |
 | `input_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens that were not served from cache. |
 | `output_price` | float ≥ 0 | *required* | Dollars per **million** completion tokens. |
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
@@ -720,11 +756,13 @@ steering-file writes. The classifier still runs. `effect: yolo` is not a valid r
 
 **Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the
-user data dir (glow and cursor default on; the real-display overlay defaults off). Glow and
-the agent cursor are drawn on the Screen pane. When the real-display toggle is on, screenshot
-tools hide that overlay for the duration of the capture so it cannot appear in the frame.
-The host overlay path is a no-op in this release; the hide flag is the contract. This is not
-a second hardware pointer.
+user data dir (glow and cursor default on; the real-display ring defaults on). Glow and
+the agent cursor are drawn on the Screen pane. The rust ring on the real display
+follows the same `cu_session` open/close tags (TD-3407) on macOS, Windows, and
+Linux X11 — it stays up until the turn ends, you cancel, or the kill-switch
+fires, not for eight seconds after the last click. Wayland has no real-display
+ring. Screenshots hide the ring for the grab so it cannot appear in the frame.
+This is not a second hardware pointer.
 
 ### 4.5 `approved_external_imports`
 

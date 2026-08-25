@@ -842,7 +842,8 @@
       {
         "id": "openrouter",
         "name": "OpenRouter",
-        "stored": false
+        "stored": false,
+        "base_url": null
       }
     ],
     "tier_credentials": {
@@ -1015,6 +1016,12 @@
     "seq": 1,
     "killed": true
   },
+  "cu_session": {
+    "type": "cu_session",
+    "seq": 1,
+    "session_id": "sess-1",
+    "active": true
+  },
   "design_hit": {
     "type": "design_hit",
     "seq": 1,
@@ -1051,7 +1058,14 @@
     "secure_desktop": "",
     "elevated": false,
     "uipi_applies": false,
-    "secure_desktop_applies": false
+    "secure_desktop_applies": false,
+    "session_type": "",
+    "wayland": "",
+    "wayland_applies": false,
+    "xtest": "",
+    "xtest_applies": false,
+    "no_display": "",
+    "no_display_applies": false
   },
   "list_jobs": {
     "type": "list_jobs"

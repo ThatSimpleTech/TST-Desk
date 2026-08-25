@@ -46,9 +46,13 @@ from .config import (
     ModelDiscoveryError,
     TierConfig,
     allocate_credential_id,
+    apply_credential_host,
     cached_config,
+    credential_base_url,
     is_loopback_url,
+    is_openrouter_family,
     load_config,
+    resolve_base_url,
     resolve_credential_id,
 )
 from .config_write import (
@@ -246,6 +250,7 @@ from .provider import (
     ChatMessage,
     ProviderClient,
     ProviderError,
+    RetryConfig,
     auth_failure_message,
 )
 from .remote_attach import (
@@ -569,10 +574,18 @@ class Daemon:
         Unbound loopback stays keyless (TD-1801). Unbound remote uses
         the historical ``openrouter`` keychain account.
         """
+        retry_cfg = RetryConfig(
+            max_retries=self.config.provider_retry.max_retries,
+            initial_delay=self.config.provider_retry.initial_delay,
+            max_delay=self.config.provider_retry.max_delay,
+        )
         cred_id = resolve_credential_id(tier_cfg)
+        base_url = resolve_base_url(self.config, tier_cfg)
         if cred_id is None:
-            return ProviderClient(base_url=tier_cfg.base_url, api_key=None)
-        return await ProviderClient.from_keychain(tier_cfg.base_url, provider_name=cred_id)
+            return ProviderClient(base_url=base_url, api_key=None, retry_config=retry_cfg)
+        return await ProviderClient.from_keychain(
+            base_url, provider_name=cred_id, retry_config=retry_cfg
+        )
 
     async def _brain_client(self) -> ProviderClient:
         """Build a client for the active brain tier."""
@@ -589,7 +602,10 @@ class Daemon:
         """
         if self._provider is not None:
             return self._provider
-        cache_key = (tier_cfg.base_url, resolve_credential_id(tier_cfg) or "")
+        cache_key = (
+            resolve_base_url(self.config, tier_cfg),
+            resolve_credential_id(tier_cfg) or "",
+        )
         cached = self._clients.get(cache_key)
         if cached is not None:
             return cached
@@ -654,7 +670,12 @@ class Daemon:
         if DEFAULT_CREDENTIAL_ID not in self.config.credentials:
             items.insert(0, (DEFAULT_CREDENTIAL_ID, "OpenRouter"))
         return [
-            CredentialSummary(id=cid, name=name, stored=await self._credential_is_stored(cid))
+            CredentialSummary(
+                id=cid,
+                name=name,
+                stored=await self._credential_is_stored(cid),
+                base_url=credential_base_url(self.config, cid),
+            )
             for cid, name in items
         ]
 
@@ -686,7 +707,12 @@ class Daemon:
             catalog_name = "OpenRouter"
         else:
             catalog_name = cred_id
-        save_credential(cred_id, catalog_name)
+        host = None
+        if cred_id not in self.config.credentials and is_openrouter_family(cred_id):
+            default = self.config.credentials.get(DEFAULT_CREDENTIAL_ID)
+            if default is not None:
+                host = default.base_url
+        save_credential(cred_id, catalog_name, base_url=host)
         await store_api_key(api_key, cred_id)
         self._reload_user_config()
         return cred_id
@@ -696,7 +722,12 @@ class Daemon:
         cleaned = name.strip()
         existing = set(self.config.credentials)
         cred_id = credential.strip() if credential else allocate_credential_id(cleaned, existing)
-        save_credential(cred_id, cleaned)
+        host = None
+        if cred_id not in self.config.credentials and is_openrouter_family(cred_id):
+            default = self.config.credentials.get(DEFAULT_CREDENTIAL_ID)
+            if default is not None:
+                host = default.base_url
+        save_credential(cred_id, cleaned, base_url=host)
         self._reload_user_config()
         return cred_id
 
@@ -779,6 +810,7 @@ class Daemon:
                 if resolve_credential_id(candidate) == credential:
                     tier_cfg = candidate
                     break
+        tier_cfg = apply_credential_host(self.config, tier_cfg)
         if api_key is not None:
             client = ProviderClient(base_url=tier_cfg.base_url, api_key=api_key)
         elif credential:
@@ -860,7 +892,7 @@ class Daemon:
                 DiagnosticCheck(name="provider", status="fail", detail=str(e), fix=e.fix),
             ]
 
-        base_url = self.config.tier("brain").base_url
+        base_url = resolve_base_url(self.config, self.config.tier("brain"))
         if err is None:
             return [
                 DiagnosticCheck(name="api_key", status="ok", detail="accepted by the provider"),
@@ -1928,6 +1960,10 @@ class Daemon:
 
         if isinstance(msg, SetCuKill):
             self.set_computer_use_killed(msg.killed)
+            if msg.killed:
+                for sess in await self.session_registry.list_sessions():
+                    await sess.close_cu_session()
+                await self.desktop_driver.set_overlay_session(False)
             # Connection-scoped: the switch is process-wide, so this is
             # not written to any session log (TD-3404).
             return CuKillState(killed=msg.killed).model_dump_json()
@@ -1999,6 +2035,7 @@ class Daemon:
             )
 
         sess._conversation_hook = _snap
+        sess._overlay_session = self.desktop_driver.set_overlay_session
         router = sess.router if sess.router is not None else TierRouter()
         sess.router = router
 

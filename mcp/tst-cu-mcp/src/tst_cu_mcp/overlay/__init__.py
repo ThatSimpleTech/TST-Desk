@@ -9,9 +9,9 @@ cross-process race, so a screenshot can never contain the glow it just
 hid.
 
 Platform resolution mirrors :mod:`tst_cu_mcp.backends`: a real
-implementation on darwin, an honest no-op elsewhere (the Windows overlay
-is a follow-up). Unlike backends, the resolved instance is cached — the
-darwin overlay owns a helper child process that must not be spawned per
+painter on darwin, win32, and Linux X11. Wayland stays a no-op
+(TD-2002). Unlike backends, the resolved instance is cached — some
+painters own a helper or a pulse thread that must not be spawned per
 call. Tests install fakes with :func:`set_overlay` and clear with
 :func:`reset_overlay`.
 
@@ -56,8 +56,16 @@ class Overlay(Protocol):
 
     name: str
 
+    def begin_session(self) -> None:
+        """Computer-use episode opened: show the ring and keep it up."""
+        ...
+
+    def end_session(self) -> None:
+        """Computer-use episode closed: hide the ring."""
+        ...
+
     def activity(self) -> None:
-        """Computer use just acted: show the glow / refresh its linger."""
+        """An actuation happened. Same as ``begin_session`` (idempotent)."""
         ...
 
     def notify_blocked(self) -> None:
@@ -79,6 +87,12 @@ class NullOverlay:
 
     name = "null"
 
+    def begin_session(self) -> None:
+        return None
+
+    def end_session(self) -> None:
+        return None
+
     def activity(self) -> None:
         return None
 
@@ -97,8 +111,8 @@ def overlay_enabled(platform: str | None = None) -> bool:
     """Whether the real-display glow should run at all.
 
     ``TST_CU_MCP_OVERLAY`` beats the config file's ``overlay.enabled``,
-    which beats the platform default (on for darwin, where the overlay
-    exists; nothing to draw anywhere else yet).
+    which beats the platform default (on for darwin / win32 / Linux X11;
+    off on Wayland, where there is no painter).
     """
     from tst_cu_mcp import safety
 
@@ -110,7 +124,17 @@ def overlay_enabled(platform: str | None = None) -> bool:
     if not safety.active_config().overlay_enabled:
         return False
     target = sys.platform if platform is None else platform
-    return target == "darwin"
+    if target.startswith("linux") and _wayland_desktop():
+        return False
+    return target in {"darwin", "win32"} or target.startswith("linux")
+
+
+def _wayland_desktop() -> bool:
+    """True when this process is on a Wayland session (env only)."""
+    session = os.environ.get("XDG_SESSION_TYPE", "").strip().casefold()
+    if session == "wayland":
+        return True
+    return bool(os.environ.get("WAYLAND_DISPLAY", "").strip()) and session != "x11"
 
 
 _overlay: Overlay | None = None
@@ -135,9 +159,25 @@ def get_overlay() -> Overlay:
             _overlay = NullOverlay()
             return _overlay
         try:
-            from tst_cu_mcp.overlay.darwin import DarwinOverlay
-
-            _overlay = DarwinOverlay()
+            _overlay = _resolve_painter()
         except Exception:
             _overlay = NullOverlay()
     return _overlay
+
+
+def _resolve_painter() -> Overlay:
+    """The platform painter. Import-time OS work stays inside each module."""
+    target = sys.platform
+    if target == "darwin":
+        from tst_cu_mcp.overlay.darwin import DarwinOverlay
+
+        return DarwinOverlay()
+    if target == "win32":
+        from tst_cu_mcp.overlay.win32 import Win32Overlay
+
+        return Win32Overlay()
+    if target.startswith("linux"):
+        from tst_cu_mcp.overlay.linux import LinuxOverlay
+
+        return LinuxOverlay()
+    return NullOverlay()

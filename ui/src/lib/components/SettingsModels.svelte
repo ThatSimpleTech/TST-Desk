@@ -5,6 +5,7 @@
 		saveSlug,
 		saveTierCredential,
 		selectedCredential,
+		credentialHost,
 	} from "../settings.svelte.js";
 
 	const TIERS = ["brain", "worker", "validator"] as const;
@@ -64,6 +65,9 @@
 			{/if}
 		</select>
 	</label>
+	{#if credentialHost(selectedCredential(tier))}
+		<p class="hint host">{credentialHost(selectedCredential(tier))}</p>
+	{/if}
 {/each}
 {#if TIERS.some((t) => isDiscovered(t))}
 	<p class="hint">
@@ -89,6 +93,11 @@
 	.field-name {
 		font-size: var(--text-sm);
 		color: var(--color-ink-secondary);
+	}
+
+	.host {
+		margin-top: var(--space-1);
+		font-family: var(--font-mono);
 	}
 
 	.input {

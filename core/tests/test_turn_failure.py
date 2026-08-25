@@ -20,7 +20,7 @@ from tests.test_dispatch import (
 from tstd.keychain import KeychainError
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
-from tstd.protocol import TurnComplete
+from tstd.protocol import AssistantDelta, TurnComplete
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
 from tstd.tools import ToolDispatcher, ToolRegistry
@@ -35,6 +35,16 @@ def make_bare_session(workspace: Path) -> tuple[Session, ToolDispatcher]:
 
 def turn_events(session: Session) -> list[TurnComplete]:
     return [e for e in session.event_log.all_events if isinstance(e, TurnComplete)]
+
+
+def assistant_text(session: Session) -> str:
+    """Everything the transcript would render as assistant output.
+
+    The event log is what the chat pane draws from, live and on replay, so a
+    message that exists only in the persisted model conversation is a message
+    the user never sees.
+    """
+    return "".join(e.delta for e in session.event_log.all_events if isinstance(e, AssistantDelta))
 
 
 class TestFailedTurnWire:
@@ -65,6 +75,42 @@ class TestFailedTurnWire:
         # the chat log carries the actionable message.
         assert session.state != "failed"
         assert session.state != "cancelled"
+
+        # ...and "carries" means on the wire, not just in the persisted
+        # conversation. A failed turn that emits no delta leaves the chat pane
+        # blank, which reads as an app that stopped responding rather than one
+        # that hit a provider error.
+        assert "Authentication failed." in assistant_text(session)
+
+    async def test_failed_turn_is_visible_in_the_transcript(self, tmp_path: Path) -> None:
+        """A provider refusal reaches the chat pane, not just the log file."""
+        session, dispatcher = make_bare_session(tmp_path)
+        mock = MockProvider(
+            sequences={
+                slug: [
+                    Script(
+                        kind="error",
+                        error_code="insufficient_credits",
+                        status_code=402,
+                        content="Insufficient credits. Add more using https://example.test/credits",
+                    )
+                ]
+                for slug in ("test-brain", "test-worker", "test-validator")
+            }
+        )
+        await start_loop(session, TierRouter(), mock, make_config(), None, dispatcher)
+
+        await session.add_user_message("hi")
+        turn = await wait_for_turn(session, 1)
+
+        assert turn.failed is True
+        assert turn.error_code == "insufficient_credits"
+
+        # The provider's own actionable wording survives to the user — the
+        # whole point of a typed cause is that the fix is nameable.
+        shown = assistant_text(session)
+        assert "Insufficient credits" in shown
+        assert "https://example.test/credits" in shown
 
     async def test_successful_turn_marks_failed_false(self, tmp_path: Path) -> None:
         session, dispatcher = make_bare_session(tmp_path)
@@ -109,5 +155,8 @@ class TestFailedTurnWire:
         assert turn.error_code == "missing_api_key"
         # The session survives: once the key exists, the next message retries.
         assert session.state == "running"
+        # And the user is told why, in the chat, rather than watching a turn
+        # end with no output at all.
+        assert "API key not found in keychain." in assistant_text(session)
 
         await runner.cancel()
