@@ -645,6 +645,7 @@ FIXTURES = {
                 "event_count": 0,
                 "title": "hello world",
                 "preset": "tst-default",
+                "busy": False,
             },
             # TD-1715: the list stays complete and marks what is filed away.
             {
@@ -656,6 +657,7 @@ FIXTURES = {
                 "event_count": 12,
                 "archived": True,
                 "starred": True,
+                "busy": False,
             },
         ]
     ),

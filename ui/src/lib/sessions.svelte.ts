@@ -21,6 +21,9 @@
 // shelf split. One daemon list feeds both shelves — the daemon marks each row
 // `archived` and the filter decides which shelf it lands on, so the recents
 // menu and the chat pane keep reading the same complete event they always did.
+//
+// TD-1720: rail dots are turn activity (`busy` / bound turnState), not
+// `state: "running"` liveness. Presentation helpers live in rail-activity.ts.
 
 import {
 	onEvent,
@@ -38,7 +41,19 @@ import {
 } from "./session-status.svelte.js";
 import { showHome, showProjects, showArtifacts, showScheduled, projects } from "./projects.svelte.js";
 import { railFunctions, type RailSurface } from "./rail";
+import { rowActivity, type BoundTurn, type RowActivity } from "./rail-activity";
+import { showCancel } from "./chat-store";
 import type { DaemonEventUnion, SessionSummary } from "./protocol";
+
+export {
+	ACTIVITY_LABELS,
+	activityTone,
+	ROW_TITLE_MAX_LEN,
+	rowActivity,
+	rowTitle,
+	rowTitleFull,
+} from "./rail-activity";
+export type { BoundTurn, RowActivity } from "./rail-activity";
 
 /** localStorage key for the rail's collapsed flag. */
 export const COLLAPSED_STORAGE_KEY = "tstdesk.sessionRailCollapsed";
@@ -59,6 +74,9 @@ export interface SessionRow {
 	title: string | null;
 	/** Catalog preset this session is using (TD-1721). Empty on old lists. */
 	preset: string;
+	/** A turn is in flight (TD-1720). Daemon truth from session_list.busy;
+	 *  live events and the bound pane may update it in place. */
+	busy: boolean;
 }
 
 export const sessions = $state({
@@ -150,6 +168,7 @@ function reduce(event: DaemonEventUnion): void {
 				starred: s.starred,
 				title: s.title ?? null,
 				preset: s.preset ?? "",
+				busy: s.busy === true,
 			}))
 			.sort((a, b) => {
 				if (a.starred !== b.starred) return a.starred ? -1 : 1;
@@ -178,6 +197,7 @@ function reduce(event: DaemonEventUnion): void {
 		sessions.moveFor = null;
 		return;
 	}
+	if (applyTurnEvidence(event)) return;
 	if (event.type !== "session_state") return;
 
 	// The new_session reply arrives as the fresh session's first
@@ -191,6 +211,7 @@ function reduce(event: DaemonEventUnion): void {
 			sessions.rows.find((r) => r.sessionId === anchor)?.workspacePath ??
 			session.workspacePath ??
 			undefined;
+		snapshotBoundActivity();
 		selectChatSession(event.session_id, event.state);
 		focusSession(event.session_id, event.state, workspacePath);
 		refresh();
@@ -249,8 +270,58 @@ export function setFilter(value: string): void {
 export function selectRow(sessionId: string): void {
 	const row = sessions.rows.find((r) => r.sessionId === sessionId);
 	if (row === undefined || row.sessionId === chat.sessionId) return;
+	snapshotBoundActivity();
 	selectChatSession(row.sessionId, row.state);
 	focusSession(row.sessionId, row.state, row.workspacePath);
+}
+
+/** Stamp the leaving session's turn evidence onto its row so the rail
+ *  keeps "Working" after detach (events stop flowing once we unbind). */
+export function snapshotBoundActivity(): void {
+	if (chat.sessionId === null) return;
+	const row = sessions.rows.find((r) => r.sessionId === chat.sessionId);
+	if (row === undefined) return;
+	row.busy = showCancel(chat.turnState) || chat.awaitingFirstToken;
+	if (chat.turnState === "awaiting_approval") row.state = "awaiting_approval";
+}
+
+/** In-place busy from turn evidence that already landed on this connection.
+ *  session_list.busy is the other source; this covers the attached session
+ *  between refreshes. Returns true when the event was consumed here. */
+function applyTurnEvidence(event: DaemonEventUnion): boolean {
+	if (
+		event.type === "user_turn" ||
+		event.type === "assistant_delta" ||
+		event.type === "assistant_reasoning" ||
+		event.type === "tool_call" ||
+		event.type === "approval_request"
+	) {
+		setRowBusy(event.session_id, true);
+		return true;
+	}
+	if (event.type === "turn_complete") {
+		setRowBusy(event.session_id, false);
+		return true;
+	}
+	return false;
+}
+
+function setRowBusy(sessionId: string, busy: boolean): void {
+	const row = sessions.rows.find((r) => r.sessionId === sessionId);
+	if (row !== undefined) row.busy = busy;
+}
+
+/** Activity for a row, overlaying the bound pane's turn evidence. */
+export function liveActivity(row: SessionRow): RowActivity {
+	return rowActivity(row, boundTurn());
+}
+
+export function boundTurn(): BoundTurn {
+	return {
+		sessionId: chat.sessionId,
+		turnState: chat.turnState,
+		awaitingFirstToken: chat.awaitingFirstToken,
+	};
 }
 
 /** New-session action: a fresh session in the attached session's workspace.

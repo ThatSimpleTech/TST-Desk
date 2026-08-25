@@ -1565,6 +1565,11 @@ class SessionSummary(BaseModel):
     # Catalog preset this session opened with, or last switched to
     # (TD-1721). Empty on a store written before the field. Additive.
     preset: str = ""
+    # A turn is in flight (TD-1720). Distinct from ``state: running``,
+    # which is loop liveness and spans the session's whole life
+    # (TD-1714). Additive with a default — a client that ignores it
+    # still reads the list it always did.
+    busy: bool = False
 
 
 class SessionList(DaemonEvent):

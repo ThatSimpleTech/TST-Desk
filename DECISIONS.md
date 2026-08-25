@@ -9343,4 +9343,29 @@ as success for `get_screen_info` on Wayland (that path stays empty).
 
 ---
 
+## 2026-08-25 — TD-1720: rail dots are turn activity, not liveness (Class B)
+
+**Decision:** `SessionSummary` gains an additive `busy: bool` sourced
+from `Session.turn_in_flight`. The rail paints **working** / **waiting**
+/ **finished** from that flag plus parked states (`awaiting_approval`,
+`paused`, `failed`). `state: "running"` is loop liveness (TD-1714) and
+must not colour a row as working. Display titles cap at 20 characters
+in the rail; storage stays at 60 (TD-3001). The bound pane's evidentiary
+`turnState` overlays the attached row so the dot moves with the
+composer. Switching away snapshots that evidence onto the leaving row
+because detach stops the event stream.
+
+**Rationale:** Every healthy session is `running` for its whole life, so
+the pre-existing liveness dots all read the same. The daemon already
+tracked open turns for Delete/Move refusals; putting that on the list
+is daemon truth, not a UI inference. A 20-char cap is a display
+choice — renaming and filter matching still see the full title.
+
+**Alternative rejected:** Remapping `running` → finished in the UI
+only. That would hide every background turn the list already knew
+about. Also rejected: attaching to every session just to watch
+`turn_complete`. Also rejected: lowering the stored title cap from 60
+to 20 — rename would silently truncate.
+
+---
 
