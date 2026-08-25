@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from tstd.config import (
@@ -30,6 +31,7 @@ from tstd.config import (
     default_config_yaml,
     ensure_user_config,
     load_config,
+    resolve_base_url,
     resolve_credential_id,
     slugify_credential_name,
 )
@@ -419,7 +421,19 @@ class TestCredentials:
     def test_shipped_catalog_names_openrouter(self, tmp_path: Path) -> None:
         cfg = _load_shipped(tmp_path)
         assert cfg.credentials["openrouter"].name == "OpenRouter"
+        assert cfg.credentials["openrouter"].base_url
         assert cfg.tier("brain").credential == "openrouter"
+
+    def test_second_openrouter_key_inherits_shipped_host(self, tmp_path: Path) -> None:
+        raw = yaml.safe_load(default_config_yaml())
+        raw["credentials"] = {"openrouter-2": {"name": "OPENROUTER"}}
+        path = tmp_path / "config.yaml"
+        path.write_text(yaml.dump(raw), encoding="utf-8")
+        cfg = load_config(path)
+        host = cfg.credentials["openrouter"].base_url
+        assert host
+        bound = cfg.presets["vllm"].brain.model_copy(update={"credential": "openrouter-2"})
+        assert resolve_base_url(cfg, bound) == host
 
     def test_local_preset_stays_unbound(self, tmp_path: Path) -> None:
         cfg = _load_shipped(tmp_path).model_copy(update={"active_preset": "local"})

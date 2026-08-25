@@ -963,6 +963,8 @@ export interface CredentialSummary {
   id: string;
   name: string;
   stored: boolean;
+  /** Host this key talks to (TD-1718). Null keeps the tier URL. */
+  base_url?: string | null;
 }
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the

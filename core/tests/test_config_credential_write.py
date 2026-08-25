@@ -66,6 +66,15 @@ class TestSaveTierCredential:
         with pytest.raises(ConfigError, match="Unknown credential"):
             save_tier_credential("local", "brain", "nope", path)
 
+    def test_writes_a_host_when_given(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        host = load_config(path).credentials["openrouter"].base_url
+        assert host
+        save_credential("openrouter-2", "OPENROUTER", path, base_url=host)
+        cfg = load_config(path)
+        assert cfg.credentials["openrouter-2"].name == "OPENROUTER"
+        assert cfg.credentials["openrouter-2"].base_url == host
+
     def test_secret_never_lands_in_yaml(self, tmp_path: Path) -> None:
         path = _seed(tmp_path)
         save_credential("local", "Local", path)

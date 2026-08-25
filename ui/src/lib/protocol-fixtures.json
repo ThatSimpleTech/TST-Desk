@@ -842,7 +842,8 @@
       {
         "id": "openrouter",
         "name": "OpenRouter",
-        "stored": false
+        "stored": false,
+        "base_url": null
       }
     ],
     "tier_credentials": {

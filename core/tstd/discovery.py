@@ -33,7 +33,13 @@ from typing import Any
 
 import httpx
 
-from .config import TIER_NAMES, ModelConfig, ModelDiscoveryError, is_loopback_url
+from .config import (
+    TIER_NAMES,
+    ModelConfig,
+    ModelDiscoveryError,
+    apply_credential_host,
+    is_loopback_url,
+)
 from .logging import get_logger
 
 log = get_logger("tstd.discovery")
@@ -219,9 +225,10 @@ async def resolve_tier_slugs(
 
     seen: dict[str, str] = {}
     for name in unset:
-        tier_cfg = tiers[name]
+        original = tiers[name]
+        tier_cfg = apply_credential_host(config, original)
         resolved = seen.get(tier_cfg.base_url)
         if resolved is None:
             resolved = await discover_model(tier_cfg.base_url, tier=name, client=client)
             seen[tier_cfg.base_url] = resolved
-        tier_cfg.slug = resolved
+        original.slug = resolved

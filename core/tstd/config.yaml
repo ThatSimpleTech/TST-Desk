@@ -26,9 +26,13 @@
 
 # Named API keys (TD-1717). Names live here; secrets live in the OS
 # keychain under tst-<id>. Settings shows the name, never the secret.
+# base_url is the host this key talks to (TD-1718). Selecting the key
+# uses that host even when the active preset is local. Omit it on a
+# keyed local server so the tier URL stays in charge.
 credentials:
   openrouter:
     name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
 
 presets:
   # ── tst-default ──────────────────────────────────────────────────
