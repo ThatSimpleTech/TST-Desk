@@ -291,6 +291,27 @@ class ProjectContextConfig(BaseModel):
 DEFAULT_LOG_MAX_EVENTS = 10000
 
 
+class ProviderRetryConfig(BaseModel):
+    """How long to keep trying a retryable provider failure (429, 5xx).
+
+    The shipped default spends four attempts inside roughly eight seconds,
+    which covers a blip and nothing longer. A gateway serving a shared
+    upstream pool answers "temporarily rate-limited upstream, please retry
+    shortly" and sends no ``Retry-After``, so eight seconds of patience ends
+    the turn while the capacity it needed was still a minute out. The cost of
+    raising this is turn latency on a provider that is genuinely down; the
+    cost of leaving it low is a turn that fails for want of waiting.
+
+    ``max_delay`` caps a single wait; ``max_retries`` caps how many there
+    are. Attempts back off exponentially from ``initial_delay``, so 8 retries
+    is roughly three minutes of persistence, not eight seconds.
+    """
+
+    max_retries: int = Field(default=3, ge=0, le=20)
+    initial_delay: float = Field(default=1.0, gt=0)
+    max_delay: float = Field(default=60.0, gt=0)
+
+
 class SessionConfig(BaseModel):
     """On-disk session event-log window (TD-2901).
 
@@ -485,6 +506,7 @@ class ModelConfig(BaseModel):
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
+    provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)

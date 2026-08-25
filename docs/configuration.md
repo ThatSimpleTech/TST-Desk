@@ -241,6 +241,26 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 |---|---|---|---|
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
 
+### `provider_retry`
+
+How stubbornly a retryable provider failure (429, 5xx, transport) is
+retried before the turn is failed. Delays back off exponentially from
+`initial_delay`, are capped per-wait at `max_delay`, and honour a
+`Retry-After` header when the provider sends one.
+
+The defaults spend four attempts in roughly eight seconds. That covers a
+blip. It does not cover a gateway serving a shared upstream pool, which
+answers `429` with "temporarily rate-limited upstream, please retry
+shortly" and no `Retry-After` — free and preview model slugs do this
+routinely, and the turn dies eight seconds into a wait that needed a
+minute. `max_retries: 8` is roughly three minutes of patience.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn. |
+| `initial_delay` | float > 0 | `1.0` | Base delay before the first retry, in seconds. Each subsequent wait doubles. |
+| `max_delay` | float > 0 | `60.0` | Ceiling on any single wait, in seconds. Bounds the worst case when `max_retries` is high. |
+
 ### `remote`
 
 Opt-in bind on a Tailscale address (TD-3601). Empty is off: the daemon
@@ -327,6 +347,10 @@ project_context:
   token_budget: 2000
 session:
   log_max_events: 10000
+provider_retry:
+  max_retries: 3
+  initial_delay: 1.0
+  max_delay: 60.0
 computer_use:
   command: ""
   browser: mock

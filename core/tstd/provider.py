@@ -29,6 +29,7 @@ log = get_logger("tstd.provider")
 _STATUS_CODE_MAP: dict[int, str] = {
     400: "bad_request",
     401: "auth_failed",
+    402: "insufficient_credits",
     403: "forbidden",
     404: "not_found",
     413: "context_length_exceeded",
@@ -316,6 +317,22 @@ class RetryConfig:
             raise ValueError(f"max_delay must be > 0, got {self.max_delay}")
         if self.jitter_factor < 0 or self.jitter_factor > 1:
             raise ValueError(f"jitter_factor must be in [0, 1], got {self.jitter_factor}")
+
+
+def worst_case_retry_seconds(config: RetryConfig) -> float:
+    """Upper bound on time spent sleeping between retries, in seconds.
+
+    A caller that waits on a turn has to outlast the retries the daemon is
+    entitled to make, or it reports a timeout for work that is still going —
+    which is what a fixed client deadline does the moment ``max_retries`` is
+    raised. Assumes no ``Retry-After`` header, since one can only be observed
+    after the fact; a provider that sends a longer one can still overrun this.
+    """
+    total = 0.0
+    for attempt in range(1, config.max_retries + 1):
+        base: float = min(config.initial_delay * (2 ** (attempt - 1)), config.max_delay)
+        total += base * (1 + config.jitter_factor)
+    return total
 
 
 def retry_delay(attempt: int, config: RetryConfig, retry_after: float | None = None) -> float:
@@ -651,6 +668,9 @@ class ProviderClient:
             if response.is_success:
                 try:
                     data = response.json()
+                    embedded = self._error_envelope_status(data)
+                    if embedded is not None:
+                        return self._parse_error(response, status_override=embedded)
                     return ChatCompletionResponse.from_api_dict(data)
                 except (ValueError, KeyError, IndexError) as e:
                     log.error(
@@ -716,8 +736,28 @@ class ProviderClient:
                         )
                         return
 
+                    # A 2xx that is JSON rather than an event stream is an
+                    # error envelope wearing a success status — there are no
+                    # SSE events to read, so letting it through would end the
+                    # turn as an empty completion instead of a retryable
+                    # failure.
+                    if "text/event-stream" not in sse.response.headers.get("content-type", ""):
+                        raw = await sse.response.aread()
+                        text = raw.decode() if raw else ""
+                        try:
+                            data = __import__("json").loads(text) if text else None
+                        except ValueError:
+                            data = None
+                        embedded = self._error_envelope_status(data)
+                        if embedded is not None:
+                            yield self._parse_error(
+                                sse.response, text or None, status_override=embedded
+                            )
+                            return
+
                     in_tool_call = False
                     saw_finish = False
+                    yielded_any = False
                     try:
                         async for event in sse.aiter_sse():
                             try:
@@ -752,6 +792,7 @@ class ProviderClient:
                                 in_tool_call = True
                             if chunk.finish_reason:
                                 saw_finish = True
+                            yielded_any = True
                             yield chunk
                     except httpx.HTTPError as e:
                         # Mid-stream connection drop
@@ -774,6 +815,21 @@ class ProviderClient:
                             message="Stream ended before the tool call "
                             "completed; the partial tool call was discarded.",
                             retryable=False,
+                        )
+                    elif not yielded_any:
+                        # A 200 event-stream that carries no events at all.
+                        # Yielding nothing here ends the generator, which
+                        # ``retry_stream`` cannot tell from a finished stream —
+                        # so the turn reports an empty completion and blames
+                        # the model for the provider closing on it. Say what
+                        # happened, and let it retry.
+                        log.warning("provider stream carried no events")
+                        yield ProviderError(
+                            code="empty_stream",
+                            message="The provider accepted the request and then "
+                            "closed the stream without sending anything. Nothing "
+                            "was generated. Resend to retry.",
+                            retryable=True,
                         )
 
             except httpx.TimeoutException as e:
@@ -825,23 +881,60 @@ class ProviderClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
+    @staticmethod
+    def _error_envelope_status(data: object) -> int | None:
+        """The HTTP-ish status inside a 2xx body that is really an error.
+
+        OpenRouter can answer an upstream refusal with ``200 OK`` whose body
+        is ``{"error": {"message": ..., "code": 429}}`` — no ``choices`` at
+        all. Trusting the status line then loses the failure twice over: the
+        non-streaming path raises ``KeyError`` on ``choices`` and reports an
+        unretryable ``parse_error``, and the streaming path finds no SSE
+        events and reports an empty completion. Both are wrong and neither
+        retries, which is how a turn that only needed a moment's patience
+        ends as a dead end.
+
+        Returns the embedded status, or ``None`` when *data* is a normal
+        response.
+        """
+        if not isinstance(data, dict) or "choices" in data:
+            return None
+        err = data.get("error")
+        if not isinstance(err, dict):
+            return None
+        code = err.get("code")
+        if isinstance(code, bool):  # bool is an int subclass; not a status
+            return 502
+        if isinstance(code, int):
+            return code
+        if isinstance(code, str) and code.lstrip("-").isdigit():
+            return int(code)
+        # An error envelope with no usable status is still an error.
+        return 502
+
     def _parse_error(
         self,
         response: httpx.Response,
         body: str | None = None,
+        status_override: int | None = None,
     ) -> ProviderError:
         """Parse an error response from the API.
 
         For auth failures (401) and context-length errors (413) the message
         is replaced with actionable guidance.  ``Retry-After`` headers are
         parsed and attached to the returned ``ProviderError``.
+
+        ``status_override`` classifies a body that carries its own status —
+        an error envelope delivered under a 2xx status line — so it is
+        treated as the failure it is rather than the success it claims.
         """
-        status = response.status_code
+        status = status_override or response.status_code
         body_text = body or response.text
 
         # Extract provider message and code
         provider_msg = ""
         provider_code = ""
+        provider_hint = ""
         try:
             data = response.json() if body is None else __import__("json").loads(body)
             if isinstance(data, dict) and "error" in data:
@@ -849,15 +942,31 @@ class ProviderClient:
                 if isinstance(err, dict):
                     provider_msg = str(err.get("message", "") or "")
                     provider_code = str(err.get("code", "") or "")
+                    # A gateway's own ``message`` is often a placeholder —
+                    # OpenRouter sends the literal "Provider returned error"
+                    # while the upstream reason ("temporarily rate-limited
+                    # upstream. Please retry shortly.") and the way out sit in
+                    # ``metadata``. Dropping those is how a turn ends up
+                    # reporting nothing the user can act on.
+                    meta = err.get("metadata")
+                    if isinstance(meta, dict):
+                        raw = str(meta.get("raw", "") or "").strip()
+                        if raw:
+                            provider_msg = raw
+                        provider_hint = str(meta.get("remedy_hint", "") or "").strip()
         except (ValueError, KeyError, TypeError):
             pass
 
         if not provider_msg:
             provider_msg = body_text[:300]
 
-        # Determine code: use provider code if meaningful, else map from status
+        # Determine code: use provider code if meaningful, else map from status.
+        # A purely numeric provider code restates the HTTP status rather than
+        # naming a cause — OpenRouter sends {"code": 429} alongside its 429 —
+        # and taking it verbatim shadows the map below, stranding every
+        # consumer on the unknown-code path for the most common failures.
         code = provider_code
-        if not code or code.startswith("http_"):
+        if not code or code.startswith("http_") or code.lstrip("-").isdigit():
             code = _STATUS_CODE_MAP.get(status, f"http_{status}")
 
         # Override for known status codes that carry specific semantics
@@ -875,7 +984,10 @@ class ProviderClient:
         elif status == 413 or code == "context_length_exceeded":
             message = context_length_message(provider_msg)
         else:
-            message = provider_msg
+            # The gateway's remedy hint names the way out (add a BYOK key,
+            # route to another provider). It is the only actionable half of
+            # an upstream-capacity refusal, so it travels with the reason.
+            message = f"{provider_msg} {provider_hint}".strip() if provider_hint else provider_msg
 
         return ProviderError(
             code=code,
@@ -971,6 +1083,7 @@ class ProviderClient:
         provider_name: str = "openrouter",
         timeout_config: TimeoutConfig | None = None,
         client: httpx.AsyncClient | None = None,
+        retry_config: RetryConfig | None = None,
     ) -> ProviderClient:
         """Create a client with the API key loaded from the OS keychain.
 
@@ -995,6 +1108,7 @@ class ProviderClient:
             api_key=api_key,
             timeout=timeout_config,
             client=client,
+            retry_config=retry_config,
         )
 
     async def close(self) -> None:
