@@ -250,6 +250,7 @@ from .provider import (
     ChatMessage,
     ProviderClient,
     ProviderError,
+    RetryConfig,
     auth_failure_message,
 )
 from .remote_attach import (
@@ -573,11 +574,18 @@ class Daemon:
         Unbound loopback stays keyless (TD-1801). Unbound remote uses
         the historical ``openrouter`` keychain account.
         """
+        retry_cfg = RetryConfig(
+            max_retries=self.config.provider_retry.max_retries,
+            initial_delay=self.config.provider_retry.initial_delay,
+            max_delay=self.config.provider_retry.max_delay,
+        )
         cred_id = resolve_credential_id(tier_cfg)
         base_url = resolve_base_url(self.config, tier_cfg)
         if cred_id is None:
-            return ProviderClient(base_url=base_url, api_key=None)
-        return await ProviderClient.from_keychain(base_url, provider_name=cred_id)
+            return ProviderClient(base_url=base_url, api_key=None, retry_config=retry_cfg)
+        return await ProviderClient.from_keychain(
+            base_url, provider_name=cred_id, retry_config=retry_cfg
+        )
 
     async def _brain_client(self) -> ProviderClient:
         """Build a client for the active brain tier."""

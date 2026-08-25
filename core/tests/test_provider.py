@@ -63,11 +63,70 @@ async def _mock_chat_app(scope: dict[str, Any], receive: Any, send: Any) -> None
     model = req_body.get("model", "mock-model")
     stream = req_body.get("stream", False)
 
+    # Error simulation, provider echoes a numeric code: "errc-{status_code}".
+    # This is the shape OpenRouter actually sends — {"code": 429} beside the
+    # 429 — and the plain "err-" body below, which omits it, is what let a
+    # numeric code shadow the status map unnoticed.
+    if model.startswith("errc-"):
+        status = int(model.split("-")[1])
+        data = {"error": {"message": f"Simulated error: {status}", "code": status}}
+        await _send_response(send, status, data)
+        return
+
+    # Error simulation with a gateway placeholder message and the real reason
+    # in metadata: "errm-{status_code}". OpenRouter answers an upstream
+    # capacity refusal with the literal "Provider returned error" and puts the
+    # cause and the way out in metadata.raw / metadata.remedy_hint.
+    if model.startswith("errm-"):
+        status = int(model.split("-")[1])
+        data = {
+            "error": {
+                "message": "Provider returned error",
+                "code": status,
+                "metadata": {
+                    "raw": "stealth/sim-model is temporarily rate-limited upstream. "
+                    "Please retry shortly.",
+                    "provider_name": "Stealth",
+                    "limit_source": "upstream_provider_shared_pool",
+                    "remedy_hint": "Retry shortly, or route to another provider.",
+                },
+            }
+        }
+        await _send_response(send, status, data)
+        return
+
     # Error simulation: model name "err-{status_code}"
     if model.startswith("err-"):
         status = int(model.split("-")[1])
         data = {"error": {"message": f"Simulated error: {status}"}}
         await _send_response(send, status, data)
+        return
+
+    # A 200 event-stream that carries no events at all: "empty-stream".
+    # Observed live from OpenRouter on a throttled model — the request is
+    # accepted, the stream opens, and it closes without a single chunk.
+    if model == "empty-stream":
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    [b"content-type", b"text/event-stream"],
+                    [b"cache-control", b"no-cache"],
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": b""})
+        return
+
+    # An error envelope delivered under HTTP 200: "ok-err-{code}". Observed
+    # live from OpenRouter — {"error": {"code": 429}} with a 200 status line
+    # and no "choices" — on both the streaming and non-streaming routes.
+    if model.startswith("ok-err-"):
+        code = int(model.rsplit("-", 1)[1])
+        await _send_response(
+            send, 200, {"error": {"message": "Provider returned error", "code": code}}
+        )
         return
 
     # Tool call simulation: model name "tool-{model}"
@@ -468,6 +527,155 @@ class TestErrorHandling:
         assert result.code == "rate_limited"
         assert result.status_code == 429
         assert result.retryable
+
+    async def test_numeric_provider_code_does_not_shadow_status_map(
+        self, client: ProviderClient
+    ) -> None:
+        """A provider that echoes {"code": 429} still classifies as rate_limited.
+
+        OpenRouter returns the HTTP status again as the body's ``code``. Taken
+        verbatim it yields the untyped string "429", which no copy table has an
+        entry for — so the UI falls through to its unknown-code text and the
+        user is told to report a bug instead of to wait and resend.
+        """
+        request = ChatCompletionRequest(
+            model="errc-429", messages=[ChatMessage(role="user", content="Hi")]
+        )
+        result = await client.chat_completion(request)
+        assert isinstance(result, ProviderError)
+        assert result.code == "rate_limited"
+        assert result.status_code == 429
+        assert result.retryable
+
+    async def test_insufficient_credits(self, client: ProviderClient) -> None:
+        """402 is a typed, non-retryable cause, not a bare http_402."""
+        request = ChatCompletionRequest(
+            model="err-402", messages=[ChatMessage(role="user", content="Hi")]
+        )
+        result = await client.chat_completion(request)
+        assert isinstance(result, ProviderError)
+        assert result.code == "insufficient_credits"
+        assert result.status_code == 402
+        # Retrying a payment failure just burns the turn again.
+        assert not result.retryable
+
+    async def test_insufficient_credits_with_echoed_code(self, client: ProviderClient) -> None:
+        """The same 402, in OpenRouter's shape, classifies identically."""
+        request = ChatCompletionRequest(
+            model="errc-402", messages=[ChatMessage(role="user", content="Hi")]
+        )
+        result = await client.chat_completion(request)
+        assert isinstance(result, ProviderError)
+        assert result.code == "insufficient_credits"
+        assert not result.retryable
+
+    async def test_typed_provider_code_still_wins(self, client: ProviderClient) -> None:
+        """A non-numeric provider code is a real cause and is preserved."""
+        request = ChatCompletionRequest(
+            model="err-400", messages=[ChatMessage(role="user", content="Hi")]
+        )
+        result = await client.chat_completion(request)
+        assert isinstance(result, ProviderError)
+        assert result.code == "bad_request"
+
+    async def test_gateway_placeholder_message_is_replaced_by_the_real_reason(
+        self, client: ProviderClient
+    ) -> None:
+        """metadata.raw wins over a placeholder ``message``.
+
+        Surfacing "Provider returned error" verbatim tells the user nothing —
+        it is the gateway's filler, not the cause. The upstream reason and the
+        remedy sit in metadata and are the only actionable part.
+        """
+        request = ChatCompletionRequest(
+            model="errm-429", messages=[ChatMessage(role="user", content="Hi")]
+        )
+        result = await client.chat_completion(request)
+        assert isinstance(result, ProviderError)
+        assert result.code == "rate_limited"
+        assert "Provider returned error" not in result.message
+        assert "temporarily rate-limited upstream" in result.message
+        # The way out travels with the reason.
+        assert "route to another provider" in result.message
+
+    async def test_error_envelope_under_http_200_is_an_error(self, client: ProviderClient) -> None:
+        """A 200 whose body is {"error": {...}} classifies by the embedded code.
+
+        Trusting the status line reports ``parse_error`` — unretryable — for
+        what is really a retryable 429, so the turn dies instead of waiting.
+        """
+        request = ChatCompletionRequest(
+            model="ok-err-429", messages=[ChatMessage(role="user", content="Hi")]
+        )
+        result = await client.chat_completion(request)
+        assert isinstance(result, ProviderError)
+        assert result.code == "rate_limited"
+        assert result.retryable
+
+    async def test_error_envelope_under_http_200_while_streaming(
+        self, client: ProviderClient
+    ) -> None:
+        """The streaming route must not read it as an empty completion.
+
+        No SSE events arrive, so without the check the loop sees a turn that
+        produced nothing and reports "the model finished without a reply" —
+        blaming the model for the gateway's refusal, and not retrying.
+        """
+        request = ChatCompletionRequest(
+            model="ok-err-429",
+            messages=[ChatMessage(role="user", content="Hi")],
+            stream=True,
+        )
+        items = [item async for item in client.chat_completion_stream(request)]
+        assert items, "stream yielded nothing at all — the failure vanished"
+        errors = [i for i in items if isinstance(i, ProviderError)]
+        assert errors, f"expected a ProviderError, got {items!r}"
+        assert errors[0].code == "rate_limited"
+        assert errors[0].retryable
+
+    async def test_event_stream_with_no_events_is_a_retryable_error(
+        self, client: ProviderClient
+    ) -> None:
+        """An empty 200 stream must speak, not vanish.
+
+        Yielding nothing ends the generator, which the retry wrapper cannot
+        distinguish from a stream that finished normally — so the turn is
+        reported as an empty completion, blaming the model for output the
+        provider never sent, and nothing retries.
+        """
+        request = ChatCompletionRequest(
+            model="empty-stream",
+            messages=[ChatMessage(role="user", content="Hi")],
+            stream=True,
+        )
+        items = [item async for item in client.chat_completion_stream(request)]
+        assert items, "empty stream produced no item at all — the failure vanished"
+        errors = [i for i in items if isinstance(i, ProviderError)]
+        assert errors, f"expected a ProviderError, got {items!r}"
+        assert errors[0].code == "empty_stream"
+        assert errors[0].retryable
+
+    async def test_a_normal_stream_is_not_reported_as_empty(self, client: ProviderClient) -> None:
+        """Regression guard: a stream with content must not trip the check."""
+        request = ChatCompletionRequest(
+            model="mock-model",
+            messages=[ChatMessage(role="user", content="Hi")],
+            stream=True,
+        )
+        items = [item async for item in client.chat_completion_stream(request)]
+        assert not [i for i in items if isinstance(i, ProviderError)]
+        assert any(isinstance(i, StreamChunk) and i.delta.content for i in items)
+
+    async def test_normal_success_is_not_mistaken_for_an_envelope(
+        self, client: ProviderClient
+    ) -> None:
+        """Regression guard: a real response still parses as a response."""
+        request = ChatCompletionRequest(
+            model="mock-model", messages=[ChatMessage(role="user", content="Hi")]
+        )
+        result = await client.chat_completion(request)
+        assert isinstance(result, ChatCompletionResponse)
+        assert result.message.content == "Hello, world!"
 
     async def test_server_error(self, client: ProviderClient) -> None:
         """Test that 500 is retryable."""
