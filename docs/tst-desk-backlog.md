@@ -3830,17 +3830,23 @@ the only wait the user can actually be watching.
 **Size:** 2 · **Depends on:** TD-1701, TD-1714
 
 **Acceptance criteria:**
-- [ ] Rail dots show turn activity — working, waiting on approval, or
+- [x] Rail dots show turn activity — working, waiting on approval, or
       finished — not session liveness (`state: "running"`)
-- [ ] Awaiting approval is a warning dot; a turn in flight is accent and
+- [x] Awaiting approval is a warning dot; a turn in flight is accent and
       pulses; finished / idle is muted
-- [ ] Session names in the rail and recents are capped at 20 characters;
+- [x] Session names in the rail and recents are capped at 20 characters;
       the full title remains on hover and in filter matching
-- [ ] `session_list` carries `busy` from `turn_in_flight` so a refresh does
+- [x] `session_list` carries `busy` from `turn_in_flight` so a refresh does
       not paint every live session as working
 
 **Notes:** user ask 2026-08-25: "running just means the chat is active, not
 its state. Colored dots. Cap chat names at like 20 char."
+
+**Completed (2026-08-25):** `SessionSummary.busy` is `turn_in_flight`.
+`rail-activity.ts` maps busy / parked states / bound `turnState` to
+working, waiting, or finished. `running` without a turn is muted
+Finished. Display titles cap at 20 characters; hover and filter keep
+the full name.
 
 ### TD-1715 — Archive, delete, and re-project sessions from the rail
 **Size:** 3 · **Depends on:** TD-1701
