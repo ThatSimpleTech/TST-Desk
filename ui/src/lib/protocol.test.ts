@@ -619,6 +619,8 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(["brain", "worker", "validator"]).toContain(m.tier);
     expect(m.override).toBeNull();
     expect(isString(m.model_slugs.brain)).toBe(true);
+    expect(isString(m.preset)).toBe(true);
+    expect(isString(m.hosts?.brain)).toBe(true);
     const ov = fixtures.tier_state_override as TierState;
     expect(ov.tier).toBe("validator");
     expect(ov.override).toBe("validator");

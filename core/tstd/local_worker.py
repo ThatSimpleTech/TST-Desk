@@ -10,6 +10,8 @@ empty so a test config without ``vllm`` does not crash.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from .config import ModelConfig, TierConfig, apply_credential_host
 from .protocol import ToolCall
 from .router import TIER_NAMES, TierName
@@ -69,3 +71,25 @@ def titlebar_slugs(config: ModelConfig, *, cu_heavy: bool) -> dict[str, str]:
         if cfg.slug is not None:
             slugs[name] = cfg.slug
     return slugs
+
+
+def display_host(base_url: str) -> str:
+    """Hostname:port for the title bar. Empty when the URL has no host."""
+    parsed = urlparse(base_url)
+    hostname = parsed.hostname
+    if not hostname:
+        return ""
+    if parsed.port is None:
+        return hostname
+    return f"{hostname}:{parsed.port}"
+
+
+def titlebar_hosts(config: ModelConfig, *, cu_heavy: bool) -> dict[str, str]:
+    """Hosts for ``tier_state`` (TD-1720). Same URL the provider client calls."""
+    hosts: dict[str, str] = {}
+    for name in TIER_NAMES:
+        cfg = effective_tier(config, name, cu_heavy=cu_heavy)
+        host = display_host(cfg.base_url)
+        if host:
+            hosts[name] = host
+    return hosts
