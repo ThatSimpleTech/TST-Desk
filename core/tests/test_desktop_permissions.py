@@ -24,6 +24,7 @@ from tstd.desktop import DesktopError, McpDesktopDriver, MockDesktopDriver
 from tstd.desktop.permissions import (
     ACCESSIBILITY_URL,
     FLAG_NAME,
+    LINUX_FLAG_NAME,
     SCREEN_RECORDING_URL,
     WINDOWS_FLAG_NAME,
     WINDOWS_NO_GATE,
@@ -38,6 +39,7 @@ from tstd.desktop.permissions import (
     parse_probe,
     windows_report,
 )
+from tstd.desktop.permissions_linux import LINUX_NO_GATE, WAYLAND_LIMIT, linux_report
 from tstd.desktop.stdio_mcp import map_mcp_error
 from tstd.protocol import (
     CheckCuPermissions,
@@ -429,3 +431,123 @@ class TestWindowsIntegrityOnboarding:
         assert event.platform == "windows"
         assert "TCC" in event.no_gate
         assert event.uipi_applies is True
+
+
+class TestLinuxOnboarding:
+    async def test_x11_probe_is_granted_with_no_gate(self) -> None:
+        driver = MockDesktopDriver(platform="linux")
+        report = await driver.check_permissions()
+        assert report["platform"] == "linux"
+        assert report["all_granted"] is True
+        assert report["no_gate"] == LINUX_NO_GATE
+        event = cu_permissions_from_report(report, first_run=True)
+        assert event.platform == "linux"
+        assert event.granted is True
+        assert event.screen_recording_url == ""
+        assert event.session_type == "x11"
+        assert event.wayland_applies is False
+        assert "TCC" in event.no_gate
+        back = parse_daemon_event(event.model_dump_json())
+        assert isinstance(back, CuPermissions)
+        assert back.platform == "linux"
+
+    async def test_wayland_is_named_not_windows(self) -> None:
+        driver = MockDesktopDriver(platform="linux", session_type="wayland")
+        report = await driver.check_permissions()
+        assert report["all_granted"] is False
+        event = cu_permissions_from_report(report, first_run=False)
+        assert event.platform == "linux"
+        assert event.granted is False
+        assert event.session_type == "wayland"
+        assert event.wayland_applies is True
+        assert event.wayland == WAYLAND_LIMIT
+        assert event.uipi == ""
+        assert event.uipi_applies is False
+
+    async def test_linux_no_gate_does_not_become_windows(self) -> None:
+        event = cu_permissions_from_report(linux_report(), first_run=True)
+        assert event.platform == "linux"
+        assert event.no_gate == LINUX_NO_GATE
+
+    def test_macos_flag_does_not_suppress_linux_first_run(self, tmp_path: Path) -> None:
+        daemon = Daemon(data_dir=tmp_path)
+        daemon.desktop_driver = MockDesktopDriver(platform="linux")
+        mark_shown(tmp_path)
+        first = ToolCall(
+            session_id="sess-1",
+            tool_call_id="c1",
+            name="desktop_click",
+            arguments={"x": 1, "y": 2},
+            seq=1,
+        )
+        assert daemon._cu_permissions_session(first) == "sess-1"
+        mark_shown(tmp_path, "linux")
+        assert daemon._cu_permissions_session(first) is None
+        assert (tmp_path / LINUX_FLAG_NAME).is_file()
+        assert (tmp_path / FLAG_NAME).is_file()
+
+    async def test_first_run_emit_is_linux_copy(self, tmp_path: Path) -> None:
+        daemon = Daemon(data_dir=tmp_path)
+        daemon.desktop_driver = MockDesktopDriver(platform="linux")
+        sent: list[str] = []
+
+        class _Conn:
+            async def send(self, payload: str) -> None:
+                sent.append(payload)
+
+        daemon._attached_clients["sess-1"] = {_Conn()}
+        await daemon._emit_cu_permissions("sess-1", first_run=True)
+        assert load_shown(tmp_path, "linux") is True
+        assert load_shown(tmp_path, "macos") is False
+        body = json.loads(sent[0])
+        assert body["type"] == "cu_permissions"
+        assert body["platform"] == "linux"
+        assert body["first_run"] is True
+        assert body["granted"] is True
+        assert body["session_type"] == "x11"
+        assert "TCC" in body["no_gate"]
+        assert body["screen_recording_url"] == ""
+        assert body["wayland_applies"] is False
+
+    async def test_check_cu_permissions_linux_copy(self, tmp_path: Path) -> None:
+        daemon = Daemon(data_dir=tmp_path)
+        daemon.desktop_driver = MockDesktopDriver(platform="linux")
+        raw = await daemon._handle_message('{"type": "check_cu_permissions"}', None)
+        assert raw is not None
+        event = json.loads(raw)
+        assert event["platform"] == "linux"
+        assert event["first_run"] is False
+        assert "TCC" in event["no_gate"]
+        assert event["session_type"] == "x11"
+
+    async def test_sidecar_linux_report_passes_through(self) -> None:
+        class _Client:
+            async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(linux_report(session="x11")),
+                        }
+                    ]
+                }
+
+            async def aclose(self) -> None:
+                return None
+
+        driver = McpDesktopDriver(["/bin/false"], platform="linux", client=_Client())  # type: ignore[arg-type]
+        report = await driver.check_permissions()
+        event = cu_permissions_from_report(report, first_run=True)
+        assert event.platform == "linux"
+        assert "TCC" in event.no_gate
+        assert event.session_type == "x11"
+        assert event.granted is True
+
+    async def test_xtest_missing_is_named(self) -> None:
+        event = cu_permissions_from_report(
+            linux_report(session="x11", display=True, xtest=False),
+            first_run=False,
+        )
+        assert event.granted is False
+        assert event.xtest_applies is True
+        assert "XTEST" in event.xtest

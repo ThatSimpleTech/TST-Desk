@@ -29,6 +29,31 @@ SECRET_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 
+# XDG leaf. The Tauri identifier is ``com.thatsimpletech.tstdesk``; a
+# host that joined that name onto ``dirs::data_dir()`` split Linux GUI
+# state from the CLI. Canonical name matches ``docs/configuration.md``.
+LINUX_DATA_DIR_NAME = "tst-desk"
+LINUX_LEGACY_DATA_DIR_NAME = "com.thatsimpletech.tstdesk"
+
+
+def linux_user_data_dir(base: Path) -> Path:
+    """Resolve the Linux / BSD data dir under *base*.
+
+    If only the reverse-DNS leftover exists, rename it once. When both
+    exist, the documented ``tst-desk`` tree wins and the leftover is left
+    alone — do not merge two live stores.
+    """
+    canonical = base / LINUX_DATA_DIR_NAME
+    legacy = base / LINUX_LEGACY_DATA_DIR_NAME
+    if canonical.exists() or not legacy.exists():
+        return canonical
+    try:
+        legacy.rename(canonical)
+    except OSError:
+        return legacy
+    return canonical
+
+
 def user_data_dir() -> Path:
     """Return the platform-appropriate user data directory for TST Desk."""
     system = sys.platform
@@ -41,9 +66,8 @@ def user_data_dir() -> Path:
         return Path.home() / "AppData" / "Roaming" / "com.thatsimpletech.tstdesk"
     # Linux / BSD
     xdg = os.environ.get("XDG_DATA_HOME")
-    if xdg:
-        return Path(xdg) / "tst-desk"
-    return Path.home() / ".local" / "share" / "tst-desk"
+    base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return linux_user_data_dir(base)
 
 
 def redact_secrets(text: str) -> str:

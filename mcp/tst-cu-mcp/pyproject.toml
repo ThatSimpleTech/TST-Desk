@@ -1,12 +1,12 @@
 [project]
 name = "tst-cu-mcp"
 version = "0.2.0"
-description = "Local computer-use MCP server: lets a model see the screen (vision) and drive the desktop over stdio. macOS and Windows."
+description = "Local computer-use MCP server: lets a model see the screen (vision) and drive the desktop over stdio. macOS, Windows, and Linux (X11)."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "That Simple Tech" }]
-keywords = ["mcp", "computer-use", "macos", "windows", "automation", "vision"]
+keywords = ["mcp", "computer-use", "macos", "windows", "linux", "automation", "vision"]
 dependencies = [
     "mcp==2.0.0",
     "pillow==12.3.0",
@@ -87,6 +87,10 @@ disallow_subclassing_any = false
 # where these lookups resolve natively and lose nothing.
 [[tool.mypy.overrides]]
 module = "tst_cu_mcp.backends.windows"
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = "tst_cu_mcp.backends.linux_x11"
 disable_error_code = ["attr-defined"]
 
 [tool.pytest.ini_options]

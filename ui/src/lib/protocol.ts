@@ -1122,13 +1122,20 @@ export interface CuPermissions extends DaemonEvent {
   screen_recording_url: string;
   accessibility_url: string;
   first_run: boolean;
-  platform: "macos" | "windows";
+  platform: "macos" | "windows" | "linux";
   no_gate: string;
   uipi: string;
   secure_desktop: string;
   elevated: boolean;
   uipi_applies: boolean;
   secure_desktop_applies: boolean;
+  session_type: string;
+  wayland: string;
+  wayland_applies: boolean;
+  xtest: string;
+  xtest_applies: boolean;
+  no_display: string;
+  no_display_applies: boolean;
 }
 
 export interface ContextCompacted extends DaemonEvent {

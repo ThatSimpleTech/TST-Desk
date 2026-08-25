@@ -37,6 +37,11 @@ the packaged file. Two consequences worth knowing:
 | Windows | `%APPDATA%\com.thatsimpletech.tstdesk\config.yaml` |
 | Linux / BSD | `$XDG_DATA_HOME/tst-desk/config.yaml`, or `~/.local/share/tst-desk/config.yaml` |
 
+The Linux leaf is `tst-desk`, not the Tauri identifier
+`com.thatsimpletech.tstdesk`. The host and `tstd` / `tst run` share that
+path. If only the reverse-DNS leftover exists, it is renamed once; if
+both exist, `tst-desk` wins and the leftover is left alone.
+
 There is no dedicated environment variable for this path and no CLI flag for it. On Linux and
 Windows it moves with the platform's own data-directory variable, as the table shows; on macOS
 the path is fixed. Note that the daemon's `--data-dir` moves the session store and the audit
@@ -152,7 +157,10 @@ is set (TD-2204). A filled `base_url` with no `command` is attach-only.
 Desktop screenshot / move / click / type / scroll (TD-3301). Empty
 `command` is the in-process mock (CI, no display). A non-empty value is
 the argv for `mcp/tst-cu-mcp` over stdio — the daemon owns the child and
-does not bind a socket. Linux has no live path (E20).
+does not bind a socket. Linux X11 is a live path (TD-2001): first-run
+onboarding is the same kind of honesty as Windows (no grant dialog). A
+Wayland session is unsupported (TD-2002); `health` reports
+`supported: false` and `session_type: "wayland"`.
 
 Browser computer-use (TD-1710): `browser` selects the in-process mock
 (CI, never launches Chrome) or Playwright with a persistent profile

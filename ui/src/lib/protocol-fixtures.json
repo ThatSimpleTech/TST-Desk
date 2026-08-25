@@ -1051,7 +1051,14 @@
     "secure_desktop": "",
     "elevated": false,
     "uipi_applies": false,
-    "secure_desktop_applies": false
+    "secure_desktop_applies": false,
+    "session_type": "",
+    "wayland": "",
+    "wayland_applies": false,
+    "xtest": "",
+    "xtest_applies": false,
+    "no_display": "",
+    "no_display_applies": false
   },
   "list_jobs": {
     "type": "list_jobs"

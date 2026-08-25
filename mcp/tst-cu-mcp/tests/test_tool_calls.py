@@ -58,6 +58,16 @@ class TestHealth:
 
     async def test_health_reports_support_and_backend(self) -> None:
         payload = await call("health")
+        if sys.platform.startswith("linux"):
+            from tst_cu_mcp.backends.linux import linux_session_usable
+
+            if linux_session_usable():
+                assert payload["supported"] is True
+                assert payload["backend"] == "linux"
+            else:
+                assert payload["supported"] is False
+                assert payload["backend"] is None
+            return
         expected = {"win32": "windows", "darwin": "darwin"}
         assert payload["supported"] is True
         assert payload["backend"] == expected[sys.platform]
@@ -71,7 +81,7 @@ class TestHealth:
 class TestCheckPermissions:
     async def test_reports_this_platforms_shape(self) -> None:
         payload = await call("check_permissions")
-        expected = {"win32": "windows", "darwin": "macos"}
+        expected = {"win32": "windows", "darwin": "macos", "linux": "linux"}
         assert payload["platform"] == expected[sys.platform]
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows report shape")

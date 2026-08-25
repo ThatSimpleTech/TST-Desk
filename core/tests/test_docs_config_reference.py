@@ -69,6 +69,7 @@ from tstd.config import (
     default_config_yaml,
     load_config,
 )
+from tstd.logging import LINUX_DATA_DIR_NAME
 from tstd.policy import PolicyConfig, PolicyRule, load_approved_imports, load_policy
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -386,6 +387,14 @@ def test_no_shipped_slug_is_copied_into_the_prose() -> None:
         }
     )
     assert not copied, "shipped slugs copied into the reference: " + ", ".join(copied)
+
+
+def test_linux_data_dir_leaf_is_documented() -> None:
+    """Host and CLI share this leaf; the table must not drift to the identifier."""
+    text = _doc_text()
+    assert LINUX_DATA_DIR_NAME == "tst-desk"
+    assert f"{LINUX_DATA_DIR_NAME}/config.yaml" in text
+    assert "com.thatsimpletech.tstdesk" in text
 
 
 def test_absent_workspace_file_means_the_documented_defaults() -> None:

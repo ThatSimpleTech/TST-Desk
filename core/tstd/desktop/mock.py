@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from .permissions import normalize_cu_platform, windows_report
+from .permissions_linux import linux_report
 from .protocol import TINY_PNG, DesktopError, window_matches
 
 
@@ -28,6 +29,9 @@ class MockDesktopDriver:
         elevated: bool = False,
         uipi_blocked: bool = False,
         secure_desktop_blocked: bool = False,
+        session_type: str = "x11",
+        display_available: bool = True,
+        xtest_available: bool = True,
     ) -> None:
         self.foreground_title = foreground_title
         self.foreground_app = foreground_app
@@ -40,6 +44,9 @@ class MockDesktopDriver:
         self.elevated = elevated
         self.uipi_blocked = uipi_blocked
         self.secure_desktop_blocked = secure_desktop_blocked
+        self.session_type = session_type
+        self.display_available = display_available
+        self.xtest_available = xtest_available
         # Successful operations only — a refusal must not appear here.
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.actuations: list[str] = []
@@ -66,8 +73,15 @@ class MockDesktopDriver:
             )
 
     async def check_permissions(self) -> dict[str, Any]:
-        if normalize_cu_platform(self.platform) == "windows":
+        plat = normalize_cu_platform(self.platform)
+        if plat == "windows":
             return windows_report(elevated=self.elevated)
+        if plat == "linux":
+            return linux_report(
+                session=self.session_type,
+                display=self.display_available,
+                xtest=self.xtest_available,
+            )
         granted = not self.permission_denied
         return {
             "platform": "macos",

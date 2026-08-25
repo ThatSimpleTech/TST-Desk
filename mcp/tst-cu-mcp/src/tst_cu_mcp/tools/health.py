@@ -13,6 +13,7 @@ from typing import Any
 
 from tst_cu_mcp._version import __version__
 from tst_cu_mcp.backends import SUPPORTED_PLATFORMS, backend_name
+from tst_cu_mcp.backends.linux import linux_session_kind, linux_session_usable
 
 SERVER_NAME = "tst-cu-mcp"
 
@@ -24,7 +25,24 @@ def health_report() -> dict[str, Any]:
     support: ``supported`` is reported rather than raised, so an unsupported host
     is visible instead of failing at the first real call. ``backend`` is the
     implementation that would handle capture and input, or ``None``.
+
+    On Linux, ``supported`` is true only for a native X11 session. Wayland is
+    named in ``session_type`` rather than treated as a missing OS backend.
     """
+    if sys.platform.startswith("linux"):
+        session = linux_session_kind()
+        usable = linux_session_usable()
+        return {
+            "name": SERVER_NAME,
+            "version": __version__,
+            "platform": sys.platform,
+            "system": platform.system(),
+            "session_type": session,
+            "supported": usable,
+            "supported_platforms": list(SUPPORTED_PLATFORMS),
+            "backend": backend_name() if usable else None,
+            "permissions": "call check_permissions for this platform's capture/input status",
+        }
     return {
         "name": SERVER_NAME,
         "version": __version__,
