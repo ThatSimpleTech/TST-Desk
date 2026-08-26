@@ -506,6 +506,20 @@ async def _dispatch_and_append_results(
     await session.conversation_changed()
 
 
+async def dispatch_worker_child_tools(
+    dispatcher: ToolDispatcher,
+    session: Session,
+    items: list[tuple[str, str, dict[str, Any]]],
+) -> list[Any]:
+    """Run child-worker tools through the same classifier gate (TD-4602).
+
+    Lives here so the chokepoint inventory keeps seeing ``dispatch_many``
+    only in ``loop.py`` / ``dispatch.py`` / ``dod.py``.  Results stay on
+    *session* (the transient child), not the parent timeline.
+    """
+    return await dispatcher.dispatch_many(items, session)
+
+
 async def agent_loop(
     session: Session,
     router: TierRouter,
@@ -702,6 +716,10 @@ async def agent_loop(
     tool_definitions: list[ProviderToolDefinition] | None = None
     if tool_registry is not None:
         tool_definitions = tool_registry.to_provider_definitions()
+        if session.delegate_depth >= 1:
+            tool_definitions = [
+                d for d in tool_definitions if d.function is None or d.function.name != "delegate"
+            ]
 
     # Tracks the last steering prefix hash for change detection (TD-509).
     _last_prefix_hash: str | None = None
@@ -717,6 +735,19 @@ async def agent_loop(
     # iteration counter the caps are measured against.
     _session_start = time.time()
     _iterations = 0
+
+    # TD-4602: bind the parent host so ``delegate`` can run a worker child
+    # against this loop's provider, dispatcher, and remaining caps.
+    if tool_dispatcher is not None:
+        from .tools.delegate import DelegateRuntime
+
+        session.delegate_runtime = DelegateRuntime(
+            provider_factory=client_for,
+            config=config,
+            dispatcher=tool_dispatcher,
+            assembler=assembler,
+            session_start=_session_start,
+        )
 
     # Tier visibility (TD-1006): slugs for the wire, and the last tier the
     # UI was told about so tier_state only fires on change.  Filled once
@@ -1133,6 +1164,8 @@ async def agent_loop(
                 await session.pause_at_cap(violation)
                 await session.wait_for_resume()
             _iterations += 1
+            if session.delegate_runtime is not None:
+                session.delegate_runtime.iterations = _iterations
 
             # 2d. Call provider (streaming)
             collected_content, tool_calls, failed, error_msg, error_code = await _stream_and_parse(
