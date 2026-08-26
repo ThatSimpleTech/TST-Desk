@@ -20,6 +20,7 @@
 	import { session } from '../session-status.svelte.js';
 	import PolicyRuleList from './PolicyRuleList.svelte';
 	import SettingsKeys from './SettingsKeys.svelte';
+	import SettingsMcp from './SettingsMcp.svelte';
 	import SettingsModels from './SettingsModels.svelte';
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
 	import CuPermissionsPane from './CuPermissionsPane.svelte';
@@ -29,6 +30,7 @@
 		appearance: 'Appearance',
 		model: 'Model',
 		policy: 'Policy',
+		mcp: 'MCP servers',
 		key: 'API keys',
 	};
 
@@ -135,6 +137,8 @@
 					<SettingsModels />
 				{:else if settings.section === 'policy'}
 					<PolicyRuleList sessionId={session.sessionId} />
+				{:else if settings.section === 'mcp'}
+					<SettingsMcp />
 				{:else}
 					<SettingsKeys />
 				{/if}

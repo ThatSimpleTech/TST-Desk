@@ -347,6 +347,22 @@
     "tier": "brain",
     "credential": "local"
   },
+  "set_mcp_server": {
+    "type": "set_mcp_server",
+    "id": "example",
+    "transport": "stdio",
+    "command": [
+      "python",
+      "-m",
+      "some_mcp"
+    ],
+    "url": "",
+    "enabled": true
+  },
+  "delete_mcp_server": {
+    "type": "delete_mcp_server",
+    "id": "example"
+  },
   "run_diagnostics": {
     "type": "run_diagnostics"
   },
@@ -941,7 +957,20 @@
       "brain": false,
       "worker": true,
       "validator": true
-    }
+    },
+    "mcp_servers": [
+      {
+        "id": "example",
+        "transport": "stdio",
+        "command": [
+          "python",
+          "-m",
+          "some_mcp"
+        ],
+        "url": "",
+        "enabled": true
+      }
+    ]
   },
   "api_key_validated": {
     "type": "api_key_validated",
