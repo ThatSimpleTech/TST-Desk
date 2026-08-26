@@ -1,12 +1,12 @@
 <script lang="ts">
-	// Title bar (TD-1006): workspace picker, tier chips, live cost meter,
-	// session state indicator, and the boundary ("wall") summary. Presentational
-	// only — everything shown is reduced from daemon events via session-status;
-	// the UI never derives truth it wasn't given (AGENTS §6).
+	// Title bar (TD-1006, TD-1720): workspace picker, tier chips, live
+	// model pill, cost meter, session state, and the boundary ("wall").
+	// Presentational only — everything shown is reduced from daemon events
+	// via session-status; the UI never derives a host from a slug.
 	//
 	// The picker and the meter own their own markup and styles in
 	// WorkspacePicker/CostMeter; what stays here is the row itself.
-	import { session, setTier, type SessionIndicator } from '../session-status.svelte.js';
+	import { liveModelLabel, session, setTier, type SessionIndicator } from '../session-status.svelte.js';
 	import { formatUsd } from '../cost-format.js';
 	import CostMeter from './CostMeter.svelte';
 	import CuKillSwitch from './CuKillSwitch.svelte';
@@ -40,6 +40,18 @@
 		return 'muted';
 	}
 
+	const liveLabel = $derived(liveModelLabel(session.tier, session.modelSlugs, session.hosts));
+	const liveTip = $derived(
+		[
+			session.preset ? `preset: ${session.preset}` : null,
+			`tier: ${session.tier}`,
+			session.modelSlugs[session.tier] ? `model: ${session.modelSlugs[session.tier]}` : null,
+			session.hosts[session.tier] ? `host: ${session.hosts[session.tier]}` : null,
+		]
+			.filter((line): line is string => line !== null)
+			.join('\n') || undefined,
+	);
+
 	let boundaryTip = $derived(
 		session.boundary === null
 			? null
@@ -66,8 +78,14 @@
 					class:chip--pinned={session.tierOverride === tier}
 					type="button"
 					aria-pressed={session.tier === tier}
-					title={session.modelSlugs[tier]
-						? `${session.modelSlugs[tier]}${session.tierOverride === tier ? ' (pinned)' : ''}`
+					title={session.modelSlugs[tier] || session.hosts[tier]
+						? [
+								session.modelSlugs[tier],
+								session.hosts[tier],
+								session.tierOverride === tier ? '(pinned)' : '',
+							]
+								.filter(Boolean)
+								.join(' ')
 						: tier}
 					onclick={() => setTier(tier)}
 				>
@@ -78,6 +96,10 @@
 				</button>
 			{/each}
 		</div>
+
+		{#if liveLabel}
+			<span class="live-model" title={liveTip} aria-label="Live model">{liveLabel}</span>
+		{/if}
 
 		<CostMeter />
 
@@ -137,6 +159,17 @@
 	.chip--active:hover {
 		background: var(--color-accent-hover);
 		border-color: var(--color-accent-hover);
+	}
+
+	.live-model {
+		min-width: 0;
+		max-width: 22rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: var(--text-xs);
+		font-family: var(--font-mono);
+		color: var(--color-text-secondary);
 	}
 
 	.pin {

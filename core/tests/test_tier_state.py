@@ -19,7 +19,9 @@ from tests.test_dispatch import (
     start_loop,
     wait_for_turn,
 )
+from tstd.config import CredentialConfig, ModelConfig, Preset, TierConfig
 from tstd.daemon import Daemon
+from tstd.local_worker import display_host, titlebar_hosts
 from tstd.mock import MockProvider, Script
 from tstd.protocol import CostUpdate, TierState
 from tstd.router import TierRouter
@@ -84,6 +86,9 @@ class TestDaemonTierState:
         # source). Just pin the shape.
         assert set(events[0].model_slugs) == {"brain", "worker", "validator"}
         assert all(events[0].model_slugs.values())
+        assert events[0].preset == daemon.config.active_preset
+        assert set(events[0].hosts) == {"brain", "worker", "validator"}
+        assert all(events[0].hosts.values())
 
         runner = daemon.session_registry.get_runner(sid)
         if runner is not None:
@@ -174,6 +179,12 @@ class TestLoopTierState:
             "worker": "test-worker",
             "validator": "test-validator",
         }
+        assert events[0].preset == "test"
+        assert events[0].hosts == {
+            "brain": "mock.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
+        }
 
         await runner.cancel()
 
@@ -196,6 +207,49 @@ class TestLoopTierState:
         assert any(call.model == "test-validator" for call in mock.calls)
 
         await runner.cancel()
+
+
+class TestTitlebarHosts:
+    def test_drops_default_port_and_path(self) -> None:
+        assert display_host("https://models.example/v1") == "models.example"
+
+    def test_keeps_an_explicit_loopback_port(self) -> None:
+        assert display_host("http://127.0.0.1:8002/v1") == "127.0.0.1:8002"
+
+    def test_empty_when_the_url_has_no_host(self) -> None:
+        assert display_host("not-a-url") == ""
+
+    def test_bound_key_host_wins_over_the_tier_url(self) -> None:
+        def tier(slug: str) -> TierConfig:
+            return TierConfig(
+                slug=slug,
+                base_url="http://127.0.0.1:8002/v1",
+                credential="remote",
+                input_price=0.0,
+                output_price=0.0,
+                cache_read_price=0.0,
+                context_window=1000,
+                max_output_tokens=100,
+            )
+
+        config = ModelConfig(
+            credentials={
+                "remote": CredentialConfig(name="Remote", base_url="https://models.example/v1"),
+            },
+            presets={
+                "vllm": Preset(
+                    brain=tier("a"),
+                    worker=tier("b"),
+                    validator=tier("c"),
+                )
+            },
+            active_preset="vllm",
+        )
+        assert titlebar_hosts(config, cu_heavy=False) == {
+            "brain": "models.example",
+            "worker": "models.example",
+            "validator": "models.example",
+        }
 
 
 class TestCostUpdateWire:

@@ -3949,6 +3949,56 @@ with no events, was reported as an empty completion and did not retry.
 
 ---
 
+### TD-1720 — Title bar shows the live slug and host
+**Size:** 2 · **Depends on:** TD-1006, TD-1718
+
+TD-1006 asked for active slugs on the chips. The bar shows
+`brain` / `worker` / `validator` and hides the slug in a tooltip.
+After binding an OpenRouter key on a local preset, that is not a
+sanity check — the role name stays `brain` while the turn may be
+on `:8002` or `openrouter.ai`.
+
+**Acceptance criteria:**
+- [x] `tier_state` carries `preset` and `hosts` (tier → hostname:port)
+      from the same resolution the provider client uses
+- [x] The title bar shows the active tier's slug and host without hover
+- [x] The UI does not infer a host from the slug
+- [x] A missing slug (discovery pending) still shows the host
+- [x] Additive protocol: no `PROTOCOL_VERSION` bump; an older client
+      ignores the new fields
+
+**Notes:** Keep the three role chips as the router pin. The pill is
+read-only. Tooltip may add preset and full URL. Spec §2.7: hosts come
+from config / `resolve_base_url`, never a Python literal.
+
+**Done (2026-08-25).** `tier_state` carries `preset` + `hosts`. The title
+bar paints `{slug} · {host}` from those fields. User ask 2026-08-25.
+
+---
+
+### TD-1721 — Per-session preset
+**Size:** 5 · **Depends on:** TD-1720, TD-1101
+
+A session already captures the `ModelConfig` it opened with;
+`set_preset` only changes new sessions. Settings still shows one
+global preset, so two chats on `local` and `vllm` look identical
+and you cannot retarget an existing chat.
+
+**Acceptance criteria:**
+- [ ] A session persists the preset it opened with and revive restores it
+- [ ] The title bar (or composer) can change *this* session's preset;
+      the change applies on the next idle turn
+- [ ] Changing Settings' `active_preset` does not rewrite open sessions
+- [ ] The session list shows each row's preset
+- [ ] A per-session slug edit does not write back onto the global preset
+- [ ] Refuse a preset switch while a turn is running
+
+**Notes:** Not a second Settings document. Settings remains the catalog.
+Class B: persist the preset name on the session, not a forked config
+tree. Do not start until TD-1720 is on main.
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 

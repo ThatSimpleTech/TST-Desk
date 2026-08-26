@@ -704,13 +704,17 @@ export interface CostUpdate extends DaemonEvent {
   cost_by_tier: Record<string, number>;
 }
 
-/** Active tier + configured slugs (TD-1006). */
+/** Active tier + configured slugs (TD-1006, TD-1720). */
 export interface TierState extends DaemonEvent {
   type: "tier_state";
   session_id: string;
   tier: "brain" | "worker" | "validator";
   override: "brain" | "worker" | "validator" | null;
   model_slugs: Record<string, string>;
+  /** Preset this session opened with. Omitted by older daemons. */
+  preset?: string;
+  /** Tier → hostname:port the client will call. Omitted by older daemons. */
+  hosts?: Record<string, string>;
 }
 
 export interface BoundaryUpdate extends DaemonEvent {

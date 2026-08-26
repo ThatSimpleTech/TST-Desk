@@ -75,7 +75,9 @@ paths, never free text) rather than by a glob.
 
 **The window (`ui/`)** is a renderer. AGENTS.md §6 again: *"The UI never derives truth it wasn't
 given — if the daemon didn't send it, don't infer it."* Every number in the title bar, every
-approval card, every timeline entry is a daemon event the UI was handed.
+approval card, every timeline entry is a daemon event the UI was handed. The live-model
+pill is `{slug} · {host}` from `tier_state` (TD-1720); the UI does not guess a host
+from the slug.
 
 ### Why a separate process at all
 
@@ -376,7 +378,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. |
-| `tier_state` | session | The active tier, any pinned override, and the configured slugs. |
+| `tier_state` | session | The active tier, any pinned override, slugs, preset, and hosts (TD-1720). |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
