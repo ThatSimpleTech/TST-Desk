@@ -55,7 +55,7 @@ from tstd.protocol import (
 from tstd.session import Session, SessionRunner
 from tstd.tools.boundary import PathGuard
 from tstd.tools.dispatch import ToolDispatcher
-from tstd.tools.registry import Tool, create_registry
+from tstd.tools.registry import Tool, ToolRegistry, create_registry
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DOC = ROOT / "docs" / "architecture.md"
@@ -384,7 +384,13 @@ def test_every_named_seam_exists_where_the_guide_says() -> None:
 def test_the_seams_the_story_asks_for_are_named() -> None:
     """The story names the seams a contributor most needs; check them off."""
     named = set(_rows("seams"))
-    required = {"create_registry", "register_builtin_handlers", "RULE_TABLE", "Precedence"}
+    required = {
+        "create_registry",
+        "load_plugins",
+        "register_builtin_handlers",
+        "RULE_TABLE",
+        "Precedence",
+    }
     assert required <= named, f"unnamed extension points: {sorted(required - named)}"
 
 
@@ -470,6 +476,52 @@ async def test_the_walkthrough_tool_registers_and_dispatches(tmp_path: Path) -> 
     # The teaching point of step 3: a contributor's tool inherits the
     # chokepoint.  An unclassified result here would mean it did not.
     assert result.decision_class is not None, "the walkthrough tool bypassed the classifier"
+
+
+@pytest.mark.asyncio
+async def test_the_plugin_walkthrough_registers_and_dispatches(tmp_path: Path) -> None:
+    """The plugin walkthrough is executed against the real chokepoint (TD-4601).
+
+    ``register()`` is exec'd from the guide, then called on a real registry
+    and dispatcher. A plugin that skipped the classifier would fail here.
+    """
+    registry = create_registry()
+    namespace: dict[str, Any] = {
+        "Tool": Tool,
+        "ToolRegistry": ToolRegistry,
+        "ToolDispatcher": ToolDispatcher,
+        "asyncio": asyncio,
+        "Path": Path,
+    }
+    _exec(_require("plugin-register"), namespace)
+    register = namespace.get("register")
+    assert callable(register), "the plugin-register block defined no register()"
+
+    body = _require("plugin-entry-points").body
+    assert "tstd.tools" in body, "the entry-point snippet does not name the tstd.tools group"
+
+    boundary = Boundary(workspace_root=tmp_path)
+    dispatcher = ToolDispatcher(
+        registry,
+        classifier=AmbiguousClassifier(
+            static=DecisionClassifier(boundary), call_worker=_stub_worker
+        ),
+        path_guard=PathGuard(boundary),
+        policy=PolicyConfig(),
+        approval_handler=lambda *_args: _approved(),
+        workspace=tmp_path,
+    )
+    register(registry, dispatcher)
+    assert registry.get("shout") is not None, "the plugin register() registered no tool"
+
+    arguments = json.loads(_require("plugin-arguments").body)
+    result = await dispatcher.dispatch("call_1", "shout", arguments, session=None)
+    assert result.status == "success", f"the plugin walkthrough tool failed: {result.output}"
+    assert result.output == _require("plugin-result").body.strip(), (
+        f"the guide promises {_require('plugin-result').body.strip()!r}, "
+        f"the dispatcher returned {result.output!r}"
+    )
+    assert result.decision_class is not None, "the plugin walkthrough tool bypassed the classifier"
 
 
 async def _approved() -> ApprovalOutcome:

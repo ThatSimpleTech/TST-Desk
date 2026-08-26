@@ -2137,6 +2137,9 @@ class Daemon:
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
         )
+        from .tools.plugins import bind_plugin_handlers
+
+        bind_plugin_handlers(tool_registry, tool_dispatcher)
         try:
             await self._mcp.ensure_loaded()
             self._mcp.attach(tool_registry, tool_dispatcher)
