@@ -287,6 +287,7 @@ class Session:
         self.charter: Charter | None = None
         self.autonomy_turns = 0
         self.autonomy_class_c = False
+        self.autonomy_class_b = False
         self.autonomy_stop_reason: str | None = None
         self.autonomy_notify: Callable[[str], Awaitable[None]] | None = None
         # TD-4303: Class C reasons kept after the stop reason is rewritten
@@ -295,6 +296,14 @@ class Session:
         # TD-4103: attached by the loop on an unattended run. Interactive
         # sessions leave this None so a turn complete never polls DoD.
         self.dod_poller: Callable[[], Awaitable[Any]] | None = None
+        self.last_dod_poll: Any = None
+        # TD-4201: validator drift check. Interactive sessions never set
+        # these; a later story (TD-4202) reads last_drift_check to revert.
+        self.autonomy_check_every = 5
+        self.autonomy_last_check_sha: str | None = None
+        self.autonomy_ledger_seen = 0
+        self.last_drift_check: Any = None
+        self.validator_call: Callable[[str], Awaitable[str]] | None = None
 
     def mark_class_c(self, reason: str) -> None:
         """A Class C call on an autonomous run — stop after this turn."""
@@ -311,9 +320,7 @@ class Session:
         if self.cu_session_active or not is_cu_tool(tool_name):
             return
         self.cu_session_active = True
-        await self.event_log.add(
-            CuSession(session_id=self.id, active=True, seq=1)
-        )
+        await self.event_log.add(CuSession(session_id=self.id, active=True, seq=1))
         if self._overlay_session is not None:
             await self._overlay_session(True)
 
@@ -324,9 +331,7 @@ class Session:
         if not self.cu_session_active:
             return
         self.cu_session_active = False
-        await self.event_log.add(
-            CuSession(session_id=self.id, active=False, seq=1)
-        )
+        await self.event_log.add(CuSession(session_id=self.id, active=False, seq=1))
         if self._overlay_session is not None:
             await self._overlay_session(False)
 

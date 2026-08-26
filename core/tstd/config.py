@@ -479,6 +479,7 @@ class AutonomyConfig(BaseModel):
 
     ``runtime`` / ``image`` are the rootless container used only for
     autonomous runs (TD-4301). Interactive sessions ignore those two.
+    ``check_every`` is the autonomy drift-check cadence (TD-4201).
     ``verify`` is the interactive validator review after writes (TD-4204,
     spec §12.6 first sentence). It is not the autonomy supervisor.
     """
@@ -487,6 +488,7 @@ class AutonomyConfig(BaseModel):
 
     runtime: str = Field(default="podman", min_length=1)
     image: str = Field(default="docker.io/library/alpine:3.21", min_length=1)
+    check_every: int = Field(default=5, ge=1)
     verify: Literal["off", "after_write", "ask"] = "after_write"
 
     @field_validator("runtime", "image")

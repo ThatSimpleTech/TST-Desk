@@ -308,6 +308,7 @@ turns never verify. There is no charter and no auto-revert.
 |---|---|---|---|
 | `runtime` | string | `podman` | Argv0 probed on PATH, or an absolute path to an executable. Empty is a load error. |
 | `image` | string | `docker.io/library/alpine:3.21` | Image the container execs. Empty is a load error. Pre-pull it; the argv passes `--pull=never` so a start check cannot phone a registry. |
+| `check_every` | int ≥ 1 | `5` | Autonomy turns between validator drift checks (TD-4201, spec §12.6). A Class B decision this turn also checks, even if N is not reached. Interactive sessions ignore this. |
 | `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. |
 
 <!-- verify: model -->
@@ -382,6 +383,7 @@ notify:
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21
+  check_every: 5
   verify: after_write
 ```
 
