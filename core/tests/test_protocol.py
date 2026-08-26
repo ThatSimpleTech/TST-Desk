@@ -836,7 +836,7 @@ class TestDaemonEvents:
         assert "session_id" not in CuKillState.model_fields
 
     def test_cu_session(self) -> None:
-        evt = CuSession(session_id="sess-1", active=True)
+        evt = CuSession(session_id="sess-1", active=True, seq=1)
         back = _roundtrip(evt)
         assert isinstance(back, CuSession)
         assert back.active is True

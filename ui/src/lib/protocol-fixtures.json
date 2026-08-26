@@ -585,6 +585,12 @@
       "brain": "test-brain-slug",
       "worker": "test-worker-slug",
       "validator": "test-validator-slug"
+    },
+    "preset": "test",
+    "hosts": {
+      "brain": "mock.local",
+      "worker": "mock.local",
+      "validator": "mock.local"
     }
   },
   "tier_state_override": {
@@ -597,6 +603,12 @@
       "brain": "test-brain-slug",
       "worker": "test-worker-slug",
       "validator": "test-validator-slug"
+    },
+    "preset": "test",
+    "hosts": {
+      "brain": "mock.local",
+      "worker": "mock.local",
+      "validator": "mock.local"
     }
   },
   "ping": {

@@ -8231,3 +8231,21 @@ user already has a config file; the patience belongs there.
 **Alternative rejected:** Inferring patience from the slug. Also
 rejected: raising the shipped default to three minutes. Also
 rejected: treating a `200` error envelope as a parse error.
+
+---
+
+## 2026-08-25 — TD-1720: title bar paints daemon-resolved host (Class B)
+
+**Decision:** `tier_state` grows additive `preset` and `hosts`
+(tier → hostname:port). The title bar shows `{slug} · {host}` for
+the active tier. The UI never parses a host out of a slug. The
+daemon fills `hosts` from the same `effective_tier` / credential
+resolution the provider client uses. No `PROTOCOL_VERSION` bump.
+
+**Rationale:** The chips named the routing role. The ox-alpha
+failure was a host mismatch that those labels could not show.
+
+**Alternative rejected:** Replacing chip labels with raw slugs
+(they wrap). Also rejected: inferring OpenRouter from `vendor/model`
+(TD-1718). Also rejected: showing Settings' `active_preset` as the
+session's host — existing sessions keep the config they opened with.

@@ -1017,12 +1017,15 @@ class CostUpdate(DaemonEvent):
 
 
 class TierState(DaemonEvent):
-    """Active model tier and configured slugs (TD-1006).
+    """Active model tier and configured slugs (TD-1006, TD-1720).
 
     Emitted when a session opens, when a ``set_tier`` override lands, and
     whenever the router changes tier between turns (lead-turns handoff,
     failure escalation). ``tier`` is what handles the next turn;
     ``override`` is the pinned override when the user picked one.
+    ``preset`` and ``hosts`` are the identity the title bar paints;
+    ``hosts`` is hostname:port from the URL the client will call, not
+    a guess from the slug (TD-1718). Additive — no PROTOCOL_VERSION bump.
     """
 
     type: Literal["tier_state"] = "tier_state"
@@ -1031,6 +1034,9 @@ class TierState(DaemonEvent):
     override: TierName | None = None
     # tier name → configured model slug, "brain"/"worker"/"validator".
     model_slugs: dict[str, str] = Field(default_factory=dict)
+    preset: str = ""
+    # tier name → hostname:port the provider client will call.
+    hosts: dict[str, str] = Field(default_factory=dict)
 
 
 class BoundaryUpdate(DaemonEvent):
@@ -1669,7 +1675,6 @@ class CuSession(DaemonEvent):
     type: Literal["cu_session"] = "cu_session"
     session_id: str
     active: bool
-    seq: int = 1
 
 
 class DesignHitBox(BaseModel):

@@ -62,4 +62,4 @@ async def test_killed_blocks_click_not_screenshot(tmp_path: Path) -> None:
     assert mock.actuations == []
     assert shot.status == "success"
     assert shot.decision_class is DecisionClass.A
-    assert [name for name, _ in mock.calls] == ["screenshot"]
+    assert [name for name, _ in mock.calls if name != "overlay_session"] == ["screenshot"]

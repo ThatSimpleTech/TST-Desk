@@ -412,6 +412,12 @@ FIXTURES = {
             "worker": "test-worker-slug",
             "validator": "test-validator-slug",
         },
+        preset="test",
+        hosts={
+            "brain": "mock.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
+        },
         seq=18,
     ),
     "tier_state_override": TierState(
@@ -422,6 +428,12 @@ FIXTURES = {
             "brain": "test-brain-slug",
             "worker": "test-worker-slug",
             "validator": "test-validator-slug",
+        },
+        preset="test",
+        hosts={
+            "brain": "mock.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
         },
         seq=19,
     ),
@@ -708,7 +720,7 @@ FIXTURES = {
     ),
     # TD-3404: process-wide kill-switch. Connection-scoped; no session_id.
     "cu_kill_state": CuKillState(killed=True),
-    "cu_session": CuSession(session_id="sess-1", active=True),
+    "cu_session": CuSession(session_id="sess-1", active=True, seq=1),
     "design_hit": DesignHit(
         session_id="sess-1",
         x=12.0,
