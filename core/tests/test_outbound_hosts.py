@@ -267,6 +267,10 @@ _OUTBOUND_CAPABLE = {
     ),
     "notify/slack.py": "slack incoming webhook; destination host is notify.slack.host from config",
     "notify/ntfy.py": "ntfy topic POST; destination host is notify.ntfy.host from config",
+    "mcp/http.py": (
+        "user-listed MCP HTTP client; destination is mcp.servers.<id>.url "
+        "from config; loopback-only, refused before send"
+    ),
 }
 
 

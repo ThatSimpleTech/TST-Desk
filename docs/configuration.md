@@ -70,6 +70,7 @@ no effect.
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 | `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
+| `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. No `env` map — tokens stay in the keychain. |
 
 ### `credentials`
 
@@ -311,6 +312,34 @@ turns never verify. There is no charter and no auto-revert.
 | `check_every` | int ≥ 1 | `5` | Autonomy turns between validator drift checks (TD-4201, spec §12.6). A Class B decision this turn also checks, even if N is not reached. Interactive sessions ignore this. |
 | `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. |
 
+### `mcp`
+
+User-listed MCP servers (TD-4401). The user names each server in
+user-data-dir `config.yaml` — that listing is the load, not dynamic
+discovery (TD-601). Interactive and autonomy sessions both load them.
+A dead or refused server is a doctor row (`mcp:<id>` after `steering`),
+not a dead daemon. Builtins stay registered. The computer-use sidecar
+(`computer_use.command` → `mcp/tst-cu-mcp`) is a different product.
+
+Tool names are prefixed `{server_id}__{remote_name}` so an MCP tool
+named `fs_read` cannot replace the builtin. Registry provenance is
+`mcp:<server_id>`. The approval floor is `ask` (TD-4402 classifies
+path/host fields). No free-form `env` map — a token pasted here would
+land on disk; Settings (TD-4403) keeps paste-a-token in the keychain.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `servers` | mapping of id → server | `{}` | Listed servers. Ids are lowercase slugs `[a-z][a-z0-9-]{0,31}`, same as credentials. Empty or omitted means none — no extra doctor rows. |
+
+#### `mcp.servers.<id>`
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `transport` | `stdio` or `http` | *required* | How the daemon talks to the server. stdio spawns `command`. http POSTs JSON-RPC to `url`. |
+| `command` | list of strings | `[]` | Argv for a stdio server. Required when `transport` is `stdio`. A string is a load error (not split). Empty skips the server with a doctor fail. |
+| `url` | string | *empty* | Loopback `http(s)` endpoint for an http server. Required when `transport` is `http`. Non-loopback is refused before any request. Empty skips the server with a doctor fail. |
+| `enabled` | bool | `true` | When false, the server is skipped (doctor `skip`). |
+
 <!-- verify: model -->
 ```yaml
 presets:
@@ -385,6 +414,16 @@ autonomy:
   image: docker.io/library/alpine:3.21
   check_every: 5
   verify: after_write
+mcp:
+  servers:
+    example:
+      transport: stdio
+      command: ["python", "-m", "some_mcp"]
+      enabled: true
+    loop:
+      transport: http
+      url: http://127.0.0.1:9
+      enabled: true
 ```
 
 ### A preset

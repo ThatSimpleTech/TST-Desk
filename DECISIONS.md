@@ -8489,3 +8489,27 @@ fallback already in discovery.
 **Alternative rejected:** Fetching the body only on pick. Also rejected:
 forbidding unknown frontmatter keys. Also rejected: a new
 `command_file` refusal code (the model should see one read-only rule).
+
+---
+
+## 2026-08-26 — TD-4401: MCP tools are prefixed; HTTP is JSON-RPC POST (Class B)
+
+**Decision:** User-listed MCP tools register as `{server_id}__{remote_name}`
+with provenance `mcp:<server_id>` and `side_effect_class="ask"`. An MCP
+tool named `fs_read` therefore cannot replace the builtin. HTTP transport
+is a JSON-RPC POST to `mcp.servers.<id>.url` (loopback only, refused
+before dial). It is not SSE and not Streamable-HTTP session ids. There
+is no `env:` map on the server config (`extra="forbid"`). A dead or
+refused server is a doctor row `mcp:<id>` after `steering`; empty
+`mcp.servers` adds no rows. The computer-use sidecar stays
+`tstd.desktop` / `mcp/tst-cu-mcp`.
+
+**Rationale:** Prefixing is the cheapest collision rule that keeps
+TD-601's explicit builtin names stable. Speaking JSON-RPC ourselves
+avoids a new PyPI dependency. HTTP POST matches the story's scripted
+loopback server without inventing a second product transport. Doctor
+rows rather than a failed `Daemon.run` is the acceptance criterion.
+
+**Alternative rejected:** Replacing builtins on name clash. Also
+rejected: hijacking `tstd.desktop.stdio_mcp`. Also rejected: a free-form
+`env` map (TD-4403 keeps tokens in the keychain).

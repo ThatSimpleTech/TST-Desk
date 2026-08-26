@@ -102,6 +102,7 @@ from .keychain import (
 from .local_worker import session_is_cu_heavy, titlebar_hosts, titlebar_slugs
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
+from .mcp.loader import McpSupervisor
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
 from .memory_store import (
@@ -570,6 +571,9 @@ class Daemon:
         # Browser CU (TD-1710): mock unless computer_use.browser is playwright
         # and Playwright is importable. Profile lives under the data dir.
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
+        # User-listed MCP servers (TD-4401). Handshake is lazy; a dead
+        # server is a doctor row, never a failed Daemon.run.
+        self._mcp = McpSupervisor(self.config.mcp)
         self._notify_send = notify_send
         self._scheduler_tick = scheduler_tick
         self._scheduler_deliver = RecordingDeliver(send=notify_send)
@@ -945,7 +949,8 @@ class Daemon:
         """Run the doctor checks (TD-1104) and return the report.
 
         Rows in display order: daemon → key → provider → git → workspace →
-        steering.  Blocking filesystem calls ride worker threads; the live
+        steering → optional ``mcp:<id>`` (only when ``mcp.servers`` is
+        non-empty).  Blocking filesystem calls ride worker threads; the live
         provider probe is the only slow row (one token, worst case the
         provider timeout).
         """
@@ -1010,6 +1015,21 @@ class Daemon:
         else:
             checks.append(await asyncio.to_thread(_check_writable, workspace))
             checks.append(await self._check_steering(workspace))
+
+        if self.config.mcp.servers:
+            try:
+                await self._mcp.ensure_loaded()
+            except Exception:
+                log.exception("mcp doctor probe failed")
+            for row in self._mcp.doctor_rows():
+                checks.append(
+                    DiagnosticCheck(
+                        name=f"mcp:{row.server_id}",
+                        status=row.status,
+                        detail=row.detail,
+                        fix=row.fix,
+                    )
+                )
 
         return DiagnosticsReport(seq=1, checks=checks)
 
@@ -1195,6 +1215,7 @@ class Daemon:
 
         await self.desktop_driver.aclose()
         await self.browser_driver.aclose()
+        await self._mcp.aclose()
 
         log.info("shutdown complete")
 
@@ -2116,6 +2137,11 @@ class Daemon:
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
         )
+        try:
+            await self._mcp.ensure_loaded()
+            self._mcp.attach(tool_registry, tool_dispatcher)
+        except Exception:
+            log.exception("mcp tool attach failed; builtins still registered")
 
         sink = self._audit_writer
         runner = SessionRunner(
