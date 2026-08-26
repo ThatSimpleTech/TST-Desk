@@ -486,6 +486,8 @@ class AutonomyConfig(BaseModel):
 
     runtime: str = Field(default="podman", min_length=1)
     image: str = Field(default="docker.io/library/alpine:3.21", min_length=1)
+    check_every: int = Field(default=5, ge=1)
+    verify: Literal["off", "after_write", "ask"] = "after_write"
 
     @field_validator("runtime", "image")
     @classmethod

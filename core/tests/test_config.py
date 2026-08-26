@@ -239,11 +239,14 @@ class TestTiers:
         cfg = _load_shipped(tmp_path)
         assert cfg.autonomy.runtime == "podman"
         assert cfg.autonomy.image == "docker.io/library/alpine:3.21"
+        assert cfg.autonomy.check_every == 5
+        assert cfg.autonomy.verify == "after_write"
         assert AutonomyConfig().runtime == "podman"
 
     def test_omitted_autonomy_is_filled_from_shipped(self, tmp_path: Path) -> None:
         text = default_config_yaml().replace(
-            "autonomy:\n  runtime: podman\n  image: docker.io/library/alpine:3.21\n\n",
+            "autonomy:\n  runtime: podman\n  image: docker.io/library/alpine:3.21\n"
+            "  check_every: 5\n  verify: after_write\n\n",
             "",
         )
         assert "\nautonomy:" not in text

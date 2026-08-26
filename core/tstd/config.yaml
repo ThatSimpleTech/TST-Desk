@@ -278,9 +278,13 @@ remote:
 # sessions ignore this block. runtime is argv0 (PATH or an absolute
 # path). image is the tag the argv execs — never a Python literal.
 # A missing or rootful runtime refuses start with install copy.
+# check_every: validator drift check every N autonomy turns (TD-4201).
+# verify: unused here — interactive post-write verify is TD-4204.
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21
+  check_every: 5
+  verify: after_write
 
 # Slack incoming webhook (TD-3801) and ntfy topic POST (TD-3802). Off by
 # default. Destination URLs are keychain secrets (tst-slack-webhook,

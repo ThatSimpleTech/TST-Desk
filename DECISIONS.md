@@ -8249,3 +8249,31 @@ failure was a host mismatch that those labels could not show.
 (they wrap). Also rejected: inferring OpenRouter from `vendor/model`
 (TD-1718). Also rejected: showing Settings' `active_preset` as the
 session's host — existing sessions keep the config they opened with.
+
+---
+
+## 2026-08-26 — TD-4201: drift check is a session result, not a turn (Class B)
+
+**Decision:** The validator drift check (spec §12.6) is a supervisor
+call on the continue path of `advance_autonomy`. Cost goes through
+`CostTracker.record_off_turn` on the validator tier. The router is
+not advanced. The structured result is stored on
+`session.last_drift_check` for TD-4202; no new protocol event.
+
+`tstd.autonomy.__init__` does not import `supervisor`. Importing it
+there cycles through `tools.dispatch` and `local_worker` → `session`
+→ `policy` while the autonomy package is still loading.
+
+The validator answer is JSON with `serves_objective` /
+`class_a_drifted` / `progress_real`, or three YES/NO/DRIFT lines.
+Unparseable is fail-closed (`drift_detected=True`) and is reported
+only — this story does not revert.
+
+**Rationale:** Spec §12.6 names the inputs and questions, not the
+wire. A later revert story needs the last result on the session.
+A new event would force a protocol/UI change this story forbids.
+
+**Alternative rejected:** Calling `router.record_turn_start()` so
+the check looks like a user turn. Also rejected: exporting
+supervisor from `autonomy/__init__.py`. Also rejected: auto-revert
+or a circuit breaker here (TD-4202 / TD-4203).
