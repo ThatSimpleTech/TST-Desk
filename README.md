@@ -218,10 +218,11 @@ path on any OS), remote attach over Tailscale (never `0.0.0.0`) with Slack/ntfy 
 and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
 a validating `CHARTER.md` schema and the project-home charter editor, the
 autonomy engine (unattended runner, circuit breakers, hard-required container),
+slash commands, `SKILL.md`, plan lock, MCP loading,
 plus the session rail, settings, diagnostics, and keyless local-model support.
 
-What is not built yet, and is not claimed anywhere above: MCP loading, slash
-commands, `SKILL.md`, and plan lock, Wayland desktop capture, and desktop Design-mode AX.
+What is not built yet, and is not claimed anywhere above: Wayland desktop
+capture, and desktop Design-mode AX.
 Those are later stories — see [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) §9 for
 the phasing.
 

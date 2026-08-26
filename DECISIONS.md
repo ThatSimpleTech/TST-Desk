@@ -8634,3 +8634,25 @@ tools without an explicit Class C product decision.
 rejected: loading non-permissive plugins with a log-only warning. Also
 rejected: a PyPI client library for SPDX. Also rejected: doctor rows for
 skipped plugins (log + skip; protocol.py is owned by other stories).
+
+---
+
+## 2026-08-26 — TD-4604: M10 exit is a new harness module (Class B)
+
+**Decision:** `tstd.e2e_m10.run_m10` is a new module, not a branch of
+`e2e_harness.run`. The pass is an interactive session (real WebSocket,
+in-process daemon, `MockProvider`) that plants user-data-dir
+`config.yaml` with known mock slugs and `mcp.servers.harness` pointing
+at a copied fake stdio speaker. Slash and skill bodies are unique
+tokens; the first recorded system prompt must show the skill catalog
+and must not show either body. Default `addopts` (`-m 'not live'`)
+keeps it in the default suite.
+
+**Rationale:** Folding M10 into `e2e_harness.run` would change a frozen
+signature (TD-1401). M10's exit criterion is observable: catalog-not-
+body, body-after-invoke, and an MCP `tool_call` that carries a decision
+class. A real MCP package or Podman would make CI a fact about the
+machine.
+
+**Alternative rejected:** Branching `e2e_harness.run`. Also rejected:
+marking the pin `@pytest.mark.live`.
