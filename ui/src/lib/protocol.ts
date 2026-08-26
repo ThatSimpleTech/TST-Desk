@@ -184,6 +184,14 @@ export interface SetPlan extends ClientMessage {
   on: boolean;
 }
 
+/** Retarget this session at a catalog preset (TD-1721). Refused mid-turn.
+ *  Does not write Settings. Acked with session_list. */
+export interface SetSessionPreset extends ClientMessage {
+  type: "set_session_preset";
+  session_id: string;
+  name: string;
+}
+
 export interface GetInstructionStack extends ClientMessage {
   type: "get_instruction_stack";
   session_id: string;
@@ -558,6 +566,7 @@ export type ClientMessageUnion =
   | Detach
   | SetTier
   | SetPlan
+  | SetSessionPreset
   | GetInstructionStack
   | ListInstructions
   | ListCommands
@@ -1003,6 +1012,8 @@ export interface SessionSummary {
   /** Auto-title from the first non-empty user message (TD-3001). Null
    *  until then — the rail falls back to the short id. Additive. */
   title?: string | null;
+  /** Catalog preset this session opened with, or last switched to (TD-1721). */
+  preset?: string;
 }
 
 export interface SessionList extends DaemonEvent {

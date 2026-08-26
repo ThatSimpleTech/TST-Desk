@@ -359,6 +359,21 @@ class SetPlan(ClientMessage):
     on: bool
 
 
+class SetSessionPreset(ClientMessage):
+    """Retarget this session at a catalog preset (TD-1721).
+
+    Settings' ``set_preset`` stays the machine-wide default for new
+    sessions. This verb writes the preset *name* onto the session
+    record — not a forked config tree — and is refused while a turn
+    is running. Acked with ``session_list``; the title bar follows
+    the ``tier_state`` the session log also emits.
+    """
+
+    type: Literal["set_session_preset"] = "set_session_preset"
+    session_id: str
+    name: str = Field(min_length=1)
+
+
 class GetInstructionStack(ClientMessage):
     """Request the current instruction stack for a session."""
 
@@ -1519,6 +1534,9 @@ class SessionSummary(BaseModel):
     # Auto-title from the first non-empty user message (TD-3001). None
     # until then — the rail falls back to the short id. Additive.
     title: str | None = None
+    # Catalog preset this session opened with, or last switched to
+    # (TD-1721). Empty on a store written before the field. Additive.
+    preset: str = ""
 
 
 class SessionList(DaemonEvent):
@@ -1968,6 +1986,7 @@ ClientMessageT = Annotated[
     | Detach
     | SetTier
     | SetPlan
+    | SetSessionPreset
     | GetInstructionStack
     | ListInstructions
     | ListCommands
@@ -2100,6 +2119,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "detach",
         "set_tier",
         "set_plan",
+        "set_session_preset",
         "get_instruction_stack",
         "list_instructions",
         "list_commands",

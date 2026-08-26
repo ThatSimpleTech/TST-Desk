@@ -30,6 +30,7 @@ from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
 
 if TYPE_CHECKING:
+    from .config import ModelConfig
     from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
     from .router import TierRouter
@@ -281,6 +282,11 @@ class Session:
         self.parent_id: str | None = None
         # Bound by agent_loop so ``delegate`` can spawn a worker child.
         self.delegate_runtime: Any = None
+        # Catalog preset this loop is using (TD-1721). Name on the
+        # session record; ``config`` is a snapshot of that catalog
+        # entry, not a fork written back to Settings.
+        self.preset: str = ""
+        self.config: ModelConfig | None = None
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False

@@ -23,6 +23,7 @@ import type {
   Detach,
   SetTier,
   SetPlan,
+  SetSessionPreset,
   GetInstructionStack,
   ListInstructions,
   ListCommands,
@@ -290,6 +291,13 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(m.type).toBe("set_plan");
     expect(m.on).toBe(true);
     expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("set_session_preset", () => {
+    const m = fixtures.set_session_preset as SetSessionPreset;
+    expect(m.type).toBe("set_session_preset");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.name)).toBe(true);
   });
 
   it("get_instruction_stack", () => {
@@ -917,6 +925,7 @@ describe("All fixtures have required shape", () => {
       "set_session_star",
       "rename_session",
       "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier", "set_plan",
+      "set_session_preset",
       "get_instruction_stack",
       "list_instructions", "list_commands", "list_memory", "save_memory", "create_rule",
       "get_charter", "save_charter", "start_autonomy",
@@ -1095,7 +1104,9 @@ describe("Session lifecycle messages match TypeScript types", () => {
     for (const s of list.sessions as SessionSummary[]) {
       expect(isBoolean(s.archived)).toBe(true);
       expect(isBoolean(s.starred)).toBe(true);
+      expect(s.preset === undefined || isString(s.preset)).toBe(true);
     }
+    expect(list.sessions.some((s) => s.preset === "tst-default")).toBe(true);
     expect(list.sessions.some((s) => s.archived)).toBe(true);
     expect(list.sessions.some((s) => !s.archived)).toBe(true);
     expect(list.sessions.some((s) => s.starred)).toBe(true);

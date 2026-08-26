@@ -1,13 +1,14 @@
 <script lang="ts">
-	// Title bar (TD-1006, TD-1720, TD-4603): workspace picker, Plan lock,
-	// tier chips, live model pill, cost meter, session state, and the
-	// boundary ("wall"). Presentational only — everything shown is reduced
-	// from daemon events via session-status; the UI never derives a host
-	// from a slug.
+	// Title bar (TD-1006, TD-1720, TD-1721, TD-4603): workspace picker,
+	// Plan lock, tier chips, session preset, live model pill, cost meter,
+	// session state, and the boundary ("wall"). Presentational only —
+	// everything shown is reduced from daemon events via session-status;
+	// the UI never derives a host from a slug.
 	//
 	// The picker and the meter own their own markup and styles in
 	// WorkspacePicker/CostMeter; what stays here is the row itself.
-	import { liveModelLabel, session, setPlan, setTier, type SessionIndicator } from '../session-status.svelte.js';
+	import { liveModelLabel, session, setPlan, setSessionPreset, setTier, type SessionIndicator } from '../session-status.svelte.js';
+	import { settings } from '../settings.svelte.js';
 	import { formatUsd } from '../cost-format.js';
 	import CostMeter from './CostMeter.svelte';
 	import CuKillSwitch from './CuKillSwitch.svelte';
@@ -41,6 +42,11 @@
 		return 'muted';
 	}
 
+	const presetOptions = $derived(
+		session.preset && !settings.presets.includes(session.preset)
+			? [session.preset, ...settings.presets]
+			: settings.presets,
+	);
 	const liveLabel = $derived(liveModelLabel(session.tier, session.modelSlugs, session.hosts));
 	const liveTip = $derived(
 		[
@@ -117,6 +123,26 @@
 			<span class="live-model" title={liveTip} aria-label="Live model">{liveLabel}</span>
 		{/if}
 
+		{#if presetOptions.length > 0}
+			<select
+				class="preset-select"
+				aria-label="Session preset"
+				title={session.turnActive
+					? 'Cannot change preset while a turn is running'
+					: 'Preset for this session'}
+				value={session.preset}
+				disabled={session.turnActive}
+				onchange={(e) => {
+					const name = e.currentTarget.value;
+					if (name !== session.preset) setSessionPreset(name);
+				}}
+			>
+				{#each presetOptions as name (name)}
+					<option value={name}>{name}</option>
+				{/each}
+			</select>
+		{/if}
+
 		<CostMeter />
 
 		<!-- Session state -->
@@ -180,6 +206,23 @@
 	.chip--active:hover {
 		background: var(--color-accent-hover);
 		border-color: var(--color-accent-hover);
+	}
+
+	.preset-select {
+		max-width: 10rem;
+		font-size: var(--text-xs);
+		font-weight: var(--weight-medium);
+		color: var(--color-text-secondary);
+		background: transparent;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-full);
+		padding: var(--space-1) var(--space-2);
+		cursor: pointer;
+	}
+
+	.preset-select:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
 	}
 
 	.live-model {

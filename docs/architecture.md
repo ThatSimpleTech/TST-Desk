@@ -312,6 +312,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `detach` | yes | Unsubscribe from a session; the session is unaffected. |
 | `set_tier` | yes | Pin the active model tier for the session. |
 | `set_plan` | yes | Turn plan mode (brain lock) on or off. Refused `set_tier` to worker/validator while on (TD-4603). |
+| `set_session_preset` | yes | Retarget this session at a catalog preset. Refused mid-turn. Does not write Settings. Acked with `session_list` (TD-1721). |
 | `get_instruction_stack` | yes | Ask for the resolved steering stack, token counts, and skills (TD-4502). |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |
 | `list_commands` | — | List a workspace's slash commands (`.tst/commands/*` and `~/.tstdesk/commands/*`, with `.claude/commands/` fallback). Human path (TD-4501). |
@@ -399,7 +400,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `autonomy_start` | connection | Reply to `start_autonomy`: signed, ready, optional `session_id` of the daemon-owned run, or the refusal (TD-4003, TD-4101). |
 | `autonomy_summary` | session | Unattended-run wrap-up: stop reason, turns, spend, refusals (TD-4303). |
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
-| `session_list` | connection | The current session list. |
+| `session_list` | connection | The current session list. Each row carries the catalog `preset` that session is using (TD-1721). |
 | `policy_rules` | connection | The workspace's saved policy rules. |
 | `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server`. `remote_bind` is the bound Tailscale address, never a token. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
