@@ -155,6 +155,7 @@ from .protocol import (
     DeleteJob,
     DeleteSession,
     Deny,
+    DenyVerify,
     DesignHit,
     DesignHitBox,
     DesignHitTest,
@@ -196,6 +197,7 @@ from .protocol import (
     RenameSession,
     Resume,
     RevokePolicyRule,
+    RunVerify,
     RunDiagnostics,
     SaveCharter,
     SaveJob,
@@ -1453,6 +1455,24 @@ class Daemon:
             events = found.event_log.events_from(found.event_log.last_seq)
             if events:
                 return events[0].model_dump_json()
+            return None
+
+        if isinstance(msg, (RunVerify, DenyVerify)):
+            # TD-4204 ask mode: the parked verify lives on the session,
+            # not an approval card. Unknown session is the same miss as
+            # cancel; a session with nothing pending is a silent no-op.
+            from .autonomy.verify import confirm_pending_verify, deny_pending_verify
+
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            if isinstance(msg, RunVerify):
+                await confirm_pending_verify(found)
+            else:
+                await deny_pending_verify(found)
             return None
 
         if isinstance(msg, Resume):

@@ -8295,3 +8295,28 @@ branches would invent a control plane this story does not need.
 `notify_autonomy_stop` (the callback would still look like
 "Autonomy complete: definition of done met"). Also rejected: a
 protocol checkout command.
+
+---
+
+## 2026-08-26 — TD-4204: interactive verify after writes (Class B)
+
+**Decision:** Detect a write turn from successful `fs_write` / `fs_edit`
+results this turn (an explicit session flag, cleared each turn). A
+`shell` that only echoes is not a write. After `turn_complete` on an
+interactive session, `autonomy.verify` (`off` | `after_write` | `ask`,
+default `after_write`) may enqueue one validator-tier completion via
+`assemble(..., tier="validator", diff=..., test_output=...)`. Cost is
+`CostTracker.record_off_turn("validator", ...)` — not
+`router.record_turn_start()`. The result is a `verify_result` timeline
+event, never an `assistant_delta`. Ask mode emits `pending: true` and
+waits for `run_verify` / `deny_verify` (not a reused `ApprovalRequest`).
+Autonomy sessions skip this path. No charter, no auto-revert.
+
+**Rationale:** Spec §12.6 first sentence is the unused interactive
+validator call. Reusing `ApprovalRequest` would lie about a tool
+approval. Folding the review into the chat transcript would invent a
+second bubble the user did not ask for.
+
+**Alternative rejected:** Treating every `mutates=True` tool as a write
+(shell echo would verify). Also rejected: streaming the validator reply
+as assistant text.

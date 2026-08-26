@@ -52,6 +52,7 @@ from tstd.protocol import (
     DeleteJob,
     DeleteSession,
     Deny,
+    DenyVerify,
     DesignHit,
     DesignHitBox,
     DesignHitTest,
@@ -101,6 +102,7 @@ from tstd.protocol import (
     RevokePolicyRule,
     RuleActivated,
     RunDiagnostics,
+    RunVerify,
     SaveCharter,
     SaveJob,
     SaveMemory,
@@ -137,6 +139,7 @@ from tstd.protocol import (
     UserMessage,
     UserTurn,
     ValidateApiKey,
+    VerifyResult,
 )
 
 FIXTURES = {
@@ -171,6 +174,8 @@ FIXTURES = {
     "set_workspace_pin": SetWorkspacePin(path="/home/user/project", pinned=True),
     "resume": Resume(session_id="sess-1"),
     "cancel": Cancel(session_id="sess-1"),
+    "run_verify": RunVerify(session_id="sess-1"),
+    "deny_verify": DenyVerify(session_id="sess-1"),
     "attach": Attach(session_id="sess-1", from_seq=5),
     "detach": Detach(session_id="sess-1"),
     "set_tier": SetTier(session_id="sess-1", tier="brain"),
@@ -364,6 +369,14 @@ FIXTURES = {
         session_id="sess-1",
         code="dirty_baseline",
         message="This workspace has uncommitted changes.",
+        seq=10,
+    ),
+    "verify_result": VerifyResult(
+        session_id="sess-1",
+        verdict="pass",
+        summary="Diff matches the tests.",
+        cost=0.002,
+        pending=False,
         seq=10,
     ),
     "cost_update": CostUpdate(
