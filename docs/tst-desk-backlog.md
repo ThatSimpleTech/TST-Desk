@@ -5652,9 +5652,15 @@ and reports only — no auto-revert (TD-4202), no circuit breakers
 **Size:** 5 · **Depends on:** TD-4201, TD-4102
 
 **Acceptance criteria:**
-- [ ] Drift → revert to last good checkpoint, log, re-plan on brain
-- [ ] Drift twice in a row → stop and notify
-- [ ] Interactive verify (TD-4204) does not auto-revert
+- [x] Drift → revert to last good checkpoint, log, re-plan on brain
+- [x] Drift twice in a row → stop and notify
+- [x] Interactive verify (TD-4204) does not auto-revert
+
+**Done:** Continue-path hook after `maybe_check_drift`. A detection
+restores drifted auto-branch paths to `autonomy_last_good_sha`, logs,
+and `set_tier("brain")`. Two in a row set `breaker:drift` (existing
+notify). Interactive verify does not import revert. First drift with
+no last-good SHA is a no-op that still counts.
 
 ---
 

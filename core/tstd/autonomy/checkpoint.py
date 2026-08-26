@@ -130,6 +130,22 @@ def auto_branch(slug: str) -> str:
     return branch
 
 
+def auto_ref(branch: str) -> str:
+    """``refs/heads/tst/auto/<slug>``. Never names HEAD, main, or master.
+
+    Revert (TD-4202) and checkpoint share this so an auto-branch move
+    cannot be pointed at the user's default branch.
+    """
+    if not branch.startswith(AUTO_BRANCH_PREFIX):
+        raise ValueError(f"autonomy ref must start with {AUTO_BRANCH_PREFIX!r}: {branch!r}")
+    if branch.removeprefix(AUTO_BRANCH_PREFIX) in {"main", "master"}:
+        raise ValueError(f"refusing to name a primary branch: {branch!r}")
+    ref = f"refs/heads/{branch}"
+    if ref in {"refs/heads/main", "refs/heads/master", "HEAD"}:
+        raise ValueError(f"refusing protected ref: {ref!r}")
+    return ref
+
+
 async def checkpoint_start_error(workspace: str | Path) -> str | None:
     """Why an autonomous run may not checkpoint here, or ``None``.
 

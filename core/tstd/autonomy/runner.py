@@ -15,6 +15,7 @@ from ..config import ModelConfig
 from ..logging import get_logger
 from .breakers import maybe_trip
 from .charter import Charter
+from .revert import apply_drift_result
 from .supervisor import maybe_check_drift
 
 if TYPE_CHECKING:
@@ -113,13 +114,16 @@ async def advance_autonomy(session: Session) -> bool:
                 class_c=session.autonomy_class_c,
             )
             if reason is None:
+                result = None
                 try:
-                    await maybe_check_drift(session)
+                    result = await maybe_check_drift(session)
                 except Exception:
                     log.exception("validator drift check failed")
-                await session.add_user_message(continue_prompt(charter, session.autonomy_turns))
-                return True
-            session.autonomy_stop_reason = reason
+                if not await apply_drift_result(session, result):
+                    await session.add_user_message(continue_prompt(charter, session.autonomy_turns))
+                    return True
+            else:
+                session.autonomy_stop_reason = reason
     from .wakeup import deliver_wakeup
 
     await deliver_wakeup(session)
