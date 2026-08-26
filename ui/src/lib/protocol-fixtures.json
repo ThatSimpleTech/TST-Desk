@@ -104,6 +104,14 @@
     "type": "cancel",
     "session_id": "sess-1"
   },
+  "run_verify": {
+    "type": "run_verify",
+    "session_id": "sess-1"
+  },
+  "deny_verify": {
+    "type": "deny_verify",
+    "session_id": "sess-1"
+  },
   "attach": {
     "type": "attach",
     "session_id": "sess-1",
@@ -516,6 +524,15 @@
     "session_id": "sess-1",
     "code": "dirty_baseline",
     "message": "This workspace has uncommitted changes."
+  },
+  "verify_result": {
+    "type": "verify_result",
+    "seq": 10,
+    "session_id": "sess-1",
+    "verdict": "pass",
+    "summary": "Diff matches the tests.",
+    "cost": 0.002,
+    "pending": false
   },
   "cost_update": {
     "type": "cost_update",

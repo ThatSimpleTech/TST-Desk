@@ -475,17 +475,19 @@ class RemoteConfig(BaseModel):
 
 
 class AutonomyConfig(BaseModel):
-    """Rootless container used only for autonomous runs (TD-4301).
+    """Autonomy and interactive-verify settings.
 
-    Interactive sessions ignore this block. ``runtime`` is the argv0
-    probed on PATH (or an absolute path). ``image`` is configuration,
-    never a Python literal — same rule as model slugs.
+    ``runtime`` / ``image`` are the rootless container used only for
+    autonomous runs (TD-4301). Interactive sessions ignore those two.
+    ``verify`` is the interactive validator review after writes (TD-4204,
+    spec §12.6 first sentence). It is not the autonomy supervisor.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     runtime: str = Field(default="podman", min_length=1)
     image: str = Field(default="docker.io/library/alpine:3.21", min_length=1)
+    verify: Literal["off", "after_write", "ask"] = "after_write"
 
     @field_validator("runtime", "image")
     @classmethod

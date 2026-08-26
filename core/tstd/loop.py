@@ -38,6 +38,11 @@ from .autonomy import (
 from .autonomy.checkpoint import auto_branch
 from .autonomy.dod import make_dod_poller
 from .autonomy.runner import advance_autonomy
+from .autonomy.verify import (
+    clear_turn_writes,
+    maybe_verify_after_turn,
+    note_tool_result,
+)
 from .autonomy.wakeup import deliver_wakeup
 from .compaction import maybe_compact
 from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
@@ -491,6 +496,7 @@ async def _dispatch_and_append_results(
                 tool_call_id=r.tool_call_id,
             )
         )
+        note_tool_result(session, r.name, r.status, diff=r.diff, output=r.output)
     await session.conversation_changed()
 
 
@@ -747,6 +753,7 @@ async def agent_loop(
         #     accounting is untouched — the ledger row and the cost_update
         #     ride on ``record()``, once per call (TD-1804).
         tracker.begin_turn()
+        clear_turn_writes(session)
         turn_start = time.time()
 
         # 1b. Resolve any tier that leaves its slug unset (TD-1805).  This
@@ -1246,6 +1253,7 @@ async def agent_loop(
 
             # 2h. No tool calls (or no dispatcher) — turn is complete
             await _emit_turn_complete(session, tier, turn_start, tracker)
+            await maybe_verify_after_turn(session, config, tracker, client_for, assembler)
             session.snapshot_branches()
             if session.autonomy and not await advance_autonomy(session):
                 return

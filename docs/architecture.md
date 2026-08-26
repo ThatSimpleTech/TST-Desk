@@ -306,6 +306,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_workspace_pin` | — | Pin or unpin a workspace on the Projects list. Machine-wide. Acked with `setup_state` (TD-2806). |
 | `resume` | yes | Resume a session paused at a declared cap, after the cap was raised. |
 | `cancel` | yes | Cancel a running session. |
+| `run_verify` | yes | Confirm a pending interactive verify after a write (TD-4204 ask mode). |
+| `deny_verify` | yes | Skip a pending interactive verify (TD-4204 ask mode). |
 | `attach` | yes | Subscribe to a session, replaying from `from_seq`. |
 | `detach` | yes | Unsubscribe from a session; the session is unaffected. |
 | `set_tier` | yes | Pin the active model tier for the session. |
@@ -375,6 +377,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write. |
 | `decision_logged` | session | A decision appended to the autonomy ledger. |
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
+| `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. |

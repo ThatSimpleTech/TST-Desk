@@ -275,9 +275,11 @@ remote:
   bind: ""
 
 # Rootless container for autonomous runs only (TD-4301). Interactive
-# sessions ignore this block. runtime is argv0 (PATH or an absolute
+# sessions ignore runtime and image. runtime is argv0 (PATH or an absolute
 # path). image is the tag the argv execs — never a Python literal.
 # A missing or rootful runtime refuses start with install copy.
+# Interactive verify after writes (TD-4204): autonomy.verify is
+# off | after_write | ask. Default after_write. Set it in your user copy.
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21

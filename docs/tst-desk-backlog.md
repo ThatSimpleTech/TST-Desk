@@ -5673,11 +5673,11 @@ The unused validator call for *interactive* mode (spec §12.6 first
 sentence). Not the autonomy supervisor.
 
 **Acceptance criteria:**
-- [ ] Config `verify: off | after_write | ask` (default `after_write`)
-- [ ] A write turn may enqueue one validator call on the diff + tests
-- [ ] Timeline `verify_result`; not a second bubble unless asked
-- [ ] Write-less turns never verify
-- [ ] No charter, no auto-revert
+- [x] Config `verify: off | after_write | ask` (default `after_write`)
+- [x] A write turn may enqueue one validator call on the diff + tests
+- [x] Timeline `verify_result`; not a second bubble unless asked
+- [x] Write-less turns never verify
+- [x] No charter, no auto-revert
 
 ---
 
