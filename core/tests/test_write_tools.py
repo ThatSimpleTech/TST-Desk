@@ -349,3 +349,37 @@ class TestCommandWriteRefusal:
         assert result.error_code == "boundary_refusal"
         assert result.decision_class is DecisionClass.C
         assert not (tmp_path / ".tst" / "commands" / "review.md").exists()
+
+
+class TestSkillWriteRefusal:
+    """Any SKILL.md write is refused like steering (TD-4502)."""
+
+    async def test_fs_write_to_tst_skill_refused(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        dispatcher = make_dispatcher(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        result = await dispatcher.dispatch(
+            "c1",
+            "fs_write",
+            {"path": ".tst/skills/foo/SKILL.md", "content": "override\n"},
+        )
+        assert result.status == "error"
+        assert result.error_code == "boundary_refusal"
+        assert result.decision_class is DecisionClass.C
+        assert not (tmp_path / ".tst" / "skills" / "foo" / "SKILL.md").exists()
+
+    async def test_fs_write_to_nested_skill_md_refused(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        dispatcher = make_dispatcher(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        result = await dispatcher.dispatch(
+            "c1",
+            "fs_write",
+            {"path": "src/SKILL.md", "content": "override\n"},
+        )
+        assert result.status == "error"
+        assert result.error_code == "boundary_refusal"
+        assert result.decision_class is DecisionClass.C
+        assert not (tmp_path / "src" / "SKILL.md").exists()

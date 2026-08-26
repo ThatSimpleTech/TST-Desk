@@ -24,6 +24,11 @@ twice. Keep it under 200 lines.
 That is the whole requirement. Everything else on this page is for when one file stops being
 enough.
 
+Skills are not steering. A `SKILL.md` under `.tst/skills/<name>/` (or the
+user-global tree) is a catalog entry the brain can load on demand. It
+never joins the steering block or the cache prefix, and the agent cannot
+write any file named `SKILL.md`.
+
 If your repo already has a `CLAUDE.md`, you are already done — see §9.
 
 ---

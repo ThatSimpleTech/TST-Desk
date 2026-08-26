@@ -13,8 +13,9 @@ the *obvious* cases — the ones that must never reach the model:
 - a network call to a host outside the allowlist → C
 - a write to a steering file (``AGENTS.md`` / ``CLAUDE.md`` /
   ``.tst/rules/**``, slash-command trees ``.tst/commands/**`` /
-  ``.claude/commands/**`` — TD-4501, and the signed charter at
-  ``.tst/autonomy/CHARTER.md`` — TD-4001) → C, even inside the workspace
+  ``.claude/commands/**`` — TD-4501, any ``SKILL.md`` — TD-4502, and the
+  signed charter at ``.tst/autonomy/CHARTER.md`` — TD-4001) → C, even
+  inside the workspace
 - a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
 - an in-workspace edit inside ``writable_paths`` → A
@@ -60,7 +61,7 @@ class DecisionClass(StrEnum):
 
 # ── Boundary and request models ────────────────────────────────────────
 
-_STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
+_STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md", "SKILL.md"})
 _STEERING_RULES_DIR_PARTS = (".tst", "rules")
 # Slash-command trees (TD-4501). Same Class C refusal as steering so the
 # model sees one read-only rule. ``.tstdesk/commands`` covers a
@@ -286,7 +287,8 @@ def _has_command_dir(parts: Sequence[str]) -> bool:
 def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
-    Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
+    Steering files — ``AGENTS.md``, ``CLAUDE.md``, any ``SKILL.md``
+    (TD-4502), anything under
     ``.tst/rules/``, slash-command trees (``.tst/commands/``,
     ``.claude/commands/``, and ``.tstdesk/commands/`` — TD-4501), the
     approval policy at ``.tst/config.yaml`` (TD-4803), and the signed
@@ -554,7 +556,7 @@ RULE_TABLE: tuple[Rule, ...] = (
     ),
     Rule(
         id="steering-file-write",
-        description="action writes a steering or slash-command file",
+        description="action writes a steering, slash-command, or SKILL.md file",
         decision_class=DecisionClass.C,
         match=_rule_steering_write,
     ),

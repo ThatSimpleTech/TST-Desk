@@ -70,6 +70,7 @@ import type {
   RuleActivated,
   TierSwitched,
   InstructionStack,
+  SkillStackEntry,
   SessionList,
   SessionSummary,
   ArchiveSession,
@@ -1031,6 +1032,15 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(m.type).toBe("instruction_files");
     expect(isString(m.workspace_path)).toBe(true);
     expect(Array.isArray(m.files)).toBe(true);
+  });
+
+  it("instruction_stack", () => {
+    const m = fixtures.instruction_stack as InstructionStack;
+    expect(m.type).toBe("instruction_stack");
+    expect(Array.isArray(m.skills)).toBe(true);
+    const skill = m.skills?.[0] as SkillStackEntry;
+    expect(isString(skill.name)).toBe(true);
+    expect(typeof skill.loaded).toBe("boolean");
   });
 
   it("command_list", () => {

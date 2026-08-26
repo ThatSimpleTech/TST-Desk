@@ -23,7 +23,8 @@
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
 	import type { AttachmentLimits, CommandEntry } from "../../protocol";
 	import { session } from "../../session-status.svelte.js";
-	import { filterCommands, insertCommandBody, slashQuery } from "../../slash-commands";
+	import { filterCommands, insertCommandBody, mergeSlashItems, slashQuery } from "../../slash-commands";
+	import { stack } from "../../stack-store.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
@@ -62,7 +63,8 @@
 
 	const query = $derived(slashQuery(value));
 	const paletteOpen = $derived(query !== null && !slashDismissed);
-	const visibleCommands = $derived(query === null ? [] : filterCommands(commands.items, query));
+	const slashItems = $derived(mergeSlashItems(commands.items, stack.skills));
+	const visibleCommands = $derived(query === null ? [] : filterCommands(slashItems, query));
 
 	$effect(() => {
 		void visibleCommands.length;

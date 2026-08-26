@@ -449,6 +449,7 @@ def _register_builtins(registry: ToolRegistry) -> None:
 
 def create_registry() -> ToolRegistry:
     """Create a new ToolRegistry with all built-in tools pre-registered."""
+    from ..context.skills import register_skill_tools
     from .browser import register_browser_tools
     from .desktop import register_desktop_tools
 
@@ -456,4 +457,5 @@ def create_registry() -> ToolRegistry:
     _register_builtins(registry)
     register_desktop_tools(registry)
     register_browser_tools(registry)
+    register_skill_tools(registry)
     return registry
