@@ -177,6 +177,13 @@ export interface SetTier extends ClientMessage {
   tier: "brain" | "worker" | "validator";
 }
 
+/** Turn plan mode (brain lock) on or off (TD-4603). */
+export interface SetPlan extends ClientMessage {
+  type: "set_plan";
+  session_id: string;
+  on: boolean;
+}
+
 export interface GetInstructionStack extends ClientMessage {
   type: "get_instruction_stack";
   session_id: string;
@@ -527,6 +534,7 @@ export type ClientMessageUnion =
   | Attach
   | Detach
   | SetTier
+  | SetPlan
   | GetInstructionStack
   | ListInstructions
   | ListMemory
@@ -736,6 +744,8 @@ export interface TierState extends DaemonEvent {
   preset?: string;
   /** Tier → hostname:port the client will call. Omitted by older daemons. */
   hosts?: Record<string, string>;
+  /** Plan mode (brain lock). Omitted by older daemons — treat as off. */
+  plan?: boolean;
 }
 
 export interface BoundaryUpdate extends DaemonEvent {

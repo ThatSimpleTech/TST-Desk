@@ -861,6 +861,7 @@ async def agent_loop(
                         model_slugs=_model_slugs,
                         preset=config.active_preset,
                         hosts=_hosts,
+                        plan=router.plan_mode,
                         seq=1,
                     )
                 )

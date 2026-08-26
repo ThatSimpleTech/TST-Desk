@@ -1,12 +1,13 @@
 <script lang="ts">
-	// Title bar (TD-1006, TD-1720): workspace picker, tier chips, live
-	// model pill, cost meter, session state, and the boundary ("wall").
-	// Presentational only — everything shown is reduced from daemon events
-	// via session-status; the UI never derives a host from a slug.
+	// Title bar (TD-1006, TD-1720, TD-4603): workspace picker, Plan lock,
+	// tier chips, live model pill, cost meter, session state, and the
+	// boundary ("wall"). Presentational only — everything shown is reduced
+	// from daemon events via session-status; the UI never derives a host
+	// from a slug.
 	//
 	// The picker and the meter own their own markup and styles in
 	// WorkspacePicker/CostMeter; what stays here is the row itself.
-	import { liveModelLabel, session, setTier, type SessionIndicator } from '../session-status.svelte.js';
+	import { liveModelLabel, session, setPlan, setTier, type SessionIndicator } from '../session-status.svelte.js';
 	import { formatUsd } from '../cost-format.js';
 	import CostMeter from './CostMeter.svelte';
 	import CuKillSwitch from './CuKillSwitch.svelte';
@@ -69,8 +70,20 @@
 	<CuKillSwitch />
 
 	{#if session.sessionId !== null}
-		<!-- Tier chips -->
+		<!-- Plan lock (TD-4603) + tier chips -->
 		<div class="tiers" role="group" aria-label="Model tier">
+			<button
+				class="chip"
+				class:chip--active={session.planMode}
+				type="button"
+				aria-pressed={session.planMode}
+				title={session.planMode
+					? 'Plan mode on — every turn uses brain. Click to clear.'
+					: 'Plan mode — lock every turn to brain'}
+				onclick={() => setPlan(!session.planMode)}
+			>
+				Plan
+			</button>
 			{#each TIERS as tier (tier)}
 				<button
 					class="chip"
@@ -78,15 +91,18 @@
 					class:chip--pinned={session.tierOverride === tier}
 					type="button"
 					aria-pressed={session.tier === tier}
-					title={session.modelSlugs[tier] || session.hosts[tier]
-						? [
-								session.modelSlugs[tier],
-								session.hosts[tier],
-								session.tierOverride === tier ? '(pinned)' : '',
-							]
-								.filter(Boolean)
-								.join(' ')
-						: tier}
+					disabled={session.planMode && tier !== 'brain'}
+					title={session.planMode && tier !== 'brain'
+						? 'Plan mode is on; only brain is allowed'
+						: session.modelSlugs[tier] || session.hosts[tier]
+							? [
+									session.modelSlugs[tier],
+									session.hosts[tier],
+									session.tierOverride === tier ? '(pinned)' : '',
+								]
+									.filter(Boolean)
+									.join(' ')
+							: tier}
 					onclick={() => setTier(tier)}
 				>
 					{tier}
@@ -146,8 +162,13 @@
 		transition: border-color var(--transition-fast);
 	}
 
-	.chip:hover {
+	.chip:hover:not(:disabled) {
 		border-color: var(--color-accent);
+	}
+
+	.chip:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
 	}
 
 	.chip--active {

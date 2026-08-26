@@ -311,6 +311,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `attach` | yes | Subscribe to a session, replaying from `from_seq`. |
 | `detach` | yes | Unsubscribe from a session; the session is unaffected. |
 | `set_tier` | yes | Pin the active model tier for the session. |
+| `set_plan` | yes | Turn plan mode (brain lock) on or off. Refused `set_tier` to worker/validator while on (TD-4603). |
 | `get_instruction_stack` | yes | Ask for the resolved steering stack and its token counts. |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |
 | `list_memory` | — | List a workspace's Memory files (`.tst/memory/*.md`). Human path (TD-2601). |
@@ -381,7 +382,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. |
-| `tier_state` | session | The active tier, any pinned override, slugs, preset, and hosts (TD-1720). |
+| `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
@@ -392,6 +393,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_files` | connection | The workspace's Memory column: `.tst/memory/*.md` with contents (TD-2601). |
 | `charter` | connection | The workspace's Charter column: parsed §12.4 fields, or absent (TD-4002). |
 | `autonomy_start` | connection | Reply to `start_autonomy`: signed, ready, optional `session_id` of the daemon-owned run, or the refusal (TD-4003, TD-4101). |
+| `autonomy_summary` | session | Unattended-run wrap-up: stop reason, turns, spend, refusals (TD-4303). |
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |
