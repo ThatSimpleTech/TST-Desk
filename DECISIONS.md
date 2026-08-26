@@ -8656,3 +8656,42 @@ machine.
 
 **Alternative rejected:** Branching `e2e_harness.run`. Also rejected:
 marking the pin `@pytest.mark.live`.
+
+---
+
+## 2026-08-26 — TD-4602: one-level worker child is transient, not a session (Class B)
+
+**Decision:** `delegate` runs a slim in-process worker loop
+(`run_worker_child` in `tstd.tools.delegate`). The child is a
+transient `Session` with `delegate_depth=1` and `parent_id` set. It
+is not inserted into `SessionRegistry`, not persisted, and not
+revived. The parent `session.id` stays the conversation the user
+sees. Child timeline events stay off the parent event log except the
+parent `tool_call`/`tool_result` for `delegate` (and parent
+`cost_update` as child spend accrues). No new protocol event.
+
+The child reuses the parent's `PathGuard`, classifier, policy,
+`approval_handler`, `skip_all_fn`, checkpointer, and ledger so the
+wall cannot widen and Class B cards park on the parent session. The
+child registry is fs + shell only — `delegate` is omitted, and the
+handler also refuses when `delegate_depth >= 1`. The child model is
+the worker tier only. Cost records land on the parent tracker with
+`CallRecord.source="worker"` (empty default for the parent loop).
+Child iteration cap is `min(8, parent remaining max_iterations)`;
+spend and wall-clock are the parent's, checked before each child
+provider call. Spec §8 stands: this is not Hermes delegation — no
+peer agents, mailbox, recursive swarm, or second window.
+
+**Rationale:** A second top-level session would grow the session list
+and imply a second WS-owned loop. Re-entering `agent_loop` would
+pull in autonomy, CU overlay, and verify. A slim child loop plus a
+shared dispatcher is the thinnest thing that still goes through the
+classifier. Child `dispatch_many` is called from `loop.py`
+(`dispatch_worker_child_tools`) so the chokepoint inventory stays
+honest.
+
+**Alternative rejected:** A Hermes-style mesh / mailbox / nested
+swarm (spec §8: do not lift). Also rejected: registering the child
+in `SessionRegistry`. Also rejected: auto-only Class A tools on the
+child (sharing the parent's approval handler keeps cards on the
+parent). Also rejected: a new timeline event for child steps.

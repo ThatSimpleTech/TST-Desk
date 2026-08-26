@@ -5904,11 +5904,20 @@ classifier.
 **Size:** 8 · **Depends on:** TD-402, TD-702
 
 **Acceptance criteria:**
-- [ ] `delegate` runs a worker child with the parent's wall and cards
-- [ ] No grandchildren. Child finish is a capped summary
-- [ ] Cost rolls into the parent, tagged worker
-- [ ] Caps are the parent's
-- [ ] Spec §8 still stands: this is not Hermes delegation
+- [x] `delegate` runs a worker child with the parent's wall and cards
+- [x] No grandchildren. Child finish is a capped summary
+- [x] Cost rolls into the parent, tagged worker
+- [x] Caps are the parent's
+- [x] Spec §8 still stands: this is not Hermes delegation
+
+Done (2026-08-26): Thin one-level `delegate` tool. Transient child
+`Session` (`delegate_depth=1`) is not registered, persisted, or a
+second window. Child tools are fs + shell only (no `delegate`).
+Finish is a 2k-char capped summary. Child provider calls record on
+the parent `CostTracker` with `source="worker"`. Caps are the
+parent's (spend / wall-clock / remaining iterations) plus an
+internal 8-iteration child bound. Not Hermes: no mesh, mailbox, or
+recursive swarm.
 
 ---
 
