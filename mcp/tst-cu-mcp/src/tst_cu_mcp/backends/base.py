@@ -112,3 +112,12 @@ class Backend(Protocol):
         silently ineffective, rather than an unqualified "granted".
         """
         ...
+
+    def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        """Observe the accessibility node at a global point. Never actuates.
+
+        Returns xpath/role/attributes/box/styles. ``xpath`` is usually
+        null on the desktop (there is no DOM). An empty role is a miss,
+        not a reason to move the pointer.
+        """
+        ...

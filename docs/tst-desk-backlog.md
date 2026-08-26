@@ -5207,10 +5207,17 @@ element-at-point). Design mode v1 is browser-only; desktop frames get a
 geometric box + crop, not an AX role.
 
 **Acceptance criteria:**
-- [ ] Desktop Screen frames accept Design picks via AX role + attributes
-- [ ] Crop + box still travel as TD-1709 attachments
-- [ ] Same ⌘⇧D / actuating gate as TD-3403
-- [ ] Observe only — never actuates
+- [x] Desktop Screen frames accept Design picks via AX role + attributes
+- [x] Crop + box still travel as TD-1709 attachments
+- [x] Same ⌘⇧D / actuating gate as TD-3403
+- [x] Observe only — never actuates
+
+**Done (2026-08-26):** Desktop frames send the same `design_hit_test`
+verb. The daemon routes from the last `desktop_` / `browser_`
+`tool_call` on the session log. `tst-cu-mcp` adds observe-only
+`hit_test` (AX / UIA-adjacent HWND / AT-SPI or EWMH window). Last
+screenshot metadata maps image pixels ↔ global points. Kill-switch
+does not block. Not an agent tool. Wayland still has no AX path.
 
 ---
 

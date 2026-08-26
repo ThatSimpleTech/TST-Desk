@@ -160,6 +160,7 @@ class TestToolCatalogue:
             "wait",
             "wait_for_window",
             "overlay_session",
+            "hit_test",
         }
 
     async def test_instructions_reach_the_client(self) -> None:

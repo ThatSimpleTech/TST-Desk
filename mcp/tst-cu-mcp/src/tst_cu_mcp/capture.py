@@ -130,7 +130,7 @@ def capture(
     with get_overlay().grab_hidden():
         raw = get_backend().capture_png(rect)
     png_bytes, image_w, image_h, downscaled = _encode(raw, max_long_edge)
-    return ScreenshotResult(
+    result = ScreenshotResult(
         png_bytes=png_bytes,
         image_px_width=image_w,
         image_px_height=image_h,
@@ -138,3 +138,7 @@ def capture(
         display=display,
         downscaled=downscaled,
     )
+    from tst_cu_mcp.hit_test import remember_capture
+
+    remember_capture(result)
+    return result
