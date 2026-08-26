@@ -138,6 +138,31 @@ class TestUnclassifiedExecutionRaises:
             await dispatcher.dispatch("c1", "touch", {"path": str(tmp_path)})
         assert called is False
 
+    async def test_mcp_dispatch_without_classifier_raises(self) -> None:
+        """An MCP-provenance tool is not a side door around TD-702."""
+        registry = ToolRegistry()
+        registry.register(
+            Tool(
+                name="example__echo",
+                description="MCP echo",
+                parameters={
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                },
+                side_effect_class="ask",
+                parallel_safe=True,
+                provenance="mcp:example",
+            )
+        )
+        dispatcher = ToolDispatcher(registry)
+
+        async def boom(session: object = None, tool_call_id: str = "", **_kw: object) -> str:
+            raise AssertionError("MCP handler ran without a classifier")
+
+        dispatcher.register_handler("example__echo", boom)
+        with pytest.raises(UnclassifiedToolCall):
+            await dispatcher.dispatch("c1", "example__echo", {"text": "hi"})
+
 
 # ── Criterion 2: classification precedes execution ─────────────────────
 
