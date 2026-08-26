@@ -297,6 +297,15 @@ class Session:
         # sessions leave this None so a turn complete never polls DoD.
         self.dod_poller: Callable[[], Awaitable[Any]] | None = None
         self.last_dod_poll: Any = None
+        # TD-4203: circuit-breaker counters. Interactive sessions never
+        # trip; the loop only records when autonomy is on.
+        self.red_dod_streak: int = 0
+        self.no_dod_progress_streak: int = 0
+        self.last_dod_green_count: int | None = None
+        self.file_write_counts: dict[str, int] = {}
+        self.last_tool_fingerprint: tuple[tuple[str, str], ...] | None = None
+        self.tool_loop_streak: int = 0
+        self._breaker_seen_turn: int | None = None
         # TD-4201: validator drift check. Interactive sessions never set
         # these; a later story (TD-4202) reads last_drift_check to revert.
         self.autonomy_check_every = 5
