@@ -286,6 +286,12 @@ autonomy:
   check_every: 5
   verify: after_write
 
+# User-listed MCP servers (TD-4401). Empty is none — no doctor rows,
+# no dynamic discovery. HTTP urls must be loopback. No env: map
+# (tokens stay in the keychain; Settings is TD-4403).
+mcp:
+  servers: {}
+
 # Slack incoming webhook (TD-3801) and ntfy topic POST (TD-3802). Off by
 # default. Destination URLs are keychain secrets (tst-slack-webhook,
 # tst-ntfy-topic), never this file. host is the only destination send()

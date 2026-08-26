@@ -5788,11 +5788,16 @@ slash/skills can start after M4.
 **Size:** 8 · **Depends on:** TD-601
 
 **Acceptance criteria:**
-- [ ] User-data-dir config lists stdio (and loopback HTTP) servers
-- [ ] Tools appear in the registry with the server as provenance
-- [ ] A dead server is a doctor row, not a dead daemon
-- [ ] Destination traces to config (`test_outbound_hosts`)
-- [ ] Size 8 — split at client vs registry if needed
+- [x] User-data-dir config lists stdio (and loopback HTTP) servers
+- [x] Tools appear in the registry with the server as provenance
+- [x] A dead server is a doctor row, not a dead daemon
+- [x] Destination traces to config (`test_outbound_hosts`)
+- [x] Size 8 — split at client vs registry if needed
+
+Done (2026-08-26): `tstd.mcp` (stdio + loopback HTTP JSON-RPC) loads
+`mcp.servers` from user-data-dir config, registers `{id}__{name}` with
+provenance `mcp:<id>` on the existing dispatcher. Dead servers are
+`mcp:<id>` doctor rows; empty config adds none. Split: client vs loader.
 
 ---
 

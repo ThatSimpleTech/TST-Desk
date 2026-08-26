@@ -254,6 +254,17 @@ class TestTiers:
         assert cfg.autonomy.runtime == "podman"
         assert cfg.autonomy.image == "docker.io/library/alpine:3.21"
 
+    def test_shipped_mcp_servers_empty(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
+        assert cfg.mcp.servers == {}
+
+    def test_omitted_mcp_defaults_empty(self, tmp_path: Path) -> None:
+        data = yaml.safe_load(default_config_yaml())
+        assert isinstance(data, dict)
+        data.pop("mcp", None)
+        cfg = load_config(_write_config(tmp_path, yaml.safe_dump(data)))
+        assert cfg.mcp.servers == {}
+
     def test_computer_use_command_accepts_string_or_list(self) -> None:
         assert ComputerUseConfig(command="python -m tst_cu_mcp").command == ("python -m tst_cu_mcp")
         assert ComputerUseConfig.model_validate(
