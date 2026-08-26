@@ -5755,10 +5755,16 @@ name. Interactive sessions never emit the event.
 **Size:** 3 · **Depends on:** TD-4101, TD-4203, TD-4301
 
 **Acceptance criteria:**
-- [ ] Headless: mock provider + fake container, a charter with a
+- [x] Headless: mock provider + fake container, a charter with a
       two-step DoD, assert branch commits, one Class A ledger line,
       a tripped breaker, and no `main` commit
-- [ ] **This harness is the M9 exit criterion**
+- [x] **This harness is the M9 exit criterion**
+
+Done (2026-08-26): `tstd.e2e_m9` + `core/scripts/e2e_m9.py`,
+pinned in CI as `tests/test_e2e_m9.py`. Headless: `MockProvider` +
+fake rootless Podman, a two-step `$` DoD, Class A write on
+`tst/auto/<slug>`, `breaker:no_dod_progress`, `main` SHA unchanged.
+Not `e2e_harness.run`. Not marked `live`.
 
 ---
 
