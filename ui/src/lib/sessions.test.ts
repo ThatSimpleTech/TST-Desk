@@ -577,9 +577,47 @@ describe("presentation helpers", () => {
       archived: false,
       starred: false,
       title: null,
+      preset: "",
     };
     expect(rowTitle(row)).toBe("abc12345");
     expect(rowSubtitle(row, now)).toBe("api-server · 1h");
+  });
+
+  it("session_list rows carry the daemon's preset (TD-1721)", () => {
+    emit({
+      type: "session_list",
+      seq: 1,
+      sessions: [
+        {
+          session_id: "s1",
+          workspace_path: "/ws/proj",
+          state: "idle",
+          created_at: "2026-08-14T09:00:00Z",
+          updated_at: "2026-08-14T09:00:00Z",
+          event_count: 1,
+          archived: false,
+          starred: false,
+          title: null,
+          preset: "local",
+        },
+      ],
+    });
+    expect(sessions.rows[0]?.preset).toBe("local");
+  });
+
+  it("row subtitle names the session preset when the list carries one (TD-1721)", () => {
+    const now = Date.parse("2026-08-14T12:00:00Z");
+    const row = {
+      sessionId: "abc12345-0000-0000-0000-000000000000",
+      workspacePath: "/ws/api-server",
+      state: "idle" as SummaryState,
+      updatedAt: "2026-08-14T11:00:00Z",
+      archived: false,
+      starred: false,
+      title: null,
+      preset: "budget",
+    };
+    expect(rowSubtitle(row, now)).toBe("api-server · budget · 1h");
   });
 
   it("row title prefers the daemon title over the short id (TD-3001)", () => {
@@ -591,6 +629,7 @@ describe("presentation helpers", () => {
       archived: false,
       starred: false,
       title: "Fix the rail titles",
+      preset: "",
     };
     expect(rowTitle(row)).toBe("Fix the rail titles");
   });

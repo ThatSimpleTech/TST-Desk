@@ -16,6 +16,7 @@ import {
   openWorkspace,
   resetSession,
   setPlan,
+  setSessionPreset,
   setTier,
   workspaceName,
 } from "./session-status.svelte.js";
@@ -29,6 +30,7 @@ const fakeClient = {
   openWorkspace: (path: string) => sent.push(`open:${path}`),
   setTier: (id: string, tier: string) => sent.push(`tier:${id}:${tier}`),
   setPlan: (id: string, on: boolean) => sent.push(`plan:${id}:${on}`),
+  setSessionPreset: (id: string, name: string) => sent.push(`preset:${id}:${name}`),
   attach: (id: string) => attached.push(id),
 } as unknown as ProtocolClient;
 
@@ -143,6 +145,48 @@ describe("tier state", () => {
       seq: 3,
     } as DaemonEventUnion);
     expect(session.planMode).toBe(false);
+  });
+
+  it("sends set_session_preset without guessing the next preset", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent({
+      type: "tier_state",
+      session_id: "s1",
+      tier: "brain",
+      override: null,
+      model_slugs: { brain: "b-slug" },
+      preset: "tst-default",
+      seq: 2,
+    } as DaemonEventUnion);
+
+    setSessionPreset("budget");
+    expect(sent).toEqual(["preset:s1:budget"]);
+    expect(session.preset).toBe("tst-default");
+  });
+
+  it("marks a turn active from user_turn and clears it on turn_complete", () => {
+    ingestEvent(sessionState("s1"));
+    expect(session.turnActive).toBe(false);
+    ingestEvent({
+      type: "user_turn",
+      session_id: "s1",
+      turn_id: "t1",
+      content: "hi",
+      seq: 2,
+    } as DaemonEventUnion);
+    expect(session.turnActive).toBe(true);
+    ingestEvent({
+      type: "turn_complete",
+      session_id: "s1",
+      tokens: 0,
+      cost: 0,
+      tier: "brain",
+      duration: 0,
+      failed: false,
+      error_code: null,
+      seq: 3,
+    } as DaemonEventUnion);
+    expect(session.turnActive).toBe(false);
   });
 
   it("does not locally change tier when a chip is clicked during plan", () => {

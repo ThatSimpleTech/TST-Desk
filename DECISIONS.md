@@ -8695,3 +8695,32 @@ swarm (spec §8: do not lift). Also rejected: registering the child
 in `SessionRegistry`. Also rejected: auto-only Class A tools on the
 child (sharing the parent's approval handler keeps cards on the
 parent). Also rejected: a new timeline event for child steps.
+
+---
+
+## 2026-08-26 — TD-1721: persist the preset name, not a forked config (Class B)
+
+**Decision:** A session stores the catalog preset *name* on
+`sessions.json` (`SessionRecord.preset`). The live loop holds a
+`ModelConfig` snapshot (`session.config = config.model_copy(update=
+{"active_preset": name})`) taken from the current catalog at open,
+revive, or `set_session_preset`. Settings' `set_preset` /
+`set_tier_slug` keep writing the catalog only. `set_session_preset`
+never calls `save_active_preset` or `save_tier_slug`. An empty or
+unknown stored name falls back to the live `active_preset` and
+backfills the row.
+
+The switch is refused while `turn_in_flight`. When idle, the
+snapshot is replaced immediately (title bar follows `tier_state`)
+and the loop rebinds `session.config` at the start of the next
+turn. Ack is `session_list` so the rail shows each row's preset.
+
+**Rationale:** The backlog forbids a second Settings document and a
+forked config tree. A name plus a snapshot is enough to keep two
+open chats on `local` and `vllm` honest across a restart, without
+writing session-local slugs back onto the catalog.
+
+**Alternative rejected:** Persisting a per-session copy of the
+preset's slugs/prices (a fork). Also rejected: applying Settings'
+`active_preset` to open loops. Also rejected: allowing a preset
+switch mid-turn (the next completion would mix two catalogs).

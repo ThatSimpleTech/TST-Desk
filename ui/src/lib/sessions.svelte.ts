@@ -57,6 +57,8 @@ export interface SessionRow {
 	/** Display title (TD-3001 / TD-3002). Null — rowTitle falls back to
 	 *  the short id. */
 	title: string | null;
+	/** Catalog preset this session is using (TD-1721). Empty on old lists. */
+	preset: string;
 }
 
 export const sessions = $state({
@@ -147,6 +149,7 @@ function reduce(event: DaemonEventUnion): void {
 				archived: s.archived,
 				starred: s.starred,
 				title: s.title ?? null,
+				preset: s.preset ?? "",
 			}))
 			.sort((a, b) => {
 				if (a.starred !== b.starred) return a.starred ? -1 : 1;
@@ -400,11 +403,14 @@ export function rowTitle(row: SessionRow): string {
 	return titled ? titled : row.sessionId.slice(0, 8);
 }
 
-/** Row subtitle: workspace name, recency — the "where and when" under the id. */
+/** Row subtitle: workspace, preset, recency — the "where and which model". */
 export function rowSubtitle(row: SessionRow, nowMs: number = Date.now()): string {
 	const when = recencyLabel(row.updatedAt, nowMs);
 	const where = workspaceName(row.workspacePath);
-	return when === "" ? where : `${where} · ${when}`;
+	const parts = [where];
+	if (row.preset) parts.push(row.preset);
+	if (when) parts.push(when);
+	return parts.join(" · ");
 }
 
 // ── Persistence (localStorage; guarded for node-env tests) ──────────────
