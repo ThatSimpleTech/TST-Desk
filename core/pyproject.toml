@@ -16,6 +16,10 @@ dependencies = [
 tstd = "tstd.daemon:main"
 tst = "tstd.cli:main"
 
+# In-process tool plugins (TD-4601). tstd ships none; third-party packages
+# expose register(registry, dispatcher) under this group. License is fail-closed.
+[project.entry-points."tstd.tools"]
+
 [dependency-groups]
 dev = [
     "mypy>=1.11",

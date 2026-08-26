@@ -10,8 +10,8 @@ the two disagree, the spec wins and this file is the bug.
 Every table and every code block below is checked against the code by
 `core/tests/test_docs_architecture_guide.py`. The protocol tables are compared against the
 discriminated unions in `core/tstd/protocol.py`, so adding a message without documenting it
-fails the suite. The "how to add a tool" walkthrough is registered and dispatched by that test,
-so a walkthrough that stopped working fails too.
+fails the suite. The "how to add a tool" walkthrough (and the plugin `register()` walkthrough)
+are registered and dispatched by that test, so a walkthrough that stopped working fails too.
 
 ---
 
@@ -452,7 +452,8 @@ change; changing the same behaviour anywhere else usually is not.
 
 | Seam | Where | What it is for |
 |---|---|---|
-| `create_registry` | `core/tstd/tools/registry.py` | Declares which tools exist and their schemas, approval class, parallel safety, and classifier metadata. Registration is explicit — there is no dynamic discovery in v0.1. |
+| `create_registry` | `core/tstd/tools/registry.py` | Declares which tools exist and their schemas, approval class, parallel safety, and classifier metadata. Builtins are registered explicitly; `load_plugins` then loads the `tstd.tools` entry-point group (TD-4601). |
+| `load_plugins` | `core/tstd/tools/plugins.py` | Discovers in-process plugin packages, refuses non-permissive licenses, and calls each `register(registry, dispatcher)`. A broken plugin is logged and skipped. Name collisions with builtins are skipped, not replaced. |
 | `register_builtin_handlers` | `core/tstd/tools/handlers.py` | Binds each registered tool name to the async callable that executes it. Registry and handler are separate on purpose: a tool with no handler is a configuration error the model is told about, not a crash. |
 | `RULE_TABLE` | `core/tstd/autonomy/classifier.py` | The static decision rules, in priority order, first match wins. Anything the table cannot decide falls to the worker-tier classifier and defaults to class B — fail toward asking, never toward acting. |
 | `sandbox_start_error` | `core/tstd/autonomy/sandbox.py` | Why an autonomous run may not start: missing / down / rootful runtime. Interactive sessions do not import this module (TD-4301). |
@@ -596,6 +597,88 @@ Worth reading once, because it is the same path for every tool:
 
 Steps 3 through 5 are why a new tool inherits the entire trust surface for free, and why
 bypassing the dispatcher is never the right shortcut.
+
+### How to add a plugin
+
+A third-party package can register tools the same way builtins do, without editing
+`registry.py`. It exposes a `register(registry, dispatcher)` callable on the `tstd.tools`
+entry-point group. TST Desk loads those entry points from `create_registry`, checks the
+distribution's license, and skips the whole plugin if the license is not permissive. That skip
+is a Class C product decision (logged, not silent) — not a tool-call classification, and not
+an absent plugin with no log line.
+
+Plugins do not skip the classifier, PathGuard, or the policy gate. Every call still goes
+through `ToolDispatcher.dispatch`. Declare `path_fields` (and `host_fields`) for every
+argument that is a path or a host — omitting them does not make the tool unguarded; it makes
+those arguments invisible to the guard, which is worse. Missing path/host metadata on a
+non-MCP plugin is existing classifier behavior: `side_effect_class` is the floor (`ask` stays
+at least B).
+
+The license allowlist is MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unlicense, 0BSD,
+and CC0-1.0. SPDX expressions that are only those identifiers, combined with AND or OR, pass.
+`GPL`, `AGPL`, `LGPL`, `Proprietary`, empty, and unknown do not load. Provenance is
+`plugin:<distribution>`. A plugin that reuses a builtin name such as `fs_read` is skipped, not
+renamed — same spirit as MCP `{id}__{name}`.
+
+#### Step 1 — write `register()`
+
+<!-- verify: plugin-register -->
+```python
+def register(registry: ToolRegistry, dispatcher: ToolDispatcher) -> None:
+    async def shout(session: object, text: str, tool_call_id: str = "") -> str:
+        del session, tool_call_id
+        return text.upper()
+
+    registry.register(
+        Tool(
+            name="shout",
+            description="Uppercase a short string.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to shout",
+                    },
+                },
+                "required": ["text"],
+            },
+            side_effect_class="auto",
+            parallel_safe=True,
+            provenance="plugin:example",
+        )
+    )
+    dispatcher.register_handler("shout", shout)
+```
+
+#### Step 2 — declare the entry point
+
+In the plugin package's `pyproject.toml`:
+
+<!-- verify: plugin-entry-points -->
+```toml
+[project.entry-points."tstd.tools"]
+shout = "example_plugin:register"
+```
+
+#### Step 3 — a call still hits the classifier
+
+Given this call from the model:
+
+<!-- verify: plugin-arguments -->
+```json
+{"text": "hello"}
+```
+
+the dispatcher returns:
+
+<!-- verify: plugin-result -->
+```
+HELLO
+```
+
+and `decision_class` is set. An unclassified result would mean the plugin bypassed the
+chokepoint; that is a defect, not a feature of plugins.
 
 ---
 
