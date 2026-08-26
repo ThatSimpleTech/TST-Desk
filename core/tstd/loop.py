@@ -38,6 +38,7 @@ from .autonomy import (
 from .autonomy.checkpoint import auto_branch
 from .autonomy.dod import make_dod_poller
 from .autonomy.runner import advance_autonomy
+from .autonomy.supervisor import attach_drift_check
 from .autonomy.verify import (
     clear_turn_writes,
     maybe_verify_after_turn,
@@ -67,6 +68,8 @@ from .protocol import (
     AssistantDelta,
     AssistantReasoning,
     ContextCompacted,
+    DaemonEvent,
+    DecisionLogged,
     RuleActivated,
     SteeringReloaded,
     TierState,
@@ -92,7 +95,7 @@ from .provider import (
     ToolDefinition as ProviderToolDefinition,
 )
 from .router import TierName, TierRouter
-from .session import Session
+from .session import Session, SessionEventLog
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.dispatch import build_decision_request
@@ -682,6 +685,15 @@ async def agent_loop(
             dispatcher=tool_dispatcher,
             ask_worker=_worker_completion,
         )
+
+    if session.autonomy:
+
+        async def _note_class_b(event: DaemonEvent, _log: SessionEventLog) -> None:
+            if isinstance(event, DecisionLogged) and event.decision_class == "B":
+                session.autonomy_class_b = True
+
+        session.event_log.subscribe(_note_class_b)  # type: ignore[arg-type]
+        attach_drift_check(session, config=config, client_for=client_for, tracker=tracker)
 
     # Pre-compute tool definitions if we have a registry
     tool_definitions: list[ProviderToolDefinition] | None = None

@@ -344,6 +344,8 @@ class TestAutonomyConfig:
         cfg = AutonomyConfig()
         assert cfg.runtime == "podman"
         assert cfg.image == "docker.io/library/alpine:3.21"
+        assert cfg.check_every == 5
+        assert cfg.verify == "after_write"
 
     def test_blank_runtime_is_rejected(self) -> None:
         with pytest.raises(Exception, match="empty"):

@@ -5636,11 +5636,15 @@ would make one a schema change, and the committed file is the signature.
 **Size:** 5 · **Depends on:** TD-4101, TD-508
 
 **Acceptance criteria:**
-- [ ] Every N iterations (config, default 5) and on Class B, the
+- [x] Every N iterations (config, default 5) and on Class B, the
       validator receives charter + source_of_truth + diff + ledger +
       tests and answers spec §12.6's three questions
-- [ ] Cost is a validator call, not a user turn
-- [ ] `source_of_truth` is re-read from disk each check
+- [x] Cost is a validator call, not a user turn
+- [x] `source_of_truth` is re-read from disk each check
+
+**Done:** Supervisor hook in `advance_autonomy`'s continue path. Detects
+and reports only — no auto-revert (TD-4202), no circuit breakers
+(TD-4203). Result lives on `session.last_drift_check`.
 
 ---
 
