@@ -721,6 +721,19 @@
     "error": null,
     "session_id": "sess-autonomy"
   },
+  "autonomy_summary": {
+    "type": "autonomy_summary",
+    "seq": 12,
+    "session_id": "sess-1",
+    "reason": "definition of done met",
+    "branch": "tst/auto/ship-the-csv-importer",
+    "ledger_path": ".tst/autonomy/DECISIONS.md",
+    "changed": [
+      "src/importer.py"
+    ],
+    "refusals": [],
+    "ledger_excerpt": "## 2026-08-26T12:00:00Z \u00b7 Class A \u00b7 commit abc123\n**Chose:** format\n**Why:** ruff"
+  },
   "memory_files": {
     "type": "memory_files",
     "seq": 1,

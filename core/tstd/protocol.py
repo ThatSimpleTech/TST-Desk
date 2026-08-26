@@ -1258,6 +1258,23 @@ class AutonomyStart(DaemonEvent):
     session_id: str | None = None
 
 
+class AutonomySummary(DaemonEvent):
+    """Wake-up card for an unattended run that stopped (TD-4303).
+
+    Session-scoped: persisted on the event log so a closed window still
+    sees it on attach. Interactive sessions never emit this type.
+    """
+
+    type: Literal["autonomy_summary"] = "autonomy_summary"
+    session_id: str
+    reason: str
+    branch: str
+    ledger_path: str
+    changed: list[str] = Field(default_factory=list)
+    refusals: list[str] = Field(default_factory=list)
+    ledger_excerpt: str = ""
+
+
 class ContextPinEntry(BaseModel):
     """One pinned path on the Context column (TD-2804)."""
 
@@ -1864,6 +1881,7 @@ DaemonEventT = Annotated[
     | MemoryFiles
     | CharterDocument
     | AutonomyStart
+    | AutonomySummary
     | MemoryProposal
     | SessionList
     | PolicyRules
@@ -1987,6 +2005,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "memory_files",
         "charter",
         "autonomy_start",
+        "autonomy_summary",
         "memory_proposal",
         "session_list",
         "policy_rules",

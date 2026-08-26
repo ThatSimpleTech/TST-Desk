@@ -289,6 +289,9 @@ class Session:
         self.autonomy_class_c = False
         self.autonomy_stop_reason: str | None = None
         self.autonomy_notify: Callable[[str], Awaitable[None]] | None = None
+        # TD-4303: Class C reasons kept after the stop reason is rewritten
+        # to CLASS_C_STOP, plus any other stored refusal strings.
+        self.autonomy_refusals: list[str] = []
         # TD-4103: attached by the loop on an unattended run. Interactive
         # sessions leave this None so a turn complete never polls DoD.
         self.dod_poller: Callable[[], Awaitable[Any]] | None = None
@@ -296,6 +299,7 @@ class Session:
     def mark_class_c(self, reason: str) -> None:
         """A Class C call on an autonomous run — stop after this turn."""
         self.autonomy_class_c = True
+        self.autonomy_refusals.append(reason)
         if self.autonomy_stop_reason is None:
             self.autonomy_stop_reason = reason
 

@@ -344,6 +344,26 @@ class TestClientMessages:
         )
         assert _roundtrip(ready).session_id == "sess-autonomy"
 
+    def test_autonomy_summary(self) -> None:
+        from tstd.protocol import AutonomySummary
+
+        ev = AutonomySummary(
+            session_id="sess-1",
+            reason="definition of done met",
+            branch="tst/auto/ship-the-csv-importer",
+            ledger_path=".tst/autonomy/DECISIONS.md",
+            changed=["src/importer.py"],
+            refusals=["Class C decision — autonomy stops"],
+            ledger_excerpt="**Chose:** format",
+            seq=12,
+        )
+        back = _roundtrip(ev)
+        assert isinstance(back, AutonomySummary)
+        assert back.branch == "tst/auto/ship-the-csv-importer"
+        assert back.ledger_path == ".tst/autonomy/DECISIONS.md"
+        assert back.changed == ["src/importer.py"]
+        assert back.refusals == ["Class C decision — autonomy stops"]
+
     def test_charter_document(self) -> None:
         from tstd.autonomy.charter import Charter
         from tstd.protocol import CharterDocument
