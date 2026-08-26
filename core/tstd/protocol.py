@@ -310,6 +310,20 @@ class Cancel(ClientMessage):
     session_id: str
 
 
+class RunVerify(ClientMessage):
+    """Confirm a pending interactive verify (TD-4204 ask mode)."""
+
+    type: Literal["run_verify"] = "run_verify"
+    session_id: str
+
+
+class DenyVerify(ClientMessage):
+    """Skip a pending interactive verify (TD-4204 ask mode)."""
+
+    type: Literal["deny_verify"] = "deny_verify"
+    session_id: str
+
+
 class Attach(ClientMessage):
     """Attach to a session, replaying events from `from_seq`."""
 
@@ -994,6 +1008,21 @@ class CheckpointNotice(DaemonEvent):
     session_id: str
     code: str
     message: str
+
+
+class VerifyResult(DaemonEvent):
+    """Interactive validator review of a write turn (TD-4204).
+
+    Timeline activity, not a chat bubble. ``pending`` is ask-mode only:
+    the validator has not run until the human confirms.
+    """
+
+    type: Literal["verify_result"] = "verify_result"
+    session_id: str
+    verdict: Literal["pass", "fail", "error"]
+    summary: str
+    cost: float = Field(ge=0)
+    pending: bool = False
 
 
 class CostUpdate(DaemonEvent):
@@ -1787,6 +1816,8 @@ ClientMessageT = Annotated[
     | SetWorkspacePin
     | Resume
     | Cancel
+    | RunVerify
+    | DenyVerify
     | Attach
     | Detach
     | SetTier
@@ -1850,6 +1881,7 @@ DaemonEventT = Annotated[
     | ApprovalRequest
     | DecisionLogged
     | CheckpointNotice
+    | VerifyResult
     | CostUpdate
     | BoundaryUpdate
     | TurnComplete
@@ -1910,6 +1942,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_workspace_pin",
         "resume",
         "cancel",
+        "run_verify",
+        "deny_verify",
         "attach",
         "detach",
         "set_tier",
@@ -1973,6 +2007,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "approval_request",
         "decision_logged",
         "checkpoint_notice",
+        "verify_result",
         "cost_update",
         "boundary_update",
         "turn_complete",

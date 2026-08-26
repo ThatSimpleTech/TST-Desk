@@ -17,7 +17,8 @@ export const KIND_LABELS: Record<EntryKind, string> = {
   tier_switch: 'Tier switch',
   compaction: 'Compaction',
   steering_reload: 'Steering',
-  error: 'Error'
+  error: 'Error',
+  verify: 'Verify'
 };
 
 /** Semantic tone per entry, driving the colored marker (AC #6). */
@@ -32,6 +33,12 @@ export function entryTone(entry: TimelineEntry): EntryTone {
     case 'compaction':
     case 'approval':
       return 'warning';
+    case 'verify':
+      if (entry.details.pending) return 'warning';
+      if (entry.details.verdict === 'fail' || entry.details.verdict === 'error') {
+        return 'danger';
+      }
+      return 'success';
     case 'decision':
     case 'tier_switch':
     case 'steering_reload':

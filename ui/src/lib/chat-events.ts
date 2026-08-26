@@ -240,6 +240,9 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       block.errorCode = event.error_code ?? null;
       return;
     }
+    case "verify_result":
+      // Timeline only (TD-4204). Never a second assistant bubble.
+      return;
     default:
       // Cost, approvals, and the rest stay the activity timeline's
       // domain (TD-1005/TD-1007).

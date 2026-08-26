@@ -69,7 +69,7 @@ no effect.
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
-| `autonomy` | mapping | see below | Rootless container used only for autonomous runs (TD-4301). Interactive sessions ignore this block. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
+| `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
 
 ### `credentials`
 
@@ -299,10 +299,16 @@ host allowlist omits that flag so Podman slirp can work, and never
 creds, the OS keychain, or the user-data-dir; there is no extra-mount
 API. Firecracker / EZER is a follow-up, not this key.
 
+`verify` is the unused validator call for *interactive* mode (spec §12.6
+first sentence, TD-4204). It is not the autonomy supervisor. A write
+turn may enqueue one validator review of the diff and tests. Write-less
+turns never verify. There is no charter and no auto-revert.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `runtime` | string | `podman` | Argv0 probed on PATH, or an absolute path to an executable. Empty is a load error. |
 | `image` | string | `docker.io/library/alpine:3.21` | Image the container execs. Empty is a load error. Pre-pull it; the argv passes `--pull=never` so a start check cannot phone a registry. |
+| `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. |
 
 <!-- verify: model -->
 ```yaml
@@ -376,6 +382,7 @@ notify:
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21
+  verify: after_write
 ```
 
 ### A preset
@@ -386,7 +393,7 @@ Every preset declares all three tiers. Omitting one is a load error naming it.
 |---|---|---|
 | `brain` | tier | Planning turns. The router opens every session here for the first two turns, and escalates back to it after three consecutive worker failures. |
 | `worker` | tier | Token-heavy execution — edits, and the tool-call classifier. Where turns land once the lead turns are spent. |
-| `validator` | tier | Reviewing diffs and tests. **Not scheduled automatically in v0.1** — it is on-demand only, so its prices rarely move your bill today. |
+| `validator` | tier | Reviewing diffs and tests. Interactive mode may call it once after a write turn (`autonomy.verify`, TD-4204). Autonomy supervision is a later story. |
 
 Routing is turn-count and failure driven; it does not read anything from this file beyond the
 three tier definitions. You can pin a tier for a session from the title bar.

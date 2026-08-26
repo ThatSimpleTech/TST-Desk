@@ -57,6 +57,7 @@ import type {
   ApprovalRequest,
   DecisionLogged,
   CheckpointNotice,
+  VerifyResult,
   CostUpdate,
   TierState,
   TurnComplete,
@@ -601,6 +602,16 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("verify_result", () => {
+    const m = fixtures.verify_result as VerifyResult;
+    expect(m.type).toBe("verify_result");
+    expect(isString(m.session_id)).toBe(true);
+    expect(["pass", "fail", "error"]).toContain(m.verdict);
+    expect(isString(m.summary)).toBe(true);
+    expect(isNumber(m.cost)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
   it("cost_update", () => {
     const m = fixtures.cost_update as CostUpdate;
     expect(m.type).toBe("cost_update");
@@ -862,7 +873,7 @@ describe("All fixtures have required shape", () => {
       "set_workspace_pin",
       "set_session_star",
       "rename_session",
-      "cancel", "attach", "detach", "set_tier",
+      "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier",
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",
       "get_charter", "save_charter", "start_autonomy",
@@ -890,7 +901,7 @@ describe("All fixtures have required shape", () => {
       "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_denied",
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
-      "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
+      "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "instruction_files", "context_pins", "memory_files", "charter", "autonomy_start", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",

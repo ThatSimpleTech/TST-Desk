@@ -30,6 +30,7 @@ from tstd.protocol import (
     DecisionLogged,
     DeleteSession,
     Deny,
+    DenyVerify,
     Detach,
     EndSession,
     Error,
@@ -53,6 +54,7 @@ from tstd.protocol import (
     RenameSession,
     Resume,
     RevokePolicyRule,
+    RunVerify,
     SessionState,
     SetCoworker,
     SetCuIndicators,
@@ -72,6 +74,7 @@ from tstd.protocol import (
     UsageReport,
     UsageRollup,
     UserMessage,
+    VerifyResult,
     build_error,
     build_hello_ack,
     parse_client_message,
@@ -834,6 +837,27 @@ class TestDaemonEvents:
         assert back.killed is True
         assert back.seq == 1
         assert "session_id" not in CuKillState.model_fields
+
+    def test_verify_result(self) -> None:
+        evt = VerifyResult(
+            session_id="sess-1",
+            verdict="pass",
+            summary="Diff matches the tests.",
+            cost=0.002,
+            pending=False,
+            seq=10,
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, VerifyResult)
+        assert back.verdict == "pass"
+        assert back.pending is False
+        assert back.cost == pytest.approx(0.002)
+
+    def test_run_verify_and_deny_verify(self) -> None:
+        run = _roundtrip(RunVerify(session_id="sess-1"))
+        assert isinstance(run, RunVerify)
+        deny = _roundtrip(DenyVerify(session_id="sess-1"))
+        assert isinstance(deny, DenyVerify)
 
     def test_cu_session(self) -> None:
         evt = CuSession(session_id="sess-1", active=True, seq=1)

@@ -604,7 +604,7 @@ describe("session control messages (TD-1006)", () => {
     h.client.stop();
   });
 
-  it("accepts tier_state, boundary_update, shell_output, checkpoint_notice, context_compacted as known events", async () => {
+  it("accepts tier_state, boundary_update, shell_output, checkpoint_notice, verify_result, context_compacted as known events", async () => {
     const h = buildClient();
     await h.client.start();
     h.servers[0].handshake();
@@ -624,7 +624,11 @@ describe("session control messages (TD-1006)", () => {
       { type: "shell_output", session_id: "sess-1", tool_call_id: "tc-1", stream: "stdout", chunk: "hi\n", seq: 4 },
       { type: "checkpoint_notice", session_id: "sess-1", code: "no_git", message: "m", seq: 5 },
       {
-        type: "context_compacted", session_id: "sess-1", seq: 6,
+        type: "verify_result", session_id: "sess-1", seq: 6,
+        verdict: "pass", summary: "ok", cost: 0.001, pending: false,
+      },
+      {
+        type: "context_compacted", session_id: "sess-1", seq: 7,
         dropped_messages: 4, kept_messages: 2, tokens_before: 900, tokens_after: 500,
       },
     ];
@@ -632,7 +636,7 @@ describe("session control messages (TD-1006)", () => {
 
     // Every one reached the sink, none warned as unknown.
     expect(h.onEvent).toHaveBeenCalledTimes(events.length);
-    expect(h.client.lastSeq("sess-1")).toBe(6);
+    expect(h.client.lastSeq("sess-1")).toBe(7);
     h.client.stop();
   });
 });

@@ -150,6 +150,16 @@ export interface Cancel extends ClientMessage {
   session_id: string;
 }
 
+export interface RunVerify extends ClientMessage {
+  type: "run_verify";
+  session_id: string;
+}
+
+export interface DenyVerify extends ClientMessage {
+  type: "deny_verify";
+  session_id: string;
+}
+
 export interface Attach extends ClientMessage {
   type: "attach";
   session_id: string;
@@ -512,6 +522,8 @@ export type ClientMessageUnion =
   | SetWorkspacePin
   | Resume
   | Cancel
+  | RunVerify
+  | DenyVerify
   | Attach
   | Detach
   | SetTier
@@ -691,6 +703,15 @@ export interface CheckpointNotice extends DaemonEvent {
   session_id: string;
   code: string;
   message: string;
+}
+
+export interface VerifyResult extends DaemonEvent {
+  type: "verify_result";
+  session_id: string;
+  verdict: "pass" | "fail" | "error";
+  summary: string;
+  cost: number;
+  pending?: boolean;
 }
 
 export interface CostUpdate extends DaemonEvent {
@@ -1197,6 +1218,7 @@ export type DaemonEventUnion =
   | ApprovalRequest
   | DecisionLogged
   | CheckpointNotice
+  | VerifyResult
   | CostUpdate
   | BoundaryUpdate
   | TurnComplete

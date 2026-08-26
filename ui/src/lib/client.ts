@@ -36,6 +36,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "approval_request",
   "decision_logged",
   "checkpoint_notice",
+  "verify_result",
   "cost_update",
   "boundary_update",
   "turn_complete",
@@ -235,6 +236,16 @@ export class ProtocolClient {
   /** Pin a session's model tier (TD-1006). The daemon acks with tier_state. */
   setTier(sessionId: string, tier: "brain" | "worker" | "validator"): void {
     this.send({ type: "set_tier", session_id: sessionId, tier });
+  }
+
+  /** Confirm a pending interactive verify (TD-4204 ask mode). */
+  runVerify(sessionId: string): boolean {
+    return this.send({ type: "run_verify", session_id: sessionId });
+  }
+
+  /** Skip a pending interactive verify (TD-4204 ask mode). */
+  denyVerify(sessionId: string): boolean {
+    return this.send({ type: "deny_verify", session_id: sessionId });
   }
 
   // ── Onboarding (TD-1101 first-run wizard) ───────────────────────────
