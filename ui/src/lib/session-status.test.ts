@@ -15,6 +15,7 @@ import {
   liveModelLabel,
   openWorkspace,
   resetSession,
+  setPlan,
   setTier,
   workspaceName,
 } from "./session-status.svelte.js";
@@ -27,6 +28,7 @@ let attached: string[];
 const fakeClient = {
   openWorkspace: (path: string) => sent.push(`open:${path}`),
   setTier: (id: string, tier: string) => sent.push(`tier:${id}:${tier}`),
+  setPlan: (id: string, on: boolean) => sent.push(`plan:${id}:${on}`),
   attach: (id: string) => attached.push(id),
 } as unknown as ProtocolClient;
 
@@ -107,6 +109,71 @@ describe("tier state", () => {
     } as DaemonEventUnion);
     expect(session.tier).toBe("validator");
     expect(session.tierOverride).toBe("validator");
+  });
+
+  it("follows plan from tier_state and sends set_plan", () => {
+    ingestEvent(sessionState("s1"));
+    expect(session.planMode).toBe(false);
+
+    ingestEvent({
+      type: "tier_state",
+      session_id: "s1",
+      tier: "brain",
+      override: null,
+      model_slugs: { brain: "b-slug" },
+      plan: true,
+      seq: 2,
+    } as DaemonEventUnion);
+
+    expect(session.planMode).toBe(true);
+    expect(session.tier).toBe("brain");
+
+    setPlan(false);
+    expect(sent).toEqual(["plan:s1:false"]);
+    // The store does not guess — plan stays on until the daemon acks.
+    expect(session.planMode).toBe(true);
+
+    ingestEvent({
+      type: "tier_state",
+      session_id: "s1",
+      tier: "brain",
+      override: null,
+      model_slugs: { brain: "b-slug" },
+      plan: false,
+      seq: 3,
+    } as DaemonEventUnion);
+    expect(session.planMode).toBe(false);
+  });
+
+  it("does not locally change tier when a chip is clicked during plan", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent({
+      type: "tier_state",
+      session_id: "s1",
+      tier: "brain",
+      override: null,
+      model_slugs: { brain: "b-slug", worker: "w-slug" },
+      plan: true,
+      seq: 2,
+    } as DaemonEventUnion);
+
+    setTier("worker");
+    expect(sent).toEqual(["tier:s1:worker"]);
+    expect(session.tier).toBe("brain");
+    expect(session.planMode).toBe(true);
+  });
+
+  it("treats an omitted plan field as off", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent({
+      type: "tier_state",
+      session_id: "s1",
+      tier: "worker",
+      override: null,
+      model_slugs: { worker: "w-slug" },
+      seq: 2,
+    } as DaemonEventUnion);
+    expect(session.planMode).toBe(false);
   });
 
   it("keeps hosts empty when an older daemon omits them", () => {

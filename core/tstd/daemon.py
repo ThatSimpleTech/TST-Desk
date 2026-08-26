@@ -211,6 +211,7 @@ from .protocol import (
     SetCuIndicators,
     SetCuKill,
     SetLoadGlobalMemory,
+    SetPlan,
     SetPreset,
     SetRemoteAttach,
     SetSessionStar,
@@ -468,6 +469,7 @@ def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
         model_slugs=titlebar_slugs(config, cu_heavy=cu_heavy),
         preset=config.active_preset,
         hosts=titlebar_hosts(config, cu_heavy=cu_heavy),
+        plan=session.router.plan_mode,
         seq=1,  # overwritten by the event log
     )
 
@@ -1510,6 +1512,9 @@ class Daemon:
             )
             return None
 
+        if isinstance(msg, SetPlan):
+            return await self._handle_set_plan(msg)
+
         if isinstance(msg, SetTier):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -1522,6 +1527,12 @@ class Daemon:
                     "session_not_live",
                     f"Session {msg.session_id!r} has no live agent loop "
                     "(restored after restart); its tier cannot be changed",
+                )
+            if found.router.plan_mode and msg.tier != "brain":
+                return build_error(
+                    "plan_mode",
+                    "Plan mode is on; only the brain tier is allowed",
+                    session_id=found.id,
                 )
             try:
                 previous = found.router.active_tier
@@ -2179,6 +2190,33 @@ class Daemon:
         events = sess.event_log.events_from(1)
         if events:
             return events[0].model_dump_json()
+        return None
+
+    async def _handle_set_plan(self, msg: SetPlan) -> str | None:
+        """Turn plan mode on or off and ack with ``tier_state`` (TD-4603)."""
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+            )
+        if found.router is None:
+            return build_error(
+                "session_not_live",
+                f"Session {msg.session_id!r} has no live agent loop "
+                "(restored after restart); plan mode cannot be changed",
+            )
+        found.router.set_plan(msg.on)
+        await found.event_log.add(_tier_state_event(found, self.config))
+        log.info(
+            "plan mode set",
+            extra={
+                "extra_fields": {
+                    "session_id": found.id,
+                    "on": msg.on,
+                }
+            },
+        )
         return None
 
     async def _handle_set_remote_attach(self, msg: SetRemoteAttach) -> str:

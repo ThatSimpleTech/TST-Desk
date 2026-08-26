@@ -238,9 +238,11 @@ class Session:
         self._resume_event = asyncio.Event()
         # Workspace boundary (TD-706), resolved by the daemon on open.
         self.boundary_config = BoundaryConfig()
-        # Tier router (TD-1006), attached by the daemon on open so a
-        # ``set_tier`` message reaches the loop's router. ``None`` on a
-        # restored tombstone — its loop is gone for good.
+        # Tier router (TD-1006 / TD-4603), attached by the daemon on
+        # open so ``set_tier`` and ``set_plan`` reach the live loop.
+        # Plan mode lives on the router. ``None`` on a restored
+        # tombstone — its loop is gone for good. Revive does not
+        # restore override or plan (neither is persisted).
         self.router: TierRouter | None = None
         # Cost tracker (TD-1201), attached by the loop at startup so the
         # daemon can answer cache-state queries. Same tombstone rule.

@@ -126,6 +126,11 @@
     "session_id": "sess-1",
     "tier": "brain"
   },
+  "set_plan": {
+    "type": "set_plan",
+    "session_id": "sess-1",
+    "on": true
+  },
   "get_instruction_stack": {
     "type": "get_instruction_stack",
     "session_id": "sess-1"
@@ -608,7 +613,8 @@
       "brain": "mock.local",
       "worker": "mock.local",
       "validator": "mock.local"
-    }
+    },
+    "plan": false
   },
   "tier_state_override": {
     "type": "tier_state",
@@ -626,7 +632,27 @@
       "brain": "mock.local",
       "worker": "mock.local",
       "validator": "mock.local"
-    }
+    },
+    "plan": false
+  },
+  "tier_state_plan": {
+    "type": "tier_state",
+    "seq": 20,
+    "session_id": "sess-1",
+    "tier": "brain",
+    "override": null,
+    "model_slugs": {
+      "brain": "test-brain-slug",
+      "worker": "test-worker-slug",
+      "validator": "test-validator-slug"
+    },
+    "preset": "test",
+    "hosts": {
+      "brain": "mock.local",
+      "worker": "mock.local",
+      "validator": "mock.local"
+    },
+    "plan": true
   },
   "ping": {
     "type": "ping"

@@ -56,6 +56,8 @@ export const session = $state({
   preset: "" as string,
   /** Tier → hostname:port the daemon will call (TD-1720). */
   hosts: {} as Record<string, string>,
+  /** Plan mode (TD-4603). False until a tier_state says otherwise. */
+  planMode: false,
 });
 
 let client: ProtocolClient | null = null;
@@ -81,6 +83,7 @@ export function resetSession(): void {
   session.modelSlugs = {};
   session.preset = "";
   session.hosts = {};
+  session.planMode = false;
   pendingPath = null;
 }
 
@@ -129,6 +132,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.modelSlugs = event.model_slugs;
       session.preset = event.preset ?? "";
       session.hosts = event.hosts ?? {};
+      session.planMode = event.plan ?? false;
       break;
     case "cost_update":
       session.cost = {
@@ -175,6 +179,7 @@ export function focusSession(
   session.modelSlugs = {};
   session.preset = "";
   session.hosts = {};
+  session.planMode = false;
   pendingPath = null;
 }
 
@@ -192,6 +197,12 @@ export function retargetWorkspace(sessionId: string, workspacePath: string): voi
 export function setTier(tier: "brain" | "worker" | "validator"): void {
   if (session.sessionId === null) return;
   client?.setTier(session.sessionId, tier);
+}
+
+/** Turn plan mode on or off. The title bar reflects the next tier_state. */
+export function setPlan(on: boolean): void {
+  if (session.sessionId === null) return;
+  client?.setPlan(session.sessionId, on);
 }
 
 /** Active slug and host for the title-bar pill (TD-1720). */
