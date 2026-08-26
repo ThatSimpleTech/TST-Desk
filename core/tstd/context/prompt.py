@@ -31,6 +31,7 @@ from pathlib import Path
 from ..router import TierName
 from .assembler import AssembledSteering
 from .manifest import ManifestConfig, WorkspaceManifest
+from .skills import list_workspace_skills, render_loaded_skills, render_skill_catalog
 from .tier import TierContextConfig, assemble_for_tier_sync
 from .tokens import heuristic_count
 
@@ -205,6 +206,7 @@ class PromptAssembler:
         test_output: str | None = None,
         approved_imports: frozenset[Path] = frozenset(),
         denied_imports: frozenset[Path] = frozenset(),
+        loaded_skills: list[str] | None = None,
     ) -> AssembledPrompt:
         """Assemble the system prompt for *tier*.
 
@@ -222,6 +224,7 @@ class PromptAssembler:
             test_output=test_output,
             approved_imports=approved_imports,
             denied_imports=denied_imports,
+            loaded_skills=loaded_skills,
         )
 
     def assemble_sync(
@@ -236,6 +239,7 @@ class PromptAssembler:
         test_output: str | None = None,
         approved_imports: frozenset[Path] = frozenset(),
         denied_imports: frozenset[Path] = frozenset(),
+        loaded_skills: list[str] | None = None,
     ) -> AssembledPrompt:
         """Synchronous variant of :meth:`assemble` (tests, CLI)."""
         # The brain tier carries the workspace manifest; others don't.
@@ -280,14 +284,28 @@ class PromptAssembler:
         # calls the same fs_* tools, and a per-tier position would split
         # the base+root prefix the tiers currently share.
         root_block = workspace_root_block(self._workspace)
-        parts = [BASE_SYSTEM_PROMPT, root_block] + [block for block in context.blocks.values()]
-        text = "\n\n".join(parts)
-
         steering_block = context.blocks.get("steering")
         prefix_parts = [BASE_SYSTEM_PROMPT, root_block]
         if steering_block is not None:
             prefix_parts.append(steering_block)
         prefix = "\n\n".join(prefix_parts)
+
+        # Skills sit after the cache prefix (TD-4502).  Catalog + loaded
+        # bodies are brain-only and must not enter prefix_hash.
+        skill_parts: list[str] = []
+        if tier == "brain":
+            discovered = list_workspace_skills(self._workspace, self._home_dir)
+            catalog = render_skill_catalog(discovered)
+            if catalog:
+                skill_parts.append(catalog)
+            names = loaded_skills if loaded_skills is not None else []
+            bodies = render_loaded_skills(discovered, names)
+            if bodies:
+                skill_parts.append(bodies)
+
+        after_prefix = [block for key, block in context.blocks.items() if key != "steering"]
+        parts = prefix_parts + skill_parts + after_prefix
+        text = "\n\n".join(parts)
         prefix_hash = hashlib.sha256(prefix.encode("utf-8")).hexdigest()
 
         # Counted separately, not derived by subtraction: the prefix is

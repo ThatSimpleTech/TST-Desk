@@ -8,11 +8,18 @@ steering reloads mid-session (TD-509).
 
 from __future__ import annotations
 
-from tstd.protocol import ImportedFile, InstructionStack, InstructionStackEntry, MemoryStackEntry
+from tstd.protocol import (
+    ImportedFile,
+    InstructionStack,
+    InstructionStackEntry,
+    MemoryStackEntry,
+    SkillStackEntry,
+)
 
 from .assembler import AssembledSteering
 from .imports import ImportDirective
 from .memory_loader import MemoryFile, MemoryLoad, memory_tokens
+from .skills import Skill
 
 
 def _flatten_imports(directives: tuple[ImportDirective, ...]) -> list[ImportedFile]:
@@ -41,6 +48,25 @@ def _memory_entries(files: tuple[MemoryFile, ...]) -> list[MemoryStackEntry]:
     ]
 
 
+def _skill_entries(
+    skills: tuple[Skill, ...] | list[Skill] | None,
+    loaded_names: frozenset[str] | set[str] | None,
+) -> list[SkillStackEntry]:
+    if not skills:
+        return []
+    loaded = loaded_names or set()
+    return [
+        SkillStackEntry(
+            name=skill.name,
+            description=skill.description,
+            source=skill.source,
+            loaded=skill.name in loaded,
+            tokens=skill.tokens,
+        )
+        for skill in skills
+    ]
+
+
 def build_instruction_stack(
     session_id: str,
     steering: AssembledSteering,
@@ -49,6 +75,8 @@ def build_instruction_stack(
     last_cached_tokens: int | None = None,
     cache_observed: bool = False,
     memory: MemoryLoad | None = None,
+    skills: tuple[Skill, ...] | list[Skill] | None = None,
+    loaded_skill_names: frozenset[str] | set[str] | list[str] | None = None,
 ) -> InstructionStack:
     """Build the ``instruction_stack`` event for *steering*.
 
@@ -90,4 +118,8 @@ def build_instruction_stack(
         memory=_memory_entries(memory.files) if memory is not None else [],
         memory_dropped=_memory_entries(memory.dropped) if memory is not None else [],
         memory_placeholder=memory is None or memory.block is None,
+        skills=_skill_entries(
+            skills,
+            frozenset(loaded_skill_names) if loaded_skill_names is not None else None,
+        ),
     )
