@@ -60,6 +60,9 @@ import {
 	selectedCredential,
 	credentialHost,
 	validateNamedKey,
+	saveMcpServer,
+	setMcpServerEnabled,
+	deleteMcpServer,
 } from "./settings.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -525,5 +528,86 @@ describe("key section", () => {
 			{ type: "delete_credential", credential: "local" },
 			{ type: "validate_api_key", credential: "local" },
 		]);
+	});
+});
+
+describe("mcp section", () => {
+	it("lists servers from setup_state and does not invent them", () => {
+		startSettings();
+		expect(settings.mcpServers).toEqual([]);
+		emit(
+			setupState({
+				mcp_servers: [
+					{
+						id: "example",
+						transport: "stdio",
+						command: ["python", "-m", "some_mcp"],
+						url: "",
+						enabled: true,
+					},
+				],
+			}),
+		);
+		expect(settings.mcpServers).toEqual([
+			{
+				id: "example",
+				transport: "stdio",
+				command: ["python", "-m", "some_mcp"],
+				url: "",
+				enabled: true,
+			},
+		]);
+	});
+
+	it("add / disable / remove send the verbs", () => {
+		startSettings();
+		emit(
+			setupState({
+				mcp_servers: [
+					{
+						id: "example",
+						transport: "stdio",
+						command: ["true"],
+						url: "",
+						enabled: true,
+					},
+				],
+			}),
+		);
+		saveMcpServer({
+			id: "loop",
+			transport: "http",
+			command: [],
+			url: "http://127.0.0.1:9/mcp",
+			enabled: true,
+		});
+		setMcpServerEnabled("example", false);
+		deleteMcpServer("example");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_mcp_server",
+				id: "loop",
+				transport: "http",
+				command: [],
+				url: "http://127.0.0.1:9/mcp",
+				enabled: true,
+			},
+			{
+				type: "set_mcp_server",
+				id: "example",
+				transport: "stdio",
+				command: ["true"],
+				url: "",
+				enabled: false,
+			},
+			{ type: "delete_mcp_server", id: "example" },
+		]);
+	});
+
+	it("disable does not invent a server the daemon never sent", () => {
+		startSettings();
+		emit(setupState({ mcp_servers: [] }));
+		setMcpServerEnabled("ghost", false);
+		expect(mocks.sent).toEqual([]);
 	});
 });

@@ -15,7 +15,7 @@ import json
 import secrets
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from .attachments import AttachmentLimits
 from .autonomy.charter import Charter
@@ -705,6 +705,68 @@ class SetTierCredential(ClientMessage):
     preset: str = Field(min_length=1)
     tier: str = Field(min_length=1)
     credential: str = ""
+
+
+class SetMcpServer(ClientMessage):
+    """Create or replace one listed MCP server (TD-4403).
+
+    Command is argv tokens only. There is no ``env`` field — a token
+    pasted here would land in ``config.yaml``. Extra keys are forbidden
+    so ``env`` / ``environment`` cannot sneak in later. Acked with
+    ``setup_state``. Live sessions keep their previous tool set until a
+    new session; hot-attach is out of scope.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["set_mcp_server"] = "set_mcp_server"
+    id: str = Field(min_length=1)
+    transport: Literal["stdio", "http"]
+    command: list[str] = Field(default_factory=list)
+    url: str = ""
+    enabled: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_env(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            for key in ("env", "environment"):
+                if key in value:
+                    raise ValueError(
+                        "MCP server messages cannot carry env; tokens stay in the keychain"
+                    )
+        return value
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _command_is_argv(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raise ValueError("command must be a list of argv tokens, not a string")
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        raise ValueError("command must be a list of argv tokens")
+
+
+class DeleteMcpServer(ClientMessage):
+    """Remove one listed MCP server (TD-4403). Unknown id is a typed error."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["delete_mcp_server"] = "delete_mcp_server"
+    id: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_env(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            for key in ("env", "environment"):
+                if key in value:
+                    raise ValueError(
+                        "MCP server messages cannot carry env; tokens stay in the keychain"
+                    )
+        return value
 
 
 class RunDiagnostics(ClientMessage):
@@ -1484,6 +1546,16 @@ class CredentialSummary(BaseModel):
     base_url: str | None = None
 
 
+class McpServerSummary(BaseModel):
+    """One listed MCP server as shown in settings (TD-4403). Never a secret."""
+
+    id: str
+    transport: Literal["stdio", "http"]
+    command: list[str] = Field(default_factory=list)
+    url: str = ""
+    enabled: bool = True
+
+
 class SetupState(DaemonEvent):
     """Response to ``get_setup_state``; also the ack for ``set_api_key`` and
     ``set_preset`` (TD-1101).
@@ -1537,6 +1609,9 @@ class SetupState(DaemonEvent):
     credentials: list[CredentialSummary] = Field(default_factory=list)
     tier_credentials: dict[str, str | None] = Field(default_factory=dict)
     tier_loopback: dict[str, bool] = Field(default_factory=dict)
+    # TD-4403: listed MCP servers. Additive, default empty. Never a secret;
+    # there is no env map. An older client ignores the field.
+    mcp_servers: list[McpServerSummary] = Field(default_factory=list)
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1913,6 +1988,8 @@ ClientMessageT = Annotated[
     | SetCredential
     | DeleteCredential
     | SetTierCredential
+    | SetMcpServer
+    | DeleteMcpServer
     | RunDiagnostics
     | GetUsage
     | ExportUsage
@@ -2044,6 +2121,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_credential",
         "delete_credential",
         "set_tier_credential",
+        "set_mcp_server",
+        "delete_mcp_server",
         "run_diagnostics",
         "get_usage",
         "export_usage",

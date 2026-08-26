@@ -42,6 +42,7 @@ from .browser import BrowserDriver, BrowserError, browser_driver_from_config, no
 from .config import (
     DEFAULT_CREDENTIAL_ID,
     ConfigError,
+    McpServerConfig,
     ModelConfig,
     ModelDiscoveryError,
     TierConfig,
@@ -57,8 +58,10 @@ from .config import (
 )
 from .config_write import (
     delete_credential_entry,
+    delete_mcp_server_entry,
     save_active_preset,
     save_credential,
+    save_mcp_server,
     save_tier_credential,
     save_tier_slug,
 )
@@ -157,6 +160,7 @@ from .protocol import (
     DeleteApiKey,
     DeleteCredential,
     DeleteJob,
+    DeleteMcpServer,
     DeleteSession,
     Deny,
     DenyVerify,
@@ -187,6 +191,7 @@ from .protocol import (
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    McpServerSummary,
     MemoryAccept,
     MemoryEdit,
     MemoryFileEntry,
@@ -216,6 +221,7 @@ from .protocol import (
     SetCuIndicators,
     SetCuKill,
     SetLoadGlobalMemory,
+    SetMcpServer,
     SetPlan,
     SetPreset,
     SetRemoteAttach,
@@ -668,6 +674,16 @@ class Daemon:
             credentials=credentials,
             tier_credentials={name: tiers[name].credential for name in tiers},
             tier_loopback={name: is_loopback_url(tiers[name].base_url) for name in tiers},
+            mcp_servers=[
+                McpServerSummary(
+                    id=sid,
+                    transport=spec.transport,
+                    command=list(spec.command),
+                    url=spec.url,
+                    enabled=spec.enabled,
+                )
+                for sid, spec in sorted(self.config.mcp.servers.items())
+            ],
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
@@ -1958,6 +1974,38 @@ class Daemon:
                 "tier slug changed",
                 extra={"extra_fields": {"preset": msg.preset, "tier": msg.tier}},
             )
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetMcpServer):
+            try:
+                spec = McpServerConfig(
+                    transport=msg.transport,
+                    command=msg.command,
+                    url=msg.url,
+                    enabled=msg.enabled,
+                )
+                save_mcp_server(msg.id, spec)
+            except (ConfigError, ValidationError) as e:
+                return build_error("bad_request", str(e))
+            try:
+                self._reload_user_config()
+            except ConfigError as e:
+                return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+            await self._mcp.reload(self.config.mcp)
+            log.info("mcp server saved", extra={"extra_fields": {"server_id": msg.id}})
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, DeleteMcpServer):
+            try:
+                delete_mcp_server_entry(msg.id)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            try:
+                self._reload_user_config()
+            except ConfigError as e:
+                return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+            await self._mcp.reload(self.config.mcp)
+            log.info("mcp server removed", extra={"extra_fields": {"server_id": msg.id}})
             return (await self._setup_state_event()).model_dump_json()
 
         # ── Diagnostics (TD-1104 doctor) ─────────────────────────────

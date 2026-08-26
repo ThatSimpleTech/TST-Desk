@@ -131,19 +131,35 @@ class McpSupervisor:
                 )
                 dispatcher.register_handler(local, _handler(live.client, remote.name))
 
+    async def reload(self, config: McpConfig) -> list[McpServerStatus]:
+        """Drop live clients and handshake a new listing. Never raises.
+
+        Live sessions keep the tool set they attached with; the next
+        session (and doctor) see this list. Hot-attach is out of scope.
+        """
+        async with self._lock:
+            await self._reset_unlocked()
+            self._config = config
+            await self._connect_all()
+            self._loaded = True
+            return list(self._statuses)
+
     async def aclose(self) -> None:
         async with self._lock:
-            for live in self._live.values():
-                try:
-                    await live.client.aclose()
-                except Exception:
-                    log.exception(
-                        "mcp client close failed",
-                        extra={"extra_fields": {"server_id": live.server_id}},
-                    )
-            self._live.clear()
-            self._statuses = []
+            await self._reset_unlocked()
             self._loaded = False
+
+    async def _reset_unlocked(self) -> None:
+        for live in self._live.values():
+            try:
+                await live.client.aclose()
+            except Exception:
+                log.exception(
+                    "mcp client close failed",
+                    extra={"extra_fields": {"server_id": live.server_id}},
+                )
+        self._live.clear()
+        self._statuses = []
 
     async def _connect_all(self) -> None:
         self._live = {}
