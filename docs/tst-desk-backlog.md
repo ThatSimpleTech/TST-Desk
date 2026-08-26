@@ -5920,10 +5920,16 @@ paints from the event; no plan document.
 **Size:** 3 · **Depends on:** TD-4402, TD-4502
 
 **Acceptance criteria:**
-- [ ] Headless: a mock MCP server contributes one tool; a slash
+- [x] Headless: a mock MCP server contributes one tool; a slash
       command and a skill appear in the recorded prompt only when
       invoked; the MCP tool cannot skip the classifier
-- [ ] **This harness is the M10 exit criterion**
+- [x] **This harness is the M10 exit criterion**
+
+Done (2026-08-26): `tstd.e2e_m10` + `core/scripts/e2e_m10.py`,
+pinned in CI as `tests/test_e2e_m10.py`. Headless: `MockProvider` +
+a fake stdio MCP speaker (`harness__echo`), slash body and skill
+body appear in recorded prompts only after invoke, MCP call carries
+a decision class. Not `e2e_harness.run`. Not marked `live`.
 
 ---
 
