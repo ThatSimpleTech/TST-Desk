@@ -5703,10 +5703,17 @@ TD-101: hard-required container. No unsandboxed autonomy.
 **Size:** 3 · **Depends on:** TD-4301
 
 **Acceptance criteria:**
-- [ ] Host keychain, `~/.ssh`, cloud creds, and the user-data-dir key
+- [x] Host keychain, `~/.ssh`, cloud creds, and the user-data-dir key
       are not visible in the container
-- [ ] A test that a well-known cred path is absent
-- [ ] Network inside the container follows the charter wall
+- [x] A test that a well-known cred path is absent
+- [x] Network inside the container follows the charter wall
+
+**Completed (2026-08-26):** `container_argv` still bind-mounts only the
+workspace; there is no extra-mount API. A well-known cred path
+(`~/.ssh` / `$HOME/.ssh` / `/root/.ssh`) is absent from argv and from
+the fake runtime's container view. `network: deny` keeps
+`--network=none`; a host allowlist omits that flag (Podman slirp) and
+never uses `--network=host`. Unexpected values fail closed as deny.
 
 ---
 
