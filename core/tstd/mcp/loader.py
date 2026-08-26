@@ -127,6 +127,10 @@ class McpSupervisor:
                         side_effect_class="ask",
                         parallel_safe=True,
                         provenance=tool_provenance(live.server_id),
+                        # TD-4402: do not infer path/host keys from the
+                        # remote schema. Undeclared fields fail toward B.
+                        path_fields=(),
+                        host_fields=(),
                     )
                 )
                 dispatcher.register_handler(local, _handler(live.client, remote.name))

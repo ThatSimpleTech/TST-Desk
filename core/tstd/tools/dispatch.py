@@ -101,7 +101,9 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
     values, reduced by :func:`host_of`, and the tool's optional
     ``host_resolver`` for config-carried hosts (``web_search`` →
     ``search.base_url``).  ``side_effect_class`` rides along so the
-    table can enforce it as a floor.
+    table can enforce it as a floor.  ``provenance`` and whether the
+    tool declared path/host metadata (TD-4402) do too — never inferred
+    from JSON schema property names.
     """
     paths = tuple(Path(arguments[f]) for f in tool.path_fields if isinstance(arguments.get(f), str))
     hosts: set[str] = set()
@@ -128,6 +130,8 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
         is_mutation=tool.mutates,
         actuates=tool.actuates,
         side_effect_class=tool.side_effect_class,
+        provenance=tool.provenance,
+        has_path_host_metadata=bool(tool.path_fields or tool.host_fields or tool.host_resolver),
     )
 
 

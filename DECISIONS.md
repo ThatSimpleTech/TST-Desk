@@ -8513,3 +8513,30 @@ rows rather than a failed `Daemon.run` is the acceptance criterion.
 **Alternative rejected:** Replacing builtins on name clash. Also
 rejected: hijacking `tstd.desktop.stdio_mcp`. Also rejected: a free-form
 `env` map (TD-4403 keeps tokens in the keychain).
+
+---
+
+## 2026-08-26 — TD-4402: MCP tools without path/host metadata cannot be Class A (Class B)
+
+**Decision:** `DecisionRequest` carries optional `provenance` (default
+`None`) and `has_path_host_metadata`. `build_decision_request` copies
+`Tool.provenance` and sets the flag from declared `path_fields` /
+`host_fields` / `host_resolver` — never from JSON schema property names.
+The static rule `mcp-undeclared-fields` matches `provenance` starting
+with `mcp:` when that flag is false, and is Class B *before every A
+grant*. Loader keeps `path_fields`/`host_fields` empty and
+`side_effect_class="ask"`. Computer-use stays `tstd.desktop`, not `mcp:`.
+
+**Rationale:** An MCP tool re-registered as `side_effect_class="auto"`
+with no path/host metadata would otherwise fall through to the worker,
+which can return A. Putting provenance on the request keeps builtins
+unchanged (`None`). The rule sits with the other never-A floors
+(`shell-floor`) so `in-workspace-edit` cannot launder a write-bearing
+request that never declared `path_fields`. If an MCP tool later declares
+`host_fields`, `network-new-host` still applies; this story does not
+invent host allowlists.
+
+**Alternative rejected:** Treating empty reads+writes+hosts as B without
+provenance (weaker: a declared `host_field` that happened to be absent
+on one call would look the same as an undeclared tool). Also rejected:
+inferring `path`/`url` keys from the remote schema.

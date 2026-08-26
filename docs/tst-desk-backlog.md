@@ -5805,9 +5805,14 @@ provenance `mcp:<id>` on the existing dispatcher. Dead servers are
 **Size:** 3 · **Depends on:** TD-4401, TD-702
 
 **Acceptance criteria:**
-- [ ] No MCP tool bypasses TD-702
-- [ ] Missing `host_fields` / path fields fail toward B, never A
-- [ ] A test attempts a bypass and gets `UnclassifiedToolCall`
+- [x] No MCP tool bypasses TD-702
+- [x] Missing `host_fields` / path fields fail toward B, never A
+- [x] A test attempts a bypass and gets `UnclassifiedToolCall`
+
+Done (2026-08-26): MCP provenance with no declared `path_fields` /
+`host_fields` / `host_resolver` is static Class B (`mcp-undeclared-fields`),
+ahead of every A grant. Dispatch with `classifier=None` still raises
+`UnclassifiedToolCall`. Loader keeps empty field lists and `ask`.
 
 ---
 

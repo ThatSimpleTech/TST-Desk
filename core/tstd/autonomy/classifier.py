@@ -18,6 +18,8 @@ the *obvious* cases — the ones that must never reach the model:
 - a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
 - an in-workspace edit inside ``writable_paths`` → A
+- an MCP tool with no declared path or host metadata → B, never A
+  (TD-4402; even if ``side_effect_class`` was reset to ``auto``)
 
 Anything the table cannot decide is left unclassified so the worker-tier
 classifier (TD-703) can handle it, defaulting to **B** — fail toward
@@ -145,6 +147,11 @@ class DecisionRequest:
             every grant; ``ask`` is at least B via the terminal floor
             rule, so specific grants (memory, in-workspace edit) keep
             their deliberate class.
+        provenance: Copied from ``Tool.provenance``. MCP tools are
+            ``mcp:<server-id>`` (TD-4402). Builtins leave this ``None``.
+        has_path_host_metadata: ``True`` when the tool declared
+            ``path_fields``, ``host_fields``, or a ``host_resolver``.
+            An MCP tool without that declaration cannot be Class A.
     """
 
     tool_name: str
@@ -155,6 +162,8 @@ class DecisionRequest:
     is_mutation: bool = False
     actuates: bool | None = None
     side_effect_class: str = "auto"
+    provenance: str | None = None
+    has_path_host_metadata: bool = False
 
 
 # ── Rule table ─────────────────────────────────────────────────────────
@@ -457,6 +466,23 @@ def _rule_shell_floor(req: DecisionRequest, _boundary: Boundary) -> bool:
     return req.tool_name == "shell"
 
 
+def _rule_mcp_undeclared_fields(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """MCP tools with no declared path/host metadata are never Class A.
+
+    Missing ``path_fields`` and ``host_fields`` (and no ``host_resolver``)
+    fail toward B, even if someone re-registers the tool as
+    ``side_effect_class="auto"`` so the ask floor would not fire.  The
+    worker must not grant A either — this is a static match, not a
+    fall-through.  Declared host/path metadata leaves the rule silent so
+    ``network-new-host`` and in-workspace writes still apply.  Computer-use
+    tools are ``tstd.desktop``, not ``mcp:`` provenance.
+    """
+    provenance = req.provenance
+    if provenance is None or not provenance.startswith("mcp:"):
+        return False
+    return not req.has_path_host_metadata
+
+
 def _rule_memory_write(req: DecisionRequest, boundary: Boundary) -> bool:
     """The call writes only under ``.tst/memory/`` (Class A, TD-2102)."""
     return (
@@ -565,6 +591,16 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="shell commands always require approval (never model-granted A)",
         decision_class=DecisionClass.B,
         match=_rule_shell_floor,
+    ),
+    # Before every A grant: an MCP tool that never declared path/host
+    # metadata must not be laundered into A by in-workspace-edit (if
+    # writes were smuggled onto the request) or by the worker tier
+    # (TD-4402).  C rules above still win — never, caps, new hosts.
+    Rule(
+        id="mcp-undeclared-fields",
+        description="MCP tool with no declared path or host metadata — never model-granted A",
+        decision_class=DecisionClass.B,
+        match=_rule_mcp_undeclared_fields,
     ),
     Rule(
         id="memory-file-write",
