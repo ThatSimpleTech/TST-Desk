@@ -35,6 +35,7 @@ TOOL_NAMES = {
     "wait",
     "wait_for_window",
     "overlay_session",
+    "hit_test",
 }
 
 TIMEOUT_SECONDS = 60

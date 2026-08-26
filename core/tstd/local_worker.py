@@ -10,12 +10,15 @@ empty so a test config without ``vllm`` does not crash.
 
 from __future__ import annotations
 
+from typing import Literal
 from urllib.parse import urlparse
 
 from .config import ModelConfig, TierConfig, apply_credential_host
 from .protocol import ToolCall
 from .router import TIER_NAMES, TierName
 from .session import Session
+
+CuSurface = Literal["desktop", "browser"]
 
 
 def is_cu_tool(name: str) -> bool:
@@ -38,6 +41,18 @@ def mark_cu_tool(session: Session, name: str) -> None:
     """Record a computer-use tool the moment the Screen tab would see it."""
     if is_cu_tool(name):
         session.used_cu = True
+
+
+def last_cu_surface(session: Session) -> CuSurface | None:
+    """The last computer-use tool's surface, or ``None`` before any CU call.
+
+    Design-mode hit-test routes from this: a desktop frame must not be
+    asked of the browser driver (TD-3406).
+    """
+    for event in reversed(session.event_log.all_events):
+        if isinstance(event, ToolCall) and is_cu_tool(event.name):
+            return "desktop" if event.name.startswith("desktop_") else "browser"
+    return None
 
 
 def local_worker_tier(config: ModelConfig) -> TierConfig | None:

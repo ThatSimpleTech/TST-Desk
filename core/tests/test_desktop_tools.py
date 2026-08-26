@@ -25,6 +25,7 @@ from tstd.desktop import (
     McpDesktopDriver,
     MockDesktopDriver,
     driver_for_command,
+    scripted_ax_hit_node,
     window_matches,
 )
 from tstd.desktop.protocol import TINY_PNG_B64
@@ -351,6 +352,27 @@ class TestLinuxAndLivePath:
             assert exc.value.code == "focus_mismatch"
         finally:
             await driver.aclose()
+
+    async def test_hit_test_is_observe_only_on_live_path(self) -> None:
+        class _Client:
+            async def call_tool(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
+                assert name == "hit_test"
+                assert arguments["coordinate_space"] == "image"
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                scripted_ax_hit_node(float(arguments["x"]), float(arguments["y"]))
+                            ),
+                        }
+                    ]
+                }
+
+        driver = McpDesktopDriver(["/bin/false"], platform="linux", client=_Client())  # type: ignore[arg-type]
+        driver.set_killed(True)
+        node = await driver.hit_test(12.0, 34.0)
+        assert node == scripted_ax_hit_node(12.0, 34.0)
 
     def test_desktop_package_does_not_bind(self) -> None:
         root = Path(__file__).resolve().parents[1] / "tstd" / "desktop"

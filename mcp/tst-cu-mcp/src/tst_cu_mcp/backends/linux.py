@@ -165,3 +165,9 @@ class LinuxBackend:
             display=display_ok,
             xtest=xtest_ok,
         )
+
+    def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        """AT-SPI node, or the EWMH window under the point. Never actuates."""
+        from tst_cu_mcp.backends.linux_hit import observe_at
+
+        return observe_at(x, y)
