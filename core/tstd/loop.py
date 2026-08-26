@@ -766,6 +766,14 @@ async def agent_loop(
             break  # session was cancelled
         apply_slash_skill(session, user_content)
 
+        # TD-1721: a preset switch while idle is applied on this turn.
+        if session.config is not None:
+            config = session.config
+            tracker.bind_config(config)
+            runtime = session.delegate_runtime
+            if runtime is not None:
+                runtime.config = config
+
         # Turn observability (TD-1713): mark the dequeue itself. The
         # existing "turn start" log lands after prompt assembly, so a
         # stall between dequeue and assembly was invisible in the logs

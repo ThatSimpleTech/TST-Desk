@@ -54,10 +54,10 @@ workspace → done.
    default loopback port, and for a loopback endpoint no key is asked for and none is sent.
    (vLLM or EZER: pick the `vllm` preset instead — it ships pointed at
    `http://127.0.0.1:8000/v1`. A different port is a `base_url` edit in `config.yaml`.)
-3. **Pick a preset.** `tst-default`, `budget`, `local`, or `vllm`. You can change presets from settings,
-   and pin which tier handles the turn from the title bar mid-session. Changing the *model*
-   behind a tier is also a settings change, but it applies to new sessions — a running session
-   keeps the model it opened with.
+3. **Pick a preset.** `tst-default`, `budget`, `local`, or `vllm`. Settings' preset is the
+   default for *new* sessions. The title bar can retarget the open chat at another catalog
+   preset without rewriting Settings. Changing the *model* behind a tier is still a settings
+   change and applies to new sessions — a running session keeps the slugs it opened with.
 4. **Pick a workspace.** A native folder picker. The folder is the unit of work — TST Desk
    scaffolds a `.tst/` directory in it with a commented default config, resolves any `AGENTS.md`
    or `CLAUDE.md` it finds, and shows you the resolved instruction stack.

@@ -245,6 +245,11 @@ export class ProtocolClient {
     this.send({ type: "set_plan", session_id: sessionId, on });
   }
 
+  /** Retarget this session at a catalog preset (TD-1721). Acked with session_list. */
+  setSessionPreset(sessionId: string, name: string): void {
+    this.send({ type: "set_session_preset", session_id: sessionId, name });
+  }
+
   /** Confirm a pending interactive verify (TD-4204 ask mode). */
   runVerify(sessionId: string): boolean {
     return this.send({ type: "run_verify", session_id: sessionId });

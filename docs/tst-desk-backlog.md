@@ -3985,17 +3985,21 @@ global preset, so two chats on `local` and `vllm` look identical
 and you cannot retarget an existing chat.
 
 **Acceptance criteria:**
-- [ ] A session persists the preset it opened with and revive restores it
-- [ ] The title bar (or composer) can change *this* session's preset;
+- [x] A session persists the preset it opened with and revive restores it
+- [x] The title bar (or composer) can change *this* session's preset;
       the change applies on the next idle turn
-- [ ] Changing Settings' `active_preset` does not rewrite open sessions
-- [ ] The session list shows each row's preset
-- [ ] A per-session slug edit does not write back onto the global preset
-- [ ] Refuse a preset switch while a turn is running
+- [x] Changing Settings' `active_preset` does not rewrite open sessions
+- [x] The session list shows each row's preset
+- [x] A per-session slug edit does not write back onto the global preset
+- [x] Refuse a preset switch while a turn is running
 
 **Notes:** Not a second Settings document. Settings remains the catalog.
 Class B: persist the preset name on the session, not a forked config
 tree. Do not start until TD-1720 is on main.
+
+**Done (2026-08-26).** `sessions.json` stores the catalog name.
+`set_session_preset` retargets the open chat; Settings' `set_preset`
+stays the default for new sessions.
 
 ---
 

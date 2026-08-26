@@ -150,6 +150,7 @@ class TestLifecycleMetadata:
             store = SessionStore(Path(tmp))
             assert await store.set_archived("nope", True) is False
             assert await store.set_workspace("nope", "/ws") is False
+            assert await store.set_preset("nope", "budget") is False
 
     async def test_a_store_written_before_this_field_still_loads(self) -> None:
         """Older snapshots have no `archived` key; they must load, not drop."""
@@ -171,6 +172,7 @@ class TestLifecycleMetadata:
             assert rec is not None
             assert rec.archived is False
             assert rec.title is None
+            assert rec.preset == ""
 
 
 class TestSessionTitle:
@@ -348,3 +350,29 @@ class TestSessionRename:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(Path(tmp))
             assert await store.set_title("nope", "x") is False
+
+
+class TestSessionPreset:
+    """Catalog preset name on the session row (TD-1721)."""
+
+    async def test_upsert_records_and_preserves_preset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle", preset="budget")
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.preset == "budget"
+            await store.upsert("s1", "/ws", "running")
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.preset == "budget"
+            assert rec.state == "running"
+
+    async def test_set_preset_persists_across_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle", preset="tst-default")
+            assert await store.set_preset("s1", "local") is True
+            rec = SessionStore(Path(tmp)).get("s1")
+            assert rec is not None
+            assert rec.preset == "local"
