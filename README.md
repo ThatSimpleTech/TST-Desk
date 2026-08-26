@@ -219,10 +219,11 @@ and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel 
 a validating `CHARTER.md` schema and the project-home charter editor, the
 autonomy engine (unattended runner, circuit breakers, hard-required container),
 slash commands, `SKILL.md`, plan lock, MCP loading,
+Design mode on browser and desktop frames,
 plus the session rail, settings, diagnostics, and keyless local-model support.
 
 What is not built yet, and is not claimed anywhere above: Wayland desktop
-capture, and desktop Design-mode AX.
+capture.
 Those are later stories — see [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) §9 for
 the phasing.
 

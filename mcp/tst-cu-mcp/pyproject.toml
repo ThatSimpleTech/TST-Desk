@@ -70,6 +70,10 @@ module = [
     "ApplicationServices",
     "CoreFoundation.*",
     "CoreFoundation",
+    "gi",
+    "gi.*",
+    "gi.repository",
+    "gi.repository.*",
 ]
 ignore_missing_imports = true
 

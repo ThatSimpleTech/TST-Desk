@@ -3,6 +3,7 @@ import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 import { createChatState, createChatStore, type ChatDeps } from "./chat-store";
 import { pickToDraft, scriptedHitNode, type DesignPick } from "./design";
 import { screen, setScreenPreviewReader, startScreen, resetScreen } from "./screen.svelte.js";
+import { session } from "./session-status.svelte.js";
 
 const mocks = vi.hoisted(() => ({
 	handlers: new Set<(e: DaemonEventUnion) => void>(),
@@ -65,6 +66,7 @@ describe("design store (TD-3403)", () => {
 	});
 
 	afterEach(() => {
+		session.sessionId = null;
 		resetDesign();
 		resetScreen();
 	});
@@ -170,5 +172,45 @@ describe("design store (TD-3403)", () => {
 		});
 		expect(design.actuating).toBe(false);
 		expect(toggleDesign()).toBe(true);
+	});
+
+	it("desktop frames send design_hit_test and enrich an AX chip (TD-3406)", async () => {
+		await freezePreview();
+		toggleDesign();
+		session.sessionId = "s1";
+		emit({
+			type: "tool_call",
+			seq: 2,
+			session_id: "s1",
+			tool_call_id: "c1",
+			name: "desktop_screenshot",
+			arguments: {},
+		});
+		expect(design.surface).toBe("desktop");
+		expect(design.enabled).toBe(true);
+		setDesignHitTester(null);
+		const made = await addPick({ x: 12, y: 34, cropDataUrl: CROP, mode: "replace" });
+		expect(made?.role).toBeNull();
+		expect(mocks.sent).toContainEqual({
+			type: "design_hit_test",
+			session_id: "s1",
+			x: 12,
+			y: 34,
+		});
+		emit({
+			type: "design_hit",
+			seq: 1,
+			session_id: "s1",
+			x: 12,
+			y: 34,
+			xpath: null,
+			role: "AXButton",
+			attributes: { AXTitle: "Mock", AXIdentifier: "mock-target" },
+			box: { x: -8, y: 24, width: 80, height: 24 },
+			styles: {},
+		});
+		expect(design.picks[0]?.role).toBe("AXButton");
+		expect(design.picks[0]?.attributes.AXIdentifier).toBe("mock-target");
+		session.sessionId = null;
 	});
 });

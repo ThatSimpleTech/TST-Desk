@@ -499,7 +499,55 @@ def foreground_window() -> WindowInfo:
     window = int.from_bytes(raw[: ns.ctypes.sizeof(ns.c_ulong)], byteorder="little")
     if window == 0:
         return WindowInfo(title="", process="", pid=0, x=0, y=0, width=0, height=0)
+    return _describe_window(dpy, window)
 
+
+def window_at_point(x: float, y: float) -> dict[str, Any]:
+    """Topmost EWMH client containing a global pixel. Never moves the pointer."""
+    ns = _x11()
+    dpy = display()
+    root = root_window(dpy)
+    raw = _property(dpy, root, _atom(dpy, b"_NET_CLIENT_LIST_STACKING"), XA_WINDOW, 4096)
+    if not raw:
+        raw = _property(dpy, root, _atom(dpy, b"_NET_CLIENT_LIST"), XA_WINDOW, 4096)
+    if not raw:
+        return {}
+    size = ns.ctypes.sizeof(ns.c_ulong)
+    windows = [
+        int.from_bytes(raw[offset : offset + size], byteorder="little")
+        for offset in range(0, len(raw) - size + 1, size)
+    ]
+    px, py = round(x), round(y)
+    for window in reversed(windows):
+        if window == 0:
+            continue
+        info = _describe_window(dpy, window)
+        if info.width <= 0 or info.height <= 0:
+            continue
+        if info.x <= px < info.x + info.width and info.y <= py < info.y + info.height:
+            attributes: dict[str, str] = {}
+            if info.title:
+                attributes["title"] = info.title
+            if info.process:
+                attributes["process"] = info.process
+            return {
+                "xpath": None,
+                "role": "window",
+                "attributes": attributes,
+                "box": {
+                    "x": float(info.x),
+                    "y": float(info.y),
+                    "width": float(info.width),
+                    "height": float(info.height),
+                },
+                "styles": {},
+            }
+    return {}
+
+
+def _describe_window(dpy: Any, window: int) -> WindowInfo:
+    ns = _x11()
+    root = root_window(dpy)
     title = ""
     utf8 = _atom(dpy, b"UTF8_STRING")
     name = _property(dpy, window, _atom(dpy, b"_NET_WM_NAME"), utf8, 4096)

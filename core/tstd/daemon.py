@@ -103,7 +103,7 @@ from .keychain import (
     get_api_key,
     store_api_key,
 )
-from .local_worker import session_is_cu_heavy, titlebar_hosts, titlebar_slugs
+from .local_worker import last_cu_surface, session_is_cu_heavy, titlebar_hosts, titlebar_slugs
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .mcp.loader import McpSupervisor
@@ -2740,7 +2740,7 @@ class Daemon:
         )
 
     async def _handle_design_hit_test(self, msg: DesignHitTest) -> str:
-        """Observe the session browser at a CSS-pixel point (TD-3403)."""
+        """Observe the last CU surface at a CSS-pixel point (TD-3403 / TD-3406)."""
         found = self.session_registry.get(msg.session_id)
         if found is None:
             return build_error(
@@ -2749,8 +2749,11 @@ class Daemon:
                 session_id=msg.session_id,
             )
         try:
-            raw = await self.browser_driver.hit_test(msg.x, msg.y)
-        except BrowserError:
+            if last_cu_surface(found) == "desktop":
+                raw = await self.desktop_driver.hit_test(msg.x, msg.y)
+            else:
+                raw = await self.browser_driver.hit_test(msg.x, msg.y)
+        except (BrowserError, DesktopError):
             raw = {}
         node = normalize_hit(raw, msg.x, msg.y)
         box_raw = node.get("box")

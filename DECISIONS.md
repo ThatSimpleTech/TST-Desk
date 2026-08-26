@@ -8724,3 +8724,29 @@ writing session-local slugs back onto the catalog.
 preset's slugs/prices (a fork). Also rejected: applying Settings'
 `active_preset` to open loops. Also rejected: allowing a preset
 switch mid-turn (the next completion would mix two catalogs).
+
+---
+
+## 2026-08-26 — TD-3406: desktop Design hit-test is observe-only AX (Class B)
+
+**Decision:** Design-mode clicks on a desktop frame use the existing
+`design_hit_test` / `design_hit` wire (no new field). The daemon
+routes by the last `desktop_` / `browser_` `tool_call` on the
+session log. `tst-cu-mcp` adds an internal `hit_test` tool that
+never calls the kill-switch and is not registered as an agent tool.
+Last-screenshot metadata (cached on `capture()`) maps frozen-frame
+image pixels to global points and remaps the AX box back onto the
+frame. `xpath` stays null on desktop.
+
+**Rationale:** Design already freezes the last `screen_frame` and
+turns off on actuating CU tools, so the last sidecar grab is that
+frame. A new agent-facing `desktop_hit_test` would need the
+classifier chokepoint for a user-inspection path. Routing from the
+log keeps the protocol additive and leaves existing browser tests
+on the browser driver.
+
+**Alternative rejected:** A new `surface` field on `design_hit_test`
+(the log already knows). Also rejected: treating image pixels as
+global points. Also rejected: blocking hit-test on the kill-switch
+(screenshot already stays live). Also rejected: registering
+`desktop_hit_test` on the agent registry.
