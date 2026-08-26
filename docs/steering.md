@@ -865,8 +865,13 @@ What does **not** carry over, and what to do about it:
   path scoping, this is where you get it back, with `appliesTo`.
 - **A `.claude/` directory inside the workspace** is skipped by the nested walk. Only
   `~/.claude/CLAUDE.md` at your home directory is read. Move anything you need out of it.
-- **MCP server definitions, hooks, slash commands, and subagent files** are configuration for
+- **MCP server definitions, hooks, and subagent files** are configuration for
   another product, not steering. They are ignored.
+- **Slash commands** live in `.tst/commands/*.md` (and `~/.tstdesk/commands/*.md`).
+  They are not steering: the assembler never puts them in the cache prefix.
+  Type `/` in the composer to list them. The agent cannot write those trees.
+  If both of our trees are empty, `.claude/commands/` (and `~/.claude/commands/`)
+  is the fallback. See TD-4501.
 - **Frontmatter conventions from other tools** are stripped, not interpreted. If your
   `CLAUDE.md` opens with a YAML block — `description`, `globs`, `alwaysApply`, or anything else
   — it is removed before the file is assembled, so it never reaches the model and you have
@@ -877,6 +882,16 @@ What does **not** carry over, and what to do about it:
 There is no import step and no migration command. When you are ready to commit to the open
 name, rename `CLAUDE.md` to `AGENTS.md`; until then, both work, and you can keep one repo
 serving both tools indefinitely.
+
+---
+
+## Slash commands are not steering
+
+`.tst/commands/` and `~/.tstdesk/commands/` are human-authored insert snippets.
+The instruction stack never reads them. Invoking `/review` inserts the file
+body into the user message; until then the body is absent from the prompt.
+Agent writes to `.tst/commands/**` and `.claude/commands/**` are Class C, the
+same refusal as `AGENTS.md`.
 
 ---
 

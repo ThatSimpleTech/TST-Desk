@@ -5826,12 +5826,17 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 5 · **Depends on:** TD-1004, TD-501
 
 **Acceptance criteria:**
-- [ ] `.tst/commands/*.md` and `~/.tstdesk/commands/*.md` (user-global
+- [x] `.tst/commands/*.md` and `~/.tstdesk/commands/*.md` (user-global
       wins on name)
-- [ ] `/` in the composer lists them; insert or send (default insert)
-- [ ] Not steering — not in the cache prefix unless invoked
-- [ ] Agent writes to those trees are Class C
-- [ ] Fallback: `.claude/commands/` when ours is empty
+- [x] `/` in the composer lists them; insert or send (default insert)
+- [x] Not steering — not in the cache prefix unless invoked
+- [x] Agent writes to those trees are Class C
+- [x] Fallback: `.claude/commands/` when ours is empty
+
+**Done:** Discovery in `tstd.context.commands`. Human-path `list_commands` /
+`command_list`. Composer `/` palette inserts by default. Assembler
+unchanged. Writes to command trees reuse the steering-file Class C
+refusal.
 
 ---
 

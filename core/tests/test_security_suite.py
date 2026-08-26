@@ -262,6 +262,10 @@ STEERING_POSITIVE = [
     ".tst/rules/deep/style.md",
     ".tst/rules",  # the rules dir itself
     ".tst/config.yaml",  # the approval policy is steering-adjacent (TD-4803)
+    ".tst/commands/review.md",  # slash commands are Class C writes (TD-4501)
+    ".tst/commands/deep/review.md",
+    ".claude/commands/review.md",
+    ".tstdesk/commands/review.md",
 ]
 
 STEERING_NEGATIVE = [

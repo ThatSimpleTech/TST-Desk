@@ -270,6 +270,14 @@ class TestClientMessages:
         assert isinstance(back, ListInstructions)
         assert back.workspace_path == "/home/user/project"
 
+    def test_list_commands(self) -> None:
+        from tstd.protocol import ListCommands
+
+        msg = ListCommands(workspace_path="/home/user/project")
+        back = _roundtrip(msg)
+        assert isinstance(back, ListCommands)
+        assert back.workspace_path == "/home/user/project"
+
     def test_list_memory(self) -> None:
         from tstd.protocol import ListMemory
 
@@ -733,6 +741,25 @@ class TestDaemonEvents:
         back = _roundtrip(evt)
         assert isinstance(back, MemoryFiles)
         assert back.files[0].name == "MEMORY.md"
+
+    def test_command_list(self) -> None:
+        from tstd.protocol import CommandEntry, CommandList
+
+        evt = CommandList(
+            workspace_path="/home/user/project",
+            commands=[
+                CommandEntry(
+                    name="review",
+                    description="Review the diff",
+                    source="workspace",
+                    body="Please review.\n",
+                )
+            ],
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, CommandList)
+        assert back.commands[0].name == "review"
+        assert back.commands[0].source == "workspace"
 
     def test_memory_proposal(self) -> None:
         from tstd.protocol import MemoryFileDiff

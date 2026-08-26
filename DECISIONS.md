@@ -8461,3 +8461,31 @@ ignoring worker/validator keeps the meter and the chips honest.
 **Alternative rejected:** A `plan_state` event. Also rejected: refusing
 `set_tier("brain")` as unnecessary. Also rejected: persisting plan
 across revive (override is not persisted either).
+
+---
+
+## 2026-08-26 — TD-4501: slash commands are a list with a body cap (Class B)
+
+**Decision:** `list_commands` is a connection-scoped human path (same
+shape as `list_instructions`). The reply is `command_list` with
+`{ name, description, source, body, too_large }`. The body is included
+so the composer can insert without a second round-trip. Cap is 32 KiB
+UTF-8 (`COMMAND_BODY_CAP`); over-cap commands keep name/description,
+omit the body, and set `too_large`. Extra YAML frontmatter keys are
+ignored — only `description` is read. Fallback when both
+`.tst/commands/` and `~/.tstdesk/commands/` have no `.md` files includes
+workspace `.claude/commands/` and `~/.claude/commands/` (user-global
+wins on stem in that set too). `source` is one of `workspace`, `user`,
+`claude_workspace`, `claude_user`. Command trees fold into
+`is_steering_write` and reuse the `steering_file` PathGuard refusal.
+
+**Rationale:** A second `get_command` verb would double the protocol
+surface for a picker that needs the body on pick. 32 KiB is enough for
+a human-written snippet and keeps the list payload bounded. Ignoring
+extra frontmatter lets Claude-style command files load without a
+migration. Symmetric `~/.claude/commands/` matches the CLAUDE.md
+fallback already in discovery.
+
+**Alternative rejected:** Fetching the body only on pick. Also rejected:
+forbidding unknown frontmatter keys. Also rejected: a new
+`command_file` refusal code (the model should see one read-only rule).
