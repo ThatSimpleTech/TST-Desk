@@ -345,6 +345,10 @@ def _win() -> Any:
     user32.GetWindowTextW.restype = ctypes.c_int
     user32.GetWindowRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
     user32.GetWindowRect.restype = wintypes.BOOL
+    user32.WindowFromPoint.argtypes = (wintypes.POINT,)
+    user32.WindowFromPoint.restype = wintypes.HWND
+    user32.GetClassNameW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    user32.GetClassNameW.restype = ctypes.c_int
     user32.GetWindowThreadProcessId.argtypes = (
         wintypes.HWND,
         ctypes.POINTER(wintypes.DWORD),
@@ -529,6 +533,48 @@ def foreground_window() -> WindowInfo:
         width=width,
         height=height,
     )
+
+
+def window_at_point(x: float, y: float) -> dict[str, Any]:
+    """HWND under a global pixel. Observe only — no cursor move."""
+    ns = _win()
+    point = ns.wintypes.POINT(round(x), round(y))
+    hwnd = ns.user32.WindowFromPoint(point)
+    if not hwnd:
+        return {}
+
+    class_buf = ns.ctypes.create_unicode_buffer(256)
+    ns.user32.GetClassNameW(hwnd, class_buf, 256)
+    class_name = class_buf.value
+
+    length = ns.user32.GetWindowTextLengthW(hwnd)
+    title = ""
+    if length > 0:
+        buffer = ns.ctypes.create_unicode_buffer(length + 1)
+        ns.user32.GetWindowTextW(hwnd, buffer, length + 1)
+        title = buffer.value
+
+    rect = ns.wintypes.RECT()
+    box = {"x": float(x), "y": float(y), "width": 1.0, "height": 1.0}
+    if ns.user32.GetWindowRect(hwnd, ns.ctypes.byref(rect)):
+        box = {
+            "x": float(rect.left),
+            "y": float(rect.top),
+            "width": float(rect.right - rect.left),
+            "height": float(rect.bottom - rect.top),
+        }
+
+    attributes: dict[str, str] = {"class": class_name}
+    if title:
+        attributes["title"] = title
+    attributes["hwnd"] = str(int(hwnd))
+    return {
+        "xpath": None,
+        "role": class_name or None,
+        "attributes": attributes,
+        "box": box,
+        "styles": {},
+    }
 
 
 def is_elevated() -> bool:
@@ -725,3 +771,7 @@ class WindowsBackend:
         prompt to raise.
         """
         return build_windows_report(elevated=is_elevated())
+
+    def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        """UIA-adjacent window under a global pixel. Never moves the pointer."""
+        return window_at_point(x, y)

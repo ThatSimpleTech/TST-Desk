@@ -1222,7 +1222,7 @@ export interface CuSession extends DaemonEvent {
   active: boolean;
 }
 
-/** Reply to design_hit_test (TD-3403). Connection-scoped; seq is 1. */
+/** Reply to design_hit_test (TD-3403 / TD-3406). Connection-scoped; seq is 1. */
 export interface DesignHitBox {
   x: number;
   y: number;

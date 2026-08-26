@@ -1,9 +1,10 @@
-// Design mode store (TD-3403).
+// Design mode store (TD-3403 / TD-3406).
 //
 // Freezes the last `screen_frame` preview. Clicks become picks; a CU tool
 // in flight forces the mode off so the pane is a watch surface again.
 // Hit-test is injectable: tests (and CI) supply a scripted node; live
-// sends `design_hit_test` and enriches the chip when `design_hit` arrives.
+// sends `design_hit_test` (browser DOM or desktop AX) and enriches the
+// chip when `design_hit` arrives.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import {
@@ -109,7 +110,7 @@ export async function addPick(args: {
 		cropDataUrl: args.cropDataUrl,
 	};
 	design.picks = applyPicks(design.picks, pick, args.mode);
-	if (hitTester === null && design.surface === "browser" && session.sessionId !== null) {
+	if (hitTester === null && session.sessionId !== null) {
 		sendToDaemon({
 			type: "design_hit_test",
 			session_id: session.sessionId,

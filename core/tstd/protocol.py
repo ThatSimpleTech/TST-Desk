@@ -844,10 +844,11 @@ class OpenArtifact(ClientMessage):
 
 
 class DesignHitTest(ClientMessage):
-    """Ask the session browser what is at a CSS-pixel point (TD-3403).
+    """Ask the last computer-use surface what is at a CSS-pixel point.
 
-    Observe only — never actuates. The reply is connection-scoped
-    ``design_hit``, not a session-log event.
+    Browser DOM (TD-3403) or desktop AX / UIA / AT-SPI (TD-3406). Observe
+    only — never actuates. The reply is connection-scoped ``design_hit``,
+    not a session-log event.
     """
 
     type: Literal["design_hit_test"] = "design_hit_test"
@@ -1880,7 +1881,7 @@ class DesignHitBox(BaseModel):
 
 
 class DesignHit(DaemonEvent):
-    """Reply to ``design_hit_test`` (TD-3403). Connection-scoped.
+    """Reply to ``design_hit_test`` (TD-3403 / TD-3406). Connection-scoped.
 
     Not written to the session log — a pick is user inspection, not an
     agent turn. ``seq`` is fixed at 1 so it cannot rewind attach.

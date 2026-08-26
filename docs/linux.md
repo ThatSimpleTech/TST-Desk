@@ -83,7 +83,9 @@ actuation is refused.
 The real-display rust ring is the same session-scoped signal as macOS and
 Windows (TD-3407): it lights on the first computer-use tool of a turn and
 stays until turn end, cancel, or the kill-switch. Wayland has no ring.
-Desktop Design-mode AX is TD-3406.
+Desktop Design-mode hit-test (TD-3406) is observe-only: AT-SPI when
+the library is present, otherwise the EWMH window under the point on
+X11. Wayland still has no Design AX path.
 
 The browser computer-use path (Playwright) is not X11-specific.
 
