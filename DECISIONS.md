@@ -8348,3 +8348,34 @@ A new event would force a protocol/UI change this story forbids.
 the check looks like a user turn. Also rejected: exporting
 supervisor from `autonomy/__init__.py`. Also rejected: auto-revert
 or a circuit breaker here (TD-4202 / TD-4203).
+
+---
+
+## 2026-08-26 — TD-4203: circuit breakers are reason strings (Class B)
+
+**Decision:** New trips are `breaker:tests_red`, `breaker:file_thrash`,
+`breaker:no_dod_progress`, and `breaker:tool_loop`. `maybe_trip` runs
+once on the `advance_autonomy` continue path after the DoD poll and
+before `continue_prompt`. It sets `session.autonomy_stop_reason` only;
+it never creates an `ApprovalRequest`. Spend/wall-clock caps and Class C
+keep their existing reason prefixes and stop sites — this story does
+not double-stop them.
+
+N comes from charter `stop_conditions` prose when a line names a number
+(`tests red for 3`, `same file modified 5+`, no-progress, tool-loop);
+otherwise defaults are tests red 3, file thrash 5, no DoD progress 3,
+tool loop 3. No new config key.
+
+The loop records a fingerprint of each dispatch batch `(name, canonical
+args)` and successful `fs_write` / `fs_edit` paths. Interactive
+sessions never record and never trip. `tests_red` is consecutive
+all-red polls; `no_dod_progress` is consecutive polls whose green
+count does not rise. A rising green count clears file-write counts.
+
+**Rationale:** Spec §12.7 is a fault report. Wake-up already notifies
+`breaker:`. Parsing the signed charter keeps N with the human contract
+instead of a second config surface.
+
+**Alternative rejected:** A new protocol event or approval card. Also
+rejected: `breaker_n` on `AutonomyConfig` (charter already states N).
+Also rejected: rewriting the spend/wall-clock/Class C reason strings.
