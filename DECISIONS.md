@@ -8348,3 +8348,34 @@ A new event would force a protocol/UI change this story forbids.
 the check looks like a user turn. Also rejected: exporting
 supervisor from `autonomy/__init__.py`. Also rejected: auto-revert
 or a circuit breaker here (TD-4202 / TD-4203).
+
+---
+
+## 2026-08-26 — TD-4202: last good is a passing check; empty undo is a no-op (Class B)
+
+**Decision:** Last good is `session.autonomy_last_good_sha`, recorded
+only when a drift check returns `drift_detected=False` (the auto-branch
+tip at that check). A later detection restores only the paths that
+differ between that SHA and the current `tst/auto/<slug>` tip, via a
+temporary index and `checkout-index`, then `update-ref`s the auto
+branch to the last-good SHA. HEAD, the user's index, and
+`refs/heads/main` are never written.
+
+The first drift with no last-good SHA is a no-op revert that still
+counts as a streak of 1 and re-plans on brain (`router.set_tier`).
+It does not stop and does not invent a tree. A second consecutive
+detection sets `autonomy_stop_reason` to `breaker:drift` so the
+existing `should_notify` / wake-up path fires without editing
+`should_notify`. A clean check between detections resets the streak.
+
+Interactive verify does not import this module.
+
+**Rationale:** Spec §12.6 names the last good checkpoint, not HEAD.
+`autonomy_last_check_sha` is stamped during prompt assembly to the
+*current* tip, so it cannot be the undo target after a failed check.
+Stopping on the first check with no SHA would skip the required
+re-plan. `breaker:drift` reuses the TD-4303 notify prefix.
+
+**Alternative rejected:** `git checkout` / `git restore` against the
+default branch. Also rejected: treating `autonomy_last_check_sha` as
+last good. Also rejected: adding a new `should_notify` reason string.
