@@ -8410,3 +8410,27 @@ re-plan. `breaker:drift` reuses the TD-4303 notify prefix.
 **Alternative rejected:** `git checkout` / `git restore` against the
 default branch. Also rejected: treating `autonomy_last_check_sha` as
 last good. Also rejected: adding a new `should_notify` reason string.
+
+---
+
+## 2026-08-26 — TD-4304: M9 exit is a headless mock autonomy pass (Class B)
+
+**Decision:** `tstd.e2e_m9.run_m9` is a new module, not a branch of
+`e2e_harness.run`. The start path is `start_autonomy` /
+`run_autonomy_start` plus `Daemon._handle_start_autonomy`. The
+sandbox gate sees a fake rootless `podman` (`_fake_runtime` +
+`inspect=ROOTLESS`); no real engine. The mock brain writes one
+in-workspace file (Class A, checkpoint on `tst/auto/<slug>`), the
+two-step DoD stays partially red, and `no measurable progress for 2`
+trips `breaker:no_dod_progress`. `check_every` is 99 so the pass is
+about the breaker, not drift. Default `addopts` (`-m 'not live'`)
+keeps it in the default suite.
+
+**Rationale:** Folding autonomy into `e2e_harness.run` would change a
+frozen signature (TD-1401) and require a live container. M9's exit
+criterion is observable: branch commits, one Class A ledger heading,
+a `breaker:` stop, and an unchanged `main`. Requiring Podman would
+make CI a fact about the machine.
+
+**Alternative rejected:** Driving the runner without the start gate.
+Also rejected: marking the pin `@pytest.mark.live`.
