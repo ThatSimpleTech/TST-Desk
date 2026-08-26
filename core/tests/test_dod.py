@@ -203,7 +203,9 @@ class TestDodAdvance:
         session.dod_poller = _green
         assert await advance_autonomy(session) is False
         assert session.autonomy_stop_reason == DOD_MET
-        assert notified == [DOD_MET]
+        assert notified
+        assert DOD_MET in notified[0]
+        assert "Branch:" in notified[0]
         assert should_notify(DOD_MET)
 
     async def test_any_red_does_not_stop(self) -> None:
@@ -250,7 +252,9 @@ class TestDodLoop:
         await session.add_user_message(first_prompt(charter))
         await wait_for_state(session, "complete")
         assert session.autonomy_stop_reason == DOD_MET
-        assert notified == [DOD_MET]
+        assert notified
+        assert DOD_MET in notified[0]
+        assert "Branch:" in notified[0]
         completes = [e for e in session.event_log.all_events if isinstance(e, TurnComplete)]
         assert len(completes) == 1
         assert not runner.is_running

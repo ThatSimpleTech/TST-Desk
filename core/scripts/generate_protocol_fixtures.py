@@ -30,6 +30,7 @@ from tstd.protocol import (
     Attach,
     Attachment,
     AutonomyStart,
+    AutonomySummary,
     BoundaryUpdate,
     Cancel,
     CharterDocument,
@@ -503,6 +504,18 @@ FIXTURES = {
         signed=True,
         error=None,
         session_id="sess-autonomy",
+    ),
+    "autonomy_summary": AutonomySummary(
+        session_id="sess-1",
+        reason="definition of done met",
+        branch="tst/auto/ship-the-csv-importer",
+        ledger_path=".tst/autonomy/DECISIONS.md",
+        changed=["src/importer.py"],
+        refusals=[],
+        ledger_excerpt=(
+            "## 2026-08-26T12:00:00Z · Class A · commit abc123\n**Chose:** format\n**Why:** ruff"
+        ),
+        seq=12,
     ),
     "memory_files": MemoryFiles(
         workspace_path="/home/user/project",

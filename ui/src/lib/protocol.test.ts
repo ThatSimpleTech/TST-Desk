@@ -31,6 +31,7 @@ import type {
   StartAutonomy,
   CharterDocument,
   AutonomyStart,
+  AutonomySummary,
   AddPin,
   ContextPins,
   CreateRule,
@@ -892,7 +893,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "context_pins", "memory_files", "charter", "autonomy_start", "memory_proposal", "session_list", "policy_rules", "error",
+      "instruction_stack", "instruction_files", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",
@@ -980,6 +981,18 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(m.ready).toBe(true);
     expect(m.signed).toBe(true);
     expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("autonomy_summary", () => {
+    const m = fixtures.autonomy_summary as AutonomySummary;
+    expect(m.type).toBe("autonomy_summary");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.reason)).toBe(true);
+    expect(isString(m.branch)).toBe(true);
+    expect(isString(m.ledger_path)).toBe(true);
+    expect(Array.isArray(m.changed)).toBe(true);
+    expect(Array.isArray(m.refusals)).toBe(true);
+    expect(isString(m.ledger_excerpt)).toBe(true);
   });
 
   it("instruction_files", () => {
