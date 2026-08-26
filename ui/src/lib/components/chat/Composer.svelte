@@ -18,12 +18,16 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
+	import { commands, loadCommands } from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
-	import type { AttachmentLimits } from "../../protocol";
+	import type { AttachmentLimits, CommandEntry } from "../../protocol";
+	import { session } from "../../session-status.svelte.js";
+	import { filterCommands, insertCommandBody, slashQuery } from "../../slash-commands";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
+	import SlashPalette from "./SlashPalette.svelte";
 
 	let {
 		disabled = false,
@@ -53,6 +57,25 @@
 	let refusal: AttachmentRefusal | null = $state(null);
 	let dragging = $state(false);
 	let nextAttachmentId = 0;
+	let slashIndex = $state(0);
+	let slashDismissed = $state(false);
+
+	const query = $derived(slashQuery(value));
+	const paletteOpen = $derived(query !== null && !slashDismissed);
+	const visibleCommands = $derived(query === null ? [] : filterCommands(commands.items, query));
+
+	$effect(() => {
+		void visibleCommands.length;
+		slashIndex = 0;
+	});
+
+	let lastQuery: string | null = null;
+	$effect(() => {
+		if (query !== lastQuery) {
+			lastQuery = query;
+			slashDismissed = false;
+		}
+	});
 
 	// Re-measure on every edit; cap growth at MAX_ROWS lines.
 	$effect(() => {
@@ -136,7 +159,44 @@
 		refusal = null;
 	}
 
+	function applyCommand(command: CommandEntry, send: boolean): void {
+		if (command.too_large) return;
+		value = insertCommandBody(value, command.body);
+		if (send) submit();
+	}
+
+	function handleFocus(): void {
+		const path = session.workspacePath;
+		if (path !== null) loadCommands(path);
+	}
+
 	function handleKeydown(event: KeyboardEvent): void {
+		if (paletteOpen) {
+			if (event.key === "ArrowDown") {
+				event.preventDefault();
+				if (visibleCommands.length === 0) return;
+				slashIndex = (slashIndex + 1) % visibleCommands.length;
+				return;
+			}
+			if (event.key === "ArrowUp") {
+				event.preventDefault();
+				if (visibleCommands.length === 0) return;
+				slashIndex = (slashIndex - 1 + visibleCommands.length) % visibleCommands.length;
+				return;
+			}
+			if (event.key === "Escape") {
+				event.preventDefault();
+				slashDismissed = true;
+				return;
+			}
+			if (event.key === "Enter" && !event.shiftKey) {
+				event.preventDefault();
+				const chosen = visibleCommands[slashIndex];
+				if (chosen === undefined) return;
+				applyCommand(chosen, event.metaKey || event.ctrlKey);
+				return;
+			}
+		}
 		if (shouldSubmit(event.key, event.shiftKey)) {
 			event.preventDefault();
 			submit();
@@ -170,6 +230,15 @@
 				onremove={removeAttachment}
 			/>
 		{/if}
+		{#if paletteOpen}
+			<SlashPalette
+				items={visibleCommands}
+				selectedIndex={slashIndex}
+				oninsert={(command) => applyCommand(command, false)}
+				onsend={(command) => applyCommand(command, true)}
+				onhover={(index) => (slashIndex = index)}
+			/>
+		{/if}
 		<div class="row">
 			<textarea
 				bind:this={textarea}
@@ -178,8 +247,12 @@
 				{disabled}
 				placeholder={disabled ? "Waiting for a session…" : "Message the agent…"}
 				aria-label="Message composer"
+				aria-expanded={paletteOpen}
+				aria-controls={paletteOpen ? "slash-list" : undefined}
+				aria-autocomplete="list"
 				onkeydown={handleKeydown}
 				onpaste={handlePaste}
+				onfocus={handleFocus}
 			></textarea>
 			<input
 				bind:this={picker}

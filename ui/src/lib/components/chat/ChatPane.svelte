@@ -20,6 +20,7 @@
 		sendUserMessage,
 		teardownChat,
 	} from "../../chat-store.svelte.js";
+	import { loadCommands, startCommands } from "../../commands.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
 	import { session } from "../../session-status.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
@@ -34,10 +35,17 @@
 	onMount(() => {
 		initChat();
 		const offWakeup = startWakeup();
+		const offCommands = startCommands();
 		return () => {
 			teardownChat();
 			offWakeup();
+			offCommands();
 		};
+	});
+
+	$effect(() => {
+		const path = session.workspacePath;
+		if (path !== null) loadCommands(path);
 	});
 
 	$effect(() => {

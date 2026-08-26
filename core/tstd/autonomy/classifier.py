@@ -12,7 +12,8 @@ the *obvious* cases — the ones that must never reach the model:
 - any path outside the workspace → C, always
 - a network call to a host outside the allowlist → C
 - a write to a steering file (``AGENTS.md`` / ``CLAUDE.md`` /
-  ``.tst/rules/**``, and the signed charter at
+  ``.tst/rules/**``, slash-command trees ``.tst/commands/**`` /
+  ``.claude/commands/**`` — TD-4501, and the signed charter at
   ``.tst/autonomy/CHARTER.md`` — TD-4001) → C, even inside the workspace
 - a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
@@ -59,6 +60,16 @@ class DecisionClass(StrEnum):
 
 _STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
 _STEERING_RULES_DIR_PARTS = (".tst", "rules")
+# Slash-command trees (TD-4501). Same Class C refusal as steering so the
+# model sees one read-only rule. ``.tstdesk/commands`` covers a
+# writable_paths hole that could reach the user-global tree.
+_COMMAND_DIR_PAIRS = frozenset(
+    {
+        (".tst", "commands"),
+        (".claude", "commands"),
+        (".tstdesk", "commands"),
+    }
+)
 _MEMORY_DIR_PARTS = (".tst", "memory")
 # The approval policy lives here (spec §6). Not a steering file by name,
 # but a write to it rewrites the guardrails — the self-escalation the
@@ -257,18 +268,31 @@ def is_memory_write(boundary: Boundary, path: Path) -> bool:
     return relative[-1].upper() not in {s.upper() for s in _STEERING_BASENAMES}
 
 
+def _has_command_dir(parts: Sequence[str]) -> bool:
+    """Whether *parts* contain a reserved slash-command directory pair."""
+    folded = _fold(parts)
+    return any((folded[i], folded[i + 1]) in _COMMAND_DIR_PAIRS for i in range(len(folded) - 1))
+
+
 def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
     Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
-    ``.tst/rules/``, the approval policy at ``.tst/config.yaml``
-    (TD-4803), and the signed charter at ``.tst/autonomy/CHARTER.md``
-    (TD-4001; spec §12.4) — are read-only to the agent,
-    unconditionally.  The charter's own directory stays otherwise
-    writable: ``DECISIONS.md`` there is the ledger the loop appends to.
-    ``.tst/memory/`` is the carve-out (TD-2102); never fold it into
-    ``.tst/**``.  Directory comparisons case-fold (TD-4804): see ``_fold``.
+    ``.tst/rules/``, slash-command trees (``.tst/commands/``,
+    ``.claude/commands/``, and ``.tstdesk/commands/`` — TD-4501), the
+    approval policy at ``.tst/config.yaml`` (TD-4803), and the signed
+    charter at ``.tst/autonomy/CHARTER.md`` (TD-4001; spec §12.4) — are
+    read-only to the agent, unconditionally.  The charter's own
+    directory stays otherwise writable: ``DECISIONS.md`` there is the
+    ledger the loop appends to.  ``.tst/memory/`` is the carve-out
+    (TD-2102); never fold it into ``.tst/**``.  Directory comparisons
+    case-fold (TD-4804): see ``_fold``.
     """
+    # Full-path pair check first so ~/.tstdesk/commands is refused even
+    # when the workspace wall would otherwise treat it as outside (a
+    # writable_paths hole) or when relative_parts is empty.
+    if _has_command_dir(path.parts):
+        return True
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
     if not relative:
         return False
@@ -280,6 +304,8 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     if _fold(relative) == _POLICY_FILE_PARTS:
         return True
     if _fold(relative) == _CHARTER_FILE_PARTS:
+        return True
+    if _has_command_dir(relative):
         return True
     return _fold(relative[:2]) == _STEERING_RULES_DIR_PARTS
 
@@ -502,7 +528,7 @@ RULE_TABLE: tuple[Rule, ...] = (
     ),
     Rule(
         id="steering-file-write",
-        description="action writes a steering file (AGENTS.md/CLAUDE.md/.tst/rules)",
+        description="action writes a steering or slash-command file",
         decision_class=DecisionClass.C,
         match=_rule_steering_write,
     ),

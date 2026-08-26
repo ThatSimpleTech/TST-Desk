@@ -134,6 +134,10 @@
     "type": "list_instructions",
     "workspace_path": "/home/user/project"
   },
+  "list_commands": {
+    "type": "list_commands",
+    "workspace_path": "/home/user/project"
+  },
   "list_memory": {
     "type": "list_memory",
     "workspace_path": "/home/user/project"
@@ -780,6 +784,20 @@
       }
     ],
     "created": null
+  },
+  "command_list": {
+    "type": "command_list",
+    "seq": 1,
+    "workspace_path": "/home/user/project",
+    "commands": [
+      {
+        "name": "review",
+        "description": "Review the current diff",
+        "source": "workspace",
+        "body": "Please review the staged changes.\n",
+        "too_large": false
+      }
+    ]
   },
   "context_pins": {
     "type": "context_pins",

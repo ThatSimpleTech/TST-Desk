@@ -361,6 +361,13 @@ class ListInstructions(ClientMessage):
     workspace_path: str
 
 
+class ListCommands(ClientMessage):
+    """List a workspace's slash commands (TD-4501). Human path."""
+
+    type: Literal["list_commands"] = "list_commands"
+    workspace_path: str
+
+
 class ListMemory(ClientMessage):
     """List a workspace's Memory files (TD-2601). Human path."""
 
@@ -1338,6 +1345,25 @@ class InstructionFiles(DaemonEvent):
     created: str | None = None
 
 
+class CommandEntry(BaseModel):
+    """One slash command the composer can insert (TD-4501)."""
+
+    name: str
+    description: str = ""
+    source: Literal["workspace", "user", "claude_workspace", "claude_user"]
+    body: str = ""
+    too_large: bool = False
+
+
+class CommandList(DaemonEvent):
+    """Reply to ``list_commands``. Connection-scoped."""
+
+    type: Literal["command_list"] = "command_list"
+    seq: int = 1
+    workspace_path: str
+    commands: list[CommandEntry] = Field(default_factory=list)
+
+
 class MemoryStackEntry(BaseModel):
     """One memory file the inspector names (TD-2604)."""
 
@@ -1840,6 +1866,7 @@ ClientMessageT = Annotated[
     | SetTier
     | GetInstructionStack
     | ListInstructions
+    | ListCommands
     | ListMemory
     | SaveMemory
     | CreateRule
@@ -1909,6 +1936,7 @@ DaemonEventT = Annotated[
     | TierSwitched
     | InstructionStack
     | InstructionFiles
+    | CommandList
     | ContextPins
     | MemoryFiles
     | CharterDocument
@@ -1967,6 +1995,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_tier",
         "get_instruction_stack",
         "list_instructions",
+        "list_commands",
         "list_memory",
         "save_memory",
         "create_rule",
@@ -2036,6 +2065,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tier_switched",
         "instruction_stack",
         "instruction_files",
+        "command_list",
         "context_pins",
         "memory_files",
         "charter",
