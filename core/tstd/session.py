@@ -297,10 +297,12 @@ class Session:
         # sessions leave this None so a turn complete never polls DoD.
         self.dod_poller: Callable[[], Awaitable[Any]] | None = None
         self.last_dod_poll: Any = None
-        # TD-4201: validator drift check. Interactive sessions never set
-        # these; a later story (TD-4202) reads last_drift_check to revert.
+        # TD-4201 / TD-4202: validator drift check, last good checkpoint,
+        # and consecutive-drift streak. Interactive sessions never set these.
         self.autonomy_check_every = 5
         self.autonomy_last_check_sha: str | None = None
+        self.autonomy_last_good_sha: str | None = None
+        self.autonomy_drift_streak: int = 0
         self.autonomy_ledger_seen = 0
         self.last_drift_check: Any = None
         self.validator_call: Callable[[str], Awaitable[str]] | None = None
