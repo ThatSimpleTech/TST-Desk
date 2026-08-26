@@ -67,16 +67,18 @@ def stop_reason(
 
 
 def should_notify(reason: str) -> bool:
-    """Class C, cap faults, and a met definition of done notify.
+    """Class C, cap faults, a met definition of done, and breaker trips.
 
-    A met DoD is the short complete summary (TD-4103). The richer
-    wake-up is TD-4303. Other clean stops still do not notify.
+    A met DoD is a complete stop (TD-4103). The wake-up body is TD-4303.
+    Breaker reasons are prefixed ``breaker:`` so TD-4203 can plug in
+    without another edit here.
     """
     return (
         reason in (CLASS_C_STOP, DOD_MET)
         or reason.startswith("iteration cap")
         or reason.startswith("spend cap")
         or reason.startswith("wall-clock cap")
+        or reason.startswith("breaker:")
     )
 
 
@@ -107,18 +109,19 @@ async def advance_autonomy(session: Session) -> bool:
                 await session.add_user_message(continue_prompt(charter, session.autonomy_turns))
                 return True
             session.autonomy_stop_reason = reason
-    reason = session.autonomy_stop_reason
-    if session.autonomy_notify is not None and should_notify(reason):
-        await session.autonomy_notify(reason)
+    from .wakeup import deliver_wakeup
+
+    await deliver_wakeup(session)
     return False
 
 
 async def notify_autonomy_stop(config: ModelConfig, message: str) -> None:
-    """Deliver *message* on the M7 channels. No-op when they are off."""
+    """Deliver *message* on the M7 channels. No-op when they are off.
+
+    *message* is the wake-up body (TD-4303), not a one-line reason.
+    """
     from ..notify.ntfy import send as ntfy_send
     from ..notify.slack import send as slack_send
 
-    prefix = "Autonomy complete" if message == DOD_MET else "Autonomy stopped"
-    text = f"{prefix}: {message}"
-    await slack_send(config, text)
-    await ntfy_send(config, text)
+    await slack_send(config, message)
+    await ntfy_send(config, message)

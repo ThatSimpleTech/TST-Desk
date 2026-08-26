@@ -37,7 +37,8 @@ from .autonomy import (
 )
 from .autonomy.checkpoint import auto_branch
 from .autonomy.dod import make_dod_poller
-from .autonomy.runner import advance_autonomy, should_notify
+from .autonomy.runner import advance_autonomy
+from .autonomy.wakeup import deliver_wakeup
 from .compaction import maybe_compact
 from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
@@ -1091,8 +1092,7 @@ async def agent_loop(
                     break
                 if session.autonomy:
                     session.autonomy_stop_reason = violation
-                    if session.autonomy_notify is not None and should_notify(violation):
-                        await session.autonomy_notify(violation)
+                    await deliver_wakeup(session)
                     return
                 log.warning(
                     "cap pause",

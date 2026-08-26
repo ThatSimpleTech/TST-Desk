@@ -845,6 +845,18 @@ export interface AutonomyStart extends DaemonEvent {
   session_id?: string | null;
 }
 
+/** Wake-up card for an unattended run that stopped (TD-4303). Session-scoped. */
+export interface AutonomySummary extends DaemonEvent {
+  type: "autonomy_summary";
+  session_id: string;
+  reason: string;
+  branch: string;
+  ledger_path: string;
+  changed: string[];
+  refusals: string[];
+  ledger_excerpt: string;
+}
+
 export interface MemoryFileDiff {
   action: "create" | "replace" | "delete";
   path: string;
@@ -1211,6 +1223,7 @@ export type DaemonEventUnion =
   | MemoryFiles
   | CharterDocument
   | AutonomyStart
+  | AutonomySummary
   | MemoryProposal
   | SessionList
   | PolicyRules

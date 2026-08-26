@@ -5714,10 +5714,16 @@ TD-101: hard-required container. No unsandboxed autonomy.
 **Size:** 5 · **Depends on:** TD-4101, TD-3801
 
 **Acceptance criteria:**
-- [ ] On complete / stop / breaker: a summary (what changed, ledger
+- [x] On complete / stop / breaker: a summary (what changed, ledger
       excerpt, refusals, branch name) lands in the window and the
       notify channel
-- [ ] The user can open the branch and the ledger in one click
+- [x] The user can open the branch and the ledger in one click
+
+**Completed (2026-08-26):** `advance_autonomy` (and the loop cap path)
+emits session-scoped `autonomy_summary` and sends the same body on
+slack/ntfy. `should_notify` accepts `breaker:` so TD-4203 can plug in.
+One click opens the ledger in the OS editor and copies the auto-branch
+name. Interactive sessions never emit the event.
 
 ---
 
