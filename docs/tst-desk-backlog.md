@@ -5873,11 +5873,19 @@ refusal.
 **Size:** 5 · **Depends on:** TD-4402
 
 **Acceptance criteria:**
-- [ ] A documented in-process plugin (Python entry point) can register
+- [x] A documented in-process plugin (Python entry point) can register
       tools the same way builtins do
-- [ ] License must be permissive; a non-permissive plugin is a Class C
+- [x] License must be permissive; a non-permissive plugin is a Class C
       product decision, not a silent load
-- [ ] Architecture guide walkthrough updated (TD-1504)
+- [x] Architecture guide walkthrough updated (TD-1504)
+
+**Done:** `tstd.tools` entry points call `register(registry, dispatcher)`.
+License is fail-closed (MIT/Apache-2.0/BSD/ISC/Unlicense/0BSD/CC0-1.0).
+GPL/empty/unknown log `plugin_license` / `non_permissive` and register
+nothing. Builtin names are not replaced. Broken plugins are skipped;
+`create_registry` still returns builtins. Architecture guide §5 plugin
+walkthrough is executed by the doc test; dispatch still hits the
+classifier.
 
 ---
 

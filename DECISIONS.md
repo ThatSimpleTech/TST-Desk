@@ -8540,3 +8540,45 @@ invent host allowlists.
 provenance (weaker: a declared `host_field` that happened to be absent
 on one call would look the same as an undeclared tool). Also rejected:
 inferring `path`/`url` keys from the remote schema.
+
+---
+
+## 2026-08-26 — TD-4601: In-process tool plugins (Class B)
+
+**Decision:** Third-party tools load from the `tstd.tools` entry-point
+group. Each entry is a synchronous `register(registry: ToolRegistry,
+dispatcher: ToolDispatcher) -> None` that calls `registry.register` and
+`dispatcher.register_handler` the same way builtins do. Discovery uses
+`importlib.metadata.entry_points(group="tstd.tools")`. Tests inject
+fakes via `load_plugins(..., entries=...)`. Provenance is
+`plugin:<distribution>`. A plugin that reuses a builtin name (e.g.
+`fs_read`) is skipped and logged (`name_collision`); it does not replace
+the builtin and is not renamed the way MCP uses `{id}__{name}`.
+
+**License (fail closed):** Read `License-Expression`, else `License`,
+from the distribution metadata. The allowlist is MIT, Apache-2.0,
+BSD-2-Clause, BSD-3-Clause, ISC, Unlicense, 0BSD, CC0-1.0
+(case-insensitive). SPDX expressions pass only when every identifier is
+on that list, joined by AND or OR. `WITH` exceptions, GPL, AGPL, LGPL,
+Proprietary, empty, and unknown do not load. The refusal is a Class C
+*product* decision: log at warning with `reason=plugin_license` and
+`license_class=non_permissive`, register nothing. It is not a tool-call
+Class C and not a silent skip.
+
+**Broken plugins:** Import errors and bad `register` signatures are
+logged (`reason=broken`) and skipped. `create_registry()` still returns
+builtins; the daemon still starts. `create_registry` loads plugins
+(capturing handlers); the daemon binds them with `bind_plugin_handlers`
+next to MCP attach so session dispatchers actually run plugin handlers.
+No new runtime dependency.
+
+**Rationale:** Entry points are the stdlib plugin hook; a group name in
+pyproject is the public contract. Skipping collisions keeps TD-601
+builtin names stable without inventing a second prefix scheme. Fail-closed
+license keeps copyleft and proprietary code from becoming process-local
+tools without an explicit Class C product decision.
+
+**Alternative rejected:** Replacing builtins on name clash. Also
+rejected: loading non-permissive plugins with a log-only warning. Also
+rejected: a PyPI client library for SPDX. Also rejected: doctor rows for
+skipped plugins (log + skip; protocol.py is owned by other stories).
