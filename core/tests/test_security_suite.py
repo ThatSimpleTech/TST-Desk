@@ -266,6 +266,8 @@ STEERING_POSITIVE = [
     ".tst/commands/deep/review.md",
     ".claude/commands/review.md",
     ".tstdesk/commands/review.md",
+    ".tst/skills/foo/SKILL.md",  # skill files are Class C writes (TD-4502)
+    "src/SKILL.md",
 ]
 
 STEERING_NEGATIVE = [

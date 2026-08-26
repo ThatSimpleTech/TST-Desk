@@ -933,6 +933,15 @@ export interface MemoryStackEntry {
   reason: "always-index" | "heading" | "embedding";
 }
 
+/** One discovered skill on the instruction stack (TD-4502). */
+export interface SkillStackEntry {
+  name: string;
+  description: string;
+  source: "workspace" | "user" | "claude_workspace" | "claude_user";
+  loaded: boolean;
+  tokens: number;
+}
+
 export interface InstructionStack extends DaemonEvent {
   type: "instruction_stack";
   session_id: string;
@@ -948,6 +957,7 @@ export interface InstructionStack extends DaemonEvent {
   memory?: MemoryStackEntry[];
   memory_dropped?: MemoryStackEntry[];
   memory_placeholder?: boolean;
+  skills?: SkillStackEntry[];
 }
 
 export interface SessionSummary {

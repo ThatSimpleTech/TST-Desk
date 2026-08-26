@@ -742,6 +742,31 @@ class TestDaemonEvents:
         assert isinstance(back, MemoryFiles)
         assert back.files[0].name == "MEMORY.md"
 
+    def test_instruction_stack_skills_are_separate(self) -> None:
+        from tstd.protocol import InstructionStack, SkillStackEntry
+
+        evt = InstructionStack(
+            session_id="sess-1",
+            sources=[],
+            total_tokens=0,
+            token_method="approximation (4 chars/token)",
+            seq=1,
+            skills=[
+                SkillStackEntry(
+                    name="review",
+                    description="Review a PR",
+                    source="workspace",
+                    loaded=True,
+                    tokens=12,
+                )
+            ],
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, InstructionStack)
+        assert back.skills[0].name == "review"
+        assert back.skills[0].loaded is True
+        assert back.sources == []
+
     def test_command_list(self) -> None:
         from tstd.protocol import CommandEntry, CommandList
 

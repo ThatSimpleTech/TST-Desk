@@ -129,6 +129,7 @@ from tstd.protocol import (
     SetupState,
     SetWorkspacePin,
     ShellOutput,
+    SkillStackEntry,
     Shutdown,
     StartAutonomy,
     SteeringReloaded,
@@ -513,6 +514,15 @@ FIXTURES = {
         total_tokens=500,
         token_method="cl100k_base",
         seq=17,
+        skills=[
+            SkillStackEntry(
+                name="review",
+                description="Review a PR",
+                source="workspace",
+                loaded=False,
+                tokens=40,
+            )
+        ],
     ),
     "charter": CharterDocument(
         workspace_path="/home/user/project",
