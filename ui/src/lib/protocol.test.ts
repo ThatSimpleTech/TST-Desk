@@ -22,6 +22,7 @@ import type {
   Attach,
   Detach,
   SetTier,
+  SetPlan,
   GetInstructionStack,
   ListInstructions,
   ListMemory,
@@ -277,6 +278,13 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.set_tier as SetTier;
     expect(m.type).toBe("set_tier");
     expect(m.tier).toBe("brain");
+  });
+
+  it("set_plan", () => {
+    const m = fixtures.set_plan as SetPlan;
+    expect(m.type).toBe("set_plan");
+    expect(m.on).toBe(true);
+    expect(isString(m.session_id)).toBe(true);
   });
 
   it("get_instruction_stack", () => {
@@ -636,6 +644,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const ov = fixtures.tier_state_override as TierState;
     expect(ov.tier).toBe("validator");
     expect(ov.override).toBe("validator");
+    expect(m.plan).toBe(false);
+    const plan = fixtures.tier_state_plan as TierState;
+    expect(plan.plan).toBe(true);
+    expect(plan.tier).toBe("brain");
   });
 
   it("boundary_update carries the attachment caps (TD-1709)", () => {
@@ -874,7 +886,7 @@ describe("All fixtures have required shape", () => {
       "set_workspace_pin",
       "set_session_star",
       "rename_session",
-      "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier",
+      "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier", "set_plan",
       "get_instruction_stack",
       "list_instructions", "list_memory", "save_memory", "create_rule",
       "get_charter", "save_charter", "start_autonomy",
@@ -903,7 +915,7 @@ describe("All fixtures have required shape", () => {
       "tool_result_truncated", "tool_result_diff", "tool_result_denied",
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "turn_complete",
-      "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
+      "tier_state", "tier_state_plan", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "instruction_files", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",

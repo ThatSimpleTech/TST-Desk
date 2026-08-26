@@ -239,6 +239,11 @@ export class ProtocolClient {
     this.send({ type: "set_tier", session_id: sessionId, tier });
   }
 
+  /** Turn plan mode (brain lock) on or off (TD-4603). Acked with tier_state. */
+  setPlan(sessionId: string, on: boolean): void {
+    this.send({ type: "set_plan", session_id: sessionId, on });
+  }
+
   /** Confirm a pending interactive verify (TD-4204 ask mode). */
   runVerify(sessionId: string): boolean {
     return this.send({ type: "run_verify", session_id: sessionId });

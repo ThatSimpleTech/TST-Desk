@@ -60,6 +60,7 @@ from tstd.protocol import (
     SetCuIndicators,
     SetCuKill,
     SetLoadGlobalMemory,
+    SetPlan,
     SetRemoteAttach,
     SetSessionStar,
     SetSkipAllApprovals,
@@ -246,6 +247,15 @@ class TestClientMessages:
     def test_set_tier_invalid(self) -> None:
         with pytest.raises(ValidationError):
             SetTier(session_id="sess-1", tier="superbrain")  # type: ignore[arg-type]
+
+    def test_set_plan(self) -> None:
+        msg = SetPlan(session_id="sess-1", on=True)
+        back = _roundtrip(msg)
+        assert isinstance(back, SetPlan)
+        assert back.on is True
+        off = _roundtrip(SetPlan(session_id="sess-1", on=False))
+        assert isinstance(off, SetPlan)
+        assert off.on is False
 
     def test_get_instruction_stack(self) -> None:
         msg = GetInstructionStack(session_id="sess-1")

@@ -347,6 +347,18 @@ class SetTier(ClientMessage):
     tier: Literal["brain", "worker", "validator"]
 
 
+class SetPlan(ClientMessage):
+    """Turn plan mode (brain lock) on or off (TD-4603).
+
+    While on, every completion is ``brain`` and ``set_tier`` to
+    worker or validator is refused. Not a plan document.
+    """
+
+    type: Literal["set_plan"] = "set_plan"
+    session_id: str
+    on: bool
+
+
 class GetInstructionStack(ClientMessage):
     """Request the current instruction stack for a session."""
 
@@ -1054,7 +1066,8 @@ class TierState(DaemonEvent):
     ``override`` is the pinned override when the user picked one.
     ``preset`` and ``hosts`` are the identity the title bar paints;
     ``hosts`` is hostname:port from the URL the client will call, not
-    a guess from the slug (TD-1718). Additive — no PROTOCOL_VERSION bump.
+    a guess from the slug (TD-1718). ``plan`` is the brain lock
+    (TD-4603). Additive — no PROTOCOL_VERSION bump.
     """
 
     type: Literal["tier_state"] = "tier_state"
@@ -1066,6 +1079,9 @@ class TierState(DaemonEvent):
     preset: str = ""
     # tier name → hostname:port the provider client will call.
     hosts: dict[str, str] = Field(default_factory=dict)
+    # Plan mode (TD-4603): when true, every completion is brain until
+    # cleared. Default false so older fixtures and emitters stay valid.
+    plan: bool = False
 
 
 class BoundaryUpdate(DaemonEvent):
@@ -1838,6 +1854,7 @@ ClientMessageT = Annotated[
     | Attach
     | Detach
     | SetTier
+    | SetPlan
     | GetInstructionStack
     | ListInstructions
     | ListMemory
@@ -1965,6 +1982,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "attach",
         "detach",
         "set_tier",
+        "set_plan",
         "get_instruction_stack",
         "list_instructions",
         "list_memory",
