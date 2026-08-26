@@ -125,6 +125,7 @@ from tstd.protocol import (
     SetPreset,
     SetRemoteAttach,
     SetPlan,
+    SetSessionPreset,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
@@ -188,6 +189,7 @@ FIXTURES = {
     "detach": Detach(session_id="sess-1"),
     "set_tier": SetTier(session_id="sess-1", tier="brain"),
     "set_plan": SetPlan(session_id="sess-1", on=True),
+    "set_session_preset": SetSessionPreset(session_id="sess-1", name="budget"),
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
     "list_instructions": ListInstructions(workspace_path="/home/user/project"),
     "list_commands": ListCommands(workspace_path="/home/user/project"),
@@ -637,6 +639,7 @@ FIXTURES = {
                 "updated_at": "2026-08-13T10:00:00Z",
                 "event_count": 0,
                 "title": "hello world",
+                "preset": "tst-default",
             },
             # TD-1715: the list stays complete and marks what is filed away.
             {

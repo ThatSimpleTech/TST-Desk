@@ -58,6 +58,8 @@ export const session = $state({
   hosts: {} as Record<string, string>,
   /** Plan mode (TD-4603). False until a tier_state says otherwise. */
   planMode: false,
+  /** A turn is owed (TD-1721). The daemon refuses a preset switch then. */
+  turnActive: false,
 });
 
 let client: ProtocolClient | null = null;
@@ -84,6 +86,7 @@ export function resetSession(): void {
   session.preset = "";
   session.hosts = {};
   session.planMode = false;
+  session.turnActive = false;
   pendingPath = null;
 }
 
@@ -134,6 +137,12 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.hosts = event.hosts ?? {};
       session.planMode = event.plan ?? false;
       break;
+    case "user_turn":
+      session.turnActive = true;
+      break;
+    case "turn_complete":
+      session.turnActive = false;
+      break;
     case "cost_update":
       session.cost = {
         turn: event.turn_cost,
@@ -180,6 +189,7 @@ export function focusSession(
   session.preset = "";
   session.hosts = {};
   session.planMode = false;
+  session.turnActive = false;
   pendingPath = null;
 }
 
@@ -203,6 +213,12 @@ export function setTier(tier: "brain" | "worker" | "validator"): void {
 export function setPlan(on: boolean): void {
   if (session.sessionId === null) return;
   client?.setPlan(session.sessionId, on);
+}
+
+/** Retarget this session at a catalog preset. The title bar follows tier_state. */
+export function setSessionPreset(name: string): void {
+  if (session.sessionId === null) return;
+  client?.setSessionPreset(session.sessionId, name);
 }
 
 /** Active slug and host for the title-bar pill (TD-1720). */

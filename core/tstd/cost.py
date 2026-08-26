@@ -131,6 +131,10 @@ class CostTracker:
         self._session_start = datetime.now()
         self._listeners: list[Callable[[CallRecord, bool], None]] = []
 
+    def bind_config(self, config: ModelConfig) -> None:
+        """Use a new catalog snapshot after a session preset switch (TD-1721)."""
+        self._config = config
+
     # ── Recording ────────────────────────────────────────────────────
 
     def add_listener(self, listener: Callable[[CallRecord, bool], None]) -> None:

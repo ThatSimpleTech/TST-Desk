@@ -226,6 +226,7 @@ from .protocol import (
     SetPlan,
     SetPreset,
     SetRemoteAttach,
+    SetSessionPreset,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
@@ -459,6 +460,11 @@ def _approved_import_allowlist(workspace: str | Path) -> frozenset[Path]:
         return frozenset(load_approved_imports(workspace))
     except ConfigError:
         return frozenset()
+
+
+def _session_model_config(session: Session, fallback: ModelConfig) -> ModelConfig:
+    """The catalog snapshot this session is actually calling (TD-1721)."""
+    return session.config if session.config is not None else fallback
 
 
 def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
@@ -1250,6 +1256,9 @@ class Daemon:
         have a transcript, not a model context.
         """
         for record in self._session_store.records():
+            chosen = self._resolved_preset(record.preset)
+            if record.preset != chosen:
+                await self._session_store.set_preset(record.session_id, chosen)
             loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
             if loaded is not None and loaded.conversation is not None:
                 await self._revive_session(record.session_id, record.workspace_path, loaded)
@@ -1263,6 +1272,7 @@ class Daemon:
             sess = await self.session_registry.restore(
                 record.session_id, record.workspace_path, final_state
             )
+            sess.preset = chosen
             if loaded is not None and loaded.events:
                 sess.event_log.replace(loaded.events)
             if final_state != record.state:
@@ -1557,6 +1567,9 @@ class Daemon:
         if isinstance(msg, SetPlan):
             return await self._handle_set_plan(msg)
 
+        if isinstance(msg, SetSessionPreset):
+            return await self._handle_set_session_preset(msg)
+
         if isinstance(msg, SetTier):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -1592,7 +1605,9 @@ class Daemon:
             )
             # ...then acknowledge with the new state so the title bar snaps
             # over even before the next turn starts (TD-1006).
-            await found.event_log.add(_tier_state_event(found, self.config))
+            await found.event_log.add(
+                _tier_state_event(found, _session_model_config(found, self.config))
+            )
             log.info(
                 "tier override set",
                 extra={
@@ -2086,6 +2101,8 @@ class Daemon:
     ) -> None:
         """Start a loop on a persisted conversation. Does not invent messages."""
         sess = await self.session_registry.restore(session_id, workspace_path, "idle")
+        record = self._session_store.get(session_id)
+        self._bind_session_preset(sess, record.preset if record is not None else "")
         if loaded.events:
             sess.event_log.replace(loaded.events)
         if loaded.conversation is not None:
@@ -2170,7 +2187,8 @@ class Daemon:
             )
 
         async def get_provider(tier_cfg: TierConfig | None = None) -> ProviderLike:
-            target = tier_cfg if tier_cfg is not None else self.config.tier("brain")
+            cfg = _session_model_config(sess, self.config)
+            target = tier_cfg if tier_cfg is not None else cfg.tier("brain")
             return await self._client_for(target)
 
         tool_registry = create_registry()
@@ -2236,7 +2254,7 @@ class Daemon:
             )
         )
         assert sess.router is not None
-        await sess.event_log.add(_tier_state_event(sess, self.config))
+        await sess.event_log.add(_tier_state_event(sess, _session_model_config(sess, self.config)))
 
     async def _start_session(self, workspace_path: str) -> str | None:
         """Create, wire, and start a session in ``workspace_path``.
@@ -2253,7 +2271,8 @@ class Daemon:
         # overwrites; config scaffold stays OpenWorkspace-only.
         await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
         sess = await self.session_registry.create(workspace_path)
-        await self._session_store.upsert(sess.id, workspace_path, sess.state)
+        self._bind_session_preset(sess, self.config.active_preset)
+        await self._session_store.upsert(sess.id, workspace_path, sess.state, preset=sess.preset)
         self._session_persist.prepare(sess.id)
         try:
             source = boundary_source(workspace_path)
@@ -2277,6 +2296,60 @@ class Daemon:
             return events[0].model_dump_json()
         return None
 
+    def _resolved_preset(self, name: str) -> str:
+        """A catalog name, or the live default when *name* is gone."""
+        if name in self.config.presets:
+            return name
+        return self.config.active_preset
+
+    def _bind_session_preset(self, sess: Session, name: str) -> str:
+        """Point *sess* at a catalog snapshot. Does not write Settings."""
+        chosen = self._resolved_preset(name)
+        sess.preset = chosen
+        sess.config = self.config.model_copy(update={"active_preset": chosen})
+        return chosen
+
+    async def _handle_set_session_preset(self, msg: SetSessionPreset) -> str:
+        """Retarget one session at a catalog preset (TD-1721)."""
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+            )
+        if found.router is None:
+            return build_error(
+                "session_not_live",
+                f"Session {msg.session_id!r} has no live agent loop "
+                "(restored after restart); its preset cannot be changed",
+            )
+        if found.turn_in_flight:
+            return build_error(
+                "session_busy",
+                "Cannot change preset while a turn is running",
+                session_id=found.id,
+            )
+        if msg.name not in self.config.presets:
+            return build_error(
+                "unknown_preset",
+                f"Unknown preset {msg.name!r}; declared: {', '.join(sorted(self.config.presets))}",
+            )
+        self._bind_session_preset(found, msg.name)
+        await self._session_store.set_preset(found.id, found.preset)
+        await found.event_log.add(
+            _tier_state_event(found, _session_model_config(found, self.config))
+        )
+        log.info(
+            "session preset set",
+            extra={
+                "extra_fields": {
+                    "session_id": found.id,
+                    "preset": found.preset,
+                }
+            },
+        )
+        return await self._handle_list_sessions()
+
     async def _handle_set_plan(self, msg: SetPlan) -> str | None:
         """Turn plan mode on or off and ack with ``tier_state`` (TD-4603)."""
         found = self.session_registry.get(msg.session_id)
@@ -2292,7 +2365,9 @@ class Daemon:
                 "(restored after restart); plan mode cannot be changed",
             )
         found.router.set_plan(msg.on)
-        await found.event_log.add(_tier_state_event(found, self.config))
+        await found.event_log.add(
+            _tier_state_event(found, _session_model_config(found, self.config))
+        )
         log.info(
             "plan mode set",
             extra={
@@ -2399,6 +2474,7 @@ class Daemon:
                     archived=record.archived,
                     starred=record.session_id in starred,
                     title=record.title,
+                    preset=record.preset,
                 )
             )
         summaries.sort(key=lambda s: (s.starred, s.updated_at), reverse=True)
@@ -2811,7 +2887,8 @@ class Daemon:
             await notify_autonomy_stop(self.config, message)
 
         sess.autonomy_notify = _notify
-        await self._session_store.upsert(sess.id, str(workspace), sess.state)
+        self._bind_session_preset(sess, self.config.active_preset)
+        await self._session_store.upsert(sess.id, str(workspace), sess.state, preset=sess.preset)
         self._session_persist.prepare(sess.id)
         await self._attach_session_runtime(sess)
         await self._emit_working_context(sess, "charter")
