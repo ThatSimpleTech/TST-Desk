@@ -36,6 +36,8 @@ from tstd.protocol import (
     CharterDocument,
     CheckCuPermissions,
     CheckpointNotice,
+    CommandEntry,
+    CommandList,
     ContextCompacted,
     ContextPinEntry,
     ContextPins,
@@ -74,6 +76,7 @@ from tstd.protocol import (
     JobEntry,
     JobList,
     ListArtifacts,
+    ListCommands,
     ListInstructions,
     ListJobs,
     ListMemory,
@@ -183,6 +186,7 @@ FIXTURES = {
     "set_plan": SetPlan(session_id="sess-1", on=True),
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
     "list_instructions": ListInstructions(workspace_path="/home/user/project"),
+    "list_commands": ListCommands(workspace_path="/home/user/project"),
     "list_memory": ListMemory(workspace_path="/home/user/project"),
     "save_memory": SaveMemory(
         workspace_path="/home/user/project",
@@ -571,6 +575,17 @@ FIXTURES = {
             ),
         ],
         created=None,
+    ),
+    "command_list": CommandList(
+        workspace_path="/home/user/project",
+        commands=[
+            CommandEntry(
+                name="review",
+                description="Review the current diff",
+                source="workspace",
+                body="Please review the staged changes.\n",
+            )
+        ],
     ),
     "context_pins": ContextPins(
         workspace_path="/home/user/project",

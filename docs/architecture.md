@@ -314,6 +314,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_plan` | yes | Turn plan mode (brain lock) on or off. Refused `set_tier` to worker/validator while on (TD-4603). |
 | `get_instruction_stack` | yes | Ask for the resolved steering stack and its token counts. |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |
+| `list_commands` | — | List a workspace's slash commands (`.tst/commands/*` and `~/.tstdesk/commands/*`, with `.claude/commands/` fallback). Human path (TD-4501). |
 | `list_memory` | — | List a workspace's Memory files (`.tst/memory/*.md`). Human path (TD-2601). |
 | `save_memory` | — | Save an edit from the Memory pane through the memory commit path. Never a tool (TD-2602). |
 | `create_rule` | — | Create a `.tst/rules/` file on the human path. Never a tool call (TD-2802). |
@@ -389,6 +390,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |
 | `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state. |
 | `instruction_files` | connection | The workspace's Instructions column: root steering plus `.tst/rules/*` (TD-2802). |
+| `command_list` | connection | The workspace's slash commands: name, description, source, body (TD-4501). |
 | `context_pins` | connection | The workspace's Context column: pinned files and folders (TD-2804). |
 | `memory_files` | connection | The workspace's Memory column: `.tst/memory/*.md` with contents (TD-2601). |
 | `charter` | connection | The workspace's Charter column: parsed §12.4 fields, or absent (TD-4002). |

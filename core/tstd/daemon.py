@@ -63,6 +63,7 @@ from .config_write import (
     save_tier_slug,
 )
 from .context.assembler import ContextAssembler
+from .context.commands import list_workspace_commands_async
 from .context.instructions import (
     InstructionNameError,
     create_rule_file,
@@ -143,6 +144,8 @@ from .protocol import (
     CharterDocument,
     CheckCuPermissions,
     ClientMessageT,
+    CommandEntry,
+    CommandList,
     ContextPinEntry,
     ContextPins,
     CreateRule,
@@ -175,6 +178,7 @@ from .protocol import (
     JobEntry,
     JobList,
     ListArtifacts,
+    ListCommands,
     ListInstructions,
     ListJobs,
     ListMemory,
@@ -1772,6 +1776,9 @@ class Daemon:
         if isinstance(msg, ListInstructions):
             return await self._handle_list_instructions(msg)
 
+        if isinstance(msg, ListCommands):
+            return await self._handle_list_commands(msg)
+
         if isinstance(msg, ListMemory):
             return await self._handle_list_memory(msg)
 
@@ -2367,6 +2374,29 @@ class Daemon:
     async def _handle_list_instructions(self, msg: ListInstructions) -> str:
         """List a workspace's Instructions files (TD-2802). Not a tool."""
         return await self._instruction_files_reply(msg.workspace_path)
+
+    async def _handle_list_commands(self, msg: ListCommands) -> str:
+        """List a workspace's slash commands (TD-4501). Not a tool."""
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {root}",
+            )
+        listed = await list_workspace_commands_async(root)
+        return CommandList(
+            workspace_path=str(root),
+            commands=[
+                CommandEntry(
+                    name=c.name,
+                    description=c.description,
+                    source=c.source,
+                    body=c.body,
+                    too_large=c.too_large,
+                )
+                for c in listed
+            ],
+        ).model_dump_json()
 
     async def _context_pins_reply(self, workspace: str | Path) -> str:
         root = Path(workspace)

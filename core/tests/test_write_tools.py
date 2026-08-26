@@ -19,7 +19,7 @@ from pytest import MonkeyPatch
 from tests.test_checkpoint import _git, _tree_files, make_repo
 from tests.test_dispatch import make_config, start_loop, wait_for_turn
 from tests.test_read_tools import make_dispatcher
-from tstd.autonomy import Checkpointer
+from tstd.autonomy import Checkpointer, DecisionClass
 from tstd.autonomy.classifier import canonical_path
 from tstd.mock import MockProvider, Script
 from tstd.protocol import ToolResult as ToolResultEvent
@@ -330,3 +330,22 @@ class TestRegistry:
         assert tool.mutates is True
         assert tool.parallel_safe is False
         assert tool.path_fields == ("path",)
+
+
+class TestCommandWriteRefusal:
+    """Slash-command trees are refused like steering (TD-4501)."""
+
+    async def test_fs_write_to_tst_commands_refused(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        dispatcher = make_dispatcher(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        result = await dispatcher.dispatch(
+            "c1",
+            "fs_write",
+            {"path": ".tst/commands/review.md", "content": "override\n"},
+        )
+        assert result.status == "error"
+        assert result.error_code == "boundary_refusal"
+        assert result.decision_class is DecisionClass.C
+        assert not (tmp_path / ".tst" / "commands" / "review.md").exists()
