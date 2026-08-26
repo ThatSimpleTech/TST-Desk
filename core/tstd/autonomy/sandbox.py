@@ -165,18 +165,39 @@ async def sandbox_start_error(
     return None
 
 
+def _network_denied(network: str | list[str]) -> bool:
+    """True when the charter wall forbids container egress.
+
+    Same shape as ``BoundarySection.network``: ``"deny"`` or a host list.
+    A non-empty list of non-blank hosts is the only shape that opens
+    slirp. Empty lists, other strings, and mixed junk fail closed as
+    deny — CNI cannot punch per-host holes, so unexpected values must
+    not widen the net ns.
+    """
+    return not (
+        isinstance(network, list)
+        and bool(network)
+        and all(isinstance(host, str) and host.strip() for host in network)
+    )
+
+
 def container_argv(
     workspace: Path,
     *,
     runtime: str,
     image: str,
     inner: Sequence[str],
+    network: str | list[str] = "deny",
 ) -> list[str]:
     """Argv that execs *inner* with only *workspace* bind-mounted.
 
-    ``--network=none`` until the charter wall can punch holes (TD-4302).
-    ``--pull=never`` so a start check cannot phone a registry. No
-    ``$HOME``, no host network, no privileged flag.
+    The only ``--mount`` is the workspace. There is no extra-mount
+    argument — host ``$HOME``, keychain, ``~/.ssh``, cloud creds, and
+    the user-data-dir cannot be bound in. ``network="deny"`` (the
+    default) is ``--network=none``. A host allowlist omits that flag so
+    Podman's default slirp can reach tool-level hosts; it never uses
+    ``--network=host``. Unexpected values fail closed as deny.
+    ``--pull=never`` so a start check cannot phone a registry.
     """
     if not inner:
         raise SandboxError("container command is empty")
@@ -187,23 +208,25 @@ def container_argv(
     ws = workspace.resolve()
     if any(ch in str(ws) for ch in ",:"):
         raise SandboxError("workspace path cannot contain comma or colon")
-    return [
-        runtime,
-        "run",
-        "--rm",
-        "--network=none",
-        "--userns=keep-id",
-        "--security-opt",
-        "no-new-privileges",
-        "--pull",
-        "never",
-        "--mount",
-        f"type=bind,src={ws},dst={WORKSPACE_DEST}",
-        "--workdir",
-        WORKSPACE_DEST,
-        image,
-        *inner,
-    ]
+    argv = [runtime, "run", "--rm"]
+    if _network_denied(network):
+        argv.append("--network=none")
+    argv.extend(
+        [
+            "--userns=keep-id",
+            "--security-opt",
+            "no-new-privileges",
+            "--pull",
+            "never",
+            "--mount",
+            f"type=bind,src={ws},dst={WORKSPACE_DEST}",
+            "--workdir",
+            WORKSPACE_DEST,
+            image,
+            *inner,
+        ]
+    )
+    return argv
 
 
 async def sandbox_exec(
@@ -213,6 +236,7 @@ async def sandbox_exec(
     config: AutonomyConfig | ModelConfig,
     which: WhichFn | None = None,
     inspect: InspectFn | None = None,
+    network: str | list[str] = "deny",
 ) -> SandboxExec:
     """Run *inner* inside the sandbox, or raise :class:`SandboxError`."""
     autonomy = _autonomy_of(config)
@@ -227,6 +251,7 @@ async def sandbox_exec(
         runtime=str(resolved),
         image=autonomy.image,
         inner=inner,
+        network=network,
     )
     try:
         proc = await asyncio.create_subprocess_exec(

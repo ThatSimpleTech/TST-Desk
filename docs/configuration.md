@@ -287,13 +287,17 @@ Settings; this branch still types them.
 
 ### `autonomy`
 
-Rootless container isolation for autonomous runs (TD-4301, spec §12.5).
-Interactive sessions do not require this. The start button (TD-4003)
-refuses without a live sandbox. `runtime` and `image` live here, never
-in Python — same rule as model slugs. The named runtime is Podman;
-another binary is accepted only if it speaks the same `run` argv
-(`--network=none`, `--userns=keep-id`, one bind mount of the workspace
-at `/workspace`). Firecracker / EZER is a follow-up, not this key.
+Rootless container isolation for autonomous runs (TD-4301, TD-4302,
+spec §12.5). Interactive sessions do not require this. The start
+button (TD-4003) refuses without a live sandbox. `runtime` and `image`
+live here, never in Python — same rule as model slugs. The named
+runtime is Podman; another binary is accepted only if it speaks the
+same `run` argv (`--userns=keep-id`, one bind mount of the workspace
+at `/workspace`, `--network=none` when the charter wall is deny; a
+host allowlist omits that flag so Podman slirp can work, and never
+`--network=host`). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
+creds, the OS keychain, or the user-data-dir; there is no extra-mount
+API. Firecracker / EZER is a follow-up, not this key.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

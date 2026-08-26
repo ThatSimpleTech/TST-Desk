@@ -8249,3 +8249,25 @@ failure was a host mismatch that those labels could not show.
 (they wrap). Also rejected: inferring OpenRouter from `vendor/model`
 (TD-1718). Also rejected: showing Settings' `active_preset` as the
 session's host — existing sessions keep the config they opened with.
+
+---
+
+## 2026-08-26 — TD-4302: container net ns follows the charter wall (Class B)
+
+**Decision:** `container_argv` / `sandbox_exec` take `network` in the
+same shape as `BoundarySection.network` (`"deny"` or a host list).
+`"deny"` (the default) keeps `--network=none`. A non-empty host
+allowlist omits `--network=none` so Podman's default slirp can reach
+tool-level hosts, and never passes `--network=host`. Unexpected
+values fail closed as deny. The only `--mount` remains the workspace;
+there is no extra-mount API.
+
+**Rationale:** CNI cannot cheaply punch per-host holes. The classifier
+already enforces `network-new-host` (Class C) against the charter
+allowlist. The container net ns is the wall (none vs slirp), not host
+networking. Binding the host net ns would expose host listeners and
+is a prime-directive miss.
+
+**Alternative rejected:** `--network=host` for allowlisted charters —
+that mounts the host net ns. Also rejected: an extra-mount API for
+`$HOME` / creds, and a CNI plugin that filters by hostname.
