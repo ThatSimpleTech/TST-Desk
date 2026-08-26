@@ -500,6 +500,58 @@ class AutonomyConfig(BaseModel):
         return stripped
 
 
+class McpServerConfig(BaseModel):
+    """One user-listed MCP server (TD-4401).
+
+    Listed in user-data-dir config — no dynamic discovery. HTTP
+    destinations must be loopback; the client refuses anything else
+    before dialing. No ``env`` map: a token pasted here would land
+    on disk (TD-4403 keeps paste-a-token in the keychain).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    transport: Literal["stdio", "http"]
+    command: list[str] = Field(default_factory=list)
+    url: str = ""
+    enabled: bool = True
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _command_is_argv(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raise ValueError("command must be a list of argv tokens, not a string")
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        raise ValueError("command must be a list of argv tokens")
+
+    @field_validator("url")
+    @classmethod
+    def _strip_url(cls, value: str) -> str:
+        return value.strip()
+
+
+class McpConfig(BaseModel):
+    """User-listed MCP servers. Empty means none — no doctor rows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+
+    @field_validator("servers")
+    @classmethod
+    def _valid_server_ids(cls, value: dict[str, McpServerConfig]) -> dict[str, McpServerConfig]:
+        bad = sorted(sid for sid in value if not CREDENTIAL_ID_RE.match(sid))
+        if bad:
+            raise ValueError(
+                "mcp server id(s) must be a lowercase slug "
+                f"[a-z][a-z0-9-]{{0,31}}: {', '.join(bad)}"
+            )
+        return value
+
+
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
@@ -515,6 +567,7 @@ class ModelConfig(BaseModel):
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
     @field_validator("credentials")
     @classmethod
@@ -674,6 +727,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "remote",
         "notify",
         "autonomy",
+        "mcp",
         "credentials",
     ):
         if key in data:

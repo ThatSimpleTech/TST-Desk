@@ -62,6 +62,8 @@ class Tool:
         actuates: Desktop computer-use only (TD-3301). ``None`` means this
             is not a CU tool. ``False`` is capture-only (Class A).
             ``True`` is pointer/keyboard actuation (Class B, ask).
+        provenance: Optional origin tag. MCP tools use ``mcp:<server-id>``
+            (TD-4401). Builtins leave this unset.
     """
 
     name: str
@@ -82,6 +84,8 @@ class Tool:
     # path_fields would otherwise fall through to the worker as B for
     # screenshot too.
     actuates: bool | None = None
+    # ``mcp:<server-id>`` for user-listed MCP tools (TD-4401). None = builtin.
+    provenance: str | None = None
 
     def __post_init__(self) -> None:
         """Validate basic invariants."""

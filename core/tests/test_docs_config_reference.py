@@ -56,6 +56,8 @@ from tstd.config import (
     CredentialConfig,
     EmbeddingsConfig,
     GroundingConfig,
+    McpConfig,
+    McpServerConfig,
     ModelConfig,
     NotifyConfig,
     NtfyNotifyConfig,
@@ -212,6 +214,8 @@ _GROUNDING_FIELDS = frozenset(GroundingConfig.model_fields)
 _REMOTE_FIELDS = frozenset(RemoteConfig.model_fields)
 _NOTIFY_FIELDS = frozenset(NotifyConfig.model_fields)
 _AUTONOMY_FIELDS = frozenset(AutonomyConfig.model_fields)
+_MCP_FIELDS = frozenset(McpConfig.model_fields)
+_MCP_SERVER_FIELDS = frozenset(McpServerConfig.model_fields)
 _SLACK_NOTIFY_FIELDS = frozenset(SlackNotifyConfig.model_fields)
 _NTFY_NOTIFY_FIELDS = frozenset(NtfyNotifyConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
@@ -290,6 +294,12 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                 _check_keys(data["notify"]["ntfy"], _NTFY_NOTIFY_FIELDS, f"{where} notify.ntfy")
         if "autonomy" in data:
             _check_keys(data["autonomy"], _AUTONOMY_FIELDS, f"{where} autonomy")
+        if "mcp" in data:
+            _check_keys(data["mcp"], _MCP_FIELDS, f"{where} mcp")
+            servers = data["mcp"].get("servers")
+            if isinstance(servers, dict):
+                for sid, body in servers.items():
+                    _check_keys(body, _MCP_SERVER_FIELDS, f"{where} mcp.servers.{sid}")
         if "credentials" in data:
             for cid, body in data["credentials"].items():
                 _check_keys(body, _CREDENTIAL_FIELDS, f"{where} credentials.{cid}")
@@ -319,6 +329,8 @@ def test_every_config_key_is_documented() -> None:
         | _REMOTE_FIELDS
         | _NOTIFY_FIELDS
         | _AUTONOMY_FIELDS
+        | _MCP_FIELDS
+        | _MCP_SERVER_FIELDS
         | _SLACK_NOTIFY_FIELDS
         | _NTFY_NOTIFY_FIELDS
         | _PRESET_FIELDS
