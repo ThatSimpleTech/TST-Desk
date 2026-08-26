@@ -2,8 +2,14 @@
 // the daemon, never invented here.
 
 import { describe, expect, it } from "vitest";
-import type { CommandEntry } from "./protocol";
-import { filterCommands, insertCommandBody, slashQuery } from "./slash-commands";
+import type { CommandEntry, SkillStackEntry } from "./protocol";
+import {
+	filterCommands,
+	insertCommandBody,
+	mergeSlashItems,
+	skillLoadMarker,
+	slashQuery,
+} from "./slash-commands";
 
 const list: CommandEntry[] = [
 	{
@@ -61,5 +67,31 @@ describe("insertCommandBody", () => {
 
 	it("leaves a non-slash draft alone", () => {
 		expect(insertCommandBody("hello", list[0]!.body)).toBe("hello");
+	});
+});
+
+describe("mergeSlashItems", () => {
+	const skills: SkillStackEntry[] = [
+		{
+			name: "review",
+			description: "skill review",
+			source: "workspace",
+			loaded: false,
+			tokens: 10,
+		},
+		{
+			name: "draft",
+			description: "Draft a reply",
+			source: "user",
+			loaded: false,
+			tokens: 8,
+		},
+	];
+
+	it("commands win on the same stem; skills that are not commands appear", () => {
+		const merged = mergeSlashItems(list, skills);
+		expect(merged.map((c) => c.name)).toEqual(["review", "ship", "draft"]);
+		expect(merged[0]!.body).toBe(list[0]!.body);
+		expect(merged[2]!.body).toBe(skillLoadMarker("draft"));
 	});
 });

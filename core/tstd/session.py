@@ -273,6 +273,8 @@ class Session:
         # Last brain-turn memory selection (TD-2604). None until a brain
         # turn has run the loader.
         self.last_memory: MemoryLoad | None = None
+        # TD-4502: skill names loaded this session via load_skill or slash.
+        self.loaded_skills: list[str] = []
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False

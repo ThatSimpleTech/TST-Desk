@@ -59,6 +59,35 @@ describe("applyEvent", () => {
 		expect(state.loaded).toBe(true);
 	});
 
+	it("lists skills separately from steering sources", () => {
+		const { state, store } = harness();
+		store.applyEvent(
+			stackEvent({
+				skills: [
+					{
+						name: "review",
+						description: "Review a PR",
+						source: "workspace",
+						loaded: true,
+						tokens: 40,
+					},
+				],
+			}),
+			"s1",
+		);
+		expect(state.skills.map((s) => s.name)).toEqual(["review"]);
+		expect(state.skills[0]?.loaded).toBe(true);
+		expect(state.sources.every((s) => !s.path.endsWith("SKILL.md"))).toBe(true);
+	});
+
+	it("a missing skills field becomes an empty list, not a steering row", () => {
+		const { state, store } = harness();
+		const event = stackEvent();
+		delete event.skills;
+		store.applyEvent(event, "s1");
+		expect(state.skills).toEqual([]);
+	});
+
 	it("names loaded and dropped memory files", () => {
 		const { state, store } = harness();
 		store.applyEvent(

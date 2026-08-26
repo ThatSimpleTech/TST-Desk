@@ -8489,3 +8489,35 @@ fallback already in discovery.
 **Alternative rejected:** Fetching the body only on pick. Also rejected:
 forbidding unknown frontmatter keys. Also rejected: a new
 `command_file` refusal code (the model should see one read-only rule).
+
+---
+
+## 2026-08-26 — TD-4502: skills are a catalog with a 4k body cap (Class B)
+
+**Decision:** Skills live at `.tst/skills/<name>/SKILL.md` and
+`~/.tstdesk/skills/<name>/SKILL.md` (user-global wins on name). Frontmatter
+allows only `description` and `whenToUse`; extra keys skip that skill
+entirely (log + omit), missing required keys skip. When both of *our*
+trees have no `SKILL.md`, fall back to workspace `.claude/skills/` and
+`~/.claude/skills/` (same symmetry as TD-4501 commands). The brain prompt
+gets a name+description catalog after the cache prefix (blocks 1–2);
+worker and validator get neither catalog nor bodies. `load_skill` (builtin,
+`side_effect_class="auto"`) attaches the body to `session.loaded_skills`.
+Slash `/name` loads a skill only when that stem is not also a command
+(TD-4501 wins). The composer inserts `Load skill \`name\`.` for skill-only
+stems; the loop calls the same loader. Body cap is 4000 heuristic tokens
+(`SKILL_BODY_TOKEN_CAP`); over-cap is refused, not truncated. Any write
+whose basename is `SKILL.md` folds into `is_steering_write` and reuses
+the `steering_file` PathGuard refusal. Inspector lists skills on
+`instruction_stack.skills`, never mixed into steering `sources`.
+
+**Rationale:** A fixed 4k token cap is predictable and does not require
+re-assembling the prefix at load time. Commands win on stem so the
+composer does not rewrite TD-4501 insert behaviour. Basename `SKILL.md`
+(not just the skills tree) matches the AC that a nested `src/SKILL.md`
+is also Class C. Extra frontmatter is refused rather than ignored so a
+partial skill cannot load.
+
+**Alternative rejected:** Cap = remaining room after prefix+catalog
+(harder to test, varies by steering). Also rejected: putting the catalog
+in the cache prefix. Also rejected: a second stack event for skills.

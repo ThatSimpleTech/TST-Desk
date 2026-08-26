@@ -50,6 +50,7 @@ from .compaction import maybe_compact
 from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
+from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
@@ -732,6 +733,7 @@ async def agent_loop(
         user_content = await session.wait_for_user_message()
         if user_content is None:
             break  # session was cancelled
+        apply_slash_skill(session, user_content)
 
         # Turn observability (TD-1713): mark the dequeue itself. The
         # existing "turn start" log lands after prompt assembly, so a
@@ -900,6 +902,7 @@ async def agent_loop(
                     project_context=project_context if tier == "brain" else None,
                     approved_imports=frozenset(approved_imports),
                     denied_imports=frozenset(denied_imports),
+                    loaded_skills=list(session.loaded_skills),
                 )
                 pending = [p for p in assembled.steering.pending_imports if p not in denied_imports]
                 if not pending:
@@ -990,6 +993,8 @@ async def agent_loop(
                         last_cached_tokens=tracker.last_cached_prompt_tokens,
                         cache_observed=tracker.cache_observed,
                         memory=session.last_memory,
+                        skills=list_workspace_skills(session.workspace_path),
+                        loaded_skill_names=session.loaded_skills,
                     )
                 )
                 log.info(

@@ -1388,6 +1388,16 @@ class MemoryStackEntry(BaseModel):
     reason: Literal["always-index", "heading", "embedding"]
 
 
+class SkillStackEntry(BaseModel):
+    """One discovered skill on the instruction stack (TD-4502)."""
+
+    name: str
+    description: str = ""
+    source: Literal["workspace", "user", "claude_workspace", "claude_user"]
+    loaded: bool = False
+    tokens: int = Field(ge=0)
+
+
 class InstructionStack(DaemonEvent):
     """Response to ``get_instruction_stack``: the resolved stack with counts."""
 
@@ -1412,6 +1422,8 @@ class InstructionStack(DaemonEvent):
     memory: list[MemoryStackEntry] = Field(default_factory=list)
     memory_dropped: list[MemoryStackEntry] = Field(default_factory=list)
     memory_placeholder: bool = False
+    # Discovered skills, separate from steering sources (TD-4502).
+    skills: list[SkillStackEntry] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):

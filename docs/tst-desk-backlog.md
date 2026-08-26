@@ -5844,14 +5844,20 @@ refusal.
 **Size:** 5 · **Depends on:** TD-4501, TD-508
 
 **Acceptance criteria:**
-- [ ] `.tst/skills/<name>/SKILL.md` (+ user-global). Frontmatter:
+- [x] `.tst/skills/<name>/SKILL.md` (+ user-global). Frontmatter:
       `description`, `whenToUse` only
-- [ ] Brain gets a name+description catalog; bodies load on
+- [x] Brain gets a name+description catalog; bodies load on
       `load_skill` or slash, after the cache prefix
-- [ ] Over-budget skill is refused, not truncated
-- [ ] Agent cannot write `**/SKILL.md`
-- [ ] Fallback: `.claude/skills/` when ours is empty
-- [ ] Inspector lists loaded skills separately from steering
+- [x] Over-budget skill is refused, not truncated
+- [x] Agent cannot write `**/SKILL.md`
+- [x] Fallback: `.claude/skills/` when ours is empty
+- [x] Inspector lists loaded skills separately from steering
+
+**Done:** Discovery in `tstd.context.skills`. Brain catalog after the
+cache prefix; bodies attach on `load_skill` or `/name` (commands win on
+the same stem). Over-budget bodies are refused at 4k heuristic tokens.
+Any `SKILL.md` write is Class C. Inspector `instruction_stack.skills`
+is a separate list, not a steering source.
 
 ---
 

@@ -723,7 +723,16 @@
     "cache_observed": false,
     "memory": [],
     "memory_dropped": [],
-    "memory_placeholder": false
+    "memory_placeholder": false,
+    "skills": [
+      {
+        "name": "review",
+        "description": "Review a PR",
+        "source": "workspace",
+        "loaded": false,
+        "tokens": 40
+      }
+    ]
   },
   "charter": {
     "type": "charter",

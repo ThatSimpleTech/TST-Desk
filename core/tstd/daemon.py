@@ -71,6 +71,7 @@ from .context.instructions import (
 )
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
+from .context.skills import list_workspace_skills_async
 from .context.stack import build_instruction_stack
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .coworker import load_coworker, save_coworker
@@ -2358,8 +2359,10 @@ class Daemon:
             tier,
             matched_paths=set(found.touched_paths),
             approved_imports=_approved_import_allowlist(found.workspace_path),
+            loaded_skills=list(found.loaded_skills),
         )
         tracker = found.cost_tracker
+        skills = await list_workspace_skills_async(found.workspace_path)
         return build_instruction_stack(
             found.id,
             assembled.steering,
@@ -2369,6 +2372,8 @@ class Daemon:
             # "nothing observed yet" the tracker itself reports (TD-1811).
             cache_observed=(tracker.cache_observed if tracker is not None else False),
             memory=found.last_memory,
+            skills=skills,
+            loaded_skill_names=found.loaded_skills,
         ).model_dump_json()
 
     async def _handle_list_instructions(self, msg: ListInstructions) -> str:
