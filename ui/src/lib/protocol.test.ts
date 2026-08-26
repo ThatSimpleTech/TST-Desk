@@ -24,6 +24,7 @@ import type {
   SetTier,
   GetInstructionStack,
   ListInstructions,
+  ListCommands,
   ListMemory,
   SaveMemory,
   GetCharter,
@@ -39,6 +40,7 @@ import type {
   RemovePin,
   EndSession,
   InstructionFiles,
+  CommandList,
   MemoryFiles,
   MemoryAccept,
   MemoryEdit,
@@ -288,6 +290,12 @@ describe("Client message fixtures match TypeScript types", () => {
   it("list_instructions", () => {
     const m = fixtures.list_instructions as ListInstructions;
     expect(m.type).toBe("list_instructions");
+    expect(isString(m.workspace_path)).toBe(true);
+  });
+
+  it("list_commands", () => {
+    const m = fixtures.list_commands as ListCommands;
+    expect(m.type).toBe("list_commands");
     expect(isString(m.workspace_path)).toBe(true);
   });
 
@@ -876,7 +884,7 @@ describe("All fixtures have required shape", () => {
       "rename_session",
       "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier",
       "get_instruction_stack",
-      "list_instructions", "list_memory", "save_memory", "create_rule",
+      "list_instructions", "list_commands", "list_memory", "save_memory", "create_rule",
       "get_charter", "save_charter", "start_autonomy",
       "list_pins", "add_pin", "remove_pin",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
@@ -904,7 +912,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "turn_complete",
       "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "session_list", "policy_rules", "error",
+      "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",
@@ -1011,6 +1019,15 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(m.type).toBe("instruction_files");
     expect(isString(m.workspace_path)).toBe(true);
     expect(Array.isArray(m.files)).toBe(true);
+  });
+
+  it("command_list", () => {
+    const m = fixtures.command_list as CommandList;
+    expect(m.type).toBe("command_list");
+    expect(isString(m.workspace_path)).toBe(true);
+    expect(Array.isArray(m.commands)).toBe(true);
+    expect(isString(m.commands[0]?.name)).toBe(true);
+    expect(isString(m.commands[0]?.body)).toBe(true);
   });
 
   it("context_pins", () => {

@@ -188,6 +188,12 @@ export interface ListInstructions extends ClientMessage {
   workspace_path: string;
 }
 
+/** List a workspace's slash commands (TD-4501). Human path. */
+export interface ListCommands extends ClientMessage {
+  type: "list_commands";
+  workspace_path: string;
+}
+
 /** List a workspace's Memory files (TD-2601). Human path. */
 export interface ListMemory extends ClientMessage {
   type: "list_memory";
@@ -529,6 +535,7 @@ export type ClientMessageUnion =
   | SetTier
   | GetInstructionStack
   | ListInstructions
+  | ListCommands
   | ListMemory
   | SaveMemory
   | CreateRule
@@ -833,6 +840,22 @@ export interface InstructionFiles extends DaemonEvent {
   workspace_path: string;
   files: InstructionFileEntry[];
   created?: string | null;
+}
+
+/** One slash command the composer can insert (TD-4501). */
+export interface CommandEntry {
+  name: string;
+  description: string;
+  source: "workspace" | "user" | "claude_workspace" | "claude_user";
+  body: string;
+  too_large?: boolean;
+}
+
+/** Reply to list_commands. Connection-scoped. */
+export interface CommandList extends DaemonEvent {
+  type: "command_list";
+  workspace_path: string;
+  commands: CommandEntry[];
 }
 
 export interface MemoryFileEntry {
@@ -1241,6 +1264,7 @@ export type DaemonEventUnion =
   | TierSwitched
   | InstructionStack
   | InstructionFiles
+  | CommandList
   | ContextPins
   | MemoryFiles
   | CharterDocument
