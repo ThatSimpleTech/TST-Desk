@@ -275,6 +275,12 @@ class Session:
         self.last_memory: MemoryLoad | None = None
         # TD-4502: skill names loaded this session via load_skill or slash.
         self.loaded_skills: list[str] = []
+        # TD-4602: 0 = user-visible parent; 1 = transient worker child.
+        # Children are not registered, persisted, or revived.
+        self.delegate_depth: int = 0
+        self.parent_id: str | None = None
+        # Bound by agent_loop so ``delegate`` can spawn a worker child.
+        self.delegate_runtime: Any = None
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False

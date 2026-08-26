@@ -40,6 +40,9 @@ class CallRecord:
     completion_cost: float
     cost: float
     timestamp: datetime = field(default_factory=datetime.now)
+    # Empty for the parent loop. ``"worker"`` tags a TD-4602 child call
+    # so usage/export can show worker-child spend on the parent ledger.
+    source: str = ""
 
 
 # ── Cost computation ──────────────────────────────────────────────────
@@ -158,7 +161,13 @@ class CostTracker:
         """
         self._turn_calls = []
 
-    def record(self, tier: TierName, usage: Usage, cfg: TierConfig | None = None) -> float:
+    def record(
+        self,
+        tier: TierName,
+        usage: Usage,
+        cfg: TierConfig | None = None,
+        source: str = "",
+    ) -> float:
         """Record an API call and return its dollar cost.
 
         Args:
@@ -166,11 +175,13 @@ class CostTracker:
             usage: Token usage from the API response.
             cfg: The tier config with pricing. If ``None``, looked up
                 from the model config's active preset.
+            source: Optional origin tag. Empty for the parent loop;
+                ``"worker"`` for a TD-4602 child call.
 
         Returns:
             The computed cost of this call in dollars.
         """
-        record, cost = self._build_record(tier, usage, cfg)
+        record, cost = self._build_record(tier, usage, cfg, source=source)
         self._calls.append(record)
         self._turn_calls.append(record)
         self._notify(record, is_classifier=False)
@@ -181,13 +192,14 @@ class CostTracker:
         tier: TierName,
         usage: Usage,
         cfg: TierConfig | None = None,
+        source: str = "",
     ) -> float:
         """Record a worker (or other) call that is not a user turn.
 
         Distill (TD-2301) is a session-end completion: it uses worker
         pricing and the session ledger, and must not move ``turn_cost``.
         """
-        record, cost = self._build_record(tier, usage, cfg)
+        record, cost = self._build_record(tier, usage, cfg, source=source)
         self._calls.append(record)
         self._notify(record, is_classifier=False)
         return cost
@@ -197,6 +209,7 @@ class CostTracker:
         tier: TierName,
         usage: Usage,
         cfg: TierConfig | None = None,
+        source: str = "",
     ) -> float:
         """Record a decision-classifier API call, tracked separately.
 
@@ -204,7 +217,7 @@ class CostTracker:
         totals so the ambiguity fallback is visible on its own breakdown
         line rather than folded into main-loop cost.
         """
-        record, cost = self._build_record(tier, usage, cfg)
+        record, cost = self._build_record(tier, usage, cfg, source=source)
         self._classifier_calls.append(record)
         self._notify(record, is_classifier=True)
         return cost
@@ -214,6 +227,7 @@ class CostTracker:
         tier: TierName,
         usage: Usage,
         cfg: TierConfig | None = None,
+        source: str = "",
     ) -> tuple[CallRecord, float]:
         """Build a CallRecord for *usage* and compute its dollar cost."""
         tier_cfg = cfg or self._config.tier(tier)
@@ -235,6 +249,7 @@ class CostTracker:
             cached_cost=cached_cost,
             completion_cost=completion_cost,
             cost=cost,
+            source=source,
         )
         return record, cost
 
