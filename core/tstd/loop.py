@@ -35,6 +35,7 @@ from .autonomy import (
     DecisionClassifier,
     DecisionLedger,
 )
+from .autonomy.breakers import record_autonomy_round
 from .autonomy.checkpoint import auto_branch
 from .autonomy.dod import make_dod_poller
 from .autonomy.runner import advance_autonomy
@@ -500,6 +501,7 @@ async def _dispatch_and_append_results(
             )
         )
         note_tool_result(session, r.name, r.status, diff=r.diff, output=r.output)
+    record_autonomy_round(session, dispatch_items, results)
     await session.conversation_changed()
 
 

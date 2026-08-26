@@ -5662,11 +5662,18 @@ and reports only — no auto-revert (TD-4202), no circuit breakers
 **Size:** 5 · **Depends on:** TD-4101, TD-707
 
 **Acceptance criteria:**
-- [ ] Spec §12.7: spend/time cap, tests red N times, same file
+- [x] Spec §12.7: spend/time cap, tests red N times, same file
       thrashed N times, no DoD progress N times, any Class C, identical
       tool-call loop
-- [ ] Trip is a fault report + notify, not an approval card
-- [ ] Each breaker has a test that trips it
+- [x] Trip is a fault report + notify, not an approval card
+- [x] Each breaker has a test that trips it
+
+**Completed (2026-08-26):** `maybe_trip` on the `advance_autonomy`
+continue path. New trips are `breaker:tests_red`, `breaker:file_thrash`,
+`breaker:no_dod_progress`, `breaker:tool_loop`. Spend/wall-clock caps
+and Class C keep their existing stop strings. A trip notifies via the
+wake-up path; it never mints an `ApprovalRequest`. Interactive sessions
+never record or trip.
 
 ---
 
