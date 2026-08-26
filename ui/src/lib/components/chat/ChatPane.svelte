@@ -28,10 +28,20 @@
 	import Composer from "./Composer.svelte";
 	import MessageList from "./MessageList.svelte";
 	import QueuedMessages from "./QueuedMessages.svelte";
+	import WakeupCard from "../WakeupCard.svelte";
+	import { bindWakeup, startWakeup } from "../../wakeup.svelte.js";
 
 	onMount(() => {
 		initChat();
-		return teardownChat;
+		const offWakeup = startWakeup();
+		return () => {
+			teardownChat();
+			offWakeup();
+		};
+	});
+
+	$effect(() => {
+		bindWakeup(session.sessionId);
 	});
 
 	// Computed once per mount; the greeting isn't meant to tick live as the
@@ -82,6 +92,7 @@
 				onretry={retryLastUserMessage}
 			/>
 		{/if}
+		<WakeupCard />
 		<!-- TD-1607: fixed-height slot — the shimmer and the duration line
 		     swap without ever nudging the composer. -->
 		<div class="turn-status" aria-live="polite">

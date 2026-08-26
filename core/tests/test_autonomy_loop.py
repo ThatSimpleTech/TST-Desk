@@ -148,6 +148,8 @@ class TestUnattendedLoop:
         follow = [m.content for m in brain[1].messages if m.role == "user"]
         assert any(c is not None and CONTINUE_PREFIX in c for c in follow)
         assert notified  # iteration cap notifies
+        assert any("iteration cap" in n for n in notified)
+        assert any("Branch:" in n for n in notified)
         assert session.autonomy_stop_reason is not None
         assert session.autonomy_stop_reason.startswith("iteration cap")
 
@@ -238,7 +240,8 @@ class TestUnattendedLoop:
         await wait_for_state(session, "complete")
         assert session.autonomy_class_c
         assert session.autonomy_stop_reason == CLASS_C_STOP
-        assert notified == [CLASS_C_STOP]
+        assert any(CLASS_C_STOP in n for n in notified)
+        assert any("Branch:" in n for n in notified)
         assert (ws / "AGENTS.md").read_text(encoding="utf-8") == "# hi\n"
         assert not runner.is_running
 
@@ -257,7 +260,8 @@ class TestUnattendedLoop:
         await session.add_user_message(first_prompt(charter))
         await wait_for_state(session, "complete")
         assert session.state != "paused"
-        assert any(n.startswith("spend cap") for n in notified)
+        assert any("spend cap" in n for n in notified)
+        assert any("Branch:" in n for n in notified)
         assert not runner.is_running
 
 

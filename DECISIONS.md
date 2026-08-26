@@ -8249,3 +8249,27 @@ failure was a host mismatch that those labels could not show.
 (they wrap). Also rejected: inferring OpenRouter from `vendor/model`
 (TD-1718). Also rejected: showing Settings' `active_preset` as the
 session's host — existing sessions keep the config they opened with.
+
+---
+
+## 2026-08-26 — TD-4303: wake-up summary (Class B)
+
+**Decision:** Additive session-scoped `autonomy_summary` event. No
+`PROTOCOL_VERSION` bump. The notify callback still takes one string;
+`notify_autonomy_stop` posts that string as the slack/ntfy body
+(the richer text is built in `wakeup.format_notify_text`). One click
+opens the ledger via the host `open_path` / `openInEditor` path and
+copies `tst/auto/<charter-slug>` — there is no daemon git-checkout
+verb. `should_notify` treats a reason that starts with `breaker:` as
+a notify so TD-4203 can trip without another edit here.
+
+**Rationale:** The daemon owns the session; the window is a viewer.
+Persisting the summary on the event log means a closed window still
+sees it on attach. A second daemon or a new client message to switch
+branches would invent a control plane this story does not need.
+
+**Alternative rejected:** Inferring the card from `turn_complete` plus
+`decision_logged`. Also rejected: wrapping the old one-liner inside
+`notify_autonomy_stop` (the callback would still look like
+"Autonomy complete: definition of done met"). Also rejected: a
+protocol checkout command.
