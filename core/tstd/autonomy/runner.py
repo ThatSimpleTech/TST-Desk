@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from ..config import ModelConfig
 from ..logging import get_logger
+from .breakers import maybe_trip
 from .charter import Charter
 from .supervisor import maybe_check_drift
 
@@ -57,8 +58,8 @@ def stop_reason(
     """Why the scheduler should stop, or ``None`` to enqueue another turn.
 
     Definition-of-done is polled in ``advance_autonomy`` (TD-4103) and
-    wins over the iteration cap on the same turn. Drift / circuit
-    breakers are E42.
+    wins over the iteration cap on the same turn. Circuit breakers
+    (TD-4203) run after the poll on the continue path.
     """
     if class_c:
         return CLASS_C_STOP
@@ -101,6 +102,10 @@ async def advance_autonomy(session: Session) -> bool:
             session.last_dod_poll = poll
             if poll is not None and poll.all_green:
                 session.autonomy_stop_reason = DOD_MET
+        if session.autonomy_stop_reason is None:
+            reason = maybe_trip(session)
+            if reason:
+                session.autonomy_stop_reason = reason
         if session.autonomy_stop_reason is None:
             reason = stop_reason(
                 charter=charter,
