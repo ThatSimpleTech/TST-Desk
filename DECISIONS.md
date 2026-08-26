@@ -8572,3 +8572,23 @@ partial skill cannot load.
 **Alternative rejected:** Cap = remaining room after prefix+catalog
 (harder to test, varies by steering). Also rejected: putting the catalog
 in the cache prefix. Also rejected: a second stack event for skills.
+
+---
+
+## 2026-08-26 — TD-4403: Settings MCP writes; live sessions keep old tools (Class B)
+
+**Decision:** `set_mcp_server` and `delete_mcp_server` surgically persist
+`mcp.servers` in user-data-dir `config.yaml` and ack with `setup_state`
+carrying `mcp_servers`. There is no `env` / `environment` field on the
+messages (`extra="forbid"`). After a write the daemon reloads
+`McpSupervisor` so doctor and the next session see the new list. Sessions
+already attached keep the tool set they opened with; hot-attach is out
+of scope.
+
+**Rationale:** A general config-write verb could smuggle a token into a
+file. Narrow messages that carry argv tokens (or a loopback URL) cannot.
+Reloading the supervisor is enough for doctor; mutating a live session
+registry mid-turn is a different product.
+
+**Alternative rejected:** Hot-attaching MCP tools into running sessions.
+Also rejected: a free-form env map on the wire or in the file.

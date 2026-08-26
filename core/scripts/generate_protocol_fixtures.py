@@ -52,6 +52,7 @@ from tstd.protocol import (
     DeleteApiKey,
     DeleteCredential,
     DeleteJob,
+    DeleteMcpServer,
     DeleteSession,
     Deny,
     DenyVerify,
@@ -92,6 +93,7 @@ from tstd.protocol import (
     MemoryFiles,
     MemoryProposal,
     MemoryReject,
+    McpServerSummary,
     MoveSession,
     OpenArtifact,
     OpenWorkspace,
@@ -119,6 +121,7 @@ from tstd.protocol import (
     SetCuIndicators,
     SetCuKill,
     SetLoadGlobalMemory,
+    SetMcpServer,
     SetPreset,
     SetRemoteAttach,
     SetPlan,
@@ -267,6 +270,13 @@ FIXTURES = {
     "set_credential": SetCredential(name="Local"),
     "delete_credential": DeleteCredential(credential="local"),
     "set_tier_credential": SetTierCredential(preset="local", tier="brain", credential="local"),
+    "set_mcp_server": SetMcpServer(
+        id="example",
+        transport="stdio",
+        command=["python", "-m", "some_mcp"],
+        enabled=True,
+    ),
+    "delete_mcp_server": DeleteMcpServer(id="example"),
     # Diagnostics (TD-1104 doctor)
     "run_diagnostics": RunDiagnostics(),
     # Usage and cost (TD-1706)
@@ -669,6 +679,15 @@ FIXTURES = {
         ],
         tier_credentials={"brain": "openrouter", "worker": None, "validator": None},
         tier_loopback={"brain": False, "worker": True, "validator": True},
+        mcp_servers=[
+            McpServerSummary(
+                id="example",
+                transport="stdio",
+                command=["python", "-m", "some_mcp"],
+                url="",
+                enabled=True,
+            )
+        ],
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so

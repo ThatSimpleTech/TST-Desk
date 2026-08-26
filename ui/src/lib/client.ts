@@ -277,6 +277,29 @@ export class ProtocolClient {
     this.send({ type: "set_preset", name });
   }
 
+  /** Create or replace a listed MCP server. Acked with setup_state. */
+  setMcpServer(server: {
+    id: string;
+    transport: "stdio" | "http";
+    command?: string[];
+    url?: string;
+    enabled?: boolean;
+  }): void {
+    this.send({
+      type: "set_mcp_server",
+      id: server.id,
+      transport: server.transport,
+      command: server.command ?? [],
+      url: server.url ?? "",
+      enabled: server.enabled ?? true,
+    });
+  }
+
+  /** Remove a listed MCP server. Acked with setup_state. */
+  deleteMcpServer(id: string): void {
+    this.send({ type: "delete_mcp_server", id });
+  }
+
   // ── Diagnostics (TD-1104 doctor) ────────────────────────────────────
 
   /** Run the doctor checks; the daemon replies with diagnostics_report. */

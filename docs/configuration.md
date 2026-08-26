@@ -326,6 +326,10 @@ named `fs_read` cannot replace the builtin. Registry provenance is
 `mcp:<server_id>`. The approval floor is `ask` (TD-4402 classifies
 path/host fields). No free-form `env` map — a token pasted here would
 land on disk; Settings (TD-4403) keeps paste-a-token in the keychain.
+Settings persist add / disable / remove through `set_mcp_server` and
+`delete_mcp_server`; the write is surgical so teaching comments survive.
+There is no `env` field on those messages. Live sessions keep the tool
+set they attached with until a new session.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

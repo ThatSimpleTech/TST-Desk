@@ -87,6 +87,8 @@ import type {
   SetCredential,
   DeleteCredential,
   SetTierCredential,
+  SetMcpServer,
+  DeleteMcpServer,
   SetSkipAllApprovals,
   SetLoadGlobalMemory,
   SetCoworker,
@@ -443,6 +445,21 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(isString(m.tier)).toBe(true);
   });
 
+  it("set_mcp_server", () => {
+    const m = fixtures.set_mcp_server as SetMcpServer;
+    expect(m.type).toBe("set_mcp_server");
+    expect(isString(m.id)).toBe(true);
+    expect(m.transport === "stdio" || m.transport === "http").toBe(true);
+    expect(Array.isArray(m.command)).toBe(true);
+    expect("env" in m).toBe(false);
+  });
+
+  it("delete_mcp_server", () => {
+    const m = fixtures.delete_mcp_server as DeleteMcpServer;
+    expect(m.type).toBe("delete_mcp_server");
+    expect(isString(m.id)).toBe(true);
+  });
+
   // TD-1104 doctor
   it("run_diagnostics", () => {
     const m = fixtures.run_diagnostics as RunDiagnostics;
@@ -779,6 +796,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.credentials?.every((c) => isString(c.id) && isString(c.name) && isBoolean(c.stored))).toBe(
       true,
     );
+    expect(Array.isArray(m.mcp_servers)).toBe(true);
+    expect(m.mcp_servers?.every((s) => isString(s.id) && (s.transport === "stdio" || s.transport === "http"))).toBe(
+      true,
+    );
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
   });
@@ -903,6 +924,7 @@ describe("All fixtures have required shape", () => {
       "memory_accept", "memory_edit", "memory_reject", "end_session",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
       "set_credential", "delete_credential", "set_tier_credential",
+      "set_mcp_server", "delete_mcp_server",
       "run_diagnostics",
       "get_usage", "export_usage",
       "list_artifacts", "open_artifact",

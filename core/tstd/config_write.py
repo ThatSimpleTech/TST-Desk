@@ -21,6 +21,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .config import (
     CREDENTIAL_ID_RE,
@@ -28,7 +29,9 @@ from .config import (
     RESERVED_CREDENTIAL_IDS,
     TIER_NAMES,
     ConfigError,
+    McpServerConfig,
     ensure_user_config,
+    is_loopback_url,
     load_config,
 )
 
@@ -344,6 +347,116 @@ def save_tier_credential(
             lines[live_at] = new_line
         else:
             lines.insert(tier_at + 1, new_line)
+
+    _atomic_write(config_path, "\n".join(lines))
+    return config_path
+
+
+def _expand_inline_empty_map(lines: list[str], index: int, key: str, indent: int) -> None:
+    """Turn ``key: {}`` into a block header so children can be inserted."""
+    stripped = lines[index].strip()
+    if stripped in {f"{key}: {{}}", f"{key}:{{}}"}:
+        lines[index] = f"{' ' * indent}{key}:"
+
+
+def _assert_mcp_http_url(url: str) -> None:
+    """Refuse an HTTP MCP URL we must never persist (TD-4403)."""
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ConfigError("MCP url must be an http(s) endpoint")
+    if not is_loopback_url(url):
+        raise ConfigError("MCP url must be loopback; off-box destinations are refused")
+
+
+def _mcp_server_lines(server_id: str, spec: McpServerConfig) -> list[str]:
+    """One server block. Never writes ``env``."""
+    block = [
+        f"    {server_id}:",
+        f"      transport: {spec.transport}",
+    ]
+    if spec.transport == "stdio":
+        block.append(f"      command: {json.dumps(list(spec.command))}")
+    else:
+        block.append(f"      url: {json.dumps(spec.url)}")
+    block.append(f"      enabled: {'true' if spec.enabled else 'false'}")
+    return block
+
+
+def _ensure_mcp_servers_header(lines: list[str]) -> tuple[int, int]:
+    """Index of ``servers:`` under ``mcp:`` and one past that block."""
+    mcp_at = _find_key(lines, 0, len(lines), "mcp", 0)
+    if mcp_at < 0:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("mcp:")
+        lines.append("  servers:")
+        return len(lines) - 1, len(lines)
+    _expand_inline_empty_map(lines, mcp_at, "mcp", 0)
+    mcp_end = _block_bounds(lines, mcp_at, 0)
+    servers_at = _find_key(lines, mcp_at + 1, mcp_end, "servers", 2)
+    if servers_at < 0:
+        lines.insert(mcp_at + 1, "  servers:")
+        servers_at = mcp_at + 1
+    _expand_inline_empty_map(lines, servers_at, "servers", 2)
+    return servers_at, _block_bounds(lines, servers_at, 2)
+
+
+def save_mcp_server(server_id: str, spec: McpServerConfig, path: Path | None = None) -> Path:
+    """Create or replace one ``mcp.servers`` entry (TD-4403). Never writes env.
+
+    Surgical for the same reason as :func:`save_credential`: teaching
+    comments around ``mcp:`` survive. HTTP destinations are loopback-checked
+    before the write so an off-box URL cannot land in the file.
+    """
+    cleaned_id = server_id.strip()
+    if not CREDENTIAL_ID_RE.match(cleaned_id):
+        raise ConfigError(
+            f"mcp server id {cleaned_id!r} must be a lowercase slug [a-z][a-z0-9-]{{0,31}}"
+        )
+    if spec.transport == "http" and spec.url:
+        _assert_mcp_http_url(spec.url)
+
+    config_path = ensure_user_config(path)
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    servers_at, servers_end = _ensure_mcp_servers_header(lines)
+    id_at = _find_key(lines, servers_at + 1, servers_end, cleaned_id, 4)
+    block = _mcp_server_lines(cleaned_id, spec)
+    if id_at < 0:
+        for i, line in enumerate(block):
+            lines.insert(servers_end + i, line)
+    else:
+        id_end = _block_bounds(lines, id_at, 4)
+        lines[id_at:id_end] = block
+
+    _atomic_write(config_path, "\n".join(lines))
+    return config_path
+
+
+def delete_mcp_server_entry(server_id: str, path: Path | None = None) -> Path:
+    """Remove one ``mcp.servers`` entry. Unknown id is an error."""
+    cleaned_id = server_id.strip()
+    config_path = ensure_user_config(path)
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    mcp_at = _find_key(lines, 0, len(lines), "mcp", 0)
+    if mcp_at < 0:
+        raise ConfigError(f"{config_path} has no top-level `mcp:` block to edit")
+    mcp_end = _block_bounds(lines, mcp_at, 0)
+    servers_at = _find_key(lines, mcp_at + 1, mcp_end, "servers", 2)
+    if servers_at < 0:
+        raise ConfigError(f"{config_path} has no `mcp.servers:` block to edit")
+    servers_end = _block_bounds(lines, servers_at, 2)
+    id_at = _find_key(lines, servers_at + 1, servers_end, cleaned_id, 4)
+    if id_at < 0:
+        raise ConfigError(f"{config_path} declares no MCP server {cleaned_id!r}")
+    id_end = _block_bounds(lines, id_at, 4)
+    del lines[id_at:id_end]
+    servers_end = _block_bounds(lines, servers_at, 2)
+    remaining = any(
+        lines[i].strip() and not lines[i].strip().startswith("#")
+        for i in range(servers_at + 1, servers_end)
+    )
+    if not remaining:
+        lines[servers_at] = "  servers: {}"
 
     _atomic_write(config_path, "\n".join(lines))
     return config_path

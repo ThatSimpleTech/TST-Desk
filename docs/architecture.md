@@ -345,6 +345,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). |
 | `delete_credential` | — | Remove a named key, its secret, and tier bindings (TD-1717). |
 | `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). That key's `base_url` is the host the tier calls when set (TD-1718). |
+| `set_mcp_server` | — | Create or replace one listed MCP server (id, transport, command argv and/or url, enabled). No `env` field. Acked with `setup_state` (TD-4403). |
+| `delete_mcp_server` | — | Remove one listed MCP server by id. Unknown id is a typed error. Acked with `setup_state` (TD-4403). |
 | `run_diagnostics` | — | Run the doctor checks. |
 | `get_usage` | — | Ask for token and cost rollups by session, day and week (TD-1706). |
 | `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
@@ -399,7 +401,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach`. `remote_bind` is the bound Tailscale address, never a token. |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server`. `remote_bind` is the bound Tailscale address, never a token. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |

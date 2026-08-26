@@ -5820,9 +5820,14 @@ ahead of every A grant. Dispatch with `classifier=None` still raises
 **Size:** 3 · **Depends on:** TD-4401, TD-1703
 
 **Acceptance criteria:**
-- [ ] Add / disable / remove a server without editing YAML by hand
-- [ ] Command + args only; no free-form env that could smuggle a key
+- [x] Add / disable / remove a server without editing YAML by hand
+- [x] Command + args only; no free-form env that could smuggle a key
       into a file (paste-a-token stays keychain)
+
+**Done:** Settings MCP section plus `set_mcp_server` / `delete_mcp_server`.
+Surgical persist of `mcp.servers` (no `env`). HTTP non-loopback refused
+before write. Supervisor `reload` so doctor / next session see the list;
+live sessions keep the old tool set.
 
 ---
 
