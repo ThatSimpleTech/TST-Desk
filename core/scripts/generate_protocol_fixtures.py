@@ -118,6 +118,7 @@ from tstd.protocol import (
     SetLoadGlobalMemory,
     SetPreset,
     SetRemoteAttach,
+    SetPlan,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
@@ -179,6 +180,7 @@ FIXTURES = {
     "attach": Attach(session_id="sess-1", from_seq=5),
     "detach": Detach(session_id="sess-1"),
     "set_tier": SetTier(session_id="sess-1", tier="brain"),
+    "set_plan": SetPlan(session_id="sess-1", on=True),
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
     "list_instructions": ListInstructions(workspace_path="/home/user/project"),
     "list_memory": ListMemory(workspace_path="/home/user/project"),
@@ -450,6 +452,24 @@ FIXTURES = {
             "validator": "mock.local",
         },
         seq=19,
+    ),
+    "tier_state_plan": TierState(
+        session_id="sess-1",
+        tier="brain",
+        override=None,
+        model_slugs={
+            "brain": "test-brain-slug",
+            "worker": "test-worker-slug",
+            "validator": "test-validator-slug",
+        },
+        preset="test",
+        hosts={
+            "brain": "mock.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
+        },
+        plan=True,
+        seq=20,
     ),
     # TD-1716 liveness frame: no session, no seq — deliberately unlike
     # every other daemon→client frame, which is the point of the fixture.

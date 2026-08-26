@@ -8434,3 +8434,30 @@ make CI a fact about the machine.
 
 **Alternative rejected:** Driving the runner without the start gate.
 Also rejected: marking the pin `@pytest.mark.live`.
+
+---
+
+## 2026-08-26 — TD-4603: Plan mode is a router lock, not a document (Class B)
+
+**Decision:** Plan mode is a boolean on `TierRouter` (`set_plan` /
+`plan_mode`). It wins over `set_tier` override, lead-turns expiry, and
+`clear_override`. `set_tier("worker"|"validator")` raises `PlanModeError`
+and the daemon returns a typed `plan_mode` error without applying the
+pin. `set_tier("brain")` is accepted as a no-op so autonomy revert
+(`revert.py`) stays legal. The title bar reads an additive `plan` field
+on the existing `tier_state` event — no `plan_state` event, no
+`.tst/plan.md`, no accept-to-execute.
+
+The lock is in-memory for the live session. Revive already builds a
+fresh `TierRouter` and does not restore `set_tier` override; plan is
+the same. No new persist store.
+
+**Rationale:** The title bar already paints from `tier_state`. A second
+event would let the loop's next `tier_state` clobber the flag unless
+every emitter learned a new type. `set_tier("brain")` must stay legal
+because TD-4202 calls it after drift. Refusing rather than silently
+ignoring worker/validator keeps the meter and the chips honest.
+
+**Alternative rejected:** A `plan_state` event. Also rejected: refusing
+`set_tier("brain")` as unnecessary. Also rejected: persisting plan
+across revive (override is not persisted either).

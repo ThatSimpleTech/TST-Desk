@@ -591,6 +591,18 @@ describe("session control messages (TD-1006)", () => {
     h.client.stop();
   });
 
+  it("sends set_plan after the handshake", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+
+    h.client.setPlan("sess-1", true);
+
+    const sent = h.sockets[0].sent.map((raw) => JSON.parse(raw));
+    expect(sent[1]).toEqual({ type: "set_plan", session_id: "sess-1", on: true });
+    h.client.stop();
+  });
+
   it("does not send before the handshake completes", async () => {
     const h = buildClient();
     await h.client.start();
