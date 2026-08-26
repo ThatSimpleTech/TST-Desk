@@ -13,13 +13,22 @@
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
 
-export type SettingsSection = "appearance" | "model" | "policy" | "key";
+export type SettingsSection = "appearance" | "model" | "policy" | "mcp" | "key";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
 	"model",
 	"policy",
+	"mcp",
 	"key",
 ] as const;
+
+export type McpServerRow = {
+	id: string;
+	transport: "stdio" | "http";
+	command: string[];
+	url: string;
+	enabled: boolean;
+};
 
 export type Theme = "light" | "system" | "dark";
 export const THEMES: readonly Theme[] = ["light", "system", "dark"] as const;
@@ -67,6 +76,8 @@ export const settings = $state({
 	remoteAttachEnabled: false,
 	/** Bound Tailscale address, never a token. */
 	remoteBind: null as string | null,
+	/** Listed MCP servers (TD-4403). From setup_state, never inferred. */
+	mcpServers: [] as McpServerRow[],
 });
 
 let started = false;
@@ -109,6 +120,7 @@ export function resetSettings(): void {
 	settings.cuShowOnRealDisplay = false;
 	settings.remoteAttachEnabled = false;
 	settings.remoteBind = null;
+	settings.mcpServers = [];
 	started = false;
 }
 
@@ -135,6 +147,13 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? false;
 		settings.remoteAttachEnabled = event.remote_attach_enabled ?? false;
 		settings.remoteBind = event.remote_bind ?? null;
+		settings.mcpServers = (event.mcp_servers ?? []).map((row) => ({
+			id: row.id,
+			transport: row.transport,
+			command: row.command ?? [],
+			url: row.url ?? "",
+			enabled: row.enabled ?? true,
+		}));
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -323,4 +342,33 @@ export function setCuIndicators(next: {
 		agent_cursor: next.agentCursor ?? settings.cuAgentCursor,
 		show_on_real_display: next.showOnRealDisplay ?? settings.cuShowOnRealDisplay,
 	});
+}
+
+// ── MCP servers (TD-4403) ────────────────────────────────────────────
+
+/** Persist one listed server. Command is argv tokens; there is no env. */
+export function saveMcpServer(server: McpServerRow): void {
+	const id = server.id.trim();
+	if (id === "") return;
+	sendToDaemon({
+		type: "set_mcp_server",
+		id,
+		transport: server.transport,
+		command: server.command,
+		url: server.url,
+		enabled: server.enabled,
+	});
+}
+
+/** Disable or re-enable a server the daemon already listed. */
+export function setMcpServerEnabled(id: string, enabled: boolean): void {
+	const row = settings.mcpServers.find((s) => s.id === id);
+	if (!row) return;
+	saveMcpServer({ ...row, enabled });
+}
+
+/** Remove a listed server. */
+export function deleteMcpServer(id: string): void {
+	if (id.trim() === "") return;
+	sendToDaemon({ type: "delete_mcp_server", id });
 }

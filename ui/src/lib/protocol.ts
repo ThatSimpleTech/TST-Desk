@@ -426,6 +426,23 @@ export interface SetTierCredential extends ClientMessage {
   credential: string;
 }
 
+/** Create or replace one listed MCP server (TD-4403). Command is argv
+ *  tokens only — there is no env field. Acked with setup_state. */
+export interface SetMcpServer extends ClientMessage {
+  type: "set_mcp_server";
+  id: string;
+  transport: "stdio" | "http";
+  command?: string[];
+  url?: string;
+  enabled?: boolean;
+}
+
+/** Remove one listed MCP server (TD-4403). Unknown id is a typed error. */
+export interface DeleteMcpServer extends ClientMessage {
+  type: "delete_mcp_server";
+  id: string;
+}
+
 // TD-1703: name the model one tier of one preset uses. Deliberately narrow
 // rather than a general config write — a message carrying only a tier and a
 // slug cannot smuggle a secret into config.yaml. Acked with a fresh
@@ -574,6 +591,8 @@ export type ClientMessageUnion =
   | SetCredential
   | DeleteCredential
   | SetTierCredential
+  | SetMcpServer
+  | DeleteMcpServer
   | RunDiagnostics
   | GetUsage
   | ExportUsage
@@ -1037,6 +1056,16 @@ export interface SetupState extends DaemonEvent {
   credentials?: CredentialSummary[];
   tier_credentials?: Record<string, string | null>;
   tier_loopback?: Record<string, boolean>;
+  // TD-4403: listed MCP servers. Additive, default empty. Never a secret.
+  mcp_servers?: McpServerSummary[];
+}
+
+export interface McpServerSummary {
+  id: string;
+  transport: "stdio" | "http";
+  command: string[];
+  url: string;
+  enabled: boolean;
 }
 
 export interface CredentialSummary {
