@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from ..config import ModelConfig
 from ..logging import get_logger
 from .charter import Charter
+from .supervisor import maybe_check_drift
 
 if TYPE_CHECKING:
     from ..session import Session
@@ -95,6 +96,7 @@ async def advance_autonomy(session: Session) -> bool:
             except Exception:
                 log.exception("definition-of-done poll failed")
                 poll = None
+            session.last_dod_poll = poll
             if poll is not None and poll.all_green:
                 session.autonomy_stop_reason = DOD_MET
         if session.autonomy_stop_reason is None:
@@ -104,6 +106,10 @@ async def advance_autonomy(session: Session) -> bool:
                 class_c=session.autonomy_class_c,
             )
             if reason is None:
+                try:
+                    await maybe_check_drift(session)
+                except Exception:
+                    log.exception("validator drift check failed")
                 await session.add_user_message(continue_prompt(charter, session.autonomy_turns))
                 return True
             session.autonomy_stop_reason = reason
