@@ -6363,6 +6363,10 @@ list. TD-2803 said this pane is hosted on the project home. Adding
 **Alternative rejected:** Opening only in the OS editor. The AC is
 "shows the markdown"; the column renders it. Edit/save is TD-2602.
 
+**Closed (2026-08-27):** The leftover "planned rail becomes ready" AC
+is ticked as cancelled, not shipped. Scheduled is `ready`. No
+`planned` rail row remains. `rail.test.ts` refuses a `memory` id.
+
 ---
 
 ## 2026-08-20 — TD-2602: pane save is a human verb, not memory_edit (Class B)
