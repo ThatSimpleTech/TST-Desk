@@ -125,36 +125,38 @@ class TestCredentialHygiene:
                             responses.append(await _ask(ws, msg))
                     finally:
                         await ws.close()
+
+                    # The flow really ran against the backing store.
+                    assert fake_keychain.stored == {}
+
+                    # No wire payload carries the canary.
+                    assert CANARY not in json.dumps(responses)
+
+                    # No log record carries it — message or structured extras.
+                    offenders = [r for r in capture.records if CANARY in r]
+                    assert not offenders, f"canary leaked into log records: {offenders}"
+
+                    # No file under the data dir carries it (sessions store, port
+                    # file, SQLite pages — raw bytes don't lie).
+                    on_disk = await asyncio.to_thread(_canary_offenders_on_disk, Path(tmp))
+                    assert not on_disk, f"canary leaked onto disk: {on_disk}"
+
+                    # And no audit row, read relationally (defense in depth
+                    # against a page-level miss).
+                    audit_db = Path(tmp) / "audit.db"
+                    if audit_db.exists():
+                        with sqlite3.connect(audit_db) as db:
+                            tables = [
+                                r[0]
+                                for r in db.execute(
+                                    "SELECT name FROM sqlite_master WHERE type='table'"
+                                )
+                            ]
+                            for table in tables:
+                                for row in db.execute(f'SELECT * FROM "{table}"'):
+                                    assert CANARY not in str(row), table
                 finally:
                     await stop_daemon_gracefully(daemon, task)
-
-                # The flow really ran against the backing store.
-                assert fake_keychain.stored == {}
-
-                # No wire payload carries the canary.
-                assert CANARY not in json.dumps(responses)
-
-                # No log record carries it — message or structured extras.
-                offenders = [r for r in capture.records if CANARY in r]
-                assert not offenders, f"canary leaked into log records: {offenders}"
-
-                # No file under the data dir carries it (sessions store, port
-                # file, SQLite pages — raw bytes don't lie).
-                on_disk = await asyncio.to_thread(_canary_offenders_on_disk, Path(tmp))
-                assert not on_disk, f"canary leaked onto disk: {on_disk}"
-
-                # And no audit row, read relationally (defense in depth
-                # against a page-level miss).
-                audit_db = Path(tmp) / "audit.db"
-                if audit_db.exists():
-                    with sqlite3.connect(audit_db) as db:
-                        tables = [
-                            r[0]
-                            for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                        ]
-                        for table in tables:
-                            for row in db.execute(f'SELECT * FROM "{table}"'):
-                                assert CANARY not in str(row), table
         finally:
             root.removeHandler(capture)
             root.setLevel(old_level)
