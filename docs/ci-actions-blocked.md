@@ -1,17 +1,17 @@
 # GitHub Actions blocked — investigation (TD-4904)
 
-**Status (2026-08-27):** Workflows trigger, but jobs do not execute steps. This
-blocks TD-1302, TD-1303, and TD-4704 until an org admin fixes the underlying
-GitHub setting. Local Linux smoke (`core/scripts/smoke_linux_bundle.sh`) remains
-the Linux install evidence.
+**Status (2026-08-27):** Org Actions budget was $0 (hard stop); raising it to
+**$20/month** unblocks hosted runners. **CI is green on all nine legs** as of
+`cab7fdd`. Package (`package.yml`) may queue behind CI pushes — trigger
+`workflow_dispatch` or wait for the concurrency group to drain.
 
 ## Root cause (2026-08-27, fixed)
 
 The org had a **ProductPricing budget for Actions at $0** with
 `prevent_further_usage: true` — a hard stop. Jobs showed `runner_id: 0`, empty
-steps, and failed in ~4s. Raising the budget (e.g. to $100/month) via
-**Organization settings → Billing and plans → Budgets** or the budgets API
-unblocks hosted runners immediately.
+steps, and failed in ~4s. Raising the budget (any amount **> $0**, e.g.
+**$20/month**) via **Organization settings → Billing and plans → Budgets** or
+the budgets API unblocks hosted runners immediately.
 
 ## Symptoms (before fix)
 
