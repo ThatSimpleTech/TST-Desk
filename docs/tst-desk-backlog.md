@@ -6060,11 +6060,14 @@ do not register a shortcut.
 **Size:** 5 · **Depends on:** TD-2902
 
 **Acceptance criteria:**
-- [ ] Tray icon with running-count; Quit lives here too
-- [ ] A second window can attach to a different session
-- [ ] One daemon
+- [x] Tray icon with running-count; Quit lives here too
+- [x] A second window can attach to a different session
+- [x] One daemon
 
----
+**Done (2026-08-27):** Tray menu (Show / Quit TST Desk) with a
+running-session count in the tooltip (macOS title when >0). Rail row
+**Open in new window** opens `?bind_session=` viewers on the same
+daemon. Window-scoped binding never auto-adopts another session.
 
 ### TD-4704 — Auto-updater
 **Size:** 5 · **Depends on:** TD-1303

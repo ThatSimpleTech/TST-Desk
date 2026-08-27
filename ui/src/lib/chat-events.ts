@@ -10,6 +10,7 @@ import type { MessageQueue } from "./chat-queue";
 import type { FirstTokenWait } from "./first-token-wait";
 import type { DaemonEventUnion, SessionState } from "./protocol";
 import { chooseBoundSession, isTerminal } from "./session-binding";
+import { windowBindSessionId } from "./window-bind";
 
 /** Collaborators the reducer may touch. The store keeps the rest. */
 export interface ChatEventContext {
@@ -187,7 +188,11 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       return;
     }
     case "session_list": {
-      const choice = chooseBoundSession(event.sessions, state.sessionId);
+      const choice = chooseBoundSession(
+        event.sessions,
+        state.sessionId,
+        windowBindSessionId(),
+      );
       if (choice.action === "bind") {
         ctx.switchSession(choice.sessionId, choice.turnState);
       } else if (choice.action === "unbind") {

@@ -4,10 +4,9 @@
 // session id + workspace path, state indicator, live cost with a per-tier
 // breakdown, the current tier + slugs, and the boundary ("wall").
 //
-// v0.1 is single-workspace: the first session_state event we see adopts
-// that session, and every session-scoped event afterwards is filtered to
-// it. Multi-session routing belongs to whichever story introduces a
-// second session.
+// v0.1 is single-workspace per window: the first session_state event we see
+// adopts that session unless this webview is bound with ?bind_session= (TD-4703).
+// Multi-session routing uses window-scoped binds and the rail's open-in-window.
 //
 // Pure TypeScript — no Tauri imports — so vitest can drive the reducer.
 
@@ -15,6 +14,7 @@ import { DEFAULT_ATTACHMENT_LIMITS } from "./attachments";
 import type { ProtocolClient } from "./client";
 import { persistLastWorkspace } from "./last-workspace";
 import type { AttachmentLimits, BoundaryUpdate, DaemonEventUnion } from "./protocol";
+import { windowBindSessionId } from "./window-bind";
 
 export type SessionIndicator =
   | "none"
@@ -94,6 +94,8 @@ export function resetSession(): void {
 /** Reduce one validated daemon event into the store. */
 export function ingestEvent(event: DaemonEventUnion): void {
   if (event.type === "session_state") {
+    const bind = windowBindSessionId();
+    if (bind !== null && event.session_id !== bind) return;
     // Adopt the first session we hear of. The open_workspace reply is a
     // session_state event, so a plain open lands here.
     if (session.sessionId === null) {

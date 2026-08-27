@@ -8919,3 +8919,24 @@ cheap). Also rejected: opening the full main window (not a small
 composer). Also rejected: inferring last workspace only from
 `session_list` in the overlay (race with a napping main webview).
 
+---
+
+## 2026-08-27 — TD-4703: tray and multi-window (Class B)
+
+**Decision:** Ship a system tray with Show, Quit TST Desk (same
+`request_quit` path as the menu), and a running-session count derived
+from the same session-state map as the coworker badge. Secondary
+windows open with `?bind_session=<id>`; `chooseBoundSession` and
+`session_state` adoption honour that bind and never auto-switch to the
+newest live session. Session window labels are `session-{id}`; close
+destroys the viewer, not the daemon. Rail row action **Open in new
+window** is the entry point.
+
+**Rationale:** One daemon is a prime directive; viewers must not fight
+over auto-bind. Tray Quit must match menu Quit so close-hide-coworker
+semantics stay coherent. Explicit URL bind is simpler than cross-window
+RPC and survives webview restarts.
+
+**Alternative rejected:** One window only with in-app tabs (not the
+story). Also rejected: a second daemon or WS connection per window.
+

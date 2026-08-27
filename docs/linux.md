@@ -103,7 +103,8 @@ Closing the window is not quitting the app (TD-2902).
   process group.
 
 A second host process attaches to the live listener instead of spawning
-another daemon. There is no tray (TD-4703). Restore after hide depends on the
+another daemon. A tray icon shows the running-session count; **Quit TST Desk** is in
+the tray menu. Restore after hide depends on the
 desktop: launching the app again attaches; there is no macOS `Reopen` event.
 
 While hidden, a running session or a parked approval updates the window title
