@@ -9059,4 +9059,22 @@ stay maintainer-local until Actions publishes artifacts (TD-4904).
 drift). Also rejected: counting these scripts toward TD-1302's four-artifact
 CI gate (they are guest smoke, not release publishing).
 
+---
+
+## 2026-08-27 — TD-4704: opt-in release check, no in-app install in v0.1 (Class B)
+
+**Decision:** Settings → About exposes a user-initiated **Check for updates**
+command (`shell/src/updater.rs`) that fetches GitHub releases and compares only
+`tstdesk-v*` tags to the bundled app version. No background timer or startup
+check. `IN_APP_INSTALL_ENABLED` stays `false` until TD-4903 signing ships;
+when an update exists the UI opens the releases page via `tauri-plugin-opener`,
+not `tauri-plugin-updater`.
+
+**Rationale:** Meets TD-4704 opt-in and no-telemetry AC without buying certs
+first. Ignoring bare `v*` tags avoids the tst-cu-mcp `v0.2.0` false positive
+(TD-4812). Full Tauri updater + `latest.json` lands when signed artifacts exist.
+
+**Alternative rejected:** Background daily check (violates “opt-in only” spirit
+for v0.1). Also rejected: treating any GitHub release as a TST Desk update.
+
 

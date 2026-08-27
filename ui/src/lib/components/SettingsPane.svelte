@@ -22,6 +22,7 @@
 	import SettingsKeys from './SettingsKeys.svelte';
 	import SettingsMcp from './SettingsMcp.svelte';
 	import SettingsModels from './SettingsModels.svelte';
+	import SettingsAbout from './SettingsAbout.svelte';
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
 	import CuPermissionsPane from './CuPermissionsPane.svelte';
 	import Icon from './Icon.svelte';
@@ -32,6 +33,7 @@
 		policy: 'Policy',
 		mcp: 'MCP servers',
 		key: 'API keys',
+		about: 'About',
 	};
 
 	function pick(next: SettingsSection): void {
@@ -139,6 +141,8 @@
 					<PolicyRuleList sessionId={session.sessionId} />
 				{:else if settings.section === 'mcp'}
 					<SettingsMcp />
+				{:else if settings.section === 'about'}
+					<SettingsAbout />
 				{:else}
 					<SettingsKeys />
 				{/if}
