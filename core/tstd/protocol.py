@@ -919,6 +919,19 @@ class DeleteJob(ClientMessage):
     job_id: str = Field(min_length=1)
 
 
+class Transcribe(ClientMessage):
+    """Hold-to-talk audio for speech-to-text (TD-4701).
+
+    Not a tool: the daemon POSTs to ``speech.base_url`` and answers with
+    ``transcript``. ``audio_b64`` is the recording's bytes. There is no
+    cloud default; an empty or disabled speech config fails typed.
+    """
+
+    type: Literal["transcribe"] = "transcribe"
+    audio_b64: str = Field(min_length=1, max_length=2_800_000)
+    mime: str = Field(min_length=1, max_length=128)
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -1643,6 +1656,11 @@ class SetupState(DaemonEvent):
     # TD-4403: listed MCP servers. Additive, default empty. Never a secret;
     # there is no env map. An older client ignores the field.
     mcp_servers: list[McpServerSummary] = Field(default_factory=list)
+    # TD-4701: hold-to-talk. Additive, default off. ``speech_ready`` is
+    # enabled plus a configured base_url — the URL itself never leaves
+    # the daemon. An older client ignores both fields.
+    speech_enabled: bool = False
+    speech_ready: bool = False
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1961,6 +1979,20 @@ class JobList(DaemonEvent):
     jobs: list[JobEntry] = Field(default_factory=list)
 
 
+class Transcript(DaemonEvent):
+    """Reply to ``transcribe`` (TD-4701). Connection-scoped.
+
+    ``detail`` is a short error code on failure (never a URL). ``text`` is
+    the transcript on success. Seq is fixed at 1 so it cannot rewind attach.
+    """
+
+    type: Literal["transcript"] = "transcript"
+    seq: int = 1
+    ok: bool
+    text: str = ""
+    detail: str = ""
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -2034,7 +2066,8 @@ ClientMessageT = Annotated[
     | SetRemoteAttach
     | ListJobs
     | SaveJob
-    | DeleteJob,
+    | DeleteJob
+    | Transcribe,
     Field(discriminator="type"),
 ]
 
@@ -2087,7 +2120,8 @@ DaemonEventT = Annotated[
     | CuSession
     | DesignHit
     | CuPermissions
-    | JobList,
+    | JobList
+    | Transcript,
     Field(discriminator="type"),
 ]
 
@@ -2168,6 +2202,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_jobs",
         "save_job",
         "delete_job",
+        "transcribe",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -2221,6 +2256,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "design_hit",
         "cu_permissions",
         "job_list",
+        "transcript",
     }
 )
 

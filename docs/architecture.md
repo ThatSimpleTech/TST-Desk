@@ -360,6 +360,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
 | `save_job` | — | Create or replace a scheduled job from draft fields. Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
 | `delete_job` | — | Remove a scheduled job by id. Acked with `job_list`. Unknown id is a typed error (TD-3805). |
+| `transcribe` | — | Hold-to-talk audio. The daemon POSTs to `speech.base_url` and answers with `transcript`. Not a tool (TD-4701). |
 
 ### Daemon → client
 
@@ -402,7 +403,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. Each row carries the catalog `preset` that session is using (TD-1721). |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server`. `remote_bind` is the bound Tailscale address, never a token. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server`. `remote_bind` is the bound Tailscale address, never a token. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
@@ -419,6 +420,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `design_hit` | connection | Reply to `design_hit_test`: xpath, role, attributes, box, styles (TD-3403 / TD-3406). Not in the session log. |
 | `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), Windows UIPI / secure-desktop integrity (TD-3303), or Linux X11 no-gate / Wayland session limits (TD-2001). |
 | `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` asked for (TD-3805). |
+| `transcript` | connection | Reply to `transcribe`: `ok`, `text`, and a short `detail` code on failure. Never a URL (TD-4701). |
 
 ### Adding a message
 

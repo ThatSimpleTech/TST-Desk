@@ -986,7 +986,9 @@
         "url": "",
         "enabled": true
       }
-    ]
+    ],
+    "speech_enabled": false,
+    "speech_ready": false
   },
   "api_key_validated": {
     "type": "api_key_validated",
@@ -1215,6 +1217,11 @@
     "type": "delete_job",
     "job_id": "job-1"
   },
+  "transcribe": {
+    "type": "transcribe",
+    "audio_b64": "AAAA",
+    "mime": "audio/webm"
+  },
   "job_list": {
     "type": "job_list",
     "seq": 1,
@@ -1229,6 +1236,13 @@
         "paused": false
       }
     ]
+  },
+  "transcript": {
+    "type": "transcript",
+    "seq": 1,
+    "ok": true,
+    "text": "hello from the mic",
+    "detail": ""
   },
   "hello_ack": {
     "type": "hello_ack",

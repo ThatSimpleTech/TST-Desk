@@ -422,6 +422,58 @@ class NotifyConfig(BaseModel):
     telegram: TelegramNotifyConfig = Field(default_factory=TelegramNotifyConfig)
 
 
+class SpeechConfig(BaseModel):
+    """Hold-to-talk transcription (TD-4701). Off by default.
+
+    ``base_url`` is the OpenAI-compatible transcriptions root (include
+    ``/v1``). Empty means unconfigured. There is no shipped cloud URL.
+    Optional ``credential`` names a keychain id; the secret is never this
+    file, never a log, never the audit database.
+    """
+
+    enabled: bool = False
+    base_url: str = ""
+    model: str = ""
+    timeout_seconds: float = Field(default=30.0, gt=0)
+    credential: str = ""
+
+    @field_validator("base_url")
+    @classmethod
+    def _strip_base_url(cls, value: str) -> str:
+        return value.strip().rstrip("/")
+
+    @field_validator("model")
+    @classmethod
+    def _strip_model(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("credential")
+    @classmethod
+    def _valid_credential(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            return ""
+        if cleaned in RESERVED_CREDENTIAL_IDS:
+            raise ValueError(
+                f"speech.credential {cleaned!r} is reserved for another keychain account"
+            )
+        if not CREDENTIAL_ID_RE.match(cleaned):
+            raise ValueError("speech.credential must be a lowercase slug [a-z][a-z0-9-]{0,31}")
+        return cleaned
+
+    @model_validator(mode="after")
+    def _base_url_is_http_when_set(self) -> SpeechConfig:
+        if not self.base_url:
+            return self
+        try:
+            parts = urlsplit(self.base_url)
+        except ValueError as e:
+            raise ValueError(f"speech.base_url is not a URL: {e}") from e
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError("speech.base_url must be an http(s) OpenAI-compatible endpoint")
+        return self
+
+
 class GroundingConfig(BaseModel):
     """Local click-grounding model (TD-3902).
 
@@ -599,6 +651,7 @@ class ModelConfig(BaseModel):
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
+    speech: SpeechConfig = Field(default_factory=SpeechConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
 
@@ -759,6 +812,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "computer_use",
         "remote",
         "notify",
+        "speech",
         "autonomy",
         "mcp",
         "credentials",

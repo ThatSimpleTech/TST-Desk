@@ -8867,3 +8867,30 @@ second secret-adjacent field and a different schema from Slack.
 module (that is a gateway). Also rejected: `notify.telegram.chat_id`
 in yaml. Also rejected: extending scheduler `deliver_to` in this
 story.
+
+---
+
+## 2026-08-27 — TD-4701: hold-to-talk via config-sourced STT (Class B)
+
+**Decision:** Dictation is hold-to-talk in the composer. The window
+opens the mic only while the control is held (max 30s), then sends
+`transcribe { audio_b64, mime }` to the daemon. The daemon POSTs
+multipart to `{speech.base_url}/audio/transcriptions` and answers
+with connection-scoped `transcript`. `speech.enabled` defaults
+false; empty `base_url` is unconfigured; the shipped file has no
+cloud URL. Optional `speech.credential` is a named keychain id
+(Bearer). Additive `setup_state` flags `speech_enabled` /
+`speech_ready` — never the URL. Not a tool, so not classified.
+No `PROTOCOL_VERSION` bump. macOS: `NSMicrophoneUsageDescription`
+plus `com.apple.security.device.audio-input`.
+
+**Rationale:** The Web Speech API on Linux/Chromium can reach a
+cloud recognizer, which would be a cloud default and a network call
+the user did not configure. Putting `fetch` in the UI would also
+bypass the outbound-host confinement that lives in Python.
+
+**Alternative rejected:** Web Speech API. Also rejected: always-on
+mic. Also rejected: a shipped OpenAI/OpenRouter transcriptions URL.
+Also rejected: treating transcribe as a tool (no classifier path
+needed; the user is holding a button).
+
