@@ -8894,3 +8894,28 @@ mic. Also rejected: a shipped OpenAI/OpenRouter transcriptions URL.
 Also rejected: treating transcribe as a tool (no classifier path
 needed; the user is holding a button).
 
+---
+
+## 2026-08-27 — TD-4702: macOS quick-entry overlay (Class B)
+
+**Decision:** Quick entry is macOS-only. ⌘⇧. toggles a dedicated
+`quick-entry` webview (always-on-top, not taskbar-visible, excluded
+from window-state restore). The last workspace path lives in
+`{data_dir}/last-workspace.yaml`; the main window writes it on
+`open_workspace`, rail focus, and workspace retarget. The overlay
+connects to the same daemon, attaches to the newest live session for
+that path or calls `open_workspace`, sends one `user_message`, then
+hides. Shortcut registration failure emits `quick-entry-permission`
+with Accessibility settings copy — no Linux/Windows shortcut.
+
+**Rationale:** A global chord needs a separate small surface; binding
+to “last workspace” must survive a hidden main window without inferring
+from UI-local recents alone. Keeping registration in the host matches
+dictation/mic patterns and avoids a JS-side shortcut API on platforms
+we do not ship.
+
+**Alternative rejected:** Linux/Windows parity (backlog: out unless
+cheap). Also rejected: opening the full main window (not a small
+composer). Also rejected: inferring last workspace only from
+`session_list` in the overlay (race with a napping main webview).
+

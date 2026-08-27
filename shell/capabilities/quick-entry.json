@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick-entry",
+  "description": "Permissions for the macOS quick-entry overlay webview (TD-4702).",
+  "windows": ["quick-entry"],
+  "permissions": ["core:default"]
+}

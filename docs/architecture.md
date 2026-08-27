@@ -62,7 +62,9 @@ Secrets live in `core/tstd/keychain.py`, which shells out to `security` on macOS
 on Linux, and the Windows credential store, all under the service name
 `com.thatsimpletech.tstdesk`. Native folder picking is likewise driven from the UI through the
 Tauri dialog plugin rather than from Rust. The host's native surface is narrow by design: window
-state, dialog, and opener. The opener's `opener:allow-open-path` grant is intentionally left
+state, dialog, and opener. On macOS, a global shortcut (⌘⇧.) toggles
+the quick-entry overlay (TD-4702); registration failure surfaces
+Accessibility copy in the main window. The opener's `opener:allow-open-path` grant is intentionally left
 without a path scope (`shell/capabilities/default.json`): the paths the UI opens are
 daemon-assembled — stack files, diff headers, usage exports — and land under whichever workspace
 the user picked this session or in the app data dir, while Tauri opener scopes are static

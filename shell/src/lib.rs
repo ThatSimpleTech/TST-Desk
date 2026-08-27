@@ -1,4 +1,5 @@
 pub mod daemon;
+mod quick_entry;
 mod read_text;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -208,7 +209,12 @@ fn build_app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&[quick_entry::WINDOW_LABEL])
+                .skip_initial_state(quick_entry::WINDOW_LABEL)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         // TD-1201: the stack panel opens resolved steering files in the
         // system editor. Paths come from the daemon's assembled stack.
@@ -231,6 +237,7 @@ pub fn run() {
             let embeddings = daemon::embeddings::start(data_dir);
             app.manage(handle);
             app.manage(embeddings);
+            quick_entry::setup(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -238,7 +245,10 @@ pub fn run() {
             open_path,
             read_text_file,
             quit_app,
-            set_coworker_indicator
+            set_coworker_indicator,
+            quick_entry::get_last_workspace,
+            quick_entry::set_last_workspace,
+            quick_entry::hide_quick_entry,
         ])
         .on_menu_event(|app, event| {
             if event.id() == "quit-tst-desk" {
@@ -248,6 +258,11 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if is_quitting() {
+                    return;
+                }
+                if window.label() == quick_entry::WINDOW_LABEL {
+                    api.prevent_close();
+                    let _ = window.hide();
                     return;
                 }
                 api.prevent_close();
