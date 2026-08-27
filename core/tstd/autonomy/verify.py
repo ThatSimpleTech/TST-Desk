@@ -19,6 +19,7 @@ from ..provider import (
     ChatCompletionResponse,
     ChatMessage,
     ProviderError,
+    content_as_text,
 )
 
 log = get_logger(__name__)
@@ -322,7 +323,7 @@ async def _run_validator(
         verdict: VerifyVerdict = "error"
         summary = f"Validator error: {response.message}"
     else:
-        verdict, summary = parse_verdict(response.message.content or "")
+        verdict, summary = parse_verdict(content_as_text(response.message.content))
         if response.usage is not None:
             cost = tracker.record_off_turn("validator", response.usage, validator_cfg)
             await session.event_log.add(tracker.emit_cost_update(session.id))

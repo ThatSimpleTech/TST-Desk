@@ -41,6 +41,7 @@ from .provider import (
     ChatMessage,
     ProviderError,
     Usage,
+    content_as_text,
 )
 
 _STEERING = "# M10 harness\n\nKeep replies short.\n"
@@ -201,7 +202,7 @@ def _system_texts(provider: MockProvider) -> list[str]:
     for request in provider.calls:
         for message in request.messages:
             if message.role == "system" and message.content:
-                texts.append(message.content)
+                texts.append(content_as_text(message.content))
                 break
     return texts
 
@@ -209,7 +210,10 @@ def _system_texts(provider: MockProvider) -> list[str]:
 def _user_texts(events: list[dict[str, Any]], provider: MockProvider) -> list[str]:
     texts = [str(e.get("content") or "") for e in events if e.get("type") == "user_turn"]
     texts.extend(
-        m.content for req in provider.calls for m in req.messages if m.role == "user" and m.content
+        content_as_text(m.content)
+        for req in provider.calls
+        for m in req.messages
+        if m.role == "user" and m.content
     )
     return texts
 
