@@ -9002,3 +9002,21 @@ changing release (`workflow_call`) or manual (`workflow_dispatch`) bundles.
 stale artifacts). Also rejected: binding a remote builder or self-hosted
 runner without an explicit later story.
 
+---
+
+## 2026-08-27 — TD-4902: Linux aarch64 CI leg (Class B)
+
+**Decision:** Add a fifth `package.yml` matrix leg on `ubuntu-24.04-arm`
+(`linux-aarch64`). Reuse the existing Linux smoke block — Docker pulls
+matching-arch images on the ARM runner. No cross-compile from amd64 dev
+hosts.
+
+**Rationale:** Sidecar and Tauri already build for the host triple via
+PyInstaller/rustc. A dedicated runner is simpler than a cross toolchain.
+Local amd64 smoke stays on x86_64 bundles; aarch64 evidence is CI (once
+Actions works) or a real ARM machine running `smoke_linux_bundle.sh`.
+
+**Alternative rejected:** Shipping only `.deb` without AppImage on ARM
+(Tauri `targets: all` already emits both). Also rejected: qemu user-static
+cross-smoke on amd64 CI (slow, flaky).
+
