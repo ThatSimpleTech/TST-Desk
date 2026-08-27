@@ -2261,6 +2261,13 @@ is re-keyed; verified the daemon's exec-array invocation is not the cause.
 Coordinate with TD-1102's wizard rework (integrate that lane first; this lands
 on top).
 
+**Leftover (2026-08-27):** a locked Linux Secret Service (`secret-tool
+lookup`) waits on an unlock prompt with no deadline. `setup_state`
+probes every named credential, so an unmocked daemon test hung the
+suite. CLI `communicate` is now bounded (5s) and maps timeout to
+`KeychainLockedError`; the suite isolates the live keychain except
+`test_keychain.py`.
+
 ---
 
 ### TD-1106 — Validate works on the entered key

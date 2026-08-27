@@ -54,6 +54,30 @@ _LOCKED_GUIDANCE = (
     "keychain (or update its password to the current login password), then retry."
 )
 
+# Bound so a locked Secret Service / security prompt cannot stall the
+# daemon (or the suite) forever. Unlock-and-retry is the TD-1105 path.
+_CLI_TIMEOUT_SECS = 5.0
+_TIMEOUT_GUIDANCE = (
+    "The login keychain did not respond in time. It is probably locked "
+    "or waiting on an unlock prompt. Unlock it (Keychain Access on "
+    "macOS, the login keyring on Linux) and retry."
+)
+
+
+async def _await_cli(
+    proc: asyncio.subprocess.Process,
+    stdin: bytes | None = None,
+) -> tuple[bytes, bytes]:
+    """``communicate`` with a deadline; a hung CLI is a locked keychain."""
+    try:
+        return await asyncio.wait_for(proc.communicate(input=stdin), timeout=_CLI_TIMEOUT_SECS)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        with contextlib.suppress(ProcessLookupError, TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=1.0)
+        raise KeychainLockedError(_TIMEOUT_GUIDANCE) from None
+
 
 def _classify_cli_failure(stderr_text: str, fallback: str) -> KeychainError:
     """Map keychain-CLI stderr to the right error type.
@@ -117,7 +141,7 @@ class MacOSKeychain(KeychainBackend):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await _await_cli(proc)
         if proc.returncode != 0:
             stderr_text = stderr.decode().strip()
             if "could not be found" in stderr_text or "The specified item" in stderr_text:
@@ -157,7 +181,7 @@ class MacOSKeychain(KeychainBackend):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await proc.communicate()
+        _, stderr = await _await_cli(proc)
         if proc.returncode != 0:
             raise _classify_cli_failure(stderr.decode().strip(), "Failed to delete keychain secret")
 
@@ -176,7 +200,7 @@ class LinuxSecretService(KeychainBackend):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await _await_cli(proc)
         if proc.returncode != 0:
             stderr_text = stderr.decode().strip()
             if "not found" in stderr_text or "does not exist" in stderr_text:
@@ -208,7 +232,7 @@ class LinuxSecretService(KeychainBackend):
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
         )
-        _, stderr = await proc.communicate(input=secret.encode())
+        _, stderr = await _await_cli(proc, stdin=secret.encode())
         if proc.returncode != 0:
             raise _classify_cli_failure(stderr.decode().strip(), "Failed to store keychain secret")
 
@@ -225,7 +249,7 @@ class LinuxSecretService(KeychainBackend):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await proc.communicate()
+        _, stderr = await _await_cli(proc)
         if proc.returncode != 0:
             raise _classify_cli_failure(stderr.decode().strip(), "Failed to delete keychain secret")
 
