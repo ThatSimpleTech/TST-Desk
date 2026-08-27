@@ -6227,10 +6227,15 @@ imports trip the external-import gate once per workspace, and
 so changing `LINE_LIMIT` drops the short badge.
 
 **Acceptance criteria:**
-- [ ] Personal-global steering sibling imports are either allowed
+- [x] Personal-global steering sibling imports are either allowed
       with copy or documented as the intended friction
-- [ ] The stack-panel badge reads `LINE_LIMIT`, not a string literal
-- [ ] No change to workspace-local `AGENTS.md` precedence
+- [x] The stack-panel badge reads `LINE_LIMIT`, not a string literal
+- [x] No change to workspace-local `AGENTS.md` precedence
+
+**Done (2026-08-27):** `@` imports from `~/.tstdesk/AGENTS.md` to paths
+under `~/.tstdesk/` load without TD-505 approval; workspace imports
+outside the tree still gate. Stack badge parses the line count from the
+daemon warning. `docs/steering.md` §5 updated.
 
 ---
 
