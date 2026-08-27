@@ -3,7 +3,6 @@
 Hermes shape: one ``send(config, message)``. Destination host comes from
 ``notify.ntfy.host`` in the user config. The topic URL is a keychain
 secret and is never written to yaml, logs, or the audit database.
-Discord and Telegram are TD-4707, not this module.
 """
 
 from __future__ import annotations

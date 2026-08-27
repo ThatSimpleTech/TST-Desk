@@ -86,8 +86,9 @@ many as you need — OpenRouter, a keyed local server, a second remote. A tier's
 | `name` | string, 1–40 chars | *required* | The local given name. Shown in Settings → Model. Never a secret. |
 | `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. |
 
-Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook` and
-`ntfy-topic` are reserved for other keychain accounts.
+Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook`,
+`ntfy-topic`, `discord-webhook`, and `telegram-bot` are reserved for
+other keychain accounts.
 
 <!-- verify: model -->
 ```yaml
@@ -199,18 +200,20 @@ when omitted, same as a loopback tier (TD-1805).
 
 ### `notify`
 
-Outbound notification channels (TD-3801, TD-3802). Each channel is a
-standalone `send(config, message)` — Slack first, ntfy optional, no
-20-platform gateway (spec §8). Discord/Telegram are TD-4707. Off by
+Outbound notification channels (TD-3801, TD-3802, TD-4707). Each channel is a
+standalone `send(config, message)` — Slack is the default, ntfy / `discord`
+/ `telegram` are extras, no 20-platform gateway (spec §8). Off by
 default. Destination URLs are keychain secrets (`tst-slack-webhook`,
-`tst-ntfy-topic`), never this file, never the audit log. `host` is the
-only host a notifier may reach; the keychain URL's host must match it
-or the send is dropped.
+`tst-ntfy-topic`, `tst-discord-webhook`, `tst-telegram-bot`), never this
+file, never the audit log. `host` is the only host a notifier may reach;
+the keychain URL's host must match it or the send is dropped.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `slack` | mapping | see below | Slack incoming webhook. |
+| `slack` | mapping | see below | Slack incoming webhook. Default channel. |
 | `ntfy` | mapping | see below | ntfy topic POST. |
+| `discord` | mapping | see below | Discord incoming webhook. |
+| `telegram` | mapping | see below | Telegram Bot API `sendMessage`. |
 
 #### `notify.slack`
 
@@ -227,6 +230,18 @@ or the send is dropped.
 | `enabled` | bool | `false` | When false, approval-needed and turn-complete never POST. |
 | `host` | string | *empty* | Allowed destination hostname. Empty disables even if `enabled` is true. Typical public instance is ntfy.sh. |
 | `timeout_seconds` | float > 0 | `5` | How long a topic POST may run. Failures are logged and never fail the turn. |
+
+#### `notify.discord`
+
+Same keys as Slack. Store the webhook URL in the keychain as
+`tst-discord-webhook`. Set `host` to that URL's hostname (commonly
+`discord.com`).
+
+#### `notify.telegram`
+
+Same keys as Slack. Store `https://<host>/bot<token>/sendMessage?chat_id=<id>`
+in the keychain as `tst-telegram-bot`. `chat_id` is a query parameter on
+that secret URL, not a yaml field. Set `host` to that URL's hostname.
 
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
@@ -410,6 +425,14 @@ notify:
     host: ""
     timeout_seconds: 5
   ntfy:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  discord:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  telegram:
     enabled: false
     host: ""
     timeout_seconds: 5

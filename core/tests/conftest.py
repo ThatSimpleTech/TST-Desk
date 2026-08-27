@@ -44,9 +44,17 @@ _KEYCHAIN_SEAMS = (
     "tstd.keychain.get_ntfy_topic_url",
     "tstd.keychain.store_ntfy_topic_url",
     "tstd.keychain.delete_ntfy_topic_url",
+    "tstd.keychain.get_discord_webhook_url",
+    "tstd.keychain.store_discord_webhook_url",
+    "tstd.keychain.delete_discord_webhook_url",
+    "tstd.keychain.get_telegram_bot_url",
+    "tstd.keychain.store_telegram_bot_url",
+    "tstd.keychain.delete_telegram_bot_url",
     "tstd.daemon.get_api_key",
     "tstd.notify.slack.get_slack_webhook_url",
     "tstd.notify.ntfy.get_ntfy_topic_url",
+    "tstd.notify.discord.get_discord_webhook_url",
+    "tstd.notify.telegram.get_telegram_bot_url",
 )
 
 

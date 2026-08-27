@@ -55,11 +55,13 @@ import httpx
 import pytest
 
 from tstd.config import (
+    DiscordNotifyConfig,
     ModelConfig,
     NotifyConfig,
     NtfyNotifyConfig,
     Preset,
     SlackNotifyConfig,
+    TelegramNotifyConfig,
     TierConfig,
     cached_config,
     is_loopback_url,
@@ -69,8 +71,10 @@ from tstd.daemon import Daemon
 from tstd.desktop.grounding_client import GroundingClient
 from tstd.desktop.protocol import TINY_PNG
 from tstd.discovery import resolve_tier_slugs
+from tstd.notify.discord import send as discord_send
 from tstd.notify.ntfy import send as ntfy_send
 from tstd.notify.slack import send as slack_send
+from tstd.notify.telegram import send as telegram_send
 from tstd.provider import ChatCompletionRequest, ChatMessage, ProviderClient, RetryConfig
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent / "tstd"
@@ -268,6 +272,12 @@ _OUTBOUND_CAPABLE = {
     ),
     "notify/slack.py": "slack incoming webhook; destination host is notify.slack.host from config",
     "notify/ntfy.py": "ntfy topic POST; destination host is notify.ntfy.host from config",
+    "notify/discord.py": (
+        "discord incoming webhook; destination host is notify.discord.host from config"
+    ),
+    "notify/telegram.py": (
+        "telegram sendMessage; destination host is notify.telegram.host from config"
+    ),
     "mcp/http.py": (
         "user-listed MCP HTTP client; destination is mcp.servers.<id>.url "
         "from config; loopback-only, refused before send"
@@ -570,6 +580,72 @@ async def test_moving_the_ntfy_host_moves_the_destination(
         config,
         "hello",
         topic_url="https://somewhere-else.invalid/desk-topic",
+    )
+    assert recorder.origins() == {"https://somewhere-else.invalid"}
+
+
+async def test_discord_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """Discord notify lands where notify.discord.host points."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        discord=DiscordNotifyConfig(enabled=True, host="127.0.0.1", timeout_seconds=1)
+    )
+    await discord_send(
+        config,
+        "hello",
+        webhook_url="http://127.0.0.1:64112/api/webhooks/1/injected",
+    )
+    assert recorder.origins() == {"http://127.0.0.1:64112"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64112/api/webhooks/1/injected"}
+
+
+async def test_moving_the_discord_host_moves_the_destination(
+    recorder: TransportRecorder,
+) -> None:
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        discord=DiscordNotifyConfig(enabled=True, host="somewhere-else.invalid", timeout_seconds=1)
+    )
+    await discord_send(
+        config,
+        "hello",
+        webhook_url="https://somewhere-else.invalid/api/webhooks/1/injected",
+    )
+    assert recorder.origins() == {"https://somewhere-else.invalid"}
+
+
+async def test_telegram_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """Telegram notify lands where notify.telegram.host points."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        telegram=TelegramNotifyConfig(enabled=True, host="127.0.0.1", timeout_seconds=1)
+    )
+    await telegram_send(
+        config,
+        "hello",
+        bot_url="http://127.0.0.1:64112/botTOKEN/sendMessage?chat_id=1",
+    )
+    assert recorder.origins() == {"http://127.0.0.1:64112"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64112/botTOKEN/sendMessage"}
+
+
+async def test_moving_the_telegram_host_moves_the_destination(
+    recorder: TransportRecorder,
+) -> None:
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.notify = NotifyConfig(
+        telegram=TelegramNotifyConfig(
+            enabled=True, host="somewhere-else.invalid", timeout_seconds=1
+        )
+    )
+    await telegram_send(
+        config,
+        "hello",
+        bot_url="https://somewhere-else.invalid/botTOKEN/sendMessage?chat_id=1",
     )
     assert recorder.origins() == {"https://somewhere-else.invalid"}
 

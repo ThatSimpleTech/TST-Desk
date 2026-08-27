@@ -54,6 +54,7 @@ from tstd.config import (
     ComputerUseConfig,
     ConfigError,
     CredentialConfig,
+    DiscordNotifyConfig,
     EmbeddingsConfig,
     GroundingConfig,
     McpConfig,
@@ -67,6 +68,7 @@ from tstd.config import (
     SearchConfig,
     SessionConfig,
     SlackNotifyConfig,
+    TelegramNotifyConfig,
     TierConfig,
     default_config_yaml,
     load_config,
@@ -218,6 +220,8 @@ _MCP_FIELDS = frozenset(McpConfig.model_fields)
 _MCP_SERVER_FIELDS = frozenset(McpServerConfig.model_fields)
 _SLACK_NOTIFY_FIELDS = frozenset(SlackNotifyConfig.model_fields)
 _NTFY_NOTIFY_FIELDS = frozenset(NtfyNotifyConfig.model_fields)
+_DISCORD_NOTIFY_FIELDS = frozenset(DiscordNotifyConfig.model_fields)
+_TELEGRAM_NOTIFY_FIELDS = frozenset(TelegramNotifyConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
 _CREDENTIAL_FIELDS = frozenset(CredentialConfig.model_fields)
 _SECTION_FIELDS = frozenset(BoundarySection.model_fields)
@@ -292,6 +296,16 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                 _check_keys(data["notify"]["slack"], _SLACK_NOTIFY_FIELDS, f"{where} notify.slack")
             if "ntfy" in data["notify"]:
                 _check_keys(data["notify"]["ntfy"], _NTFY_NOTIFY_FIELDS, f"{where} notify.ntfy")
+            if "discord" in data["notify"]:
+                _check_keys(
+                    data["notify"]["discord"], _DISCORD_NOTIFY_FIELDS, f"{where} notify.discord"
+                )
+            if "telegram" in data["notify"]:
+                _check_keys(
+                    data["notify"]["telegram"],
+                    _TELEGRAM_NOTIFY_FIELDS,
+                    f"{where} notify.telegram",
+                )
         if "autonomy" in data:
             _check_keys(data["autonomy"], _AUTONOMY_FIELDS, f"{where} autonomy")
         if "mcp" in data:
@@ -333,6 +347,8 @@ def test_every_config_key_is_documented() -> None:
         | _MCP_SERVER_FIELDS
         | _SLACK_NOTIFY_FIELDS
         | _NTFY_NOTIFY_FIELDS
+        | _DISCORD_NOTIFY_FIELDS
+        | _TELEGRAM_NOTIFY_FIELDS
         | _PRESET_FIELDS
         | _CREDENTIAL_FIELDS
         | _TIER_FIELDS

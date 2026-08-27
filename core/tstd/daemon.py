@@ -122,8 +122,10 @@ from .memory_trigger import (
     completed_turn_count,
     distill_if_due,
 )
+from .notify.discord import schedule as schedule_discord_notify
 from .notify.ntfy import schedule as schedule_ntfy_notify
 from .notify.slack import schedule as schedule_slack_notify
+from .notify.telegram import schedule as schedule_telegram_notify
 from .policy import (
     add_rule,
     load_approved_imports,
@@ -208,8 +210,8 @@ from .protocol import (
     RenameSession,
     Resume,
     RevokePolicyRule,
-    RunVerify,
     RunDiagnostics,
+    RunVerify,
     SaveCharter,
     SaveJob,
     SaveMemory,
@@ -1350,6 +1352,12 @@ class Daemon:
         if task is not None:
             self._tasks.append(task)
         task = schedule_ntfy_notify(self.config, event)
+        if task is not None:
+            self._tasks.append(task)
+        task = schedule_discord_notify(self.config, event)
+        if task is not None:
+            self._tasks.append(task)
+        task = schedule_telegram_notify(self.config, event)
         if task is not None:
             self._tasks.append(task)
 
