@@ -542,6 +542,13 @@ export interface DeleteJob extends ClientMessage {
   job_id: string;
 }
 
+/** Hold-to-talk audio (TD-4701). Connection-scoped. Not a tool. */
+export interface Transcribe extends ClientMessage {
+  type: "transcribe";
+  audio_b64: string;
+  mime: string;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -613,7 +620,8 @@ export type ClientMessageUnion =
   | SetRemoteAttach
   | ListJobs
   | SaveJob
-  | DeleteJob;
+  | DeleteJob
+  | Transcribe;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -1067,8 +1075,11 @@ export interface SetupState extends DaemonEvent {
   credentials?: CredentialSummary[];
   tier_credentials?: Record<string, string | null>;
   tier_loopback?: Record<string, boolean>;
-  // TD-4403: listed MCP servers. Additive, default empty. Never a secret.
-  mcp_servers?: McpServerSummary[];
+	// TD-4403: listed MCP servers. Additive, default empty. Never a secret.
+	mcp_servers?: McpServerSummary[];
+	// TD-4701: hold-to-talk. Additive, default off. The URL never arrives.
+	speech_enabled?: boolean;
+	speech_ready?: boolean;
 }
 
 export interface McpServerSummary {
@@ -1300,6 +1311,14 @@ export interface JobList extends DaemonEvent {
   jobs: JobEntry[];
 }
 
+/** Reply to transcribe (TD-4701). Connection-scoped. detail is a code, never a URL. */
+export interface Transcript extends DaemonEvent {
+  type: "transcript";
+  ok: boolean;
+  text?: string;
+  detail?: string;
+}
+
 export type DaemonEventUnion =
   | Ready
   | SessionState
@@ -1348,4 +1367,5 @@ export type DaemonEventUnion =
   | CuSession
   | DesignHit
   | CuPermissions
-  | JobList;
+  | JobList
+  | Transcript;

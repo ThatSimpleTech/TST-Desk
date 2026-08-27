@@ -115,6 +115,11 @@ export const ICONS = {
 	/** Design mode / agent cursor (TD-3402, TD-3403). */
 	'mouse-pointer':
 		'<path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>',
+	/** Hold-to-talk (composer, TD-4701). */
+	mic:
+		'<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>' +
+		'<path d="M19 10v2a7 7 0 0 1-14 0v-2"/>' +
+		'<path d="M12 19v3"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

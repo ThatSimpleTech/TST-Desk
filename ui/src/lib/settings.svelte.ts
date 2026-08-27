@@ -78,6 +78,9 @@ export const settings = $state({
 	remoteBind: null as string | null,
 	/** Listed MCP servers (TD-4403). From setup_state, never inferred. */
 	mcpServers: [] as McpServerRow[],
+	/** Hold-to-talk (TD-4701). From setup_state; the URL never arrives. */
+	speechEnabled: false,
+	speechReady: false,
 });
 
 let started = false;
@@ -121,6 +124,8 @@ export function resetSettings(): void {
 	settings.remoteAttachEnabled = false;
 	settings.remoteBind = null;
 	settings.mcpServers = [];
+	settings.speechEnabled = false;
+	settings.speechReady = false;
 	started = false;
 }
 
@@ -154,6 +159,8 @@ function reduce(event: DaemonEventUnion): void {
 			url: row.url ?? "",
 			enabled: row.enabled ?? true,
 		}));
+		settings.speechEnabled = event.speech_enabled ?? false;
+		settings.speechReady = event.speech_ready ?? false;
 		return;
 	}
 	if (event.type === "policy_rules") {

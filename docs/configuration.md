@@ -243,6 +243,62 @@ Same keys as Slack. Store `https://<host>/bot<token>/sendMessage?chat_id=<id>`
 in the keychain as `tst-telegram-bot`. `chat_id` is a query parameter on
 that secret URL, not a yaml field. Set `host` to that URL's hostname.
 
+### `speech`
+
+Hold-to-talk dictation (TD-4701). Off by default. There is no cloud
+speech URL and no Web Speech API path. The window records only while
+the control is held, then the daemon POSTs to
+`{base_url}/audio/transcriptions`. Empty `base_url` is unconfigured:
+the control (when `enabled`) tells the user to set this key. Optional
+`credential` is a named keychain id used as a Bearer token; the secret
+is never this file. Omit `credential` for a keyless loopback whisper
+server.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | When false, the hold-to-talk control is hidden. |
+| `base_url` | string | *empty* | OpenAI-compatible transcriptions root, including `/v1`. Empty disables even if `enabled` is true. No shipped cloud URL. |
+| `model` | string | *empty* | Transcriptions `model` field. Empty omits it (local servers often have a default). |
+| `timeout_seconds` | float > 0 | `30` | How long the POST may run. |
+| `credential` | string | *empty* | Named keychain id sent as `Authorization: Bearer`. Empty sends no key. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  demo:
+    brain:
+      slug: demo/brain
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    worker:
+      slug: demo/worker
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    validator:
+      slug: demo/validator
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+active_preset: demo
+speech:
+  enabled: false
+  base_url: http://127.0.0.1:8080/v1
+  model: ""
+  timeout_seconds: 30
+  credential: ""
+```
+
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
 

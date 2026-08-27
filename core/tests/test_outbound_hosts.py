@@ -43,6 +43,7 @@ has to land somewhere the recorder can see.
 from __future__ import annotations
 
 import ast
+import base64
 import json
 import re
 import subprocess
@@ -61,6 +62,7 @@ from tstd.config import (
     NtfyNotifyConfig,
     Preset,
     SlackNotifyConfig,
+    SpeechConfig,
     TelegramNotifyConfig,
     TierConfig,
     cached_config,
@@ -76,6 +78,7 @@ from tstd.notify.ntfy import send as ntfy_send
 from tstd.notify.slack import send as slack_send
 from tstd.notify.telegram import send as telegram_send
 from tstd.provider import ChatCompletionRequest, ChatMessage, ProviderClient, RetryConfig
+from tstd.speech import transcribe
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent / "tstd"
 
@@ -278,6 +281,7 @@ _OUTBOUND_CAPABLE = {
     "notify/telegram.py": (
         "telegram sendMessage; destination host is notify.telegram.host from config"
     ),
+    "speech.py": ("hold-to-talk transcriptions; destination is speech.base_url from config"),
     "mcp/http.py": (
         "user-listed MCP HTTP client; destination is mcp.servers.<id>.url "
         "from config; loopback-only, refused before send"
@@ -376,6 +380,8 @@ class TransportRecorder:
                 json={"data": [{"embedding": [0.1, 0.2], "index": 0}]},
                 request=request,
             )
+        if path.endswith("/audio/transcriptions"):
+            return httpx.Response(200, json={"text": "hello from the mic"}, request=request)
         if request.headers.get("accept") == "text/event-stream":
             return httpx.Response(
                 200,
@@ -647,6 +653,31 @@ async def test_moving_the_telegram_host_moves_the_destination(
         "hello",
         bot_url="https://somewhere-else.invalid/botTOKEN/sendMessage?chat_id=1",
     )
+    assert recorder.origins() == {"https://somewhere-else.invalid"}
+
+
+async def test_speech_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """Transcriptions land where speech.base_url points."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.speech = SpeechConfig(enabled=True, base_url="http://127.0.0.1:64114/v1")
+    audio = base64.b64encode(b"fake-opus").decode("ascii")
+    result = await transcribe(config, audio, "audio/webm")
+    assert result.ok, result.detail
+    assert recorder.origins() == {"http://127.0.0.1:64114"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64114/v1/audio/transcriptions"}
+
+
+async def test_moving_the_speech_url_moves_the_destination(
+    recorder: TransportRecorder,
+) -> None:
+    """Change speech.base_url and the request follows. A hardcoded host would not."""
+    config = _config(LOCAL_ENDPOINT, "sentinel-model")
+    config.speech = SpeechConfig(enabled=True, base_url="https://somewhere-else.invalid/v1")
+    audio = base64.b64encode(b"fake-opus").decode("ascii")
+    result = await transcribe(config, audio, "audio/webm")
+    assert result.ok, result.detail
     assert recorder.origins() == {"https://somewhere-else.invalid"}
 
 

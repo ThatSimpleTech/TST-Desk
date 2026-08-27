@@ -315,3 +315,14 @@ notify:
     enabled: false
     host: ""
     timeout_seconds: 5
+
+# Hold-to-talk (TD-4701). Off by default. There is no cloud speech URL.
+# Set base_url to an OpenAI-compatible transcriptions root (include /v1),
+# typically a loopback whisper server. Optional credential is a named
+# keychain id; the secret is never this file.
+speech:
+  enabled: false
+  base_url: ""
+  model: ""
+  timeout_seconds: 30
+  credential: ""

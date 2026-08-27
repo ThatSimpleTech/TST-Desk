@@ -25,6 +25,7 @@ from tstd.config import (
     NtfyNotifyConfig,
     RemoteConfig,
     SlackNotifyConfig,
+    SpeechConfig,
     TierConfig,
     allocate_credential_id,
     cached_config,
@@ -240,6 +241,31 @@ class TestTiers:
         assert cfg.notify.discord.enabled is False
         assert cfg.notify.telegram.enabled is False
         assert cfg.notify.slack.enabled is False
+
+    def test_shipped_speech_is_off(self, tmp_path: Path) -> None:
+        """TD-4701: packaged config has no mic path and no cloud STT URL."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.speech.enabled is False
+        assert cfg.speech.base_url == ""
+        assert cfg.speech.model == ""
+        assert cfg.speech.credential == ""
+        assert SpeechConfig().enabled is False
+
+    def test_omitted_speech_is_filled_from_shipped(self, tmp_path: Path) -> None:
+        data = yaml.safe_load(default_config_yaml())
+        assert isinstance(data, dict)
+        data.pop("speech", None)
+        cfg = load_config(_write_config(tmp_path, yaml.safe_dump(data)))
+        assert cfg.speech.enabled is False
+        assert cfg.speech.base_url == ""
+
+    def test_speech_rejects_a_non_http_url(self) -> None:
+        with pytest.raises(ValidationError):
+            SpeechConfig(base_url="not-a-url")
+
+    def test_speech_rejects_a_reserved_credential(self) -> None:
+        with pytest.raises(ValidationError):
+            SpeechConfig(credential="slack-webhook")
 
     def test_shipped_autonomy_is_rootless_podman(self, tmp_path: Path) -> None:
         """TD-4301: packaged config names Podman; image is not a Python literal."""
