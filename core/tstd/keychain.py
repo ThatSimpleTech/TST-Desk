@@ -79,6 +79,37 @@ async def _await_cli(
         raise KeychainLockedError(_TIMEOUT_GUIDANCE) from None
 
 
+async def _spawn_cli(*args: str, stdin: bool = False) -> asyncio.subprocess.Process:
+    """Start a keychain helper. A missing binary is a KeychainError, not a crash.
+
+    ``setup_state`` probes every named credential. On a clean Linux guest
+    ``secret-tool`` is often absent; FileNotFoundError used to kill the
+    WebSocket handler and leave the window on Connecting….
+    """
+    try:
+        if stdin:
+            return await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
+            )
+        return await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        name = args[0] if args else "keychain helper"
+        if name == "secret-tool":
+            hint = "Install libsecret-tools and retry."
+        elif name == "security":
+            hint = "The macOS security CLI was not found."
+        else:
+            hint = f"{name} was not found."
+        raise KeychainError(f"Keychain helper {name!r} is not installed. {hint}") from exc
+
+
 def _classify_cli_failure(stderr_text: str, fallback: str) -> KeychainError:
     """Map keychain-CLI stderr to the right error type.
 
@@ -130,7 +161,7 @@ class MacOSKeychain(KeychainBackend):
     """macOS keychain via the `security` CLI."""
 
     async def get_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> str:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _spawn_cli(
             "security",
             "find-generic-password",
             "-a",
@@ -138,8 +169,6 @@ class MacOSKeychain(KeychainBackend):
             "-s",
             service,
             "-w",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await _await_cli(proc)
         if proc.returncode != 0:
@@ -171,15 +200,13 @@ class MacOSKeychain(KeychainBackend):
     async def delete_secret(
         self, account: str, service: str = "com.thatsimpletech.tstdesk"
     ) -> None:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _spawn_cli(
             "security",
             "delete-generic-password",
             "-a",
             account,
             "-s",
             service,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await _await_cli(proc)
         if proc.returncode != 0:
@@ -190,15 +217,13 @@ class LinuxSecretService(KeychainBackend):
     """Linux keychain via `secret-tool` (libsecret)."""
 
     async def get_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> str:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _spawn_cli(
             "secret-tool",
             "lookup",
             "service",
             service,
             "account",
             account,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await _await_cli(proc)
         if proc.returncode != 0:
@@ -219,7 +244,7 @@ class LinuxSecretService(KeychainBackend):
     async def set_secret(
         self, account: str, secret: str, service: str = "com.thatsimpletech.tstdesk"
     ) -> None:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _spawn_cli(
             "secret-tool",
             "store",
             "--label",
@@ -228,9 +253,7 @@ class LinuxSecretService(KeychainBackend):
             service,
             "account",
             account,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            stdin=asyncio.subprocess.PIPE,
+            stdin=True,
         )
         _, stderr = await _await_cli(proc, stdin=secret.encode())
         if proc.returncode != 0:
@@ -239,15 +262,13 @@ class LinuxSecretService(KeychainBackend):
     async def delete_secret(
         self, account: str, service: str = "com.thatsimpletech.tstdesk"
     ) -> None:
-        proc = await asyncio.create_subprocess_exec(
+        proc = await _spawn_cli(
             "secret-tool",
             "clear",
             "service",
             service,
             "account",
             account,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await _await_cli(proc)
         if proc.returncode != 0:

@@ -367,6 +367,20 @@ class TestLockedClassification:
             await MacOSKeychain().set_secret("tst-openrouter", "sk-x")
 
 
+class TestMissingHelper:
+    """A clean guest without secret-tool must not crash setup_state."""
+
+    async def test_missing_secret_tool_is_keychain_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def missing(*_args: object, **_kwargs: object) -> object:
+            raise FileNotFoundError(2, "No such file or directory", "secret-tool")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", missing)
+        with pytest.raises(KeychainError, match="secret-tool"):
+            await kc_mod.LinuxSecretService().get_secret("tst-openrouter")
+
+
 class TestCliTimeout:
     """A hung secret-tool / security prompt is a locked keychain (TD-1105)."""
 
