@@ -85,6 +85,17 @@ class TestPathResolution:
         assert "Archived." not in result.block
         assert (home / "docs" / "arch.md").resolve() in result.pending_imports
 
+    def test_user_global_sibling_imports_skip_external_gate(self, tmp_path: Path) -> None:
+        """``~/.tstdesk/AGENTS.md`` may @-import siblings without TD-505 (TD-4905)."""
+        home = tmp_path / "home"
+        workspace = tmp_path / "workspace"
+        _write(home / ".tstdesk" / "AGENTS.md", "Global.\n@rules/extra.md")
+        _write(home / ".tstdesk" / "rules" / "extra.md", "Extra rule.")
+        _write(workspace / "AGENTS.md", "Workspace.")
+        result = _make_assembler(home).assemble_sync(workspace)
+        assert "Extra rule." in result.block
+        assert not result.pending_imports
+
 
 # ── Tests: depth limit ────────────────────────────────────────────────────
 

@@ -104,6 +104,20 @@ def _is_outside(path: Path, workspace: Path) -> bool:
         return True
 
 
+def _user_steering_root(home_dir: Path) -> Path:
+    """``~/.tstdesk`` — personal-global steering tree (TD-4905)."""
+    return (home_dir / ".tstdesk").resolve()
+
+
+def _under_user_steering(path: Path, home_dir: Path) -> bool:
+    """True when *path* lives under the personal-global steering directory."""
+    try:
+        path.resolve().relative_to(_user_steering_root(home_dir))
+        return True
+    except ValueError:
+        return False
+
+
 def _collect_issues(imports: tuple[ImportDirective, ...]) -> list[str]:
     """Flatten all issues from an import tree into a single list."""
     issues: list[str] = []
@@ -216,11 +230,16 @@ def process_imports(
         # in *pending* for the loop to raise an approval request.  A
         # missing external file is "not found", not "awaiting approval" —
         # there is nothing to read, so nothing to approve.
-        if (
+        gated = (
             workspace_path is not None
             and _is_outside(resolved_path, workspace_path)
             and resolved_path not in approved
-        ):
+            and not (
+                _under_user_steering(source_path, home_dir)
+                and _under_user_steering(resolved_path, home_dir)
+            )
+        )
+        if gated:
             if resolved_path in denied:
                 issue = f"external import denied: {resolved_path}"
             elif not resolved_path.exists():

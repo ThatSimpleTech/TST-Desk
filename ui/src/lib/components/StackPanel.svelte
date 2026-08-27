@@ -15,7 +15,7 @@
 	// subscribe on first open. Clicking a file opens it in the system
 	// editor via tauri-plugin-opener.
 	import { stack } from '../stack-store.svelte.js';
-	import { cacheBadge, cacheLabel, formatTokens, memoryPlaceholderCopy, memoryReasonLabel } from '../stack-store';
+	import { cacheBadge, cacheLabel, formatTokens, memoryPlaceholderCopy, memoryReasonLabel, warningBadge } from '../stack-store';
 	import { openInEditor } from '../open-file';
 	import Icon from './Icon.svelte';
 
@@ -27,11 +27,6 @@
 
 	function baseName(path: string): string {
 		return path.split('/').pop() ?? path;
-	}
-
-	/** Short badge for a warning line; full text stays in the tooltip. */
-	function warningBadge(warning: string): string {
-		return warning.includes('exceeds 200 lines') ? 'over 200 lines' : warning;
 	}
 </script>
 
