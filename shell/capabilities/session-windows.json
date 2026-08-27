@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "session-windows",
+  "description": "Permissions for per-session viewer windows (TD-4703).",
+  "windows": ["session-*"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "opener:allow-open-path",
+    "notification:default"
+  ]
+}

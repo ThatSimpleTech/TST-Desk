@@ -1,6 +1,8 @@
 pub mod daemon;
 mod quick_entry;
 mod read_text;
+mod session_window;
+mod tray;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -62,7 +64,7 @@ fn quit_app(app: tauri::AppHandle) {
 }
 
 /// Dock / taskbar badge while a hidden session is still working (TD-2904).
-/// No tray (TD-4703). The UI owns the label; this only applies it.
+/// Tray running-count is TD-4703 (`set_tray_running_count`).
 const WINDOW_VISIBILITY_EVENT: &str = "window-visibility";
 
 #[tauri::command]
@@ -88,8 +90,7 @@ fn emit_window_visibility(app: &tauri::AppHandle, visible: bool) {
     let _ = app.emit(WINDOW_VISIBILITY_EVENT, visible);
 }
 
-#[cfg(target_os = "macos")]
-fn show_main_window(app: &tauri::AppHandle) {
+pub(crate) fn show_main_window(app: &tauri::AppHandle) {
     let window = app
         .get_webview_window("main")
         .or_else(|| app.webview_windows().into_values().next());
@@ -112,7 +113,7 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
-fn request_quit(app: &tauri::AppHandle) {
+pub(crate) fn request_quit(app: &tauri::AppHandle) {
     if !begin_quit() {
         return;
     }
@@ -238,6 +239,7 @@ pub fn run() {
             app.manage(handle);
             app.manage(embeddings);
             quick_entry::setup(app)?;
+            tray::setup(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -249,6 +251,8 @@ pub fn run() {
             quick_entry::get_last_workspace,
             quick_entry::set_last_workspace,
             quick_entry::hide_quick_entry,
+            tray::set_tray_running_count,
+            session_window::open_session_window,
         ])
         .on_menu_event(|app, event| {
             if event.id() == "quit-tst-desk" {
@@ -263,6 +267,9 @@ pub fn run() {
                 if window.label() == quick_entry::WINDOW_LABEL {
                     api.prevent_close();
                     let _ = window.hide();
+                    return;
+                }
+                if session_window::is_session_window_label(window.label()) {
                     return;
                 }
                 api.prevent_close();
