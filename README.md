@@ -245,8 +245,8 @@ The first time you close the window: that hides TST Desk. **Quit TST Desk** is w
 
 OS notifications for an approval or a finished turn still fire while the window is hidden.
 While hidden, a running session or a parked approval badges the Dock (macOS) or the
-taskbar tooltip (Windows / Linux). Clicking the app icon shows the window and focuses
-the approval if one is waiting. There is no tray icon.
+taskbar tooltip (Windows / Linux). A tray icon shows the running-session count; **Quit TST Desk** lives in the tray menu too. Clicking the app icon shows the window and focuses
+the approval if one is waiting.
 
 See [`docs/tst-desk-backlog.md`](docs/tst-desk-backlog.md) for the current milestone and
 [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) for the full architecture spec. How the pieces
