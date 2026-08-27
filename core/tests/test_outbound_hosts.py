@@ -258,6 +258,7 @@ _OUTBOUND_CAPABLE = {
         "preset's loopback /v1 (or a loopback override); off-box is refused "
         "before send"
     ),
+    "e2e_m10.py": "the M10 exit harness, a protocol client of our own loopback daemon",
     "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
     "tools/web_search.py": "web_search; destination is search.base_url from config",
     "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
