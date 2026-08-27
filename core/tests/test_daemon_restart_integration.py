@@ -177,6 +177,8 @@ class TestDaemonRestartIntegration:
                 else:
                     daemon.wait(timeout=5)
                 _close_spawn_log(daemon)
+                if sys.platform == "win32":
+                    await asyncio.sleep(0.5)
 
             # 2. Restart on the same data dir. The stale port file (with the
             #    dead daemon's pid) must be replaced.
@@ -217,6 +219,8 @@ class TestDaemonRestartIntegration:
                     else:
                         daemon2.wait(timeout=5)
                 _close_spawn_log(daemon2)
+                if sys.platform == "win32":
+                    await asyncio.sleep(0.5)
 
             # 3. Snapshot on disk → same chat, running. No snapshot → tombstone.
             by_id = {row["session_id"]: row for row in sessions}
