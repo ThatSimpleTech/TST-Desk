@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -206,8 +207,19 @@ def container_argv(
     if not runtime.strip():
         raise SandboxError("autonomy.runtime is empty")
     ws = workspace.resolve()
-    if any(ch in str(ws) for ch in ",:"):
-        raise SandboxError("workspace path cannot contain comma or colon")
+    ws_text = str(ws)
+    if "," in ws_text:
+        raise SandboxError("workspace path cannot contain comma")
+    if sys.platform == "win32":
+        # Drive-absolute C:\… is required on Windows; drive-relative C:foo is not.
+        if (
+            len(ws_text) >= 2
+            and ws_text[1] == ":"
+            and ws_text[2:3] not in ("\\", "/")
+        ):
+            raise SandboxError("workspace path cannot contain drive-relative colon form")
+    elif ":" in ws_text:
+        raise SandboxError("workspace path cannot contain colon")
     argv = [runtime, "run", "--rm"]
     if _network_denied(network):
         argv.append("--network=none")

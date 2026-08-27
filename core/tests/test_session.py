@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+from tests.platform_helpers import outside_workspace_path
 from tstd.protocol import AssistantDelta
 from tstd.protocol import SessionState as SessionStateEvent
 from tstd.session import Session, SessionError, SessionEventLog, SessionRegistry, SessionRunner
@@ -433,7 +434,7 @@ class TestRecordTouched:
 
     def test_absolute_outside_workspace_dropped(self, tmp_path) -> None:
         session = Session(str(tmp_path))
-        session.record_touched(["/etc/passwd"])
+        session.record_touched([outside_workspace_path()])
         assert session.touched_paths == set()
 
     def test_empty_and_repeat_records_idempotent(self, tmp_path) -> None:

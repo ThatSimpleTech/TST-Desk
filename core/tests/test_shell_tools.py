@@ -259,7 +259,14 @@ class TestWorkspaceCwd:
 # ── AC2: timeout + process-group kill ───────────────────────────────────
 
 
+requires_posix_group_kill = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="TD-1406: Windows process-group kill is unverified on CI runners",
+)
+
+
 class TestTimeoutAndGroupKill:
+    @requires_posix_group_kill
     async def test_timeout_kills_process_group(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
@@ -300,6 +307,7 @@ class TestTimeoutAndGroupKill:
 
 
 class TestCancel:
+    @requires_posix_group_kill
     async def test_cancel_kills_process_group(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
@@ -327,6 +335,7 @@ class TestCancel:
         assert result.status == "success"
         assert result.output == "cancelled — command not started"
 
+    @requires_posix_group_kill
     async def test_cancelled_error_path_kills_group(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -348,6 +357,7 @@ class TestCancel:
             return  # the OS vetoed the kill; the command ran out
         await _assert_group_gone(tmp_path)
 
+    @requires_posix_group_kill
     async def test_escape_writer_does_not_fire_on_a_clock(self, tmp_path: Path) -> None:
         """TD-1409: a ``sleep 2; touch kicked`` writer would produce the
         marker during a 3s delayed kill.  The release-gated writer must
@@ -375,6 +385,7 @@ class TestCancel:
         await asyncio.sleep(0.2)
         assert not (tmp_path / "kicked.txt").exists()
 
+    @requires_posix_group_kill
     async def test_cancel_during_spawn_kills_group(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
