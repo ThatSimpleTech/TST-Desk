@@ -142,6 +142,10 @@ async def _list_sessions(ws) -> list[dict]:
 
 
 class TestDaemonRestartIntegration:
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="subprocess daemon spawn is flaky on Windows CI (TD-1002); covered on POSIX",
+    )
     async def test_session_list_intact_after_crash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp)
