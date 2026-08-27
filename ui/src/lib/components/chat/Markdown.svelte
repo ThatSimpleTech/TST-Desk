@@ -4,11 +4,32 @@
 	// blocks are wired by one delegated click handler; feedback is written to
 	// the clicked button directly since the markup is generated.
 	import { renderMarkdown } from "../../markdown";
+	import { hydrateMermaid } from "../../markdown-mermaid";
 	// Token-driven hljs theme (TD-1609): follows the warm palette in both
 	// color schemes — replaces highlight.js's light-only github.css.
 	import "../../hljs-theme.css";
+	import { tick } from "svelte";
 
-	let { text }: { text: string } = $props();
+	let { text, live = false }: { text: string; live?: boolean } = $props();
+
+	let root: HTMLDivElement | undefined = $state();
+
+	$effect(() => {
+		const source = text;
+		const streaming = live;
+		const el = root;
+		if (streaming || el === undefined) return;
+		void tick().then(async () => {
+			if (root !== el || source !== text) return;
+			if (el.querySelector(".md-katex-ph") !== null) {
+				const { hydrateKatex } = await import("../../markdown-katex");
+				hydrateKatex(el);
+			}
+			if (el.querySelector(".md-mermaid") !== null) {
+				await hydrateMermaid(el);
+			}
+		});
+	});
 
 	async function openLink(url: string): Promise<void> {
 		const { openUrl } = await import("@tauri-apps/plugin-opener");
@@ -50,7 +71,7 @@
      element is the button inside the {@html}; the wrapper only listens. -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="markdown" onclick={handleClick}>
+<div class="markdown" bind:this={root} onclick={handleClick}>
 	{@html renderMarkdown(text)}
 </div>
 
@@ -144,6 +165,22 @@
 	.markdown :global(.code-block:hover .copy-btn),
 	.markdown :global(.copy-btn:focus-visible) {
 		opacity: 1;
+	}
+
+	.markdown :global(.md-katex-display) {
+		display: block;
+		overflow-x: auto;
+		margin: var(--space-3) 0;
+	}
+
+	.markdown :global(.md-mermaid) {
+		margin: var(--space-3) 0;
+		overflow-x: auto;
+	}
+
+	.markdown :global(.md-mermaid svg) {
+		max-width: 100%;
+		height: auto;
 	}
 
 	.markdown :global(blockquote) {

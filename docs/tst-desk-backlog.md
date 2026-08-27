@@ -6082,10 +6082,16 @@ the product." Web search is already TD-609/TD-610.
 **Size:** 3 · **Depends on:** TD-1603, TD-3202
 
 **Acceptance criteria:**
-- [ ] Vendored mermaid + KaTeX; no CDN
-- [ ] Failed parse falls back to the fence
-- [ ] Bundle delta in `DECISIONS.md`
-- [ ] Images in markdown wait for TD-4705
+- [x] Vendored mermaid + KaTeX; no CDN
+- [x] Failed parse falls back to the fence
+- [x] Bundle delta in `DECISIONS.md`
+- [x] Images in markdown wait for TD-4705
+
+**Done (2026-08-27):** `mermaid@11` and `katex@0.16` are npm deps (MIT, no
+CDN). Fences `mermaid` / `math|katex|latex`, display `$$…$$`, and inline
+`\(…\)` hydrate after the message completes; a parse error restores the
+highlighted fence. Currency `$5` is not math. Markdown images render as
+`[alt]` until TD-4705. User bubbles use the same pipeline.
 
 ---
 

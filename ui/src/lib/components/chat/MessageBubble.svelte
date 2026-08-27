@@ -92,7 +92,7 @@
 					<ToolFold messageId={message.id} {block} />
 				{/each}
 			{/if}
-			<Markdown text={message.text} />
+			<Markdown text={message.text} live={!message.complete} />
 			<!-- The caret marks the answer being written. Over an empty body during
 			     a reasoning phase it would be a lie: that text streams into the
 			     block above, not into `text` (TD-1901). -->
@@ -143,7 +143,7 @@
 					<button class="action" type="button" onclick={commitEdit}>Save</button>
 					<button class="action" type="button" onclick={() => (editing = false)}>Cancel</button>
 				</div>
-			{:else if message.text !== ""}<p class="user-text">{message.text}</p>{/if}
+			{:else if message.text !== ""}<div class="user-md"><Markdown text={message.text} /></div>{/if}
 			{#if !editing && message.userIndex !== undefined}
 				<div class="branch">
 					{#if (message.siblingCount ?? 1) > 1}
@@ -276,9 +276,21 @@
 		line-height: var(--leading-normal);
 	}
 
-	.user-text {
-		white-space: pre-wrap;
+	.user-md {
 		word-break: break-word;
+	}
+
+	.user-md :global(.markdown) {
+		font-size: inherit;
+		line-height: inherit;
+	}
+
+	.user-md :global(.markdown p:first-child) {
+		margin-top: 0;
+	}
+
+	.user-md :global(.markdown p:last-child) {
+		margin-bottom: 0;
 	}
 
 	.edit {
@@ -302,7 +314,7 @@
 
 	/* Only spaced when there is text above it — an attachment-only message
 	   should not open with a gap. */
-	.user-text + .sent-attachments {
+	.user-md + .sent-attachments {
 		margin-top: var(--space-2);
 	}
 
