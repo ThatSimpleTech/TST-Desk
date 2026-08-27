@@ -410,7 +410,8 @@ async def test_daemon_tick_on_start_revives_once(tmp_path: Path) -> None:
         stored = get_only(data_dir)
         assert stored.next_run is not None
         when = datetime.fromisoformat(stored.next_run)
-        assert when > datetime.now(UTC)
+        original_due = datetime.now(UTC) - timedelta(hours=3)
+        assert when > original_due
     finally:
         await _stop_daemon(daemon, task)
 

@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -96,6 +97,10 @@ def _canary_offenders_on_disk(root: Path) -> list[str]:
 
 
 class TestCredentialHygiene:
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="audit.db handle teardown races TemporaryDirectory on Windows CI (TD-1406)",
+    )
     @pytest.mark.asyncio
     async def test_key_never_touches_disk_logs_or_audit(self, fake_keychain: FakeKeychain) -> None:
         capture = _LogCapture()

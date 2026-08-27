@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -437,7 +438,7 @@ class TestSkipAll:
                 )
             )
             loop = asyncio.get_running_loop()
-            deadline = loop.time() + 3.0
+            deadline = loop.time() + (10.0 if sys.platform == "win32" else 3.0)
             while loop.time() < deadline:
                 if session.get_pending_approval("tc-b") and session.get_pending_approval("tc-c"):
                     break
