@@ -5,6 +5,14 @@ name: Package
 on:
   push:
     branches: [main]
+    # TD-4904: doc-only merges must not enqueue another 30–40 minute matrix
+    # behind an already-blocked Actions queue. Release tags and manual runs
+    # still bundle via workflow_call / workflow_dispatch.
+    paths:
+      - "shell/**"
+      - "ui/**"
+      - "core/**"
+      - ".github/workflows/package.yml"
   workflow_dispatch:
   workflow_call: # TD-1303 release.yml reuses this matrix
 
