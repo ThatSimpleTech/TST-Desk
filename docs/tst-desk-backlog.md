@@ -3861,6 +3861,13 @@ and advances the wall clock with `vi.setSystemTime` while pending timers are dra
 unfired. 8 daemon tests cover ping shape, cadence, handshake gating, shutdown, and a re-attach
 superseding its predecessor.
 
+**Leftover (2026-08-27):** a loaded suite can stall a settings-wire
+`await ws.recv()` past 15s, so the next frame is `ping` rather than the
+ack. Production clients already skip ping. Tests now resolve
+`PING_INTERVAL_SECONDS` at `WebSocketServer` init and the suite fixture
+quiets it (0) except the cadence-pin test. Emission tests still pass an
+explicit interval.
+
 
 ### TD-1717 — Named API keys, bound per model
 **Size:** 5 · **Depends on:** TD-1703, TD-1801
