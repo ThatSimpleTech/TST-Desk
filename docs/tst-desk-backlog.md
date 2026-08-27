@@ -5198,6 +5198,11 @@ a matching close tag ends it.
 `overlay_session` drives macOS / Windows / Linux X11 painters. Linger
 removed. Wayland stays `NullOverlay`.
 
+**Leftover (2026-08-27):** the event reached `DaemonEventUnion` and the
+Screen-pane reducer, but not `KNOWN_EVENT_TYPES`. The live client
+dropped every `cu_session` frame (TD-1010) while unit tests stayed
+green by calling the reducer directly. Added to the gate.
+
 ---
 
 ### TD-3403 — Design mode
