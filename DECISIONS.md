@@ -8964,3 +8964,22 @@ metadata in Python. Also rejected: storing images only in the workspace
 tree (attachments are turn-scoped on the wire). Also rejected: silent
 downscale to fit caps.
 
+---
+
+## 2026-08-27 — TD-4905: personal-global steering imports (Class B)
+
+**Decision:** `@` imports where both the importer and the target live under
+`~/.tstdesk/` bypass the TD-505 external-import gate. Workspace-local
+imports into `~/.tstdesk/` and imports from global steering to paths
+outside `.tstdesk/` still prompt. The stack-panel warning badge parses
+the line count from the daemon's warning text instead of hardcoding 200.
+
+**Rationale:** Splitting personal steering across files under
+`~/.tstdesk/` is a normal authoring pattern, not an untrusted read from
+a project tree. The gate remains for every workspace-scoped escape.
+Parsing the warning keeps UI copy aligned when `LINE_LIMIT` moves.
+
+**Alternative rejected:** Document-only friction (left the prompt on every
+workspace open). Also rejected: auto-approving all `~`-imports regardless
+of source (would weaken TD-505 for workspace files).
+

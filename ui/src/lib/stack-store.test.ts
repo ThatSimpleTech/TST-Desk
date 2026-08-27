@@ -10,6 +10,7 @@ import {
 	createStackStore,
 	formatTokens,
 	memoryPlaceholderCopy,
+	warningBadge,
 	type StackState,
 } from "./stack-store";
 
@@ -256,6 +257,13 @@ describe("labels", () => {
 
 	it("empty memory quotes the prompt placeholder", () => {
 		expect(memoryPlaceholderCopy()).toBe("<!-- memory: none loaded for this session -->");
+	});
+
+	it("warningBadge shortens line-limit warnings from the daemon", () => {
+		expect(warningBadge("file exceeds 200 lines; long files measurably reduce adherence")).toBe(
+			"over 200 lines",
+		);
+		expect(warningBadge("appliesTo only scopes rules")).toBe("appliesTo only scopes rules");
 	});
 });
 
