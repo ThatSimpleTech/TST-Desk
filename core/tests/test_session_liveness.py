@@ -182,7 +182,7 @@ class TestUserMessageLiveness:
                 if not sess._user_message_queue.empty():
                     break
                 await asyncio.sleep(0.02)
-            assert sess._user_message_queue.get_nowait() == "still alive"
+            assert sess._user_message_queue.get_nowait().display == "still alive"
             # And no error frame arrived.
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(ws.recv(), timeout=0.3)

@@ -25,7 +25,12 @@ import websockets.exceptions
 from pydantic import ValidationError
 
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, to_entry
-from .attachments import AttachmentError, decode_attachments, render_user_content
+from .attachments import (
+    AttachmentError,
+    build_provider_user_content,
+    decode_attachments,
+    render_user_content,
+)
 from .audit import AuditStore
 from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
 from .audit_writer import AuditWriter
@@ -103,7 +108,13 @@ from .keychain import (
     get_api_key,
     store_api_key,
 )
-from .local_worker import last_cu_surface, session_is_cu_heavy, titlebar_hosts, titlebar_slugs
+from .local_worker import (
+    effective_tier,
+    last_cu_surface,
+    session_is_cu_heavy,
+    titlebar_hosts,
+    titlebar_slugs,
+)
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .mcp.loader import McpSupervisor
@@ -284,6 +295,7 @@ from .scheduler.runner import SendFn as NotifySendFn
 from .scheduler.store import delete_job, get_job, list_jobs, save_job
 from .session import (
     TERMINAL_STATES,
+    QueuedUserMessage,
     Session,
     SessionEventLog,
     SessionRegistry,
@@ -471,6 +483,18 @@ def _session_model_config(session: Session, fallback: ModelConfig) -> ModelConfi
     return session.config if session.config is not None else fallback
 
 
+def _active_tier_vision(session: Session, config: ModelConfig) -> bool:
+    """Whether the active tier accepts image attachments (TD-4705)."""
+    if session.router is None:
+        return False
+    tier_cfg = effective_tier(
+        config,
+        session.router.active_tier,
+        cu_heavy=session_is_cu_heavy(session),
+    )
+    return tier_cfg.vision
+
+
 def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
     """Build the ``tier_state`` event for the title bar (TD-1006).
 
@@ -484,6 +508,7 @@ def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
     """
     assert session.router is not None
     cu_heavy = session_is_cu_heavy(session)
+    tier_cfg = effective_tier(config, session.router.active_tier, cu_heavy=cu_heavy)
     return TierState(
         session_id=session.id,
         tier=session.router.active_tier,
@@ -492,6 +517,7 @@ def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
         preset=config.active_preset,
         hosts=titlebar_hosts(config, cu_heavy=cu_heavy),
         plan=session.router.plan_mode,
+        vision=tier_cfg.vision,
         seq=1,  # overwritten by the event log
     )
 
@@ -1451,7 +1477,14 @@ class Daemon:
             # message — the copy says so — rather than delivering a turn the
             # user believes carried files it did not.
             try:
-                decoded = decode_attachments(msg.attachments, found.boundary_config.attachments)
+                allow_images = _active_tier_vision(
+                    found, _session_model_config(found, self.config)
+                )
+                decoded = decode_attachments(
+                    msg.attachments,
+                    found.boundary_config.attachments,
+                    allow_images=allow_images,
+                )
             except AttachmentError as e:
                 log.info(
                     "attachment refused",
@@ -1465,7 +1498,9 @@ class Daemon:
                 )
                 return build_error(e.code, e.message, session_id=msg.session_id)
 
-            await found.add_user_message(render_user_content(msg.content, decoded))
+            display = render_user_content(msg.content, decoded)
+            provider = build_provider_user_content(msg.content, decoded)
+            await found.add_user_message(QueuedUserMessage(display=display, provider=provider))
             # Title from the user's text, not the rendered body — an
             # attachment-only message must stay untitled (TD-3001).
             await self._session_store.maybe_set_title(msg.session_id, msg.content)

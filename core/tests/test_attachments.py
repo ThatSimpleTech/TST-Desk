@@ -24,12 +24,14 @@ from tstd.attachments import (
     AttachmentError,
     AttachmentLimits,
     DecodedAttachment,
+    build_provider_user_content,
     decode_attachments,
     render_user_content,
 )
 from tstd.boundary_config import BoundaryConfig, load_workspace_boundary
 from tstd.daemon import Daemon
 from tstd.protocol import Attachment, BoundaryUpdate, UserMessage, parse_client_message
+from tstd.session import QueuedUserMessage
 
 # A real PNG header: valid bytes, invalid UTF-8, and what a user actually
 # drags in when they try to attach a screenshot.
@@ -73,8 +75,27 @@ class TestDecodeAttachments:
             decode_attachments(
                 [Attachment(name="shot.png", content_b64=b64(PNG_BYTES))], AttachmentLimits()
             )
-        assert excinfo.value.code == "attachment_binary"
+        assert excinfo.value.code == "attachment_no_vision"
         assert "shot.png" in excinfo.value.message
+
+    def test_image_accepted_when_vision_enabled(self) -> None:
+        decoded = decode_attachments(
+            [Attachment(name="shot.png", content_b64=b64(PNG_BYTES))],
+            AttachmentLimits(),
+            allow_images=True,
+        )
+        assert decoded[0].is_image
+        assert decoded[0].mime == "image/png"
+        assert decoded[0].data_b64 is not None
+
+    def test_image_refused_when_vision_disabled(self) -> None:
+        with pytest.raises(AttachmentError) as excinfo:
+            decode_attachments(
+                [Attachment(name="shot.png", content_b64=b64(PNG_BYTES))],
+                AttachmentLimits(),
+                allow_images=False,
+            )
+        assert excinfo.value.code == "attachment_no_vision"
 
     def test_nul_byte_is_binary_even_when_utf8_decodable(self) -> None:
         """NUL is legal UTF-8 and still the oldest reliable binary tell."""
@@ -189,6 +210,27 @@ class TestDecodeAttachments:
             with pytest.raises(AttachmentError) as excinfo:
                 decode_attachments(items, limits)
             assert "Nothing was sent." in excinfo.value.message
+
+
+class TestBuildProviderUserContent:
+    def test_text_only_stays_plain_string(self) -> None:
+        decoded = [DecodedAttachment(name="a.txt", text="hi", size=2)]
+        assert build_provider_user_content("hello", decoded) == (
+            "hello\n\n--- attached file: a.txt (2 bytes) ---\nhi\n--- end of a.txt ---"
+        )
+
+    def test_image_becomes_multimodal_parts(self) -> None:
+        item = DecodedAttachment(
+            name="shot.png",
+            size=len(PNG_BYTES),
+            mime="image/png",
+            data_b64=b64(PNG_BYTES),
+        )
+        parts = build_provider_user_content("look", [item])
+        assert isinstance(parts, list)
+        assert parts[0] == {"type": "text", "text": "look"}
+        assert parts[1]["type"] == "image_url"
+        assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
 class TestRenderUserContent:
@@ -333,10 +375,8 @@ class TestDaemonRefusal:
         reply = await _send(daemon, session_id, [attach("screenshot.png", PNG_BYTES)])
 
         assert reply is not None
-        assert reply["code"] == "attachment_binary"
+        assert reply["code"] == "attachment_no_vision"
         assert "screenshot.png" in reply["message"]
-        # Actionable, and honest about why images are out for now.
-        assert "text" in reply["message"].lower()
         assert sess._user_message_queue.empty()
         await daemon._shutdown()
 
@@ -395,11 +435,13 @@ class TestDaemonRefusal:
 
         # The session's loop drains the queue on a 50ms poll, so capture at
         # the enqueue rather than racing it.
-        captured: list[str] = []
+        captured: list[QueuedUserMessage] = []
         original = sess.add_user_message
 
-        async def spy(content: str) -> None:
-            captured.append(content)
+        async def spy(content: str | QueuedUserMessage) -> None:
+            captured.append(
+                QueuedUserMessage.plain(content) if isinstance(content, str) else content
+            )
             await original(content)
 
         sess.add_user_message = spy  # type: ignore[method-assign]
@@ -410,7 +452,7 @@ class TestDaemonRefusal:
 
         assert reply is None  # no error is the ack
         assert len(captured) == 1
-        assert captured[0] == (
+        assert captured[0].display == (
             "explain this\n\n"
             "--- attached file: hello.py (12 bytes) ---\n"
             "print('hi')\n\n"
@@ -426,18 +468,21 @@ class TestDaemonRefusal:
         sess = daemon.session_registry.get(session_id)
         assert sess is not None
 
-        captured: list[str] = []
+        captured: list[QueuedUserMessage] = []
         original = sess.add_user_message
 
-        async def spy(content: str) -> None:
-            captured.append(content)
+        async def spy(content: str | QueuedUserMessage) -> None:
+            captured.append(
+                QueuedUserMessage.plain(content) if isinstance(content, str) else content
+            )
             await original(content)
 
         sess.add_user_message = spy  # type: ignore[method-assign]
 
         raw = json.dumps({"type": "user_message", "session_id": session_id, "content": "plain"})
         assert await daemon._handle_message(raw, None) is None
-        assert captured == ["plain"]
+        assert len(captured) == 1
+        assert captured[0].display == "plain"
         await daemon._shutdown()
 
     async def test_boundary_update_carries_the_limits(self, tmp_path: Path) -> None:
@@ -456,4 +501,42 @@ class TestDaemonRefusal:
         assert len(updates) == 1
         assert updates[0].attachments.max_count == 3
         assert updates[0].attachments.max_file_bytes == DEFAULT_MAX_FILE_BYTES
+        await daemon._shutdown()
+
+    async def test_image_accepted_when_vision_enabled(self, tmp_path: Path) -> None:
+        daemon = Daemon(data_dir=tmp_path / "data")
+        preset_name = daemon.config.active_preset
+        preset = daemon.config.presets[preset_name]
+        brain = preset.brain.model_copy(update={"vision": True})
+        daemon.config = daemon.config.model_copy(
+            update={
+                "presets": {
+                    **daemon.config.presets,
+                    preset_name: preset.model_copy(update={"brain": brain}),
+                }
+            }
+        )
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        session_id = await _open(daemon, workspace)
+        sess = daemon.session_registry.get(session_id)
+        assert sess is not None
+
+        captured: list[QueuedUserMessage] = []
+        original = sess.add_user_message
+
+        async def spy(content: str | QueuedUserMessage) -> None:
+            captured.append(
+                QueuedUserMessage.plain(content) if isinstance(content, str) else content
+            )
+            await original(content)
+
+        sess.add_user_message = spy  # type: ignore[method-assign]
+
+        reply = await _send(daemon, session_id, [attach("shot.png", PNG_BYTES)], content="look")
+        assert reply is None
+        assert len(captured) == 1
+        assert "[Images attached: shot.png" in captured[0].display
+        assert isinstance(captured[0].provider, list)
+        assert captured[0].provider[1]["type"] == "image_url"
         await daemon._shutdown()

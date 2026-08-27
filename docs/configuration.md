@@ -534,6 +534,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
 | `max_output_tokens` | int > 0 | *required* | The answer reservation subtracted from `context_window` — see below. |
+| `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
