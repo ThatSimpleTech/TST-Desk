@@ -6209,12 +6209,19 @@ permissions). That is why TD-1302 / TD-1303 stay open after a green
 Linux guest.
 
 **Acceptance criteria:**
-- [ ] The first `package.yml` run on `main` has real job steps and
+- [x] The first `package.yml` run on `main` has real job steps and
       produces the four artifacts, or a written account of which org
       setting still blocks it
-- [ ] Local Linux smoke stays the Linux evidence; Actions is the
+- [x] Local Linux smoke stays the Linux evidence; Actions is the
       four-platform gate
-- [ ] No workaround that binds a non-loopback socket or phones home
+- [x] No workaround that binds a non-loopback socket or phones home
+
+**Done (2026-08-27):** Investigation in `docs/ci-actions-blocked.md`.
+Symptom: jobs spawn with **empty step lists** and fail in ~4s (`ci.yml`)
+or sit **pending with zero jobs** (`package.yml`) — org Actions
+billing/policy, not repo logic. `package.yml` push now filters to
+packaging paths so doc merges do not flood the queue. Recovery requires
+an org admin; local `smoke_linux_bundle.sh` unchanged.
 
 ---
 
