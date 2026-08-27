@@ -1180,6 +1180,8 @@ class TierState(DaemonEvent):
     # Plan mode (TD-4603): when true, every completion is brain until
     # cleared. Default false so older fixtures and emitters stay valid.
     plan: bool = False
+    # Active tier accepts image attachments (TD-4705). Default false.
+    vision: bool = False
 
 
 class BoundaryUpdate(DaemonEvent):

@@ -36,6 +36,7 @@
 		running = false,
 		value = $bindable(""),
 		limits,
+		allowImages = false,
 		onsubmit,
 		oncancel,
 	}: {
@@ -47,6 +48,8 @@
 		value?: string;
 		/** The workspace's caps, from `boundary_update` (TD-1709). */
 		limits: AttachmentLimits;
+		/** Active tier accepts images (TD-4705), from `tier_state`. */
+		allowImages?: boolean;
 		onsubmit: (text: string, attachments: readonly AttachmentDraft[]) => void;
 		oncancel?: () => void;
 	} = $props();
@@ -100,7 +103,7 @@
 		refusal = null;
 		for (const file of files) {
 			const bytes = new Uint8Array(await file.arrayBuffer());
-			const outcome = acceptAttachment(file.name, bytes, limits, attachments);
+			const outcome = acceptAttachment(file.name, bytes, limits, attachments, allowImages);
 			if (!outcome.ok) {
 				refusal = outcome.refusal;
 				return;

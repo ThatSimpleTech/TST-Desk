@@ -94,17 +94,73 @@ export function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/** Magic-byte image detection — same set as core/tstd/attachments.py (TD-4705). */
+export function detectImageMime(bytes: Uint8Array): string | null {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 6 &&
+    ((bytes[0] === 0x47 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x38 &&
+      (bytes[4] === 0x37 || bytes[4] === 0x39) &&
+      bytes[5] === 0x61) ||
+      (bytes[0] === 0x47 &&
+        bytes[1] === 0x49 &&
+        bytes[2] === 0x46 &&
+        bytes[3] === 0x38 &&
+        bytes[4] === 0x39 &&
+        bytes[5] === 0x61))
+  ) {
+    return "image/gif";
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  return null;
+}
+
 /** Vet one dropped/picked/pasted file against the caps and the text test.
  *
  *  `staged` is what the composer already holds, so the count and the running
  *  total are judged against the message as it will actually be sent. Every
  *  refusal names the file and the way forward, and none of them claims
- *  anything was sent — nothing has been. */
+ *  anything was sent — nothing has been.
+ *
+ *  When `allowImages` is true (from `tier_state.vision`, TD-4705), PNG/JPEG/
+ *  GIF/WebP pass; other binary still refuses. When false, images refuse with
+ *  `attachment_no_vision` rather than the generic binary copy. */
 export function acceptAttachment(
   rawName: string,
   bytes: Uint8Array,
   limits: AttachmentLimits,
   staged: readonly NewAttachment[] = [],
+  allowImages = false,
 ): AttachmentOutcome {
   const name = safeName(rawName) || "file";
 
@@ -141,13 +197,31 @@ export function acceptAttachment(
     };
   }
 
+  const mime = detectImageMime(bytes);
+  if (mime !== null) {
+    if (!allowImages) {
+      return {
+        ok: false,
+        refusal: {
+          name,
+          code: "attachment_no_vision",
+          message: `${name} is an image, but the active model does not accept images. Set vision: true on that tier in config.yaml, or switch to a vision-capable preset.`,
+        },
+      };
+    }
+    return {
+      ok: true,
+      draft: { name, size: bytes.length, content_b64: toBase64(bytes) },
+    };
+  }
+
   if (!isTextBytes(bytes)) {
     return {
       ok: false,
       refusal: {
         name,
         code: "attachment_binary",
-        message: `${name} isn't a text file, so it can't be attached. TST Desk attaches text files only — images need vision support, which depends on the models you've chosen and isn't in this version.`,
+        message: `${name} isn't a text file, so it can't be attached. Attach a text file instead.`,
       },
     };
   }

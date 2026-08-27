@@ -39,6 +39,23 @@ if TYPE_CHECKING:
 log = get_logger("tstd.session")
 
 
+@dataclass(frozen=True)
+class QueuedUserMessage:
+    """A user turn waiting for the loop (TD-4705).
+
+    ``display`` feeds the event log, memory loader, and assembler;
+    ``provider`` is what the OpenAI-compatible client sends (plain text
+    or multimodal parts when images are attached).
+    """
+
+    display: str
+    provider: str | list[dict[str, Any]]
+
+    @classmethod
+    def plain(cls, text: str) -> QueuedUserMessage:
+        return cls(display=text, provider=text)
+
+
 class SessionError(Exception):
     """Session-related error."""
 
@@ -229,7 +246,7 @@ class Session:
         self._state = "idle"
         self.event_log = SessionEventLog()
         self._cancel_event = asyncio.Event()
-        self._user_message_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._user_message_queue: asyncio.Queue[QueuedUserMessage] = asyncio.Queue()
         # The loop's conversation lives here so a fork can truncate it
         # (TD-1708).  The loop aliases this list; it must not rebind.
         self.conversation: list[ChatMessage] = []
@@ -710,17 +727,17 @@ class Session:
         """
         return self._user_message_queue.qsize()
 
-    async def add_user_message(self, content: str) -> None:
+    async def add_user_message(self, content: str | QueuedUserMessage) -> None:
         """Enqueue a user message for the agent loop to process."""
         self._open_turns += 1
-        self._user_message_queue.put_nowait(content)
+        queued = QueuedUserMessage.plain(content) if isinstance(content, str) else content
+        self._user_message_queue.put_nowait(queued)
 
-    async def wait_for_user_message(self) -> str | None:
+    async def wait_for_user_message(self) -> QueuedUserMessage | None:
         """Wait for the next user message.
 
-        Returns the message content, or ``None`` if the session is
-        cancelled while waiting.  Uses a short poll so cancellation is
-        responsive.
+        Returns the queued turn, or ``None`` if the session is cancelled
+        while waiting.  Uses a short poll so cancellation is responsive.
         """
         while True:
             if self._cancel_event.is_set():
@@ -804,8 +821,10 @@ class Session:
         restored = deepcopy(siblings[sibling_index])
         self.conversation[:] = restored
         self._drain_user_queue()
+        from .provider import content_as_text
+
         users = [m for m in self.conversation if m.role == "user"]
-        text = users[user_index].content or "" if user_index < len(users) else ""
+        text = content_as_text(users[user_index].content) if user_index < len(users) else ""
         return self._emit_reset(user_index, text)
 
     @property

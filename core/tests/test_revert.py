@@ -115,7 +115,7 @@ async def test_single_drift_reverts_to_last_good_and_continues(tmp_path: Path) -
     assert _queued(session) == 2
     msg = session._user_message_queue.get_nowait()
     session._user_message_queue.get_nowait()
-    assert CONTINUE_PREFIX in msg
+    assert CONTINUE_PREFIX in msg.display
     assert (repo / "feature.txt").read_text(encoding="utf-8") == "good\n"
     assert not (repo / "extra.txt").exists()
     assert _git(repo, "rev-parse", f"refs/heads/{branch}") == good

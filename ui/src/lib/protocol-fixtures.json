@@ -639,7 +639,8 @@
       "worker": "mock.local",
       "validator": "mock.local"
     },
-    "plan": false
+    "plan": false,
+    "vision": false
   },
   "tier_state_override": {
     "type": "tier_state",
@@ -658,7 +659,8 @@
       "worker": "mock.local",
       "validator": "mock.local"
     },
-    "plan": false
+    "plan": false,
+    "vision": false
   },
   "tier_state_plan": {
     "type": "tier_state",
@@ -677,7 +679,8 @@
       "worker": "mock.local",
       "validator": "mock.local"
     },
-    "plan": true
+    "plan": true,
+    "vision": false
   },
   "ping": {
     "type": "ping"
