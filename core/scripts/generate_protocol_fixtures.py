@@ -453,6 +453,7 @@ FIXTURES = {
             "worker": "mock.local",
             "validator": "mock.local",
         },
+        vision=False,
         seq=18,
     ),
     "tier_state_override": TierState(

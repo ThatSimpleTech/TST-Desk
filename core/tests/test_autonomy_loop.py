@@ -336,7 +336,7 @@ class TestLaunch:
         async def _idle(session: Session, *_args: object, **_kwargs: object) -> None:
             content = await session.wait_for_user_message()
             if content is not None:
-                seen.append(content)
+                seen.append(content.display)
 
         monkeypatch.setattr("tstd.daemon.agent_loop", _idle)
         daemon = Daemon(data_dir=tmp_path / "data")

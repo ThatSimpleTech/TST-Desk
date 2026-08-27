@@ -1,4 +1,4 @@
-"""Text-file attachments on a user message (TD-1709).
+"""Text-file and image attachments on a user message (TD-1709, TD-4705).
 
 **The daemon is the gate, not the composer.**  A client is not trustworthy:
 it can be an older build, a stalled one, or something that is not our UI at
@@ -23,7 +23,7 @@ import base64
 import binascii
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -79,8 +79,14 @@ class DecodedAttachment:
     """One attachment the daemon has accepted, decoded and measured itself."""
 
     name: str
-    text: str
     size: int
+    text: str | None = None
+    mime: str | None = None
+    data_b64: str | None = None
+
+    @property
+    def is_image(self) -> bool:
+        return self.mime is not None
 
 
 def format_bytes(count: int) -> str:
@@ -93,14 +99,7 @@ def format_bytes(count: int) -> str:
 
 
 def _safe_name(raw: str) -> str:
-    """The basename, with anything that could forge a delimiter refused.
-
-    The name is client-supplied and lands in two places that matter: the
-    prompt the model reads, and the chip the user reads.  A newline in it
-    could counterfeit the block markers below, and a path could imply the
-    daemon read a file it never touched — so both are stripped or refused
-    rather than trusted.
-    """
+    """The basename, with anything that could forge a delimiter refused."""
     name = raw.replace("\\", "/").rsplit("/", 1)[-1].strip()
     if name in ("", ".", ".."):
         raise AttachmentError(
@@ -117,18 +116,26 @@ def _safe_name(raw: str) -> str:
     return name
 
 
-def _decode_text(name: str, raw: bytes) -> str:
-    """Strict UTF-8, plus a NUL scan — the whole text/binary test.
+def detect_image_mime(raw: bytes) -> str | None:
+    """Magic-byte image detection. No resize — bytes are sent as-is (TD-4705)."""
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if raw.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
-    NUL is legal UTF-8 but is the oldest and most reliable binary tell, and
-    it is what would end a C string mid-prompt; refusing it costs nothing on
-    real text files.
-    """
+
+def _decode_text(name: str, raw: bytes) -> str:
+    """Strict UTF-8, plus a NUL scan — the whole text/binary test."""
     binary = AttachmentError(
         "attachment_binary",
-        f"{name} isn't a text file, so it can't be attached. TST Desk attaches "
-        "text files only — images need vision support, which depends on the "
-        "models you've chosen and isn't in this version. Nothing was sent.",
+        f"{name} isn't a text file, so it can't be attached. Attach a text "
+        "file, or enable vision on the active tier in config.yaml if this is "
+        "an image. Nothing was sent.",
     )
     if b"\x00" in raw:
         raise binary
@@ -138,20 +145,22 @@ def _decode_text(name: str, raw: bytes) -> str:
         raise binary from e
 
 
+def _no_vision_refusal(name: str) -> AttachmentError:
+    return AttachmentError(
+        "attachment_no_vision",
+        f"{name} is an image, but the active model does not accept images. "
+        "Set vision: true on that tier in config.yaml, or switch to a "
+        "vision-capable preset. Nothing was sent.",
+    )
+
+
 def decode_attachments(
     items: Sequence[AttachmentLike],
     limits: AttachmentLimits,
+    *,
+    allow_images: bool = False,
 ) -> list[DecodedAttachment]:
-    """Decode and vet every attachment on a message, or refuse the message.
-
-    All-or-nothing on purpose: a partial send would drop a file the user can
-    see in their own composer, and they would have no way to tell which.
-
-    Raises:
-        AttachmentError: On the first attachment that breaks a cap, fails to
-            decode, or is not text.  ``code`` is the wire error code and
-            ``message`` is copy that names the file and the way forward.
-    """
+    """Decode and vet every attachment on a message, or refuse the message."""
     if not items:
         return []
 
@@ -196,27 +205,79 @@ def decode_attachments(
                 ".tst/config.yaml. Nothing was sent.",
             )
 
-        decoded.append(DecodedAttachment(name=name, text=_decode_text(name, raw), size=len(raw)))
+        mime = detect_image_mime(raw)
+        if mime is not None:
+            if not allow_images:
+                raise _no_vision_refusal(name)
+            decoded.append(
+                DecodedAttachment(
+                    name=name,
+                    size=len(raw),
+                    mime=mime,
+                    data_b64=base64.b64encode(raw).decode("ascii"),
+                )
+            )
+            continue
+
+        text = _decode_text(name, raw)
+        decoded.append(DecodedAttachment(name=name, text=text, size=len(raw)))
 
     return decoded
 
 
 def render_user_content(text: str, attachments: Sequence[DecodedAttachment]) -> str:
-    """Fold accepted attachments into the message the model actually reads.
-
-    Plain delimiter lines rather than code fences: a fence would need
-    escaping the moment an attached markdown file contained one, and the
-    escaping is the part that goes wrong.  ``_safe_name`` is what keeps a
-    file name from counterfeiting these lines.
-    """
-    if not attachments:
+    """Fold accepted text attachments into the message the model reads."""
+    text_files = [a for a in attachments if not a.is_image]
+    if not text_files:
+        image_note = _image_summary(attachments)
+        if image_note and text:
+            return f"{text}\n\n{image_note}"
+        if image_note:
+            return image_note
         return text
 
     blocks = [text] if text else []
-    for item in attachments:
+    for item in text_files:
+        assert item.text is not None
         blocks.append(
             f"--- attached file: {item.name} ({item.size} bytes) ---\n"
             f"{item.text}\n"
             f"--- end of {item.name} ---"
         )
-    return "\n\n".join(blocks)
+    body = "\n\n".join(blocks)
+    image_note = _image_summary(attachments)
+    if image_note:
+        body = f"{body}\n\n{image_note}" if body else image_note
+    return body
+
+
+def _image_summary(attachments: Sequence[DecodedAttachment]) -> str:
+    images = [a for a in attachments if a.is_image]
+    if not images:
+        return ""
+    names = ", ".join(f"{a.name} ({a.size} bytes)" for a in images)
+    return f"[Images attached: {names}]"
+
+
+def build_provider_user_content(
+    text: str,
+    attachments: Sequence[DecodedAttachment],
+) -> str | list[dict[str, Any]]:
+    """OpenAI-compatible user content — text and/or image_url parts (TD-4705)."""
+    images = [a for a in attachments if a.is_image]
+    if not images:
+        return render_user_content(text, attachments)
+
+    parts: list[dict[str, Any]] = []
+    prose = render_user_content(text, [a for a in attachments if not a.is_image])
+    if prose:
+        parts.append({"type": "text", "text": prose})
+    for item in images:
+        assert item.mime is not None and item.data_b64 is not None
+        parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{item.mime};base64,{item.data_b64}"},
+            }
+        )
+    return parts

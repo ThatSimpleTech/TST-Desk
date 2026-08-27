@@ -22,6 +22,7 @@ from .memory_distill import (
 )
 from .memory_store import memory_dir, memory_max_lines, replace_memory_file
 from .protocol import MemoryFileDiff, MemoryFileEdit, MemoryProposal, TurnComplete
+from .provider import content_as_text
 from .session import Session
 
 
@@ -46,9 +47,10 @@ def completed_turn_count(session: Session) -> int:
 def turns_from_conversation(session: Session) -> tuple[DistillTurn, ...]:
     out: list[DistillTurn] = []
     for msg in session.conversation:
-        if msg.role not in {"user", "assistant"} or not msg.content:
+        text = content_as_text(msg.content)
+        if msg.role not in {"user", "assistant"} or not text:
             continue
-        out.append(DistillTurn(msg.role, msg.content))
+        out.append(DistillTurn(msg.role, text))
     return tuple(out)
 
 

@@ -131,6 +131,7 @@
 			running={showCancel(chat.turnState) || chat.awaitingFirstToken}
 			bind:value={draft}
 			limits={session.attachmentLimits}
+			allowImages={session.vision}
 			onsubmit={(text, attachments) => {
 				sendUserMessage(text, attachments);
 			}}

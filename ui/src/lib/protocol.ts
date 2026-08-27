@@ -789,6 +789,8 @@ export interface TierState extends DaemonEvent {
   hosts?: Record<string, string>;
   /** Plan mode (brain lock). Omitted by older daemons — treat as off. */
   plan?: boolean;
+  /** Active tier accepts images (TD-4705). Omitted by older daemons — treat as off. */
+  vision?: boolean;
 }
 
 export interface BoundaryUpdate extends DaemonEvent {

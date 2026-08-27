@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from .config import TierConfig
 from .context.tokens import TokenCounter
-from .provider import ChatMessage
+from .provider import ChatMessage, content_as_text
 
 # Trigger compaction at this fraction of the usable window.
 THRESHOLD_FRACTION = 0.8
@@ -51,7 +51,7 @@ def estimate_tokens(messages: list[ChatMessage], counter: TokenCounter) -> tuple
     total = 0
     methods: set[str] = set()
     for message in messages:
-        text = message.content or ""
+        text = content_as_text(message.content)
         if message.tool_calls:
             text += "".join(
                 tc.function.arguments for tc in message.tool_calls if tc.function is not None
@@ -91,7 +91,7 @@ def _render_summary(dropped: list[ChatMessage]) -> str:
     lines = ["[Earlier conversation compacted]"]
     for message in dropped:
         if message.role == "user":
-            lines.append(f"User: {_truncate(message.content or '')}")
+            lines.append(f"User: {_truncate(content_as_text(message.content))}")
         elif message.role == "assistant":
             if message.tool_calls:
                 names = ", ".join(
@@ -99,11 +99,11 @@ def _render_summary(dropped: list[ChatMessage]) -> str:
                 )
                 lines.append(f"Assistant called tools: {names}")
             else:
-                lines.append(f"Assistant: {_truncate(message.content or '')}")
+                lines.append(f"Assistant: {_truncate(content_as_text(message.content))}")
         elif message.role == "tool":
-            lines.append(f"Tool result: {_truncate(message.content or '')}")
+            lines.append(f"Tool result: {_truncate(content_as_text(message.content))}")
         else:  # system: only a prior summary can land here — fold it in
-            lines.append(message.content or "")
+            lines.append(content_as_text(message.content))
     body = "\n".join(lines)
     if len(body) > _SUMMARY_MAX_CHARS:
         body = body[:_SUMMARY_MAX_CHARS] + "…"
