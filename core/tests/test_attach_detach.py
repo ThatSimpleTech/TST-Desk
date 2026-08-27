@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from websockets.asyncio.client import connect
 
+from tests.platform_helpers import stop_daemon_gracefully
 from tstd.daemon import Daemon
 from tstd.protocol import PROTOCOL_VERSION, AssistantDelta
 
@@ -118,8 +119,7 @@ class TestAttachDetachIntegration:
         await session.event_log.add(AssistantDelta(session_id=session_id, delta="b", seq=1))
         expected = [event.seq for event in session.event_log.events_from(1)]
         await ws.close()
-        first._shutdown_event.set()
-        await asyncio.gather(first_task, return_exceptions=True)
+        await stop_daemon_gracefully(first, first_task)
 
         second = Daemon(data_dir=data_dir)
         second_task = asyncio.create_task(second.run())
@@ -143,8 +143,7 @@ class TestAttachDetachIntegration:
             replayed.append(json.loads(await asyncio.wait_for(ws.recv(), timeout=2)))
         assert [frame["seq"] for frame in replayed] == restored
         await ws.close()
-        second._shutdown_event.set()
-        await asyncio.gather(second_task, return_exceptions=True)
+        await stop_daemon_gracefully(second, second_task)
 
     @pytest.mark.asyncio
     async def test_attach_streams_live_events(self, tmp_path: Path) -> None:

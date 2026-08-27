@@ -80,11 +80,19 @@ def scheduler_fixture_ws(name: str = "ws") -> Path:
 async def stop_daemon_gracefully(daemon: Daemon, task: asyncio.Task[Any]) -> None:
     """Shut down an in-process daemon without leaving audit.db open on Windows."""
     daemon._shutdown_event.set()
+    timeout = 15.0 if sys.platform == "win32" else 5.0
     if task.done():
+        if daemon._audit_writer is not None:
+            await daemon._audit_writer.close()
+            daemon._audit_writer = None
         return
     try:
-        await asyncio.wait_for(asyncio.shield(task), timeout=5)
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
     except (TimeoutError, asyncio.CancelledError):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+    finally:
+        if daemon._audit_writer is not None:
+            await daemon._audit_writer.close()
+            daemon._audit_writer = None
