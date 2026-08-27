@@ -122,6 +122,8 @@ import type {
   SaveJob,
   DeleteJob,
   JobList,
+  Transcribe,
+  Transcript,
   Ping,
   Error,
   Attachment,
@@ -808,6 +810,8 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.mcp_servers?.every((s) => isString(s.id) && (s.transport === "stdio" || s.transport === "http"))).toBe(
       true,
     );
+    expect(isBoolean(m.speech_enabled)).toBe(true);
+    expect(isBoolean(m.speech_ready)).toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
   });
@@ -942,6 +946,7 @@ describe("All fixtures have required shape", () => {
       "set_cu_kill",
       "set_remote_attach",
       "list_jobs", "save_job", "delete_job",
+      "transcribe",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -966,6 +971,7 @@ describe("All fixtures have required shape", () => {
       "design_hit",
       "cu_permissions",
       "job_list",
+      "transcript",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -1274,6 +1280,20 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isNumber(jobs.seq)).toBe(true);
     expect(isString(jobs.jobs[0]?.id)).toBe(true);
     expect("session_id" in jobs).toBe(false);
+  });
+
+  it("transcribe / transcript (TD-4701)", () => {
+    const req = fixtures.transcribe as Transcribe;
+    expect(req.type).toBe("transcribe");
+    expect(isString(req.audio_b64)).toBe(true);
+    expect(isString(req.mime)).toBe(true);
+    expect("session_id" in req).toBe(false);
+    const reply = fixtures.transcript as Transcript;
+    expect(reply.type).toBe("transcript");
+    expect(isBoolean(reply.ok)).toBe(true);
+    expect(isString(reply.text)).toBe(true);
+    expect(isNumber(reply.seq)).toBe(true);
+    expect("session_id" in reply).toBe(false);
   });
 
   it("session_list carries the auto-title field (TD-3001)", () => {

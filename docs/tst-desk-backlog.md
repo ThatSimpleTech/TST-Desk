@@ -6028,10 +6028,16 @@ the product." Web search is already TD-609/TD-610.
 **Size:** 8 · **Depends on:** TD-1004
 
 **Acceptance criteria:**
-- [ ] A hold-to-talk control transcribes into the composer locally or
+- [x] A hold-to-talk control transcribes into the composer locally or
       via a user-configured speech endpoint (config-sourced host)
-- [ ] No always-on mic. No cloud default
-- [ ] Off by default
+- [x] No always-on mic. No cloud default
+- [x] Off by default
+
+**Done (2026-08-27):** Hold-to-talk in the composer. Mic opens only
+while held (30s cap). `speech:` in user config (`enabled: false`,
+empty `base_url`). Daemon `transcribe` → `{base_url}/audio/transcriptions`
+→ `transcript`. No Web Speech API. macOS mic usage string + audio-input
+entitlement.
 
 ---
 

@@ -239,6 +239,7 @@ from .protocol import (
     Shutdown,
     StartAutonomy,
     TierState,
+    Transcribe,
     UsageExported,
     UsageReport,
     UsageRollup,
@@ -292,6 +293,7 @@ from .session_lifecycle import archive_session, delete_session, move_session, re
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
+from .speech import transcribe as transcribe_audio
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .workspace_pins import load_workspace_pins, save_workspace_pins
@@ -693,6 +695,8 @@ class Daemon:
                 )
                 for sid, spec in sorted(self.config.mcp.servers.items())
             ],
+            speech_enabled=self.config.speech.enabled,
+            speech_ready=self.config.speech.enabled and bool(self.config.speech.base_url),
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
@@ -1888,6 +1892,9 @@ class Daemon:
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, Transcribe):
+            return (await transcribe_audio(self.config, msg.audio_b64, msg.mime)).model_dump_json()
 
         if isinstance(msg, SetApiKey):
             try:

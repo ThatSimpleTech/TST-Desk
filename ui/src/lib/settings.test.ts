@@ -611,3 +611,19 @@ describe("mcp section", () => {
 		expect(mocks.sent).toEqual([]);
 	});
 });
+
+describe("speech flags (TD-4701)", () => {
+	it("reads speech_enabled and speech_ready from setup_state", () => {
+		startSettings();
+		emit(setupState({ speech_enabled: true, speech_ready: true }));
+		expect(settings.speechEnabled).toBe(true);
+		expect(settings.speechReady).toBe(true);
+	});
+
+	it("stays off when the daemon omits the fields", () => {
+		startSettings();
+		emit(setupState());
+		expect(settings.speechEnabled).toBe(false);
+		expect(settings.speechReady).toBe(false);
+	});
+});

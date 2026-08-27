@@ -72,6 +72,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "design_hit", // TD-3403
   "cu_permissions", // TD-3302
   "job_list", // TD-3805
+  "transcript", // TD-4701
 ]);
 
 /**
@@ -489,6 +490,12 @@ export class ProtocolClient {
     // acceptSequenced would drop it after attach the same way it dropped
     // instruction_stack snapshots before TD-1204.
     if (type === "design_hit") {
+      this.dispatch(msg as DaemonEventUnion);
+      return;
+    }
+
+    // TD-4701: transcript is connection-scoped (seq=1, not in the log).
+    if (type === "transcript") {
       this.dispatch(msg as DaemonEventUnion);
       return;
     }
