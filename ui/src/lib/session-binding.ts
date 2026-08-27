@@ -50,7 +50,31 @@ export interface BindContext {
 export function chooseBoundSession(
   summaries: readonly SessionSummary[],
   currentId: string | null,
+  windowBind: string | null = null,
 ): SessionBinding {
+  if (windowBind !== null) {
+    const bound = summaries.find((s) => s.session_id === windowBind);
+    if (bound === undefined) {
+      if (currentId === windowBind) {
+        return { action: "keep", turnState: null };
+      }
+      return { action: "unbind" };
+    }
+    if (bound.archived || isTerminal(bound.state)) {
+      return { action: "unbind" };
+    }
+    if (currentId === windowBind) {
+      return {
+        action: "keep",
+        turnState: bound.state === "running" ? null : bound.state,
+      };
+    }
+    return {
+      action: "bind",
+      sessionId: windowBind,
+      turnState: bound.state === "running" ? null : bound.state,
+    };
+  }
   // Keep the current session while the daemon still lists it *and* still files
   // it under the default view; else bind the most recently updated one.
   // Archiving the bound session (TD-1715) is therefore a rebind, not a pane

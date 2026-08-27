@@ -27,6 +27,7 @@
 		confirmDelete,
 		moveRow,
 		moveTargets,
+		openSessionInNewWindow,
 		renameSession,
 		requestDelete,
 		requestMove,
@@ -72,6 +73,7 @@
 		else if (id === 'archive') setArchived(row.sessionId, true);
 		else if (id === 'unarchive') setArchived(row.sessionId, false);
 		else if (id === 'move') requestMove(row.sessionId);
+		else if (id === 'open-window') openSessionInNewWindow(row.sessionId);
 		else if (id === 'delete') requestDelete(row.sessionId);
 	}
 

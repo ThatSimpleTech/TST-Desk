@@ -143,6 +143,7 @@ export type RailRowActionId =
 	| "archive"
 	| "unarchive"
 	| "move"
+	| "open-window"
 	| "delete";
 
 export interface RailRowAction {
@@ -218,6 +219,13 @@ export function rowActions(archived: boolean, starred = false): RailRowAction[] 
 					hint: "Hide this session from the list. Keeps everything, cancels nothing.",
 				},
 		{ id: "move", label: "Move to project", icon: "folder", danger: false, hint: MOVE_HINT },
+		{
+			id: "open-window",
+			label: "Open in new window",
+			icon: "layers",
+			danger: false,
+			hint: "Open this session in a separate window. One daemon serves both.",
+		},
 		{
 			id: "delete",
 			label: "Delete",

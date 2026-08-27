@@ -16,6 +16,7 @@ import {
 	coworkerBadge,
 	firstAwaitingSession,
 	focusApprovalCard,
+	trayRunningCount,
 } from "./coworker-indicator";
 import type { DaemonEventUnion } from "./protocol";
 
@@ -23,6 +24,7 @@ export const WINDOW_VISIBILITY_EVENT = "window-visibility";
 
 export interface CoworkerIndicatorBridge {
 	setBadge(label: string | null): Promise<void>;
+	setTrayCount(count: number): Promise<void>;
 	focusCard(toolCallId: string): boolean;
 	switchSession(sessionId: string): void;
 }
@@ -100,9 +102,12 @@ function ingest(event: DaemonEventUnion): void {
 function syncBadge(): void {
 	if (bridge === null) return;
 	const next = coworkerBadge(windowHidden, [...sessionStates.values()]);
-	if (next === lastBadge) return;
-	lastBadge = next;
-	void bridge.setBadge(next);
+	if (next !== lastBadge) {
+		lastBadge = next;
+		void bridge.setBadge(next);
+	}
+	const count = trayRunningCount([...sessionStates.values()]);
+	void bridge.setTrayCount(count);
 }
 
 function revealApprovals(): void {
@@ -149,6 +154,11 @@ export function createTauriCoworkerBridge(): CoworkerIndicatorBridge {
 			if (!isTauri()) return;
 			const { invoke } = await import("@tauri-apps/api/core");
 			await invoke("set_coworker_indicator", { label });
+		},
+		async setTrayCount(count) {
+			if (!isTauri()) return;
+			const { invoke } = await import("@tauri-apps/api/core");
+			await invoke("set_tray_running_count", { count: count > 0 ? count : null });
 		},
 		focusCard(toolCallId) {
 			return focusApprovalCard(toolCallId);
