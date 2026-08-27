@@ -6198,12 +6198,17 @@ this exists. This story is the certs and the build wiring, not the
 updater UI.
 
 **Acceptance criteria:**
-- [ ] Decision recorded: which platforms get a cert in v0.1, cost, and
+- [x] Decision recorded: which platforms get a cert in v0.1, cost, and
       who holds the secret (OS keychain / CI OIDC — never the repo)
-- [ ] macOS notarization and Windows Authenticode each either land or
+- [x] macOS notarization and Windows Authenticode each either land or
       are explicitly refused with copy the README already warns about
-- [ ] Linux remains unsigned unless a cheap path appears
-- [ ] No telemetry in the signing path
+- [x] Linux remains unsigned unless a cheap path appears
+- [x] No telemetry in the signing path
+
+**Done (2026-08-27):** v0.1 explicitly refuses signing on all platforms;
+`docs/signing.md` records cost, secret homes (GitHub encrypted secrets +
+OS keychain for runtime keys), and future CI env wiring. README unsigned
+section unchanged; points at the doc. TD-4704 stays off until certs land.
 
 ---
 
