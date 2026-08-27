@@ -411,6 +411,56 @@ async def delete_ntfy_topic_url() -> None:
     await backend.delete_secret(NTFY_TOPIC_ACCOUNT)
 
 
+DISCORD_WEBHOOK_ACCOUNT = "tst-discord-webhook"
+
+
+async def get_discord_webhook_url() -> str:
+    """Retrieve the Discord incoming-webhook URL from the OS keychain.
+
+    Stored under account ``tst-discord-webhook``. The URL is a secret —
+    callers must not write it to config, logs, or the audit database.
+    """
+    backend = _get_backend()
+    return await backend.get_secret(DISCORD_WEBHOOK_ACCOUNT)
+
+
+async def store_discord_webhook_url(url: str) -> None:
+    """Store the Discord incoming-webhook URL in the OS keychain."""
+    backend = _get_backend()
+    await backend.set_secret(DISCORD_WEBHOOK_ACCOUNT, url)
+
+
+async def delete_discord_webhook_url() -> None:
+    """Delete the Discord incoming-webhook URL from the OS keychain."""
+    backend = _get_backend()
+    await backend.delete_secret(DISCORD_WEBHOOK_ACCOUNT)
+
+
+TELEGRAM_BOT_ACCOUNT = "tst-telegram-bot"
+
+
+async def get_telegram_bot_url() -> str:
+    """Retrieve the Telegram bot sendMessage URL from the OS keychain.
+
+    Stored under account ``tst-telegram-bot``. The URL is a secret —
+    callers must not write it to config, logs, or the audit database.
+    """
+    backend = _get_backend()
+    return await backend.get_secret(TELEGRAM_BOT_ACCOUNT)
+
+
+async def store_telegram_bot_url(url: str) -> None:
+    """Store the Telegram bot sendMessage URL in the OS keychain."""
+    backend = _get_backend()
+    await backend.set_secret(TELEGRAM_BOT_ACCOUNT, url)
+
+
+async def delete_telegram_bot_url() -> None:
+    """Delete the Telegram bot sendMessage URL from the OS keychain."""
+    backend = _get_backend()
+    await backend.delete_secret(TELEGRAM_BOT_ACCOUNT)
+
+
 def has_keychain_backend() -> bool:
     """Check if a keychain backend is available for this platform."""
     try:

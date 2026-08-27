@@ -8841,3 +8841,29 @@ do for async mermaid.
 **Alternative rejected:** `marked` calling mermaid/KaTeX inline
 (blocks first paint; mermaid is async). Also rejected: `$…$` inline
 math. Also rejected: rendering markdown `<img>` here (TD-4705).
+
+---
+
+## 2026-08-27 — TD-4707: Discord and Telegram as sibling send() (Class B)
+
+**Decision:** Add `notify/discord.py` and `notify/telegram.py` as
+standalone `send(config, message)` modules, same shape as Slack and
+ntfy. Slack remains the default (`tstd.notify.send` still re-exports
+Slack; shipped yaml lists Slack first). There is no gateway, plugin
+loader, or extra channel. Discord POSTs `{"content": message}`.
+Telegram POSTs `{"chat_id", "text"}`; `chat_id` lives on the keychain
+URL as `?chat_id=`, not in yaml, so the config shape stays
+`enabled` / `host` / `timeout_seconds`. Hosts stay config-sourced.
+Secrets: `tst-discord-webhook`, `tst-telegram-bot`. Scheduler
+`deliver_to` stays `window | slack | ntfy` — extras fire on the same
+approval / turn-complete / autonomy-stop path as Slack, not a new
+job channel.
+
+**Rationale:** Spec §8 lifts notification channels as sibling modules
+and skips a 20-platform gateway. Putting `chat_id` in yaml would be a
+second secret-adjacent field and a different schema from Slack.
+
+**Alternative rejected:** A dispatcher that maps channel name to a
+module (that is a gateway). Also rejected: `notify.telegram.chat_id`
+in yaml. Also rejected: extending scheduler `deliver_to` in this
+story.

@@ -34,7 +34,9 @@ DEFAULT_PRESET = "tst-default"
 
 # Implicit keychain account for an unbound remote tier (TD-1717).
 DEFAULT_CREDENTIAL_ID = "openrouter"
-RESERVED_CREDENTIAL_IDS = frozenset({"slack-webhook", "ntfy-topic"})
+RESERVED_CREDENTIAL_IDS = frozenset(
+    {"slack-webhook", "ntfy-topic", "discord-webhook", "telegram-bot"}
+)
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # A second OpenRouter key slugifies to openrouter-2 (TD-1718). Same host.
 _OPENROUTER_FAMILY_RE = re.compile(r"^openrouter(?:-\d+)?$")
@@ -374,7 +376,36 @@ class NtfyNotifyConfig(BaseModel):
     ``host`` is the only host ``tstd.notify.ntfy.send`` may reach. The
     topic URL itself is a keychain secret (account ``tst-ntfy-topic``),
     never this file, never a log, never the audit database. Empty ``host``
-    or ``enabled: false`` means no send. Discord/Telegram are TD-4707.
+    or ``enabled: false`` means no send.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class DiscordNotifyConfig(BaseModel):
+    """Discord incoming webhook (TD-4707). Off by default.
+
+    ``host`` is the only host ``tstd.notify.discord.send`` may reach. The
+    webhook URL itself is a keychain secret (account ``tst-discord-webhook``),
+    never this file, never a log, never the audit database. Empty ``host``
+    or ``enabled: false`` means no send.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class TelegramNotifyConfig(BaseModel):
+    """Telegram Bot API sendMessage (TD-4707). Off by default.
+
+    ``host`` is the only host ``tstd.notify.telegram.send`` may reach. The
+    bot URL itself is a keychain secret (account ``tst-telegram-bot``),
+    including ``chat_id`` as a query parameter. Never this file, never a
+    log, never the audit database. Empty ``host`` or ``enabled: false``
+    means no send.
     """
 
     enabled: bool = False
@@ -383,10 +414,12 @@ class NtfyNotifyConfig(BaseModel):
 
 
 class NotifyConfig(BaseModel):
-    """Outbound notification channels. Slack first, ntfy optional; no gateway."""
+    """Outbound notification channels. Slack is the default; no gateway."""
 
     slack: SlackNotifyConfig = Field(default_factory=SlackNotifyConfig)
     ntfy: NtfyNotifyConfig = Field(default_factory=NtfyNotifyConfig)
+    discord: DiscordNotifyConfig = Field(default_factory=DiscordNotifyConfig)
+    telegram: TelegramNotifyConfig = Field(default_factory=TelegramNotifyConfig)
 
 
 class GroundingConfig(BaseModel):

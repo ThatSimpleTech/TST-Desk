@@ -183,6 +183,8 @@ class TestNotifyChannels:
 
         monkeypatch.setattr("tstd.notify.slack.send", _capture)
         monkeypatch.setattr("tstd.notify.ntfy.send", _capture)
+        monkeypatch.setattr("tstd.notify.discord.send", _capture)
+        monkeypatch.setattr("tstd.notify.telegram.send", _capture)
 
         session = Session(str(tmp_path))
         _wire_autonomy(session, make_charter(max_iterations=8))
@@ -197,7 +199,7 @@ class TestNotifyChannels:
 
         session.dod_poller = _green
         assert await advance_autonomy(session) is False
-        assert len(sent) == 2
+        assert len(sent) == 4
         for body in sent:
             assert body != "Autonomy complete: definition of done met"
             assert DOD_MET in body

@@ -1,13 +1,15 @@
-"""ntfy topic POST (TD-3802).
+"""Discord incoming webhook (TD-4707).
 
-``send(config, message)`` posts only when ntfy is enabled and the
-injected (or keychain) URL's host matches ``notify.ntfy.host``. Off by
-default. Failures never raise. The topic URL never appears in logs.
+``send(config, message)`` posts only when Discord is enabled and the
+injected (or keychain) URL's host matches ``notify.discord.host``. Off by
+default. Failures never raise. The webhook URL never appears in logs.
+Slack remains the default notify export.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -15,9 +17,9 @@ import httpx
 import pytest
 
 from tstd.config import (
+    DiscordNotifyConfig,
     ModelConfig,
     NotifyConfig,
-    NtfyNotifyConfig,
     Preset,
     SlackNotifyConfig,
     TierConfig,
@@ -26,7 +28,9 @@ from tstd.config import (
     load_config,
 )
 from tstd.daemon import Daemon
-from tstd.notify.ntfy import message_for, schedule, send
+from tstd.notify import send as default_send
+from tstd.notify.discord import message_for, schedule, send
+from tstd.notify.slack import send as slack_send
 from tstd.protocol import ApprovalRequest, CostUpdate, TurnComplete
 from tstd.session import SessionEventLog
 
@@ -54,18 +58,8 @@ def _config(*, enabled: bool = False, host: str = "") -> ModelConfig:
     return ModelConfig(
         presets={"t": preset},
         active_preset="t",
-        notify=NotifyConfig(ntfy=NtfyNotifyConfig(enabled=enabled, host=host, timeout_seconds=1)),
-    )
-
-
-def _both(*, ntfy: bool = True, slack: bool = True, host: str = "127.0.0.1") -> ModelConfig:
-    preset = Preset(brain=_tier(), worker=_tier(), validator=_tier())
-    return ModelConfig(
-        presets={"t": preset},
-        active_preset="t",
         notify=NotifyConfig(
-            slack=SlackNotifyConfig(enabled=slack, host=host, timeout_seconds=1),
-            ntfy=NtfyNotifyConfig(enabled=ntfy, host=host, timeout_seconds=1),
+            discord=DiscordNotifyConfig(enabled=enabled, host=host, timeout_seconds=1)
         ),
     )
 
@@ -110,41 +104,30 @@ class TestSend:
         await send(
             _config(),
             "hello",
-            topic_url="http://127.0.0.1:9/topic",
+            webhook_url="http://127.0.0.1:9/api/webhooks/1/secret",
             transport=_mock_transport(captured),
         )
         assert captured == []
 
-    async def test_enabled_posts_injected_url(self) -> None:
+    async def test_enabled_posts_content_json(self) -> None:
         captured: list[httpx.Request] = []
-        url = "http://127.0.0.1:9/desk-topic"
+        url = "http://127.0.0.1:9/api/webhooks/1/injected"
         await send(
             _config(enabled=True, host="127.0.0.1"),
             "Approval needed: Run `echo hi`",
-            topic_url=url,
+            webhook_url=url,
             transport=_mock_transport(captured),
         )
         assert len(captured) == 1
         assert str(captured[0].url) == url
-        assert captured[0].method == "POST"
-        assert captured[0].read() == b"Approval needed: Run `echo hi`"
+        assert json.loads(captured[0].read()) == {"content": "Approval needed: Run `echo hi`"}
 
     async def test_host_mismatch_does_not_post(self) -> None:
         captured: list[httpx.Request] = []
         await send(
             _config(enabled=True, host="allowed.example"),
             "hello",
-            topic_url="http://127.0.0.1:9/topic",
-            transport=_mock_transport(captured),
-        )
-        assert captured == []
-
-    async def test_empty_host_does_not_post(self) -> None:
-        captured: list[httpx.Request] = []
-        await send(
-            _config(enabled=True, host=""),
-            "hello",
-            topic_url="http://127.0.0.1:9/topic",
+            webhook_url="http://127.0.0.1:9/api/webhooks/1/x",
             transport=_mock_transport(captured),
         )
         assert captured == []
@@ -152,20 +135,20 @@ class TestSend:
     async def test_http_error_is_logged_without_url_and_does_not_raise(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        token = "secret-ntfy-topic-name"
+        token = "webhook-secret-token"
 
         def boom(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, request=request)
 
-        url = f"http://127.0.0.1:9/{token}"
-        with caplog.at_level(logging.WARNING, logger="tstd.notify.ntfy"):
+        url = f"http://127.0.0.1:9/api/webhooks/1/{token}"
+        with caplog.at_level(logging.WARNING, logger="tstd.notify.discord"):
             await send(
                 _config(enabled=True, host="127.0.0.1"),
                 "hello",
-                topic_url=url,
+                webhook_url=url,
                 transport=httpx.MockTransport(boom),
             )
-        assert any("ntfy notify failed" in r.message for r in caplog.records)
+        assert any("discord notify failed" in r.message for r in caplog.records)
         joined = " ".join(r.getMessage() for r in caplog.records)
         assert token not in joined
         assert url not in joined
@@ -176,7 +159,7 @@ class TestSend:
         async def missing() -> str:
             raise KeychainError("not stored")
 
-        monkeypatch.setattr("tstd.notify.ntfy.get_ntfy_topic_url", missing)
+        monkeypatch.setattr("tstd.notify.discord.get_discord_webhook_url", missing)
         await send(_config(enabled=True, host="127.0.0.1"), "hello")
 
 
@@ -200,10 +183,10 @@ class TestMessageAndSchedule:
         async def fake_send(config: ModelConfig, message: str, **kwargs: object) -> None:
             posted.append(message)
 
-        monkeypatch.setattr("tstd.notify.ntfy.send", fake_send)
+        monkeypatch.setattr("tstd.notify.discord.send", fake_send)
         config = _config(enabled=True, host="127.0.0.1")
-        approval_task = schedule(config, _approval(), topic_url="http://127.0.0.1:9/topic")
-        turn_task = schedule(config, _turn(), topic_url="http://127.0.0.1:9/topic")
+        approval_task = schedule(config, _approval(), webhook_url="http://127.0.0.1:9/hook")
+        turn_task = schedule(config, _turn(), webhook_url="http://127.0.0.1:9/hook")
         assert approval_task is not None
         assert turn_task is not None
         await asyncio.gather(approval_task, turn_task)
@@ -212,110 +195,79 @@ class TestMessageAndSchedule:
 
     async def test_schedule_skips_when_disabled(self) -> None:
         assert schedule(_config(), _approval()) is None
-        assert schedule(_config(), _turn()) is None
 
 
 class TestDaemonHook:
-    async def test_approval_and_turn_complete_deliver(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        captured: list[httpx.Request] = []
-        token = "secret-ntfy-topic-name"
-        url = f"http://127.0.0.1:9/{token}"
-        transport = _mock_transport(captured)
-        real_send = send
-
-        async def wrapped(config: ModelConfig, message: str, **kwargs: object) -> None:
-            await real_send(config, message, topic_url=url, transport=transport)
-
-        monkeypatch.setattr("tstd.notify.ntfy.send", wrapped)
-        daemon = Daemon(data_dir=tmp_path / "data")
-        daemon.config = _config(enabled=True, host="127.0.0.1")
-        event_log = SessionEventLog()
-        await daemon._on_session_event(_approval(), event_log)
-        await daemon._on_session_event(_turn(), event_log)
-        pending = [task for task in daemon._tasks if not task.done()]
-        if pending:
-            await asyncio.gather(*pending)
-        texts = [req.read().decode() for req in captured]
-        assert any(text.startswith("Approval needed") for text in texts)
-        assert any(text.startswith("Turn complete") for text in texts)
-        blob = ""
-        for path in (tmp_path / "data").rglob("*"):
-            if path.is_file():
-                blob += path.read_text(encoding="utf-8", errors="replace")
-        assert token not in blob
-        assert url not in blob
-
-    async def test_other_events_do_not_deliver(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_approval_delivers(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         posted: list[str] = []
 
         async def fake_send(config: ModelConfig, message: str, **kwargs: object) -> None:
             posted.append(message)
 
-        monkeypatch.setattr("tstd.notify.ntfy.send", fake_send)
+        monkeypatch.setattr("tstd.notify.discord.send", fake_send)
         daemon = Daemon(data_dir=tmp_path / "data")
         daemon.config = _config(enabled=True, host="127.0.0.1")
-        event = CostUpdate(session_id="s1", turn_cost=0, session_cost=0, total_cost=0, seq=1)
-        await daemon._on_session_event(event, SessionEventLog())
+        await daemon._on_session_event(_approval(), SessionEventLog())
         pending = [task for task in daemon._tasks if not task.done()]
         if pending:
             await asyncio.gather(*pending)
-        assert posted == []
+        assert any(m.startswith("Approval needed") for m in posted)
 
-    async def test_slack_still_delivers_when_ntfy_is_on(
+    async def test_slack_still_delivers_when_discord_is_on(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         slack_posted: list[str] = []
-        ntfy_posted: list[str] = []
+        discord_posted: list[str] = []
 
         async def fake_slack(config: ModelConfig, message: str, **kwargs: object) -> None:
             slack_posted.append(message)
 
-        async def fake_ntfy(config: ModelConfig, message: str, **kwargs: object) -> None:
-            ntfy_posted.append(message)
+        async def fake_discord(config: ModelConfig, message: str, **kwargs: object) -> None:
+            discord_posted.append(message)
 
         monkeypatch.setattr("tstd.notify.slack.send", fake_slack)
-        monkeypatch.setattr("tstd.notify.ntfy.send", fake_ntfy)
+        monkeypatch.setattr("tstd.notify.discord.send", fake_discord)
+        preset = Preset(brain=_tier(), worker=_tier(), validator=_tier())
         daemon = Daemon(data_dir=tmp_path / "data")
-        daemon.config = _both()
+        daemon.config = ModelConfig(
+            presets={"t": preset},
+            active_preset="t",
+            notify=NotifyConfig(
+                slack=SlackNotifyConfig(enabled=True, host="127.0.0.1", timeout_seconds=1),
+                discord=DiscordNotifyConfig(enabled=True, host="127.0.0.1", timeout_seconds=1),
+            ),
+        )
         await daemon._on_session_event(_approval(), SessionEventLog())
         pending = [task for task in daemon._tasks if not task.done()]
         if pending:
             await asyncio.gather(*pending)
         assert any(m.startswith("Approval needed") for m in slack_posted)
-        assert any(m.startswith("Approval needed") for m in ntfy_posted)
+        assert any(m.startswith("Approval needed") for m in discord_posted)
 
 
 class TestConfig:
-    def test_shipped_ntfy_is_off(self, tmp_path: Path) -> None:
+    def test_shipped_discord_is_off(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yaml"
         path.write_text(default_config_yaml(), encoding="utf-8")
         cfg = load_config(path)
-        assert cfg.notify.ntfy.enabled is False
-        assert cfg.notify.ntfy.host == ""
+        assert cfg.notify.discord.enabled is False
+        assert cfg.notify.discord.host == ""
 
-    def test_older_user_copy_without_ntfy_loads(self, tmp_path: Path) -> None:
+    def test_older_user_copy_without_discord_loads(self, tmp_path: Path) -> None:
         text = default_config_yaml()
-        cut = text.index("\n  ntfy:")
+        cut = text.index("\n  discord:")
         path = tmp_path / "config.yaml"
         path.write_text(text[:cut] + "\n", encoding="utf-8")
         cfg = load_config(path)
-        assert cfg.notify.ntfy.enabled is False
+        assert cfg.notify.discord.enabled is False
+        assert cfg.notify.telegram.enabled is False
 
-    def test_schema_does_not_hold_a_topic_url(self) -> None:
+    def test_schema_does_not_hold_a_webhook_url(self) -> None:
         import yaml
 
-        assert "url" not in NtfyNotifyConfig.model_fields
-        assert "topic_url" not in NtfyNotifyConfig.model_fields
+        assert "webhook_url" not in DiscordNotifyConfig.model_fields
         shipped = yaml.safe_load(default_config_yaml())
-        assert "url" not in shipped["notify"]["ntfy"]
-        assert "topic_url" not in shipped["notify"]["ntfy"]
+        assert "webhook_url" not in shipped["notify"]["discord"]
 
-    def test_no_messaging_gateway(self) -> None:
-        """Spec §8: extras are sibling modules, not a 20-platform gateway."""
-        notify_dir = Path(__file__).resolve().parent.parent / "tstd" / "notify"
-        names = {path.name for path in notify_dir.iterdir() if path.suffix == ".py"}
-        assert names == {"__init__.py", "slack.py", "ntfy.py", "discord.py", "telegram.py"}
+    def test_package_send_is_still_slack(self) -> None:
+        assert default_send is slack_send

@@ -131,12 +131,17 @@ async def advance_autonomy(session: Session) -> bool:
 
 
 async def notify_autonomy_stop(config: ModelConfig, message: str) -> None:
-    """Deliver *message* on the M7 channels. No-op when they are off.
+    """Deliver *message* on the M7 / E47 channels. No-op when they are off.
 
     *message* is the wake-up body (TD-4303), not a one-line reason.
+    Slack stays the default export; Discord and Telegram are extras.
     """
+    from ..notify.discord import send as discord_send
     from ..notify.ntfy import send as ntfy_send
     from ..notify.slack import send as slack_send
+    from ..notify.telegram import send as telegram_send
 
     await slack_send(config, message)
     await ntfy_send(config, message)
+    await discord_send(config, message)
+    await telegram_send(config, message)
