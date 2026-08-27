@@ -10,11 +10,10 @@ import pytest
 
 from tests.platform_helpers import (
     OWNER_ONLY_MODE,
-    assert_owner_only_oct_suffix,
     assert_owner_only_mode,
+    assert_owner_only_oct_suffix,
     skip_posix_file_modes,
 )
-
 from tstd.config import DEFAULT_LOG_MAX_EVENTS
 from tstd.protocol import AssistantDelta, UserTurn, parse_daemon_event
 from tstd.provider import ChatMessage, FunctionCall, ToolCall
