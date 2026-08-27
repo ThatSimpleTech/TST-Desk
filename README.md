@@ -203,7 +203,8 @@ model choice, the audit trail, and the code.
 
 v0.1 — **in development, not yet released.** No Desk release has been published, so there
 is nothing to download yet; packaging runs in CI but has not yet produced a green artifact
-set (`TD-1302`, `TD-1303`). App releases now tag as `tstdesk-v*` (`TD-4812`) so a package
+set (`TD-1302`, `TD-1303`). GitHub Actions is currently blocked at the org level — see
+[`docs/ci-actions-blocked.md`](docs/ci-actions-blocked.md). App releases now tag as `tstdesk-v*` (`TD-4812`) so a package
 tag like `v0.2.0` (the `tst-cu-mcp` server, not the app) cannot fire the app workflow.
 Running it today means running it from source.
 
