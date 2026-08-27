@@ -8983,3 +8983,22 @@ Parsing the warning keeps UI copy aligned when `LINE_LIMIT` moves.
 workspace open). Also rejected: auto-approving all `~`-imports regardless
 of source (would weaken TD-505 for workspace files).
 
+---
+
+## 2026-08-27 — TD-4904: Actions blocked account (Class B)
+
+**Decision:** Record the org-level Actions failure in
+`docs/ci-actions-blocked.md` rather than adding in-repo workarounds.
+Filter `package.yml` `push` to packaging paths (`shell/`, `ui/`, `core/`,
+workflow file) so doc-only merges do not enqueue another full matrix
+while the queue is stuck.
+
+**Rationale:** CI jobs fail with empty step lists in ~4s — not a test or
+workflow syntax defect. Fixing billing/policy is an org-admin task.
+Path filtering reduces queue pressure once Actions works again without
+changing release (`workflow_call`) or manual (`workflow_dispatch`) bundles.
+
+**Alternative rejected:** Removing `main` push triggers entirely (would
+stale artifacts). Also rejected: binding a remote builder or self-hosted
+runner without an explicit later story.
+
