@@ -6045,12 +6045,16 @@ entitlement.
 **Size:** 5 · **Depends on:** TD-2902
 
 **Acceptance criteria:**
-- [ ] A global shortcut opens a small composer bound to the last
+- [x] A global shortcut opens a small composer bound to the last
       workspace
-- [ ] Permission copy for Accessibility if the OS requires it
-- [ ] Linux/Windows are out unless cheap
+- [x] Permission copy for Accessibility if the OS requires it
+- [x] Linux/Windows are out unless cheap
 
----
+**Done (2026-08-27):** ⌘⇧. toggles a small always-on-top overlay
+(`quick-entry` webview) bound to `{data_dir}/last-workspace.yaml`.
+The main window writes that path on open/focus/retarget. Registration
+failure surfaces Accessibility copy in the main window. Linux/Windows
+do not register a shortcut.
 
 ### TD-4703 — Tray and multi-window
 **Size:** 5 · **Depends on:** TD-2902

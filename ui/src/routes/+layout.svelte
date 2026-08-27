@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { connect, disconnect } from '$lib/connection-status.svelte.js';
 
 	let { children } = $props();
+
+	const isQuickEntry = $derived(page.url.pathname === '/quick-entry');
 
 	onMount(() => {
 		connect();
@@ -16,9 +19,13 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<main class="app-frame">
+{#if isQuickEntry}
 	{@render children()}
-</main>
+{:else}
+	<main class="app-frame">
+		{@render children()}
+	</main>
+{/if}
 
 <style>
 	.app-frame {

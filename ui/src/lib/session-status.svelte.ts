@@ -13,6 +13,7 @@
 
 import { DEFAULT_ATTACHMENT_LIMITS } from "./attachments";
 import type { ProtocolClient } from "./client";
+import { persistLastWorkspace } from "./last-workspace";
 import type { AttachmentLimits, BoundaryUpdate, DaemonEventUnion } from "./protocol";
 
 export type SessionIndicator =
@@ -159,6 +160,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
 export function openWorkspace(path: string): void {
   pendingPath = path;
   client?.openWorkspace(path);
+  void persistLastWorkspace(path);
 }
 
 /** Re-target this store at another live session (TD-1701 rail selection).
@@ -177,7 +179,10 @@ export function focusSession(
 ): void {
   if (session.sessionId === sessionId) return;
   session.sessionId = sessionId;
-  if (workspacePath !== undefined) session.workspacePath = workspacePath;
+  if (workspacePath !== undefined) {
+    session.workspacePath = workspacePath;
+    void persistLastWorkspace(workspacePath);
+  }
   session.state = state;
   session.reason = null;
   session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
@@ -201,6 +206,7 @@ export function focusSession(
 export function retargetWorkspace(sessionId: string, workspacePath: string): void {
   if (session.sessionId !== sessionId) return;
   session.workspacePath = workspacePath;
+  void persistLastWorkspace(workspacePath);
 }
 
 /** Pin a tier on the active session (a chip click). */
