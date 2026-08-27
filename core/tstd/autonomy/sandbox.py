@@ -212,11 +212,7 @@ def container_argv(
         raise SandboxError("workspace path cannot contain comma")
     if sys.platform == "win32":
         # Drive-absolute C:\… is required on Windows; drive-relative C:foo is not.
-        if (
-            len(ws_text) >= 2
-            and ws_text[1] == ":"
-            and ws_text[2:3] not in ("\\", "/")
-        ):
+        if len(ws_text) >= 2 and ws_text[1] == ":" and ws_text[2:3] not in ("\\", "/"):
             raise SandboxError("workspace path cannot contain drive-relative colon form")
     elif ":" in ws_text:
         raise SandboxError("workspace path cannot contain colon")
