@@ -185,6 +185,7 @@ for _ in $(seq 1 150); do
 done
 test -f "$PORT"
 python3 /bundle/smoke_linux_e2e.py --client --workspace "$WS" --port-file "$PORT"
+python3 /bundle/smoke_linux_e2e.py --probe-keychain --workspace "$WS" --port-file "$PORT"
 # Daemon first: graceful quit distills, and the mock must still be up.
 kill "$DAEMON" 2>/dev/null || true
 wait "$DAEMON" 2>/dev/null || true
