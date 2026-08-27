@@ -24,7 +24,8 @@ v0.1 has not been tagged yet, so the release page below is empty until the first
 |---|---|
 | macOS (Apple silicon) | `.dmg`, `aarch64-apple-darwin` |
 | macOS (Intel) | `.dmg`, `x86_64-apple-darwin` |
-| Linux | `.AppImage` and `.deb`, `x86_64` |
+| Linux (x86_64) | `.AppImage` and `.deb`, `x86_64-unknown-linux-gnu` |
+| Linux (ARM64) | `.AppImage` and `.deb`, `aarch64-unknown-linux-gnu` (TD-4902) |
 | Windows | `.msi`, `x86_64` |
 
 1. Download the artifact for your platform from

@@ -7,6 +7,10 @@
 #
 # Usage: smoke_linux_bundle.sh [path-to-deb] [path-to-appimage]
 # Defaults: the unique files under shell/target/release/bundle/{deb,appimage}/
+#
+# Works on the host architecture: on aarch64 Linux the Docker guests pull
+# arm64 images automatically (TD-4902). On amd64, smoke the x86_64 bundle
+# you built locally; CI builds and smokes aarch64 on ubuntu-24.04-arm.
 
 set -euo pipefail
 
