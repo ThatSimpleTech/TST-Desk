@@ -1477,9 +1477,7 @@ class Daemon:
             # message — the copy says so — rather than delivering a turn the
             # user believes carried files it did not.
             try:
-                allow_images = _active_tier_vision(
-                    found, _session_model_config(found, self.config)
-                )
+                allow_images = _active_tier_vision(found, _session_model_config(found, self.config))
                 decoded = decode_attachments(
                     msg.attachments,
                     found.boundary_config.attachments,

@@ -76,9 +76,7 @@ class _MockHandler(BaseHTTPRequestHandler):
         if follow_up:
             self.wfile.write(_text_stream(_REPLY))
         else:
-            args = json.dumps(
-                {"path": str(workspace / _WRITE_NAME), "content": _WRITE_BODY}
-            )
+            args = json.dumps({"path": str(workspace / _WRITE_NAME), "content": _WRITE_BODY})
             self.wfile.write(_tool_stream("fs_write", args))
         self.wfile.flush()
 
@@ -123,9 +121,7 @@ def _text_stream(text: str) -> bytes:
     delta = {
         "id": "smoke-2",
         "object": "chat.completion.chunk",
-        "choices": [
-            {"index": 0, "delta": {"content": text}, "finish_reason": None}
-        ],
+        "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
     }
     done = {
         "id": "smoke-2",
@@ -260,9 +256,7 @@ def _recv_until(ws: _Ws, typ: str, timeout: float) -> dict[str, Any]:
         event = json.loads(raw)
         last = event
         if event.get("type") == "error":
-            raise RuntimeError(
-                f"daemon error {event.get('code')}: {event.get('message')}"
-            )
+            raise RuntimeError(f"daemon error {event.get('code')}: {event.get('message')}")
         if event.get("type") == typ:
             return event
     raise TimeoutError(f"timed out waiting for {typ}; last={last!r}")
@@ -299,18 +293,14 @@ def client(port_file: Path, workspace: Path) -> None:
             event = json.loads(ws.recv_text())
             typ = event.get("type")
             if typ == "error":
-                raise RuntimeError(
-                    f"daemon error {event.get('code')}: {event.get('message')}"
-                )
+                raise RuntimeError(f"daemon error {event.get('code')}: {event.get('message')}")
             if typ == "tool_call" and event.get("name") == "fs_write":
                 saw_tool = True
             if typ == "assistant_delta" and event.get("delta"):
                 texts.append(str(event["delta"]))
             if typ == "turn_complete":
                 if event.get("failed"):
-                    raise RuntimeError(
-                        f"turn failed: {event.get('error_code')}"
-                    )
+                    raise RuntimeError(f"turn failed: {event.get('error_code')}")
                 break
         else:
             raise TimeoutError("turn_complete not received")
