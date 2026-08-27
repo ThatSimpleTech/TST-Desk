@@ -67,6 +67,15 @@ class TestPingFrame:
         make one dropped ping survivable."""
         assert PING_INTERVAL_SECONDS * 2 <= 30
 
+    def test_omitted_interval_follows_the_module_constant(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default is looked up at init, so a test can quiet the cadence
+        without restating every constructor."""
+        monkeypatch.setattr("tstd.ws.PING_INTERVAL_SECONDS", 3.0)
+        server = WebSocketServer(tmp_path)
+        assert server._ping_interval == 3.0
+
 
 class TestPingEmission:
     @pytest.mark.asyncio
