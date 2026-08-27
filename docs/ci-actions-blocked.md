@@ -5,7 +5,15 @@ blocks TD-1302, TD-1303, and TD-4704 until an org admin fixes the underlying
 GitHub setting. Local Linux smoke (`core/scripts/smoke_linux_bundle.sh`) remains
 the Linux install evidence.
 
-## Symptoms
+## Root cause (2026-08-27, fixed)
+
+The org had a **ProductPricing budget for Actions at $0** with
+`prevent_further_usage: true` — a hard stop. Jobs showed `runner_id: 0`, empty
+steps, and failed in ~4s. Raising the budget (e.g. to $100/month) via
+**Organization settings → Billing and plans → Budgets** or the budgets API
+unblocks hosted runners immediately.
+
+## Symptoms (before fix)
 
 ### `ci.yml` — fails in ~4–5 seconds
 
