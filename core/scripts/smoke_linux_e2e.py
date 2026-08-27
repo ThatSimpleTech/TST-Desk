@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import json
 import os
 import socket
@@ -26,6 +27,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
 _REPLY = "Wrote hello.txt as requested."
 _WRITE_NAME = "hello.txt"
 _WRITE_BODY = "hello from clean guest\n"
@@ -36,12 +38,12 @@ def _sse(payload: dict[str, Any]) -> bytes:
 
 
 class _MockHandler(BaseHTTPRequestHandler):
-    server: "_MockServer"  # type: ignore[assignment]
+    server: _MockServer  # type: ignore[assignment]
 
     def log_message(self, fmt: str, *args: object) -> None:
         sys.stderr.write("%s\n" % (fmt % args))
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         if self.path.rstrip("/") == "/v1/models":
             body = json.dumps(
                 {"object": "list", "data": [{"id": "smoke-model", "object": "model"}]}
@@ -54,7 +56,7 @@ class _MockHandler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         if self.path.rstrip("/") != "/v1/chat/completions":
             self.send_error(404)
             return
@@ -84,10 +86,7 @@ class _MockHandler(BaseHTTPRequestHandler):
 def _has_tool_result(messages: object) -> bool:
     if not isinstance(messages, list):
         return False
-    for msg in messages:
-        if isinstance(msg, dict) and msg.get("role") == "tool":
-            return True
-    return False
+    return any(isinstance(msg, dict) and msg.get("role") == "tool" for msg in messages)
 
 
 def _tool_stream(name: str, arguments: str) -> bytes:
@@ -243,10 +242,8 @@ class _Ws:
         return buf
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(OSError):
             self._sock.close()
-        except OSError:
-            pass
 
 
 def _send(ws: _Ws, message: dict[str, Any]) -> None:
