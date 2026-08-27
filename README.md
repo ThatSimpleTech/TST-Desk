@@ -335,7 +335,9 @@ git commit --no-verify
 
 ## Installing an unsigned build
 
-v0.1 builds are not code-signed or notarized (see `DECISIONS.md`, 2026-08-14).
+v0.1 builds are not code-signed or notarized (see `DECISIONS.md`, 2026-08-14, and
+[`docs/signing.md`](docs/signing.md) for the v0.1 refusal, future CI wiring, and
+where release secrets would live).
 Each OS will warn on first launch; that is expected, not a defect.
 
 - **macOS** — Gatekeeper blocks the unsigned app. Right-click the app and
