@@ -6073,10 +6073,16 @@ daemon. Window-scoped binding never auto-adopts another session.
 **Size:** 5 · **Depends on:** TD-1303
 
 **Acceptance criteria:**
-- [ ] Opt-in check against GitHub releases (user-initiated or a
+- [x] Opt-in check against GitHub releases (user-initiated or a
       stated interval)
-- [ ] No telemetry. Signature story recorded (may still be unsigned)
-- [ ] Off by default until signing exists
+- [x] No telemetry. Signature story recorded (may still be unsigned)
+- [x] Off by default until signing exists
+
+**Done (2026-08-27):** Settings → About → **Check for updates** calls
+`check_for_updates` (GitHub `tstdesk-v*` releases only; ignores sibling-package
+`v*` tags). No background interval. `IN_APP_INSTALL_ENABLED` is false; copy
+points at `docs/signing.md` and the releases page. In-app install flips on when
+signing lands.
 
 ---
 

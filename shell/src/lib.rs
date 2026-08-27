@@ -3,6 +3,7 @@ mod quick_entry;
 mod read_text;
 mod session_window;
 mod tray;
+mod updater;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -253,6 +254,7 @@ pub fn run() {
             quick_entry::hide_quick_entry,
             tray::set_tray_running_count,
             session_window::open_session_window,
+            updater::check_for_updates,
         ])
         .on_menu_event(|app, event| {
             if event.id() == "quit-tst-desk" {
