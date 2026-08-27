@@ -89,7 +89,7 @@ async def _wait_for_port_file(
     event loop must not do blocking filesystem work.
     """
     if seconds is None:
-        seconds = 60.0 if sys.platform == "win32" else 10.0
+        seconds = 120.0 if sys.platform == "win32" else 10.0
     try:
         async with asyncio.timeout(seconds):
             while True:

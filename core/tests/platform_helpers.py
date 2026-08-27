@@ -96,3 +96,5 @@ async def stop_daemon_gracefully(daemon: Daemon, task: asyncio.Task[Any]) -> Non
         if daemon._audit_writer is not None:
             await daemon._audit_writer.close()
             daemon._audit_writer = None
+        if sys.platform == "win32":
+            await asyncio.sleep(1.0)
