@@ -9020,3 +9020,23 @@ Actions works) or a real ARM machine running `smoke_linux_bundle.sh`.
 (Tauri `targets: all` already emits both). Also rejected: qemu user-static
 cross-smoke on amd64 CI (slow, flaky).
 
+---
+
+## 2026-08-27 — TD-4903: v0.1 unsigned on all platforms (Class B)
+
+**Decision:** v0.1 ships without macOS notarization, Windows Authenticode,
+or Linux codesigning. Record costs, secret homes, and future CI env wiring
+in `docs/signing.md`. Runtime API keys stay in the OS keychain only; release
+certificates would live in GitHub encrypted secrets when we opt in. TD-4704
+(auto-updater) stays off until signed releases exist.
+
+**Rationale:** Named early users can follow README Gatekeeper/SmartScreen copy.
+Buying certs and wiring notary/signtool before green CI artifacts (TD-1302)
+would spend money on a pipeline that does not yet publish. Explicit refusal
+satisfies TD-4903 without fake signing steps that no secret backs.
+
+**Alternative rejected:** Self-signed macOS cert shipped to users (same
+friction as unsigned for Gatekeeper). Also rejected: storing signing material
+in repo-adjacent config (violates prime directive §2).
+
+
