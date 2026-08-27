@@ -351,7 +351,7 @@ class TestLockedClassification:
         class _Proc:
             returncode = 0
 
-            async def communicate(self) -> tuple[bytes, bytes]:
+            async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
                 return b"", b""
 
         async def _fake_exec(*args: Any, **kwargs: Any) -> _Proc:
@@ -365,3 +365,38 @@ class TestLockedClassification:
         )
         with pytest.raises(KeychainLockedError):
             await MacOSKeychain().set_secret("tst-openrouter", "sk-x")
+
+
+class TestCliTimeout:
+    """A hung secret-tool / security prompt is a locked keychain (TD-1105)."""
+
+    async def test_hung_lookup_raises_locked_and_kills_the_cli(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hung = _HungProc()
+
+        async def fake_exec(*_args: object, **_kwargs: object) -> _HungProc:
+            return hung
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        monkeypatch.setattr(kc_mod, "_CLI_TIMEOUT_SECS", 0.05)
+        with pytest.raises(KeychainLockedError, match="did not respond"):
+            await kc_mod.LinuxSecretService().get_secret("tst-openrouter")
+        assert hung.killed
+
+
+class _HungProc:
+    returncode = None
+
+    def __init__(self) -> None:
+        self.killed = False
+
+    def kill(self) -> None:
+        self.killed = True
+
+    async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+        await asyncio.sleep(30)
+        return b"", b""
+
+    async def wait(self) -> int:
+        return 0
