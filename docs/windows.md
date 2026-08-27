@@ -116,11 +116,12 @@ independently, so a `taskkill` that cannot run still leaves the immediate comman
 
 **This is implemented and unverified.** No Windows host has executed it. A process-tree kill is
 a claim about an operating system's behaviour and the only evidence that counts is a Windows
-machine performing one, so the cancel and timeout tests in
-`core/tests/test_shell_tools.py` remain skipped on `win32` and the corresponding backlog
-criterion (TD-1406) remains unticked. Unskipping needs two things: a Windows CI leg, and a
-cmd or PowerShell equivalent of the POSIX escape probe those tests use, which is currently
-written with `$$`, `&` and `wait`.
+machine performing one, so the corresponding backlog criterion (TD-1406) remains unticked.
+The cancel and timeout tests in `core/tests/test_shell_tools.py` now run on `win32`: they use
+a PowerShell escape probe that writes the `cmd.exe` group-leader pid plus a parked
+grandchild, then `_assert_group_gone` asks `OpenProcess` whether those pids are still
+`STILL_ACTIVE`. Helper argv tests in `core/tests/test_shell_windows_kill.py` pin
+`taskkill /T /F /PID` on every host. A green Linux suite still does not tick the box.
 
 ---
 

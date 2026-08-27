@@ -2637,12 +2637,13 @@ product-semantics work the skips point at.
       cancel/timeout tests unskipped — **implemented, unverified.**
       `CREATE_NEW_PROCESS_GROUP` at the spawn and `taskkill /T /F /PID` after
       the direct-child kill have landed, replacing a `proc.kill()` whose own
-      docstring admitted grandchildren escape. Not ticked: no Windows host has
-      run it, and a process-tree kill is a claim about an OS that only that OS
-      can settle. Ticking it from a green macOS suite, where the code is
-      `sys.platform`-gated out, would be this backlog's eighth "green suite,
-      dead feature". Unskipping also needs a cmd/PowerShell equivalent of the
-      POSIX escape probe (`$$`, `&`, `wait`) the cancel tests use
+      docstring admitted grandchildren escape. The PowerShell escape probe
+      and host-safe `taskkill` argv tests have also landed; cancel/timeout
+      tests no longer `skipif(win32)`. Not ticked: no Windows host has run
+      the live tree kill, and a process-tree kill is a claim about an OS
+      that only that OS can settle. Ticking it from a green Linux or macOS
+      suite, where `_kill_windows_tree` is never entered for real, would be
+      this backlog's eighth "green suite, dead feature"
 - [x] Parent-watchdog liveness probe works on Windows (OpenProcess) — first pass:
       OpenProcess plus `GetExitCodeProcess != STILL_ACTIVE` (a dead process with an
       open handle otherwise reports alive); `test_parent_watchdog` green on the
