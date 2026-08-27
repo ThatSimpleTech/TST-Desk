@@ -8807,3 +8807,37 @@ artifacts" from Linux Docker evidence. Also rejected: installing
 `libsecret-tools` in the protocol guest to hide a missing-helper
 crash — that crash is a first-run defect, so the smoke found it
 and the helper now raises `KeychainError`.
+
+---
+
+## 2026-08-27 — TD-4706: vendored mermaid + KaTeX, lazy (Class B)
+
+**Decision:** Ship `mermaid@^11.17.2` and `katex@^0.16.47` from npm
+(both MIT). No CDN. Marked emits placeholders; `Markdown.svelte`
+hydrates after the message is complete. Mermaid initializes with
+`securityLevel: "strict"` and `startOnLoad: false`; the SVG is
+DOMPurify-cleaned; `bindFunctions` is never called. KaTeX covers
+fences `math` / `katex` / `latex`, display `$$…$$`, and inline
+`\(…\)`. Single-dollar TeX is refused so `$5` stays currency.
+Markdown images stay inert `[alt]` until TD-4705.
+
+**Bundle (production `ui` build, gzip -9):**
+- First-paint chat page: 248 kB / 73 kB gzip JS, 108 kB / 13 kB gzip
+  CSS. Was ~60 kB gzip JS before this story; the +13 kB is
+  placeholder markup and tokenizers, not the libraries.
+- First mermaid fence: async chunks, largest 308 kB gzip (mermaid
+  core / diagram types). Not fetched until a `.md-mermaid` node
+  exists.
+- First math: KaTeX JS on demand, CSS 28 kB / 8 kB gzip, plus
+  ~250 kB of woff2 (browser fetches only faces the formula uses).
+  Static-importing KaTeX from `markdown.ts` had blown the page to
+  ~455 kB gzip; that is why hydrate is a dynamic `import()`.
+
+**Rationale:** The acceptance criterion asked for a recorded delta,
+not a smaller first paint at the cost of a CDN. Failed parse must
+be able to restore the fence, which a sync marked renderer cannot
+do for async mermaid.
+
+**Alternative rejected:** `marked` calling mermaid/KaTeX inline
+(blocks first paint; mermaid is async). Also rejected: `$…$` inline
+math. Also rejected: rendering markdown `<img>` here (TD-4705).
