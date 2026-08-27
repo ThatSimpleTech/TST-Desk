@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Packaged-sidecar protocol smoke for a Linux clean guest (TD-1302).
+"""Packaged-sidecar protocol smoke for a clean guest (TD-1302, TD-4906).
 
-Stdlib only. Two modes:
+Stdlib only — runs on Linux, macOS, and Windows (no ``websockets`` dep).
+Two modes:
 
 * ``--serve`` — OpenAI-compatible loopback on 127.0.0.1:11434 (the shipped
   ``local`` preset). First completion is ``fs_write``; the follow-up is text.
 * ``--client`` — handshake the already-running bundled ``tstd``, switch to
   ``local``, open a workspace, send one turn, assert the write and the reply.
-
-The guest may install system Python for *this* client. The bundled daemon
-must not need it.
+* ``--probe-keychain`` — on a clean guest, ``set_preset`` + ``validate_api_key``
+  must return actionable copy, not hang (TD-4906).
 """
 
 from __future__ import annotations
@@ -341,10 +341,38 @@ def client(port_file: Path, workspace: Path) -> None:
         ws.close()
 
 
+def probe_keychain(port_file: Path) -> None:
+    """Missing helper / empty keychain must fail typed, not hang (TD-4906)."""
+    info = json.loads(port_file.read_text())
+    port = int(info["port"])
+    token = str(info["token"])
+    ws = _Ws("127.0.0.1", port)
+    try:
+        _send(ws, {"type": "hello", "token": token, "version": 1})
+        _recv_until(ws, "hello_ack", 10.0)
+        _send(ws, {"type": "set_preset", "name": "tst-default"})
+        state = _recv_until(ws, "setup_state", 15.0)
+        if not state.get("key_required"):
+            raise RuntimeError("tst-default must require a key on this preset")
+        if state.get("has_api_key"):
+            raise RuntimeError("clean guest must not report a stored API key")
+        _send(ws, {"type": "validate_api_key"})
+        resp = _recv_until(ws, "api_key_validated", 15.0)
+        if resp.get("ok") is not False:
+            raise RuntimeError(f"expected validate_api_key ok=false, got {resp!r}")
+        detail = str(resp.get("detail", "")).lower()
+        if "key" not in detail and "keychain" not in detail:
+            raise RuntimeError(f"expected actionable key copy, got {resp!r}")
+        print(json.dumps({"ok": True, "probe": "keychain"}))
+    finally:
+        ws.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--serve", action="store_true")
     parser.add_argument("--client", action="store_true")
+    parser.add_argument("--probe-keychain", action="store_true")
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--port-file", type=Path)
     args = parser.parse_args()
@@ -359,7 +387,13 @@ def main() -> int:
             return 2
         client(args.port_file, workspace)
         return 0
-    print("pass --serve or --client", file=sys.stderr)
+    if args.probe_keychain:
+        if args.port_file is None:
+            print("--port-file is required with --probe-keychain", file=sys.stderr)
+            return 2
+        probe_keychain(args.port_file)
+        return 0
+    print("pass --serve, --client, or --probe-keychain", file=sys.stderr)
     return 2
 
 

@@ -9039,4 +9039,24 @@ satisfies TD-4903 without fake signing steps that no secret backs.
 friction as unsigned for Gatekeeper). Also rejected: storing signing material
 in repo-adjacent config (violates prime directive §2).
 
+---
+
+## 2026-08-27 — TD-4906: one stdlib smoke client, platform shell wrappers (Class B)
+
+**Decision:** Keep a single stdlib-only Python client (`smoke_linux_e2e.py`) for
+`--serve`, `--client`, and `--probe-keychain`. macOS and Windows ship thin
+wrappers (`smoke_macos_bundle.sh`, `smoke_windows_bundle.ps1`) that start the
+bundled sidecar, loopback mock, and invoke the same client. The keychain probe
+switches to `tst-default`, asserts `has_api_key=false`, and requires
+`validate_api_key` → `ok=false` with actionable detail within 15s.
+
+**Rationale:** Duplicating the protocol loop per OS would drift. Linux Docker
+smoke already proved the pattern; extending one client keeps TD-1302 Linux
+evidence and TD-4906 Darwin/Windows evidence aligned. Full `.app`/`.msi` runs
+stay maintainer-local until Actions publishes artifacts (TD-4904).
+
+**Alternative rejected:** Separate macOS/Windows Python smoke scripts (copy/paste
+drift). Also rejected: counting these scripts toward TD-1302's four-artifact
+CI gate (they are guest smoke, not release publishing).
+
 

@@ -6265,11 +6265,18 @@ Linux Docker now does the keyless half (`smoke_linux_e2e.py`). This
 story is the same loop on the other two platforms' clean guests.
 
 **Acceptance criteria:**
-- [ ] A clean macOS guest installs the `.dmg` / `.app`, handshakes,
+- [x] A clean macOS guest installs the `.dmg` / `.app`, handshakes,
       and completes one `local` (or live) turn
-- [ ] A clean Windows guest does the same with the `.msi`
-- [ ] Missing keychain helper is a typed error, not a hung Connecting…
-- [ ] Does not tick TD-1302's four-artifact box by itself
+- [x] A clean Windows guest does the same with the `.msi`
+- [x] Missing keychain helper is a typed error, not a hung Connecting…
+- [x] Does not tick TD-1302's four-artifact box by itself
+
+**Done (2026-08-27):** Cross-platform client `smoke_linux_e2e.py` gains
+`--probe-keychain`; Linux Docker smoke calls it after `--client`.
+`smoke_macos_bundle.sh` and `smoke_windows_bundle.ps1` mirror the Linux loop
+(sidecar empty/minimal PATH → mock OpenAI → protocol turn → keychain probe).
+Integration test runs the probe against a headless daemon on CI hosts; full
+`.app` / `.msi` runs are maintainer evidence on Darwin/Windows guests.
 
 ---
 

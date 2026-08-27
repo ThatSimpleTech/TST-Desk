@@ -150,5 +150,6 @@ That script proves: no system Python on the sidecar (`ldd` + empty
 `PATH`), `dpkg -i` + `xvfb-run tst-desk` writes `port.json`, a protocol
 turn against the shipped `local` preset (loopback mock → `fs_write` →
 reply), and AppImage `--appimage-extract` of the same sidecar. It does
-not tick the four-platform packaging boxes. macOS and Windows still need
-their own guests. GitHub Actions `package.yml` is a separate gate.
+not tick the four-platform packaging boxes. macOS and Windows guests use
+`core/scripts/smoke_macos_bundle.sh` and `core/scripts/smoke_windows_bundle.ps1`
+(TD-4906). GitHub Actions `package.yml` is a separate gate.
