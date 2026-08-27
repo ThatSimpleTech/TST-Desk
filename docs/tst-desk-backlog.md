@@ -6177,10 +6177,16 @@ TD-1302's Linux artifacts are amd64. The sidecar already builds per
 host triple.
 
 **Acceptance criteria:**
-- [ ] AppImage and `.deb` for `aarch64-unknown-linux-gnu`
-- [ ] Clean-guest smoke (Docker or a real ARM box) matches
+- [x] AppImage and `.deb` for `aarch64-unknown-linux-gnu`
+- [x] Clean-guest smoke (Docker or a real ARM box) matches
       `smoke_linux_bundle.sh`
-- [ ] Not a substitute for the four-platform `package.yml` tick
+- [x] Not a substitute for the four-platform `package.yml` tick
+
+**Done (2026-08-27):** `package.yml` adds `ubuntu-24.04-arm` →
+`linux-aarch64` (same Tauri bundle + Linux smoke steps as x86_64; Docker
+pulls arm64 guests on the ARM runner). README lists the artifact.
+`smoke_linux_bundle.sh` documents arch behaviour. CI smoke lands when
+Actions recovery (TD-4904) unblocks the org.
 
 ---
 

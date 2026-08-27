@@ -59,7 +59,8 @@ workflow**.
    pytest/clippy/vitest logs.
 2. Run **Package** (`workflow_dispatch` or a packaging-path push). Expect **four**
    jobs (macOS arm64, macOS x86_64, Linux x86_64, Windows x86_64) and uploaded
-   artifacts. After TD-4902 lands, expect **five** jobs (adds Linux aarch64).
+   artifacts. After TD-4902, expect **five** jobs (adds Linux aarch64 on
+   `ubuntu-24.04-arm`).
 3. When `package.yml` is green, TD-1302 can tick; when release tags work,
    TD-1303 can tick; then TD-4903 / TD-4704 become unblocked.
 
