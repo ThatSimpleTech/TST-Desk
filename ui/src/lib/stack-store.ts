@@ -141,6 +141,12 @@ export function memoryReasonLabel(reason: MemoryStackEntry["reason"]): string {
  *  has not reported a miss, and the two must not render alike. */
 export type CacheBadge = "unobserved" | "unreported" | "miss" | "hit";
 
+export function warningBadge(warning: string): string {
+	const match = warning.match(/exceeds (\d+) lines/);
+	if (match) return `over ${match[1]} lines`;
+	return warning;
+}
+
 export function cacheBadge(
 	lastCachedTokens: number | null,
 	cacheObserved: boolean,

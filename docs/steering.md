@@ -616,11 +616,13 @@ Two consequences that surprise people:
 
 - **A missing external file is "not found", not "awaiting approval".** There is nothing to
   read, so there is nothing to approve, and no prompt appears.
-- **Your global steering file's own imports are external.** `~/.tstdesk/AGENTS.md` lives
-  outside every workspace, so `@shared.md` next to it resolves outside the workspace and is
-  gated like any other outside read — once per workspace you open.
+- **Imports under your personal steering tree are not gated.** `~/.tstdesk/AGENTS.md`
+  may `@`-import siblings inside `~/.tstdesk/` (for example `@rules/style.md`) without
+  the external-import prompt — those files are part of your personal steering, not
+  workspace escapes. Imports from a workspace file into `~/.tstdesk/` still ask once per
+  workspace; imports from global steering into `~/notes/…` outside `.tstdesk/` still ask too.
 
-That second one is easy to hit and worth seeing. Nothing here is in the workspace at all:
+Splitting personal steering across files under `~/.tstdesk/` looks like this:
 
 <!-- verify: example global-import -->
 <!-- verify: file ~/.tstdesk/AGENTS.md -->
@@ -635,12 +637,12 @@ Prefer small, reviewable commits.
 
 <!-- verify: pending -->
 ```
-~/.tstdesk/shared.md
+(none)
 ```
 
 <!-- verify: issues -->
 ```
-external import awaiting approval: ~/.tstdesk/shared.md
+(none)
 ```
 
 ---
@@ -937,11 +939,9 @@ worked around here, and is demonstrated by a live example above rather than asse
 - **`appliesTo` outside `.tst/rules/` is neither honoured nor stripped.** *Fixed.* Frontmatter
   is stripped at every level now, so nothing reaches the model. It is still not honoured
   outside `.tst/rules/` — that half is deliberate, and flagged rather than silent. See §4.
-- **Your user-global steering file's own imports are treated as external.**
-  `~/.tstdesk/AGENTS.md` sits outside every workspace, so `@shared.md` beside it triggers the
-  untrusted-read approval, once per workspace you ever open. See §5. It is defensible — the
-  gate is about where the file lives, not who wrote it — but it makes splitting your personal
-  steering across files more friction than it looks.
+- **Splitting user-global steering across files under `~/.tstdesk/`.** *Fixed (TD-4905).*
+  `@` imports from `~/.tstdesk/AGENTS.md` to another file under `~/.tstdesk/` load without
+  the external-import gate. Workspace files importing outside the tree still prompt. See §5.
 
 ---
 
