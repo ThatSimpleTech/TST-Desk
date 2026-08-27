@@ -13,6 +13,10 @@ Every matrix leg (`python`, `rust`, `typescript` × three OSes) reports
 `conclusion: failure` with **`steps: []`** in the Actions API — no checkout, no
 logs. Example run: merge `TD-4905` on `main` (2026-08-27).
 
+The job objects also show **`runner_id: 0`** and an empty `runner_name` — GitHub
+never assigned a hosted runner. This is the billing/spending-limit fingerprint,
+not a test failure inside the repo.
+
 This is not a test failure inside the repo. The runner never reaches the first
 step.
 
@@ -31,10 +35,13 @@ The workflow file itself is valid: full checkout → sidecar build → Tauri bun
 Check these in **GitHub → Organization settings → Actions** (or the repo's
 Actions settings if not org-owned):
 
-1. **Actions disabled** for the org or this repository.
-2. **Spending limit / billing** — private repos need paid minutes; macOS minutes
-   bill at 10×. When the limit is hit, jobs may fail immediately or never leave
-   the queue.
+1. **Actions spending limit / billing** — most likely for this repo (`runner_id:
+   0`, empty steps, ~4s failure). Open
+   **Organization settings → Billing and plans → Actions** and raise the
+   spending limit (or pay any failed invoice). Private repos need paid minutes;
+   macOS minutes bill at 10×. When the limit is hit, jobs fail immediately or
+   never leave the queue.
+2. **Actions disabled** for the org or this repository.
 3. **Allowed actions / policy** — third-party actions (`actions/checkout@v4`,
    `astral-sh/setup-uv@v5`, etc.) blocked by an org policy.
 4. **Runner group access** — required runner labels (`ubuntu-latest`,
