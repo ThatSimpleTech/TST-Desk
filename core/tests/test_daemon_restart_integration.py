@@ -60,6 +60,13 @@ def _spawn(data_dir: Path) -> subprocess.Popen:
     return proc
 
 
+def _close_spawn_log(proc: subprocess.Popen) -> None:
+    handle = getattr(proc, "_log_handle", None)
+    if handle is not None:
+        handle.close()
+        del proc._log_handle
+
+
 def _read_port_file(path: Path) -> dict | None:
     """Synchronously read the port file, returning None if it is absent."""
     if not path.exists():
@@ -169,6 +176,7 @@ class TestDaemonRestartIntegration:
                         pytest.skip("the OS vetoed the test's own kill (TD-605)")
                 else:
                     daemon.wait(timeout=5)
+                _close_spawn_log(daemon)
 
             # 2. Restart on the same data dir. The stale port file (with the
             #    dead daemon's pid) must be replaced.
@@ -208,6 +216,7 @@ class TestDaemonRestartIntegration:
                         pass
                     else:
                         daemon2.wait(timeout=5)
+                _close_spawn_log(daemon2)
 
             # 3. Snapshot on disk → same chat, running. No snapshot → tombstone.
             by_id = {row["session_id"]: row for row in sessions}
