@@ -36,7 +36,7 @@ async def deliver_wakeup(session: Session) -> None:
 
     No-op for interactive sessions and for stop reasons ``should_notify``
     rejects. The notify callback still receives a single string — the
-    formatted summary — so slack/ntfy keep ``send(config, message)``.
+    formatted summary — so slack/ntfy/discord/telegram keep ``send(config, message)``.
     """
     from .runner import should_notify
 

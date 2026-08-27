@@ -292,16 +292,26 @@ autonomy:
 mcp:
   servers: {}
 
-# Slack incoming webhook (TD-3801) and ntfy topic POST (TD-3802). Off by
-# default. Destination URLs are keychain secrets (tst-slack-webhook,
-# tst-ntfy-topic), never this file. host is the only destination send()
-# may reach — set it to the URL's hostname when you enable a channel.
+# Slack incoming webhook (TD-3801), ntfy (TD-3802), Discord and Telegram
+# (TD-4707). Off by default. Slack is the default channel. Destination
+# URLs are keychain secrets (tst-slack-webhook, tst-ntfy-topic,
+# tst-discord-webhook, tst-telegram-bot), never this file. host is the
+# only destination send() may reach — set it to the URL's hostname when
+# you enable a channel. There is no 20-platform gateway.
 notify:
   slack:
     enabled: false
     host: ""
     timeout_seconds: 5
   ntfy:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  discord:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  telegram:
     enabled: false
     host: ""
     timeout_seconds: 5
