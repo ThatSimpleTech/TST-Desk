@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tstd.config import cached_config
+
 OWNER_ONLY_MODE = 0o666 if sys.platform == "win32" else 0o600
 OWNER_ONLY_OCT_SUFFIX = "666" if sys.platform == "win32" else "600"
 
@@ -33,3 +35,39 @@ def outside_workspace_path() -> str:
     if sys.platform == "win32":
         return r"C:\Windows\System32\drivers\etc\hosts"
     return "/etc/passwd"
+
+
+def isolate_user_data_env(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """Keep user config and data dir off the developer machine (docs/windows.md).
+
+    ``user_data_dir()`` on Windows follows ``%APPDATA%``, not ``HOME``; tests
+    that only repoint ``HOME`` still read and write the real profile unless
+    these variables move with it.
+    """
+    monkeypatch.setenv("HOME", str(root))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    if sys.platform == "win32":
+        profile = root / "win-profile"
+        roaming = profile / "AppData" / "Roaming"
+        local = profile / "AppData" / "Local"
+        roaming.mkdir(parents=True, exist_ok=True)
+        local.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("USERPROFILE", str(profile))
+        monkeypatch.setenv("APPDATA", str(roaming))
+        monkeypatch.setenv("LOCALAPPDATA", str(local))
+    cached_config.cache_clear()
+
+
+def path_endswith(path: str, suffix: str) -> bool:
+    """Compare path suffixes portably (forward slashes in test literals)."""
+    return Path(path).as_posix().endswith(suffix.replace("\\", "/"))
+
+
+_SCHED_FIXTURE_ROOT = Path(__file__).resolve().parent / "_sched_fixture_ws"
+
+
+def scheduler_fixture_ws(name: str = "ws") -> Path:
+    """Absolute workspace path for scheduler store/runner tests on every OS."""
+    path = (_SCHED_FIXTURE_ROOT / name).resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    return path

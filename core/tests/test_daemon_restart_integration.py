@@ -59,7 +59,7 @@ def _read_port_file(path: Path) -> dict | None:
     return json.loads(path.read_text())
 
 
-async def _wait_for_port_file(path: Path, pid: int, seconds: float = 10.0) -> dict:
+async def _wait_for_port_file(path: Path, pid: int, seconds: float | None = None) -> dict:
     """Wait for the port file the daemon with the given pid wrote.
 
     Keying on the pid matters on restart: after a SIGKILL the previous
@@ -67,6 +67,8 @@ async def _wait_for_port_file(path: Path, pid: int, seconds: float = 10.0) -> di
     mean the fresh daemon is up. The read goes through a thread because the
     event loop must not do blocking filesystem work.
     """
+    if seconds is None:
+        seconds = 30.0 if sys.platform == "win32" else 10.0
     try:
         async with asyncio.timeout(seconds):
             while True:
