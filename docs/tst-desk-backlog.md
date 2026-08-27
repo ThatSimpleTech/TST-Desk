@@ -4536,9 +4536,15 @@ Spec §5: "open, correct, diff, grep, and revert."
 - [x] A Memory surface lists `.tst/memory/**` for the bound workspace
 - [x] Opening a file shows the markdown
 - [x] Empty directory has copy that points at the first distill
-- [ ] Planned rail entry (`state: planned`) becomes `ready` — no Memory
-      rail row exists; Scheduled is the only `planned` entry. The pane
-      landed as the project-home Memory column instead. See DECISIONS.md.
+- [x] Planned rail entry (`state: planned`) becomes `ready` — no Memory
+      rail row exists. The pane is the project-home Memory column
+      (DECISIONS 2026-08-20). Scheduled is `ready` with the other
+      function rows; the rail has no `planned` entry.
+
+**Done (2026-08-27):** `list_memory` / `memory_files` plus the project-home
+column already satisfied the first three ACs. The leftover rail row is
+closed as cancelled: adding `memory` to `RailSurface` would fight Home /
+Projects / Scheduled. `rail.test.ts` pins that.
 
 ---
 

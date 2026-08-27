@@ -91,6 +91,13 @@ describe("surfaces that can't be clicked", () => {
 		expect(entry("scheduled")?.state).toBe("ready");
 	});
 
+	it("does not put Memory on the rail (TD-2601)", () => {
+		const ids = railFunctions("home").map((e) => e.id);
+		expect(ids).not.toContain("memory");
+		expect(ids).toEqual(["home", "projects", "artifacts", "scheduled"]);
+		expect(railFunctions("home").every((e) => e.state !== "planned")).toBe(true);
+	});
+
 	it("marks Home current rather than a destination — the pane is already it", () => {
 		expect(entry("home")?.state).toBe("current");
 	});
