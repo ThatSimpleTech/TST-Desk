@@ -8,7 +8,9 @@ are not about the cadence should not see it either.
 
 from __future__ import annotations
 
+import hashlib
 import sys
+import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -34,11 +36,14 @@ def _quiet_application_pings(
 
 
 @pytest.fixture(autouse=True)
-def _redirect_windows_user_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _redirect_windows_user_data(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``user_data_dir()`` follows ``%APPDATA%`` on Windows, not ``HOME``."""
     if sys.platform != "win32":
         return
-    profile = tmp_path / "win-profile"
+    digest = hashlib.sha256(request.node.nodeid.encode()).hexdigest()[:16]
+    profile = Path(tempfile.gettempdir()) / "tstd-pytest-profiles" / digest
     roaming = profile / "AppData" / "Roaming"
     local = profile / "AppData" / "Local"
     roaming.mkdir(parents=True, exist_ok=True)

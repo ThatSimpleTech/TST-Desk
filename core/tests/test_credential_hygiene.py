@@ -27,12 +27,12 @@ import pytest
 
 # Reuse the onboarding-wire harness: in-memory keychain pinned into the
 # daemon's imports, plus its daemon/ws helpers.
+from tests.platform_helpers import stop_daemon_gracefully
 from tests.test_setup_state import (
     FakeKeychain,
     _ask,
     _connect_and_handshake,
     _start_daemon,
-    _stop_daemon,
 )
 from tstd.config import cached_config
 
@@ -126,7 +126,7 @@ class TestCredentialHygiene:
                     finally:
                         await ws.close()
                 finally:
-                    await _stop_daemon(task)
+                    await stop_daemon_gracefully(daemon, task)
 
                 # The flow really ran against the backing store.
                 assert fake_keychain.stored == {}

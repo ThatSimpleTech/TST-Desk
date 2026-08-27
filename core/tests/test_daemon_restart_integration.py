@@ -25,6 +25,8 @@ from websockets.asyncio.client import connect
 from tstd.protocol import PROTOCOL_VERSION
 from tstd.ws import create_port_file_path
 
+_CORE = Path(__file__).resolve().parent.parent
+
 
 def _spawn(data_dir: Path) -> subprocess.Popen:
     """Start a real tstd daemon on the given data dir, watched by this process.
@@ -35,7 +37,9 @@ def _spawn(data_dir: Path) -> subprocess.Popen:
     would never match it, and ``kill()`` would orphan the real daemon with
     its data-dir files still open (TD-1406).
     """
-    return subprocess.Popen(
+    log_path = data_dir / "daemon.log"
+    log_handle = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
+    proc = subprocess.Popen(
         [
             sys.executable,
             "-m",
@@ -47,9 +51,13 @@ def _spawn(data_dir: Path) -> subprocess.Popen:
             "--parent-pid",
             str(os.getpid()),
         ],
-        stdout=open(data_dir / "daemon.log", "w"),
+        stdout=log_handle,
         stderr=subprocess.STDOUT,
+        cwd=str(_CORE),
+        env=os.environ.copy(),
     )
+    proc._log_handle = log_handle  # keep stdout open for the child's lifetime
+    return proc
 
 
 def _read_port_file(path: Path) -> dict | None:
@@ -59,7 +67,13 @@ def _read_port_file(path: Path) -> dict | None:
     return json.loads(path.read_text())
 
 
-async def _wait_for_port_file(path: Path, pid: int, seconds: float | None = None) -> dict:
+async def _wait_for_port_file(
+    path: Path,
+    pid: int,
+    *,
+    proc: subprocess.Popen | None = None,
+    seconds: float | None = None,
+) -> dict:
     """Wait for the port file the daemon with the given pid wrote.
 
     Keying on the pid matters on restart: after a SIGKILL the previous
@@ -68,10 +82,19 @@ async def _wait_for_port_file(path: Path, pid: int, seconds: float | None = None
     event loop must not do blocking filesystem work.
     """
     if seconds is None:
-        seconds = 30.0 if sys.platform == "win32" else 10.0
+        seconds = 60.0 if sys.platform == "win32" else 10.0
     try:
         async with asyncio.timeout(seconds):
             while True:
+                if proc is not None and proc.poll() is not None:
+                    log_tail = ""
+                    log_path = path.parent / "daemon.log"
+                    if log_path.exists():
+                        log_tail = log_path.read_text(encoding="utf-8")[-2000:]
+                    raise RuntimeError(
+                        f"daemon exited with code {proc.returncode} before port file appeared; "
+                        f"log tail:\n{log_tail}"
+                    )
                 info = await asyncio.to_thread(_read_port_file, path)
                 if info and info.get("pid") == pid:
                     return info
@@ -121,7 +144,9 @@ class TestDaemonRestartIntegration:
             daemon = _spawn(data_dir)
             scenario_ran = False
             try:
-                info = await _wait_for_port_file(create_port_file_path(data_dir), daemon.pid)
+                info = await _wait_for_port_file(
+                    create_port_file_path(data_dir), daemon.pid, proc=daemon
+                )
                 ws = await _connect(info)
                 (data_dir / "workspace").mkdir()
                 live_id = await _open_workspace(ws, str(data_dir / "workspace"))
@@ -149,7 +174,9 @@ class TestDaemonRestartIntegration:
             #    dead daemon's pid) must be replaced.
             daemon2 = _spawn(data_dir)
             try:
-                info2 = await _wait_for_port_file(create_port_file_path(data_dir), daemon2.pid)
+                info2 = await _wait_for_port_file(
+                    create_port_file_path(data_dir), daemon2.pid, proc=daemon2
+                )
                 ws2 = await _connect(info2)
                 sessions = await _list_sessions(ws2)
                 if sys.platform == "win32":

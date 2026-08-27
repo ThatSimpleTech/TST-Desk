@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from tstd.config import cached_config
+from tstd.daemon import Daemon
 
 OWNER_ONLY_MODE = 0o666 if sys.platform == "win32" else 0o600
 OWNER_ONLY_OCT_SUFFIX = "666" if sys.platform == "win32" else "600"
@@ -71,3 +75,16 @@ def scheduler_fixture_ws(name: str = "ws") -> Path:
     path = (_SCHED_FIXTURE_ROOT / name).resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+async def stop_daemon_gracefully(daemon: Daemon, task: asyncio.Task[Any]) -> None:
+    """Shut down an in-process daemon without leaving audit.db open on Windows."""
+    daemon._shutdown_event.set()
+    if task.done():
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=5)
+    except (TimeoutError, asyncio.CancelledError):
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
