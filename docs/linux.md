@@ -43,7 +43,10 @@ keyring, then retry Store. There is no Keychain Access app on Linux.
 
 `secret-tool` is discovered at call time. The Linux backend is selected
 whenever `sys.platform` is Linux, even if the binary is missing — the first
-store or lookup is where that shows up.
+store or lookup is where that shows up. A missing binary is a typed
+`KeychainError` ("install libsecret-tools"), not a crash: `setup_state`
+probes every named credential, and a clean guest without libsecret must
+still handshake and run the keyless `local` preset.
 
 ---
 
@@ -129,3 +132,22 @@ removes `network-manager-applet`.
 
 For where each of these decisions was made, see the TD-2001, TD-2002, and
 Linux data-dir entries in `DECISIONS.md`.
+
+---
+
+## 8. Clean-guest smoke
+
+This host has no `/dev/kvm`, so the Linux "clean VM" is Docker
+(`ubuntu:22.04` for the extracted sidecar, `ubuntu:24.04` for `dpkg -i`
+plus the windowed host). From a built `.deb` / AppImage:
+
+```
+core/scripts/smoke_linux_bundle.sh [path-to-deb] [path-to-appimage]
+```
+
+That script proves: no system Python on the sidecar (`ldd` + empty
+`PATH`), `dpkg -i` + `xvfb-run tst-desk` writes `port.json`, a protocol
+turn against the shipped `local` preset (loopback mock → `fs_write` →
+reply), and AppImage `--appimage-extract` of the same sidecar. It does
+not tick the four-platform packaging boxes. macOS and Windows still need
+their own guests. GitHub Actions `package.yml` is a separate gate.

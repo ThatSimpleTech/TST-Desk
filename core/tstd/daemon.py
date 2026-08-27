@@ -697,7 +697,7 @@ class Daemon:
         try:
             await get_api_key(credential_id)
             return True
-        except KeychainError:
+        except (KeychainError, FileNotFoundError):
             return False
 
     async def _credential_summaries(self) -> list[CredentialSummary]:
