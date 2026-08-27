@@ -8754,3 +8754,28 @@ on the browser driver.
 global points. Also rejected: blocking hit-test on the kill-switch
 (screenshot already stays live). Also rejected: registering
 `desktop_hit_test` on the agent registry.
+
+---
+
+## 2026-08-27 — TD-1105: keychain CLI waits are bounded (Class B)
+
+**Decision:** `security` / `secret-tool` `communicate` waits at most
+5 seconds. A timeout kills the helper and raises `KeychainLockedError`
+with unlock-and-retry copy. The pytest suite patches the public
+keychain functions so tests never touch the host keyring, except
+`test_keychain.py`.
+
+**Rationale:** A locked Secret Service collection does not fail — it
+waits on a prompt. `setup_state` probes every named credential, so
+one hung `secret-tool lookup` stalls the daemon and the suite. TD-1105
+already mapped locked stderr to a retryable error; a hung CLI is the
+same user-visible state. Five seconds matches the other bounded
+helper waits (`taskkill`, kill grace) and is long enough for a
+responsive keyring, short enough that a missing prompt cannot look
+like a frozen app.
+
+**Alternative rejected:** Leaving the wait unbounded and only
+mocking in the tests that already knew to. The next unmocked
+`Daemon()` + `setup_state` would hang again. Also rejected: a
+sub-second timeout (a healthy lookup can be slower on a cold
+keyring).
