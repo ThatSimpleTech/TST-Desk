@@ -191,3 +191,19 @@ The report itself is `tst_cu_mcp.permissions.build_windows_report`. The daemon p
 does not grow a second Windows backend.
 
 See the TD-3303 entry in `DECISIONS.md`.
+
+---
+
+## 9. Clean-guest smoke
+
+After `npm run tauri:build` in `ui/`, from a built `.msi` / sidecar:
+
+```powershell
+pwsh -File core/scripts/smoke_windows_bundle.ps1 [path-to-tstd.exe]
+```
+
+The script proves: bundled sidecar serves with no Python on `PATH`, a protocol
+turn against the shipped `local` preset (loopback mock → `fs_write` → reply),
+and that a missing API key returns actionable copy instead of hanging on
+Connecting…. Linux uses `smoke_linux_bundle.sh`; macOS uses
+`smoke_macos_bundle.sh`. None of these tick TD-1302's four-artifact CI box.
