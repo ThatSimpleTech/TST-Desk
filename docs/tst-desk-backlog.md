@@ -85,8 +85,8 @@ M4 Memory hangs off E5 (the assembler already has a brain-only memory slot) and 
 supervision — heading-match loading is the floor if the sidecar is not running.
 
 M5 Cowork hangs off TD-205 / TD-1002: the session already outlives the socket; the
-window still kills the daemon. Persist revive (events.jsonl) landed early — TD-2901
-pins and bounds it. M6 hangs off TD-1710 (browser Screen) and E20 (`tst-cu-mcp`).
+window no longer kills the daemon on close (TD-2902). Persist revive
+(events.jsonl) landed early — TD-2901 pins and bounds it. M6 hangs off TD-1710 (browser Screen) and E20 (`tst-cu-mcp`).
 M7 hangs off M5 (something must be alive to attach to). M9 hangs off M5 and M7
 (spec §9). M10 hangs off E6 (every MCP tool is still a classified tool).
 
@@ -4209,9 +4209,9 @@ Memory / Context on the right and recents in the middle. Computer-use
 (TD-1710, E20), packaging clean-VM boxes (TD-1301–1303), and Windows
 process-group verify (TD-1406) stay where they are — they do not block M4.
 
-**v0.1 leftover that is not M4:** the window still kills the daemon on close. Distill
-therefore runs on **graceful quit** and on an explicit End session, not on crash, and
-does not wait for v0.3 detached sessions.
+**v0.1 leftover that is not M4:** close no longer kills the daemon
+(TD-2902). Distill still runs on **graceful quit** and on an explicit
+End session, not on crash, and does not wait for v0.3 detached sessions.
 
 **Already decided (do not reopen):** local embeddings are a **sidecar**
 (`llama-server --embeddings` or any OpenAI `/v1/embeddings` endpoint), never an
