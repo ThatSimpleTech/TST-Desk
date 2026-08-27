@@ -421,7 +421,7 @@ fn resolve_with(
 /// How the host is watching a live `tstd`: a child it spawned, or a
 /// leftover listener it attached to (TD-2902).
 enum ChildWatch {
-    Spawned { child: tokio::process::Child },
+    Spawned { child: Box<tokio::process::Child> },
     Attached,
 }
 
@@ -469,7 +469,7 @@ async fn acquire_daemon(data_dir: &Path) -> Result<(ChildWatch, ClientWs, PortFi
             return Err(e);
         }
     };
-    Ok((ChildWatch::Spawned { child }, ws, port_file, pid))
+    Ok((ChildWatch::Spawned { child: Box::new(child) }, ws, port_file, pid))
 }
 
 /// `port.json` when it names a live process. Handshake is the attach
