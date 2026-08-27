@@ -1,8 +1,10 @@
 # TST Desk — Work Plan & Backlog
 
 **Scope of this document:** everything that must be built for **v0.1** and **v0.2**, plus
-a full decomposition of **v0.3–Later** (M5–M10 and E47). Later phases may be planned;
-they may not be started until the previous milestone exits (`AGENTS.md` §3).
+a full decomposition of **v0.3–Later** (M5–M10, E47, and E49). Later phases may be planned;
+they may not be started until the previous milestone exits (`AGENTS.md` §3). E49 is
+follow-through that the spec implied or the clean-guest pass exposed; it is not a
+new product. Do not implement E47 or E49 unless the maintainer says so.
 
 Companion documents:
 - `tst-desk-spec.md` — behavior and architecture. Source of truth for *what it does*.
@@ -52,7 +54,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M8 — Local remainder (v0.6)** | E39 | EZER/vLLM path. UI-TARS grounding. Floor already shipped as M1.5 |
 | **M9 — Autonomy (v0.7)** | E40–E43 | Charter, unattended runner, drift checks, circuit breakers, hard-required container, wake-up |
 | **M10 — Extensibility (v0.8)** | E44–E46 | MCP through the classifier. Slash + `SKILL.md`. One-level subagent. Plan lock |
-| **Later** | E47 | Voice, tray, multi-window, updater, vision. Unversioned; do not pull forward |
+| **Later** | E47, E49 | Voice, tray, updater, vision; Wayland CU; signing; aarch64; CI recovery. Unversioned; do not pull forward |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -2435,9 +2437,11 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
       (PyInstaller onefile sidecar, `core/scripts/build_sidecar.py` →
       `shell/binaries/tstd-<triple>`; smoke-launched with no system Python involved)
 - [ ] App launches on a machine with no Python installed, verified on a clean VM per platform
-      (manual release step — no clean VM available in this environment; the
-      sidecar itself boots and serves standalone, so this verifies the Tauri
-      bundle around it. Belongs with TD-1302's clean-VM installs.)
+      (Linux Docker guests on 2026-08-27: extracted `.deb` `tstd` on
+      `ubuntu:22.04` with empty PATH and no system Python; `dpkg -i` +
+      `xvfb-run tst-desk` on `ubuntu:24.04` wrote `port.json` and accepted
+      a loopback TCP connect. Script: `core/scripts/smoke_linux_bundle.sh`.
+      macOS and Windows guests are still open. Do not tick from Linux only.)
 - [x] Bundle size documented and justified (18.9 MB aarch64-apple-darwin —
       see DECISIONS.md 2026-08-14)
 - [x] Daemon startup under three seconds on a mid-range machine
@@ -2455,11 +2459,13 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
       level — the bundled sidecar serves `port.json` with no system Python.
       The local `.dmg` step needs Finder automation rights this dev host
       lacks (AppleEvent -1712); runners get TAURI_BUNDLER_DMG_IGNORE_CI=false.
-      Ticks when the first main run produces four artifacts.)
+      Linux AppImage + `.deb` rebuilt on this host 2026-08-27. Ticks when
+      the first main `package.yml` run produces four artifacts. GitHub
+      Actions is still dying in ~4s with empty job steps — TD-4904.)
 - [ ] Each installs and runs on a clean VM
-      (each matrix leg treats its fresh runner as the clean machine:
-      install/extract the bundle, run the bundled sidecar, assert the port
-      file.  Ticks when that first run is green.)
+      (Linux: Docker guests, see Local 2026-08-27 below. Other platforms
+      still need their matrix legs or a real VM. Ticks when every claimed
+      artifact has a green guest, not when Linux alone is green.)
 - [x] Unsigned-binary warnings documented in the README with per-platform instructions
 - [x] Signing decision recorded in `DECISIONS.md` — cost and benefit stated, deferral is
       acceptable for v0.1 (deferred, 2026-08-14)
@@ -2467,8 +2473,17 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 **Local (2026-08-24):** Ubuntu 26.04 XFCE built AppImage (101 MB), `.deb`
 (27 MB), and `.rpm`. Extracted-deb `tstd` served `port.json` on this
 host, with `PATH` empty, and inside `ubuntu:22.04` (no system Python).
-The two open ACs still need the first green `package.yml` run on main
-(four artifacts) and the other matrix legs.
+
+**Local (2026-08-27):** Rebuilt AppImage (101 MB) and `.deb` (27 MB) on
+the 16-core EPYC host. `core/scripts/smoke_linux_bundle.sh` against
+stock `ubuntu:22.04` / `ubuntu:24.04` Docker guests (no `/dev/kvm`, so
+Docker is the Linux clean guest — `DECISIONS.md`). Proved: sidecar
+with empty PATH; windowed host via `dpkg -i` + xvfb; protocol E2E
+(handshake → `local` preset → `fs_write` → reply) with no API key and
+no `secret-tool`; AppImage `--appimage-extract` sidecar. Missing
+`secret-tool` used to crash `setup_state` — now a `KeychainError`.
+The two open ACs still need green `package.yml` (four artifacts) and
+macOS / Windows guests.
 
 ---
 
@@ -6084,6 +6099,127 @@ the product." Web search is already TD-609/TD-610.
 
 ---
 
+## Epic E49 — Unplanned follow-through
+
+Filed 2026-08-27 after the Linux clean-guest pass. These are gaps the
+spec implied, or leftovers an earlier story named and left unfiled.
+They are **not** a new product and they are **not** a reason to reopen
+M0–M10. Unversioned with E47. Do not start unless the maintainer says
+so.
+
+**What this epic is not.** Hosted backend, accounts, telephony,
+Flatpak/Snap, i18n, a native phone app, a plugin marketplace, a
+20-platform messaging gateway, or anything that breaks prime
+directive §2. Spec §1 non-goals still hold. ntfy already shipped as
+TD-3802. Root-only glob `/config.py` stays out of scope (TD-511).
+
+```
+TD-4904 (Actions) ─> TD-1302 / TD-1303 ticks
+TD-4901 (Wayland) ─> optional AT-SPI actuation (inside 4901, not a second epic)
+TD-4903 (signing) ─> TD-4704 updater can then turn on
+```
+
+---
+
+### TD-4901 — Wayland computer-use
+**Size:** 13 · **Depends on:** TD-2002, TD-3301
+
+TD-2002 decided Wayland stays unsupported and said the implementation
+epic is size 13 and is not filed now. File it so the decision has a
+home. Spec §9 v0.4 named Atspi; X11 raw is what shipped.
+
+**Acceptance criteria:**
+- [ ] Portal ScreenCast (PipeWire) and RemoteDesktop / libei assessed
+      again against current GNOME and KDE; consent flow described
+- [ ] `foreground_window` strategy is explicit: AT-SPI, compositor
+      protocol, or refuse. `expect_window` never degrades
+- [ ] X11 path is unchanged. Wayland `health` becomes `supported: true`
+      only when the chosen strategy actually works
+- [ ] Size 13 — split if capture and input diverge. Do not start from
+      "just drive XWayland"
+
+---
+
+### TD-4902 — Linux aarch64 bundles
+**Size:** 5 · **Depends on:** TD-1301
+
+TD-1302's Linux artifacts are amd64. The sidecar already builds per
+host triple.
+
+**Acceptance criteria:**
+- [ ] AppImage and `.deb` for `aarch64-unknown-linux-gnu`
+- [ ] Clean-guest smoke (Docker or a real ARM box) matches
+      `smoke_linux_bundle.sh`
+- [ ] Not a substitute for the four-platform `package.yml` tick
+
+---
+
+### TD-4903 — Code signing and notarization
+**Size:** 5 · **Depends on:** TD-1302
+
+Signing was deferred in TD-1302. TD-4704's updater stays off until
+this exists. This story is the certs and the build wiring, not the
+updater UI.
+
+**Acceptance criteria:**
+- [ ] Decision recorded: which platforms get a cert in v0.1, cost, and
+      who holds the secret (OS keychain / CI OIDC — never the repo)
+- [ ] macOS notarization and Windows Authenticode each either land or
+      are explicitly refused with copy the README already warns about
+- [ ] Linux remains unsigned unless a cheap path appears
+- [ ] No telemetry in the signing path
+
+---
+
+### TD-4904 — GitHub Actions package.yml recovery
+**Size:** 2 · **Depends on:** TD-106
+
+`package.yml` dies in ~4–5s with empty job steps (org / billing /
+permissions). That is why TD-1302 / TD-1303 stay open after a green
+Linux guest.
+
+**Acceptance criteria:**
+- [ ] The first `package.yml` run on `main` has real job steps and
+      produces the four artifacts, or a written account of which org
+      setting still blocks it
+- [ ] Local Linux smoke stays the Linux evidence; Actions is the
+      four-platform gate
+- [ ] No workaround that binds a non-loopback socket or phones home
+
+---
+
+### TD-4905 — Steering leftovers named in TD-511
+**Size:** 2 · **Depends on:** TD-511, TD-1201
+
+Called out in TD-511 and left unfiled: `~/.tstdesk/AGENTS.md` sibling
+imports trip the external-import gate once per workspace, and
+`StackPanel.svelte` hardcodes `warning.includes('exceeds 200 lines')`
+so changing `LINE_LIMIT` drops the short badge.
+
+**Acceptance criteria:**
+- [ ] Personal-global steering sibling imports are either allowed
+      with copy or documented as the intended friction
+- [ ] The stack-panel badge reads `LINE_LIMIT`, not a string literal
+- [ ] No change to workspace-local `AGENTS.md` precedence
+
+---
+
+### TD-4906 — Packaged stranger loop on macOS and Windows
+**Size:** 5 · **Depends on:** TD-1302, TD-4904
+
+Spec §11 is install → key (or `local`) → folder → request → approve.
+Linux Docker now does the keyless half (`smoke_linux_e2e.py`). This
+story is the same loop on the other two platforms' clean guests.
+
+**Acceptance criteria:**
+- [ ] A clean macOS guest installs the `.dmg` / `.app`, handshakes,
+      and completes one `local` (or live) turn
+- [ ] A clean Windows guest does the same with the `.msi`
+- [ ] Missing keychain helper is a typed error, not a hung Connecting…
+- [ ] Does not tick TD-1302's four-artifact box by itself
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -6119,8 +6255,8 @@ the product." Web search is already TD-609/TD-610.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47 | 7 | 34 |
-| **Total planned** | **47** | **268** | **861** |
+| Later | E47, E49 | 13 | 66 |
+| **Total planned** | **48** | **274** | **893** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

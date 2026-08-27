@@ -8779,3 +8779,31 @@ mocking in the tests that already knew to. The next unmocked
 `Daemon()` + `setup_state` would hang again. Also rejected: a
 sub-second timeout (a healthy lookup can be slower on a cold
 keyring).
+
+---
+
+## 2026-08-27 — TD-1302: Docker is the Linux clean guest (Class B)
+
+**Decision:** On a host without `/dev/kvm`, the Linux clean-VM
+acceptance for TD-1301 / TD-1302 is Docker, not qemu. `ubuntu:22.04`
+extracts the `.deb` and runs `tstd` with an empty `PATH` (same guest
+as `package.yml`). `ubuntu:24.04` runs `dpkg -i` plus `xvfb-run
+tst-desk` because the `.deb` needs `libwebkit2gtk-4.1`, which 22.04
+does not ship. Protocol E2E uses a stdlib loopback OpenAI mock on
+`127.0.0.1:11434` (the shipped `local` preset) so a guest with no
+Python in *the product* and no API key still completes
+workspace → tool write → reply.
+
+**Rationale:** This box is the right hardware for a clean guest
+(16-core, 123 GiB, Docker) but it is not a KVM host. A hardware VM
+that cannot boot is not more honest than a stock Ubuntu container.
+The guest still has no TST Desk, no venv, and no system Python on
+the sidecar `PATH`. macOS and Windows stay real VMs / Actions
+runners; this decision is Linux-only.
+
+**Alternative rejected:** qemu without KVM (too slow to be a
+release gate). Also rejected: ticking "per platform" / "four
+artifacts" from Linux Docker evidence. Also rejected: installing
+`libsecret-tools` in the protocol guest to hide a missing-helper
+crash — that crash is a first-run defect, so the smoke found it
+and the helper now raises `KeychainError`.
