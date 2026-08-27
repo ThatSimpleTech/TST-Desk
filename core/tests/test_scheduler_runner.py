@@ -409,9 +409,8 @@ async def test_daemon_tick_on_start_revives_once(tmp_path: Path) -> None:
         assert len(mock.calls) == 1
         stored = get_only(data_dir)
         assert stored.next_run is not None
-        when = datetime.fromisoformat(stored.next_run)
-        original_due = datetime.now(UTC) - timedelta(hours=3)
-        assert when > original_due
+        # After revive the job must not still be due at the same instant.
+        assert due_jobs(list_jobs(data_dir), datetime.now(UTC)) == []
     finally:
         await _stop_daemon(daemon, task)
 
