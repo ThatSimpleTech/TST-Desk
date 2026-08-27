@@ -11,8 +11,9 @@ workspace as the working directory.  Three safety rails surround it:
 - **Process-group kill.**  The child starts a new session
   (``start_new_session``), so it leads its own process group.  On timeout
   or cancel the whole group is SIGKILLed — backgrounded children cannot
-  outlive the command.  Windows has no process-group kill; the direct
-  child is terminated instead.
+  outlive the command.  Windows has no ``killpg``: the child is spawned
+  with ``CREATE_NEW_PROCESS_GROUP`` and ``taskkill /T /F`` walks the
+  tree (TD-1406).
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
