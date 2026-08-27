@@ -13,13 +13,14 @@
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
 
-export type SettingsSection = "appearance" | "model" | "policy" | "mcp" | "key";
+export type SettingsSection = "appearance" | "model" | "policy" | "mcp" | "key" | "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
 	"model",
 	"policy",
 	"mcp",
 	"key",
+	"about",
 ] as const;
 
 export type McpServerRow = {
