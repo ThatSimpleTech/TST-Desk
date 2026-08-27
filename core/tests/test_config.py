@@ -234,6 +234,13 @@ class TestTiers:
         assert cfg.notify.ntfy.host == ""
         assert NtfyNotifyConfig().enabled is False
 
+    def test_shipped_discord_and_telegram_notify_are_off(self, tmp_path: Path) -> None:
+        """TD-4707: extras are off; Slack stays the default channel."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.notify.discord.enabled is False
+        assert cfg.notify.telegram.enabled is False
+        assert cfg.notify.slack.enabled is False
+
     def test_shipped_autonomy_is_rootless_podman(self, tmp_path: Path) -> None:
         """TD-4301: packaged config names Podman; image is not a Python literal."""
         cfg = _load_shipped(tmp_path)

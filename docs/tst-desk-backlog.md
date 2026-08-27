@@ -6099,9 +6099,15 @@ highlighted fence. Currency `$5` is not math. Markdown images render as
 **Size:** 3 · **Depends on:** TD-3801
 
 **Acceptance criteria:**
-- [ ] Discord and/or Telegram as the same `send` module
-- [ ] Slack remains the default
-- [ ] 20-platform gateway stays refused (spec §8)
+- [x] Discord and/or Telegram as the same `send` module
+- [x] Slack remains the default
+- [x] 20-platform gateway stays refused (spec §8)
+
+**Done (2026-08-27):** `notify/discord.py` and `notify/telegram.py` are
+sibling `send(config, message)` modules. Slack stays the package
+default and shipped-off like the others. Keychain accounts
+`tst-discord-webhook` and `tst-telegram-bot` (chat_id on the URL
+query). No gateway package.
 
 ---
 

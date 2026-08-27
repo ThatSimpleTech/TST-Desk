@@ -3,7 +3,6 @@
 ``send(config, message)`` posts only when ntfy is enabled and the
 injected (or keychain) URL's host matches ``notify.ntfy.host``. Off by
 default. Failures never raise. The topic URL never appears in logs.
-Discord/Telegram are TD-4707 — this module must not exist here.
 """
 
 from __future__ import annotations
@@ -315,9 +314,8 @@ class TestConfig:
         assert "url" not in shipped["notify"]["ntfy"]
         assert "topic_url" not in shipped["notify"]["ntfy"]
 
-    def test_discord_and_telegram_are_not_this_story(self) -> None:
+    def test_no_messaging_gateway(self) -> None:
+        """Spec §8: extras are sibling modules, not a 20-platform gateway."""
         notify_dir = Path(__file__).resolve().parent.parent / "tstd" / "notify"
-        names = {path.name for path in notify_dir.iterdir()}
-        assert "discord.py" not in names
-        assert "telegram.py" not in names
-        assert "ntfy.py" in names
+        names = {path.name for path in notify_dir.iterdir() if path.suffix == ".py"}
+        assert names == {"__init__.py", "slack.py", "ntfy.py", "discord.py", "telegram.py"}
