@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from tests.platform_helpers import assert_owner_only_mode
 from tstd.artifacts import ArtifactError, ArtifactStore
 from tstd.daemon import Daemon
 from tstd.protocol import Artifact, ArtifactList, ArtifactReady, parse_daemon_event
@@ -65,7 +66,7 @@ class TestStore:
         assert rec.path == f"artifacts/{rec.id}"
         dest = persist_dir / "artifacts" / rec.id
         assert dest.read_bytes() == b"<p>ok</p>"
-        assert dest.stat().st_mode & 0o777 == 0o600
+        assert_owner_only_mode(dest.stat().st_mode & 0o777)
 
     def test_absolute_persist_path_is_accepted(self, tmp_path: Path) -> None:
         store, ws, persist_dir, _persist = _store(tmp_path)

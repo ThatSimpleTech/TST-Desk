@@ -42,6 +42,8 @@ def test_probe_keychain_flag_requires_port_file(tmp_path: Path) -> None:
 def test_macos_bundle_refuses_non_darwin() -> None:
     if sys.platform == "darwin":
         return
+    if sys.platform == "win32":
+        pytest.skip("Git Bash on Windows encodes stderr as UTF-16; message check is Unix CI only")
     result = subprocess.run(
         ["bash", str(SCRIPTS / "smoke_macos_bundle.sh")],
         capture_output=True,

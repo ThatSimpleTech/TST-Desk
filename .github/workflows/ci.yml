@@ -50,6 +50,8 @@ jobs:
 
       - name: Test (pytest)
         run: uv run pytest -q --tb=short
+        env:
+          PYTHONUTF8: "1"
 
   # ── Rust ────────────────────────────────────────────────────────────
 
