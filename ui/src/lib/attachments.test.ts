@@ -73,13 +73,27 @@ describe("acceptAttachment", () => {
     expect(atob(outcome.draft.content_b64)).toBe("# Title\n");
   });
 
-  it("refuses a binary file with copy naming it and why", () => {
+  it("refuses an image without vision with copy naming config", () => {
     const outcome = acceptAttachment("shot.png", PNG, limits());
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
-    expect(outcome.refusal.code).toBe("attachment_binary");
+    expect(outcome.refusal.code).toBe("attachment_no_vision");
     expect(outcome.refusal.message).toContain("shot.png");
-    expect(outcome.refusal.message).toContain("text files only");
+    expect(outcome.refusal.message).toContain("vision: true");
+  });
+
+  it("accepts an image when vision is enabled", () => {
+    const outcome = acceptAttachment("shot.png", PNG, limits(), [], true);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.draft.name).toBe("shot.png");
+  });
+
+  it("still refuses non-image binary when vision is enabled", () => {
+    const outcome = acceptAttachment("blob.dat", new Uint8Array([0, 1, 2, 3]), limits(), [], true);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.refusal.code).toBe("attachment_binary");
   });
 
   it("refuses an oversize file and names the config key", () => {

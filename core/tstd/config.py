@@ -186,6 +186,10 @@ class TierConfig(BaseModel):
     cache_read_price: float = Field(ge=0)
     context_window: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
+    # When true, PNG/JPEG/GIF/WebP attachments are accepted on user turns
+    # routed to this tier (TD-4705). Default false — capability is config,
+    # never inferred from a slug in code.
+    vision: bool = False
     # Named key from the credentials catalog (TD-1717). None / omitted /
     # blank means unbound: loopback sends no key, remote uses openrouter.
     credential: str | None = None

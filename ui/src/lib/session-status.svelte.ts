@@ -59,6 +59,8 @@ export const session = $state({
   hosts: {} as Record<string, string>,
   /** Plan mode (TD-4603). False until a tier_state says otherwise. */
   planMode: false,
+  /** Active tier accepts image attachments (TD-4705). False until tier_state. */
+  vision: false,
   /** A turn is owed (TD-1721). The daemon refuses a preset switch then. */
   turnActive: false,
 });
@@ -87,6 +89,7 @@ export function resetSession(): void {
   session.preset = "";
   session.hosts = {};
   session.planMode = false;
+  session.vision = false;
   session.turnActive = false;
   pendingPath = null;
 }
@@ -139,6 +142,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.preset = event.preset ?? "";
       session.hosts = event.hosts ?? {};
       session.planMode = event.plan ?? false;
+      session.vision = event.vision ?? false;
       break;
     case "user_turn":
       session.turnActive = true;
@@ -196,6 +200,7 @@ export function focusSession(
   session.preset = "";
   session.hosts = {};
   session.planMode = false;
+  session.vision = false;
   session.turnActive = false;
   pendingPath = null;
 }

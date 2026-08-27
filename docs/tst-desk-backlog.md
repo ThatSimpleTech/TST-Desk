@@ -6084,10 +6084,15 @@ daemon. Window-scoped binding never auto-adopts another session.
 **Size:** 5 · **Depends on:** TD-1709
 
 **Acceptance criteria:**
-- [ ] Images attach when the active brain/worker advertises vision
-- [ ] Capability detected, not assumed; a text-only model refuses
+- [x] Images attach when the active brain/worker advertises vision
+- [x] Capability detected, not assumed; a text-only model refuses
       with copy
-- [ ] Caps apply. No silent downscale that hides a secret
+- [x] Caps apply. No silent downscale that hides a secret
+
+**Done (2026-08-27):** `vision: true` on a tier in config; `tier_state.vision`
+mirrors the active tier. Daemon magic-byte gate accepts PNG/JPEG/GIF/WebP when
+on; composer courtesy uses the same flag. Provider user turns send OpenAI
+multimodal parts; no resize.
 
 ---
 

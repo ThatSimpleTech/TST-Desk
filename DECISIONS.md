@@ -8940,3 +8940,27 @@ RPC and survives webview restarts.
 **Alternative rejected:** One window only with in-app tabs (not the
 story). Also rejected: a second daemon or WS connection per window.
 
+---
+
+## 2026-08-27 — TD-4705: vision attachments (Class B)
+
+**Decision:** Image attach is gated by `vision: true` on the active tier
+in config — never inferred from a model slug in code. The daemon detects
+PNG/JPEG/GIF/WebP by magic bytes, applies the same attachment caps, and
+refuses with `attachment_no_vision` when off. Accepted images are sent
+as OpenAI-compatible multimodal user content (`image_url` data URLs) with
+no resize. `tier_state.vision` mirrors the active tier so the composer
+courtesy gate matches the daemon. The event log and UI keep a plain-text
+display body; the provider queue carries the multimodal payload.
+
+**Rationale:** Slug-based capability guessing violates prime directive §7
+and breaks when discovery remaps endpoints. Config is the user's explicit
+choice. No downscale avoids hiding secrets in pixels and keeps bytes
+honest for cost/audit. Split display vs provider payloads keeps replay
+and compaction text-only without losing vision on the wire.
+
+**Alternative rejected:** Inferring vision from slug prefixes or provider
+metadata in Python. Also rejected: storing images only in the workspace
+tree (attachments are turn-scoped on the wire). Also rejected: silent
+downscale to fit caps.
+
