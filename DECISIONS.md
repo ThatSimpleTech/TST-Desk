@@ -9077,4 +9077,21 @@ first. Ignoring bare `v*` tags avoids the tst-cu-mcp `v0.2.0` false positive
 **Alternative rejected:** Background daily check (violates “opt-in only” spirit
 for v0.1). Also rejected: treating any GitHub release as a TST Desk update.
 
+---
+
+## 2026-08-27 — TD-4901: Wayland CU split a/b/c (Class B)
+
+**Decision:** File the size-13 epic as three sub-stories: **4901a** capture
+(ScreenCast + PipeWire), **4901b** input (RemoteDesktop + libei), **4901c**
+foreground_window policy. Assessment lives in `docs/wayland-computer-use.md`.
+`expect_window` refuses on Wayland until portal-picked scope can be matched;
+AT-SPI is Design-mode hinting only. X11 EWMH path unchanged.
+
+**Rationale:** wlroots often ships ScreenCast without RemoteDesktop; capture and
+input diverge in practice. Starting from XWayland would lie about native app
+support (TD-2002).
+
+**Alternative rejected:** Single monolithic TD-4901 PR (unreviewable). Also
+rejected: flipping `health` to supported on XWayland `DISPLAY` alone.
+
 
