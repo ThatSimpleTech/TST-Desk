@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from tests.platform_helpers import scheduler_fixture_ws
 from tstd.scheduler.models import Job, JobDraft, JobValidationError, validate_draft
 from tstd.scheduler.parse import parse_job_request
 from tstd.scheduler.store import delete_job, get_job, jobs_path, list_jobs, save_job
@@ -117,6 +118,7 @@ def test_junk_is_empty(tmp_path: Path) -> None:
 def test_malformed_row_is_dropped(tmp_path: Path) -> None:
     path = jobs_path(tmp_path)
     path.parent.mkdir(parents=True)
+    ws = scheduler_fixture_ws("one")
     path.write_text(
         json.dumps(
             {
@@ -125,7 +127,7 @@ def test_malformed_row_is_dropped(tmp_path: Path) -> None:
                     {"id": "bad"},
                     {
                         "id": "good",
-                        "workspace": "/ws/one",
+                        "workspace": str(ws),
                         "instruction": "ping",
                         "cadence": "every 2 hours",
                         "deliver_to": "window",

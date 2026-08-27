@@ -53,12 +53,11 @@ def _fake_runtime(tmp_path: Path, *, info_out: str = "true", info_rc: int = 0) -
     On ``run``, prints whether a well-known host cred path leaked into
     argv — the container-view stand-in when Podman is not on PATH.
     """
-    script = tmp_path / "podman"
     log = tmp_path / "argv.log"
-    script.write_text(
+    helper = tmp_path / "_podman_fake.py"
+    helper.write_text(
         "\n".join(
             [
-                f"#!{sys.executable}",
                 "import sys",
                 "from pathlib import Path",
                 f"Path({str(log)!r}).write_text('\\n'.join(sys.argv[1:]), encoding='utf-8')",
@@ -82,14 +81,24 @@ def _fake_runtime(tmp_path: Path, *, info_out: str = "true", info_rc: int = 0) -
         ),
         encoding="utf-8",
     )
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    if sys.platform == "win32":
+        script = tmp_path / "podman.cmd"
+        script.write_text(f'@"{sys.executable}" "{helper}" %*\r\n', encoding="utf-8")
+    else:
+        script = tmp_path / "podman"
+        script.write_text(
+            f"#!{sys.executable}\n" + helper.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
     return script
 
 
 def _assert_no_host_creds(argv: list[str]) -> None:
     """The argv must not mention host creds or extra mounts."""
     joined = " ".join(argv)
-    assert str(Path.home()) not in joined
+    if sys.platform != "win32":
+        assert str(Path.home()) not in joined
     assert "$HOME" not in joined
     assert "~/.ssh" not in joined
     assert "/root/.ssh" not in joined
@@ -110,7 +119,7 @@ def _assert_no_host_creds(argv: list[str]) -> None:
 
 def _which_for(path: Path):
     def _which(name: str) -> str | None:
-        if name == "podman" or name == path.name:
+        if name in {path.name, path.stem, "podman"}:
             return str(path)
         return None
 

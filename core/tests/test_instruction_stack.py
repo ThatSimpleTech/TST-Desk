@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from websockets.asyncio.client import connect
 
+from tests.platform_helpers import path_endswith
 from tests.test_dispatch import make_config, start_loop, wait_for_turn
 from tstd.context import ContextAssembler, SteeringFileResolver
 from tstd.context.memory_loader import MemoryFile, MemoryLoad
@@ -323,7 +324,7 @@ class TestGetInstructionStackHandler:
                 )
                 resp = json.loads(await ws.recv())
                 assert resp["type"] == "instruction_stack"
-                root = next(e for e in resp["sources"] if e["path"].endswith("ws/AGENTS.md"))
+                root = next(e for e in resp["sources"] if path_endswith(e["path"], "ws/AGENTS.md"))
                 imp = next(i for i in root["imports"] if i["path"] == str(external))
                 assert imp["issue"] is None
                 await ws.close()

@@ -8,11 +8,14 @@ are not about the cadence should not see it either.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tstd.config import cached_config
 from tstd.keychain import KeychainError
 
 _KEEP_REAL_PING_INTERVAL = {
@@ -28,6 +31,22 @@ def _quiet_application_pings(
     if request.node.name in _KEEP_REAL_PING_INTERVAL:
         return
     monkeypatch.setattr("tstd.ws.PING_INTERVAL_SECONDS", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def _redirect_windows_user_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``user_data_dir()`` follows ``%APPDATA%`` on Windows, not ``HOME``."""
+    if sys.platform != "win32":
+        return
+    profile = tmp_path / "win-profile"
+    roaming = profile / "AppData" / "Roaming"
+    local = profile / "AppData" / "Local"
+    roaming.mkdir(parents=True, exist_ok=True)
+    local.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("USERPROFILE", str(profile))
+    monkeypatch.setenv("APPDATA", str(roaming))
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    cached_config.cache_clear()
 
 
 # Seams that would otherwise call the developer's live keychain. setup_state
