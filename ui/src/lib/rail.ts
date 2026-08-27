@@ -37,7 +37,8 @@ export interface RailEntry {
  *
  * Home, Projects, Artifacts, and Scheduled trade `current` / `ready` so
  * the rail is honest about which pane the window is showing (TD-2801 /
- * TD-3202 / TD-3805).
+ * TD-3202 / TD-3805). Memory is the project-home column, not a fifth
+ * function row (TD-2601).
  */
 export function railFunctions(current: RailSurface = "home"): RailEntry[] {
 	return [

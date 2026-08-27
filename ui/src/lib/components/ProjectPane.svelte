@@ -4,7 +4,7 @@
 	// Rail Projects lands here instead of the title-bar recents menu.
 	// Selecting a row shows a home: folder name, New chat (`new_session`
 	// in that workspace), and recents filtered to that path. Columns
-	// Context is a later story. Memory is TD-2601.
+	// Memory is the project-home column (TD-2601), not a rail row.
 	import Icon from './Icon.svelte';
 	import { workspaceName } from '../session-status.svelte.js';
 	import { workspaces } from '../workspaces.svelte.js';
