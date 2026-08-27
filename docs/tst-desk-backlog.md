@@ -2809,6 +2809,12 @@ literals (must be loopback), confines which modules may open a transport, record
 provider / discovery / key-validation paths under a patched httpx transport, and imports
 the package in a subprocess with sockets refused. The README now cites that file.
 
+**Leftover (2026-08-27):** TD-4604's `e2e_m10.py` imports the websockets
+client the same way the earlier harnesses do. It was missing from
+`_OUTBOUND_CAPABLE`, so the confinement test failed for a loopback
+protocol client rather than a new remote host. Added with the same
+reason as `e2e_m5`–`e2e_m8`.
+
 ---
 
 ### TD-1411 — Settings appearance tests assume `localStorage` exists
