@@ -6165,14 +6165,18 @@ epic is size 13 and is not filed now. File it so the decision has a
 home. Spec §9 v0.4 named Atspi; X11 raw is what shipped.
 
 **Acceptance criteria:**
-- [ ] Portal ScreenCast (PipeWire) and RemoteDesktop / libei assessed
+- [x] Portal ScreenCast (PipeWire) and RemoteDesktop / libei assessed
       again against current GNOME and KDE; consent flow described
-- [ ] `foreground_window` strategy is explicit: AT-SPI, compositor
+- [x] `foreground_window` strategy is explicit: AT-SPI, compositor
       protocol, or refuse. `expect_window` never degrades
-- [ ] X11 path is unchanged. Wayland `health` becomes `supported: true`
+- [x] X11 path is unchanged. Wayland `health` becomes `supported: true`
       only when the chosen strategy actually works
 - [ ] Size 13 — split if capture and input diverge. Do not start from
       "just drive XWayland"
+
+**Done (2026-08-27, assessment):** `docs/wayland-computer-use.md` re-assesses
+portals and libei, names TD-4901a/b/c split, and locks `expect_window` to
+refuse on Wayland until portal scope matches. Implementation not started.
 
 ---
 
