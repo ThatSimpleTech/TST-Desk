@@ -141,6 +141,8 @@ from tstd.protocol import (
     TierSwitched,
     ToolCall,
     ToolResult,
+    Transcribe,
+    Transcript,
     TurnComplete,
     UsageExported,
     UsageReport,
@@ -691,6 +693,8 @@ FIXTURES = {
                 enabled=True,
             )
         ],
+        speech_enabled=False,
+        speech_ready=False,
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so
@@ -851,6 +855,7 @@ FIXTURES = {
         deliver_to="window",
     ),
     "delete_job": DeleteJob(job_id="job-1"),
+    "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
     "job_list": JobList(
         jobs=[
             JobEntry(
@@ -863,6 +868,7 @@ FIXTURES = {
             )
         ],
     ),
+    "transcript": Transcript(ok=True, text="hello from the mic", detail=""),
 }
 
 

@@ -30,7 +30,8 @@
     "externalBin": ["binaries/tstd"],
     "macOS": {
       "signingIdentity": "tst-desk-dev",
-      "entitlements": "./macos-entitlements.plist"
+      "entitlements": "./macos-entitlements.plist",
+      "infoPlist": "./macos-info.plist"
     },
     "icon": [
       "icons/32x32.png",

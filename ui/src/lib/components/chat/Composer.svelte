@@ -28,6 +28,7 @@
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
+	import DictationButton from "./DictationButton.svelte";
 	import SlashPalette from "./SlashPalette.svelte";
 
 	let {
@@ -204,6 +205,18 @@
 			submit();
 		}
 	}
+
+	function appendDictation(text: string): void {
+		const piece = text.trim();
+		if (!piece) return;
+		const cur = value;
+		if (!cur) {
+			value = piece;
+			return;
+		}
+		const sep = /[\s\n]$/.test(cur) ? "" : " ";
+		value = `${cur}${sep}${piece}`;
+	}
 </script>
 
 <div class="composer">
@@ -256,6 +269,7 @@
 				onpaste={handlePaste}
 				onfocus={handleFocus}
 			></textarea>
+			<DictationButton {disabled} ontranscript={appendDictation} />
 			<input
 				bind:this={picker}
 				type="file"

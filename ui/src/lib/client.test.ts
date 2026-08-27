@@ -369,6 +369,28 @@ describe("from_seq replay — no gaps, no duplicates", () => {
     h.client.stop();
   });
 
+  it("delivers transcript even when seq=1 is behind lastSeq (TD-4701)", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.attach("sess-1");
+    h.servers[0].push(JSON.stringify({ type: "session_state", session_id: "sess-1", state: "running", seq: 1 }));
+    const before = h.onEvent.mock.calls.length;
+    h.servers[0].push(
+      JSON.stringify({
+        type: "transcript",
+        seq: 1,
+        ok: true,
+        text: "hello from the mic",
+        detail: "",
+      }),
+    );
+    expect(h.onEvent).toHaveBeenCalledTimes(before + 1);
+    expect(h.onEvent.mock.calls[before][0].type).toBe("transcript");
+    expect(h.client.lastSeq("sess-1")).toBe(1);
+    h.client.stop();
+  });
+
   it("log_trimmed jumps lastSeq so a windowed replay is not a false gap", async () => {
     const h = buildClient();
     await h.client.start();
