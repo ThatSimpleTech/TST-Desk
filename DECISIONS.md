@@ -9236,5 +9236,16 @@ the lie TD-4901 forbids as a starting point.
 **Alternative rejected:** Raising `UnsupportedPlatformError` from
 `get_backend()` on Wayland (collapses `session_type` into "no backend").
 Also rejected: capture-only Wayland via XWayland while refusing input.
+## 2026-08-28 — TD-4823: overlay ctypes follow the windows.py override (Class B)
+
+**Decision:** `overlay.win32` shares the `attr-defined` override with
+`backends.windows`. `overlay.linux` does not: XColor /
+XSetWindowAttributes hang off a SimpleNamespace instead of a CDLL.
+
+**Rationale:** Same ctypes platform split TD-4823 already recorded.
+Linux structs are ours; they do not need a Windows-host override.
+
+**Alternative rejected:** A blanket overlay.* attr-defined disable
+(hides real Linux mistakes).
 
 

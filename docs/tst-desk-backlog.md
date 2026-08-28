@@ -7162,3 +7162,8 @@ Closed with a `[[tool.mypy.overrides]]` disabling only `attr-defined` for
 `tst_cu_mcp.backends.windows`: those ctypes names resolve only when mypy itself
 runs on Windows, where the override is a no-op and full checking still applies.
 
+**Addendum (2026-08-28):** TD-3407's overlay painters reopened the same
+hole on `overlay/win32.py` (`WinDLL`) and `overlay/linux.py` (`XColor`
+stuffed onto a `CDLL`). Win32 joins the windows override. Linux structs
+live on a `SimpleNamespace` so `mypy --strict src` is clean on Linux.
+
