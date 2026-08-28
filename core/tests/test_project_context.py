@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from tstd.context.prompt import PromptAssembler
-from tstd.context_pins import add_pin, load_project_context
+from tstd.context.tokens import heuristic_count
+from tstd.context_pins import add_pin, load_project_context, project_capacity
 from tstd.memory_store import memory_dir
 
 
@@ -27,6 +28,21 @@ def test_lifo_drops_newest(tmp_path: Path) -> None:
     dropped = [p.path for p in loaded.dropped]
     assert "new.md" in dropped
     assert "old.md" in names or loaded.block is None
+
+
+def test_capacity_meter_is_instructions_plus_memory_plus_pins(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    _write(ws / "AGENTS.md", "steering-bytes\n")
+    _write(memory_dir(ws) / "MEMORY.md", "memory-bytes\n")
+    pinned = ws / "notes.md"
+    _write(pinned, "pin-bytes\n")
+    add_pin(ws, str(pinned))
+    ins, mem, pins, dropped = project_capacity(ws, 2000)
+    assert ins == heuristic_count("steering-bytes\n").count
+    assert mem == heuristic_count("memory-bytes\n").count
+    assert pins > 0
+    assert dropped == []
+    assert ins + mem + pins > ins
 
 
 def test_brain_has_pins_after_memory(tmp_path: Path) -> None:
