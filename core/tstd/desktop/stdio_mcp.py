@@ -162,6 +162,8 @@ def map_mcp_error(message: str) -> DesktopError:
         return DesktopError("cu_killed", message)
     if "e20" in lower or "no computer-use backend" in lower:
         return DesktopError("e20", message)
+    if "td-2002" in lower or "xwayland display is not a substitute" in lower:
+        return DesktopError(DesktopError.WAYLAND, message)
     if is_uipi_failure(message):
         return DesktopError(DesktopError.UIPI, message)
     if is_secure_desktop_failure(message):

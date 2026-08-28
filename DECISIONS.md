@@ -9219,5 +9219,22 @@ compositor-neutral `expect_window` that does not degrade.
 on this X11 box (cannot live-verify; new dep). Also rejected:
 capture-only `supported: true`. Also rejected: AT-SPI as
 `foreground_window` (hint, not compositor focus).
+## 2026-08-28 — TD-2001: Wayland refuses before any Xlib call (Class B)
+
+**Decision:** `LinuxBackend` methods other than `check_permissions` raise
+`WaylandUnsupportedError` when `linux_session_usable()` is false, even if
+`DISPLAY` is set (XWayland). `get_backend("linux")` still returns
+`LinuxBackend` so `health` and `check_permissions` can name
+`session_type`. The product surfaces the refuse as `DesktopError` code
+`wayland`. `expect_window` does not read EWMH through XWayland.
+
+**Rationale:** TD-2002 and `docs/linux.md` already promised a clean
+refusal. `health.supported: false` was honest; actuation was not.
+Driving XWayland clients while native Wayland apps stay unguarded is
+the lie TD-4901 forbids as a starting point.
+
+**Alternative rejected:** Raising `UnsupportedPlatformError` from
+`get_backend()` on Wayland (collapses `session_type` into "no backend").
+Also rejected: capture-only Wayland via XWayland while refusing input.
 
 
