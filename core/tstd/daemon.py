@@ -563,6 +563,11 @@ class Daemon:
             self.data_dir,
             log_max_events=self.config.session.log_max_events,
         )
+        # Persist is awaited outside SessionEventLog's seq lock, so two
+        # overlapping to_thread appends can take the file lock as 2 then 1
+        # (Windows CI). One asyncio lock per session keeps jsonl in seq
+        # order.
+        self._event_persist_locks: dict[str, asyncio.Lock] = {}
         self._artifacts = ArtifactStore(self._session_persist)
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
@@ -1367,7 +1372,11 @@ class Daemon:
         """Write the event to disk and refresh the registry row."""
         session_id = getattr(event, "session_id", None)
         if isinstance(session_id, str) and session_id:
-            result = await asyncio.to_thread(self._session_persist.append_event, session_id, event)
+            persist_lock = self._event_persist_locks.setdefault(session_id, asyncio.Lock())
+            async with persist_lock:
+                result = await asyncio.to_thread(
+                    self._session_persist.append_event, session_id, event
+                )
             if result.trimmed:
                 await event_log.drop_before(result.earliest_seq)
         if isinstance(event, SessionStateEvent):
