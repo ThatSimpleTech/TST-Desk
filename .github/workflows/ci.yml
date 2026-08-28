@@ -1,10 +1,27 @@
 name: CI
 
+# Default CI is three ubuntu-latest jobs. The old 3 job × 3 OS matrix
+# billed macOS at 10× and Windows at 2× on every PR and every main push,
+# which exhausted the org's $20/month Actions budget (TD-4904). macOS and
+# Windows still build on Package (workflow_dispatch or a tstdesk-v* tag).
 on:
   push:
     branches: [main]
+    paths:
+      - "core/**"
+      - "shell/**"
+      - "ui/**"
+      - "mcp/**"
+      - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
+    paths:
+      - "core/**"
+      - "shell/**"
+      - "ui/**"
+      - "mcp/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,11 +31,7 @@ jobs:
   # ── Python ──────────────────────────────────────────────────────────
 
   python:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
@@ -56,11 +69,7 @@ jobs:
   # ── Rust ────────────────────────────────────────────────────────────
 
   rust:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
@@ -75,7 +84,6 @@ jobs:
       # Tauri build scripts link glib/webkit on Linux — same system deps
       # as package.yml.
       - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
@@ -98,9 +106,8 @@ jobs:
         shell: bash
         run: |
           triple=$(rustc -vV | sed -n 's/^host: *//p')
-          case "$RUNNER_OS" in Windows) suffix=.exe ;; *) suffix= ;; esac
           mkdir -p binaries
-          : > "binaries/tstd-${triple}${suffix}"
+          : > "binaries/tstd-${triple}"
 
       - name: Clippy
         run: cargo clippy -- -D warnings
@@ -108,11 +115,7 @@ jobs:
   # ── TypeScript ──────────────────────────────────────────────────────
 
   typescript:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
