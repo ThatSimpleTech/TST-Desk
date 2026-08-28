@@ -63,7 +63,7 @@
 	--color-success:        var(--color-ok);
 	--color-warning:        var(--color-warn);
 	--color-danger:         var(--color-err);
-	/* Info states (running dot, active tab) read as accent, not a cool hue. */
+	/* Info states (working dot, active tab) read as accent, not a cool hue. */
 	--color-info:           var(--color-accent);
 
 	/* ---- Spacing scale (4px base) ---- */

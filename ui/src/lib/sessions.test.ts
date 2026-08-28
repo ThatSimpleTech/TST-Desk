@@ -20,7 +20,11 @@ const mocks = vi.hoisted(() => {
     sendResult: true,
     // Mocked connection + store state the rail reads.
     wsState: { state: "connected" },
-    chatState: { sessionId: null as string | null },
+    chatState: {
+      sessionId: null as string | null,
+      turnState: null as string | null,
+      awaitingFirstToken: false,
+    },
     statusState: { workspacePath: null as string | null },
     // Recorded calls into the single-session stores.
     chatSelects: [] as Array<[id: string, turnState: string | null]>,
@@ -107,7 +111,11 @@ import {
   stateTone,
   recencyLabel,
   rowTitle,
+  rowTitleFull,
   rowSubtitle,
+  liveActivity,
+  snapshotBoundActivity,
+  ACTIVITY_LABELS,
   COLLAPSED_STORAGE_KEY,
 } from "./sessions.svelte.js";
 import {
@@ -142,13 +150,14 @@ function sessionList(
       archived?: boolean,
       starred?: boolean,
       title?: string | null,
+      busy?: boolean,
     ]
   >,
 ): DaemonEventUnion {
   return {
     type: "session_list",
     seq: 1,
-    sessions: entries.map(([id, updatedAt, state, path, archived, starred, title]) => ({
+    sessions: entries.map(([id, updatedAt, state, path, archived, starred, title, busy]) => ({
       session_id: id,
       workspace_path: path ?? "/ws/proj",
       state: state ?? "idle",
@@ -158,6 +167,8 @@ function sessionList(
       archived: archived ?? false,
       starred: starred ?? false,
       title: title ?? null,
+      preset: "",
+      busy: busy ?? false,
     })),
   };
 }
@@ -205,6 +216,8 @@ beforeEach(() => {
   mocks.workspacesState.entries = [];
   resetProjects();
   mocks.chatState.sessionId = null;
+  mocks.chatState.turnState = null;
+  mocks.chatState.awaitingFirstToken = false;
   mocks.statusState.workspacePath = null;
   mocks.sendResult = true;
   mocks.wsState.state = "connected";
@@ -578,6 +591,7 @@ describe("presentation helpers", () => {
       starred: false,
       title: null,
       preset: "",
+      busy: false,
     };
     expect(rowTitle(row)).toBe("abc12345");
     expect(rowSubtitle(row, now)).toBe("api-server · 1h");
@@ -599,6 +613,7 @@ describe("presentation helpers", () => {
           starred: false,
           title: null,
           preset: "local",
+          busy: false,
         },
       ],
     });
@@ -616,6 +631,7 @@ describe("presentation helpers", () => {
       starred: false,
       title: null,
       preset: "budget",
+      busy: false,
     };
     expect(rowSubtitle(row, now)).toBe("api-server · budget · 1h");
   });
@@ -630,6 +646,7 @@ describe("presentation helpers", () => {
       starred: false,
       title: "Fix the rail titles",
       preset: "",
+      busy: false,
     };
     expect(rowTitle(row)).toBe("Fix the rail titles");
   });
@@ -639,6 +656,77 @@ describe("presentation helpers", () => {
     expect(rowTitle(sessions.rows[0])).toBe("Custom");
     emit(sessionList([["abc12345-xxxx", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, false, null]]));
     expect(rowTitle(sessions.rows[0])).toBe("abc12345");
+  });
+
+  it("row title display is capped at 20 characters (TD-1720)", () => {
+    emit(
+      sessionList([
+        ["abc12345-xxxx", "2026-08-14T09:00:00Z", "idle", "/ws/proj", false, false, "abcdefghijklmnopqrstuvwxyz"],
+      ]),
+    );
+    expect(rowTitleFull(sessions.rows[0]!)).toBe("abcdefghijklmnopqrstuvwxyz");
+    expect(rowTitle(sessions.rows[0]!)).toBe("abcdefghijklmnopqrstuvwxyz".slice(0, 20) + "…");
+    setFilter("vwxyz");
+    expect(visibleRows().map((r) => r.sessionId)).toEqual(["abc12345-xxxx"]);
+  });
+});
+
+describe("turn activity (TD-1720)", () => {
+  it("session_list busy marks a running row working, not merely live", () => {
+    emit(sessionList([["s1", "2026-08-14T09:00:00Z", "running", "/ws/proj", false, false, null, true]]));
+    expect(sessions.rows[0]?.busy).toBe(true);
+    expect(liveActivity(sessions.rows[0]!)).toBe("working");
+    emit(sessionList([["s1", "2026-08-14T09:00:00Z", "running"]]));
+    expect(sessions.rows[0]?.busy).toBe(false);
+    expect(liveActivity(sessions.rows[0]!)).toBe("finished");
+    expect(ACTIVITY_LABELS.finished).toBe("Finished");
+  });
+
+  it("turn evidence on the wire updates busy in place", () => {
+    emit(sessionList([["s1", "2026-08-14T09:00:00Z", "running"]]));
+    emit({ type: "user_turn", seq: 6, session_id: "s1", turn_id: "t1", content: "hi" });
+    expect(sessions.rows[0]?.busy).toBe(true);
+    expect(liveActivity(sessions.rows[0]!)).toBe("working");
+    emit({
+      type: "turn_complete",
+      seq: 7,
+      session_id: "s1",
+      tokens: 10,
+      cost: 0,
+      tier: "brain",
+      duration: 1,
+      failed: false,
+      error_code: null,
+    });
+    expect(sessions.rows[0]?.busy).toBe(false);
+    expect(liveActivity(sessions.rows[0]!)).toBe("finished");
+  });
+
+  it("the bound pane's turn overlays the attached row", () => {
+    emit(sessionList([["s1", "2026-08-14T09:00:00Z", "running"]]));
+    mocks.chatState.sessionId = "s1";
+    mocks.chatState.turnState = "running";
+    expect(liveActivity(sessions.rows[0]!)).toBe("working");
+    mocks.chatState.turnState = "awaiting_approval";
+    expect(liveActivity(sessions.rows[0]!)).toBe("waiting");
+    mocks.chatState.turnState = null;
+    expect(liveActivity(sessions.rows[0]!)).toBe("finished");
+  });
+
+  it("switching away snapshots the bound turn onto the leaving row", () => {
+    emit(
+      sessionList([
+        ["s1", "2026-08-14T10:00:00Z", "running"],
+        ["s2", "2026-08-14T09:00:00Z", "idle"],
+      ]),
+    );
+    mocks.chatState.sessionId = "s1";
+    mocks.chatState.turnState = "running";
+    snapshotBoundActivity();
+    expect(sessions.rows.find((r) => r.sessionId === "s1")?.busy).toBe(true);
+    selectRow("s2");
+    expect(sessions.rows.find((r) => r.sessionId === "s1")?.busy).toBe(true);
+    expect(liveActivity(sessions.rows.find((r) => r.sessionId === "s1")!)).toBe("working");
   });
 });
 

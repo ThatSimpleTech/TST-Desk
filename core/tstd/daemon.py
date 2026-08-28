@@ -2546,6 +2546,7 @@ class Daemon:
                     starred=record.session_id in starred,
                     title=record.title,
                     preset=record.preset,
+                    busy=sess.turn_in_flight if sess is not None else False,
                 )
             )
         summaries.sort(key=lambda s: (s.starred, s.updated_at), reverse=True)
