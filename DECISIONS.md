@@ -9292,5 +9292,16 @@ user still has to edit. Save stays a second message.
 
 **Alternative rejected:** A worker-tier JSON completion (cost, mock
 surface, no extra accuracy on "every 2 hours in /ws").
+## 2026-08-28 — TD-2103: Memory pane may replace at cap (Class B)
+
+**Decision:** Tool writes still cannot replace a file at `memory.max_lines`.
+Distill and the Memory pane may, so long as the new bytes stay under the
+cap.
+
+**Rationale:** Spec §5 is "open, correct, diff, grep, and revert." A
+200-line MEMORY.md the human cannot shorten is not correctable.
+
+**Alternative rejected:** Refusing pane save at cap (locks the user out
+until the next distill).
 
 
