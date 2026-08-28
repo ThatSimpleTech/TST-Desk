@@ -9263,5 +9263,23 @@ channel" was true only in tests.
 **Alternative rejected:** Passing `schedule()` into the scheduler (event
 shaped, not a summary string). Also rejected: constructing httpx in
 the runner.
+## 2026-08-28 — TD-4301: autonomy shell execs in the container (Class B)
+
+**Decision:** Autonomous `shell` runs as `podman run … /bin/sh -c
+<command>` with only the workspace bind-mounted. Interactive `shell`
+is unchanged (host subprocess). Filesystem tools stay in the daemon
+process behind PathGuard. Git checkpoints stay host-side: they only
+touch the workspace repo, which is the mount.
+
+**Rationale:** Spec §12.5 requires the *run* in a container with no
+credentials. Wrapping the whole Python loop would fork the classifier
+chokepoint (rejected in TD-4101). Wrapping shell is the command-exec
+seam that actually inherits host env and can see `~/.ssh`. fs_write
+cannot escape the workspace wall.
+
+**Alternative rejected:** Wrapping every tool including `fs_write`
+(duplicate of PathGuard, and the daemon still has to persist events on
+the host). Also rejected: moving the SessionRunner into the container
+(new IPC, classifier would run twice).
 
 

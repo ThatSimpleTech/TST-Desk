@@ -5791,6 +5791,15 @@ TD-101: hard-required container. No unsandboxed autonomy.
 - [x] Interactive mode does not require a container
 - [x] Size 8 — Firecracker/EZER is a follow-up, not this story
 
+**Completed (2026-08-26):** start gate probes rootless Podman and refuses
+with install copy. Interactive sessions never import the sandbox.
+
+**Addendum (2026-08-28):** the act seam is the autonomy *shell* tool.
+`run_shell` on `session.autonomy` execs `container_argv` (`/bin/sh -c`
+inside the image) instead of a host shell. Filesystem tools stay
+host-side behind PathGuard — the workspace *is* the mount. Firecracker
+is still a follow-up.
+
 ---
 
 ### TD-4302 — No credentials in the mount

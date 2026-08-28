@@ -48,6 +48,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -396,6 +397,47 @@ def _format_result(
     return "\n".join(lines)
 
 
+def _open_shell_process(session: Session, command: str) -> Awaitable[asyncio.subprocess.Process]:
+    """Host shell for interactive sessions; container argv when autonomous."""
+    env = sanitized_env()
+    if not session.autonomy:
+        return asyncio.create_subprocess_shell(
+            command,
+            cwd=session.workspace_path,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+            creationflags=_CREATE_NEW_PROCESS_GROUP,
+        )
+    from ..autonomy.sandbox import SandboxError, autonomy_shell_argv
+
+    cfg = session.config
+    if cfg is None:
+        raise ValueError("autonomy shell requires a model config")
+    network: str | list[str] = "deny"
+    if session.charter is not None:
+        network = session.charter.boundary.network
+    try:
+        argv = autonomy_shell_argv(
+            Path(session.workspace_path),
+            command,
+            runtime=cfg.autonomy.runtime,
+            image=cfg.autonomy.image,
+            network=network,
+        )
+    except SandboxError as e:
+        raise ValueError(str(e)) from e
+    return asyncio.create_subprocess_exec(
+        *argv,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+        creationflags=_CREATE_NEW_PROCESS_GROUP,
+    )
+
+
 async def run_shell(
     session: Session | None,
     command: str,
@@ -429,22 +471,7 @@ async def run_shell(
     # and losing the handle would orphan the whole process group (TD-605
     # AC2; the TestCancel flake family).  On cancellation, wait for the
     # spawn to settle, kill the group, and let cancellation propagate.
-    spawn = asyncio.ensure_future(
-        asyncio.create_subprocess_shell(
-            command,
-            cwd=session.workspace_path,
-            env=sanitized_env(),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            # POSIX: setsid, so the child leads a killable process group.
-            # start_new_session is silently ignored on Windows, where the
-            # equivalent is a creation flag — without it the child joins
-            # the daemon's own group and a tree walk from its pid has no
-            # defined edge (TD-1406).
-            start_new_session=True,
-            creationflags=_CREATE_NEW_PROCESS_GROUP,
-        )
-    )
+    spawn = asyncio.ensure_future(_open_shell_process(session, command))
     try:
         proc = await asyncio.shield(spawn)
     except asyncio.CancelledError:
