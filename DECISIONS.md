@@ -9146,4 +9146,29 @@ verification the backlog required.
 new surface). Also rejected: leaving the live tests skipped after the
 Windows Package sidecar already used ``taskkill``.
 
+---
+
+## 2026-08-28 — TD-1303: first release from last Package, not the tag rebuild (Class B)
+
+**Decision:** Tag `tstdesk-v0.1.0` at `451ac6f`. Publish installers from
+Package run `33147408105` (`4330c37`) via `gh release create`, because
+the tag's Release workflow could not start runners (spending limit).
+Record the SHA gap in the release notes. GitHub Releases rewrites spaces
+in asset names to dots; `SHA256SUMS.txt` uses those download names.
+`release.yml` flattens nested artifact dirs, applies the same rename
+before checksums, and clobbers an existing release so a later budget
+raise can rebuild the tag.
+
+**Rationale:** An empty release page after the maintainer said publish
+is worse than a documented two-commit sidecar gap (events.jsonl seq
+order). Rebuilding five platforms locally is not available on this host.
+Moving the tag back to `4330c37` would match binaries but hide the jsonl
+fix that is already on `main`.
+
+**Alternative rejected:** Waiting for billing before any GitHub Release
+(leaves strangers with clone-from-source only). Also rejected: attaching
+mismatched binaries with no note.
+
+---
+
 
