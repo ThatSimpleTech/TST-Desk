@@ -4317,10 +4317,17 @@ the guard together.
 - [x] A memory file is capped at ~200 lines (exact number in config, tested)
 - [x] A write that would exceed the cap is refused with copy that says to
       distill, not to append
-- [x] Distill (E23) is the only path that may replace a file that is at cap
+- [x] Distill (E23) and the Memory pane (TD-2602) may replace a file that
+      is at cap; tool writes cannot
 
 **Notes:** spec §5 — distilled, not appended forever. The number lives in
-config, never in a handler literal.
+config, never in a handler literal. The pane is the human correction
+path; it is not `fs_write`.
+
+**Addendum (2026-08-28):** Class B — a at-cap file the human can still
+open and shorten would otherwise be locked until the next distill.
+`test_pane_save_may_replace_at_cap` pins the carve-out. Tools still
+cannot replace at cap.
 
 ---
 
