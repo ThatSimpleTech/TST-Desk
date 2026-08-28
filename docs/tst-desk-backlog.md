@@ -194,6 +194,10 @@ Create the directory structure from `AGENTS.md` §11.
 - [x] Jobs: Python lint, Python typecheck, Python tests, Rust clippy, TypeScript typecheck,
       frontend build
 - [x] Build matrix covers macOS, Linux, Windows
+      (2026-08-28: default `ci.yml` is three `ubuntu-latest` jobs so
+      the $20/month org budget survives PRs. macOS and Windows
+      installers still build from `package.yml` on dispatch or a
+      `tstdesk-v*` tag. See TD-4904.)
 - [x] Pipeline is green on the empty scaffold
 - [x] Failing any job blocks merge
 
@@ -6252,6 +6256,10 @@ from the last green Package instead.
 Symptom was empty step lists / pending-with-zero-jobs at $0 budget.
 **Recovered (2026-08-28):** budget $20/mo; Package run `33134175163`
 uploaded five artifacts and ticked TD-1302.
+**Spend cut (2026-08-28):** default CI is ubuntu-only; Package no
+longer runs on push to `main`. macOS 10× minutes were exhausting the
+cap on every PR (9-leg CI) and every code merge (5-leg Package, two
+macOS SKUs). Full bundles remain dispatch/tag.
 
 ---
 
