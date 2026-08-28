@@ -110,35 +110,50 @@ def _parent_pid(pid: int) -> int | None:
 
 
 def _win_parent_pid(pid: int) -> int | None:
-    """Same lookup the host uses (`wmic`), with a CIM fallback."""
-    proc = subprocess.run(
-        ["wmic", "process", f"where processid={pid}", "get", "parentprocessid"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode == 0:
-        for line in proc.stdout.splitlines():
-            line = line.strip()
-            if line.isdigit():
-                parsed = int(line)
-                return parsed if parsed > 0 else None
-    proc = subprocess.run(
-        [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    text = proc.stdout.strip()
-    if proc.returncode != 0 or not text.isdigit():
+    """Parent pid via Toolhelp32 — ``wmic`` is gone on current Windows runners."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = (
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        )
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32NextW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)
+    if not snap or snap == wintypes.HANDLE(-1).value:
         return None
-    parsed = int(text)
-    return parsed if parsed > 0 else None
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        if not kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+            return None
+        while True:
+            if int(entry.th32ProcessID) == pid:
+                parent = int(entry.th32ParentProcessID)
+                return parent if parent > 0 else None
+            if not kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                return None
+    finally:
+        kernel32.CloseHandle(snap)
 
 
 def _is_descendant(ancestor: int, pid: int) -> bool:
