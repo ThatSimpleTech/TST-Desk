@@ -467,13 +467,6 @@ export function recencyLabel(iso: string, nowMs: number = Date.now()): string {
 	return new Date(then).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Row title: the daemon's display title when it has one, else the
- *  short id (TD-3001 / TD-3002). */
-export function rowTitle(row: SessionRow): string {
-	const titled = row.title?.trim();
-	return titled ? titled : row.sessionId.slice(0, 8);
-}
-
 /** Row subtitle: workspace, preset, recency — the "where and which model". */
 export function rowSubtitle(row: SessionRow, nowMs: number = Date.now()): string {
 	const when = recencyLabel(row.updatedAt, nowMs);
