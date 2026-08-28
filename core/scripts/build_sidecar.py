@@ -74,7 +74,7 @@ def build(triple: str) -> Path:
             "--noconfirm",
         ]
         for src, dest in DATAS:
-            cmd += ["--add-data", f"{src}:{dest}"]
+            cmd += ["--add-data", f"{src}{os.pathsep}{dest}"]
         cmd.append(str(ENTRY))
         subprocess.run(cmd, check=True, cwd=CORE)
         # PyInstaller appends .exe on Windows, and Tauri's externalBin
@@ -88,7 +88,9 @@ def build(triple: str) -> Path:
 
 
 def _parent_pid(pid: int) -> int | None:
-    """Best-effort ppid via `ps`. None if the process is gone."""
+    """Best-effort ppid. None if the process is gone."""
+    if sys.platform == "win32":
+        return _win_parent_pid(pid)
     proc = subprocess.run(
         ["ps", "-o", "ppid=", "-p", str(pid)],
         capture_output=True,
@@ -104,6 +106,38 @@ def _parent_pid(pid: int) -> int | None:
         parsed = int(text)
     except ValueError:
         return None
+    return parsed if parsed > 0 else None
+
+
+def _win_parent_pid(pid: int) -> int | None:
+    """Same lookup the host uses (`wmic`), with a CIM fallback."""
+    proc = subprocess.run(
+        ["wmic", "process", f"where processid={pid}", "get", "parentprocessid"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                parsed = int(line)
+                return parsed if parsed > 0 else None
+    proc = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    text = proc.stdout.strip()
+    if proc.returncode != 0 or not text.isdigit():
+        return None
+    parsed = int(text)
     return parsed if parsed > 0 else None
 
 
@@ -126,10 +160,16 @@ def _is_descendant(ancestor: int, pid: int) -> bool:
 
 def _reap_group(proc: subprocess.Popen[bytes]) -> None:
     """Kill the sidecar's process group so a onefile grandchild cannot linger."""
-    if proc.pid:
+    if proc.pid and sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
+    elif proc.pid:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
+        except (ProcessLookupError, PermissionError, OSError, AttributeError):
             proc.kill()
     try:
         proc.wait(timeout=10.0)
@@ -140,7 +180,7 @@ def _reap_group(proc: subprocess.Popen[bytes]) -> None:
 
 def smoke(binary: Path) -> float:
     """Launch the bundle like the shell does; return seconds to port.json."""
-    with tempfile.TemporaryDirectory(prefix="tstd-smoke-") as data_dir:
+    with tempfile.TemporaryDirectory(prefix="tstd-smoke-", ignore_cleanup_errors=True) as data_dir:
         started = time.monotonic()
         proc = subprocess.Popen(
             [str(binary), "--data-dir", data_dir, "--log-level", "INFO"],

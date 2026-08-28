@@ -35,8 +35,9 @@ OIDC-based cert acquisition (e.g. Apple notary via App Store Connect API key) is
 preferred over long-lived passwords when we wire release; still GitHub encrypted
 secrets or cloud KMS — never `config.yaml`, logs, or the audit DB.
 
-Local dev may ad-hoc sign with a personal cert (`shell/tauri.conf.json`
-`signingIdentity: "tst-desk-dev"`). That identity is **not** used in CI releases.
+`shell/tauri.conf.json` sets `signingIdentity` to `"-"` (unsigned) so CI
+can bundle without a keychain identity. Local dev may override that string
+to a personal cert. CI releases do not.
 
 ## CI wiring (future — not active in v0.1)
 
