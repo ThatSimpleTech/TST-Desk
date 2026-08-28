@@ -194,6 +194,7 @@ from .protocol import (
     HandshakeError,
     InstructionFileEntry,
     InstructionFiles,
+    JobDraftReply,
     JobEntry,
     JobList,
     ListArtifacts,
@@ -215,6 +216,7 @@ from .protocol import (
     NewSession,
     OpenArtifact,
     OpenWorkspace,
+    ParseJob,
     PolicyRules,
     PolicyRuleSummary,
     RemovePin,
@@ -1940,6 +1942,9 @@ class Daemon:
         if isinstance(msg, DeleteJob):
             return await self._handle_delete_job(msg)
 
+        if isinstance(msg, ParseJob):
+            return await self._handle_parse_job(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -2753,6 +2758,24 @@ class Daemon:
             title=entry.title,
             mime=entry.mime,
             path=entry.path,
+        ).model_dump_json()
+
+    async def _handle_parse_job(self, msg: ParseJob) -> str:
+        """Fill a draft from NL. Does not persist (TD-3803)."""
+        from .scheduler.parse import parse_job_request
+
+        try:
+            draft = parse_job_request(msg.text)
+        except JobValidationError as exc:
+            return JobDraftReply(ok=False, detail=str(exc)).model_dump_json()
+        return JobDraftReply(
+            ok=True,
+            workspace=draft.workspace,
+            instruction=draft.instruction,
+            cadence=draft.cadence,
+            next_run=draft.next_run,
+            deliver_to=draft.deliver_to,
+            paused=draft.paused,
         ).model_dump_json()
 
     async def _handle_list_jobs(self) -> str:

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from tstd.daemon import Daemon
-from tstd.protocol import JobList, parse_daemon_event
+from tstd.protocol import JobDraftReply, JobList, parse_daemon_event
 from tstd.scheduler.models import Job
 from tstd.scheduler.store import list_jobs, save_job
 
@@ -27,6 +27,31 @@ def _draft(workspace: Path) -> dict[str, Any]:
         "cadence": "every 1 hour",
         "deliver_to": "window",
     }
+
+
+async def test_parse_job_fills_a_draft_without_saving(tmp_path: Path) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    parsed = parse_daemon_event(
+        json.dumps(
+            await _handle(
+                daemon,
+                {
+                    "type": "parse_job",
+                    "text": f"every 2 hours in {workspace} summarize the inbox deliver to slack",
+                },
+            )
+        )
+    )
+    assert isinstance(parsed, JobDraftReply)
+    assert parsed.ok is True
+    assert parsed.workspace == str(workspace)
+    assert parsed.instruction == "summarize the inbox"
+    assert parsed.cadence == "every 2 hours"
+    assert parsed.deliver_to == "slack"
+    assert list_jobs(tmp_path / "data") == []
+    await daemon._shutdown()
 
 
 async def test_list_empty(tmp_path: Path) -> None:
