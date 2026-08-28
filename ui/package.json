@@ -12,9 +12,9 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"tauri": "TAURI_APP_PATH=../shell tauri",
-		"tauri:dev": "TAURI_APP_PATH=../shell tauri dev",
-		"tauri:build": "TAURI_APP_PATH=../shell tauri build"
+		"tauri": "node scripts/run-tauri.mjs",
+		"tauri:dev": "node scripts/run-tauri.mjs dev",
+		"tauri:build": "node scripts/run-tauri.mjs build"
 	},
 	"dependencies": {
 		"@tanstack/svelte-virtual": "^3.13.35",
