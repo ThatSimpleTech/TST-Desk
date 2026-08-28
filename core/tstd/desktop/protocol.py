@@ -28,6 +28,7 @@ class DesktopError(Exception):
     PERMISSION_DENIED = "permission_denied"
     UIPI = "uipi"
     SECURE_DESKTOP = "secure_desktop"
+    WAYLAND = "wayland"
     # First-run / Settings reopen: TCC deny or a Windows integrity refuse.
     REOPEN_CODES = frozenset({PERMISSION_DENIED, UIPI, SECURE_DESKTOP})
 

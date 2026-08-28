@@ -17,7 +17,7 @@ import sys
 
 import pytest
 
-from tst_cu_mcp.backends.linux import LinuxBackend
+from tst_cu_mcp.backends.linux import LinuxBackend, linux_session_usable
 
 ARM_ENV = "TST_CU_MCP_ALLOW_INTRUSIVE_TESTS"
 _ARMED = os.environ.get(ARM_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -25,6 +25,10 @@ _ARMED = os.environ.get(ARM_ENV, "").strip().lower() in {"1", "true", "yes", "on
 pytestmark = [
     pytest.mark.intrusive,
     pytest.mark.skipif(sys.platform != "linux", reason="native Linux desktop required"),
+    pytest.mark.skipif(
+        not linux_session_usable(),
+        reason="native X11 session required (Wayland is unsupported)",
+    ),
     pytest.mark.skipif(not _ARMED, reason=f"{ARM_ENV}=1 is required to type"),
 ]
 
