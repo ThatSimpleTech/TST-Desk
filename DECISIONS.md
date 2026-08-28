@@ -9094,4 +9094,38 @@ support (TD-2002).
 **Alternative rejected:** Single monolithic TD-4901 PR (unreviewable). Also
 rejected: flipping `health` to supported on XWayland `DISPLAY` alone.
 
+---
+
+## 2026-08-28 — TD-1302: Actions runners are the macOS/Windows guest (Class B)
+
+**Decision:** The macOS and Windows clean-guest evidence for TD-1301 /
+TD-1302 is the hosted Package job: install the produced bundle layout,
+PATH-scrub the sidecar (empty `PATH` on Darwin, `System32` only on
+Windows), require `port.json`, and upload `.dmg` / `.msi`. Linux stays
+Docker (`ubuntu:22.04` / `24.04`) as decided 2026-08-27.
+
+**Rationale:** This box is the Linux Docker host, not a Mac or Windows
+VM. The runner *is* a machine with no TST Desk install and, after
+PATH-scrub, no reachable Python. That matches the Python-bundling claim.
+The GUI host is Rust/Tauri; the no-Python AC is the sidecar.
+
+**Alternative rejected:** Leaving TD-1302 open until a maintainer
+hand-installs `.dmg` / `.msi` on spare hardware (would re-block M3 on
+machine access). Also rejected: ticking from Linux Docker alone.
+
+---
+
+## 2026-08-28 — TD-1302: macos-15-intel replaces macos-13 (Class B)
+
+**Decision:** Intel macOS Package runs on `macos-15-intel`. GitHub
+retired `macos-13` hosted images in December 2025; jobs assigned that
+label sat at `runner_id: 0` forever.
+
+**Rationale:** Same x86_64-apple-darwin triple. `macos-latest` is
+arm64. Unsigned `signingIdentity: "-"` is unchanged.
+
+**Alternative rejected:** Dropping the Intel `.dmg` (the TD-1302 AC
+names both architectures). Also rejected: `macos-14` Intel (15 is
+what GitHub currently labels).
+
 
