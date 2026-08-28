@@ -64,27 +64,26 @@ def test_timeout_is_a_refusal_note(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "timed out" in note
 
 
-def test_process_group_on_windows_kills_then_walks_the_tree(
+def test_process_group_on_windows_walks_the_tree_before_killing_the_leader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """TerminateProcess on the leader first orphans grandchildren (TD-1406)."""
     monkeypatch.setattr(shell.sys, "platform", "win32")
-    killed: list[int] = []
-    trees: list[int] = []
+    order: list[str] = []
 
     class _Proc:
         pid = 99
 
         def kill(self) -> None:
-            killed.append(self.pid)
+            order.append("kill")
 
     def fake_tree(pid: int) -> str | None:
-        trees.append(pid)
+        order.append(f"tree:{pid}")
         return None
 
     monkeypatch.setattr(shell, "_kill_windows_tree", fake_tree)
     assert shell._kill_process_group(_Proc()) is None  # type: ignore[arg-type]
-    assert killed == [99]
-    assert trees == [99]
+    assert order == ["tree:99", "kill"]
 
 
 def test_creation_flag_is_the_stdlib_constant_on_windows() -> None:
