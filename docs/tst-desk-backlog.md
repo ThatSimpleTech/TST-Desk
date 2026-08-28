@@ -2658,18 +2658,14 @@ product-semantics work the skips point at.
       every port-file write would restate that for a subprocess. POSIX asserts
       `0o600`, win32 asserts the file exists, reads back, and carries `0o666`.
       Written up in `docs/windows.md`
-- [ ] Shell-tool process-group kill semantics verified on Windows
-      (CREATE_NEW_PROCESS_GROUP + taskkill/TerminateJobObject), skipped
-      cancel/timeout tests unskipped — **implemented, unverified.**
-      `CREATE_NEW_PROCESS_GROUP` at the spawn and `taskkill /T /F /PID` after
-      the direct-child kill have landed, replacing a `proc.kill()` whose own
-      docstring admitted grandchildren escape. The PowerShell escape probe
-      and host-safe `taskkill` argv tests have also landed; cancel/timeout
-      tests no longer `skipif(win32)`. Not ticked: no Windows host has run
-      the live tree kill, and a process-tree kill is a claim about an OS
-      that only that OS can settle. Ticking it from a green Linux or macOS
-      suite, where `_kill_windows_tree` is never entered for real, would be
-      this backlog's eighth "green suite, dead feature"
+- [x] Shell-tool process-group kill semantics verified on Windows
+      (CREATE_NEW_PROCESS_GROUP + `taskkill /T /F /PID` **before**
+      `TerminateProcess` on the leader — killing cmd.exe first orphaned
+      Start-Process grandchildren). Live cancel/timeout tests on
+      windows-latest, CI run `33146979852` on `e5513fe` (2026-08-28).
+      PowerShell escape probe writes this powershell pid plus a parked
+      grandchild; `_assert_group_gone` uses `OpenProcess` /
+      `STILL_ACTIVE`. Argv helpers in `test_shell_windows_kill.py`.
 - [x] Parent-watchdog liveness probe works on Windows (OpenProcess) — first pass:
       OpenProcess plus `GetExitCodeProcess != STILL_ACTIVE` (a dead process with an
       open handle otherwise reports alive); `test_parent_watchdog` green on the
