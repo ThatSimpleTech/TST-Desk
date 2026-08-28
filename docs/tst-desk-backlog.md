@@ -6198,6 +6198,9 @@ default and shipped-off like the others. Keychain accounts
 `tst-discord-webhook` and `tst-telegram-bot` (chat_id on the URL
 query). No gateway package.
 
+**Addendum (2026-08-28):** `TestExtraNotifyAccounts` round-trips both
+account names.
+
 ---
 
 ## Epic E49 — Unplanned follow-through
