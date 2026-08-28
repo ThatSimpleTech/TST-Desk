@@ -62,8 +62,12 @@ fn parent_pid_impl(pid: u32) -> Option<u32> {
 
 #[cfg(windows)]
 fn parent_pid_impl(pid: u32) -> Option<u32> {
-    // wmic is the no-dependency parent lookup on Windows. The format is
-    // a header line then the number. Fail closed on anything we don't parse.
+    wmic_parent(pid).or_else(|| powershell_parent(pid))
+}
+
+#[cfg(windows)]
+fn wmic_parent(pid: u32) -> Option<u32> {
+    // Older images still have wmic. Current GitHub `windows-latest` does not.
     let output = std::process::Command::new("wmic")
         .args([
             "process",
@@ -86,6 +90,26 @@ fn parent_pid_impl(pid: u32) -> Option<u32> {
         return (parsed > 0).then_some(parsed);
     }
     None
+}
+
+#[cfg(windows)]
+fn powershell_parent(pid: u32) -> Option<u32> {
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId"),
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let parsed = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .ok()?;
+    (parsed > 0).then_some(parsed)
 }
 
 #[cfg(not(any(unix, windows)))]
