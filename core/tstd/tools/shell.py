@@ -286,8 +286,11 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
     SIGKILL to the group takes backgrounded grandchildren with it.
     Windows has no ``killpg``; the child leads its own process group
     (``CREATE_NEW_PROCESS_GROUP``) and ``taskkill /T /F`` walks the tree
-    from it.  ``proc.kill()`` still runs first there, so the direct child
-    dies even if the helper cannot (TD-1406).
+    from it.  ``taskkill`` must run while the leader is still alive —
+    ``TerminateProcess`` on the leader first orphans the grandchildren,
+    after which ``taskkill /T`` reports the pid gone and leaves them
+    running (TD-1406, Windows CI).  ``proc.kill()`` still runs after, so
+    the direct child dies even if the helper cannot.
 
     Returns None when the kill was delivered (or the processes were
     already gone).  macOS occasionally vetoes same-uid kills with EPERM —
@@ -296,13 +299,14 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
     so a short note comes back for honest reporting instead.
     """
     if sys.platform == "win32":
+        note = _kill_windows_tree(proc.pid)
         try:
             proc.kill()
         except ProcessLookupError:
-            return None
+            pass
         except OSError:
-            return "process kill refused by the OS; it may still be running"
-        return _kill_windows_tree(proc.pid)
+            return note or "process kill refused by the OS; it may still be running"
+        return note
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
