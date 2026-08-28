@@ -17,11 +17,17 @@ from typing import Any
 
 import pytest
 
-from tstd.config import cached_config
+from tstd.config import ModelConfig, cached_config
+from tstd.context.embeddings import EmbeddingsClient
 from tstd.keychain import KeychainError
 
 _KEEP_REAL_PING_INTERVAL = {
     "test_default_interval_leaves_room_for_a_missed_frame",
+}
+
+# test_embeddings owns from_config against the shipped sidecar URL.
+_KEEP_EMBEDDINGS_FROM_CONFIG = {
+    "test_embeddings",
 }
 
 
@@ -33,6 +39,27 @@ def _quiet_application_pings(
     if request.node.name in _KEEP_REAL_PING_INTERVAL:
         return
     monkeypatch.setattr("tstd.ws.PING_INTERVAL_SECONDS", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def _disable_embeddings_sidecar(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Do not POST the shipped embeddings sidecar from ordinary tests.
+
+    Session open plants ``.tst/memory/*.md`` topics. A brain turn then
+    POSTs ``embeddings.base_url`` (``http://127.0.0.1:8080/v1``) with a
+    2s connect timeout. CI has no sidecar, so every such turn paid 2s
+    and Windows tests with a 3s ``approval_request`` deadline lost the
+    race (``test_remote_approve_unparks_the_agent_loop``).
+    """
+    if request.module.__name__.rsplit(".", 1)[-1] in _KEEP_EMBEDDINGS_FROM_CONFIG:
+        return
+
+    def _disabled(_cls: type[EmbeddingsClient], _config: ModelConfig) -> EmbeddingsClient:
+        return EmbeddingsClient("", "", timeout_seconds=0.1)
+
+    monkeypatch.setattr(EmbeddingsClient, "from_config", classmethod(_disabled))
 
 
 @pytest.fixture(autouse=True)
