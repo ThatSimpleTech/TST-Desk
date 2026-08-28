@@ -4465,6 +4465,11 @@ path that writes.
 - [x] A crash, a killed sidecar, or a force-quit writes nothing
 - [x] Distill is skipped when memory is unchanged (no proposal event)
 
+**Addendum (2026-08-28):** `test_only_graceful_shutdown_reaches_distill`
+pins that `_distill_live_sessions` is called only from `_shutdown`, not
+from `main` or a crash path. SIGKILL never reaches that function, so it
+writes nothing.
+
 **Notes:** v0.1 quit is graceful (TD-1002). Do not wait for detached
 sessions (v0.3). End session can be a rail action; if the rail is too
 small, a command-palette entry is enough.
