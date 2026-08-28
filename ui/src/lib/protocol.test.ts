@@ -1315,4 +1315,10 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(list.sessions[0]?.title).toBe("hello world");
     expect(list.sessions[1]?.title ?? null).toBeNull();
   });
+
+  it("session_list carries busy, distinct from running (TD-1720)", () => {
+    const list = fixtures.session_list as SessionList;
+    expect(list.sessions[0]?.busy).toBe(false);
+    expect(list.sessions[1]?.busy).toBe(false);
+  });
 });

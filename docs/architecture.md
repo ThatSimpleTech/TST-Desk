@@ -404,7 +404,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `autonomy_start` | connection | Reply to `start_autonomy`: signed, ready, optional `session_id` of the daemon-owned run, or the refusal (TD-4003, TD-4101). |
 | `autonomy_summary` | session | Unattended-run wrap-up: stop reason, turns, spend, refusals (TD-4303). |
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
-| `session_list` | connection | The current session list. Each row carries the catalog `preset` that session is using (TD-1721). |
+| `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). |
 | `policy_rules` | connection | The workspace's saved policy rules. |
 | `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server`. `remote_bind` is the bound Tailscale address, never a token. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |

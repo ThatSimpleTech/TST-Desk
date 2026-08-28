@@ -126,3 +126,28 @@ class TestSessionTitleWire:
             assert row is not None
             assert row["title"] == "Persisted title"
             await ws.close()
+
+
+class TestSessionListBusy:
+    @pytest.mark.asyncio
+    async def test_session_list_busy_follows_turn_in_flight(self, tmp_path: Path) -> None:
+        async with _RunningDaemon() as daemon:
+            ws = await _connect_and_handshake(
+                f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+            )
+            sid = (await _open_workspace(ws, str(tmp_path)))["session_id"]
+            listing = await _list_sessions(ws)
+            row = _summary(listing, sid)
+            assert row is not None
+            assert row["busy"] is False
+            assert row["state"] == "running"
+
+            session = daemon.session_registry.get(sid)
+            assert session is not None
+            await session.add_user_message("hello")
+            listing = await _list_sessions(ws)
+            row = _summary(listing, sid)
+            assert row is not None
+            assert row["busy"] is True
+            assert row["state"] == "running"
+            await ws.close()
