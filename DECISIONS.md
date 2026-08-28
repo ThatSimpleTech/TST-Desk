@@ -9171,4 +9171,32 @@ mismatched binaries with no note.
 
 ---
 
+## 2026-08-28 — TD-4904: default CI is Linux; Package is on-demand (Class B)
+
+**Decision:** `ci.yml` runs python / rust / typescript on
+`ubuntu-latest` only, with a path filter so docs-only changes do not
+start runners. `package.yml` no longer triggers on push to `main`.
+Five-platform bundles (including both macOS SKUs at 10×) run on
+`workflow_dispatch` or from `release.yml` on a `tstdesk-v*` tag.
+This supersedes the 2026-08-27 decision that kept Package on filtered
+`main` pushes.
+
+**Rationale:** The org Actions budget is $20/month. One green
+nine-leg CI run is ~70–80 Linux-equivalent minutes (three macOS
+jobs at 10×). One green five-leg Package run is ~200 (two macOS
+legs). Rapid merges with `cancel-in-progress: false` queued extra
+Package matrices; the `tstdesk-v0.1.0` tag then failed immediately
+because the cap was already gone. Maintainer asked to rework the
+YAML rather than raise the cap. Ubuntu CI still gates lint, mypy,
+pytest, clippy, tsc, vitest, and the UI build. macOS/Windows
+installers stay a deliberate spend.
+
+**Alternative rejected:** Keeping a Linux-only Package job on every
+`main` push (still ~12 min per merge, and fourteen open PRs would
+have fired it fourteen times). Also rejected: a scheduled weekly
+macOS/Windows CI matrix (same 10× SKU on a budget that already
+died twice in one day). Also rejected: self-hosted runners.
+
+---
+
 
