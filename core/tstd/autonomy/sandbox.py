@@ -3,10 +3,10 @@
 Spec §12.5 and TD-101: autonomy is hard-required to run in a container
 with only the workspace bound in. This module is the isolation primitive
 — probe the configured runtime, refuse start with install copy when it
-is missing or not rootless, and build the argv a later runner execs.
-
-Interactive sessions must not import this module. There is no start
-button here (TD-4003) and no Firecracker path (follow-up).
+is missing or not rootless, and build the argv the autonomy *shell*
+tool execs. Filesystem tools stay host-side behind PathGuard (the
+workspace *is* the mount). Interactive sessions never import this
+module from the loop. No Firecracker path (follow-up).
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ class SandboxError(Exception):
 
 @dataclass(frozen=True)
 class SandboxExec:
-    """Result of one ``runtime run`` (used by tests and, later, TD-4101)."""
+    """Result of one ``runtime run`` (tests and ``sandbox_exec``)."""
 
     argv: list[str]
     returncode: int
@@ -235,6 +235,34 @@ def container_argv(
         ]
     )
     return argv
+
+
+def autonomy_shell_argv(
+    workspace: Path,
+    command: str,
+    *,
+    runtime: str,
+    image: str,
+    network: str | list[str] = "deny",
+    which: WhichFn | None = None,
+) -> list[str]:
+    """Argv that runs *command* inside the sandbox via ``/bin/sh -c``.
+
+    The inner shell is the *image's* ``/bin/sh``, not the host's. Used by
+    the product shell tool on autonomous sessions (TD-4301).
+    """
+    if not command.strip():
+        raise SandboxError("container command is empty")
+    resolved = resolve_runtime(runtime, which=_which(which))
+    if resolved is None:
+        raise SandboxError(INSTALL_MISSING)
+    return container_argv(
+        workspace,
+        runtime=str(resolved),
+        image=image,
+        inner=["/bin/sh", "-c", command],
+        network=network,
+    )
 
 
 async def sandbox_exec(
