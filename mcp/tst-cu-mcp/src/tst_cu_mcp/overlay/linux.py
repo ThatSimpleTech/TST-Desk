@@ -187,7 +187,7 @@ def _rgb_pixel(x11: Any, dpy: Any, rgb: tuple[int, int, int]) -> int:
     color.blue = rgb[2] * 257
     color.flags = 7
     if x11.XAllocColor(dpy, cmap, ctypes.byref(color)) == 0:
-        return x11.XBlackPixel(dpy, screen)
+        return int(x11.XBlackPixel(dpy, screen))
     return int(color.pixel)
 
 
@@ -246,6 +246,7 @@ def _load_x11() -> Any:
         return _X11_NS
     import ctypes
     from ctypes import Structure, c_char_p, c_int, c_long, c_ulong, c_ushort, c_void_p
+    from types import SimpleNamespace
 
     class XColor(Structure):
         _fields_ = (
@@ -297,17 +298,44 @@ def _load_x11() -> Any:
     lib.XInternAtom.restype = c_ulong
     lib.XInternAtom.argtypes = [c_void_p, c_char_p, c_int]
     lib.XChangeProperty.argtypes = [
-        c_void_p, c_ulong, c_ulong, c_ulong, c_int, c_int, c_void_p, c_int
+        c_void_p,
+        c_ulong,
+        c_ulong,
+        c_ulong,
+        c_int,
+        c_int,
+        c_void_p,
+        c_int,
     ]
     lib.XMapRaised.argtypes = [c_void_p, c_ulong]
     lib.XUnmapWindow.argtypes = [c_void_p, c_ulong]
     lib.XDestroyWindow.argtypes = [c_void_p, c_ulong]
     lib.XCloseDisplay.argtypes = [c_void_p]
     lib.XFlush.argtypes = [c_void_p]
-    lib.XColor = XColor
-    lib.XSetWindowAttributes = XSetWindowAttributes
-    _X11_NS = lib
-    return lib
+    # Structs live on a namespace, not on CDLL — mypy has no XColor attr
+    # on ctypes.CDLL (same class of issue as TD-4823's windows.py).
+    ns = SimpleNamespace(
+        XOpenDisplay=lib.XOpenDisplay,
+        XDefaultScreen=lib.XDefaultScreen,
+        XRootWindow=lib.XRootWindow,
+        XDefaultColormap=lib.XDefaultColormap,
+        XDefaultDepth=lib.XDefaultDepth,
+        XDefaultVisual=lib.XDefaultVisual,
+        XBlackPixel=lib.XBlackPixel,
+        XAllocColor=lib.XAllocColor,
+        XCreateWindow=lib.XCreateWindow,
+        XInternAtom=lib.XInternAtom,
+        XChangeProperty=lib.XChangeProperty,
+        XMapRaised=lib.XMapRaised,
+        XUnmapWindow=lib.XUnmapWindow,
+        XDestroyWindow=lib.XDestroyWindow,
+        XCloseDisplay=lib.XCloseDisplay,
+        XFlush=lib.XFlush,
+        XColor=XColor,
+        XSetWindowAttributes=XSetWindowAttributes,
+    )
+    _X11_NS = ns
+    return ns
 
 
 def _load_xext() -> Any:
@@ -319,7 +347,15 @@ def _load_xext() -> Any:
 
     lib = ctypes.cdll.LoadLibrary("libXext.so.6")
     lib.XShapeCombineRectangles.argtypes = [
-        c_void_p, c_ulong, c_int, c_int, c_int, c_void_p, c_int, c_int, c_int
+        c_void_p,
+        c_ulong,
+        c_int,
+        c_int,
+        c_int,
+        c_void_p,
+        c_int,
+        c_int,
+        c_int,
     ]
     _XEXT_NS = lib
     return lib
