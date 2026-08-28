@@ -542,6 +542,12 @@ export interface DeleteJob extends ClientMessage {
   job_id: string;
 }
 
+/** Turn natural language into a job draft (TD-3803). Does not persist. */
+export interface ParseJob extends ClientMessage {
+  type: "parse_job";
+  text: string;
+}
+
 /** Hold-to-talk audio (TD-4701). Connection-scoped. Not a tool. */
 export interface Transcribe extends ClientMessage {
   type: "transcribe";
@@ -621,6 +627,7 @@ export type ClientMessageUnion =
   | ListJobs
   | SaveJob
   | DeleteJob
+  | ParseJob
   | Transcribe;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
@@ -1313,6 +1320,19 @@ export interface JobList extends DaemonEvent {
   jobs: JobEntry[];
 }
 
+/** Response to parse_job (TD-3803). Connection-scoped. Not saved. */
+export interface JobDraftReply extends DaemonEvent {
+  type: "job_draft";
+  ok: boolean;
+  detail?: string;
+  workspace?: string | null;
+  instruction?: string | null;
+  cadence?: string | null;
+  next_run?: string | null;
+  deliver_to?: "window" | "slack" | "ntfy" | null;
+  paused?: boolean;
+}
+
 /** Reply to transcribe (TD-4701). Connection-scoped. detail is a code, never a URL. */
 export interface Transcript extends DaemonEvent {
   type: "transcript";
@@ -1370,4 +1390,5 @@ export type DaemonEventUnion =
   | DesignHit
   | CuPermissions
   | JobList
+  | JobDraftReply
   | Transcript;

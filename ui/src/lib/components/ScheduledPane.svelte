@@ -6,9 +6,11 @@
 	import {
 		createJob,
 		deleteScheduledJob,
+		parseJobRequest,
 		pauseJob,
 		scheduled,
 		setDraftField,
+		setParseText,
 	} from '../scheduled.svelte.js';
 	import { jobsEmptyCopy, jobWhen } from '../scheduled';
 
@@ -48,7 +50,17 @@
 	</section>
 	<section class="form-col" aria-label="New scheduled job">
 		<h2 class="form-title">New job</h2>
-		<p class="lede">Draft fields. Cadence or next run, not both.</p>
+		<p class="lede">Parse a sentence, edit the draft, then create. Cadence or next run, not both.</p>
+		<label class="field">
+			<span>Describe the job</span>
+			<textarea
+				rows="2"
+				value={scheduled.parseText}
+				oninput={(e) => setParseText(e.currentTarget.value)}
+				placeholder="every 2 hours in /home/me/proj summarize the inbox deliver to slack"
+			></textarea>
+		</label>
+		<button class="action" type="button" onclick={() => parseJobRequest()}>Parse</button>
 		<label class="field">
 			<span>Workspace</span>
 			<input

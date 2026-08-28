@@ -74,6 +74,7 @@ from tstd.protocol import (
     InstructionFileEntry,
     InstructionFiles,
     InstructionStack,
+    JobDraftReply,
     JobEntry,
     JobList,
     ListArtifacts,
@@ -97,6 +98,7 @@ from tstd.protocol import (
     MoveSession,
     OpenArtifact,
     OpenWorkspace,
+    ParseJob,
     Ping,
     PolicyRules,
     PolicyRuleSummary,
@@ -856,6 +858,7 @@ FIXTURES = {
         deliver_to="window",
     ),
     "delete_job": DeleteJob(job_id="job-1"),
+    "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
     "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
     "job_list": JobList(
         jobs=[
@@ -868,6 +871,14 @@ FIXTURES = {
                 paused=False,
             )
         ],
+    ),
+    "job_draft": JobDraftReply(
+        ok=True,
+        workspace="/ws/proj",
+        instruction="summarize the inbox",
+        cadence="every 2 hours",
+        deliver_to="slack",
+        paused=False,
     ),
     "transcript": Transcript(ok=True, text="hello from the mic", detail=""),
 }
