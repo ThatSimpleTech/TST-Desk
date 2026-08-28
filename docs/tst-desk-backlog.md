@@ -5461,6 +5461,11 @@ Done (2026-08-21): `send(config, message)`; topic URL in keychain
 Done (2026-08-21): `{user_data_dir}/scheduler/jobs.json`; parse is a
 draft; save is a second call; no runner.
 
+**Addendum (2026-08-28):** `parse_job` / `job_draft` is the daemon door
+for that parse. The pane's "Describe the job" box sends NL; the reply
+fills the draft; Create still `save_job`. The parse is the
+worker-shaped schema (deterministic), not a model call.
+
 ---
 
 ### TD-3804 — Wake, run, deliver

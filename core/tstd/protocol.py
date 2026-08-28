@@ -919,6 +919,18 @@ class DeleteJob(ClientMessage):
     job_id: str = Field(min_length=1)
 
 
+class ParseJob(ClientMessage):
+    """Turn natural language into a job draft (TD-3803).
+
+    Does not persist. The daemon answers with ``job_draft`` for the user
+    to edit before ``save_job``. The parse is the worker-shaped schema
+    (deterministic); it is not a model call and not a save.
+    """
+
+    type: Literal["parse_job"] = "parse_job"
+    text: str = ""
+
+
 class Transcribe(ClientMessage):
     """Hold-to-talk audio for speech-to-text (TD-4701).
 
@@ -1981,6 +1993,21 @@ class JobList(DaemonEvent):
     jobs: list[JobEntry] = Field(default_factory=list)
 
 
+class JobDraftReply(DaemonEvent):
+    """Response to ``parse_job`` (TD-3803). Connection-scoped. Not saved."""
+
+    type: Literal["job_draft"] = "job_draft"
+    seq: int = 1
+    ok: bool = True
+    detail: str = ""
+    workspace: str | None = None
+    instruction: str | None = None
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    paused: bool = False
+
+
 class Transcript(DaemonEvent):
     """Reply to ``transcribe`` (TD-4701). Connection-scoped.
 
@@ -2069,6 +2096,7 @@ ClientMessageT = Annotated[
     | ListJobs
     | SaveJob
     | DeleteJob
+    | ParseJob
     | Transcribe,
     Field(discriminator="type"),
 ]
@@ -2123,6 +2151,7 @@ DaemonEventT = Annotated[
     | DesignHit
     | CuPermissions
     | JobList
+    | JobDraftReply
     | Transcript,
     Field(discriminator="type"),
 ]
@@ -2204,6 +2233,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_jobs",
         "save_job",
         "delete_job",
+        "parse_job",
         "transcribe",
     }
 )
@@ -2258,6 +2288,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "design_hit",
         "cu_permissions",
         "job_list",
+        "job_draft",
         "transcript",
     }
 )
