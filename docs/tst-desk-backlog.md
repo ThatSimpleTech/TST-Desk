@@ -5232,6 +5232,11 @@ Screen-pane reducer, but not `KNOWN_EVENT_TYPES`. The live client
 dropped every `cu_session` frame (TD-1010) while unit tests stayed
 green by calling the reducer directly. Added to the gate.
 
+**Addendum (2026-08-28):** `set_cu_kill` already closed the episode
+(`close_cu_session` + overlay off). `test_set_cu_kill_emits_cu_session_false`
+now opens a session, kills, and asserts `cu_session {active:false}` on
+the log and the overlay callback.
+
 ---
 
 ### TD-3403 — Design mode
