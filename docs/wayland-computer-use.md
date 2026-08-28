@@ -108,3 +108,28 @@ TD-4901c — foreground_window policy + tests (no silent degrade)
 Do not start from “drive XWayland only” — that violates spec §9 and TD-2002.
 
 See TD-2002 and TD-4901 entries in `DECISIONS.md`.
+
+---
+
+## 6. Implementation status (2026-08-28)
+
+The size-13 epic is split in code as well as on paper:
+
+| Sub-epic | Module | What “available” means |
+|---|---|---|
+| TD-4901a | `tst_cu_mcp.backends.wayland_capture` | A grabber is wired on a Wayland session |
+| TD-4901b | `tst_cu_mcp.backends.wayland_input` | An injector is wired on a Wayland session |
+| TD-4901c | `WaylandBackend.foreground_window` | Empty title/process; `expect_window` cannot match |
+
+`get_backend()` on a Wayland session returns `WaylandBackend`, never
+`LinuxBackend`. X11 is unchanged. `health.supported` is true only when
+**both** strategies are available.
+
+**Live-verify gap.** This checkout’s host is a native X11 session
+(`XDG_SESSION_TYPE=x11`). PipeWire ScreenCast frames and libei injection
+are therefore not live-verified. Tests inject grab/click doubles. Do not
+read `supported: true` on this machine as a live portal grant — the
+default strategies have no grabber, so Wayland stays `supported: false`.
+A maintainer with GNOME or KDE Wayland still needs to wire a real
+ScreenCast + RemoteDesktop client and re-run the suite under that
+session.
