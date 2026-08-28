@@ -5195,6 +5195,11 @@ pointer). The real-display host path is a no-op; screenshot tools raise
 `prefers-reduced-motion` is a static border and no trail. The store
 clears on `turn_complete`, cancel, and `cu_kill_state`.
 
+**Addendum (2026-08-28):** UI omitted-field fallback for
+`cu_show_on_real_display` was `?? false` while the daemon default is
+on. Settings now defaults the third bit on, matching
+`CuIndicatorPrefs.show_on_real_display`.
+
 **Addendum (2026-08-22):** The real-display path is no longer a no-op: the
 sidecar paints a rust ring on every display while the agent drives
 (`tst_cu_mcp/overlay`, helper AppKit child; DECISIONS.md 2026-08-22). The
