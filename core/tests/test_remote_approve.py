@@ -19,6 +19,7 @@ from websockets.asyncio.client import connect
 
 from tstd.autonomy.classifier import DecisionClass
 from tstd.config import cached_config
+from tstd.context.embeddings import EmbeddingsClient
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
 from tstd.policy import PolicyConfig, PolicyRule, load_policy, save_policy
@@ -35,7 +36,7 @@ async def _wait_port(daemon: Daemon) -> None:
     raise TimeoutError("daemon did not bind")
 
 
-async def _recv_until(ws: Any, target_type: str, _timeout: float = 3.0) -> dict[str, Any]:
+async def _recv_until(ws: Any, target_type: str, _timeout: float = 15.0) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _timeout
     while loop.time() < deadline:
@@ -47,7 +48,7 @@ async def _recv_until(ws: Any, target_type: str, _timeout: float = 3.0) -> dict[
     raise TimeoutError(f"no {target_type!r} message received")
 
 
-async def _recv_session_state(ws: Any, wanted: str, _timeout: float = 3.0) -> dict[str, Any]:
+async def _recv_session_state(ws: Any, wanted: str, _timeout: float = 15.0) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _timeout
     while loop.time() < deadline:
@@ -136,6 +137,11 @@ async def _attach(ws: Any, session_id: str) -> None:
 
 
 # ── Remote resolve (criterion 1) ────────────────────────────────────────
+
+
+def test_suite_disables_the_shipped_embeddings_sidecar() -> None:
+    """Canary for the conftest fixture: a brain turn must not wait 2s on :8080."""
+    assert not EmbeddingsClient.from_config(cached_config()).enabled
 
 
 class TestRemoteResolve:
