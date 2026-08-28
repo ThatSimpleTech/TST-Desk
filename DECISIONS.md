@@ -9128,4 +9128,22 @@ arm64. Unsigned `signingIdentity: "-"` is unchanged.
 names both architectures). Also rejected: `macos-14` Intel (15 is
 what GitHub currently labels).
 
+---
+
+## 2026-08-28 — TD-1406: taskkill the tree before killing the leader (Class B)
+
+**Decision:** On Windows the shell tool runs ``taskkill /T /F /PID``
+first, then ``TerminateProcess`` on the asyncio child. The old order
+orphaned ``Start-Process`` grandchildren.
+
+**Rationale:** ``taskkill /T`` walks the live parent tree. A dead
+leader is "not found" (exit 128) and the walk never happens. POSIX
+``killpg`` does not have this failure mode because the pgid outlives
+the leader. Hosted ``windows-latest`` (run ``33146979852``) is the
+verification the backlog required.
+
+**Alternative rejected:** Win32 Job Objects at spawn (better isolation,
+new surface). Also rejected: leaving the live tests skipped after the
+Windows Package sidecar already used ``taskkill``.
+
 
