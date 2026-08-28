@@ -21,6 +21,7 @@ from tst_cu_mcp.backends.linux import (
     WaylandUnsupportedError,
     require_native_x11,
 )
+from tst_cu_mcp.backends.wayland_input import WaylandInputError
 
 pytestmark = [
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux session helpers"),
@@ -157,13 +158,15 @@ class TestPolicyLayer:
     def test_click_refuses_without_x(
         self, wayland_with_xwayland: None, x11_never_opened: list[str]
     ) -> None:
-        with pytest.raises(WaylandUnsupportedError):
+        # After TD-4901, get_backend() is WaylandBackend. Empty ScreenCast
+        # must not fall through to Xlib or a generic "no displays".
+        with pytest.raises(WaylandInputError, match="RemoteDesktop"):
             input_control.click(10, 10)
         assert x11_never_opened == []
 
     def test_expect_window_does_not_degrade_to_xwayland(
         self, wayland_with_xwayland: None, x11_never_opened: list[str]
     ) -> None:
-        with pytest.raises(WaylandUnsupportedError):
+        with pytest.raises(WaylandInputError, match="RemoteDesktop"):
             input_control.click(10, 10, expect_window="Terminal")
         assert x11_never_opened == []

@@ -7,7 +7,12 @@ item is not an instant stop.
 
 from __future__ import annotations
 
+import shutil
+import stat
+import sys
 from pathlib import Path
+
+import pytest
 
 from tests.test_autonomy_loop import _wire_autonomy, make_charter
 from tests.test_cap_enforcement import wait_for_state
@@ -34,6 +39,47 @@ from tstd.protocol import TurnComplete
 from tstd.router import TierRouter
 from tstd.session import Session
 from tstd.tools.results import ToolResult
+
+
+def _arm_autonomy_shell(session: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give a DoD live session a model config and a host-side runtime stand-in.
+
+    Autonomy shell now execs through ``autonomy_shell_argv`` (TD-4301).
+    Isolation is tested in ``test_sandbox.py``; these tests care that
+    ``$`` items still go through the dispatcher and that the formatted
+    ``exit code:`` line is honest. The stand-in runs the inner
+    ``/bin/sh -c`` on the host so ``echo`` / ``false`` still mean what
+    they meant before the wrap.
+    """
+    session.config = make_config()
+    script = tmp_path / "podman"
+    script.write_text(
+        "\n".join(
+            [
+                f"#!{sys.executable}",
+                "import subprocess, sys",
+                "if len(sys.argv) > 1 and sys.argv[1] == 'info':",
+                "    print('true')",
+                "    raise SystemExit(0)",
+                "if '-c' in sys.argv:",
+                "    cmd = sys.argv[sys.argv.index('-c') + 1]",
+                "    raise SystemExit(subprocess.call(['/bin/sh', '-c', cmd]))",
+                "raise SystemExit(0)",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+    real_which = shutil.which
+
+    def _which(name: str) -> str | None:
+        if name in {script.name, "podman"}:
+            return str(script)
+        return real_which(name)
+
+    monkeypatch.setattr("tstd.autonomy.sandbox.shutil.which", _which)
 
 
 class RecordingDispatcher:
@@ -123,10 +169,13 @@ class TestDodPoller:
         assert poll.results[0].via == "worker"
         assert dispatcher.calls == []
 
-    async def test_live_shell_through_the_gate(self, tmp_path: Path) -> None:
+    async def test_live_shell_through_the_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = Session(str(tmp_path))
         session.autonomy = True
         session.charter = make_charter(definition_of_done=["$ echo ok"])
+        _arm_autonomy_shell(session, tmp_path, monkeypatch)
         dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("echo",))
         dispatcher.autonomy_fn = lambda: True
         session.dod_poller = make_dod_poller(session, dispatcher=dispatcher, ask_worker=None)
@@ -134,13 +183,16 @@ class TestDodPoller:
         assert poll.all_green
         assert poll.results[0].via == "shell"
 
-    async def test_nonzero_shell_is_red(self, tmp_path: Path) -> None:
+    async def test_nonzero_shell_is_red(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = Session(str(tmp_path))
         session.autonomy = True
         session.charter = make_charter(
             definition_of_done=["$ false"],
             allowed_commands=["false"],
         )
+        _arm_autonomy_shell(session, tmp_path, monkeypatch)
         dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("false",))
         dispatcher.autonomy_fn = lambda: True
         session.dod_poller = make_dod_poller(session, dispatcher=dispatcher, ask_worker=None)
@@ -148,7 +200,9 @@ class TestDodPoller:
         assert not poll.all_green
         assert poll.results[0].via == "shell"
 
-    async def test_class_c_command_is_red_not_a_stop(self, tmp_path: Path) -> None:
+    async def test_class_c_command_is_red_not_a_stop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         (tmp_path / "AGENTS.md").write_text("# hi\n", encoding="utf-8")
         session = Session(str(tmp_path))
         session.autonomy = True
@@ -156,6 +210,7 @@ class TestDodPoller:
             definition_of_done=["$ echo rewritten > AGENTS.md"],
             allowed_commands=["echo"],
         )
+        _arm_autonomy_shell(session, tmp_path, monkeypatch)
         dispatcher = make_shell_dispatcher(tmp_path, allowed_commands=("echo",))
         dispatcher.autonomy_fn = lambda: True
         dispatcher.on_class_c = session.mark_class_c
