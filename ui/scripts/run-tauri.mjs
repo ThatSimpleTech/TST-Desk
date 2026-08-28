@@ -10,7 +10,12 @@ const bin = path.join(
 	".bin",
 	process.platform === "win32" ? "tauri.cmd" : "tauri",
 );
-const child = spawn(bin, process.argv.slice(2), {
+const args = process.argv.slice(2);
+// CI has no `tst-desk-dev` identity (TD-4903: v0.1 ships unsigned).
+if (process.env.CI && args[0] === "build") {
+	args.push("--config", JSON.stringify({ bundle: { macOS: { signingIdentity: "-" } } }));
+}
+const child = spawn(bin, args, {
 	cwd: uiRoot,
 	env: { ...process.env, TAURI_APP_PATH: path.join(uiRoot, "..", "shell") },
 	stdio: "inherit",
