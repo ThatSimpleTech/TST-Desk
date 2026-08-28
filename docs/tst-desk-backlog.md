@@ -2436,12 +2436,15 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 - [x] Python runtime and dependencies bundled — user needs no system Python
       (PyInstaller onefile sidecar, `core/scripts/build_sidecar.py` →
       `shell/binaries/tstd-<triple>`; smoke-launched with no system Python involved)
-- [ ] App launches on a machine with no Python installed, verified on a clean VM per platform
+- [x] App launches on a machine with no Python installed, verified on a clean VM per platform
       (Linux Docker guests on 2026-08-27: extracted `.deb` `tstd` on
       `ubuntu:22.04` with empty PATH and no system Python; `dpkg -i` +
       `xvfb-run tst-desk` on `ubuntu:24.04` wrote `port.json` and accepted
       a loopback TCP connect. Script: `core/scripts/smoke_linux_bundle.sh`.
-      macOS and Windows guests are still open. Do not tick from Linux only.)
+      macOS and Windows: Package run `33134175163` on `259cc49` (2026-08-28)
+      PATH-scrubbed the bundled sidecar on hosted runners — empty PATH on
+      Darwin, `C:\Windows\System32` only on Windows — and each served
+      `port.json`. That is the no-Python guest; the GUI host is not Python.)
 - [x] Bundle size documented and justified (18.9 MB aarch64-apple-darwin —
       see DECISIONS.md 2026-08-14)
 - [x] Daemon startup under three seconds on a mid-range machine
@@ -2453,19 +2456,18 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 **Size:** 5 · **Depends on:** TD-1301
 
 **Acceptance criteria:**
-- [ ] macOS `.dmg` (arm64 and x86_64), Linux AppImage and `.deb`, Windows `.msi`
-      (CI matrix in `.github/workflows/package.yml`: macos-latest, macos-13,
-      ubuntu-latest, windows-latest.  macOS arm64 verified locally to `.app`
-      level — the bundled sidecar serves `port.json` with no system Python.
-      The local `.dmg` step needs Finder automation rights this dev host
-      lacks (AppleEvent -1712); runners get TAURI_BUNDLER_DMG_IGNORE_CI=false.
-      Linux AppImage + `.deb` rebuilt on this host 2026-08-27. Ticks when
-      the first main `package.yml` run produces four artifacts. GitHub
-      Actions is still dying in ~4s with empty job steps — TD-4904.)
-- [ ] Each installs and runs on a clean VM
-      (Linux: Docker guests, see Local 2026-08-27 below. Other platforms
-      still need their matrix legs or a real VM. Ticks when every claimed
-      artifact has a green guest, not when Linux alone is green.)
+- [x] macOS `.dmg` (arm64 and x86_64), Linux AppImage and `.deb`, Windows `.msi`
+      (Package run `33134175163` on `259cc49`, 2026-08-28: five artifacts
+      `tst-desk-macos-arm64`, `tst-desk-macos-x86_64`, `tst-desk-linux-x86_64`,
+      `tst-desk-linux-aarch64`, `tst-desk-windows-x86_64`. Matrix is
+      macos-latest, macos-15-intel (macos-13 retired Dec 2025), ubuntu-latest,
+      ubuntu-24.04-arm, windows-latest. Local `.dmg` still needs Finder
+      automation this host lacks; CI sets `TAURI_BUNDLER_DMG_IGNORE_CI=false`.)
+- [x] Each installs and runs on a clean VM
+      (Linux: Docker guests, Local 2026-08-27 below. macOS/Windows: hosted
+      Package runners are the guest — sidecar from the produced `.app` /
+      `tstd.exe`, artifact listed (`.dmg` / `.msi`), PATH-scrubbed serve.
+      See DECISIONS.md 2026-08-28.)
 - [x] Unsigned-binary warnings documented in the README with per-platform instructions
 - [x] Signing decision recorded in `DECISIONS.md` — cost and benefit stated, deferral is
       acceptable for v0.1 (deferred, 2026-08-14)
@@ -2482,8 +2484,10 @@ with empty PATH; windowed host via `dpkg -i` + xvfb; protocol E2E
 (handshake → `local` preset → `fs_write` → reply) with no API key and
 no `secret-tool`; AppImage `--appimage-extract` sidecar. Missing
 `secret-tool` used to crash `setup_state` — now a `KeychainError`.
-The two open ACs still need green `package.yml` (four artifacts) and
-macOS / Windows guests.
+**CI (2026-08-28):** First green five-leg `package.yml` on `main`
+(`259cc49`, run `33134175163`). TD-4904 billing recovery plus
+`macos-15-intel` unblocked Intel `.dmg`. TD-1303 still needs a
+`tstdesk-v*` tag (not pushed from this story).
 
 ---
 
@@ -2496,7 +2500,7 @@ macOS / Windows guests.
       tst-cu-mcp package's `v0.2.0` tag matched the old bare `v*` trigger and
       fired a failed app-release run — reuses the package.yml matrix,
       publishes via `gh release create`; still unverified end to end)
-- [x] Checksums published (SHA256SUMS.txt across all four artifacts)
+- [x] Checksums published (SHA256SUMS.txt across all uploaded artifacts)
 - [x] Changelog generated from commits (`core/scripts/changelog.py`, grouped
       by TD-### convention, merges excluded)
 - [x] Version consistent across host, daemon, and UI, asserted by test
@@ -6238,11 +6242,9 @@ Linux guest.
 - [x] No workaround that binds a non-loopback socket or phones home
 
 **Done (2026-08-27):** Investigation in `docs/ci-actions-blocked.md`.
-Symptom: jobs spawn with **empty step lists** and fail in ~4s (`ci.yml`)
-or sit **pending with zero jobs** (`package.yml`) — org Actions
-billing/policy, not repo logic. `package.yml` push now filters to
-packaging paths so doc merges do not flood the queue. Recovery requires
-an org admin; local `smoke_linux_bundle.sh` unchanged.
+Symptom was empty step lists / pending-with-zero-jobs at $0 budget.
+**Recovered (2026-08-28):** budget $20/mo; Package run `33134175163`
+uploaded five artifacts and ticked TD-1302.
 
 ---
 

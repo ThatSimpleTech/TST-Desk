@@ -206,4 +206,5 @@ The script proves: bundled sidecar serves with no Python on `PATH`, a protocol
 turn against the shipped `local` preset (loopback mock → `fs_write` → reply),
 and that a missing API key returns actionable copy instead of hanging on
 Connecting…. Linux uses `smoke_linux_bundle.sh`; macOS uses
-`smoke_macos_bundle.sh`. None of these tick TD-1302's four-artifact CI box.
+`smoke_macos_bundle.sh`. These scripts are maintainer/local guests; the
+CI four-/five-artifact box is `package.yml` (green on `259cc49`, 2026-08-28).
