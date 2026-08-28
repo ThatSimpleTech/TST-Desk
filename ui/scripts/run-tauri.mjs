@@ -12,7 +12,8 @@ const bin = path.join(
 );
 const args = process.argv.slice(2);
 // CI has no `tst-desk-dev` identity (TD-4903: v0.1 ships unsigned).
-if (process.env.CI && args[0] === "build") {
+// Only Darwin: Windows cmd.exe mangles JSON if we pass --config via shell.
+if (process.env.CI && process.platform === "darwin" && args[0] === "build") {
 	args.push("--config", JSON.stringify({ bundle: { macOS: { signingIdentity: "-" } } }));
 }
 const child = spawn(bin, args, {
