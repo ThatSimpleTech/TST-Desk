@@ -15,21 +15,27 @@ import tstd.keychain as kc_mod
 import tstd.keychain_macos as keychain_macos  # must import off-macOS
 import tstd.keychain_windows as keychain_windows  # must import off-Windows
 from tstd.keychain import (
+    DISCORD_WEBHOOK_ACCOUNT,
     KeychainBackend,
     KeychainError,
     KeychainLockedError,
     MacOSKeychain,
     NTFY_TOPIC_ACCOUNT,
     SLACK_WEBHOOK_ACCOUNT,
+    TELEGRAM_BOT_ACCOUNT,
     _classify_cli_failure,
     delete_api_key,
     get_api_key,
+    get_discord_webhook_url,
     get_ntfy_topic_url,
     get_slack_webhook_url,
+    get_telegram_bot_url,
     has_keychain_backend,
     store_api_key,
+    store_discord_webhook_url,
     store_ntfy_topic_url,
     store_slack_webhook_url,
+    store_telegram_bot_url,
 )
 from tstd.provider import ProviderClient
 
@@ -87,6 +93,18 @@ class TestNotifyAccounts:
         assert NTFY_TOPIC_ACCOUNT == "tst-ntfy-topic"
         await store_ntfy_topic_url("https://ntfy.sh/desk")
         assert await get_ntfy_topic_url() == "https://ntfy.sh/desk"
+
+
+class TestExtraNotifyAccounts:
+    async def test_discord_webhook_is_tst_discord_webhook(self) -> None:
+        assert DISCORD_WEBHOOK_ACCOUNT == "tst-discord-webhook"
+        await store_discord_webhook_url("https://discord.com/api/webhooks/x")
+        assert await get_discord_webhook_url() == "https://discord.com/api/webhooks/x"
+
+    async def test_telegram_bot_is_tst_telegram_bot(self) -> None:
+        assert TELEGRAM_BOT_ACCOUNT == "tst-telegram-bot"
+        await store_telegram_bot_url("https://api.telegram.org/botx/sendMessage?chat_id=1")
+        assert "api.telegram.org" in await get_telegram_bot_url()
 
 
 class TestKeychainCRUD:
