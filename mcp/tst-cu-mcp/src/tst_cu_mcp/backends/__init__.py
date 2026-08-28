@@ -42,8 +42,16 @@ def get_backend(platform: str | None = None) -> Backend:
         return WindowsBackend()
 
     if target.startswith("linux"):
-        from tst_cu_mcp.backends.linux import LinuxBackend
+        from tst_cu_mcp.backends.linux import LinuxBackend, linux_session_kind
 
+        # Native X11 stays the X11 backend. Wayland never selects it —
+        # that would drive XWayland clients and ignore native apps
+        # (TD-4901). Unknown/headless keeps X11 so existing spies and
+        # Xvfb tests still construct LinuxBackend.
+        if linux_session_kind() == "wayland":
+            from tst_cu_mcp.backends.wayland import WaylandBackend
+
+            return WaylandBackend()
         return LinuxBackend()
 
     raise UnsupportedPlatformError(
