@@ -19,11 +19,17 @@ from tstd.keychain import (
     KeychainError,
     KeychainLockedError,
     MacOSKeychain,
+    NTFY_TOPIC_ACCOUNT,
+    SLACK_WEBHOOK_ACCOUNT,
     _classify_cli_failure,
     delete_api_key,
     get_api_key,
+    get_ntfy_topic_url,
+    get_slack_webhook_url,
     has_keychain_backend,
     store_api_key,
+    store_ntfy_topic_url,
+    store_slack_webhook_url,
 )
 from tstd.provider import ProviderClient
 
@@ -69,6 +75,18 @@ def _patch_keychain(monkeypatch: pytest.MonkeyPatch) -> MockKeychain:
 
 
 # ── Tests ───────────────────────────────────────────────────────────────
+
+
+class TestNotifyAccounts:
+    async def test_slack_webhook_is_tst_slack_webhook(self) -> None:
+        assert SLACK_WEBHOOK_ACCOUNT == "tst-slack-webhook"
+        await store_slack_webhook_url("https://hooks.slack.com/services/x")
+        assert await get_slack_webhook_url() == "https://hooks.slack.com/services/x"
+
+    async def test_ntfy_topic_is_tst_ntfy_topic(self) -> None:
+        assert NTFY_TOPIC_ACCOUNT == "tst-ntfy-topic"
+        await store_ntfy_topic_url("https://ntfy.sh/desk")
+        assert await get_ntfy_topic_url() == "https://ntfy.sh/desk"
 
 
 class TestKeychainCRUD:
