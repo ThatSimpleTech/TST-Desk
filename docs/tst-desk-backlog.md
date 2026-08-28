@@ -6492,6 +6492,14 @@ pinned in `test_linux_geometry.py`; live capture/cursor/foreground ran on an
 X11 XFCE host (`pytest -m desktop`). Wayland is an explicit health refusal.
 The Desk live path accepts Linux; `cu_permissions.platform` is `"linux"`.
 
+**Addendum (2026-08-28):** health was honest (`supported: false` on
+Wayland) but `LinuxBackend` still opened Xlib when `DISPLAY` was set, so
+an XWayland socket could move the pointer. Capture, input, focus, and
+hit-test now raise `WaylandUnsupportedError` before any X11 symbol is
+touched. `check_permissions` still answers. The mock and `map_mcp_error`
+surface code `wayland`. Live `desktop` tests skip unless
+`linux_session_usable()`.
+
 ---
 
 ### TD-2002 — Decide the Wayland strategy

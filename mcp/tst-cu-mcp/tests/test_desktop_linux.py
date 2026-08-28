@@ -16,7 +16,7 @@ import pytest
 from PIL import Image
 
 from tst_cu_mcp import capture
-from tst_cu_mcp.backends.linux import LinuxBackend
+from tst_cu_mcp.backends.linux import LinuxBackend, linux_session_usable
 from tst_cu_mcp.backends.linux_x11 import cursor_position, virtual_desktop
 from tst_cu_mcp.displays import screen_info
 from tst_cu_mcp.focus import window_matches
@@ -25,6 +25,10 @@ from tst_cu_mcp.tools.health import health_report
 pytestmark = [
     pytest.mark.desktop,
     pytest.mark.skipif(sys.platform != "linux", reason="native Linux desktop required"),
+    pytest.mark.skipif(
+        not linux_session_usable(),
+        reason="native X11 session required (Wayland is unsupported)",
+    ),
 ]
 
 CURSOR_TOLERANCE_PX = 2

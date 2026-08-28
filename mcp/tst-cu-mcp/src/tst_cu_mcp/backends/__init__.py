@@ -13,8 +13,10 @@ import sys
 from tst_cu_mcp.backends.base import Backend
 
 #: ``sys.platform`` values with a real implementation.
-#: Linux is X11; a Wayland session still selects this backend but ``health``
-#: reports ``supported: false`` (TD-2001 / TD-2002).
+#: Linux still *selects* this backend on Wayland so ``health`` /
+#: ``check_permissions`` can name ``session_type``. Capture and input
+#: raise ``WaylandUnsupportedError`` unless the session is native X11
+#: (TD-2001 / TD-2002). An XWayland ``DISPLAY`` is not enough.
 SUPPORTED_PLATFORMS = ("darwin", "win32", "linux")
 
 
