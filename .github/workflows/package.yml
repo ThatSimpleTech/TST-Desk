@@ -88,6 +88,7 @@ jobs:
         run: npm run tauri:build
         working-directory: ui
         env:
+          TAURI_APP_PATH: ../shell
           TAURI_BUNDLER_DMG_IGNORE_CI: "false"
 
       # The smoke test treats the runner as the clean machine: install the
