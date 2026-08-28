@@ -204,6 +204,7 @@ class SessionPersist:
                     "dropping malformed session event",
                     extra={"extra_fields": {"path": str(path), "line": i, "error": str(e)}},
                 )
+        events.sort(key=lambda event: event.seq)
         return events
 
     def _apply_window(self, path: Path, events: list[DaemonEvent]) -> list[DaemonEvent]:

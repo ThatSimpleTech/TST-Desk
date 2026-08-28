@@ -55,6 +55,15 @@ class TestSessionEventLog:
         await log.add(AssistantDelta(session_id="s", delta="b", seq=1))
         assert log.last_seq == 2
 
+    def test_replace_orders_by_seq_not_file_order(self) -> None:
+        """Revive must not replay jsonl insertion order (Windows persist race)."""
+        log = SessionEventLog()
+        first = AssistantDelta(session_id="s", delta="a", seq=1)
+        second = AssistantDelta(session_id="s", delta="b", seq=2)
+        log.replace([second, first])
+        assert [event.seq for event in log.events_from(1)] == [1, 2]
+        assert log.last_seq == 2
+
     async def test_drop_before_matches_a_window_and_keeps_last_seq(self) -> None:
         log = SessionEventLog()
         await log.add(AssistantDelta(session_id="s", delta="a", seq=1))

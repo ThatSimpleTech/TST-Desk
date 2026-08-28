@@ -409,7 +409,12 @@ async def test_daemon_tick_on_start_revives_once(tmp_path: Path) -> None:
         assert len(mock.calls) == 1
         stored = get_only(data_dir)
         assert stored.next_run is not None
-        # After revive the job must not still be due at the same instant.
+        # Persist happens before notify, but wait on the stored slot so a
+        # slow Windows flush cannot observe the overdue next_run.
+        for _ in range(80):
+            if due_jobs(list_jobs(data_dir), datetime.now(UTC)) == []:
+                break
+            await asyncio.sleep(0.05)
         assert due_jobs(list_jobs(data_dir), datetime.now(UTC)) == []
     finally:
         await _stop_daemon(daemon, task)

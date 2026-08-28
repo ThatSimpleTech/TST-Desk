@@ -173,7 +173,7 @@ class SessionEventLog:
         """Return all events with seq >= `seq`."""
         if seq < 1:
             seq = 1
-        return [e for e in self._events if e.seq >= seq]
+        return sorted((e for e in self._events if e.seq >= seq), key=lambda event: event.seq)
 
     async def wait_for_new_event(self, seen_seq: int) -> int:
         """Wait until a new event beyond `seen_seq` is available.
@@ -208,8 +208,9 @@ class SessionEventLog:
 
         Used on revive. Re-adding would mint new seqs and rewrite disk.
         """
-        self._events = list(events)
-        self._seq = events[-1].seq if events else 0
+        ordered = sorted(events, key=lambda event: event.seq)
+        self._events = ordered
+        self._seq = max(event.seq for event in ordered) if ordered else 0
 
 
 # ── Session ────────────────────────────────────────────────────────────
