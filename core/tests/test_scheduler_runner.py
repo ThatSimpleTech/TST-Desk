@@ -323,6 +323,35 @@ async def _echo_turn(workspace: Path, message: str) -> str:
     return f"echo: {message}"
 
 
+@pytest.mark.parametrize(
+    ("channel", "module"),
+    [("slack", "tstd.notify.slack.send"), ("ntfy", "tstd.notify.ntfy.send")],
+)
+async def test_daemon_default_hook_calls_real_send(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    channel: str,
+    module: str,
+) -> None:
+    """Production Daemon() must not skip Slack/ntfy (TD-3804)."""
+    sent: list[str] = []
+
+    async def fake_send(config: object, message: str, **_kwargs: object) -> None:
+        sent.append(message)
+
+    monkeypatch.setattr(module, fake_send)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    workspace = _workspace(tmp_path)
+    save_job(data_dir, _job(workspace, job_id=f"prod-{channel}", deliver_to=channel))
+    mock = MockProvider(default=Script(kind="stream", content="done"))
+    daemon = Daemon(data_dir=data_dir, provider=mock)
+    daemon.config = make_config()
+    await daemon.run_due_jobs(_now())
+    assert sent == ["done"]
+    assert daemon._scheduler_deliver.records == [(channel, "done")]
+
+
 async def test_ntfy_without_send_is_recorded_not_http(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
