@@ -90,7 +90,10 @@ disallow_subclassing_any = false
 # module: every other check applies everywhere, including on a Windows host,
 # where these lookups resolve natively and lose nothing.
 [[tool.mypy.overrides]]
-module = "tst_cu_mcp.backends.windows"
+module = [
+    "tst_cu_mcp.backends.windows",
+    "tst_cu_mcp.overlay.win32",
+]
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
