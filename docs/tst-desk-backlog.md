@@ -6185,12 +6185,34 @@ home. Spec §9 v0.4 named Atspi; X11 raw is what shipped.
       protocol, or refuse. `expect_window` never degrades
 - [x] X11 path is unchanged. Wayland `health` becomes `supported: true`
       only when the chosen strategy actually works
-- [ ] Size 13 — split if capture and input diverge. Do not start from
+- [x] Size 13 — split if capture and input diverge. Do not start from
       "just drive XWayland"
 
 **Done (2026-08-27, assessment):** `docs/wayland-computer-use.md` re-assesses
 portals and libei, names TD-4901a/b/c split, and locks `expect_window` to
-refuse on Wayland until portal scope matches. Implementation not started.
+refuse on Wayland until portal scope matches.
+
+**Done (2026-08-28, split + mock implementation):** capture, input, and
+focus are separate modules. `get_backend()` on Wayland returns
+`WaylandBackend`, never X11. `health.supported` is true only when both
+injected strategies work. This host is X11 — PipeWire/libei live-verify
+is documented in `docs/wayland-computer-use.md` §6. Do not read
+`supported: true` here.
+
+#### TD-4901a — Wayland capture (ScreenCast)
+- [x] Capture is a module that does not import input
+- [x] An XWayland `DISPLAY` does not make capture available
+- [x] Tests inject a grabber; default has none
+
+#### TD-4901b — Wayland input (RemoteDesktop / libei)
+- [x] Input is a module that does not import capture
+- [x] Capture-only availability does not flip `health.supported`
+- [x] Tests inject a clicker; default has none
+
+#### TD-4901c — `expect_window` never degrades
+- [x] `foreground_window` returns empty title/process
+- [x] `expect_window` refuses without actuating
+- [x] X11 `get_backend()` is still `LinuxBackend`
 
 ---
 

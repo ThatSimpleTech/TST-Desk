@@ -9199,4 +9199,25 @@ died twice in one day). Also rejected: self-hosted runners.
 
 ---
 
+## 2026-08-28 — TD-4901: split Wayland capture and input (Class B)
+
+**Decision:** Three modules: `wayland_capture` (ScreenCast),
+`wayland_input` (RemoteDesktop/libei), `WaylandBackend` composing them
+with an empty `foreground_window` (TD-4901c). `get_backend()` on a
+Wayland session returns `WaylandBackend`, never `LinuxBackend`.
+`health.supported` is true only when *both* strategies are available
+(an injected grabber *and* injector in tests). No new D-Bus or
+PipeWire dependency. Live frame grab / libei is a documented gap on
+this X11 host.
+
+**Rationale:** Capture and input already diverge on compositors (wlr
+has ScreenCast, often not RemoteDesktop). One backend that “just
+opens DISPLAY” would be XWayland. Empty foreground is the only
+compositor-neutral `expect_window` that does not degrade.
+
+**Alternative rejected:** jeepney/dbus-next for a live portal client
+on this X11 box (cannot live-verify; new dep). Also rejected:
+capture-only `supported: true`. Also rejected: AT-SPI as
+`foreground_window` (hint, not compositor focus).
+
 
