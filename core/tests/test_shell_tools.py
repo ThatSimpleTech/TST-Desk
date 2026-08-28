@@ -64,16 +64,18 @@ _ESCAPE_PROBE_CMD = (
 )
 
 # cmd.exe is the CREATE_NEW_PROCESS_GROUP leader (create_subprocess_shell).
-# The script writes that pid plus the parked grandchild's pid, then waits
-# on the grandchild. The grandchild writes kicked.txt only after
-# release.txt exists — same release gate as POSIX (TD-1409). Checking
-# both pids is the Windows stand-in for killpg(0) on the group.
+# This script is that cmd's powershell child. It records its own pid plus
+# a parked grandchild, then waits on the grandchild. The grandchild writes
+# kicked.txt only after release.txt exists — same release gate as POSIX
+# (TD-1409). Checking both pids is the Windows stand-in for killpg(0).
+# Do not look up the cmd parent via CIM: that WMI round-trip is slow and
+# flaky on hosted runners, and taskkill /T from the cmd pid already walks
+# this powershell and the Start-Process child.
 _WINDOWS_ESCAPE_PROBE_PS1 = """
-$cmdPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
 $child = Start-Process -PassThru -WindowStyle Hidden -FilePath powershell -ArgumentList @(
     '-NoProfile', '-File', 'escape_grandchild.ps1'
 )
-Set-Content -Path pgid.txt -Value "$cmdPid`n$($child.Id)"
+Set-Content -Path pgid.txt -Value "$PID`n$($child.Id)"
 Wait-Process -Id $child.Id
 """
 
@@ -108,12 +110,16 @@ requires_posix_killpg = pytest.mark.skipif(
 )
 
 
-async def _wait_for_file(path: Path, seconds: float = 5.0) -> None:
+async def _wait_for_file(path: Path, seconds: float | None = None) -> None:
     """Poll for *path* to appear — the condition a fixed sleep approximates.
 
     Failing to appear within *seconds* means the command never started:
     a product failure worth failing the test for, not a flake to absorb.
+    Windows probes spawn a nested powershell; hosted runners need more
+    than the POSIX 5s for that to write pgid.txt (TD-1406).
     """
+    if seconds is None:
+        seconds = 15.0 if sys.platform == "win32" else 5.0
     deadline = asyncio.get_running_loop().time() + seconds
     while not await asyncio.to_thread(path.exists):
         if asyncio.get_running_loop().time() > deadline:
@@ -121,7 +127,7 @@ async def _wait_for_file(path: Path, seconds: float = 5.0) -> None:
         await asyncio.sleep(0.02)
 
 
-async def _assert_group_gone(tmp_path: Path, seconds: float = 5.0) -> None:
+async def _assert_group_gone(tmp_path: Path, seconds: float | None = None) -> None:
     """Assert the killed process group is gone (TD-1407).
 
     The condition the old kicked.txt + ``sleep 2`` marker approximated: a
@@ -135,6 +141,8 @@ async def _assert_group_gone(tmp_path: Path, seconds: float = 5.0) -> None:
     nothing was ever forked, so nothing could escape — the assertion is
     vacuous and passes by waiting the file out.
     """
+    if seconds is None:
+        seconds = 15.0 if sys.platform == "win32" else 5.0
     pgid_file = tmp_path / "pgid.txt"
     deadline = asyncio.get_running_loop().time() + seconds
     while not await asyncio.to_thread(pgid_file.exists):
