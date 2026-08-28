@@ -57,7 +57,20 @@ class MockDesktopDriver:
     async def set_overlay_session(self, active: bool) -> None:
         self.calls.append(("overlay_session", {"active": bool(active)}))
 
+    def _refuse_if_wayland(self) -> None:
+        if normalize_cu_platform(self.platform) != "linux":
+            return
+        if self.session_type != "wayland":
+            return
+        raise DesktopError(
+            DesktopError.WAYLAND,
+            "Linux computer-use is X11 only (TD-2002); "
+            "session_type='wayland' is not supported. "
+            "An XWayland DISPLAY is not a substitute for native Wayland apps.",
+        )
+
     def _refuse_if_denied(self) -> None:
+        self._refuse_if_wayland()
         if self.secure_desktop_blocked:
             raise DesktopError(
                 DesktopError.SECURE_DESKTOP,

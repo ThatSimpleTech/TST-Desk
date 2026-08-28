@@ -301,6 +301,32 @@ class TestNoPathGuard:
         assert guard.seen == []
 
 
+class TestWaylandRefuse:
+    async def test_click_does_not_actuate(self, tmp_path: Path) -> None:
+        driver = MockDesktopDriver(platform="linux", session_type="wayland")
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        result = await dispatcher.dispatch("c1", "desktop_click", {"x": 1, "y": 2})
+        assert result.status == "error"
+        assert result.error_code == DesktopError.WAYLAND
+        assert driver.actuations == []
+        assert driver.calls == []
+
+    async def test_screenshot_does_not_capture(self, tmp_path: Path) -> None:
+        driver = MockDesktopDriver(platform="linux", session_type="wayland")
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        result = await dispatcher.dispatch("c1", "desktop_screenshot", {})
+        assert result.status == "error"
+        assert result.error_code == DesktopError.WAYLAND
+        assert driver.calls == []
+
+    async def test_x11_session_still_actuates(self, tmp_path: Path) -> None:
+        driver = MockDesktopDriver(platform="linux", session_type="x11")
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        result = await dispatcher.dispatch("c1", "desktop_click", {"x": 1, "y": 2})
+        assert result.status == "success"
+        assert driver.actuations == ["click"]
+
+
 class TestLinuxAndLivePath:
     def test_empty_command_is_mock(self) -> None:
         assert isinstance(driver_for_command(""), MockDesktopDriver)
