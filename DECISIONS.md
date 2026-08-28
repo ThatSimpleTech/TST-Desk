@@ -9219,6 +9219,9 @@ compositor-neutral `expect_window` that does not degrade.
 on this X11 box (cannot live-verify; new dep). Also rejected:
 capture-only `supported: true`. Also rejected: AT-SPI as
 `foreground_window` (hint, not compositor focus).
+
+---
+
 ## 2026-08-28 — TD-2001: Wayland refuses before any Xlib call (Class B)
 
 **Decision:** `LinuxBackend` methods other than `check_permissions` raise
@@ -9236,6 +9239,9 @@ the lie TD-4901 forbids as a starting point.
 **Alternative rejected:** Raising `UnsupportedPlatformError` from
 `get_backend()` on Wayland (collapses `session_type` into "no backend").
 Also rejected: capture-only Wayland via XWayland while refusing input.
+
+---
+
 ## 2026-08-28 — TD-4823: overlay ctypes follow the windows.py override (Class B)
 
 **Decision:** `overlay.win32` shares the `attr-defined` override with
@@ -9247,6 +9253,9 @@ Linux structs are ours; they do not need a Windows-host override.
 
 **Alternative rejected:** A blanket overlay.* attr-defined disable
 (hides real Linux mistakes).
+
+---
+
 ## 2026-08-28 — TD-3804: production scheduler uses notify send modules (Class B)
 
 **Decision:** When `Daemon` is constructed without an injected
@@ -9263,6 +9272,9 @@ channel" was true only in tests.
 **Alternative rejected:** Passing `schedule()` into the scheduler (event
 shaped, not a summary string). Also rejected: constructing httpx in
 the runner.
+
+---
+
 ## 2026-08-28 — TD-4301: autonomy shell execs in the container (Class B)
 
 **Decision:** Autonomous `shell` runs as `podman run … /bin/sh -c
@@ -9281,6 +9293,9 @@ cannot escape the workspace wall.
 (duplicate of PathGuard, and the daemon still has to persist events on
 the host). Also rejected: moving the SessionRunner into the container
 (new IPC, classifier would run twice).
+
+---
+
 ## 2026-08-28 — TD-3803: parse_job is deterministic, not a worker call (Class B)
 
 **Decision:** `parse_job` runs `parse_job_request` in-process and
@@ -9292,6 +9307,9 @@ user still has to edit. Save stays a second message.
 
 **Alternative rejected:** A worker-tier JSON completion (cost, mock
 surface, no extra accuracy on "every 2 hours in /ws").
+
+---
+
 ## 2026-08-28 — TD-2103: Memory pane may replace at cap (Class B)
 
 **Decision:** Tool writes still cannot replace a file at `memory.max_lines`.
@@ -9303,5 +9321,26 @@ cap.
 
 **Alternative rejected:** Refusing pane save at cap (locks the user out
 until the next distill).
+
+---
+
+## 2026-08-28 — TD-4901: Wayland click names RemoteDesktop, not "no displays" (Class B)
+
+**Decision:** `input_control.assert_on_screen` raises
+`WaylandInputError` (portal RemoteDesktop copy) when the active
+backend is Wayland and `list_displays` is empty. Headless X11 still
+raises `RuntimeError("no active displays found")`.
+
+**Rationale:** After TD-4901, `get_backend()` on Wayland is
+`WaylandBackend`. Capture without a grabber returns no displays, so
+the policy layer never reached `backend.click` and a Wayland session
+looked like a headless X box. The refuse must still happen before
+any Xlib call.
+
+**Alternative rejected:** Returning a dummy display so click can
+fail later (would lie about geometry). Also rejected: empty-list
+as success for `get_screen_info` on Wayland (that path stays empty).
+
+---
 
 
