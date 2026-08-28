@@ -9281,5 +9281,16 @@ cannot escape the workspace wall.
 (duplicate of PathGuard, and the daemon still has to persist events on
 the host). Also rejected: moving the SessionRunner into the container
 (new IPC, classifier would run twice).
+## 2026-08-28 — TD-3803: parse_job is deterministic, not a worker call (Class B)
+
+**Decision:** `parse_job` runs `parse_job_request` in-process and
+returns `job_draft` for edit. It does not call the worker tier.
+
+**Rationale:** The parse module already *is* the schema a worker would
+fill. A model call would spend tokens to produce the same draft the
+user still has to edit. Save stays a second message.
+
+**Alternative rejected:** A worker-tier JSON completion (cost, mock
+surface, no extra accuracy on "every 2 hours in /ws").
 
 

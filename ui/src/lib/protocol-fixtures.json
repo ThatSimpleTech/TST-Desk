@@ -1220,6 +1220,10 @@
     "type": "delete_job",
     "job_id": "job-1"
   },
+  "parse_job": {
+    "type": "parse_job",
+    "text": "every 2 hours in /ws/proj summarize the inbox deliver to slack"
+  },
   "transcribe": {
     "type": "transcribe",
     "audio_b64": "AAAA",
@@ -1239,6 +1243,18 @@
         "paused": false
       }
     ]
+  },
+  "job_draft": {
+    "type": "job_draft",
+    "seq": 1,
+    "ok": true,
+    "detail": "",
+    "workspace": "/ws/proj",
+    "instruction": "summarize the inbox",
+    "cadence": "every 2 hours",
+    "next_run": null,
+    "deliver_to": "slack",
+    "paused": false
   },
   "transcript": {
     "type": "transcript",

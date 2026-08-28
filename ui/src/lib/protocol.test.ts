@@ -121,7 +121,9 @@ import type {
   ListJobs,
   SaveJob,
   DeleteJob,
+  ParseJob,
   JobList,
+  JobDraftReply,
   Transcribe,
   Transcript,
   Ping,
@@ -1261,6 +1263,18 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isBoolean(m.xtest_applies)).toBe(true);
     expect(isString(m.no_display)).toBe(true);
     expect(isBoolean(m.no_display_applies)).toBe(true);
+  });
+
+  it("parse_job / job_draft (TD-3803)", () => {
+    const req = fixtures.parse_job as ParseJob;
+    expect(req.type).toBe("parse_job");
+    expect(isString(req.text)).toBe(true);
+    expect("session_id" in req).toBe(false);
+    const draft = fixtures.job_draft as JobDraftReply;
+    expect(draft.type).toBe("job_draft");
+    expect(isBoolean(draft.ok)).toBe(true);
+    expect(isNumber(draft.seq)).toBe(true);
+    expect("session_id" in draft).toBe(false);
   });
 
   it("list_jobs / save_job / delete_job / job_list (TD-3805)", () => {
