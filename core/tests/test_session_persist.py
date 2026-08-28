@@ -261,6 +261,26 @@ class TestSessionLogWindow:
         events_path = reader.dir_for("s1") / "events.jsonl"
         assert events_path.read_text(encoding="utf-8").count("\n") == 3
 
+    def test_append_rewrites_jsonl_into_seq_order(self, tmp_path: Path) -> None:
+        """Overlapping appends can land seq 2 before seq 1; the file must not."""
+        persist = _persist(tmp_path)
+        persist.prepare("s1")
+        persist.append_event(
+            "s1",
+            AssistantDelta(session_id="s1", delta="second", seq=2),
+        )
+        persist.append_event(
+            "s1",
+            AssistantDelta(session_id="s1", delta="first", seq=1),
+        )
+        events_path = persist.dir_for("s1") / "events.jsonl"
+        seqs = [
+            int(json.loads(line)["seq"])
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert seqs == [1, 2]
+
 
 class TestParseUserTurn:
     def test_user_turn_is_a_known_daemon_event(self) -> None:
