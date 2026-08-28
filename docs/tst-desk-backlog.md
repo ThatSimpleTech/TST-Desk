@@ -5455,6 +5455,9 @@ the 20-platform gateway.
 Done (2026-08-21): `send(config, message)`; URL in keychain
 `tst-slack-webhook`; host from `notify.slack.host`; off by default.
 
+**Addendum (2026-08-28):** `test_get_uses_tst_slack_webhook` asserts
+`get_slack_webhook_url` reads account `tst-slack-webhook`.
+
 ---
 
 ### TD-3802 — ntfy (optional extra)
@@ -5466,6 +5469,9 @@ Done (2026-08-21): `send(config, message)`; URL in keychain
 
 Done (2026-08-21): `send(config, message)`; topic URL in keychain
 `tst-ntfy-topic`; host from `notify.ntfy.host`; off by default.
+
+**Addendum (2026-08-28):** `test_ntfy_topic_is_tst_ntfy_topic` stores and
+reads that account.
 
 ---
 
