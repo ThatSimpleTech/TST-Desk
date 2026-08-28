@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
+from ..config import ModelConfig
 from ..logging import get_logger
 from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
@@ -44,6 +45,23 @@ class SessionHost(Protocol):
 
     @property
     def session_registry(self) -> object: ...
+
+
+async def channel_notify(config: ModelConfig, channel: DeliverTo, summary: str) -> None:
+    """Production Slack/ntfy POST. Window delivery stays on RecordingDeliver.
+
+    ``Daemon`` uses this when no test injects ``notify_send``. Operational
+    failures stay inside ``notify.*.send`` (logged, never raised, URL redacted).
+    """
+    if channel == "slack":
+        from ..notify.slack import send as slack_send
+
+        await slack_send(config, summary)
+        return
+    if channel == "ntfy":
+        from ..notify.ntfy import send as ntfy_send
+
+        await ntfy_send(config, summary)
 
 
 class RecordingDeliver:
