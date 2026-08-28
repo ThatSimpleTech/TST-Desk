@@ -387,11 +387,11 @@ describe("remote attach", () => {
 });
 
 describe("computer-use indicators", () => {
-	it("defaults glow and cursor on, real display off", () => {
+	it("defaults glow, cursor, and real display on", () => {
 		startSettings();
 		expect(settings.cuGlow).toBe(true);
 		expect(settings.cuAgentCursor).toBe(true);
-		expect(settings.cuShowOnRealDisplay).toBe(false);
+		expect(settings.cuShowOnRealDisplay).toBe(true);
 	});
 
 	it("reads the three bits from setup_state", () => {
@@ -408,13 +408,13 @@ describe("computer-use indicators", () => {
 		expect(settings.cuShowOnRealDisplay).toBe(true);
 	});
 
-	it("treats omitted glow/cursor as on and real display as off", () => {
+	it("treats omitted glow/cursor/real-display as on", () => {
 		startSettings();
 		emit(
 			setupState({
 				cu_glow: false,
 				cu_agent_cursor: false,
-				cu_show_on_real_display: true,
+				cu_show_on_real_display: false,
 			}),
 		);
 		const {
@@ -426,7 +426,7 @@ describe("computer-use indicators", () => {
 		emit(without as SetupState);
 		expect(settings.cuGlow).toBe(true);
 		expect(settings.cuAgentCursor).toBe(true);
-		expect(settings.cuShowOnRealDisplay).toBe(false);
+		expect(settings.cuShowOnRealDisplay).toBe(true);
 	});
 
 	it("sends set_cu_indicators and waits for the ack", () => {
@@ -438,7 +438,7 @@ describe("computer-use indicators", () => {
 				type: "set_cu_indicators",
 				glow: false,
 				agent_cursor: true,
-				show_on_real_display: false,
+				show_on_real_display: true,
 			},
 		]);
 		expect(settings.cuGlow).toBe(true);
