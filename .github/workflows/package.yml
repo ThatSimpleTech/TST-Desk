@@ -1,18 +1,12 @@
 name: Package
 
-# TD-1302: per-platform bundles.  Runs on main (keeps artifacts fresh) and
-# on demand.  TD-1303 builds the tagged-release publishing on top of this.
+# TD-1302: per-platform bundles. Not on push to main — two macOS legs
+# (arm64 + intel) bill at 10× and one green five-leg run is ~200
+# Linux-equivalent minutes. Rapid main merges with cancel-in-progress:
+# false queued overlapping matrices and exhausted the $20/month budget
+# (TD-4904). Build on demand, or when release.yml calls this from a
+# tstdesk-v* tag.
 on:
-  push:
-    branches: [main]
-    # TD-4904: doc-only merges must not enqueue another 30–40 minute matrix
-    # behind an already-blocked Actions queue. Release tags and manual runs
-    # still bundle via workflow_call / workflow_dispatch.
-    paths:
-      - "shell/**"
-      - "ui/**"
-      - "core/**"
-      - ".github/workflows/package.yml"
   workflow_dispatch:
   workflow_call: # TD-1303 release.yml reuses this matrix
 

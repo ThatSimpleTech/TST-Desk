@@ -204,12 +204,14 @@ model choice, the audit trail, and the code.
 
 ## Status
 
-v0.1 — **in development, not yet released.** No Desk release has been published, so there
-is nothing to download yet; packaging runs in CI but has not yet produced a green artifact
-set (`TD-1302`, `TD-1303`). GitHub Actions is currently blocked at the org level — see
-[`docs/ci-actions-blocked.md`](docs/ci-actions-blocked.md). App releases now tag as `tstdesk-v*` (`TD-4812`) so a package
-tag like `v0.2.0` (the `tst-cu-mcp` server, not the app) cannot fire the app workflow.
-Running it today means running it from source.
+v0.1.0 is tagged (`tstdesk-v0.1.0`); installers are on
+[the releases page](https://github.com/ThatSimpleTech/TST-Desk/releases/tag/tstdesk-v0.1.0).
+GitHub Actions is budget-capped at **$20/month**. Default CI is three
+Linux jobs; five-platform Package runs only on demand or on a new
+`tstdesk-v*` tag — see [`docs/ci-actions-blocked.md`](docs/ci-actions-blocked.md).
+App releases tag as `tstdesk-v*` (`TD-4812`) so a package tag like
+`v0.2.0` (the `tst-cu-mcp` server, not the app) cannot fire the app
+workflow. The app also runs from source.
 
 What works: streaming chat, the three-tier router, the steering assembler and instruction
 inspector, filesystem and shell tools behind a decision classifier and approval cards, path
