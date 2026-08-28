@@ -5471,6 +5471,11 @@ draft; save is a second call; no runner.
 Done (2026-08-21): daemon tick + in-process `_start_session` turn;
 one fire then cadence advances `next_run` (or pause if one-shot).
 
+**Addendum (2026-08-28):** `Daemon.main()` never passed `notify_send`, so
+production Slack/ntfy scheduled delivery logged "skipped (no send hook)".
+The default hook is now `channel_notify` → `notify.slack.send` /
+`notify.ntfy.send`. Tests may still inject a mock.
+
 ---
 
 ### TD-3805 — Scheduled rail is live

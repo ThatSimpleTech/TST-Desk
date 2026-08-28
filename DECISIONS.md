@@ -9247,5 +9247,21 @@ Linux structs are ours; they do not need a Windows-host override.
 
 **Alternative rejected:** A blanket overlay.* attr-defined disable
 (hides real Linux mistakes).
+## 2026-08-28 — TD-3804: production scheduler uses notify send modules (Class B)
+
+**Decision:** When `Daemon` is constructed without an injected
+`notify_send` (the `main()` path), `RecordingDeliver` gets
+`channel_notify`, which calls `tstd.notify.slack.send` /
+`tstd.notify.ntfy.send`. Tests may still inject a hook. Window
+delivery stays a log line / `on_window` callback.
+
+**Rationale:** Session approval/turn-complete already used
+`schedule_slack_notify`. Scheduled jobs went through a second pipe that
+was None in production, so "deliver a summary to the configured
+channel" was true only in tests.
+
+**Alternative rejected:** Passing `schedule()` into the scheduler (event
+shaped, not a summary string). Also rejected: constructing httpx in
+the runner.
 
 

@@ -289,8 +289,13 @@ from .remote_attach import (
     save_remote_attach,
 )
 from .router import TIER_NAMES, TierRouter
-from .scheduler.models import Job, JobDraft, JobValidationError
-from .scheduler.runner import RecordingDeliver, run_due_jobs, run_turn_on_daemon
+from .scheduler.models import DeliverTo, Job, JobDraft, JobValidationError
+from .scheduler.runner import (
+    RecordingDeliver,
+    channel_notify,
+    run_due_jobs,
+    run_turn_on_daemon,
+)
 from .scheduler.runner import SendFn as NotifySendFn
 from .scheduler.store import delete_job, get_job, list_jobs, save_job
 from .session import (
@@ -622,9 +627,9 @@ class Daemon:
         # User-listed MCP servers (TD-4401). Handshake is lazy; a dead
         # server is a doctor row, never a failed Daemon.run.
         self._mcp = McpSupervisor(self.config.mcp)
-        self._notify_send = notify_send
+        self._notify_send = notify_send if notify_send is not None else self._channel_notify
         self._scheduler_tick = scheduler_tick
-        self._scheduler_deliver = RecordingDeliver(send=notify_send)
+        self._scheduler_deliver = RecordingDeliver(send=self._notify_send)
 
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
@@ -1339,6 +1344,10 @@ class Daemon:
                 )
             except TimeoutError:
                 continue
+
+    async def _channel_notify(self, channel: DeliverTo, summary: str) -> None:
+        """Default scheduler delivery: Slack/ntfy ``send``, never a skip log."""
+        await channel_notify(self.config, channel, summary)
 
     async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
         """Wake due jobs against this daemon. Tests call this directly."""
