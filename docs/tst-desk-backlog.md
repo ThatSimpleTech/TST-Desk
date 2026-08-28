@@ -4725,6 +4725,10 @@ the pin file is a new schema.
 - [x] Over cap, pins drop last-in-first-out; the meter says so
 - [x] Worker/validator do not receive the pin block
 
+**Addendum (2026-08-28):** `test_capacity_meter_is_instructions_plus_memory_plus_pins`
+asserts `project_capacity` tokens are the same heuristic as steering
+plus listed memory plus loaded pins.
+
 ---
 
 ### TD-2806 — Pin list on the rail
