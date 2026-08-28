@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_loop import make_config
 from tstd.autonomy.sandbox import (
     INSTALL_DOWN,
     INSTALL_MISSING,
@@ -16,12 +17,15 @@ from tstd.autonomy.sandbox import (
     WORKSPACE_DEST,
     RuntimeState,
     SandboxError,
+    autonomy_shell_argv,
     container_argv,
     sandbox_exec,
     sandbox_start_error,
 )
 from tstd.config import AutonomyConfig
 from tstd.logging import user_data_dir
+from tstd.session import Session
+from tstd.tools.shell import run_shell
 
 CORE = Path(__file__).resolve().parent.parent / "tstd"
 
@@ -322,6 +326,62 @@ class TestSandboxExec:
     async def test_missing_runtime_does_not_exec(self, tmp_path: Path) -> None:
         with pytest.raises(SandboxError, match="Install Podman"):
             await sandbox_exec(tmp_path, ("true",), config=_cfg(), which=_which_none)
+
+
+# ── Autonomy shell uses the container (TD-4301 act seam) ─────────────────
+
+
+class TestAutonomyShell:
+    def test_argv_is_container_not_host_shell(self, tmp_path: Path) -> None:
+        fake = _fake_runtime(tmp_path)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        argv = autonomy_shell_argv(
+            ws,
+            "true",
+            runtime="podman",
+            image="alpine",
+            which=_which_for(fake),
+        )
+        assert argv[0] == str(fake)
+        assert argv[-3:] == ["/bin/sh", "-c", "true"]
+        _assert_no_host_creds(argv)
+        assert f"dst={WORKSPACE_DEST}" in " ".join(argv)
+
+    def test_missing_runtime_refuses_before_exec(self, tmp_path: Path) -> None:
+        with pytest.raises(SandboxError, match="Install Podman"):
+            autonomy_shell_argv(
+                tmp_path,
+                "true",
+                runtime="podman",
+                image="alpine",
+                which=_which_none,
+            )
+
+    async def test_run_shell_autonomy_does_not_see_host_creds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _fake_runtime(tmp_path)
+        monkeypatch.setattr("tstd.autonomy.sandbox.shutil.which", _which_for(fake))
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        session = Session(str(ws))
+        session.autonomy = True
+        session.config = make_config()
+        result = await run_shell(session, "true")
+        assert "cred_path_absent" in result
+        recorded = (tmp_path / "argv.log").read_text(encoding="utf-8")
+        assert "run" in recorded
+        assert "--mount" in recorded or "type=bind" in recorded
+        assert ".ssh" not in recorded
+
+    async def test_run_shell_interactive_does_not_need_podman(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("tstd.autonomy.sandbox.shutil.which", _which_none)
+        session = Session(str(tmp_path))
+        result = await run_shell(session, "echo host-ok")
+        assert "host-ok" in result
 
 
 # ── Interactive path stays clear ─────────────────────────────────────────
