@@ -71,8 +71,8 @@ export const settings = $state({
 	cuGlow: true,
 	/** Screen-pane agent cursor (TD-3402). Default on; from setup_state. */
 	cuAgentCursor: true,
-	/** Host overlay on the real display (TD-3402). Default off. */
-	cuShowOnRealDisplay: false,
+	/** Host overlay on the real display (TD-3402 addendum). Default on. */
+	cuShowOnRealDisplay: true,
 	/** Tailscale remote attach (TD-3603). Default off; from setup_state. */
 	remoteAttachEnabled: false,
 	/** Bound Tailscale address, never a token. */
@@ -121,7 +121,7 @@ export function resetSettings(): void {
 	settings.coworkerEnabled = true;
 	settings.cuGlow = true;
 	settings.cuAgentCursor = true;
-	settings.cuShowOnRealDisplay = false;
+	settings.cuShowOnRealDisplay = true;
 	settings.remoteAttachEnabled = false;
 	settings.remoteBind = null;
 	settings.mcpServers = [];
@@ -150,7 +150,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.coworkerEnabled = event.coworker_enabled ?? true;
 		settings.cuGlow = event.cu_glow ?? true;
 		settings.cuAgentCursor = event.cu_agent_cursor ?? true;
-		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? false;
+		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? true;
 		settings.remoteAttachEnabled = event.remote_attach_enabled ?? false;
 		settings.remoteBind = event.remote_bind ?? null;
 		settings.mcpServers = (event.mcp_servers ?? []).map((row) => ({
