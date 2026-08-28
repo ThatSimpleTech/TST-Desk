@@ -2486,8 +2486,8 @@ no `secret-tool`; AppImage `--appimage-extract` sidecar. Missing
 `secret-tool` used to crash `setup_state` — now a `KeychainError`.
 **CI (2026-08-28):** First green five-leg `package.yml` on `main`
 (`259cc49`, run `33134175163`). TD-4904 billing recovery plus
-`macos-15-intel` unblocked Intel `.dmg`. TD-1303 still needs a
-`tstdesk-v*` tag (not pushed from this story).
+`macos-15-intel` unblocked Intel `.dmg`. TD-1303 tagged
+`tstdesk-v0.1.0` the same day.
 
 ---
 
@@ -2495,17 +2495,28 @@ no `secret-tool`; AppImage `--appimage-extract` sidecar. Missing
 **Size:** 3 · **Depends on:** TD-1302, TD-106
 
 **Acceptance criteria:**
-- [ ] Tagged release builds all platforms and publishes artifacts
-      (release.yml fires on `tstdesk-v*` — namespaced in TD-4812 after the
-      tst-cu-mcp package's `v0.2.0` tag matched the old bare `v*` trigger and
-      fired a failed app-release run — reuses the package.yml matrix,
-      publishes via `gh release create`; still unverified end to end)
+- [x] Tagged release builds all platforms and publishes artifacts
+      (tag `tstdesk-v0.1.0` on `451ac6f`. `release.yml` rebuild was
+      blocked by the org Actions spending limit — run `33177767804`,
+      empty jobs, `runner_id: 0`. Published from last green five-leg
+      Package `33147408105` at `4330c37`: both `.dmg`s, both AppImages,
+      both `.deb`s, the `.msi`, and `SHA256SUMS.txt`. Raise the budget
+      and re-run Release to refresh installers from the tag SHA.
+      `release.yml` now flattens nested artifact dirs, rewrites spaces
+      in filenames to dots so checksums match GitHub's download names,
+      and `gh release upload --clobber`s if the release already exists.)
 - [x] Checksums published (SHA256SUMS.txt across all uploaded artifacts)
 - [x] Changelog generated from commits (`core/scripts/changelog.py`, grouped
       by TD-### convention, merges excluded)
 - [x] Version consistent across host, daemon, and UI, asserted by test
       (`core/tests/test_version_consistency.py`; release job re-asserts the
       tag equals all four. Caught ui/package.json at 0.0.1 → 0.1.0.)
+
+**Done (2026-08-28):** Tag `tstdesk-v0.1.0` pushed. GitHub Release
+https://github.com/ThatSimpleTech/TST-Desk/releases/tag/tstdesk-v0.1.0
+with five-platform installers, `SHA256SUMS.txt`, and the story changelog.
+`release.yml` flatten / space-to-dot / idempotent upload landed so a
+budget-unblocked re-run can refresh the same tag.
 
 ---
 
@@ -2903,9 +2914,8 @@ not reach any database already stamped version 1.
       empty state, rail and activity pane live against the bundled sidecar.
       Not a browser capture.)
 - [x] A five-minute quickstart from download to first result
-      (**caveat: the download step is written ahead of the first release.**  No
-      `v*` tag has been pushed, so the linked releases page is empty until one
-      is.  Steps 2–5 are the real first-run wizard, whose launch-to-first-message
+      (`tstdesk-v0.1.0` is on the releases page as of 2026-08-28.  Steps 2–5
+      are the real first-run wizard, whose launch-to-first-message
       time TD-1101 already measured under two minutes.  Install detail is not
       duplicated — the quickstart points at TD-1302's unsigned-build section.)
 - [x] The cost story stated plainly with the default stack and real numbers
@@ -6226,8 +6236,9 @@ section unchanged; points at the doc. TD-4704 stays off until certs land.
 **Size:** 2 · **Depends on:** TD-106
 
 `package.yml` dies in ~4–5s with empty job steps (org / billing /
-permissions). That is why TD-1302 / TD-1303 stay open after a green
-Linux guest.
+permissions). That is why TD-1302 stayed open after a green Linux guest.
+The same symptom blocked the `tstdesk-v0.1.0` rebuild; TD-1303 published
+from the last green Package instead.
 
 **Acceptance criteria:**
 - [x] The first `package.yml` run on `main` has real job steps and

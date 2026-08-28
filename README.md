@@ -16,17 +16,20 @@ network at all.
 
 ## Install
 
-v0.1 has not been tagged yet, so the release page below is empty until the first
-`tstdesk-v*` tag is pushed. When it lands, each platform gets these artifacts, built by
+[v0.1.0](https://github.com/ThatSimpleTech/TST-Desk/releases/tag/tstdesk-v0.1.0)
+is on the releases page. Each platform gets these artifacts, built by
 [`.github/workflows/package.yml`](.github/workflows/package.yml):
 
 | Platform | Artifact |
 |---|---|
-| macOS (Apple silicon) | `.dmg`, `aarch64-apple-darwin` |
-| macOS (Intel) | `.dmg`, `x86_64-apple-darwin` |
-| Linux (x86_64) | `.AppImage` and `.deb`, `x86_64-unknown-linux-gnu` |
-| Linux (ARM64) | `.AppImage` and `.deb`, `aarch64-unknown-linux-gnu` (TD-4902) |
-| Windows | `.msi`, `x86_64` |
+| macOS (Apple silicon) | `TST.Desk_0.1.0_aarch64.dmg` |
+| macOS (Intel) | `TST.Desk_0.1.0_x64.dmg` |
+| Linux (x86_64) | `TST.Desk_0.1.0_amd64.AppImage` and `TST.Desk_0.1.0_amd64.deb` |
+| Linux (ARM64) | `TST.Desk_0.1.0_aarch64.AppImage` and `TST.Desk_0.1.0_arm64.deb` |
+| Windows | `TST.Desk_0.1.0_x64_en-US.msi` |
+
+GitHub Releases rewrites spaces in Tauri's `TST Desk_…` names to dots;
+`SHA256SUMS.txt` uses the download names.
 
 1. Download the artifact for your platform from
    [the releases page](https://github.com/ThatSimpleTech/TST-Desk/releases).
@@ -39,7 +42,7 @@ v0.1 has not been tagged yet, so the release page below is empty until the first
    [Installing an unsigned build](#installing-an-unsigned-build) below for the per-platform
    click-through.
 
-Until there is a release, the app runs from source — see [Development](#development).
+The app also runs from source — see [Development](#development).
 
 ## Quickstart
 
@@ -47,8 +50,7 @@ Five minutes, launch to first result. The first-run wizard is: welcome → API k
 workspace → done.
 
 1. **Download it, install it, open it.** [Install](#install) above has the per-platform steps;
-   clearing the unsigned-build warning on first launch is a one-time click. (Until the first
-   release is tagged there is nothing to download — run it from source instead.)
+   clearing the unsigned-build warning on first launch is a one-time click.
 2. **Paste an API key.** The wizard links to where to get one and validates it with a single
    cheap live call. The key goes into your OS keychain, not a file.
    *Or skip this entirely:* pick the `local` preset instead. It ships pointed at Ollama's
