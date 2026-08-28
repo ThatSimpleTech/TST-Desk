@@ -116,8 +116,11 @@ async def _run_one(
             extra={"extra_fields": {"job_id": job.id, "error": str(exc)}},
         )
         summary = f"scheduled run failed: {exc}"
-    await deliver(job.deliver_to, summary)
+    # Stamp the next slot before notify. Deliver-first left an overdue
+    # ``next_run`` on disk if the test (or a crash) observed the record
+    # before ``save_job`` finished — a second tick would fire again.
     await asyncio.to_thread(save_job, data_dir, advance_job(job, now))
+    await deliver(job.deliver_to, summary)
 
 
 async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -> str:
