@@ -4,18 +4,18 @@
 	// this component's concern; the math lives in ../splitpane for testability.
 	//
 	// Uses design tokens (--space-1) exclusively — no hardcoded spacing.
-	// The left pane width is a percentage of the container.
+	// The right pane is a pixel width; the left pane takes the leftover.
 	import {
-		DEFAULT_LEFT_PCT,
+		DEFAULT_RIGHT_PX,
 		DIVIDER_HIT_MIN_PX,
-		KEYBOARD_STEP_PCT,
-		MAX_LEFT_PCT,
-		MIN_LEFT_PCT,
+		KEYBOARD_STEP_PX,
+		MIN_RIGHT_PX,
 		attachDragListeners,
-		clampLeftPct,
-		pxToLeftPct,
-		readPersistedLeftPct,
-		writePersistedLeftPct
+		clampRightPx,
+		maxRightPx,
+		pointerToRightPx,
+		readPersistedRightPx,
+		writePersistedRightPx
 	} from '../splitpane';
 
 	interface Props {
@@ -25,8 +25,11 @@
 
 	let { left, right }: Props = $props();
 
-	// Percentage of the container width occupied by the left pane.
-	let leftPct = $state(DEFAULT_LEFT_PCT);
+	// Desired inspector width. Display is clamped to the live container so a
+	// wide preference survives a shrink and comes back when the window grows.
+	let desiredPx = $state(DEFAULT_RIGHT_PX);
+	let containerWidth = $state(0);
+	let rightPx = $derived(clampRightPx(desiredPx, containerWidth));
 	// true while the user is actively dragging.
 	let dragging = $state(false);
 
@@ -37,7 +40,7 @@
 	let detachDrag: (() => void) | null = null;
 
 	function persist() {
-		writePersistedLeftPct(window.localStorage, leftPct);
+		writePersistedRightPx(window.localStorage, desiredPx);
 	}
 
 	function onDividerDown(e: PointerEvent) {
@@ -50,8 +53,8 @@
 	function onDividerMove(e: PointerEvent) {
 		if (!dragging) return;
 		const rect = container?.getBoundingClientRect();
-		const next = pxToLeftPct(e.clientX - (rect?.left ?? 0), rect?.width ?? 0);
-		if (next !== null) leftPct = next;
+		const next = pointerToRightPx(e.clientX, rect?.left ?? 0, rect?.width ?? 0);
+		if (next !== null) desiredPx = next;
 	}
 
 	function onDividerUp() {
@@ -65,9 +68,9 @@
 
 	function onDividerKeydown(e: KeyboardEvent) {
 		if (e.key === 'ArrowLeft') {
-			leftPct = clampLeftPct(leftPct - KEYBOARD_STEP_PCT);
+			desiredPx = clampRightPx(desiredPx + KEYBOARD_STEP_PX, containerWidth);
 		} else if (e.key === 'ArrowRight') {
-			leftPct = clampLeftPct(leftPct + KEYBOARD_STEP_PCT);
+			desiredPx = clampRightPx(desiredPx - KEYBOARD_STEP_PX, containerWidth);
 		} else {
 			return;
 		}
@@ -78,7 +81,7 @@
 	// Restore the persisted divider position on mount. $effect runs
 	// client-side only, so localStorage is safe to touch here.
 	$effect(() => {
-		leftPct = readPersistedLeftPct(window.localStorage);
+		desiredPx = readPersistedRightPx(window.localStorage);
 	});
 
 	// A drag in flight when the pane unmounts must not leave window
@@ -93,11 +96,12 @@
 
 <div
 	bind:this={container}
+	bind:clientWidth={containerWidth}
 	class="splitpane"
 	class:dragging
 	data-dragging={dragging ? "true" : "false"}
-	data-left-pct={leftPct}
-	style={`grid-template-columns: ${leftPct}% var(--space-1) 1fr; --divider-hit: ${DIVIDER_HIT_MIN_PX}px;`}
+	data-right-px={rightPx}
+	style={`grid-template-columns: minmax(0, 1fr) var(--space-1) ${rightPx}px; --divider-hit: ${DIVIDER_HIT_MIN_PX}px;`}
 >
 	<div class="pane left">{@render left()}</div>
 	<!-- ARIA window-splitter pattern: a focusable, keyboard-operable
@@ -109,9 +113,10 @@
 		role="separator"
 		tabindex="0"
 		aria-orientation="vertical"
-		aria-valuenow={Math.round(leftPct)}
-		aria-valuemin={MIN_LEFT_PCT}
-		aria-valuemax={MAX_LEFT_PCT}
+		aria-label="Activity pane width"
+		aria-valuenow={Math.round(rightPx)}
+		aria-valuemin={MIN_RIGHT_PX}
+		aria-valuemax={maxRightPx(containerWidth)}
 		onpointerdown={onDividerDown}
 		onkeydown={onDividerKeydown}
 	></div>
@@ -122,7 +127,7 @@
 	.splitpane {
 		display: grid;
 		/* Fill the parent flex line; otherwise the grid shrink-wraps and
-		   percentage columns resolve against an indefinite width. */
+		   pixel columns resolve against an indefinite width. */
 		width: 100%;
 		height: 100%;
 		overflow: hidden;
@@ -139,7 +144,7 @@
 		width: 100%;
 		height: 100%;
 		cursor: col-resize;
-		background: var(--color-border);
+		background: var(--color-hairline);
 		transition: background var(--transition-fast);
 		touch-action: none;
 	}
