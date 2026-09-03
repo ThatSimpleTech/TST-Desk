@@ -55,6 +55,7 @@ from tstd.config import (
     ConfigError,
     CredentialConfig,
     EmbeddingsConfig,
+    EngineConfig,
     GroundingConfig,
     ModelConfig,
     NotifyConfig,
@@ -66,6 +67,7 @@ from tstd.config import (
     SessionConfig,
     SlackNotifyConfig,
     TierConfig,
+    VoiceConfig,
     default_config_yaml,
     load_config,
 )
@@ -212,6 +214,8 @@ _GROUNDING_FIELDS = frozenset(GroundingConfig.model_fields)
 _REMOTE_FIELDS = frozenset(RemoteConfig.model_fields)
 _NOTIFY_FIELDS = frozenset(NotifyConfig.model_fields)
 _AUTONOMY_FIELDS = frozenset(AutonomyConfig.model_fields)
+_ENGINE_FIELDS = frozenset(EngineConfig.model_fields)
+_VOICE_FIELDS = frozenset(VoiceConfig.model_fields)
 _SLACK_NOTIFY_FIELDS = frozenset(SlackNotifyConfig.model_fields)
 _NTFY_NOTIFY_FIELDS = frozenset(NtfyNotifyConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
@@ -272,6 +276,10 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             )
         if "session" in data:
             _check_keys(data["session"], _SESSION_FIELDS, f"{where} session")
+        if "engine" in data:
+            _check_keys(data["engine"], _ENGINE_FIELDS, f"{where} engine")
+        if "voice" in data:
+            _check_keys(data["voice"], _VOICE_FIELDS, f"{where} voice")
         if "computer_use" in data:
             _check_keys(data["computer_use"], _COMPUTER_USE_FIELDS, f"{where} computer_use")
             if "grounding" in data["computer_use"]:
@@ -319,6 +327,8 @@ def test_every_config_key_is_documented() -> None:
         | _REMOTE_FIELDS
         | _NOTIFY_FIELDS
         | _AUTONOMY_FIELDS
+        | _ENGINE_FIELDS
+        | _VOICE_FIELDS
         | _SLACK_NOTIFY_FIELDS
         | _NTFY_NOTIFY_FIELDS
         | _PRESET_FIELDS

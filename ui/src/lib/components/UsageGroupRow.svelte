@@ -57,7 +57,7 @@
 	.group-key {
 		font-size: var(--text-xs);
 		font-weight: var(--weight-semibold);
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.group-figures {
@@ -81,7 +81,7 @@
 		align-items: baseline;
 		gap: var(--space-2);
 		font-size: var(--text-xs);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.tier-name {
@@ -93,13 +93,13 @@
 	}
 
 	.cost {
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.classifier {
 		margin: var(--space-1) 0 0;
 		font-size: var(--text-xs);
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 		display: flex;
 		justify-content: space-between;
 	}

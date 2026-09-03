@@ -25,6 +25,11 @@ from pydantic import (
 from ..logging import redact_secrets
 
 DeliverTo = Literal["window", "slack", "ntfy"]
+RunStatus = Literal["ok", "failed"]
+
+#: A run summary is a receipt, not a transcript. Anything longer is cut so
+#: jobs.json cannot grow without bound on a job that fires every minute.
+MAX_SUMMARY_CHARS = 2000
 
 _CRON_FIELD = re.compile(
     r"^(?:\*(?:/\d+)?|[0-9]+(?:-[0-9]+)?(?:/\d+)?(?:,[0-9]+(?:-[0-9]+)?(?:/\d+)?)*)$"
@@ -83,6 +88,15 @@ class Job(BaseModel):
     deliver_to: DeliverTo
     paused: bool = False
 
+    # ── Last run (TD-3807) ────────────────────────────────────────────
+    # Optional so a jobs.json written before this landed still loads.
+    # Without them a job is a black box: it fires, and nothing on disk or
+    # on screen says whether it ever worked.
+    last_run: str | None = None
+    last_status: RunStatus | None = None
+    last_summary: str | None = None
+    last_session_id: str | None = None
+
     @field_validator("id")
     @classmethod
     def _id_is_a_name(cls, value: str) -> str:
@@ -118,9 +132,30 @@ class Job(BaseModel):
             return None
         return normalize_next_run(value)
 
+    @field_validator("last_run")
+    @classmethod
+    def _last_run_iso(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_next_run(value)
+
+    @field_validator("last_summary")
+    @classmethod
+    def _last_summary_is_safe(cls, value: str | None) -> str | None:
+        return normalize_summary(value)
+
     @model_validator(mode="after")
     def _one_schedule(self) -> Job:
-        if self.cadence is None and self.next_run is None:
+        """A job needs a schedule, unless it has already spent the one it had.
+
+        ``advance_job`` clears a one-shot's ``next_run`` once it fires, so
+        that Resume cannot re-run last week's instruction on the next tick.
+        That leaves a row with neither field, which is the honest shape for
+        a job with nothing left to do. Create is guarded separately by
+        ``validate_draft``, which still demands exactly one of the two — so
+        this only widens what may be *loaded*, never what may be made.
+        """
+        if self.cadence is None and self.next_run is None and self.last_run is None:
             raise ValueError("cadence or next_run is required")
         return self
 
@@ -162,6 +197,24 @@ def normalize_cadence(raw: str) -> str:
     raise JobValidationError(
         "cadence must be a 5-field cron expression or 'every N minutes|hours|days'"
     )
+
+
+def normalize_summary(raw: str | None) -> str | None:
+    """Redact and cap a run summary. The turn's own text, so not trusted.
+
+    ``instruction`` *rejects* secret-shaped text because the user typed it
+    and can retype it. A summary is model output arriving after the fact —
+    refusing it would throw away the run record, so redact instead.
+
+    Module level, not just a validator: ``model_copy`` does not re-validate,
+    and the runner stamps the summary that way.
+    """
+    if raw is None:
+        return None
+    text = redact_secrets(raw).strip()
+    if len(text) > MAX_SUMMARY_CHARS:
+        text = text[:MAX_SUMMARY_CHARS] + "…"
+    return text or None
 
 
 def normalize_next_run(raw: str) -> str:

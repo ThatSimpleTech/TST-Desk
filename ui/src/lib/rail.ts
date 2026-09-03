@@ -133,6 +133,76 @@ export function railSections(
 	];
 }
 
+// ── Recency groups ────────────────────────────────────────────────────
+//
+// The history list reads by when, not by what: rows fall under Today,
+// Yesterday, This week and Earlier, with starred rows held in their own
+// group at the top (they are already sorted first). Pure so the day
+// boundaries — the part that is easy to get wrong across midnight — are
+// asserted without rendering the rail.
+
+export type RailGroupId = "starred" | "today" | "yesterday" | "week" | "earlier";
+
+export interface RailRowGroup<T> {
+	id: RailGroupId;
+	label: string;
+	rows: T[];
+}
+
+const GROUP_LABELS: Record<RailGroupId, string> = {
+	starred: "Starred",
+	today: "Today",
+	yesterday: "Yesterday",
+	week: "This week",
+	earlier: "Earlier",
+};
+
+const GROUP_ORDER: readonly RailGroupId[] = ["starred", "today", "yesterday", "week", "earlier"];
+
+/** Bucket rows by the local calendar day of their `updatedAt`, keeping the
+ *  incoming order inside each bucket. Empty buckets are omitted, so a list
+ *  of only today's sessions renders one heading, not five. */
+export function groupRowsByRecency<T extends { updatedAt: string; starred: boolean }>(
+	rows: readonly T[],
+	nowMs: number = Date.now(),
+): RailRowGroup<T>[] {
+	const startOfToday = new Date(nowMs);
+	startOfToday.setHours(0, 0, 0, 0);
+	// Walk back by calendar days, not by 24h multiples: across a DST change
+	// a day is 23 or 25 hours long, and "yesterday" must still start at
+	// midnight.
+	const dayStart = (daysAgo: number): number => {
+		const d = new Date(startOfToday);
+		d.setDate(d.getDate() - daysAgo);
+		return d.getTime();
+	};
+	const today = startOfToday.getTime();
+	const yesterday = dayStart(1);
+	const weekStart = dayStart(6);
+	const buckets = new Map<RailGroupId, T[]>();
+	for (const row of rows) {
+		let id: RailGroupId;
+		if (row.starred) {
+			id = "starred";
+		} else {
+			const then = Date.parse(row.updatedAt);
+			if (Number.isNaN(then)) id = "earlier";
+			else if (then >= today) id = "today";
+			else if (then >= yesterday) id = "yesterday";
+			else if (then >= weekStart) id = "week";
+			else id = "earlier";
+		}
+		const bucket = buckets.get(id);
+		if (bucket === undefined) buckets.set(id, [row]);
+		else bucket.push(row);
+	}
+	return GROUP_ORDER.filter((id) => buckets.has(id)).map((id) => ({
+		id,
+		label: GROUP_LABELS[id],
+		rows: buckets.get(id) ?? [],
+	}));
+}
+
 // ── Row lifecycle actions (TD-1715) ────────────────────────────────────
 
 export type RailRowActionId =
@@ -286,4 +356,69 @@ export function accountRow(activePreset: string | null, hasApiKey: boolean): Acc
 		label,
 		note: hasApiKey ? "Key stored" : "No key",
 	};
+}
+
+// ── Attention (navigation round, 2026-09) ─────────────────────────────────
+//
+// One session state needs the user rather than the daemon: parked on an
+// approval. The rail counts those across the workspace so a wait in a
+// session you are not looking at is visible from any other, and from the
+// collapsed strip. Archived rows are left out — a filed session's wait is
+// not on the shelf you are working from.
+
+export const ATTENTION_STATE = "awaiting_approval";
+
+export function needsAttention(state: string): boolean {
+	return state === ATTENTION_STATE;
+}
+
+export function attentionCount(rows: readonly { state: string; archived?: boolean }[]): number {
+	let n = 0;
+	for (const row of rows) {
+		if (row.archived !== true && needsAttention(row.state)) n += 1;
+	}
+	return n;
+}
+
+/** Hover copy for the count: how many, and what they wait on. */
+export function attentionHint(count: number): string {
+	return count === 1
+		? "1 session is waiting for your approval"
+		: `${count} sessions are waiting for your approval`;
+}
+
+// ── Keyboard order (navigation round, 2026-09) ────────────────────────────
+//
+// ⌘⌥↑ / ⌘⌥↓ and ⌘1…⌘9 walk the rail in the order it is drawn: starred
+// first, then newest to oldest (groupRowsByRecency), on whatever shelf and
+// filter the rail is showing. Pure over the grouped rows so the shell owns
+// no rail geometry.
+
+/** The rail's rows flattened into the order the eye reads them. */
+export function railOrder<T extends { sessionId: string }>(
+	groups: readonly { rows: readonly T[] }[],
+): string[] {
+	return groups.flatMap((g) => g.rows.map((r) => r.sessionId));
+}
+
+/** The id one step from `currentId`, stopping at the ends. From nowhere —
+ *  no attached session, or one the rail is not showing — the first row
+ *  going down and the last going up. Null when there is nowhere to go. */
+export function stepSessionId(
+	order: readonly string[],
+	currentId: string | null,
+	delta: -1 | 1,
+): string | null {
+	if (order.length === 0) return null;
+	const at = currentId === null ? -1 : order.indexOf(currentId);
+	if (at < 0) return delta > 0 ? order[0] : order[order.length - 1];
+	const next = at + delta;
+	if (next < 0 || next >= order.length) return null;
+	return order[next];
+}
+
+/** The id in 1-based `slot`, or null past the end of the list. */
+export function sessionIdAtSlot(order: readonly string[], slot: number): string | null {
+	if (!Number.isInteger(slot) || slot < 1 || slot > order.length) return null;
+	return order[slot - 1];
 }

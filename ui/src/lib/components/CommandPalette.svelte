@@ -6,6 +6,7 @@
 	// mounting anything. Escape is deliberately *not* handled here: the shell's
 	// one keydown handler owns the layer order (shortcuts.ts), and a second
 	// listener would be a second opinion about what Escape means.
+	import EmptyState from './EmptyState.svelte';
 	import Icon from './Icon.svelte';
 	import {
 		palette,
@@ -94,7 +95,7 @@
 						</span>
 					</button>
 				{:else}
-					<p class="empty">No matches</p>
+					<EmptyState compact body="No matches" />
 				{/each}
 			</div>
 		</div>
@@ -223,12 +224,5 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-
-	.empty {
-		margin: var(--space-4) var(--space-2);
-		font-size: var(--text-xs);
-		color: var(--color-ink-muted);
-		text-align: center;
 	}
 </style>

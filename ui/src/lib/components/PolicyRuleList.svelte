@@ -7,6 +7,7 @@
 	//
 	// Three states, not two: rules live in a workspace, so "no session yet" is
 	// a different claim from "no rules saved" and reads differently.
+	import EmptyState from './EmptyState.svelte';
 	import { settings, revokeRule, setLoadGlobalMemory, setSkipAllApprovals } from '../settings.svelte.js';
 
 	interface Props {
@@ -58,9 +59,9 @@
 </div>
 
 {#if sessionId === null}
-	<p class="empty">Open a workspace to see the rules saved for it.</p>
+	<EmptyState align="start" body="Open a workspace to see the rules saved for it." />
 {:else if settings.rules.length === 0}
-	<p class="empty">No always-allow rules saved for this workspace.</p>
+	<EmptyState align="start" body="No always-allow rules saved for this workspace." />
 {:else}
 	<ul class="rules">
 		{#each settings.rules as rule (rule.tool + rule.args)}
@@ -120,12 +121,6 @@
 		color: var(--color-on-accent);
 		background: var(--color-accent);
 		border-color: var(--color-accent);
-	}
-
-	.empty {
-		font-size: var(--text-sm);
-		color: var(--color-ink-secondary);
-		margin: var(--space-3) 0 0;
 	}
 
 	.rules {

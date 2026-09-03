@@ -11,6 +11,7 @@
 	import type { ChatMessage } from "../../chat-store";
 	import MessageBubble from "./MessageBubble.svelte";
 	import Icon from "../Icon.svelte";
+	import { chatJump } from "../../chat-jump.svelte.js";
 
 	let {
 		messages,
@@ -25,6 +26,10 @@
 
 	let scrollEl: HTMLDivElement | null = $state(null);
 	let auto: AutoScroll | null = $state(null);
+	// The row a jump landed on, ringed for a moment so the eye finds it.
+	let targetId: string | null = $state(null);
+	// The last jump this list answered — a fresh mount must not replay one.
+	let answeredJump = 0;
 
 	// Initial count is 0 on purpose — the $effect below is the source of
 	// truth and re-sets options reactively whenever the conversation grows.
@@ -88,13 +93,43 @@
 			},
 		};
 	}
+
+	// Jump-to-turn from the Activity pane (navigation round, 2026-09). The
+	// nonce is the trigger; the list finds the user message that opened the
+	// turn and scrolls it to the top. Scrolling up unpins auto-scroll the way
+	// any scroll up does, so the jump button appears and the stream does not
+	// drag the reader back down. Messages and the virtualizer are read
+	// untracked so growth mid-stream cannot replay the jump.
+	$effect(() => {
+		const nonce = chatJump.nonce;
+		const turnId = chatJump.turnId;
+		if (nonce === 0 || nonce === answeredJump || turnId === null) return;
+		answeredJump = nonce;
+		const index = untrack(() =>
+			messages.findIndex((m) => m.role === "user" && m.turnId === turnId),
+		);
+		if (index < 0) return;
+		const id = untrack(() => messages[index]?.id ?? null);
+		untrack(() => $virtualizer.scrollToIndex(index, { align: "start" }));
+		targetId = id;
+		const timer = setTimeout(() => {
+			targetId = null;
+		}, 1800);
+		return () => clearTimeout(timer);
+	});
 </script>
 
 <div class="list-wrap">
 	<div class="scroll" bind:this={scrollEl}>
 		<div class="sizer" style="height: {$virtualizer.getTotalSize()}px;">
 			{#each $virtualizer.getVirtualItems() as row (row.key)}
-				<div class="row" data-index={row.index} use:measure style="transform: translateY({row.start}px);">
+				<div
+					class="row"
+					class:row--target={row.key === targetId}
+					data-index={row.index}
+					use:measure
+					style="transform: translateY({row.start}px);"
+				>
 					<MessageBubble message={messages[row.index]} first={row.index === 0} {turnLive} {onretry} />
 				</div>
 			{/each}
@@ -136,6 +171,30 @@
 		padding-bottom: var(--space-3);
 	}
 
+	/* A jump's landing row: ringed in accent for a moment. Drawn as an
+	   overlay inside the row's own box (minus the gap below it), so the
+	   list's edges never clip it. */
+	.row--target::before {
+		content: "";
+		position: absolute;
+		inset: 0 0 var(--space-3) 0;
+		border: 2px solid var(--color-accent);
+		border-radius: var(--radius-lg);
+		pointer-events: none;
+		animation: settle var(--dur-enter) var(--ease-out);
+	}
+
+	@keyframes settle {
+		from {
+			opacity: 0;
+			transform: scale(1.02);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+
 	.jump {
 		display: inline-flex;
 		align-items: center;
@@ -147,7 +206,7 @@
 		padding: var(--space-2) var(--space-4);
 		font-size: var(--text-sm);
 		font-weight: var(--weight-medium);
-		color: var(--color-accent-text);
+		color: var(--color-on-accent);
 		background: var(--color-accent);
 		border: none;
 		border-radius: var(--radius-full);

@@ -77,6 +77,12 @@ export function renameSession(sessionId: string, title: string): boolean {
 	return sent;
 }
 
+export function openInTerminal(sessionId: string): boolean {
+	const sent = sendToDaemon({ type: "open_in_terminal", session_id: sessionId });
+	if (sent) closeRowMenus();
+	return sent;
+}
+
 export function cancelRename(): void {
 	sessions.renameFor = null;
 }

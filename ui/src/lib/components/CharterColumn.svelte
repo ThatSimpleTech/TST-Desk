@@ -11,6 +11,7 @@
 		previewCharterYaml,
 		startConfirmCopy,
 	} from '../charter';
+	import EmptyState from './EmptyState.svelte';
 	import {
 		addBoundaryListItem,
 		addHostItem,
@@ -53,7 +54,7 @@
 	<h2 class="section">Charter</h2>
 	<p class="lede">{charterLedeCopy()}</p>
 	{#if !charter.present}
-		<p class="empty">{charterEmptyCopy()}</p>
+		<EmptyState align="start" body={charterEmptyCopy()} />
 	{/if}
 	<form
 		class="form"
@@ -319,17 +320,6 @@
 	}
 
 	.lede,
-	.empty {
-		margin: var(--space-2) 0 0;
-		font-size: var(--text-xs);
-		color: var(--color-ink-muted);
-	}
-
-	.empty {
-		font-size: var(--text-sm);
-		margin-top: var(--space-3);
-	}
-
 	.form {
 		margin-top: var(--space-3);
 		display: flex;

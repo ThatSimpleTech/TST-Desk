@@ -13,6 +13,7 @@
 		type DecisionRow,
 	} from '../decisions.svelte.js';
 	import Icon from './Icon.svelte';
+	import EmptyState from './EmptyState.svelte';
 
 	let expandedId = $state<string | null>(null);
 	let copiedId = $state<string | null>(null);
@@ -90,7 +91,7 @@
 			</div>
 
 			{#if rows.length === 0}
-				<p class="empty">No decisions logged for this session yet.</p>
+				<EmptyState align="start" body="No decisions logged for this session yet." />
 			{:else}
 				<ul class="rows" role="list">
 					{#each rows as row (row.id)}
@@ -140,7 +141,7 @@
 	.decisions-overlay {
 		position: fixed;
 		inset: 0;
-		background: color-mix(in srgb, var(--color-bg) 78%, transparent);
+		background: color-mix(in srgb, var(--color-ground) 78%, transparent);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -150,8 +151,8 @@
 	.decisions {
 		width: min(40rem, calc(100vw - var(--space-8)));
 		max-height: 80vh;
-		background: var(--color-bg-raised);
-		border: var(--border-width) solid var(--color-border);
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-xl);
 		box-shadow: var(--shadow-lg);
 		padding: var(--space-6);
@@ -172,7 +173,7 @@
 		font-size: var(--text-xl);
 		font-weight: var(--weight-medium);
 		letter-spacing: var(--tracking-display);
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.filters {
@@ -182,10 +183,10 @@
 	}
 
 	.chip {
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-full);
 		background: transparent;
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		font-size: var(--text-xs);
 		padding: var(--space-1) var(--space-2);
 		cursor: pointer;
@@ -194,7 +195,7 @@
 	.chip--on {
 		background: var(--color-accent);
 		border-color: var(--color-accent);
-		color: var(--color-bg);
+		color: var(--color-on-accent);
 	}
 
 	.close {
@@ -205,16 +206,10 @@
 		min-height: 24px;
 		border: none;
 		background: none;
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		cursor: pointer;
 		font-size: var(--text-sm);
 		padding: var(--space-2);
-	}
-
-	.empty {
-		margin: 0;
-		font-size: var(--text-sm);
-		color: var(--color-text-muted);
 	}
 
 	.rows {
@@ -241,7 +236,7 @@
 	}
 
 	.row-line:hover {
-		background: var(--color-bg-subtle);
+		background: var(--color-sunken);
 	}
 
 	.class-chip {
@@ -253,20 +248,20 @@
 	}
 
 	.class-a {
-		color: var(--color-danger);
+		color: var(--color-err);
 	}
 
 	.class-b {
-		color: var(--color-warning);
+		color: var(--color-warn);
 	}
 
 	.class-c {
-		color: var(--color-success);
+		color: var(--color-ok);
 	}
 
 	.what {
 		font-size: var(--text-sm);
-		color: var(--color-text);
+		color: var(--color-ink);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -276,7 +271,7 @@
 	.sha {
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		flex-shrink: 0;
 	}
 
@@ -290,16 +285,16 @@
 	.why {
 		margin: 0;
 		font-size: var(--text-sm);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		line-height: 1.5;
 	}
 
 	.btn--ghost {
 		align-self: flex-start;
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-md);
 		background: transparent;
-		color: var(--color-text);
+		color: var(--color-ink);
 		font-size: var(--text-xs);
 		font-family: var(--font-mono);
 		padding: var(--space-1) var(--space-2);
@@ -308,14 +303,14 @@
 
 	.no-undo {
 		font-size: var(--text-xs);
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	.foot {
 		display: flex;
 		align-items: baseline;
 		gap: var(--space-2);
-		border-top: var(--border-width) solid var(--color-border);
+		border-top: var(--border-width) solid var(--color-hairline);
 		padding-top: var(--space-3);
 	}
 
@@ -332,7 +327,7 @@
 	.path {
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;

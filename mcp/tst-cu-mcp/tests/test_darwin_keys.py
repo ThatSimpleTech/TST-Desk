@@ -15,6 +15,7 @@ from typing import Any, cast
 
 import pytest
 
+from tst_cu_mcp.backends import darwin
 from tst_cu_mcp.backends.darwin import DarwinBackend
 from tst_cu_mcp.input_control import utf16_length
 
@@ -40,7 +41,24 @@ class FakeQuartz:
 def quartz(monkeypatch: pytest.MonkeyPatch) -> FakeQuartz:
     fake = FakeQuartz()
     monkeypatch.setitem(sys.modules, "Quartz", cast(ModuleType, fake))
+    # Only the host identity posts to CoreGraphics itself; a checkout helper
+    # forwards to the host socket, which is not what these tests measure.
+    monkeypatch.setattr(darwin, "_is_host_identity", lambda: True)
+    # The wire format is measured with the grant in place; refusal is its own test.
+    monkeypatch.setattr(darwin, "_accessibility_granted", lambda: True)
     return fake
+
+
+def test_untrusted_process_refuses_instead_of_posting(
+    quartz: FakeQuartz, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """macOS drops CGEventPost from a process without Accessibility and says
+    nothing; the backend must say it, or the model hears "ok" for a click
+    that never landed."""
+    monkeypatch.setattr(darwin, "_accessibility_granted", lambda: False)
+    with pytest.raises(RuntimeError, match="Accessibility"):
+        DarwinBackend().type_text("a")
+    assert quartz.declared == []
 
 
 def test_utf16_length_counts_wire_units_not_characters() -> None:

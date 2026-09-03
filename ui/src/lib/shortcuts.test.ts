@@ -3,7 +3,7 @@
 // stay inert.
 
 import { describe, expect, it } from "vitest";
-import { resolveShortcut, type ShortcutContext } from "./shortcuts";
+import { resolveShortcut, sessionSlot, type ShortcutContext } from "./shortcuts";
 
 const IDLE: ShortcutContext = {
 	workspaceMenuOpen: false,
@@ -154,6 +154,51 @@ describe("resolveShortcut — computer-use kill-switch (TD-3404)", () => {
 
 	it("leaves a bare period alone so typing works", () => {
 		expect(resolveShortcut({ key: ".", metaKey: false, ctrlKey: false }, IDLE)).toBeNull();
+	});
+});
+
+describe("resolveShortcut — stepping between sessions (2026-09)", () => {
+	it("steps down on ⌘⌥↓ and up on ⌘⌥↑, on either modifier", () => {
+		expect(
+			resolveShortcut({ key: "ArrowDown", metaKey: true, ctrlKey: false, altKey: true }, IDLE),
+		).toBe("next-session");
+		expect(
+			resolveShortcut({ key: "ArrowUp", metaKey: false, ctrlKey: true, altKey: true }, IDLE),
+		).toBe("prev-session");
+	});
+
+	it("leaves the arrows alone without Option, so the composer keeps ⌘↑ and ⌘↓", () => {
+		expect(resolveShortcut({ key: "ArrowDown", metaKey: true, ctrlKey: false }, IDLE)).toBeNull();
+		expect(
+			resolveShortcut({ key: "ArrowUp", metaKey: true, ctrlKey: false, altKey: false }, IDLE),
+		).toBeNull();
+		expect(resolveShortcut({ key: "ArrowDown", metaKey: false, ctrlKey: false, altKey: true }, IDLE)).toBeNull();
+	});
+
+	it("works while a turn runs — switching away is not cancelling", () => {
+		expect(
+			resolveShortcut({ key: "ArrowDown", metaKey: true, ctrlKey: false, altKey: true }, LIVE),
+		).toBe("next-session");
+	});
+});
+
+describe("sessionSlot — ⌘1…⌘9 (2026-09)", () => {
+	it("names the slot for ⌘ or Ctrl plus a digit", () => {
+		expect(sessionSlot({ key: "1", metaKey: true, ctrlKey: false })).toBe(1);
+		expect(sessionSlot({ key: "9", metaKey: false, ctrlKey: true })).toBe(9);
+		expect(resolveShortcut({ key: "3", metaKey: true, ctrlKey: false }, IDLE)).toBe("pick-session");
+	});
+
+	it("ignores zero, letters, and a digit typed on its own", () => {
+		expect(sessionSlot({ key: "0", metaKey: true, ctrlKey: false })).toBeNull();
+		expect(sessionSlot({ key: "k", metaKey: true, ctrlKey: false })).toBeNull();
+		expect(sessionSlot({ key: "4", metaKey: false, ctrlKey: false })).toBeNull();
+		expect(resolveShortcut({ key: "4", metaKey: false, ctrlKey: false }, IDLE)).toBeNull();
+	});
+
+	it("stays out of shifted and Option chords", () => {
+		expect(sessionSlot({ key: "1", metaKey: true, ctrlKey: false, shiftKey: true })).toBeNull();
+		expect(sessionSlot({ key: "1", metaKey: true, ctrlKey: false, altKey: true })).toBeNull();
 	});
 });
 

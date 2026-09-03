@@ -13,9 +13,27 @@
 	let { proposal }: Props = $props();
 
 	let cardEl: HTMLElement | null = null;
-	let drafts = $state<Record<string, string>>(
-		Object.fromEntries(proposal.files.map((file) => [file.path, file.after ?? ''])),
-	);
+
+	// What the user has typed, per file path — not the whole draft. The
+	// proposal supplies the rest, so a card handed a different proposal
+	// shows that one's text instead of a snapshot taken at mount. Tagged
+	// with the proposal it belongs to; null means nothing typed yet.
+	let edits = $state<{ id: string; text: Record<string, string> } | null>(null);
+
+	function typedText(): Record<string, string> {
+		return edits !== null && edits.id === proposal.proposalId ? edits.text : {};
+	}
+
+	const drafts = $derived.by(() => {
+		const typed = typedText();
+		return Object.fromEntries(
+			proposal.files.map((file) => [file.path, typed[file.path] ?? file.after ?? '']),
+		);
+	});
+
+	function editDraft(path: string, value: string): void {
+		edits = { id: proposal.proposalId, text: { ...typedText(), [path]: value } };
+	}
 
 	onMount(() => cardEl?.focus());
 
@@ -60,7 +78,8 @@
 					id="memory-edit-{file.path}"
 					class="editor"
 					aria-label={`Edit ${file.path}`}
-					bind:value={drafts[file.path]}
+					value={drafts[file.path] ?? ''}
+					oninput={(e) => editDraft(file.path, e.currentTarget.value)}
 				></textarea>
 			</section>
 		{/each}
@@ -78,9 +97,9 @@
 		flex-direction: column;
 		gap: var(--space-3);
 		padding: var(--space-4);
-		background: var(--color-bg);
-		border: var(--border-width) solid var(--color-border);
-		border-left: var(--space-1) solid var(--color-info);
+		background: var(--color-ground);
+		border: var(--border-width) solid var(--color-hairline);
+		border-left: var(--space-1) solid var(--color-accent);
 		border-radius: var(--radius-md);
 		box-shadow: var(--shadow-sm);
 	}
@@ -100,16 +119,16 @@
 	.card-title {
 		font-size: var(--text-sm);
 		font-weight: var(--weight-semibold);
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.badge {
 		font-size: var(--text-xs);
 		font-weight: var(--weight-semibold);
 		padding: var(--space-1) var(--space-2);
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-full);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		flex-shrink: 0;
 	}
 
@@ -137,22 +156,22 @@
 		flex-shrink: 0;
 	}
 
-	.file-action--create { color: var(--color-success); }
-	.file-action--replace { color: var(--color-warning); }
-	.file-action--delete { color: var(--color-danger); }
+	.file-action--create { color: var(--color-ok); }
+	.file-action--replace { color: var(--color-warn); }
+	.file-action--delete { color: var(--color-err); }
 
 	.file-path {
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--color-text);
+		color: var(--color-ink);
 		word-break: break-all;
 	}
 
 	.code {
 		margin: 0;
 		padding: var(--space-2) var(--space-3);
-		background: var(--color-bg-subtle);
-		border: var(--border-width) solid var(--color-border);
+		background: var(--color-sunken);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-sm);
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
@@ -162,11 +181,11 @@
 	}
 
 	.diff-line { display: inline; }
-	.diff-line--add { color: var(--color-success); }
-	.diff-line--del { color: var(--color-danger); }
-	.diff-line--hunk { color: var(--color-info); }
-	.diff-line--meta { color: var(--color-text-muted); font-weight: var(--weight-semibold); }
-	.diff-line--context { color: var(--color-text-secondary); }
+	.diff-line--add { color: var(--color-ok); }
+	.diff-line--del { color: var(--color-err); }
+	.diff-line--hunk { color: var(--color-accent); }
+	.diff-line--meta { color: var(--color-ink-muted); font-weight: var(--weight-semibold); }
+	.diff-line--context { color: var(--color-ink-secondary); }
 
 	.editor-label {
 		display: flex;
@@ -175,21 +194,21 @@
 		gap: var(--space-2);
 		font-size: var(--text-xs);
 		font-weight: var(--weight-semibold);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.editor-hint {
 		font-weight: var(--weight-medium);
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	.editor {
 		min-height: var(--space-16);
 		padding: var(--space-2) var(--space-3);
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-sm);
-		background: var(--color-bg);
-		color: var(--color-text);
+		background: var(--color-ground);
+		color: var(--color-ink);
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
 		line-height: var(--leading-normal);
@@ -218,7 +237,7 @@
 
 	.btn--accept {
 		background: var(--color-accent);
-		color: var(--color-accent-text);
+		color: var(--color-on-accent);
 	}
 
 	.btn--accept:hover {
@@ -227,12 +246,12 @@
 
 	.btn--reject {
 		background: transparent;
-		color: var(--color-danger);
-		border-color: var(--color-danger);
+		color: var(--color-err);
+		border-color: var(--color-err);
 	}
 
 	.btn--reject:hover {
-		background: var(--color-danger);
-		color: var(--color-accent-text);
+		background: var(--color-err);
+		color: var(--color-on-accent);
 	}
 </style>

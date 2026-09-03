@@ -19,10 +19,13 @@
 // the chat conversation, not an activity record. The AC enumerates exactly the
 // activity kinds shown here.
 
-import type { DaemonEventUnion } from "./protocol";
+import type { DaemonEventUnion, SessionState, TurnComplete, UserTurn } from "./protocol";
 
-/** Presentation category driving visually distinct treatment (AC #6). */
+/** Presentation category driving visually distinct treatment (AC #6).
+ *  `turn` is the group header the other kinds sit under: one per user
+ *  message, closed by the daemon's turn_complete. */
 export type EntryKind =
+  | "turn"
   | "tool_call"
   | "tool_result"
   | "decision"
@@ -194,12 +197,45 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
         details: { code: event.code, message: event.message, session_id: event.session_id ?? null },
       };
     default:
-      // assistant_delta, session_state, turn_complete, cost_update,
-      // boundary_update, checkpoint_notice, ready, instruction_stack,
-      // session_list — not activity entries.
+      // assistant_delta, cost_update, boundary_update, checkpoint_notice,
+      // ready, instruction_stack, session_list — not activity entries.
       // shell_output is merged into its parent tool_call, not shown alone.
+      // user_turn, turn_complete and session_state are turn boundaries the
+      // Timeline folds itself (see `turnEntry`), since numbering a turn
+      // needs the count so far.
       return null;
   }
+}
+
+/** Collapse a user message to one scannable line for a turn header. */
+function oneLine(text: string, max = 120): string {
+  return truncate(text.replace(/\s+/g, " ").trim(), max);
+}
+
+/** The header row that opens a turn: the user's message, numbered by the
+ *  timeline as it goes. `status` and the measurements start empty and are
+ *  filled by the daemon's turn_complete — the UI never times or prices a
+ *  turn itself (AGENTS §6). */
+export function turnEntry(event: UserTurn, number: number): TimelineEntry {
+  return {
+    id: `turn:${event.seq}`,
+    kind: "turn",
+    seq: event.seq,
+    title: `Turn ${number}`,
+    preview: oneLine(event.content),
+    details: {
+      turn_id: event.turn_id,
+      number,
+      // running → complete | failed (turn_complete), or cancelled |
+      // interrupted when the session stops with the turn still open.
+      status: "running",
+      duration: null,
+      cost: null,
+      tokens: null,
+      tier: null,
+      error_code: null,
+    },
+  };
 }
 
 /**
@@ -223,6 +259,8 @@ export class Timeline {
   private _sessionId: string | null = null;
   /** Highest log position already folded in — see `push`. */
   private _lastSeq = 0;
+  /** Turns opened so far; the next header takes the next number. */
+  private _turns = 0;
 
   /** Storage is injected so the caller can supply a reactive (`$state`) array. */
   constructor(storage: TimelineEntry[] = []) {
@@ -286,6 +324,22 @@ export class Timeline {
       this._mergeShellOutput(event);
       return;
     }
+    // Turn boundaries: the user's message opens a group, turn_complete
+    // closes it with the daemon's own duration and cost, and a session that
+    // stops with a turn still open settles that turn as stopped.
+    if (event.type === "user_turn") {
+      this._turns += 1;
+      this._entries.push(turnEntry(event, this._turns));
+      return;
+    }
+    if (event.type === "turn_complete") {
+      this._closeTurn(event);
+      return;
+    }
+    if (event.type === "session_state") {
+      this._settleTurn(event.state);
+      return;
+    }
     const entry = eventToEntry(event);
     if (entry !== null) {
       this._entries.push(entry);
@@ -311,6 +365,39 @@ export class Timeline {
   clear(): void {
     this._entries.length = 0;
     this._lastSeq = 0;
+    this._turns = 0;
+  }
+
+  /** Fill the open turn's header with what the daemon measured. A
+   *  turn_complete with no header above it (an attach window that opened
+   *  mid-turn) has nothing to annotate and is dropped. */
+  private _closeTurn(event: TurnComplete): void {
+    const turn = this._findTurn();
+    if (turn === null) return;
+    turn.details.status = event.failed ? "failed" : "complete";
+    turn.details.duration = event.duration;
+    turn.details.cost = event.cost;
+    turn.details.tokens = event.tokens;
+    turn.details.tier = event.tier;
+    turn.details.error_code = event.error_code;
+  }
+
+  /** A session that stops mid-turn leaves the header saying "running"
+   *  forever unless the stop is written onto it. Only a still-running turn
+   *  is touched: once turn_complete has spoken, the state event is old news. */
+  private _settleTurn(state: SessionState["state"]): void {
+    if (state !== "cancelled" && state !== "interrupted" && state !== "failed") return;
+    const turn = this._findTurn();
+    if (turn === null || turn.details.status !== "running") return;
+    turn.details.status = state;
+  }
+
+  /** Most recent turn header, if any. */
+  private _findTurn(): TimelineEntry | null {
+    for (let i = this._entries.length - 1; i >= 0; i--) {
+      if (this._entries[i].kind === "turn") return this._entries[i];
+    }
+    return null;
   }
 
   /** Append a shell_output chunk to the live buffer of its tool_call entry. */

@@ -3,7 +3,7 @@
 // Watches session states and window visibility. When the window is hidden
 // and a session is running or awaiting approval, the host is told to badge
 // the dock / taskbar. Showing the window clears the badge and focuses a
-// parked approval if there is one. No tray.
+// parked approval if there is one. Tray tooltip is updated alongside.
 
 import { onEvent } from "./connection-status.svelte.js";
 import { pending } from "./approval-store.svelte.js";
@@ -16,6 +16,7 @@ import {
 	coworkerBadge,
 	firstAwaitingSession,
 	focusApprovalCard,
+	trayTooltip,
 } from "./coworker-indicator";
 import type { DaemonEventUnion } from "./protocol";
 
@@ -23,6 +24,7 @@ export const WINDOW_VISIBILITY_EVENT = "window-visibility";
 
 export interface CoworkerIndicatorBridge {
 	setBadge(label: string | null): Promise<void>;
+	setTrayTooltip?(tooltip: string): Promise<void>;
 	focusCard(toolCallId: string): boolean;
 	switchSession(sessionId: string): void;
 }
@@ -32,12 +34,14 @@ const sessionStates = new Map<string, string>();
 let started = false;
 let windowHidden = false;
 let lastBadge: string | null | undefined = undefined;
+let lastTray: string | undefined = undefined;
 let bridge: CoworkerIndicatorBridge | null = null;
 
 export function resetCoworkerIndicator(): void {
 	started = false;
 	windowHidden = false;
 	lastBadge = undefined;
+	lastTray = undefined;
 	bridge = null;
 	sessionStates.clear();
 }
@@ -99,10 +103,17 @@ function ingest(event: DaemonEventUnion): void {
 
 function syncBadge(): void {
 	if (bridge === null) return;
-	const next = coworkerBadge(windowHidden, [...sessionStates.values()]);
-	if (next === lastBadge) return;
-	lastBadge = next;
-	void bridge.setBadge(next);
+	const states = [...sessionStates.values()];
+	const next = coworkerBadge(windowHidden, states);
+	if (next !== lastBadge) {
+		lastBadge = next;
+		void bridge.setBadge(next);
+	}
+	const tooltip = trayTooltip(states);
+	if (tooltip !== lastTray) {
+		lastTray = tooltip;
+		void bridge.setTrayTooltip?.(tooltip);
+	}
 }
 
 function revealApprovals(): void {
@@ -149,6 +160,11 @@ export function createTauriCoworkerBridge(): CoworkerIndicatorBridge {
 			if (!isTauri()) return;
 			const { invoke } = await import("@tauri-apps/api/core");
 			await invoke("set_coworker_indicator", { label });
+		},
+		async setTrayTooltip(tooltip) {
+			if (!isTauri()) return;
+			const { invoke } = await import("@tauri-apps/api/core");
+			await invoke("set_tray_tooltip", { tooltip });
 		},
 		focusCard(toolCallId) {
 			return focusApprovalCard(toolCallId);

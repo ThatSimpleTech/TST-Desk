@@ -85,6 +85,15 @@
     "type": "set_coworker",
     "enabled": true
   },
+  "set_voice": {
+    "type": "set_voice",
+    "enabled": true
+  },
+  "transcribe": {
+    "type": "transcribe",
+    "audio_b64": "AAAA",
+    "mime": "audio/webm"
+  },
   "set_cu_indicators": {
     "type": "set_cu_indicators",
     "glow": true,
@@ -314,6 +323,36 @@
   "set_preset": {
     "type": "set_preset",
     "name": "tst-default"
+  },
+  "set_engine": {
+    "type": "set_engine",
+    "kind": "grok"
+  },
+  "set_grok_mode": {
+    "type": "set_grok_mode",
+    "session_id": "sess-1",
+    "mode": "plan"
+  },
+  "run_grok_command": {
+    "type": "run_grok_command",
+    "session_id": "sess-1",
+    "name": "compact",
+    "argument": "keep tests"
+  },
+  "list_grok_sessions": {
+    "type": "list_grok_sessions"
+  },
+  "open_in_terminal": {
+    "type": "open_in_terminal",
+    "session_id": "sess-1"
+  },
+  "approve_grok_plan": {
+    "type": "approve_grok_plan",
+    "session_id": "sess-1",
+    "comment": "go"
+  },
+  "list_grok_extensions": {
+    "type": "list_grok_extensions"
   },
   "set_credential": {
     "type": "set_credential",
@@ -855,7 +894,12 @@
       "brain": false,
       "worker": true,
       "validator": true
-    }
+    },
+    "engine": "native",
+    "grok_available": false,
+    "grok_binary": null,
+    "voice_enabled": false,
+    "voice_has_endpoint": false
   },
   "api_key_validated": {
     "type": "api_key_validated",
@@ -1018,7 +1062,7 @@
   },
   "cu_session": {
     "type": "cu_session",
-    "seq": 1,
+    "seq": 24,
     "session_id": "sess-1",
     "active": true
   },
@@ -1095,7 +1139,83 @@
         "cadence": "every 1 hour",
         "next_run": null,
         "deliver_to": "window",
-        "paused": false
+        "paused": false,
+        "last_run": "2026-08-21T15:00:00+00:00",
+        "last_status": "ok",
+        "last_summary": "3 threads need a reply",
+        "last_session_id": "sess-1"
+      }
+    ]
+  },
+  "grok_commands": {
+    "type": "grok_commands",
+    "seq": 2,
+    "session_id": "sess-1",
+    "commands": [
+      {
+        "name": "compact",
+        "description": "Compress history"
+      }
+    ]
+  },
+  "grok_plan": {
+    "type": "grok_plan",
+    "seq": 3,
+    "session_id": "sess-1",
+    "markdown": "# Plan\n\nDo the thing.",
+    "entries": [
+      {
+        "content": "Step one",
+        "status": "pending"
+      }
+    ]
+  },
+  "grok_mode": {
+    "type": "grok_mode",
+    "seq": 4,
+    "session_id": "sess-1",
+    "mode": "plan",
+    "modes": [
+      "default",
+      "plan",
+      "yolo"
+    ]
+  },
+  "grok_preview": {
+    "type": "grok_preview",
+    "seq": 5,
+    "session_id": "sess-1",
+    "kind": "image",
+    "path": "/tmp/out.png",
+    "url": null,
+    "title": "out.png"
+  },
+  "grok_session_list": {
+    "type": "grok_session_list",
+    "seq": 1,
+    "sessions": [
+      {
+        "id": "abc",
+        "title": "Fix login",
+        "cwd": "/tmp/proj",
+        "updated_at": "1"
+      }
+    ]
+  },
+  "transcript": {
+    "type": "transcript",
+    "seq": 1,
+    "text": "hello from the mic",
+    "error": null
+  },
+  "grok_extensions": {
+    "type": "grok_extensions",
+    "seq": 1,
+    "items": [
+      {
+        "kind": "skill",
+        "name": "review",
+        "detail": "user"
       }
     ]
   },

@@ -70,6 +70,8 @@ class TestLoading:
         assert isinstance(cfg, ModelConfig)
         assert cfg.active_preset == "tst-default"
         assert cfg.session.log_max_events == DEFAULT_LOG_MAX_EVENTS
+        assert cfg.engine.kind == "native"
+        assert cfg.engine.binary == ""
 
     def test_session_log_max_events_zero_is_rejected(self, tmp_path: Path) -> None:
         text = default_config_yaml().replace("log_max_events: 10000", "log_max_events: 0")

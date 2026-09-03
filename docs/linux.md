@@ -98,8 +98,9 @@ Closing the window is not quitting the app (TD-2902).
   process group.
 
 A second host process attaches to the live listener instead of spawning
-another daemon. There is no tray (TD-4703). Restore after hide depends on the
-desktop: launching the app again attaches; there is no macOS `Reopen` event.
+another daemon. The tray (TD-4703) is Show / New window / Quit; the tooltip
+counts running sessions. Restore after hide is tray Show, or launching the
+app again. There is no macOS `Reopen` event on Linux.
 
 While hidden, a running session or a parked approval updates the window title
 (the cheap Linux / Windows badge path). OS notifications still fire.

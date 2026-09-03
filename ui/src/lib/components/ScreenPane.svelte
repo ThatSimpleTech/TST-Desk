@@ -5,6 +5,7 @@
 	// is a data-URL the host read under the same wall as artifacts.
 	// TD-3402: glow + agent cursor overlays hug the frame, not the pane.
 	// TD-3403: DesignLayer + a visible Design control (⌘⇧D also works).
+	import EmptyState from './EmptyState.svelte';
 	import { session } from '../session-status.svelte.js';
 	import { screen } from '../screen.svelte.js';
 	import { design, toggleDesign } from '../design.svelte.js';
@@ -57,7 +58,7 @@
 	{/if}
 	<div class="stage">
 		{#if !visible || empty || frameSrc === null}
-			<p class="empty">{SCREEN_EMPTY_COPY}</p>
+			<EmptyState body={SCREEN_EMPTY_COPY} />
 			{#if screen.error !== null}
 				<p class="error">{screen.error}</p>
 			{/if}
@@ -80,7 +81,7 @@
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;
-		background: var(--color-bg);
+		background: var(--color-ground);
 	}
 
 	.toolbar {
@@ -101,16 +102,16 @@
 	}
 
 	.mode--watch {
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	.design {
 		flex-shrink: 0;
 		font-size: var(--text-xs);
 		font-weight: var(--weight-medium);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		background: transparent;
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-full);
 		padding: var(--space-1) var(--space-2);
 		cursor: pointer;
@@ -141,18 +142,9 @@
 		justify-content: center;
 	}
 
-	.empty {
-		padding: var(--space-6);
-		color: var(--color-text-muted);
-		font-size: var(--text-sm);
-		line-height: var(--leading-relaxed);
-		text-align: center;
-		max-width: 28rem;
-	}
-
 	.error {
 		padding: 0 var(--space-6);
-		color: var(--color-danger);
+		color: var(--color-err);
 		font-size: var(--text-sm);
 	}
 

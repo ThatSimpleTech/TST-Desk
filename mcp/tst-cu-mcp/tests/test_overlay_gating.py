@@ -301,6 +301,24 @@ class TestToolHooks:
             input_control.move_mouse(10, 10)
         assert recorder.calls == ["blocked"]
 
+    def test_backend_refusal_puts_the_glow_out(
+        self, recorder: RecordingOverlay, fake_desktop: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The OS said no (a missing Accessibility grant, say): the ring must
+        not stay lit for an act that never happened."""
+
+        class RefusingBackend:
+            def parse_key_combo(self, combo: str) -> str:
+                return combo
+
+            def press_keys(self, _combo: str) -> None:
+                raise RuntimeError("computer-use press_keys failed in the TST Desk host")
+
+        monkeypatch.setattr(input_control, "get_backend", lambda: RefusingBackend())
+        with pytest.raises(RuntimeError):
+            input_control.press_keys("ctrl+c")
+        assert recorder.calls == ["activity", "blocked"]
+
     def test_capture_brackets_backend_grab(
         self, recorder: RecordingOverlay, fake_desktop: None
     ) -> None:

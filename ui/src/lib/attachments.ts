@@ -73,6 +73,33 @@ export function safeName(raw: string): string {
 /** Strict UTF-8 plus a NUL scan: the whole text/binary test, same as the
  *  daemon's. `fatal` is what makes it a test rather than a lossy decode —
  *  without it a PNG comes back as replacement characters and reads as prose. */
+export function isImageBytes(bytes: Uint8Array): boolean {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return true;
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return true;
+  }
+  if (bytes.length >= 6) {
+    const ascii = String.fromCharCode(...bytes.subarray(0, 6));
+    if (ascii === "GIF87a" || ascii === "GIF89a") return true;
+  }
+  if (
+    bytes.length >= 12 &&
+    String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF" &&
+    String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP"
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function isTextBytes(bytes: Uint8Array): boolean {
   if (bytes.includes(0)) return false;
   try {
@@ -141,13 +168,13 @@ export function acceptAttachment(
     };
   }
 
-  if (!isTextBytes(bytes)) {
+  if (!isTextBytes(bytes) && !isImageBytes(bytes)) {
     return {
       ok: false,
       refusal: {
         name,
         code: "attachment_binary",
-        message: `${name} isn't a text file, so it can't be attached. TST Desk attaches text files only — images need vision support, which depends on the models you've chosen and isn't in this version.`,
+        message: `${name} isn't a text file or a PNG/JPEG/GIF/WebP image, so it can't be attached.`,
       },
     };
   }

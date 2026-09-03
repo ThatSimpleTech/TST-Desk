@@ -64,6 +64,7 @@ import {
 	coworkerBadge,
 	firstAwaitingSession,
 	focusApprovalCard,
+	trayTooltip,
 } from "./coworker-indicator";
 import {
 	resetCoworkerIndicator,
@@ -162,6 +163,18 @@ describe("coworkerBadge", () => {
 	it("clears when hidden but idle", () => {
 		expect(coworkerBadge(true, ["idle", "complete", "paused"])).toBeNull();
 		expect(coworkerBadge(true, [])).toBeNull();
+	});
+});
+
+describe("trayTooltip", () => {
+	it("is the product name when idle", () => {
+		expect(trayTooltip(["idle"])).toBe("TST Desk");
+	});
+
+	it("counts running and parked approvals while the window is up", () => {
+		expect(trayTooltip(["running", "running", "awaiting_approval"])).toBe(
+			"TST Desk — 2 running · 1 approval",
+		);
 	});
 });
 

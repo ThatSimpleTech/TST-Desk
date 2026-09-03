@@ -407,20 +407,28 @@ def test_linux_desktop_gap_matches_the_sidecar() -> None:
     )
 
 
-def _git_v_tags() -> tuple[list[str], bool]:
-    """Every ``v*`` tag known to git, plus whether the clone is shallow."""
-    shallow_out = subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "--is-shallow-repository"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    tags_out = subprocess.run(
-        ["git", "-C", str(ROOT), "tag", "--list", "v*"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
+def _git_v_tags() -> tuple[list[str], bool] | None:
+    """Every ``v*`` tag known to git, plus whether the clone is shallow.
+
+    ``None`` when there is no git to ask — an export, a source tarball, or
+    a machine without the binary.  The tag sentence is unauditable there,
+    which is a skip, not a failure.
+    """
+    try:
+        shallow_out = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--is-shallow-repository"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        tags_out = subprocess.run(
+            ["git", "-C", str(ROOT), "tag", "--list", "v*"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
     return sorted(t for t in tags_out.splitlines() if t), shallow_out == "true"
 
 
@@ -431,7 +439,10 @@ def test_the_release_claim_matches_the_repository_tags() -> None:
     fails here — which is the point: the release story (TD-1302/TD-1303)
     and this sentence move together.
     """
-    tags, shallow = _git_v_tags()
+    found = _git_v_tags()
+    if found is None:
+        pytest.skip("not a git checkout, so the release claim cannot be audited")
+    tags, shallow = found
     if not tags and shallow:
         pytest.skip("shallow clone without fetched tags cannot audit the release claim")
     mentioned = set(re.findall(r"`(v[\d.]+)`", _status_text()))

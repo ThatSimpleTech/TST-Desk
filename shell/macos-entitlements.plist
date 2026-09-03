@@ -2,10 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- The bundled PyInstaller daemon extracts libpython at runtime; that
-	     dylib keeps Python.org's build signature (foreign Team ID). Library
-	     validation would block it once we sign with a real identity. -->
+	<!-- Applied bundle-wide by tauri.conf.json (bundle.macOS.entitlements)
+	     and to the sidecar by core/scripts/build_sidecar.py. Both keys are
+	     needed: allow-jit keeps WebKit's JIT (the host's webview blanks
+	     without it); disable-library-validation lets the PyInstaller
+	     sidecar load the libpython it extracts at runtime (Python.org
+	     signature, foreign Team ID), which the hardened runtime would
+	     otherwise refuse under a certificate signature (TD-4823). -->
 	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
 </dict>
 </plist>

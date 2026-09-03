@@ -67,6 +67,15 @@ workspace → done.
 
 Nothing in those five steps creates an account anywhere.
 
+## Grok Build engine
+
+TST Desk can wrap the installed [Grok Build CLI](https://docs.x.ai/build/overview)
+instead of its native three-tier loop. Settings → Engine → Grok Build. New sessions then
+spawn `grok agent stdio` over ACP; the window, approvals, coworker mode, and timeline stay
+TST Desk's. The CLI is not replaced: `grok`, `grok -p`, and `grok agent stdio` keep working
+on their own, sessions still live under `~/.grok`, and `grok --resume` still opens the TUI.
+Grok credentials stay in `~/.grok/auth.json` — never in TST Desk's config.
+
 ## What it costs
 
 You are billed by your provider for the tokens you use. Nothing is billed by us, because there

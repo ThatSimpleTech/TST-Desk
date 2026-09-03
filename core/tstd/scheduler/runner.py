@@ -11,6 +11,7 @@ import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
@@ -19,14 +20,28 @@ from ..logging import get_logger
 from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
 from .models import DeliverTo, Job
-from .schedule import advance_job, arm_cadence_job, as_utc, due_jobs
+from .schedule import advance_job, arm_cadence_job, as_utc, due_jobs, record_run
 from .store import list_jobs, save_job
 
 log = get_logger("tstd.scheduler.runner")
 
 _TURN_TIMEOUT_SECS = 120.0
 
-TurnFn = Callable[[Path, str], Awaitable[str]]
+
+@dataclass(frozen=True)
+class TurnResult:
+    """What one scheduled fire produced (TD-3807).
+
+    ``run_turn`` may still return a bare ``str`` — every injected test fake
+    does — which is read as a successful turn with no session to point at.
+    """
+
+    summary: str
+    ok: bool = True
+    session_id: str | None = None
+
+
+TurnFn = Callable[[Path, str], Awaitable["str | TurnResult"]]
 SendFn = Callable[[DeliverTo, str], Awaitable[None]]
 WindowFn = Callable[[str], Awaitable[None]]
 
@@ -109,37 +124,54 @@ async def _run_one(
     deliver: Deliver,
 ) -> None:
     try:
-        summary = await run_turn(Path(job.workspace), job.instruction)
+        outcome = await run_turn(Path(job.workspace), job.instruction)
+        result = outcome if isinstance(outcome, TurnResult) else TurnResult(summary=outcome)
     except Exception as exc:
         log.exception(
             "scheduled turn failed",
             extra={"extra_fields": {"job_id": job.id, "error": str(exc)}},
         )
-        summary = f"scheduled run failed: {exc}"
-    await deliver(job.deliver_to, summary)
-    await asyncio.to_thread(save_job, data_dir, advance_job(job, now))
+        result = TurnResult(summary=f"scheduled run failed: {exc}", ok=False)
+    await deliver(job.deliver_to, result.summary)
+    # Advance first, then stamp the receipt on the advanced copy, so the
+    # saved row carries both the next slot and what just happened.
+    stamped = record_run(
+        advance_job(job, now),
+        now,
+        status="ok" if result.ok else "failed",
+        summary=result.summary,
+        session_id=result.session_id,
+    )
+    await asyncio.to_thread(save_job, data_dir, stamped)
 
 
-async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -> str:
-    """In-process ``tst run``: start a session, one user message, wait."""
+async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -> TurnResult:
+    """In-process ``tst run``: start a session, one user message, wait.
+
+    Every early return is a failure the user needs to see on the job row —
+    a workspace that has been moved or deleted is the common one.
+    """
     if not await asyncio.to_thread(workspace.is_dir):
-        return f"workspace is not a directory: {workspace}"
+        return TurnResult(f"workspace is not a directory: {workspace}", ok=False)
     raw = await host._start_session(str(workspace))
     if raw is None:
-        return "open_workspace did not return a session"
+        return TurnResult("open_workspace did not return a session", ok=False)
     opened = json.loads(raw)
     session_id = opened.get("session_id")
     if not isinstance(session_id, str) or not session_id:
-        return "open_workspace did not return a session"
+        return TurnResult("open_workspace did not return a session", ok=False)
     getter = getattr(host.session_registry, "get", None)
     if getter is None:
-        return "daemon has no session registry"
+        return TurnResult("daemon has no session registry", ok=False, session_id=session_id)
     session = getter(session_id)
     if not isinstance(session, Session):
-        return f"session {session_id} was not registered"
+        return TurnResult(
+            f"session {session_id} was not registered", ok=False, session_id=session_id
+        )
     await session.add_user_message(message)
     await _wait_turn_complete(session)
-    return turn_summary(session)
+    summary, failed = turn_outcome(session)
+    return TurnResult(summary, ok=not failed, session_id=session_id)
 
 
 async def _wait_turn_complete(session: Session) -> None:
@@ -161,13 +193,27 @@ async def _wait_turn_complete(session: Session) -> None:
 
 def turn_summary(session: Session) -> str:
     """Assistant text from the turn, or the failed ``error_code``."""
+    return turn_outcome(session)[0]
+
+
+def turn_outcome(session: Session) -> tuple[str, bool]:
+    """``(summary, failed)`` for the turn just finished.
+
+    A turn that ends with ``turn_complete.failed`` is a failure even though
+    it produced a summary, and a turn that produced no text at all is one
+    too — "it ran and said nothing" is not something to report as success.
+    """
+    failed_code: str | None = None
+    for event in reversed(session.event_log.all_events):
+        if isinstance(event, TurnComplete) and event.failed:
+            failed_code = event.error_code or "turn_failed"
+            break
     parts = [
         event.delta for event in session.event_log.all_events if isinstance(event, AssistantDelta)
     ]
     text = "".join(parts).strip()
     if text:
-        return text
-    for event in reversed(session.event_log.all_events):
-        if isinstance(event, TurnComplete) and event.failed:
-            return event.error_code or "turn_failed"
-    return ""
+        return text, failed_code is not None
+    if failed_code is not None:
+        return failed_code, True
+    return "the scheduled turn produced no output", True

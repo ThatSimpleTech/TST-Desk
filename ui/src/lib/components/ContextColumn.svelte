@@ -3,6 +3,7 @@
 	//
 	// Pins are workspace files/folders. + is a picker inside the wall.
 	// Search filters the cards. Unpin removes the pin, not the file.
+	import EmptyState from './EmptyState.svelte';
 	import Icon from './Icon.svelte';
 	import { contextEmptyCopy, filterPins, pinKindLabel } from '../context-pins';
 	import {
@@ -56,9 +57,9 @@
 		oninput={(e) => setPinQuery(e.currentTarget.value)}
 	/>
 	{#if contextPins.pins.length === 0}
-		<p class="empty">{contextEmptyCopy()}</p>
+		<EmptyState align="start" body={contextEmptyCopy()} />
 	{:else if visible.length === 0}
-		<p class="empty">No pins match.</p>
+		<EmptyState compact align="start" body="No pins match." />
 	{:else}
 		<ul class="list">
 			{#each visible as pin (pin.path)}
@@ -133,12 +134,6 @@
 		padding: var(--space-2) var(--space-3);
 		font-family: var(--font-sans);
 		font-size: var(--text-sm);
-	}
-
-	.empty {
-		margin: var(--space-3) 0 0;
-		font-size: var(--text-sm);
-		color: var(--color-ink-muted);
 	}
 
 	.list {

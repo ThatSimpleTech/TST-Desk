@@ -3,6 +3,7 @@
 	//
 	// Lists .tst/memory/*.md. Click shows the markdown. Edit/save is a
 	// human-path client message — never a tool, never a steering write.
+	import EmptyState from './EmptyState.svelte';
 	import Markdown from './chat/Markdown.svelte';
 	import MemoryProposalCard from './MemoryProposalCard.svelte';
 	import { memoryEmptyCopy, memoryLocalCopy } from '../memory-files';
@@ -45,7 +46,7 @@
 		</div>
 	{/if}
 	{#if empty}
-		<p class="empty">{memoryEmptyCopy()}</p>
+		<EmptyState align="start" body={memoryEmptyCopy()} />
 	{:else}
 		<ul class="list">
 			{#each memoryFiles.files as file (file.path)}
@@ -116,12 +117,6 @@
 
 	.proposals {
 		margin-top: var(--space-3);
-	}
-
-	.empty {
-		margin: var(--space-3) 0 0;
-		font-size: var(--text-sm);
-		color: var(--color-ink-muted);
 	}
 
 	.list {

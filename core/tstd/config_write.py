@@ -64,6 +64,37 @@ def save_active_preset(name: str, path: Path | None = None) -> Path:
     return config_path
 
 
+def save_engine_kind(kind: str, path: Path | None = None) -> Path:
+    """Persist ``engine.kind`` in the user config.
+
+    New sessions use the new engine; running sessions keep the loop they
+    started with. Surgical rewrite so comments survive.
+    """
+    cleaned = kind.strip().lower()
+    if cleaned not in {"native", "grok"}:
+        raise ConfigError(f"Unknown engine {kind!r}; expected 'native' or 'grok'")
+    config_path = ensure_user_config(path)
+    text = config_path.read_text(encoding="utf-8")
+    engine_kind = re.compile(
+        r"(^engine:\s*\n(?:[ \t].*\n)*?[ \t]+kind:\s*)\S+",
+        re.MULTILINE,
+    )
+    if engine_kind.search(text):
+        text = engine_kind.sub(rf"\g<1>{cleaned}", text, count=1)
+    elif re.search(r"^engine:\s*$", text, re.MULTILINE):
+        text = re.sub(
+            r"^engine:\s*$",
+            f"engine:\n  kind: {cleaned}",
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+    else:
+        text = text.rstrip("\n") + f'\n\nengine:\n  kind: {cleaned}\n  binary: ""\n'
+    _atomic_write(config_path, text)
+    return config_path
+
+
 def _atomic_write(config_path: Path, text: str) -> None:
     """Replace *config_path*'s contents in one step.
 

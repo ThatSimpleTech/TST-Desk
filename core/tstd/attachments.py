@@ -76,11 +76,30 @@ class AttachmentLike(Protocol):
 
 @dataclass(frozen=True)
 class DecodedAttachment:
-    """One attachment the daemon has accepted, decoded and measured itself."""
+    """One attachment the daemon has accepted, decoded and measured itself.
+
+    Images carry ``data`` and ``media_type`` and leave ``text`` empty so a
+    native loop can mention the file without dumping bytes into the prompt.
+    """
 
     name: str
     text: str
     size: int
+    data: bytes | None = None
+    media_type: str | None = None
+
+
+def sniff_image(raw: bytes) -> str | None:
+    """Return a media type for a well-known image header, else None."""
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if raw.startswith(b"GIF87a") or raw.startswith(b"GIF89a"):
+        return "image/gif"
+    if raw.startswith(b"RIFF") and len(raw) >= 12 and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 def format_bytes(count: int) -> str:
@@ -126,9 +145,8 @@ def _decode_text(name: str, raw: bytes) -> str:
     """
     binary = AttachmentError(
         "attachment_binary",
-        f"{name} isn't a text file, so it can't be attached. TST Desk attaches "
-        "text files only — images need vision support, which depends on the "
-        "models you've chosen and isn't in this version. Nothing was sent.",
+        f"{name} isn't a text file or a PNG/JPEG/GIF/WebP image, so it can't "
+        "be attached. Nothing was sent.",
     )
     if b"\x00" in raw:
         raise binary
@@ -196,6 +214,12 @@ def decode_attachments(
                 ".tst/config.yaml. Nothing was sent.",
             )
 
+        media = sniff_image(raw)
+        if media is not None:
+            decoded.append(
+                DecodedAttachment(name=name, text="", size=len(raw), data=raw, media_type=media)
+            )
+            continue
         decoded.append(DecodedAttachment(name=name, text=_decode_text(name, raw), size=len(raw)))
 
     return decoded
@@ -214,6 +238,11 @@ def render_user_content(text: str, attachments: Sequence[DecodedAttachment]) -> 
 
     blocks = [text] if text else []
     for item in attachments:
+        if item.media_type:
+            blocks.append(
+                f"--- attached image: {item.name} ({item.size} bytes, {item.media_type}) ---"
+            )
+            continue
         blocks.append(
             f"--- attached file: {item.name} ({item.size} bytes) ---\n"
             f"{item.text}\n"

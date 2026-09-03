@@ -78,6 +78,7 @@ import type {
   SetApiKey,
   ValidateApiKey,
   SetPreset,
+  SetEngine,
   SetCredential,
   DeleteCredential,
   SetTierCredential,
@@ -403,6 +404,12 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.set_preset as SetPreset;
     expect(m.type).toBe("set_preset");
     expect(isString(m.name)).toBe(true);
+  });
+
+  it("set_engine", () => {
+    const m = fixtures.set_engine as SetEngine;
+    expect(m.type).toBe("set_engine");
+    expect(m.kind === "native" || m.kind === "grok").toBe(true);
   });
 
   it("set_credential", () => {
@@ -856,6 +863,8 @@ describe("All fixtures have required shape", () => {
       "set_skip_all_approvals",
       "set_load_global_memory",
       "set_coworker",
+      "set_voice",
+      "transcribe",
       "set_cu_indicators",
       "set_workspace_pin",
       "set_session_star",
@@ -866,7 +875,9 @@ describe("All fixtures have required shape", () => {
       "get_charter", "save_charter", "start_autonomy",
       "list_pins", "add_pin", "remove_pin",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
-      "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
+      "get_setup_state", "set_api_key", "validate_api_key", "set_preset", "set_engine",
+      "set_grok_mode", "run_grok_command", "list_grok_sessions", "open_in_terminal",
+      "approve_grok_plan", "list_grok_extensions",
       "set_credential", "delete_credential", "set_tier_credential",
       "run_diagnostics",
       "get_usage", "export_usage",
@@ -900,6 +911,13 @@ describe("All fixtures have required shape", () => {
       "design_hit",
       "cu_permissions",
       "job_list",
+      "grok_commands",
+      "grok_plan",
+      "grok_mode",
+      "grok_preview",
+      "grok_session_list",
+      "grok_extensions",
+      "transcript",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

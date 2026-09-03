@@ -836,11 +836,15 @@ class TestDaemonEvents:
         assert "session_id" not in CuKillState.model_fields
 
     def test_cu_session(self) -> None:
-        evt = CuSession(session_id="sess-1", active=True)
+        evt = CuSession(session_id="sess-1", active=True, seq=24)
         back = _roundtrip(evt)
         assert isinstance(back, CuSession)
         assert back.active is True
         assert back.session_id == "sess-1"
+        # Session-scoped: it is appended to the session log, which stamps
+        # seq, so the field is required and carries through (TD-3407).
+        assert back.seq == 24
+        assert CuSession.model_fields["seq"].is_required()
 
 
 # ── Discriminated union dispatch ───────────────────────────────────────

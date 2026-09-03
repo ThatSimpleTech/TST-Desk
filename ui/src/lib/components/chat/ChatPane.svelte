@@ -21,7 +21,7 @@
 		teardownChat,
 	} from "../../chat-store.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
-	import { session } from "../../session-status.svelte.js";
+	import { session, workspaceName } from "../../session-status.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
 	import { greetingForHour, SUGGESTIONS } from "../../greeting";
 	import { workingVerb } from "../../working-flavor";
@@ -60,7 +60,24 @@
 	<div class="column">
 		{#if chat.messages.length === 0}
 			<div class="empty" aria-label="Getting started">
-				<p class="greeting">{greeting}.</p>
+				<div class="hello">
+					<p class="greeting">{greeting}.</p>
+					{#if chat.sessionId !== null}
+						<!-- Where you are and what will answer: the two facts a blank
+						     conversation can't show any other way. -->
+						<p class="context">
+							{#if session.workspacePath !== null}
+								<span>{workspaceName(session.workspacePath)}</span>
+								<span class="context-sep" aria-hidden="true">·</span>
+							{/if}
+							<span>
+								{session.tier}{session.modelSlugs[session.tier]
+									? ` · ${session.modelSlugs[session.tier]}`
+									: ""}
+							</span>
+						</p>
+					{/if}
+				</div>
 				{#if chat.sessionId === null}
 					<!-- TD-1711: auto-bind refuses dead sessions, so a restart can
 					     leave nothing live to bind. Point at the escape. -->
@@ -148,6 +165,12 @@
 		padding: 0 var(--space-4);
 	}
 
+	.hello {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
 	.greeting {
 		margin: 0;
 		font-family: var(--font-display);
@@ -156,6 +179,19 @@
 		letter-spacing: var(--tracking-display);
 		line-height: var(--leading-tight);
 		color: var(--color-ink);
+	}
+
+	.context {
+		margin: 0;
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		font-size: var(--text-sm);
+		color: var(--color-ink-muted);
+	}
+
+	.context-sep {
+		color: var(--color-hairline);
 	}
 
 	.pointer {

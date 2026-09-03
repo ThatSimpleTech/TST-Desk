@@ -144,6 +144,13 @@ class TestLocalWorkerHelpers:
         assert is_cu_tool("browser_navigate")
         assert not is_cu_tool("fs_read")
         assert not is_cu_tool("echo")
+        # Grok names the same MCP tools computer-use__<tool>; diagnostics
+        # are not an episode.
+        assert is_cu_tool("computer-use__click")
+        assert is_cu_tool("computer-use__screenshot")
+        assert not is_cu_tool("computer-use__check_permissions")
+        assert not is_cu_tool("computer-use__health")
+        assert not is_cu_tool("computer-use__overlay_session")
 
     def test_non_cu_uses_active_worker(self) -> None:
         config = _cu_config()

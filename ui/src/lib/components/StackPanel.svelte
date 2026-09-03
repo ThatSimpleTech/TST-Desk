@@ -14,6 +14,7 @@
 	// while the user was on Activity, and raced refresh ahead of
 	// subscribe on first open. Clicking a file opens it in the system
 	// editor via tauri-plugin-opener.
+	import EmptyState from './EmptyState.svelte';
 	import { stack } from '../stack-store.svelte.js';
 	import { cacheBadge, cacheLabel, formatTokens, memoryPlaceholderCopy, memoryReasonLabel } from '../stack-store';
 	import { openInEditor } from '../open-file';
@@ -37,7 +38,7 @@
 
 <div class="stack-panel">
 	{#if !stack.loaded}
-		<p class="empty">No instruction stack yet.</p>
+		<EmptyState icon="layers" body="No instruction stack yet." />
 	{:else}
 		<ul class="sources">
 			{#each stack.sources as entry (entry.path)}
@@ -155,13 +156,6 @@
 		flex-direction: column;
 	}
 
-	.empty {
-		padding: var(--space-6);
-		color: var(--color-text-muted);
-		font-size: var(--text-sm);
-		text-align: center;
-	}
-
 	.sources {
 		flex: 1;
 		list-style: none;
@@ -171,7 +165,7 @@
 
 	.source {
 		padding: var(--space-2) var(--space-4);
-		border-bottom: var(--border-width) solid var(--color-border);
+		border-bottom: var(--border-width) solid var(--color-hairline);
 	}
 
 	.source.inactive {
@@ -187,7 +181,7 @@
 		padding: 0;
 		border: none;
 		background: none;
-		color: var(--color-text);
+		color: var(--color-ink);
 		font-size: var(--text-sm);
 		font-weight: var(--weight-semibold);
 		cursor: pointer;
@@ -199,7 +193,7 @@
 	}
 
 	.file .tokens {
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 		font-weight: var(--weight-normal);
 		white-space: nowrap;
 	}
@@ -211,7 +205,7 @@
 		gap: var(--space-2);
 		margin-top: var(--space-1);
 		font-size: var(--text-xs);
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	.chip {
@@ -219,28 +213,28 @@
 		align-items: center;
 		gap: var(--space-1);
 		padding: 0 var(--space-2);
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-sm);
 		white-space: nowrap;
 	}
 
 	.chip-on {
-		color: var(--color-success);
-		border-color: var(--color-success);
+		color: var(--color-ok);
+		border-color: var(--color-ok);
 	}
 
 	.chip-off {
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	.chip-warn {
-		color: var(--color-warning);
-		border-color: var(--color-warning);
+		color: var(--color-warn);
+		border-color: var(--color-warn);
 	}
 
 	.chip-note {
-		color: var(--color-info);
-		border-color: var(--color-info);
+		color: var(--color-accent);
+		border-color: var(--color-accent);
 	}
 
 	.imports {
@@ -260,12 +254,12 @@
 
 	.file.import {
 		font-weight: var(--weight-normal);
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 		width: auto;
 	}
 
 	.memory {
-		border-top: var(--border-width) solid var(--color-border);
+		border-top: var(--border-width) solid var(--color-hairline);
 	}
 
 	.memory-head {
@@ -276,7 +270,7 @@
 		font-weight: var(--weight-semibold);
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	.memory-empty {
@@ -284,7 +278,7 @@
 		margin: 0;
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	.totals {
@@ -293,22 +287,22 @@
 		align-items: baseline;
 		gap: var(--space-3);
 		padding: var(--space-3) var(--space-4);
-		border-top: var(--border-width) solid var(--color-border);
+		border-top: var(--border-width) solid var(--color-hairline);
 		font-size: var(--text-sm);
 		position: sticky;
 		bottom: 0;
-		background: var(--color-bg-raised);
+		background: var(--color-lifted);
 	}
 
 	.cache {
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	.cache-hit {
-		color: var(--color-success);
+		color: var(--color-ok);
 	}
 
 	.cache-miss {
-		color: var(--color-warning);
+		color: var(--color-warn);
 	}
 </style>

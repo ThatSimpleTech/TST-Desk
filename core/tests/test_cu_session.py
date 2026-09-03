@@ -58,4 +58,3 @@ async def test_cancel_closes_the_episode() -> None:
     tags = [e for e in session.event_log.all_events if isinstance(e, CuSession)]
     assert tags[-1].active is False
     assert session.cu_session_active is False
-

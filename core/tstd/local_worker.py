@@ -15,10 +15,24 @@ from .protocol import ToolCall
 from .router import TIER_NAMES, TierName
 from .session import Session
 
+#: Grok reports MCP tools as ``<server>__<tool>``; the computer-use server
+#: is registered as ``computer-use`` (``grok_home.computer_use_mcp``).
+GROK_CU_PREFIX = "computer-use__"
+#: Diagnostics that neither look at nor touch the desktop.
+_GROK_CU_META = frozenset({"check_permissions", "health", "overlay_session"})
+
 
 def is_cu_tool(name: str) -> bool:
-    """True for the tools that make the Screen tab appear."""
-    return name.startswith("desktop_") or name.startswith("browser_")
+    """True for the tools that make the Screen tab appear.
+
+    Native names are ``desktop_*`` / ``browser_*``; a Grok session reports
+    the same MCP tools as ``computer-use__*`` (its diagnostics excluded).
+    """
+    if name.startswith("desktop_") or name.startswith("browser_"):
+        return True
+    if name.startswith(GROK_CU_PREFIX):
+        return name[len(GROK_CU_PREFIX) :] not in _GROK_CU_META
+    return False
 
 
 def session_is_cu_heavy(session: Session) -> bool:
