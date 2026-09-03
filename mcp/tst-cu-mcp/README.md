@@ -46,14 +46,28 @@ uv run tst-cu-mcp
 ### macOS — grant permissions (required)
 
 macOS gates screen capture and input synthesis behind two permissions, and it
-grants them to **the app that launches the server** — Kiro, Claude Desktop,
-Goose, or your terminal — **not** to the server itself.
+grants them to **the app that launches the server** — TST Desk, Kiro, Claude
+Desktop, Goose, or your terminal — **not** to the server itself.
 
 1. **Screen Recording** — System Settings > Privacy & Security > Screen Recording
 2. **Accessibility** — System Settings > Privacy & Security > Accessibility
 
-Enable your **host app** in both, then **fully quit and reopen it**. macOS caches
-the grant per-binary, so reconnecting the server alone will not pick it up.
+Enable your **host app** in both, then **fully quit and reopen it** (Cmd+Q, not
+just closing the window). macOS pins each grant to the host's code signature,
+so reconnecting the server or clicking Allow on the in-app prompt again will
+not pick it up. `check_permissions` with `request=true` raises each prompt at
+most once.
+
+**Settings shows the host ON but capture or input still fails?** The grant
+belongs to an older build of the host (an ad-hoc signature changes on every
+rebuild). `check_permissions` reports this as `stale_grant_suspected`; no
+amount of `request=true` repairs it. Reset the rows and allow again:
+
+- In TST Desk: Settings → Computer use → **Reset grants & re-request**, then
+  relaunch. TST Desk signs its builds with a stable identity
+  (`shell/scripts/install-macos.sh`), so grants survive later rebuilds.
+- Any other host: `tccutil reset ScreenCapture <host bundle id>` and
+  `tccutil reset Accessibility <host bundle id>`, then relaunch the host.
 
 ### Windows — no permission gate, two real limits
 

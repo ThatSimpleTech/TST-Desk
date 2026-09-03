@@ -292,6 +292,10 @@ class Session:
         # TD-4103: attached by the loop on an unattended run. Interactive
         # sessions leave this None so a turn complete never polls DoD.
         self.dod_poller: Callable[[], Awaitable[Any]] | None = None
+        # Image bytes for the next Grok ACP prompt (name, bytes, media_type).
+        self.pending_images: list[tuple[str, bytes, str]] = []
+        self.grok_acp: Any = None
+        self.grok_session_id: str | None = None
 
     def mark_class_c(self, reason: str) -> None:
         """A Class C call on an autonomous run — stop after this turn."""
@@ -307,9 +311,7 @@ class Session:
         if self.cu_session_active or not is_cu_tool(tool_name):
             return
         self.cu_session_active = True
-        await self.event_log.add(
-            CuSession(session_id=self.id, active=True, seq=1)
-        )
+        await self.event_log.add(CuSession(session_id=self.id, active=True, seq=1))
         if self._overlay_session is not None:
             await self._overlay_session(True)
 
@@ -320,9 +322,7 @@ class Session:
         if not self.cu_session_active:
             return
         self.cu_session_active = False
-        await self.event_log.add(
-            CuSession(session_id=self.id, active=False, seq=1)
-        )
+        await self.event_log.add(CuSession(session_id=self.id, active=False, seq=1))
         if self._overlay_session is not None:
             await self._overlay_session(False)
 
@@ -582,6 +582,58 @@ class Session:
                 output=(
                     f"Approved external import: {path}" if outcome.approved else outcome.message
                 ),
+                error_code=None if outcome.approved else "approval_denied",
+                seq=1,
+            )
+        )
+        return outcome
+
+    async def request_acp_approval(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        summary: str,
+        reason: str,
+    ) -> ApprovalOutcome:
+        """Park a Grok ACP permission request on the existing approval card.
+
+        Grok has already classified the call; TST Desk asks the human
+        with the same card native tools use. Always-allow is not offered
+        here — Grok's own permission mode / skip-all covers that.
+        """
+        from .protocol import ApprovalRequest as ApprovalRequestEvent
+
+        fut: asyncio.Future[tuple[bool, str | None]] = asyncio.get_running_loop().create_future()
+        self._pending_approvals[tool_call_id] = PendingApproval(
+            future=fut,
+            tool=None,
+            arguments=arguments,
+            decision_class=DecisionClass.B,
+        )
+        await self.event_log.add(
+            ApprovalRequestEvent(
+                session_id=self.id,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                decision_class="B",
+                summary=summary,
+                reason=reason,
+                proposed_always_allow=None,
+                seq=1,
+            )
+        )
+        if self._state != "awaiting_approval":
+            await self.set_state("awaiting_approval", reason=reason)
+        outcome = await self._await_approval_resolution(tool_call_id, fut)
+        await self.event_log.add(
+            ToolResult(
+                session_id=self.id,
+                tool_call_id=tool_call_id,
+                status="success" if outcome.approved else "error",
+                output="Approved" if outcome.approved else outcome.message,
                 error_code=None if outcome.approved else "approval_denied",
                 seq=1,
             )

@@ -1,15 +1,16 @@
 import { describe, it, expect } from "vitest";
 import {
-	MIN_LEFT_PCT,
-	MAX_LEFT_PCT,
-	DEFAULT_LEFT_PCT,
+	MIN_RIGHT_PX,
+	MIN_LEFT_PX,
+	DEFAULT_RIGHT_PX,
 	DIVIDER_HIT_MIN_PX,
 	STORAGE_KEY,
 	attachDragListeners,
-	clampLeftPct,
-	pxToLeftPct,
-	readPersistedLeftPct,
-	writePersistedLeftPct,
+	clampRightPx,
+	maxRightPx,
+	pointerToRightPx,
+	readPersistedRightPx,
+	writePersistedRightPx,
 	type DragTarget,
 	type KVStorage
 } from "./splitpane";
@@ -23,72 +24,89 @@ function fakeStorage(initial: Record<string, string> = {}): KVStorage & { data: 
 	};
 }
 
-describe("clampLeftPct", () => {
-	it.each([
-		[0, MIN_LEFT_PCT],
-		[19.9, MIN_LEFT_PCT],
-		[MIN_LEFT_PCT, MIN_LEFT_PCT],
-		[50, 50],
-		[MAX_LEFT_PCT, MAX_LEFT_PCT],
-		[80.1, MAX_LEFT_PCT],
-		[100, MAX_LEFT_PCT]
-	])("clamps %f to %f", (input, expected) => {
-		expect(clampLeftPct(input)).toBe(expected);
+describe("maxRightPx", () => {
+	it("leaves the chat its minimum", () => {
+		expect(maxRightPx(1000)).toBe(1000 - MIN_LEFT_PX);
+	});
+
+	it("does not drop below the inspector minimum on a narrow container", () => {
+		expect(maxRightPx(MIN_LEFT_PX)).toBe(MIN_RIGHT_PX);
+		expect(maxRightPx(0)).toBe(MIN_RIGHT_PX);
+	});
+});
+
+describe("clampRightPx", () => {
+	it("keeps an in-range width", () => {
+		expect(clampRightPx(400, 1000)).toBe(400);
+	});
+
+	it("floors at the inspector minimum", () => {
+		expect(clampRightPx(10, 1000)).toBe(MIN_RIGHT_PX);
+	});
+
+	it("caps at the container minus the chat minimum", () => {
+		expect(clampRightPx(9999, 1000)).toBe(1000 - MIN_LEFT_PX);
+	});
+
+	it("has no container cap when width is unknown, so a wide preference survives", () => {
+		expect(clampRightPx(900)).toBe(900);
+		expect(clampRightPx(10)).toBe(MIN_RIGHT_PX);
 	});
 
 	it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
 		"falls back to the default for non-finite input %f",
 		(input) => {
-			expect(clampLeftPct(input)).toBe(DEFAULT_LEFT_PCT);
+			expect(clampRightPx(input, 1000)).toBe(DEFAULT_RIGHT_PX);
 		}
 	);
 });
 
-describe("pxToLeftPct", () => {
-	it("converts a pixel offset to a percentage of container width", () => {
-		expect(pxToLeftPct(500, 1000)).toBe(50);
+describe("pointerToRightPx", () => {
+	it("measures from the container's right edge", () => {
+		expect(pointerToRightPx(700, 0, 1000)).toBe(300);
+		expect(pointerToRightPx(800, 100, 1000)).toBe(300);
 	});
 
-	it("clamps the converted percentage", () => {
-		expect(pxToLeftPct(50, 1000)).toBe(MIN_LEFT_PCT);
-		expect(pxToLeftPct(950, 1000)).toBe(MAX_LEFT_PCT);
+	it("clamps the converted width", () => {
+		expect(pointerToRightPx(0, 0, 1000)).toBe(1000 - MIN_LEFT_PX);
+		expect(pointerToRightPx(1000, 0, 1000)).toBe(MIN_RIGHT_PX);
 	});
 
 	it.each([0, -10])("returns null when the container has no measurable width (%f)", (w) => {
-		expect(pxToLeftPct(400, w)).toBeNull();
+		expect(pointerToRightPx(400, 0, w)).toBeNull();
 	});
 });
 
-describe("readPersistedLeftPct", () => {
+describe("readPersistedRightPx", () => {
 	it("returns the default when nothing was persisted", () => {
-		expect(readPersistedLeftPct(fakeStorage())).toBe(DEFAULT_LEFT_PCT);
+		expect(readPersistedRightPx(fakeStorage())).toBe(DEFAULT_RIGHT_PX);
 	});
 
 	it("restores a persisted value", () => {
-		expect(readPersistedLeftPct(fakeStorage({ [STORAGE_KEY]: "55" }))).toBe(55);
+		expect(readPersistedRightPx(fakeStorage({ [STORAGE_KEY]: "480" }))).toBe(480);
 	});
 
-	it("clamps an out-of-range persisted value", () => {
-		expect(readPersistedLeftPct(fakeStorage({ [STORAGE_KEY]: "95" }))).toBe(MAX_LEFT_PCT);
-		expect(readPersistedLeftPct(fakeStorage({ [STORAGE_KEY]: "5" }))).toBe(MIN_LEFT_PCT);
+	it("floors an undersized persisted value and keeps a wide one", () => {
+		expect(readPersistedRightPx(fakeStorage({ [STORAGE_KEY]: "5" }))).toBe(MIN_RIGHT_PX);
+		expect(readPersistedRightPx(fakeStorage({ [STORAGE_KEY]: "2000" }))).toBe(2000);
 	});
 
 	it.each(["abc", "", " "])("falls back to the default for corrupt value %j", (raw) => {
-		expect(readPersistedLeftPct(fakeStorage({ [STORAGE_KEY]: raw }))).toBe(DEFAULT_LEFT_PCT);
+		expect(readPersistedRightPx(fakeStorage({ [STORAGE_KEY]: raw }))).toBe(DEFAULT_RIGHT_PX);
 	});
 });
 
-describe("writePersistedLeftPct", () => {
+describe("writePersistedRightPx", () => {
 	it("round-trips a value through storage", () => {
 		const storage = fakeStorage();
-		writePersistedLeftPct(storage, 33.7);
-		expect(readPersistedLeftPct(storage)).toBe(33.7);
+		writePersistedRightPx(storage, 412);
+		expect(readPersistedRightPx(storage)).toBe(412);
 	});
 
-	it("persists the clamped value", () => {
+	it("persists the floored value", () => {
 		const storage = fakeStorage();
-		writePersistedLeftPct(storage, 200);
-		expect(storage.data.get(STORAGE_KEY)).toBe(String(MAX_LEFT_PCT));
+		writePersistedRightPx(storage, 1);
+		expect(storage.data.get(STORAGE_KEY)).toBe(String(MIN_RIGHT_PX));
 	});
 });
 

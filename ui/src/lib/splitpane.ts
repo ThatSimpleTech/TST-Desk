@@ -1,26 +1,44 @@
-// Pure split-pane divider logic: clamping, unit conversion, persistence.
-// DOM-free so it is unit-testable in the node vitest environment.
+// Pure split-pane divider logic: clamping, persistence. DOM-free so it is
+// unit-testable in the node vitest environment.
+//
+// The right pane (Activity / inspector) is a pixel-width sidebar. The chat
+// pane takes the leftover. A percentage split (20–80%) could not be dragged
+// to an arbitrary size; pixels can, clamped only so neither pane disappears.
 
-export const MIN_LEFT_PCT = 20;
-export const MAX_LEFT_PCT = 80;
-export const DEFAULT_LEFT_PCT = 40;
-export const KEYBOARD_STEP_PCT = 2;
-export const STORAGE_KEY = "tstd-desktop.splitpane.leftPct";
+export const MIN_RIGHT_PX = 200;
+/** Chat keeps at least this much of the split container. */
+export const MIN_LEFT_PX = 280;
+export const DEFAULT_RIGHT_PX = 320;
+export const KEYBOARD_STEP_PX = 16;
+export const STORAGE_KEY = "tstd-desktop.splitpane.rightPx";
 /** Minimum pointer target for the divider (TD-1011). The painted rule
  *  stays `--space-1` (4px); the hit area is this wide. */
 export const DIVIDER_HIT_MIN_PX = 8;
 
-export function clampLeftPct(pct: number): number {
-	if (!Number.isFinite(pct)) return DEFAULT_LEFT_PCT;
-	return Math.min(MAX_LEFT_PCT, Math.max(MIN_LEFT_PCT, pct));
+/** Widest the inspector may be in a container of this width. */
+export function maxRightPx(containerWidth: number): number {
+	if (!(containerWidth > 0)) return MIN_RIGHT_PX;
+	return Math.max(MIN_RIGHT_PX, containerWidth - MIN_LEFT_PX);
 }
 
-/** Convert a pixel offset within the container to a clamped left-pane
- *  percentage. Returns null when the container has no measurable width
- *  (e.g. not yet laid out), so callers can keep the current value. */
-export function pxToLeftPct(px: number, containerWidth: number): number | null {
+export function clampRightPx(px: number, containerWidth?: number): number {
+	if (!Number.isFinite(px)) return DEFAULT_RIGHT_PX;
+	if (containerWidth === undefined || containerWidth <= 0) {
+		return Math.max(MIN_RIGHT_PX, px);
+	}
+	return Math.min(maxRightPx(containerWidth), Math.max(MIN_RIGHT_PX, px));
+}
+
+/** Convert a pointer x-coordinate into a clamped right-pane width.
+ *  Returns null when the container has no measurable width (e.g. not yet
+ *  laid out), so callers can keep the current value. */
+export function pointerToRightPx(
+	clientX: number,
+	containerLeft: number,
+	containerWidth: number,
+): number | null {
 	if (containerWidth <= 0) return null;
-	return clampLeftPct((px / containerWidth) * 100);
+	return clampRightPx(containerLeft + containerWidth - clientX, containerWidth);
 }
 
 /** Minimal storage shape — matches the Web Storage API subset we use,
@@ -30,16 +48,17 @@ export interface KVStorage {
 	setItem(key: string, value: string): void;
 }
 
-export function readPersistedLeftPct(storage: KVStorage): number {
+export function readPersistedRightPx(storage: KVStorage): number {
 	const raw = storage.getItem(STORAGE_KEY);
-	if (raw === null || raw.trim() === "") return DEFAULT_LEFT_PCT;
-	// Number() yields NaN for corrupt values; clampLeftPct normalizes those
-	// to the default and out-of-range values to the bounds.
-	return clampLeftPct(Number(raw));
+	if (raw === null || raw.trim() === "") return DEFAULT_RIGHT_PX;
+	// Number() yields NaN for corrupt values; clampRightPx normalizes those
+	// to the default. Out-of-range values keep a floor of MIN_RIGHT_PX and
+	// are capped against the container later, when it is known.
+	return clampRightPx(Number(raw));
 }
 
-export function writePersistedLeftPct(storage: KVStorage, pct: number): void {
-	storage.setItem(STORAGE_KEY, String(clampLeftPct(pct)));
+export function writePersistedRightPx(storage: KVStorage, px: number): void {
+	storage.setItem(STORAGE_KEY, String(clampRightPx(px)));
 }
 
 /** The subset of `EventTarget` a drag needs — window in the app, a fake

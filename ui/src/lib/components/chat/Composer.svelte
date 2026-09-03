@@ -5,12 +5,13 @@
 	// (Esc cancels too, TD-1609). Enter submits, Shift+Enter newlines,
 	// auto-grows to eight rows before scrolling internally.
 	//
-	// Text files attach here three ways (TD-1709): the paperclip's picker,
-	// drag-and-drop onto the card, and paste. The refusal shown inline is a
-	// courtesy — the daemon refuses the same file again on arrival, and that
-	// is the gate that actually holds. Deliberately no `accept` filter on the
-	// picker: a file the user cannot even select produces no copy explaining
-	// why, and the copy is the point.
+	// Text files and PNG/JPEG/GIF/WebP images attach here three ways
+	// (TD-1709): the paperclip's picker, drag-and-drop onto the card, and
+	// paste. The refusal shown inline is a courtesy — the daemon refuses
+	// the same file again on arrival, and that is the gate that actually
+	// holds. Deliberately no `accept` filter on the picker: a file the
+	// user cannot even select produces no copy explaining why, and the
+	// copy is the point.
 	import {
 		acceptAttachment,
 		toChips,
@@ -21,6 +22,11 @@
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
 	import type { AttachmentLimits } from "../../protocol";
+	import { grok, matchingGrokCommands, runGrokCommand } from "../../grok.svelte.js";
+	import { session } from "../../session-status.svelte.js";
+	import { settings } from "../../settings.svelte.js";
+	import { appendTranscript, canDictate, dictationHint, osDictationAvailable } from "../../voice";
+	import { beginDictation, endDictation, voice } from "../../voice.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
@@ -136,7 +142,46 @@
 		refusal = null;
 	}
 
+	let slashHits = $derived(value.startsWith("/") ? matchingGrokCommands(value) : []);
+	let dictateOk = $derived(
+		canDictate({
+			enabled: settings.voiceEnabled,
+			osAvailable: osDictationAvailable(),
+			hasEndpoint: settings.voiceHasEndpoint,
+		}),
+	);
+
+	function holdMic(event: PointerEvent): void {
+		if (!dictateOk || disabled) return;
+		event.preventDefault();
+		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+		beginDictation((spoken) => {
+			value = appendTranscript(value, spoken);
+		});
+	}
+
+	function releaseMic(): void {
+		endDictation();
+	}
+
+	function pickSlash(name: string): void {
+		if (session.sessionId === null) {
+			value = `/${name} `;
+			return;
+		}
+		const rest = value.replace(/^\/\S*\s*/, "");
+		runGrokCommand(session.sessionId, name, rest);
+		value = "";
+		attachments = [];
+		refusal = null;
+	}
+
 	function handleKeydown(event: KeyboardEvent): void {
+		if (slashHits.length > 0 && event.key === "Tab") {
+			event.preventDefault();
+			pickSlash(slashHits[0].name);
+			return;
+		}
 		if (shouldSubmit(event.key, event.shiftKey)) {
 			event.preventDefault();
 			submit();
@@ -145,6 +190,18 @@
 </script>
 
 <div class="composer">
+	{#if slashHits.length > 0 && grok.commands.length > 0}
+		<ul class="slash" role="listbox" aria-label="Grok commands">
+			{#each slashHits as cmd (cmd.name)}
+				<li>
+					<button type="button" onclick={() => pickSlash(cmd.name)}>
+						<span class="slash-name">/{cmd.name}</span>
+						<span class="slash-desc">{cmd.description}</span>
+					</button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 	<!-- role/label so the drop target is announced, not just visible: the
 	     textarea's own label says what to type, this one says what can be
 	     dropped. -->
@@ -200,6 +257,26 @@
 			>
 				<Icon name="paperclip" size={16} />
 			</button>
+			{#if settings.voiceEnabled}
+				<button
+					type="button"
+					class="attach"
+					class:listening={voice.listening}
+					disabled={disabled || !dictateOk}
+					title={dictationHint({
+						enabled: settings.voiceEnabled,
+						osAvailable: osDictationAvailable(),
+						hasEndpoint: settings.voiceHasEndpoint,
+					})}
+					aria-label="Hold to talk"
+					aria-pressed={voice.listening}
+					onpointerdown={holdMic}
+					onpointerup={releaseMic}
+					onpointercancel={releaseMic}
+				>
+					<Icon name="mic" size={16} />
+				</button>
+			{/if}
 			{#if running && !disabled}
 				<button
 					type="button"
@@ -226,6 +303,8 @@
 	</div>
 	{#if refusal !== null}
 		<p class="refusal" role="alert">{refusal.message}</p>
+	{:else if voice.error !== null}
+		<p class="refusal" role="alert">{voice.error}</p>
 	{:else}
 		<p class="disclaimer">TST Desk can make mistakes — check its work.</p>
 	{/if}
@@ -234,6 +313,37 @@
 <style>
 	.composer {
 		padding: var(--space-2) var(--space-4) var(--space-3);
+	}
+
+	.slash {
+		list-style: none;
+		margin: 0 0 var(--space-2);
+		padding: 0;
+		border: 1px solid var(--color-hairline);
+		border-radius: var(--radius-md);
+		background: var(--color-lifted);
+		box-shadow: var(--shadow-md);
+		animation: rise var(--dur-enter) var(--ease-out);
+		max-height: 12rem;
+		overflow-y: auto;
+	}
+	.slash button {
+		display: flex;
+		gap: var(--space-2);
+		width: 100%;
+		text-align: left;
+		background: none;
+		border: 0;
+		color: inherit;
+		padding: 6px 10px;
+		cursor: pointer;
+		font-size: var(--text-sm);
+	}
+	.slash-name {
+		font-family: var(--font-mono);
+	}
+	.slash-desc {
+		color: var(--color-ink-muted);
 	}
 
 	/* The card carries the chrome; the textarea inside is chromeless. */
@@ -309,6 +419,11 @@
 
 	.attach:hover:not(:disabled) {
 		color: var(--color-ink);
+		background: var(--color-sunken);
+	}
+
+	.attach.listening {
+		color: var(--color-accent);
 		background: var(--color-sunken);
 	}
 

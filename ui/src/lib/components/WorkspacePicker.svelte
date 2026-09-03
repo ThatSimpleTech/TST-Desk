@@ -114,9 +114,9 @@
 		gap: var(--space-2);
 		font-size: var(--text-xs);
 		font-weight: var(--weight-medium);
-		color: var(--color-text);
+		color: var(--color-ink);
 		background: transparent;
-		border: 1px solid var(--color-border);
+		border: 1px solid var(--color-hairline);
 		border-radius: var(--radius-md);
 		padding: var(--space-1) var(--space-2);
 		cursor: pointer;
@@ -126,18 +126,18 @@
 	}
 
 	.workspace:hover {
-		background: var(--color-bg-subtle);
+		background: var(--color-sunken);
 	}
 
 	.folder {
 		display: inline-flex;
 		flex-shrink: 0;
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.chevron {
 		display: inline-flex;
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.ws-backdrop {
@@ -156,8 +156,8 @@
 		z-index: 20;
 		min-width: 16rem;
 		max-width: 26rem;
-		background: var(--color-bg-raised);
-		border: 1px solid var(--color-border);
+		background: var(--color-lifted);
+		border: 1px solid var(--color-hairline);
 		border-radius: var(--radius-md);
 		box-shadow: var(--shadow-lg);
 		padding: var(--space-1);
@@ -184,19 +184,19 @@
 	}
 
 	.ws-switch:hover {
-		background: var(--color-bg-subtle);
+		background: var(--color-sunken);
 	}
 
 	.ws-name {
 		font-size: var(--text-xs);
 		font-weight: var(--weight-medium);
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.ws-path {
 		font-size: 10px;
 		font-family: var(--font-mono);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -206,7 +206,7 @@
 	.ws-remove {
 		background: transparent;
 		border: 0;
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 		font-size: 10px;
 		padding: var(--space-1);
 		cursor: pointer;
@@ -215,12 +215,12 @@
 	}
 
 	.ws-remove:hover {
-		color: var(--color-danger);
-		background: var(--color-bg-subtle);
+		color: var(--color-err);
+		background: var(--color-sunken);
 	}
 
 	.ws-sep {
-		border-top: 1px solid var(--color-border);
+		border-top: 1px solid var(--color-hairline);
 		margin: var(--space-1) 0;
 	}
 
@@ -232,12 +232,12 @@
 		border-radius: var(--radius-sm);
 		padding: var(--space-1) var(--space-2);
 		font-size: var(--text-xs);
-		color: var(--color-text);
+		color: var(--color-ink);
 		cursor: pointer;
 		text-align: left;
 	}
 
 	.ws-open:hover {
-		background: var(--color-bg-subtle);
+		background: var(--color-sunken);
 	}
 </style>

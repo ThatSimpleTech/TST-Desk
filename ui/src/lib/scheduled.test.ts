@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientMessageUnion, DaemonEventUnion, JobEntry } from "./protocol";
-import { emptyDraft, jobWhen, jobsEmptyCopy, saveFromDraft, saveFromJob } from "./scheduled";
+import {
+	emptyDraft,
+	formatLocal,
+	jobFailed,
+	jobLastRun,
+	jobWhen,
+	jobsEmptyCopy,
+	saveFromDraft,
+	saveFromJob,
+} from "./scheduled";
 
 const mocks = vi.hoisted(() => ({
 	handler: null as ((e: DaemonEventUnion) => void) | null,
@@ -43,6 +52,10 @@ function job(over: Partial<JobEntry> & Pick<JobEntry, "id">): JobEntry {
 		next_run: null,
 		deliver_to: "window",
 		paused: false,
+		last_run: null,
+		last_status: null,
+		last_summary: null,
+		last_session_id: null,
 		...over,
 	};
 }
@@ -91,10 +104,37 @@ describe("copy and draft", () => {
 
 	it("says paused before the next slot", () => {
 		expect(jobWhen(job({ id: "j1", paused: true, next_run: "soon" }))).toBe("Paused");
-		expect(jobWhen(job({ id: "j1", next_run: "2026-08-21T18:00:00+00:00" }))).toBe(
-			"2026-08-21T18:00:00+00:00",
-		);
+		// next_run is stored UTC and shown local, so this must not be the raw
+		// string. The exact text is the runner's locale; the year is not.
+		const shown = jobWhen(job({ id: "j1", next_run: "2026-08-21T18:00:00+00:00" }), "UTC");
+		expect(shown).not.toBe("2026-08-21T18:00:00+00:00");
+		expect(shown).toContain("2026");
 		expect(jobWhen(job({ id: "j1" }))).toBe("every 1 hour");
+	});
+
+	it("shows a stored UTC instant in the viewer's own zone", () => {
+		const iso = "2026-08-21T18:00:00+00:00";
+		// The whole point of formatting: two viewers on the same instant
+		// read different wall-clock hours.
+		expect(formatLocal(iso, "UTC")).not.toBe(formatLocal(iso, "Asia/Tokyo"));
+	});
+
+	it("shows an unparseable instant as-is rather than Invalid Date", () => {
+		expect(formatLocal("soon")).toBe("soon");
+		expect(formatLocal("soon")).not.toMatch(/invalid/i);
+	});
+
+	it("reports the last fire, and that there was none", () => {
+		expect(jobLastRun(job({ id: "j1" }))).toBe("Never run");
+		expect(jobFailed(job({ id: "j1" }))).toBe(false);
+
+		const ok = job({ id: "j1", last_run: "2026-08-21T18:00:00+00:00", last_status: "ok" });
+		expect(jobLastRun(ok, "UTC")).toMatch(/^Ran /);
+		expect(jobFailed(ok)).toBe(false);
+
+		const bad = job({ id: "j1", last_run: "2026-08-21T18:00:00+00:00", last_status: "failed" });
+		expect(jobLastRun(bad, "UTC")).toMatch(/^Failed /);
+		expect(jobFailed(bad)).toBe(true);
 	});
 });
 
@@ -157,5 +197,38 @@ describe("scheduled store", () => {
 		setDraftField("workspace", "/other");
 		refreshJobs("/ws/hint");
 		expect(scheduled.draft.workspace).toBe("/other");
+	});
+
+	it("clears the draft once the daemon acks the create, keeping the workspace", () => {
+		setDraftField("workspace", "/ws/proj");
+		setDraftField("instruction", "summarize the inbox");
+		setDraftField("next_run", "2026-08-21T18:00:00+00:00");
+		expect(createJob()).toBe(true);
+		// Still filled: nothing has come back yet, so the create may still fail.
+		expect(scheduled.draft.instruction).toBe("summarize the inbox");
+
+		emit({ type: "job_list", seq: 1, jobs: [job({ id: "j1" })] });
+		expect(scheduled.draft.instruction).toBe("");
+		expect(scheduled.draft.next_run).toBe("");
+		expect(scheduled.draft.workspace).toBe("/ws/proj");
+	});
+
+	it("keeps what the user typed when the create is rejected", () => {
+		setDraftField("workspace", "/ws/proj");
+		setDraftField("instruction", "summarize the inbox");
+		createJob();
+		emit({ type: "error", seq: 1, code: "job_invalid", message: "missing instruction" });
+		expect(scheduled.draft.instruction).toBe("summarize the inbox");
+
+		// And the rejected create must not arm a later, unrelated list refresh.
+		emit({ type: "job_list", seq: 2, jobs: [] });
+		expect(scheduled.draft.instruction).toBe("summarize the inbox");
+	});
+
+	it("does not clear the draft on a job_list nobody asked for", () => {
+		setDraftField("instruction", "half-typed");
+		refreshJobs();
+		emit({ type: "job_list", seq: 1, jobs: [] });
+		expect(scheduled.draft.instruction).toBe("half-typed");
 	});
 });

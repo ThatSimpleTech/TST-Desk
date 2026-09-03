@@ -10,7 +10,8 @@
 		scheduled,
 		setDraftField,
 	} from '../scheduled.svelte.js';
-	import { jobsEmptyCopy, jobWhen } from '../scheduled';
+	import { jobFailed, jobLastRun, jobsEmptyCopy, jobWhen } from '../scheduled';
+	import EmptyState from './EmptyState.svelte';
 
 	let empty = $derived(jobsEmptyCopy());
 </script>
@@ -23,15 +24,19 @@
 			<p class="error">{scheduled.error}</p>
 		{/if}
 		{#if scheduled.items.length === 0}
-			<p class="empty">{empty}</p>
+			<EmptyState align="start" body={empty} />
 		{:else}
 			<ul class="list">
 				{#each scheduled.items as row (row.id)}
 					<li>
-						<div class="card">
+						<div class="card" class:card-failed={jobFailed(row)}>
 							<span class="card-name">{row.instruction}</span>
 							<span class="card-meta">{jobWhen(row)} · {row.deliver_to}</span>
 							<span class="card-path">{row.workspace}</span>
+							<span class="card-run" class:run-failed={jobFailed(row)}>{jobLastRun(row)}</span>
+							{#if row.last_summary}
+								<p class="card-summary">{row.last_summary}</p>
+							{/if}
 							<div class="actions">
 								<button class="action" type="button" onclick={() => pauseJob(row.id)}>
 									{row.paused ? 'Resume' : 'Pause'}
@@ -151,12 +156,6 @@
 		color: var(--color-ink-secondary);
 	}
 
-	.empty {
-		margin: var(--space-8) 0 0;
-		font-size: var(--text-sm);
-		color: var(--color-ink-muted);
-	}
-
 	.error {
 		margin: var(--space-4) 0 0;
 		font-size: var(--text-sm);
@@ -191,10 +190,40 @@
 	}
 
 	.card-meta,
-	.card-path {
+	.card-path,
+	.card-run {
 		font-size: var(--text-xs);
 		font-family: var(--font-mono);
 		color: var(--color-ink-secondary);
+	}
+
+	.card-run {
+		margin-top: var(--space-1);
+		color: var(--color-ink-muted);
+	}
+
+	.run-failed {
+		color: var(--color-err);
+	}
+
+	.card-failed {
+		border-color: var(--color-err);
+	}
+
+	/* The last summary is the only place a scheduled run's output is
+	   readable in the window; clamp it so one long turn cannot push the
+	   rest of the list off-screen. */
+	.card-summary {
+		margin: var(--space-1) 0 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-secondary);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		display: -webkit-box;
+		-webkit-line-clamp: 3;
+		line-clamp: 3;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 
 	.actions {

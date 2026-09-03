@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ATTACHMENT_LIMITS,
   acceptAttachment,
+  isImageBytes,
   formatBytes,
   isTextBytes,
   safeName,
@@ -73,13 +74,29 @@ describe("acceptAttachment", () => {
     expect(atob(outcome.draft.content_b64)).toBe("# Title\n");
   });
 
-  it("refuses a binary file with copy naming it and why", () => {
+  it("accepts a PNG header as an image", () => {
+    expect(isImageBytes(PNG)).toBe(true);
     const outcome = acceptAttachment("shot.png", PNG, limits());
+    expect(outcome.ok).toBe(true);
+  });
+
+  it("accepts JPEG, GIF, and WebP headers as images", () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
+    const webp = new Uint8Array([
+      0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
+    ]);
+    expect(acceptAttachment("a.jpg", jpeg, limits()).ok).toBe(true);
+    expect(acceptAttachment("a.gif", gif, limits()).ok).toBe(true);
+    expect(acceptAttachment("a.webp", webp, limits()).ok).toBe(true);
+  });
+
+  it("refuses a binary file with copy naming it and why", () => {
+    const outcome = acceptAttachment("blob.dat", new Uint8Array([0, 1, 2, 3, 4]), limits());
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.refusal.code).toBe("attachment_binary");
-    expect(outcome.refusal.message).toContain("shot.png");
-    expect(outcome.refusal.message).toContain("text files only");
+    expect(outcome.refusal.message).toContain("blob.dat");
   });
 
   it("refuses an oversize file and names the config key", () => {
@@ -139,7 +156,7 @@ describe("acceptAttachment", () => {
 
   it("never claims anything was sent — nothing has been", () => {
     const cases = [
-      acceptAttachment("shot.png", PNG, limits()),
+      acceptAttachment("blob.dat", new Uint8Array([0, 1, 2, 3, 4]), limits()),
       acceptAttachment("big.txt", bytes("xx"), limits({ max_file_bytes: 1 })),
       acceptAttachment("n.txt", bytes("x"), limits({ max_count: 1 }), [draft("a.txt", 1)]),
     ];

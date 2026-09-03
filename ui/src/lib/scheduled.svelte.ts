@@ -16,6 +16,10 @@ export const scheduled = $state({
 
 let started = false;
 let stopEvents: (() => void) | null = null;
+// A create is in flight. The daemon acks with `job_list`, which is the
+// only signal that it took the draft — clearing the form before that
+// would throw away the user's text on a validation error.
+let createPending = false;
 
 function ensureStarted(): void {
 	if (started) return;
@@ -34,6 +38,7 @@ export function startScheduled(): () => void {
 
 export function resetScheduled(): void {
 	started = false;
+	createPending = false;
 	stopEvents?.();
 	stopEvents = null;
 	scheduled.items = [];
@@ -64,7 +69,11 @@ export function createJob(): boolean {
 	ensureStarted();
 	scheduled.loading = true;
 	scheduled.error = null;
-	return sendToDaemon(saveFromDraft(scheduled.draft));
+	const sent = sendToDaemon(saveFromDraft(scheduled.draft));
+	// Only arm the reset if the frame actually went out; a create that
+	// never left must keep what the user typed.
+	if (sent) createPending = true;
+	return sent;
 }
 
 export function pauseJob(jobId: string): boolean {
@@ -89,9 +98,15 @@ function reduce(event: DaemonEventUnion): void {
 		scheduled.items = event.jobs;
 		scheduled.loading = false;
 		scheduled.error = null;
+		if (createPending) {
+			createPending = false;
+			// Keep the workspace — the next job is usually in the same one.
+			scheduled.draft = emptyDraft(scheduled.draft.workspace || null);
+		}
 		return;
 	}
 	if (event.type === "error" && (event.code === "job_invalid" || event.code === "job_not_found")) {
+		createPending = false;
 		scheduled.loading = false;
 		scheduled.error = event.message;
 	}

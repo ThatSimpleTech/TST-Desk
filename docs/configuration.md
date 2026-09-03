@@ -70,6 +70,7 @@ no effect.
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 | `autonomy` | mapping | see below | Rootless container used only for autonomous runs (TD-4301). Interactive sessions ignore this block. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
+| `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 
 ### `credentials`
 
@@ -372,7 +373,35 @@ notify:
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21
+engine:
+  kind: native
+  binary: ""
+voice:
+  base_url: ""
+  credential: ""
+  timeout_seconds: 30
 ```
+
+### `engine`
+
+Which agent loop new sessions start. The window is always a viewer; this picks whose loop it is viewing.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `kind` | `native` or `grok` | `native` | `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP (`grok agent stdio`). Auth for grok stays in `~/.grok/auth.json` — never this file. New sessions pick up a change; a running session keeps the engine it started with. |
+| `binary` | string | empty | Path to the `grok` executable. Empty means PATH, then `~/.grok/bin/grok`. |
+
+The Grok CLI itself is unchanged: `grok`, `grok -p`, `grok agent stdio`, SSH, and tmux keep working with or without TST Desk.
+
+### `voice`
+
+Hold-to-talk dictation (TD-4701). The Settings toggle is off by default and lives in `{user_data_dir}/voice.yaml`, not this file. This block only names a transcription endpoint. Empty `base_url` means the composer uses OS dictation (no network from `tstd`). Works with whichever engine the session is running — it fills the composer, it does not talk to the agent loop.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `base_url` | string | *empty* | OpenAI-compatible `/v1` root. `tstd` POSTs `{base_url}/audio/transcriptions`. Empty disables the endpoint path. The host is configuration, never Python. |
+| `credential` | string | *empty* | Named key from the catalog. Required when `base_url` is off-box; omit on loopback. |
+| `timeout_seconds` | float > 0 | `30` | How long to wait for the transcription response. |
 
 ### A preset
 

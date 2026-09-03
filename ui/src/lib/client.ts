@@ -65,9 +65,17 @@ const KNOWN_EVENT_TYPES = new Set([
   "error",
   "screen_frame", // TD-1710
   "cu_kill_state", // TD-3402 / TD-3404
+  "cu_session", // TD-3407: was missing; the Screen-pane glow never opened
   "design_hit", // TD-3403
   "cu_permissions", // TD-3302
   "job_list", // TD-3805
+  "grok_commands",
+  "grok_plan",
+  "grok_mode",
+  "grok_preview",
+  "grok_session_list",
+  "grok_extensions",
+  "transcript",
 ]);
 
 /**

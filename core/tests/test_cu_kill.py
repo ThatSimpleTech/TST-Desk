@@ -54,6 +54,12 @@ async def test_killed_blocks_click_not_screenshot(tmp_path: Path) -> None:
         None,
     )
 
+    # The kill itself tears the overlay down (TD-3404); that is the only
+    # driver call it is allowed to make.  Drop it so what follows measures
+    # the dispatcher alone.
+    assert [name for name, _ in mock.calls] == ["overlay_session"]
+    mock.calls.clear()
+
     dispatcher, _ = _dispatcher(tmp_path, mock)
     click = await dispatcher.dispatch("c1", "desktop_click", {"x": 1, "y": 2})
     shot = await dispatcher.dispatch("c2", "desktop_screenshot", {})

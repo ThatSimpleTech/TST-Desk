@@ -68,13 +68,23 @@ class TestDecodeAttachments:
         )
         assert decoded[0].text == text
 
+    def test_png_is_accepted_as_an_image(self) -> None:
+        decoded = decode_attachments(
+            [Attachment(name="shot.png", content_b64=b64(PNG_BYTES))], AttachmentLimits()
+        )
+        assert decoded[0].name == "shot.png"
+        assert decoded[0].media_type == "image/png"
+        assert decoded[0].data == PNG_BYTES
+        assert decoded[0].text == ""
+
     def test_binary_is_refused(self) -> None:
         with pytest.raises(AttachmentError) as excinfo:
             decode_attachments(
-                [Attachment(name="shot.png", content_b64=b64(PNG_BYTES))], AttachmentLimits()
+                [Attachment(name="blob.dat", content_b64=b64(b"\x00\x01\x02\x03"))],
+                AttachmentLimits(),
             )
         assert excinfo.value.code == "attachment_binary"
-        assert "shot.png" in excinfo.value.message
+        assert "blob.dat" in excinfo.value.message
 
     def test_nul_byte_is_binary_even_when_utf8_decodable(self) -> None:
         """NUL is legal UTF-8 and still the oldest reliable binary tell."""
@@ -171,7 +181,7 @@ class TestDecodeAttachments:
         """A partial send would drop a file the user can still see in the composer."""
         items = [
             Attachment(name="good.txt", content_b64=b64(b"fine")),
-            Attachment(name="bad.png", content_b64=b64(PNG_BYTES)),
+            Attachment(name="bad.dat", content_b64=b64(b"\x00\x01\x02")),
         ]
         with pytest.raises(AttachmentError):
             decode_attachments(items, AttachmentLimits())
@@ -179,7 +189,7 @@ class TestDecodeAttachments:
     def test_every_refusal_says_nothing_was_sent(self) -> None:
         """The message is dropped whole, so the copy must not imply otherwise."""
         cases: list[list[Attachment]] = [
-            [Attachment(name="shot.png", content_b64=b64(PNG_BYTES))],
+            [Attachment(name="blob.dat", content_b64=b64(b"\x00\x01\x02"))],
             [Attachment(name="big.txt", content_b64=b64(b"x" * 20))],
             [Attachment(name="x.txt", content_b64="not base64!!")],
             [Attachment(name="dir/", content_b64=b64(b"hi"))],
@@ -330,13 +340,11 @@ class TestDaemonRefusal:
         sess = daemon.session_registry.get(session_id)
         assert sess is not None
 
-        reply = await _send(daemon, session_id, [attach("screenshot.png", PNG_BYTES)])
+        reply = await _send(daemon, session_id, [attach("blob.dat", b"\x00\x01\x02\x03")])
 
         assert reply is not None
         assert reply["code"] == "attachment_binary"
-        assert "screenshot.png" in reply["message"]
-        # Actionable, and honest about why images are out for now.
-        assert "text" in reply["message"].lower()
+        assert "blob.dat" in reply["message"]
         assert sess._user_message_queue.empty()
         await daemon._shutdown()
 

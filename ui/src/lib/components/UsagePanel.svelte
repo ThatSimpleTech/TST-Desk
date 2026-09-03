@@ -20,6 +20,7 @@
 	import { openInEditor } from '../open-file';
 	import Icon from './Icon.svelte';
 	import UsageGroupRow from './UsageGroupRow.svelte';
+	import EmptyState from './EmptyState.svelte';
 
 	let groups = $derived(groupByBucket(usage.rows, usage.bucket));
 	let totals = $derived(totalsFor(groups));
@@ -62,12 +63,12 @@
 	{/if}
 
 	{#if usage.loading && !usage.loaded}
-		<p class="empty">Reading the audit store…</p>
+		<EmptyState compact body="Reading the audit store…" />
 	{:else if groups.length === 0}
-		<p class="empty">
-			No recorded spend yet. Every model call this workspace makes is written to the audit
-			store, and its token and dollar totals appear here by session, day, and week.
-		</p>
+		<EmptyState
+			title="No recorded spend yet"
+			body="Every model call this workspace makes is written to the audit store, and its token and dollar totals appear here by session, day, and week."
+		/>
 	{:else}
 		<div class="totals">
 			<span class="totals-label">{groups.length}
@@ -142,9 +143,9 @@
 	.bucket {
 		font-size: var(--text-xs);
 		font-weight: var(--weight-medium);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		background: transparent;
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-full);
 		padding: var(--space-1) var(--space-3);
 		cursor: pointer;
@@ -156,7 +157,7 @@
 	}
 
 	.bucket-active {
-		color: var(--color-accent-text);
+		color: var(--color-on-accent);
 		background: var(--color-accent);
 		border-color: var(--color-accent);
 	}
@@ -166,15 +167,15 @@
 		align-items: center;
 		background: transparent;
 		border: 0;
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 		padding: var(--space-1);
 		border-radius: var(--radius-sm);
 		cursor: pointer;
 	}
 
 	.action:hover:not(:disabled) {
-		color: var(--color-text);
-		background: var(--color-bg-subtle);
+		color: var(--color-ink);
+		background: var(--color-sunken);
 	}
 
 	.action:disabled {
@@ -182,18 +183,10 @@
 		opacity: 0.5;
 	}
 
-	.empty {
-		margin: 0;
-		padding: var(--space-4) var(--space-2);
-		font-size: var(--text-xs);
-		line-height: var(--leading-relaxed);
-		color: var(--color-text-secondary);
-	}
-
 	.error {
 		margin: 0;
 		font-size: var(--text-xs);
-		color: var(--color-danger);
+		color: var(--color-err);
 	}
 
 	.totals {
@@ -202,12 +195,12 @@
 		justify-content: space-between;
 		gap: var(--space-3);
 		padding-bottom: var(--space-2);
-		border-bottom: var(--border-width) solid var(--color-border);
+		border-bottom: var(--border-width) solid var(--color-hairline);
 	}
 
 	.totals-label {
 		font-size: var(--text-xs);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.totals-figures {
@@ -231,13 +224,13 @@
 	}
 
 	.cost {
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.exports {
 		margin-top: auto;
 		padding-top: var(--space-3);
-		border-top: var(--border-width) solid var(--color-border);
+		border-top: var(--border-width) solid var(--color-hairline);
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
@@ -245,7 +238,7 @@
 
 	.exports-label {
 		font-size: var(--text-xs);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.exports-buttons {
@@ -257,9 +250,9 @@
 		font-size: var(--text-xs);
 		font-weight: var(--weight-medium);
 		font-family: var(--font-mono);
-		color: var(--color-text);
+		color: var(--color-ink);
 		background: transparent;
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-md);
 		padding: var(--space-1) var(--space-3);
 		cursor: pointer;
@@ -280,12 +273,12 @@
 		border: 0;
 		padding: 0;
 		font-size: var(--text-xs);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		cursor: pointer;
 	}
 
 	.export-result:hover {
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.export-path {

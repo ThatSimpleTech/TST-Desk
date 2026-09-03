@@ -88,6 +88,11 @@ class TestInstructions:
         assert "Screen Recording" in text
         assert "cmd" in text
 
+    def test_macos_instructions_tell_the_model_not_to_reprompt(self) -> None:
+        text = server.instructions("darwin")
+        assert "at most once" in text
+        assert "Cmd+Q" in text
+
     def test_windows_instructions_name_windows_and_its_modifiers(self) -> None:
         text = server.instructions("win32")
         assert "Windows" in text

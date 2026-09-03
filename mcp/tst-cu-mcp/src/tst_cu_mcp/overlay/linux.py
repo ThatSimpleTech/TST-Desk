@@ -297,7 +297,14 @@ def _load_x11() -> Any:
     lib.XInternAtom.restype = c_ulong
     lib.XInternAtom.argtypes = [c_void_p, c_char_p, c_int]
     lib.XChangeProperty.argtypes = [
-        c_void_p, c_ulong, c_ulong, c_ulong, c_int, c_int, c_void_p, c_int
+        c_void_p,
+        c_ulong,
+        c_ulong,
+        c_ulong,
+        c_int,
+        c_int,
+        c_void_p,
+        c_int,
     ]
     lib.XMapRaised.argtypes = [c_void_p, c_ulong]
     lib.XUnmapWindow.argtypes = [c_void_p, c_ulong]
@@ -319,7 +326,15 @@ def _load_xext() -> Any:
 
     lib = ctypes.cdll.LoadLibrary("libXext.so.6")
     lib.XShapeCombineRectangles.argtypes = [
-        c_void_p, c_ulong, c_int, c_int, c_int, c_void_p, c_int, c_int, c_int
+        c_void_p,
+        c_ulong,
+        c_int,
+        c_int,
+        c_int,
+        c_void_p,
+        c_int,
+        c_int,
+        c_int,
     ]
     _XEXT_NS = lib
     return lib

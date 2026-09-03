@@ -5383,6 +5383,79 @@ once through `run_due_jobs` on the in-process daemon; injected
 
 ---
 
+### TD-3807 — A scheduled job ran and told nobody
+**Size:** 3 · **Depends on:** TD-3804, TD-3805, TD-3806
+
+**Acceptance criteria:**
+- [x] The daemon's own entrypoint delivers on every channel, not only
+      when a test injects `notify_send`
+- [x] `deliver_to: window` reaches the user rather than a log line
+- [x] A job carries what its last fire did — when, whether it worked,
+      what it said, and which session it ran in — on disk and on the row
+- [x] The Scheduled pane shows the receipt, and a failed run is legible
+      as one without opening anything
+- [x] An OS notification fires for a `window` job that ran while the
+      window was in the background; `slack` / `ntfy` do not double up
+- [x] Cron day-of-month and day-of-week OR when both are restricted
+- [x] A spent one-shot cannot be re-fired by the rail's Pause/Resume
+- [x] A regression test drives the real handler, not an injected hook
+
+Done (2026-08-31): the scheduler ran jobs correctly and produced nothing
+a user could see. `Daemon.__init__` built `RecordingDeliver(send=notify_send)`
+and the real entrypoint never passes `notify_send`, so `send` was `None`
+on every non-test path: slack and ntfy logged "delivery skipped (no send
+hook)" and `window` logged a summary length. TD-3806's harness stayed
+green throughout because injecting that hook is exactly what it does —
+the one path CI exercised was the one path production never took. `send`
+now defaults to `_send_scheduled_notify` and `on_window` to
+`_deliver_to_window`.
+
+Delivery alone was still not enough to see: nothing recorded that a fire
+had happened, so a job whose turn failed looked identical to one that had
+never run. `Job` gains `last_run` / `last_status` / `last_summary` /
+`last_session_id` (all optional, so an existing `jobs.json` still loads),
+stamped by `record_run` on the advanced copy and preserved across edits —
+Pause is a `save_job`, and the first cut of it erased the history it was
+meant to show. `run_turn_on_daemon` returns a `TurnResult` instead of a
+bare string so every early return (a workspace that moved, a session that
+never registered) lands on the row as a failure rather than as silence,
+and a turn that produced no text is a failure too. `run_due_jobs` pushes
+a fresh `job_list` only when something actually ran.
+
+`window` delivery is the receipt plus an OS notification: the pane shows
+"Ran"/"Failed" with the summary, and `os-notify` rings for a run that
+landed while the window was in the background, keyed on `last_run` so
+reconnecting never replays history and a run the user watched happen does
+not ring afterwards. `slack` and `ntfy` deliver themselves and are left
+alone.
+
+Two more the audit turned up. `_day_matches` ANDed day-of-month with
+day-of-week, so `0 0 1 * 1` fired only on Mondays falling on the 1st
+instead of Vixie's "the 1st, and every Monday" — most of such a schedule's
+fires were silently dropped. And `advance_job` paused a spent one-shot
+while leaving its `next_run` in the past, so Resume — the rail's only
+handle on a row — re-ran last week's instruction on the next tick; the
+slot is now cleared, which widens `Job`'s "cadence or next_run" invariant
+to allow a job that has already run (create still refuses both-empty via
+`validate_draft`).
+
+Two protocol-parity leaks closed while in here, both the same shape as
+TD-803 and TD-1706: `cu_session` was absent from `client.ts`'s
+`KNOWN_EVENT_TYPES`, so the Screen pane's glow was dead at runtime and
+green in every unit test; and `checkpoint_notice` passed the gate but no
+store reduced it, so a user whose workspace was not a git repository was
+never told checkpoints were off. `core/tests/test_protocol_parity.py` now
+pins the daemon↔UI type sets in both directions, and
+`client-event-gate.test.ts` gained a check that every declared event has a
+reader — the gate list itself excluded, or the check passes on the gate
+alone.
+
+Suite: 2760 passed / 8 skipped, ruff + `mypy --strict` clean over 118
+files, vitest 1105, svelte-check 451 files 0 errors 0 warnings, cargo
+clippy `-D warnings` clean, 47 Rust tests.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
@@ -5829,10 +5902,17 @@ the product." Web search is already TD-609/TD-610.
 **Size:** 8 · **Depends on:** TD-1004
 
 **Acceptance criteria:**
-- [ ] A hold-to-talk control transcribes into the composer locally or
+- [x] A hold-to-talk control transcribes into the composer locally or
       via a user-configured speech endpoint (config-sourced host)
-- [ ] No always-on mic. No cloud default
-- [ ] Off by default
+- [x] No always-on mic. No cloud default
+- [x] Off by default
+
+**Completed (2026-09-02):** Settings → Appearance toggle, default off,
+`{user_data_dir}/voice.yaml`. Composer mic is hold-to-talk. OS
+`SpeechRecognition` when the webview has it; otherwise a clip POSTed as
+`transcribe` to `voice.base_url` (config-sourced, never a Python
+literal). Fills the composer for whichever engine is running. No
+always-on capture.
 
 ---
 
@@ -5851,9 +5931,14 @@ the product." Web search is already TD-609/TD-610.
 **Size:** 5 · **Depends on:** TD-2902
 
 **Acceptance criteria:**
-- [ ] Tray icon with running-count; Quit lives here too
-- [ ] A second window can attach to a different session
-- [ ] One daemon
+- [x] Tray icon with running-count; Quit lives here too
+- [x] A second window can attach to a different session
+- [x] One daemon
+
+**Completed (2026-09-02):** Host-owned tray (Show / New window / Quit).
+Tooltip counts `running` and `awaiting_approval` across engines. Extra
+windows are `desk-*` webviews on the same daemon; closing a non-last
+window destroys it, closing the last still hides when coworker is on.
 
 ---
 
@@ -6724,4 +6809,72 @@ Found by the 2026-08-21 ox-alpha review (Bug 5 / Enhancement 3).
 Closed with a `[[tool.mypy.overrides]]` disabling only `attr-defined` for
 `tst_cu_mcp.backends.windows`: those ctypes names resolve only when mypy itself
 runs on Windows, where the override is a no-op and full checking still applies.
+
+---
+
+## Postmortem — Grok Build engine in TST Desk (2026-09-02)
+
+Not a v0.1 story. Built against the Grok Desktop plan and rolled into this
+shell instead of a second Electron app. The CLI remains the engine
+(`grok agent stdio` over ACP). TST Desk is the viewer.
+
+### What landed
+
+- **Engine switch** (`engine.kind` native | grok) in Settings → Engine.
+- **ACP loop** mapping text, thinking, tools, permissions, plan, slash
+  commands, modes, usage, and preview (media paths + loopback URLs).
+- **Preview / Plan** right-pane tabs. Imagine-style image/video/PDF/HTML
+  paths and `http://127.0.0.1` URLs open in Preview. Plan mode can be
+  approved from the pane.
+- **Image attachments** (PNG/JPEG/GIF/WebP by magic bytes) go to Grok as
+  ACP image blocks. Native loop still inlines a mention, not bytes.
+- **Slash palette** in the composer when Grok advertises commands.
+- **Open in Terminal** (`grok --resume`) from the command palette.
+- **Grok TUI session list and extensions** (MCP/skills/plugins) read from
+  `~/.grok` — no secrets, no second session store.
+
+### Engine-agnostic furniture (2026-09-02)
+
+Voice, tray, and notification Approve/Deny shipped because they work
+with whichever loop is running — they never talk to ACP.
+
+- **Voice (TD-4701):** hold-to-talk into the composer.
+- **Tray (TD-4703):** running-count, New window, Quit.
+- **Notification Approve/Deny:** class-B only. Class C still opens the card.
+
+### Still missing vs an ideal Grok app
+
+- `grok://` URLs, bundled CLI updates.
+- Embedded TUI PTY (Open in Terminal is the escape hatch).
+- Client-owned ACP `fs` / `terminal` capabilities (Grok still owns tools).
+- Grok spend on the title-bar meter is best-effort from ACP usage; many
+  backends omit cost, so `$0` can still mean "unreported".
+- Computer-use Screen pane is the native `desktop_`/`browser_` tools.
+  A Grok-engine session only fills Screen if Grok writes the same events.
+
+### Files
+
+`core/tstd/grok_acp.py`, `grok_loop.py`, `grok_home.py`; protocol events
+`grok_*`; UI `PreviewPane`, `PlanPane`, `grok.svelte.ts`, Engine settings.
+
+---
+
+### TD-4827 — Inspector and session rail resize to any width
+**Size:** 2 · **Depends on:** TD-1001, TD-1701
+
+**Acceptance criteria:**
+- [x] Dragging the chat|activity divider sets the inspector to a pixel width,
+      not a 20–80% ratio of the split
+- [x] Dragging the session rail's right edge is not capped at 440px
+- [x] Both bars keep a 200px floor; the inspector also leaves the chat ≥280px;
+      the rail leaves chat+inspector their minima
+- [x] Widths persist in `localStorage` and restore on launch
+- [x] Tests: clamp/persist math for both bars; TD-1011 drag still resizes after
+      leaving the 4px divider
+
+**Notes:** User request 2026-09-03: the bar to the right of the sessions should
+resize to whatever size they want. Class B recorded in DECISIONS.md.
+
+**Completed (2026-09-03):** SplitPane sizes the right pane in pixels
+(`tstd-desktop.splitpane.rightPx`). The rail drops `MAX_RAIL_PX`.
 

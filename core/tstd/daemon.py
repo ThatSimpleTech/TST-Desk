@@ -59,6 +59,7 @@ from .config_write import (
     delete_credential_entry,
     save_active_preset,
     save_credential,
+    save_engine_kind,
     save_tier_credential,
     save_tier_slug,
 )
@@ -81,6 +82,7 @@ from .cu_indicators import (
 )
 from .desktop import DesktopDriver, desktop_driver_from_config
 from .desktop.grounding_client import GroundingClient
+from .desktop.host_probe import host_permissions
 from .desktop.permissions import (
     cu_permissions_from_report,
     driver_cu_platform,
@@ -91,6 +93,9 @@ from .desktop.permissions import (
 )
 from .desktop.protocol import DesktopError
 from .discovery import resolve_tier_slugs
+from .grok_acp import GrokEngineError, find_grok_binary
+from .grok_home import list_grok_extensions, list_grok_sessions, open_in_terminal
+from .grok_loop import grok_loop
 from .keychain import (
     KeychainError,
     KeychainLockedError,
@@ -117,7 +122,9 @@ from .memory_trigger import (
     distill_if_due,
 )
 from .notify.ntfy import schedule as schedule_ntfy_notify
+from .notify.ntfy import send as send_ntfy_notify
 from .notify.slack import schedule as schedule_slack_notify
+from .notify.slack import send as send_slack_notify
 from .policy import (
     add_rule,
     load_approved_imports,
@@ -133,6 +140,7 @@ from .protocol import (
     AlwaysAllow,
     ApiKeyValidated,
     Approve,
+    ApproveGrokPlan,
     ArchiveSession,
     Artifact,
     ArtifactList,
@@ -168,12 +176,19 @@ from .protocol import (
     GetInstructionStack,
     GetSetupState,
     GetUsage,
+    GrokExtension,
+    GrokExtensions,
+    GrokMode,
+    GrokSessionEntry,
+    GrokSessionList,
     HandshakeError,
     InstructionFileEntry,
     InstructionFiles,
     JobEntry,
     JobList,
     ListArtifacts,
+    ListGrokExtensions,
+    ListGrokSessions,
     ListInstructions,
     ListJobs,
     ListMemory,
@@ -189,14 +204,17 @@ from .protocol import (
     MoveSession,
     NewSession,
     OpenArtifact,
+    OpenInTerminal,
     OpenWorkspace,
     PolicyRules,
     PolicyRuleSummary,
     RemovePin,
     RenameSession,
+    ResetCuPermissions,
     Resume,
     RevokePolicyRule,
     RunDiagnostics,
+    RunGrokCommand,
     SaveCharter,
     SaveJob,
     SaveMemory,
@@ -208,6 +226,8 @@ from .protocol import (
     SetCredential,
     SetCuIndicators,
     SetCuKill,
+    SetEngine,
+    SetGrokMode,
     SetLoadGlobalMemory,
     SetPreset,
     SetRemoteAttach,
@@ -217,10 +237,13 @@ from .protocol import (
     SetTierCredential,
     SetTierSlug,
     SetupState,
+    SetVoice,
     SetWorkspacePin,
     Shutdown,
     StartAutonomy,
     TierState,
+    Transcribe,
+    Transcript,
     UsageExported,
     UsageReport,
     UsageRollup,
@@ -259,8 +282,13 @@ from .remote_attach import (
     save_remote_attach,
 )
 from .router import TIER_NAMES, TierRouter
-from .scheduler.models import Job, JobDraft, JobValidationError
-from .scheduler.runner import RecordingDeliver, run_due_jobs, run_turn_on_daemon
+from .scheduler.models import DeliverTo, Job, JobDraft, JobValidationError
+from .scheduler.runner import (
+    RecordingDeliver,
+    TurnResult,
+    run_due_jobs,
+    run_turn_on_daemon,
+)
 from .scheduler.runner import SendFn as NotifySendFn
 from .scheduler.store import delete_job, get_job, list_jobs, save_job
 from .session import (
@@ -276,6 +304,14 @@ from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
+from .voice import (
+    MAX_AUDIO_BYTES,
+    VoiceError,
+    load_voice,
+    save_voice,
+    transcribe_audio,
+    voice_has_endpoint,
+)
 from .workspace_pins import load_workspace_pins, save_workspace_pins
 from .ws import WebSocketServer
 
@@ -399,6 +435,35 @@ def _check_git() -> DiagnosticCheck:
     return DiagnosticCheck(name="git", status="ok", detail=f"{version} ({path})")
 
 
+def _probe_grok(configured: str) -> tuple[Path | None, bool]:
+    """PATH / configured binary probe. Never a credential."""
+    try:
+        path = find_grok_binary(configured)
+    except GrokEngineError:
+        return None, False
+    return path, True
+
+
+def _check_grok(configured: str, engine_kind: str) -> DiagnosticCheck:
+    """Grok CLI reachable when the grok engine is in play, else skip."""
+    try:
+        path = find_grok_binary(configured)
+    except GrokEngineError as exc:
+        if engine_kind != "grok":
+            return DiagnosticCheck(
+                name="grok_cli",
+                status="skip",
+                detail="not using the grok engine",
+            )
+        return DiagnosticCheck(
+            name="grok_cli",
+            status="fail",
+            detail=exc.message,
+            fix="Install Grok Build and run `grok login`.",
+        )
+    return DiagnosticCheck(name="grok_cli", status="ok", detail=str(path))
+
+
 def _check_writable(workspace: Path) -> DiagnosticCheck:
     """The workspace accepts a file (TD-1104). Runs in a worker thread.
 
@@ -477,6 +542,10 @@ def _job_entry(job: Job) -> JobEntry:
         next_run=job.next_run,
         deliver_to=job.deliver_to,
         paused=job.paused,
+        last_run=job.last_run,
+        last_status=job.last_status,
+        last_summary=job.last_summary,
+        last_session_id=job.last_session_id,
     )
 
 
@@ -528,6 +597,7 @@ class Daemon:
         self.skip_all_approvals = load_skip_all(self.data_dir)
         self.load_global_memory = load_global_memory(self.data_dir)
         self.coworker_enabled = load_coworker(self.data_dir)
+        self.voice_enabled = load_voice(self.data_dir)
         self.remote_attach_enabled, self.remote_attach_last_bind = load_remote_attach(self.data_dir)
         self.cu_indicators = load_cu_indicators(self.data_dir)
         set_current_prefs(self.cu_indicators)
@@ -551,6 +621,7 @@ class Daemon:
             bind=bind,
             interfaces=interfaces,
         )
+        self._cu_server: Any = None
         # Shared across sessions so the kill-switch is process-wide.
         # Empty computer_use.command is the mock; a command is stdio MCP.
         self.desktop_driver: DesktopDriver = desktop_driver_from_config(
@@ -561,7 +632,14 @@ class Daemon:
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
         self._notify_send = notify_send
         self._scheduler_tick = scheduler_tick
-        self._scheduler_deliver = RecordingDeliver(send=notify_send)
+        # TD-3807: default the hook instead of leaving it None. The real
+        # entrypoint never passed one, so slack and ntfy delivery logged
+        # "skipped (no send hook)" and the user saw nothing on any channel.
+        # Tests still inject their own.
+        self._scheduler_deliver = RecordingDeliver(
+            send=notify_send if notify_send is not None else self._send_scheduled_notify,
+            on_window=self._deliver_to_window,
+        )
 
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
@@ -634,10 +712,13 @@ class Daemon:
         credentials = await self._credential_summaries()
         has_api_key = any(item.stored for item in credentials)
         tiers = self.config.tiers()
+        grok_path, grok_ok = _probe_grok(self.config.engine.binary)
+        engine_kind = self.config.engine.kind
+        key_required = self.config.requires_api_key() and engine_kind != "grok"
         return SetupState(
             seq=1,
             has_api_key=has_api_key,
-            key_required=self.config.requires_api_key(),
+            key_required=key_required,
             presets=sorted(self.config.presets),
             active_preset=self.config.active_preset,
             tier_slugs=dict(self._slug_snapshot.get(self.config.active_preset, {})),
@@ -653,6 +734,11 @@ class Daemon:
             credentials=credentials,
             tier_credentials={name: tiers[name].credential for name in tiers},
             tier_loopback={name: is_loopback_url(tiers[name].base_url) for name in tiers},
+            engine=engine_kind,
+            grok_available=grok_ok,
+            grok_binary=str(grok_path) if grok_path is not None else None,
+            voice_enabled=self.voice_enabled,
+            voice_has_endpoint=voice_has_endpoint(self.config.voice),
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
@@ -773,12 +859,34 @@ class Daemon:
             return event.session_id
         return None
 
-    async def _cu_permissions_event(self, *, first_run: bool) -> CuPermissions:
-        """Probe the driver without prompting. Stamp first-run when asked."""
-        raw = await probe_report(self.desktop_driver)
+    async def _cu_permissions_event(self, *, first_run: bool, reset: bool = False) -> CuPermissions:
+        """Probe the host first, then the driver. Stamp first-run when asked.
+
+        On macOS the Tauri host (``cu-agent.sock``) is the process TCC
+        attributes grants to, so its report — with stale-grant detection —
+        wins over the driver's; the mock driver always says granted, which
+        is what the pane used to show (TD-4823). ``reset`` runs ``tccutil
+        reset`` in the host and re-prompts. Neither path prompts otherwise.
+        """
+        raw = await host_permissions(self.data_dir, reset=reset)
+        if raw is None:
+            raw = await probe_report(self.desktop_driver)
         if first_run:
             mark_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
-        return cu_permissions_from_report(raw, first_run=first_run)
+        event = cu_permissions_from_report(raw, first_run=first_run)
+        if event.platform == "macos":
+            log.info(
+                "cu permissions probed path=%s signing=%s screen=%s ax=%s "
+                "stale_screen=%s stale_ax=%s reset=%s",
+                event.actuation_path or "driver",
+                event.signing or "unknown",
+                event.screen_recording,
+                event.accessibility,
+                event.stale_screen_recording,
+                event.stale_accessibility,
+                reset,
+            )
+        return event
 
     async def _emit_cu_permissions(self, session_id: str, *, first_run: bool) -> None:
         """Push ``cu_permissions`` to clients attached to *session_id*."""
@@ -987,6 +1095,9 @@ class Daemon:
             )
 
         checks.append(await asyncio.to_thread(_check_git))
+        checks.append(
+            await asyncio.to_thread(_check_grok, self.config.engine.binary, self.config.engine.kind)
+        )
 
         workspace = self._current_workspace()
         if workspace is None:
@@ -1144,6 +1255,10 @@ class Daemon:
             self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
             self._audit_writer.start()
         await self.ws_server.start()
+        if sys.platform == "darwin":
+            from .cu_host import start_cu_socket
+
+            self._cu_server = await start_cu_socket(self.data_dir)
         self._tasks.append(asyncio.create_task(self._scheduler_loop()))
         await self._shutdown_event.wait()
 
@@ -1151,6 +1266,12 @@ class Daemon:
         """Graceful shutdown: distill, cancel tasks, close sockets, flush."""
         log.info("shutting down")
         await self._distill_live_sessions()
+
+        if self._cu_server is not None:
+            from .cu_host import stop_cu_socket
+
+            await stop_cu_socket(self.data_dir)
+            self._cu_server = None
 
         # Stop the WebSocket server (closes clients and removes the port file)
         await self.ws_server.stop()
@@ -1247,16 +1368,57 @@ class Daemon:
     async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
         """Wake due jobs against this daemon. Tests call this directly."""
         when = now if now is not None else datetime.now(UTC)
-        return await run_due_jobs(
+        ran = await run_due_jobs(
             self.data_dir,
             when,
             run_turn=self._scheduled_run_turn,
             deliver=self._scheduler_deliver,
         )
+        if ran:
+            # Both halves of the row moved: next_run advanced and the run
+            # receipt landed. Nothing asked for this, so push it — otherwise
+            # an open Scheduled pane shows a fire time that has passed and
+            # no sign the job ran (TD-3807).
+            await self._push_job_list()
+        return ran
 
-    async def _scheduled_run_turn(self, workspace: Path, message: str) -> str:
+    async def _push_job_list(self) -> None:
+        """Broadcast the job list to every handshaken client. Never raises."""
+        try:
+            payload = await self._job_list_event()
+            await self.ws_server.broadcast(payload)
+        except Exception:
+            log.exception("failed to push scheduled job list")
+
+    async def _scheduled_run_turn(self, workspace: Path, message: str) -> TurnResult:
         """In-process ``tst run``: one session, one message, no nested daemon."""
         return await run_turn_on_daemon(self, workspace, message)
+
+    async def _send_scheduled_notify(self, channel: DeliverTo, summary: str) -> None:
+        """Deliver a scheduled summary to slack or ntfy (TD-3807).
+
+        Both modules are already no-ops when their channel is disabled or
+        its secret is missing, and neither raises, so this does not guard
+        again — it only routes.
+        """
+        if channel == "slack":
+            await send_slack_notify(self.config, summary)
+        elif channel == "ntfy":
+            await send_ntfy_notify(self.config, summary)
+
+    async def _deliver_to_window(self, summary: str) -> None:
+        """Window delivery: the run receipt is the delivery (TD-3807).
+
+        There is no unsolicited "here is some text" frame in the protocol,
+        and inventing one would put model output on screen with no session
+        behind it. Instead the outcome is stamped on the job by the runner
+        and pushed as a fresh ``job_list`` once the tick finishes, so the
+        Scheduled pane shows what happened and which session it happened in.
+        """
+        log.info(
+            "scheduled delivery to window",
+            extra={"extra_fields": {"summary_len": len(summary)}},
+        )
 
     async def _parent_watchdog(self, parent_pid: int) -> None:
         """Poll the host's liveness and shut down if it dies (TD-1002).
@@ -1394,6 +1556,11 @@ class Daemon:
                 )
                 return build_error(e.code, e.message, session_id=msg.session_id)
 
+            found.pending_images = [
+                (item.name, item.data, item.media_type)
+                for item in decoded
+                if item.data is not None and item.media_type is not None
+            ]
             await found.add_user_message(render_user_content(msg.content, decoded))
             # Title from the user's text, not the rendered body — an
             # attachment-only message must stay untitled (TD-3001).
@@ -1648,6 +1815,36 @@ class Daemon:
             save_coworker(self.data_dir, msg.enabled)
             return (await self._setup_state_event()).model_dump_json()
 
+        if isinstance(msg, SetVoice):
+            self.voice_enabled = msg.enabled
+            save_voice(self.data_dir, msg.enabled)
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, Transcribe):
+            if not self.voice_enabled:
+                return build_error(
+                    "voice_off",
+                    "Dictation is off. Turn it on in Settings → Appearance.",
+                )
+            try:
+                import base64
+                import binascii
+
+                audio = base64.b64decode(msg.audio_b64, validate=True)
+            except (binascii.Error, ValueError):
+                return build_error("bad_request", "The audio clip was not valid base64.")
+            if len(audio) > MAX_AUDIO_BYTES:
+                return build_error(
+                    "attachment_too_large",
+                    f"That clip is {len(audio)} bytes; the limit is {MAX_AUDIO_BYTES}. "
+                    "Hold a shorter phrase, or use OS dictation.",
+                )
+            try:
+                text = await transcribe_audio(audio, msg.mime, self.config.voice)
+            except VoiceError as exc:
+                return Transcript(seq=1, text="", error=exc.message).model_dump_json()
+            return Transcript(seq=1, text=text).model_dump_json()
+
         if isinstance(msg, SetRemoteAttach):
             return await self._handle_set_remote_attach(msg)
 
@@ -1856,6 +2053,103 @@ class Daemon:
             )
             return (await self._setup_state_event()).model_dump_json()
 
+        if isinstance(msg, SetEngine):
+            try:
+                save_engine_kind(msg.kind)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            try:
+                self._reload_user_config()
+            except ConfigError as e:
+                return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+            log.info(
+                "engine changed",
+                extra={"extra_fields": {"engine": msg.kind}},
+            )
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetGrokMode):
+            found = self.session_registry.get(msg.session_id)
+            if found is None or found.grok_acp is None or not found.grok_session_id:
+                return build_error(
+                    "not_grok_session",
+                    "This session is not running the Grok engine.",
+                    session_id=msg.session_id,
+                )
+            try:
+                await found.grok_acp.set_mode(found.grok_session_id, msg.mode)
+            except GrokEngineError as e:
+                return build_error(e.code, e.message, session_id=msg.session_id)
+            event = GrokMode(session_id=found.id, mode=msg.mode, modes=[], seq=1)
+            await found.event_log.add(event)
+            return event.model_dump_json()
+
+        if isinstance(msg, RunGrokCommand):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error("session_not_found", "Session not found")
+            name = msg.name.strip().lstrip("/")
+            argument = msg.argument.strip()
+            text = f"/{name} {argument}".strip()
+            await found.add_user_message(text)
+            return None
+
+        if isinstance(msg, ApproveGrokPlan):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error("session_not_found", "Session not found")
+            comment = msg.comment.strip()
+            text = "Approve the plan and start implementing."
+            if comment:
+                text = f"{text} {comment}"
+            await found.add_user_message(text)
+            return None
+
+        if isinstance(msg, ListGrokSessions):
+            rows = await asyncio.to_thread(list_grok_sessions)
+            return GrokSessionList(
+                seq=1,
+                sessions=[
+                    GrokSessionEntry(
+                        id=row["id"],
+                        title=row["title"],
+                        cwd=row["cwd"],
+                        updated_at=row["updated_at"],
+                    )
+                    for row in rows
+                ],
+            ).model_dump_json()
+
+        if isinstance(msg, ListGrokExtensions):
+            rows = await asyncio.to_thread(list_grok_extensions)
+            return GrokExtensions(
+                seq=1,
+                items=[
+                    GrokExtension(
+                        kind=row["kind"],  # type: ignore[arg-type]
+                        name=row["name"],
+                        detail=row.get("detail", ""),
+                    )
+                    for row in rows
+                ],
+            ).model_dump_json()
+
+        if isinstance(msg, OpenInTerminal):
+            found = self.session_registry.get(msg.session_id)
+            grok_id = found.grok_session_id if found is not None else None
+            cwd = found.workspace_path if found is not None else ""
+            if not grok_id:
+                return build_error(
+                    "not_grok_session",
+                    "No Grok session id to resume in a terminal.",
+                    session_id=msg.session_id,
+                )
+            try:
+                await asyncio.to_thread(open_in_terminal, grok_id, cwd)
+            except (OSError, ValueError) as e:
+                return build_error("open_failed", str(e), session_id=msg.session_id)
+            return None
+
         if isinstance(msg, SetPreset):
             if msg.name not in self.config.presets:
                 return build_error(
@@ -1911,6 +2205,11 @@ class Daemon:
 
         if isinstance(msg, CheckCuPermissions):
             return (await self._cu_permissions_event(first_run=False)).model_dump_json()
+
+        if isinstance(msg, ResetCuPermissions):
+            # Window action (TD-4823): the host resets its TCC rows and
+            # re-prompts. Never reachable from a tool call.
+            return (await self._cu_permissions_event(first_run=False, reset=True)).model_dump_json()
 
         if isinstance(msg, EndSession):
             found = self.session_registry.get(msg.session_id)
@@ -2077,17 +2376,35 @@ class Daemon:
         )
 
         sink = self._audit_writer
+        if self.config.engine.kind == "grok":
+
+            async def grok_factory(s: Session) -> None:
+                await grok_loop(
+                    s,
+                    binary=self.config.engine.binary,
+                    yolo=self.skip_all_approvals,
+                    skip_all_fn=lambda: self.skip_all_approvals,
+                    cu_command=self.config.computer_use.command,
+                )
+
+            loop_factory = grok_factory
+        else:
+
+            async def native_factory(s: Session) -> None:
+                await agent_loop(
+                    s,
+                    router,
+                    get_provider,
+                    self.config,
+                    tool_registry=tool_registry,
+                    tool_dispatcher=tool_dispatcher,
+                    audit_sink=sink,
+                )
+
+            loop_factory = native_factory
         runner = SessionRunner(
             sess,
-            loop_factory=lambda s: agent_loop(
-                s,
-                router,
-                get_provider,
-                self.config,
-                tool_registry=tool_registry,
-                tool_dispatcher=tool_dispatcher,
-                audit_sink=sink,
-            ),
+            loop_factory=loop_factory,
         )
         await runner.start()
         if self._audit_writer is not None:
@@ -2473,6 +2790,12 @@ class Daemon:
                     next_run=existing.next_run if msg.next_run is None else msg.next_run,
                     deliver_to=msg.deliver_to or existing.deliver_to,
                     paused=msg.paused,
+                    # The receipt belongs to the run, not to this edit — an
+                    # edit (Pause is one) must not erase what last happened.
+                    last_run=existing.last_run,
+                    last_status=existing.last_status,
+                    last_summary=existing.last_summary,
+                    last_session_id=existing.last_session_id,
                 )
             except (ValidationError, JobValidationError) as exc:
                 raise JobValidationError(str(exc)) from exc
@@ -2736,6 +3059,19 @@ class Daemon:
 
 def main() -> None:
     """CLI entry point: run the daemon until interrupted."""
+    if "--cu-mcp" in sys.argv:
+        from .cu_host import run_cu_mcp
+
+        raise SystemExit(run_cu_mcp())
+    if "--cu-capture" in sys.argv:
+        from .cu_host import run_cu_capture
+
+        raise SystemExit(run_cu_capture(sys.argv))
+    if "--cu-agent" in sys.argv:
+        from .cu_host import run_cu_agent
+
+        raise SystemExit(run_cu_agent())
+
     parser = argparse.ArgumentParser(description="TST Desk daemon")
     parser.add_argument(
         "--log-level",

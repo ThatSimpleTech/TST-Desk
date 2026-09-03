@@ -214,11 +214,19 @@ def _load_win() -> Any:
     gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
     user32.CreateWindowExW.restype = wintypes.HWND
     user32.SetLayeredWindowAttributes.argtypes = [
-        wintypes.HWND, wintypes.COLORREF, wintypes.BYTE, wintypes.DWORD
+        wintypes.HWND,
+        wintypes.COLORREF,
+        wintypes.BYTE,
+        wintypes.DWORD,
     ]
     user32.SetWindowPos.argtypes = [
-        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-        ctypes.c_int, ctypes.c_int, wintypes.UINT,
+        wintypes.HWND,
+        wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.UINT,
     ]
     user32.DestroyWindow.argtypes = [wintypes.HWND]
     gdi32.CreateSolidBrush.argtypes = [wintypes.COLORREF]

@@ -38,9 +38,17 @@ _BASE_INSTRUCTIONS = (
 
 _PLATFORM_INSTRUCTIONS = {
     "darwin": (
-        " Host: macOS. Screen Recording and Accessibility permissions must be "
-        "granted to the launching app. Shortcut modifiers: cmd, shift, alt/option, "
-        "ctrl, fn."
+        " Host: macOS. Screen Recording and Accessibility must be granted to the "
+        "launching app (TST Desk, Terminal, ...), not this server. Call "
+        "check_permissions with request=false to probe. request=true raises each "
+        "OS prompt at most once — do not pass it again; clicking Allow repeatedly "
+        "does not stick. After enabling the host in System Settings, the host "
+        "must be fully quit and reopened (Cmd+Q). If check_permissions reports "
+        "stale_grant_suspected, stop: no amount of request=true will help; tell "
+        "the user to run Reset grants in TST Desk → Settings → Computer use, "
+        "relaunch, and allow again. Never run the screencapture "
+        "shell command — it re-prompts Screen Recording; use the screenshot tool. "
+        "Shortcut modifiers: cmd, shift, alt/option, ctrl, fn."
     ),
     "win32": (
         " Host: Windows. No permissions to grant. Shortcut modifiers: ctrl, shift, "
@@ -134,11 +142,15 @@ def build_server() -> MCPServer:
         name="check_permissions",
         description=(
             "Report this platform's capture and input status. On macOS: Screen "
-            "Recording and Accessibility grants for the host process, with fix steps "
-            "and the host-restart caveat; pass request=true to trigger the OS prompts "
-            "for anything missing. On Windows: nothing is gated, so it reports the two "
-            "conditions under which input silently does nothing — elevated windows "
-            "(UIPI) and the secure desktop. Safe to call anytime."
+            "Recording and Accessibility grants for the host app, with fix steps "
+            "and the host-restart caveat. Prefer request=false. request=true raises "
+            "each OS prompt at most once; later calls only re-probe — do not keep "
+            "passing request=true. stale_grant_suspected means System Settings "
+            "shows the host ON for an older build: only a reset by the user "
+            "(TST Desk → Settings → Computer use → Reset grants) repairs it. On "
+            "Windows: nothing is gated, so it reports the "
+            "two conditions under which input silently does nothing — elevated "
+            "windows (UIPI) and the secure desktop. Safe to call anytime."
         ),
         structured_output=False,
     )

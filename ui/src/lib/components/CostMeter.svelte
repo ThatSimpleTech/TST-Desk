@@ -11,21 +11,40 @@
 	let costBreakdown = $derived(
 		Object.entries(session.cost.byTier).sort((a, b) => b[1] - a[1]),
 	);
+	let cap = $derived(session.boundary?.spend_usd ?? 0);
+	let ratio = $derived(cap > 0 ? Math.min(1, session.cost.session / cap) : 0);
+	// Per-tier bars are relative to the largest tier, so the shape of the
+	// spend reads at a glance even when every number is small.
+	let largest = $derived(costBreakdown[0]?.[1] ?? 0);
 </script>
 
 <div class="meter">
-	<button class="cost" type="button" title="Cost breakdown">
+	<button class="cost" type="button" title="Cost breakdown" aria-haspopup="true">
 		{formatUsd(session.cost.session)}
 	</button>
-	<div class="popover">
-		<p class="popover-title">Cost breakdown</p>
-		<dl>
-			<div><dt>This turn</dt><dd>{formatUsd(session.cost.turn)}</dd></div>
+	<div class="popover" role="group" aria-label="Cost breakdown">
+		<p class="hero">
+			<span class="hero-num">{formatUsd(session.cost.session)}</span>
+			<span class="hero-sub">this session{cap > 0 ? ` · ${formatUsd(cap)} cap` : ''}</span>
+		</p>
+		{#if cap > 0}
+			<div class="bar" aria-hidden="true">
+				<span class="fill" style={`width: ${Math.round(ratio * 100)}%`}></span>
+			</div>
+		{/if}
+		<dl class="rows">
+			<div class="row"><dt>This turn</dt><dd>{formatUsd(session.cost.turn)}</dd></div>
 			{#each costBreakdown as [tier, cost] (tier)}
-				<div><dt>{tier}</dt><dd>{formatUsd(cost)}</dd></div>
+				<div class="row row--tier">
+					<dt>{tier}</dt>
+					<dd>{formatUsd(cost)}</dd>
+					<dd class="tier-bar" aria-hidden="true">
+						<span class="tier-fill" style={`width: ${largest > 0 ? Math.round((cost / largest) * 100) : 0}%`}></span>
+					</dd>
+				</div>
 			{/each}
 			{#if session.cost.classifier > 0}
-				<div><dt>classifier</dt><dd>{formatUsd(session.cost.classifier)}</dd></div>
+				<div class="row"><dt>classifier</dt><dd>{formatUsd(session.cost.classifier)}</dd></div>
 			{/if}
 		</dl>
 		<!-- The meter is this session's running spend; the usage pane
@@ -44,7 +63,7 @@
 	.cost {
 		font-size: var(--text-xs);
 		font-weight: var(--weight-medium);
-		color: var(--color-text);
+		color: var(--color-ink);
 		font-family: var(--font-mono);
 		background: transparent;
 		border: 0;
@@ -59,12 +78,14 @@
 		top: 100%;
 		right: 0;
 		z-index: 10;
-		background: var(--color-bg-raised);
-		border: 1px solid var(--color-border);
+		min-width: 15rem;
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-md);
 		box-shadow: var(--shadow-lg);
-		padding: var(--space-2) var(--space-3);
+		padding: var(--space-3);
 		white-space: nowrap;
+		animation: rise var(--dur-enter) var(--ease-out);
 	}
 
 	.meter:hover .popover,
@@ -72,42 +93,91 @@
 		display: block;
 	}
 
-	.popover-title {
-		font-size: var(--text-xs);
-		font-weight: var(--weight-semibold);
-		margin: 0 0 var(--space-1);
-		font-family: var(--font-family);
-	}
-
-	.popover dl {
-		margin: 0;
-		font-family: var(--font-family);
-	}
-
-	.popover dl > div {
+	/* The number is the point of the popover; it gets the display face. */
+	.hero {
 		display: flex;
-		justify-content: space-between;
-		gap: var(--space-4);
+		align-items: baseline;
+		gap: var(--space-2);
+		margin: 0 0 var(--space-2);
 	}
 
-	.popover dt {
-		color: var(--color-text-secondary);
+	.hero-num {
+		font-family: var(--font-display);
+		font-size: var(--text-xl);
+		font-weight: var(--weight-medium);
+		letter-spacing: var(--tracking-display);
+		color: var(--color-ink);
 	}
 
-	.popover dd {
+	.hero-sub {
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
+	}
+
+	.bar {
+		height: 4px;
+		margin-bottom: var(--space-3);
+		border-radius: var(--radius-full);
+		background: var(--color-hairline);
+		overflow: hidden;
+	}
+
+	.fill {
+		display: block;
+		height: 100%;
+		border-radius: var(--radius-full);
+		background: var(--color-accent);
+	}
+
+	.rows {
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		font-size: var(--text-xs);
+	}
+
+	.row {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		column-gap: var(--space-4);
+		align-items: baseline;
+	}
+
+	.row dt {
+		color: var(--color-ink-secondary);
+	}
+
+	.row dd {
 		margin: 0;
 		font-family: var(--font-mono);
+		color: var(--color-ink);
+	}
+
+	.tier-bar {
+		grid-column: 1 / -1;
+		height: 3px;
+		border-radius: var(--radius-full);
+		background: var(--color-sunken);
+		overflow: hidden;
+	}
+
+	.tier-fill {
+		display: block;
+		height: 100%;
+		border-radius: var(--radius-full);
+		background: var(--color-ink-muted);
 	}
 
 	.popover-link {
 		display: block;
 		width: 100%;
-		margin-top: var(--space-2);
+		margin-top: var(--space-3);
 		padding-top: var(--space-2);
 		border: 0;
-		border-top: var(--border-width) solid var(--color-border);
+		border-top: var(--border-width) solid var(--color-hairline);
 		background: transparent;
-		font-family: var(--font-family);
+		font-family: var(--font-sans);
 		font-size: var(--text-xs);
 		color: var(--color-accent);
 		text-align: left;

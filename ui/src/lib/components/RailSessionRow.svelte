@@ -11,7 +11,7 @@
 	// alone knows if a turn is in flight, so both are always offered and its
 	// refusal renders in place, under the row that asked.
 	import Icon from './Icon.svelte';
-	import { DELETE_CONFIRM, rowActions, type RailRowActionId } from '../rail';
+	import { DELETE_CONFIRM, needsAttention, rowActions, type RailRowActionId } from '../rail';
 	import { workspaceName } from '../session-status.svelte.js';
 	import {
 		closeRowMenus,
@@ -47,6 +47,17 @@
 	let draft = $state('');
 	let inputEl = $state<HTMLInputElement | undefined>(undefined);
 	let renameSeed = $state<string | null>(null);
+
+	// A titled row reads as a sentence, so it is set in the sans; only the
+	// bare id fallback keeps the mono. The id itself lives in the tooltip.
+	let untitled = $derived(row.title === null || row.title.trim() === '');
+	// Idle and complete are the norm and the dot already says so; the
+	// subtitle only spells out a state worth a second look.
+	const QUIET_STATES: ReadonlySet<string> = new Set(['none', 'idle', 'complete']);
+	let stateNote = $derived(QUIET_STATES.has(row.state) ? null : ROW_STATE_LABELS[row.state]);
+	let tooltip = $derived(
+		`${rowTitle(row)}\n${row.sessionId.slice(0, 8)} · ${rowSubtitle(row)} · ${ROW_STATE_LABELS[row.state]}`
+	);
 
 	$effect(() => {
 		if (!renaming) {
@@ -96,13 +107,21 @@
 		<button
 			class="open"
 			type="button"
+			data-rail-row={row.sessionId}
 			aria-current={active ? 'true' : undefined}
+			title={tooltip}
 			onclick={onselect}
 		>
-			<span class="dot dot-{stateTone(row.state)}" aria-hidden="true"></span>
+			<span
+				class="dot dot-{stateTone(row.state)}"
+				class:dot--attention={needsAttention(row.state)}
+				aria-hidden="true"
+			></span>
 			<span class="row-text">
-				<span class="row-title">{rowTitle(row)}</span>
-				<span class="row-sub">{rowSubtitle(row)} · {ROW_STATE_LABELS[row.state]}</span>
+				<span class="row-title" class:row-title--id={untitled}>{rowTitle(row)}</span>
+				<span class="row-sub">
+					{rowSubtitle(row)}{#if stateNote !== null} · <span class="row-state">{stateNote}</span>{/if}
+				</span>
 			</span>
 		</button>
 		<button
@@ -224,6 +243,58 @@
 		padding: var(--space-1) var(--space-2);
 		cursor: pointer;
 		color: var(--color-ink);
+		border-radius: var(--radius-sm);
+	}
+
+	/* The ring sits inside the row: the list clips, and a ring drawn outside
+	   a 260px column is a ring drawn over the next row. */
+	.open:focus-visible {
+		outline-offset: -2px;
+	}
+
+	/* The state dot. Its rules used to live only in SessionRail, whose
+	   scoped styles stopped reaching this markup when the row moved out
+	   (TD-1715) — the expanded rail drew no dots at all. Same sizes and
+	   tones as the collapsed strip's. */
+	.dot {
+		width: var(--space-2);
+		height: var(--space-2);
+		border-radius: var(--radius-full);
+		flex-shrink: 0;
+	}
+
+	.dot-info {
+		background: var(--color-accent);
+	}
+	.dot-warning {
+		background: var(--color-warn);
+	}
+	.dot-danger {
+		background: var(--color-err);
+	}
+	.dot-success {
+		background: var(--color-ok);
+	}
+	.dot-muted {
+		background: var(--color-ink-muted);
+	}
+
+	/* A session waiting on an approval breathes (navigation round, 2026-09);
+	   without motion the amber and the subtitle's state word carry it. */
+	@media (prefers-reduced-motion: no-preference) {
+		.dot--attention {
+			animation: attention-pulse 1.8s var(--ease-out) infinite;
+		}
+	}
+
+	@keyframes attention-pulse {
+		0%,
+		100% {
+			box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-warn) 45%, transparent);
+		}
+		60% {
+			box-shadow: 0 0 0 5px transparent;
+		}
 	}
 
 	.row-text {
@@ -236,19 +307,27 @@
 	.row-title {
 		font-size: var(--text-sm);
 		font-weight: var(--weight-medium);
-		font-family: var(--font-mono);
+		font-family: var(--font-sans);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
+	.row-title--id {
+		font-family: var(--font-mono);
+	}
+
 	.row-sub {
 		font-size: var(--text-xs);
 		font-family: var(--font-sans);
-		color: var(--color-ink-secondary);
+		color: var(--color-ink-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.row-state {
+		color: var(--color-ink-secondary);
 	}
 
 	/* The menu affordance stays out of the way until the row is hovered or the
@@ -282,6 +361,7 @@
 		display: flex;
 		flex-direction: column;
 		padding: var(--space-1) var(--space-1) var(--space-2);
+		animation: rise var(--dur-enter) var(--ease-out);
 	}
 
 	.action {
@@ -313,6 +393,7 @@
 		flex-direction: column;
 		gap: var(--space-1);
 		padding: var(--space-1) var(--space-2) var(--space-2);
+		animation: rise var(--dur-enter) var(--ease-out);
 	}
 
 	.rename {
@@ -322,7 +403,7 @@
 		background: var(--color-ground);
 		border-radius: var(--radius-sm);
 		padding: var(--space-1) var(--space-2);
-		font-family: var(--font-mono);
+		font-family: var(--font-sans);
 		font-size: var(--text-sm);
 		color: var(--color-ink);
 	}

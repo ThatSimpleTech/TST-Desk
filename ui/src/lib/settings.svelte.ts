@@ -13,9 +13,10 @@
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
 
-export type SettingsSection = "appearance" | "model" | "policy" | "key";
+export type SettingsSection = "appearance" | "engine" | "model" | "policy" | "key";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
+	"engine",
 	"model",
 	"policy",
 	"key",
@@ -67,6 +68,15 @@ export const settings = $state({
 	remoteAttachEnabled: false,
 	/** Bound Tailscale address, never a token. */
 	remoteBind: null as string | null,
+	/** Agent engine for new sessions. */
+	engine: "native" as "native" | "grok",
+	grokAvailable: false,
+	grokBinary: null as string | null,
+	savingEngine: false,
+	/** Hold-to-talk (TD-4701). Default off; from setup_state. */
+	voiceEnabled: false,
+	/** Whether config.yaml names a transcription URL. */
+	voiceHasEndpoint: false,
 });
 
 let started = false;
@@ -109,6 +119,12 @@ export function resetSettings(): void {
 	settings.cuShowOnRealDisplay = false;
 	settings.remoteAttachEnabled = false;
 	settings.remoteBind = null;
+	settings.engine = "native";
+	settings.grokAvailable = false;
+	settings.grokBinary = null;
+	settings.savingEngine = false;
+	settings.voiceEnabled = false;
+	settings.voiceHasEndpoint = false;
 	started = false;
 }
 
@@ -135,6 +151,12 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? false;
 		settings.remoteAttachEnabled = event.remote_attach_enabled ?? false;
 		settings.remoteBind = event.remote_bind ?? null;
+		settings.engine = event.engine ?? "native";
+		settings.grokAvailable = event.grok_available ?? false;
+		settings.grokBinary = event.grok_binary ?? null;
+		settings.savingEngine = false;
+		settings.voiceEnabled = event.voice_enabled ?? false;
+		settings.voiceHasEndpoint = event.voice_has_endpoint ?? false;
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -183,6 +205,12 @@ export function setTheme(theme: Theme): void {
 	settings.theme = theme;
 	applyTheme(theme);
 	if (typeof localStorage !== "undefined") localStorage.setItem(THEME_KEY, theme);
+}
+
+export function setEngine(kind: "native" | "grok"): void {
+	settings.savingEngine = true;
+	const sent = sendToDaemon({ type: "set_engine", kind });
+	if (!sent) settings.savingEngine = false;
 }
 
 // ── Model ─────────────────────────────────────────────────────────────
@@ -304,6 +332,11 @@ export function setLoadGlobalMemory(enabled: boolean): void {
 /** Turn coworker mode on or off (TD-2905). Acked with setup_state. */
 export function setCoworker(enabled: boolean): void {
 	sendToDaemon({ type: "set_coworker", enabled });
+}
+
+/** Turn hold-to-talk dictation on or off (TD-4701). Acked with setup_state. */
+export function setVoice(enabled: boolean): void {
+	sendToDaemon({ type: "set_voice", enabled });
 }
 
 /** Turn remote attach on or off (TD-3603). Acked with setup_state. */

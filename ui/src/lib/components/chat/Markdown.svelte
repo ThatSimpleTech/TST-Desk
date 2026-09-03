@@ -98,10 +98,25 @@
 		font-size: var(--text-base);
 	}
 
+	/* Links wear the accent and an underline in the accent's own tint: the
+	   underline is what says "link"; the colour just agrees with it. */
+	.markdown :global(a) {
+		color: var(--color-accent);
+		text-decoration: underline;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 0.15em;
+		text-decoration-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+	}
+
+	.markdown :global(a:hover) {
+		color: var(--color-accent-hover);
+		text-decoration-color: currentColor;
+	}
+
 	.markdown :global(code) {
 		font-family: var(--font-mono);
 		font-size: var(--text-sm);
-		background: var(--color-bg-subtle);
+		background: var(--color-sunken);
 		border-radius: var(--radius-sm);
 		padding: 0 var(--space-1);
 	}
@@ -115,8 +130,8 @@
 		margin: 0;
 		padding: var(--space-4);
 		overflow-x: auto;
-		background: var(--color-bg-subtle);
-		border: var(--border-width) solid var(--color-border);
+		background: var(--color-sunken);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-md);
 	}
 
@@ -132,9 +147,9 @@
 		right: var(--space-2);
 		padding: var(--space-1) var(--space-2);
 		font-size: var(--text-xs);
-		color: var(--color-text-secondary);
-		background: var(--color-bg-raised);
-		border: var(--border-width) solid var(--color-border);
+		color: var(--color-ink-secondary);
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-sm);
 		cursor: pointer;
 		opacity: 0;
@@ -149,19 +164,42 @@
 	.markdown :global(blockquote) {
 		margin: var(--space-3) 0;
 		padding-left: var(--space-4);
-		border-left: var(--space-1) solid var(--color-border);
-		color: var(--color-text-secondary);
+		border-left: var(--space-1) solid var(--color-hairline);
+		color: var(--color-ink-secondary);
 	}
 
+	/* A wide table scrolls inside its own box; the bubble never does. */
 	.markdown :global(table) {
+		display: block;
+		max-width: 100%;
+		overflow-x: auto;
 		border-collapse: collapse;
 		margin: var(--space-3) 0;
+		font-size: var(--text-sm);
 	}
 
 	.markdown :global(th),
 	.markdown :global(td) {
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		padding: var(--space-1) var(--space-3);
 		text-align: left;
+		vertical-align: top;
+	}
+
+	.markdown :global(th) {
+		background: var(--color-sunken);
+		font-weight: var(--weight-semibold);
+	}
+
+	.markdown :global(hr) {
+		border: 0;
+		border-top: var(--border-width) solid var(--color-hairline);
+		margin: var(--space-4) 0;
+	}
+
+	.markdown :global(img) {
+		max-width: 100%;
+		height: auto;
+		border-radius: var(--radius-sm);
 	}
 </style>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hold-to-talk dictation in the composer. The microphone is only on while you hold the button.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Hold-to-talk dictation in the composer. Speech is not captured unless you hold the mic.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Computer use takes a screenshot of the desktop when the agent needs to see the screen. Nothing is recorded or sent off this Mac.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>macOS groups screen capture with system-audio capture. TST Desk does not record the microphone for computer use.</string>
+</dict>
+</plist>

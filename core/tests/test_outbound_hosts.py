@@ -265,8 +265,17 @@ _OUTBOUND_CAPABLE = {
         "UI-TARS grounding; destination is computer_use.grounding.base_url "
         "from config; loopback-only, empty disables"
     ),
+    "cu_host.py": (
+        "the cu-agent.sock AF_UNIX server in the data dir, plus a liveness "
+        "connect to that same path; no network address is involved"
+    ),
+    "desktop/host_probe.py": (
+        "dials only cu-agent.sock (AF_UNIX) in the data dir or TST_CU_AGENT_SOCK; "
+        "no network address is involved"
+    ),
     "notify/slack.py": "slack incoming webhook; destination host is notify.slack.host from config",
     "notify/ntfy.py": "ntfy topic POST; destination host is notify.ntfy.host from config",
+    "voice.py": "hold-to-talk transcription; destination is voice.base_url from config",
 }
 
 
@@ -361,6 +370,8 @@ class TransportRecorder:
                 json={"data": [{"embedding": [0.1, 0.2], "index": 0}]},
                 request=request,
             )
+        if path.endswith("/audio/transcriptions"):
+            return httpx.Response(200, json={"text": "hello"}, request=request)
         if request.headers.get("accept") == "text/event-stream":
             return httpx.Response(
                 200,
@@ -468,6 +479,21 @@ async def test_every_outbound_destination_traces_to_config(
         f"{REMOTE_ENDPOINT}/chat/completions",
         f"{LOCAL_ENDPOINT}/models",
     }
+
+
+async def test_voice_destination_traces_to_config(recorder: TransportRecorder) -> None:
+    """Hold-to-talk transcription lands where voice.base_url points."""
+    from tstd.config import VoiceConfig
+    from tstd.voice import transcribe_audio
+
+    text = await transcribe_audio(
+        b"RIFF",
+        "audio/webm",
+        VoiceConfig(base_url="http://127.0.0.1:64114/v1"),
+    )
+    assert text == "hello"
+    assert recorder.origins() == {"http://127.0.0.1:64114"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64114/v1/audio/transcriptions"}
 
 
 async def test_embeddings_destination_traces_to_config(

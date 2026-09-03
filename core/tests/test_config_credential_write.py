@@ -8,13 +8,32 @@ import pytest
 import yaml
 
 from tstd.config import ConfigError, default_config_yaml, load_config
-from tstd.config_write import delete_credential_entry, save_credential, save_tier_credential
+from tstd.config_write import (
+    delete_credential_entry,
+    save_credential,
+    save_engine_kind,
+    save_tier_credential,
+)
 
 
 def _seed(tmp_path: Path) -> Path:
     path = tmp_path / "config.yaml"
     path.write_text(default_config_yaml(), encoding="utf-8")
     return path
+
+
+class TestSaveEngineKind:
+    def test_switches_kind_and_keeps_comments(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        save_engine_kind("grok", path)
+        cfg = load_config(path)
+        assert cfg.engine.kind == "grok"
+        assert "the CLI remains" in path.read_text() or "Grok Build" in path.read_text()
+
+    def test_rejects_unknown(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        with pytest.raises(ConfigError, match="Unknown engine"):
+            save_engine_kind("codex", path)
 
 
 class TestSaveCredential:

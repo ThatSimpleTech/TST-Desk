@@ -5,6 +5,10 @@
 declare module "node:fs" {
 	export function readFileSync(path: string, encoding: string): string;
 	export function writeFileSync(path: string, data: string): void;
+	export function readdirSync(
+		path: string,
+		options: { withFileTypes: true },
+	): { name: string; isDirectory(): boolean; isFile(): boolean }[];
 }
 
 declare module "node:path" {

@@ -44,9 +44,13 @@ class TestMacOSReport:
 
     def test_host_caveat_is_always_present(self) -> None:
         # The single most common macOS support question: the grant belongs to the
-        # launching app and needs a restart.
+        # launching app, needs a restart, and — when Settings already shows ON —
+        # belongs to an older build and needs a reset (TD-4823).
         report = permissions.build_report(screen_recording=True, accessibility=True)
         assert "quit and reopen" in report["host_caveat"]
+        assert "Allow" in report["host_caveat"]
+        assert "older build" in report["host_caveat"]
+        assert "Reset grants" in report["host_caveat"]
 
     def test_platform_is_labelled(self) -> None:
         report = permissions.build_report(screen_recording=True, accessibility=True)
