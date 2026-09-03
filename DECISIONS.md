@@ -9369,3 +9369,30 @@ to 20 — rename would silently truncate.
 
 ---
 
+
+
+---
+
+## 2026-09-03 — Inspector and session rail are pixel-width, not ratio-clamped (Class B)
+
+**Decision:** The chat|activity divider sizes the inspector in pixels
+(`tstd-desktop.splitpane.rightPx`), not as a 20–80% left-pane ratio.
+The session rail keeps pixels (`tstd-desktop.sessionRail.widthPx`) and
+drops the 440px ceiling. Both clamp only against the live layout: the
+inspector cannot shrink past 200px or grow past `container − 280px`
+(chat minimum); the rail cannot shrink past 200px or grow past
+`viewport − inspector min − chat min`. A wide preference that does not
+fit the current window is held and returns when the window grows. The
+old `tstd-desktop.splitpane.leftPct` key is ignored.
+
+**Rationale:** A percentage split cannot be dragged to an arbitrary size
+— 20% of a large window is still a large inspector, 80% still leaves
+chat a fifth of the pane. A 440px rail cap truncates session titles
+that the user can otherwise read by giving the list more room. Pixel
+sidebars with keep-alive minima match the rail's existing model and
+let either bar take as much of the window as the user wants.
+
+**Alternative rejected:** Loosening the percentage clamp to 5–95%. Still
+a ratio, still not "this many pixels", and a window resize still moves
+the inspector. Also rejected: no minima (chat and tabs collapse to
+unusable).

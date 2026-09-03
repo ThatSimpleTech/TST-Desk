@@ -40,7 +40,7 @@
 	import { DIVIDER_HIT_MIN_PX, attachDragListeners } from '../splitpane';
 	import {
 		DEFAULT_RAIL_PX,
-		MAX_RAIL_PX,
+		railMaxPx,
 		MIN_RAIL_PX,
 		RAIL_KEYBOARD_STEP_PX,
 		clampRailPx,
@@ -60,6 +60,11 @@
 	let railRoot: HTMLElement | undefined = $state();
 	let detachDrag: (() => void) | null = null;
 
+	function layoutMax(): number {
+		if (typeof window === 'undefined') return MIN_RAIL_PX;
+		return railMaxPx(window.innerWidth);
+	}
+
 	function persist() {
 		writePersistedRailPx(window.localStorage, railPx);
 	}
@@ -73,7 +78,10 @@
 
 	function onDividerMove(e: PointerEvent) {
 		if (!dragging) return;
-		const next = clampRailPx(e.clientX - (railRoot?.getBoundingClientRect().left ?? 0));
+		const next = clampRailPx(
+			e.clientX - (railRoot?.getBoundingClientRect().left ?? 0),
+			layoutMax()
+		);
 		railPx = next;
 	}
 
@@ -88,9 +96,9 @@
 
 	function onDividerKeydown(e: KeyboardEvent) {
 		if (e.key === 'ArrowLeft') {
-			railPx = clampRailPx(railPx - RAIL_KEYBOARD_STEP_PX);
+			railPx = clampRailPx(railPx - RAIL_KEYBOARD_STEP_PX, layoutMax());
 		} else if (e.key === 'ArrowRight') {
-			railPx = clampRailPx(railPx + RAIL_KEYBOARD_STEP_PX);
+			railPx = clampRailPx(railPx + RAIL_KEYBOARD_STEP_PX, layoutMax());
 		} else {
 			return;
 		}
@@ -101,7 +109,7 @@
 	// Restore the persisted width on mount; a drag still in flight when the
 	// rail unmounts must not leave window listeners behind.
 	$effect(() => {
-		railPx = readPersistedRailPx(window.localStorage);
+		railPx = clampRailPx(readPersistedRailPx(window.localStorage), layoutMax());
 	});
 	$effect(() => {
 		return () => {
@@ -261,7 +269,7 @@
 			aria-label="Session rail width"
 			aria-valuenow={railPx}
 			aria-valuemin={MIN_RAIL_PX}
-			aria-valuemax={MAX_RAIL_PX}
+			aria-valuemax={layoutMax()}
 			style={`--divider-hit: ${DIVIDER_HIT_MIN_PX}px;`}
 			onpointerdown={onDividerDown}
 			onkeydown={onDividerKeydown}

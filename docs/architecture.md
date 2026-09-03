@@ -143,7 +143,10 @@ is the contents of `remote-token`.
 
 On a viewport narrower than 640px the same `AppShell` hides the session rail
 and the inspector so the phone is chat + approval. Either pane can be shown
-again; they are not a separate product.
+again; they are not a separate product. On a wide viewport both sidebars are
+pixel-width and user-draggable: the session rail from its right edge, the
+inspector from the chat|activity divider. Each persists in `localStorage` and
+is clamped only so the other columns keep a usable minimum.
 
 ---
 

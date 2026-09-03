@@ -7243,3 +7243,25 @@ hole on `overlay/win32.py` (`WinDLL`) and `overlay/linux.py` (`XColor`
 stuffed onto a `CDLL`). Win32 joins the windows override. Linux structs
 live on a `SimpleNamespace` so `mypy --strict src` is clean on Linux.
 
+
+
+---
+
+### TD-4827 — Inspector and session rail resize to any width
+**Size:** 2 · **Depends on:** TD-1001, TD-1701
+
+**Acceptance criteria:**
+- [x] Dragging the chat|activity divider sets the inspector to a pixel width,
+      not a 20–80% ratio of the split
+- [x] Dragging the session rail's right edge is not capped at 440px
+- [x] Both bars keep a 200px floor; the inspector also leaves the chat ≥280px;
+      the rail leaves chat+inspector their minima
+- [x] Widths persist in `localStorage` and restore on launch
+- [x] Tests: clamp/persist math for both bars; TD-1011 drag still resizes after
+      leaving the 4px divider
+
+**Notes:** User request 2026-09-03: the bar to the right of the sessions should
+resize to whatever size they want. Class B recorded in DECISIONS.md.
+
+**Completed (2026-09-03):** SplitPane sizes the right pane in pixels
+(`tstd-desktop.splitpane.rightPx`). The rail drops `MAX_RAIL_PX`.
