@@ -19,6 +19,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,55 @@ _prompted_this_process: set[str] = set()
 SOCK_ENV = "TST_CU_AGENT_SOCK"
 _TEXT_TIMEOUT = 3.0
 _CAPTURE_TIMEOUT = 8.0
+
+# Window levels at or above the Dock's are never what a click or a keystroke is
+# aimed at: the Dock (20), the menu bar (24) and the status items (25) sit in
+# front of every application window — the status items are literally first in
+# the on-screen list. Below that line are normal windows (0) and floating,
+# modal and utility panels (3, 8, 19), which do take input. The session ring
+# runs at the screen-saver level, so this bound also keeps our own overlay out
+# of the answer.
+DOCK_WINDOW_LEVEL = 20
+
+
+def frontmost_entry(listing: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The first window in *listing* that could receive input, or ``None``.
+
+    ``CGWindowListCopyWindowInfo`` returns on-screen windows front to back, so
+    the first entry that qualifies is the frontmost one. Kept pure — like
+    :func:`~tst_cu_mcp.focus.window_matches` — so the policy is testable
+    without a desktop.
+    """
+    for entry in listing:
+        if not 0 <= int(entry.get("kCGWindowLayer") or 0) < DOCK_WINDOW_LEVEL:
+            continue
+        alpha = entry.get("kCGWindowAlpha")
+        if alpha is not None and float(alpha) <= 0.0:
+            continue
+        bounds = entry.get("kCGWindowBounds") or {}
+        # Some apps park a 1x1 window on screen to hold state. Nothing can be
+        # aimed at it, and reporting it would hide the window behind it.
+        if float(bounds.get("Width") or 0) <= 1 or float(bounds.get("Height") or 0) <= 1:
+            continue
+        return entry
+    return None
+
+
+def window_from_entry(entry: Mapping[str, Any] | None) -> WindowInfo:
+    """Read one window-list entry into a :class:`WindowInfo`; ``None`` is empty."""
+    if entry is None:
+        return WindowInfo(title="", process="", pid=0, x=0, y=0, width=0, height=0)
+    bounds = entry.get("kCGWindowBounds") or {}
+    return WindowInfo(
+        title=str(entry.get("kCGWindowName") or ""),
+        process=str(entry.get("kCGWindowOwnerName") or ""),
+        pid=int(entry.get("kCGWindowOwnerPID") or 0),
+        x=round(float(bounds.get("X") or 0)),
+        y=round(float(bounds.get("Y") or 0)),
+        width=round(float(bounds.get("Width") or 0)),
+        height=round(float(bounds.get("Height") or 0)),
+    )
+
 
 MAX_DISPLAYS = 16
 
@@ -376,53 +426,31 @@ class DarwinBackend:
         return (round(point.x), round(point.y))
 
     def foreground_window(self) -> WindowInfo:
-        """The frontmost application's window, best-effort.
+        """The window in front, read from the window server's own z-order.
 
-        macOS splits this: the frontmost *application* is public API, but window
-        *titles* live behind Accessibility. So the process name is always
-        available and the title is filled in from the on-screen window list when
-        macOS is willing, empty when it is not — which
-        :func:`~tst_cu_mcp.focus.window_matches` handles, since it matches either
-        field.
+        This asks ``CGWindowListCopyWindowInfo`` rather than
+        ``NSWorkspace.frontmostApplication()``. The workspace query answers
+        which application is active *for the caller's activation context*, and
+        a sidecar spawned by the host app does not reliably share the user's:
+        in a live session it named the host app seven times out of seven while
+        Spotlight, then Finder, then a remote-desktop window actually had the
+        screen, and every ``expect_window`` guard built on it was dead. The
+        window list has no caller context to get wrong. It also describes the
+        window that is really in front rather than the active application's
+        frontmost window, which are not always the same one.
+
+        ``process`` and the bounds are always readable. ``title`` needs Screen
+        Recording — without it ``kCGWindowName`` is empty for every window —
+        which :func:`~tst_cu_mcp.focus.window_matches` absorbs by matching
+        either field.
         """
         import Quartz
-        from AppKit import NSWorkspace
 
-        app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        if app is None:  # pragma: no cover - no active app is possible at login
-            return WindowInfo(title="", process="", pid=0, x=0, y=0, width=0, height=0)
-
-        pid = int(app.processIdentifier())
-        process = str(app.localizedName() or "")
-
-        title = ""
-        x = y = width = height = 0
         listing = Quartz.CGWindowListCopyWindowInfo(
             Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
             Quartz.kCGNullWindowID,
         )
-        for entry in listing or []:
-            if int(entry.get("kCGWindowOwnerPID", -1)) != pid:
-                continue
-            # The list is front-to-back, so the owner's first entry is its
-            # frontmost window.
-            title = str(entry.get("kCGWindowName") or "")
-            bounds = entry.get("kCGWindowBounds") or {}
-            x = round(float(bounds.get("X", 0)))
-            y = round(float(bounds.get("Y", 0)))
-            width = round(float(bounds.get("Width", 0)))
-            height = round(float(bounds.get("Height", 0)))
-            break
-
-        return WindowInfo(
-            title=title,
-            process=process,
-            pid=pid,
-            x=x,
-            y=y,
-            width=width,
-            height=height,
-        )
+        return window_from_entry(frontmost_entry(listing or []))
 
     # --- environment --------------------------------------------------------
 

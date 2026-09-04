@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from mcp.client.client import Client
 
-from tst_cu_mcp.server import build_server
+from tst_cu_mcp.server import INTERNAL_ENV, build_server
 
 
 async def call(name: str, arguments: dict[str, Any] | None = None) -> Any:
@@ -159,8 +159,24 @@ class TestToolCatalogue:
             "get_cursor_position",
             "wait",
             "wait_for_window",
-            "overlay_session",
         }
+
+    async def test_the_episode_bracket_is_not_offered_to_the_model(self) -> None:
+        """It brackets a computer-use episode for the daemon's ring. A model
+        holding that control can light the ring with nothing running, and
+        nothing in a turn tells it when to put it out."""
+        async with Client(build_server(), mode="legacy") as client:
+            listed = {tool.name for tool in (await client.list_tools()).tools}
+        assert "overlay_session" not in listed
+
+    async def test_the_daemons_own_child_still_gets_the_episode_bracket(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(INTERNAL_ENV, "1")
+        async with Client(build_server(), mode="legacy") as client:
+            listed = {tool.name for tool in (await client.list_tools()).tools}
+            assert "overlay_session" in listed
+            assert await client.call_tool("overlay_session", {"active": True})
 
     async def test_instructions_reach_the_client(self) -> None:
         async with Client(build_server(), mode="legacy") as client:
