@@ -8632,3 +8632,79 @@ let either bar take as much of the window as the user wants.
 a ratio, still not "this many pixels", and a window resize still moves
 the inspector. Also rejected: no minima (chat and tabs collapse to
 unusable).
+
+---
+
+## 2026-09-04 — The foreground window comes from the window server's z-order (Class B)
+
+**Decision:** `DarwinBackend.foreground_window` reads
+`CGWindowListCopyWindowInfo` (on-screen, desktop elements excluded) and
+returns the first entry that could receive input: window level in
+`[0, 20)`, non-zero alpha, larger than one pixel on each side. It no
+longer asks `NSWorkspace.frontmostApplication()` for a pid and then
+searches that pid's windows. The selection policy is a pure function
+(`frontmost_entry`) beside a pure reader (`window_from_entry`), the way
+`focus.window_matches` is pure, so the policy is testable without a
+desktop. When nothing qualifies the answer is an empty `WindowInfo`
+rather than a guess.
+
+**Rationale:** `frontmostApplication()` answers "which application is
+active for the caller's activation context", which a sidecar spawned by
+the host app does not reliably share. In a recorded session it named the
+host app on all seven calls while Spotlight, then Finder, then a
+remote-desktop window had the screen. `get_foreground_window`,
+`wait_for_window` and every `expect_window` guard are the same call, so
+all three were silently dead for that session — the guards passed
+whatever they were given. The window list is the window server's own
+z-order and has no caller context to get wrong. It also names the window
+that is actually in front rather than the active application's frontmost
+window, which are not the same thing when a panel or a sheet is up.
+
+The `[0, 20)` bound is where the desktop stops being an input target:
+status items (25), the menu bar (24) and the Dock (20) sit in front of
+every application window — status items are literally first in the list —
+while normal windows (0) and floating, modal and utility panels (3, 8,
+19) all take input. The session ring paints at the screen-saver level, so
+the same bound keeps our own overlay out of the answer for free.
+
+**Consequence accepted:** the reported bounds belong to the topmost
+window, which for an app showing a banner (Chrome Remote Desktop's
+sharing bar) is the banner rather than the content window. Identity —
+the field the guards match on — is right either way, and picking "the
+biggest window of the front app" instead would report the wrong thing
+whenever a small dialog is the point.
+
+**Alternative rejected:** The Accessibility route
+(`kAXFocusedApplicationAttribute` on the system-wide element), which is
+the true keyboard-focus owner and would read titles without Screen
+Recording. It needs a grant this call currently does not, and it needs
+the window-list fallback anyway when the grant is absent. Worth
+revisiting as the primary source with this as the fallback. Also
+rejected: keeping `NSWorkspace` as a cross-check — a wrong pid that
+happens to own a window is exactly the failure being removed.
+
+---
+
+## 2026-09-04 — Internal sidecar tools are registered only for the daemon's own child (Class B)
+
+**Decision:** `tst-cu-mcp` registers `overlay_session` only when
+`TST_CU_MCP_INTERNAL` is truthy in its environment. `desktop_driver_from_config`
+sets it on the child it spawns, alongside the existing `TST_CU_MCP_OVERLAY`
+value and independent of it. Grok's copy of the same binary
+(`grok_home.computer_use_mcp`) does not set it, so the tool is absent from
+the list the model sees. The tests default to the model-facing surface: an
+autouse fixture clears the variable, and the two tests that mean to be the
+daemon set it themselves.
+
+**Rationale:** `overlay_session` is an episode bracket the daemon opens and
+closes around a computer-use turn; it is the only caller that knows when a
+turn ends. A model that can see the tool will eventually call it, and a ring
+lit by a model says an episode is running when none is — with nothing left
+to close it. The description said "Not a model tool", which is a comment,
+not a boundary. This makes it one, without splitting the binary or the
+server build.
+
+**Alternative rejected:** Filtering the tool out in `grok_loop` when it
+forwards the list. That leaves the tool callable by name on a surface the
+model reaches, and every other client that spawns this server directly
+(Kiro, Claude Desktop, Goose) would still be offered it.

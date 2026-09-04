@@ -6878,3 +6878,65 @@ resize to whatever size they want. Class B recorded in DECISIONS.md.
 **Completed (2026-09-03):** SplitPane sizes the right pane in pixels
 (`tstd-desktop.splitpane.rightPx`). The rail drops `MAX_RAIL_PX`.
 
+
+---
+
+### TD-4828 — Computer use: the foreground window was never read, and the model could light the ring
+**Size:** 2 · **Depends on:** TD-3407, TD-4823
+
+**Acceptance criteria:**
+- [x] `get_foreground_window` names the window actually in front, from the window
+      server's z-order, not from the calling process's activation context
+- [x] Menu bar, status items, the Dock and our own session ring are never
+      reported as the foreground window
+- [x] `wait_for_window` matches a window that is already in front, and on
+      timeout names what is in front instead
+- [x] `expect_window` refuses a mismatch instead of passing everything
+- [x] `overlay_session` is absent from the tool list a model sees, and still
+      present for the daemon's own sidecar
+- [x] Tests: selection policy table-driven over recorded listings, no desktop
+      needed; both halves of the tool gate proved against real subprocesses
+
+**Post-mortem.** A 68.7-minute live session spent 36 minutes and 59 of its 98
+tool calls lost on a Mac it was already driving correctly. Two defects in this
+package, both silent, both invisible to the model:
+
+*The foreground window was never read.* `foreground_window` asked
+`NSWorkspace.frontmostApplication()` for a pid, then searched the window list
+for that pid's first window. That call answers "which application is active for
+the caller's activation context", which a sidecar spawned by the host app does
+not reliably share: it named the host app on all seven calls while Spotlight,
+then Finder, then a remote-desktop window had the screen — once with an empty
+title. `wait_for_window` and every `expect_window` guard are the same call, so
+all three were dead for the whole session: the guards passed whatever they were
+given. The model noticed the tool was lying, called it a bug, and fell back to
+40 full-resolution screenshots and six consecutive region zooms to find one
+icon. Nothing errored. That is why nothing stopped it.
+
+*The model could see the ring's switch.* `overlay_session` brackets a
+computer-use episode for the daemon's real-display ring (TD-3407). Its
+description said "Not a model tool", which is a comment, not a boundary — it was
+in the list, and a list is an invitation. A ring lit by a model says an episode
+is running when none is, and nothing in a turn tells that child when to put it
+out.
+
+**Closed (2026-09-04):** `foreground_window` reads
+`CGWindowListCopyWindowInfo` directly and takes the frontmost entry that could
+receive input — window level in `[0, 20)`, non-zero alpha, larger than a pixel
+each side. That bound is where the desktop stops being an input target: status
+items (25), the menu bar (24) and the Dock (20) sit in front of every
+application window, while normal windows (0) and floating, modal and utility
+panels (3, 8, 19) all take input. The ring paints at the screen-saver level, so
+the same bound excludes our own overlay for free. Selection and reading are pure
+functions (`frontmost_entry`, `window_from_entry`) beside `focus.window_matches`,
+so the policy is tested without a desktop. `overlay_session` now registers only
+behind `TST_CU_MCP_INTERNAL`, which `desktop_driver_from_config` sets on the
+daemon's child and `grok_home.computer_use_mcp` does not. Two Class B entries in
+DECISIONS.md.
+
+**Not closed here.** The session's other findings are separate work: 99% of its
+wall clock was time-to-first-token (mean 41s), so the unit to optimize is
+round-trips — `settle_ms` on actions, `after_ms` on screenshot, the foreground
+window returned with every action result, and a `launch_app` tool so opening an
+app is one call instead of a Spotlight pantomime. Not filed; not in this
+milestone.

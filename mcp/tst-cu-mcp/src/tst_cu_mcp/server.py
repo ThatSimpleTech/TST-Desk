@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 from typing import Any
 
@@ -28,6 +29,25 @@ from tst_cu_mcp.tools.health import health_report
 # The model reads these strings and acts on them, so they must describe the host
 # it is actually driving. A hardcoded "macOS" here told every Windows model to
 # reach for cmd-shortcuts and to expect permission prompts that do not exist.
+
+#: Set by the daemon when it spawns its own copy of this server. Everything
+#: registered behind it is machinery, not a model tool.
+INTERNAL_ENV = "TST_CU_MCP_INTERNAL"
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def internal_tools_enabled() -> bool:
+    """Whether this process is the daemon's own sidecar.
+
+    A tool in the list is a tool the model will eventually call: an episode
+    bracket it can open and close at will is a way to leave the ring lit with
+    nothing running. The daemon drives that bracket itself and is the only
+    caller that needs it, so it is the only launcher that gets it. Grok, Kiro
+    and Claude Desktop spawn this server without the flag and never see it.
+    """
+    return os.environ.get(INTERNAL_ENV, "").strip().lower() in _TRUTHY
+
 
 _BASE_INSTRUCTIONS = (
     "Local computer-use server. Use `health` for liveness and `check_permissions` "
@@ -387,22 +407,24 @@ def build_server() -> MCPServer:
         input_control.scroll(dx, dy, expect_window=expect_window)
         return {"scrolled": {"dx": dx, "dy": dy}}
 
-    @server.tool(
-        name="overlay_session",
-        description=(
-            "Internal TST Desk signal: computer-use episode open/close. "
-            "Not a model tool. Lights or darkens the real-display ring."
-        ),
-        structured_output=False,
-    )
-    def overlay_session(active: bool) -> dict[str, Any]:
-        from tst_cu_mcp.overlay import get_overlay
+    if internal_tools_enabled():
 
-        if active:
-            get_overlay().begin_session()
-        else:
-            get_overlay().end_session()
-        return {"active": bool(active)}
+        @server.tool(
+            name="overlay_session",
+            description=(
+                "Internal TST Desk signal: computer-use episode open/close. "
+                "Not a model tool. Lights or darkens the real-display ring."
+            ),
+            structured_output=False,
+        )
+        def overlay_session(active: bool) -> dict[str, Any]:
+            from tst_cu_mcp.overlay import get_overlay
+
+            if active:
+                get_overlay().begin_session()
+            else:
+                get_overlay().end_session()
+            return {"active": bool(active)}
 
     return server
 
