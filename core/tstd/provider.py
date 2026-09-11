@@ -77,12 +77,32 @@ class ToolCall:
     function: FunctionCall | None = None
 
 
+MessageContent = str | list[dict[str, Any]]
+
+
+def content_as_text(content: MessageContent | None) -> str:
+    """Plain text for compaction, distill, and branch labels (TD-4705).
+
+    Multimodal user turns keep prose in ``text`` parts; image parts are
+    omitted here because summaries and memory never need the pixels.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    parts: list[str] = []
+    for part in content:
+        if part.get("type") == "text" and isinstance(part.get("text"), str):
+            parts.append(part["text"])
+    return "\n".join(parts)
+
+
 @dataclass
 class ChatMessage:
     """A single message in the chat conversation."""
 
     role: Literal["system", "user", "assistant", "tool"]
-    content: str | None = None
+    content: MessageContent | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
 

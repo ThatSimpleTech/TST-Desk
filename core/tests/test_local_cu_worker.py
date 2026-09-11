@@ -21,6 +21,7 @@ from tstd.desktop.mock import MockDesktopDriver
 from tstd.local_worker import (
     effective_tier,
     is_cu_tool,
+    last_cu_surface,
     local_worker_tier,
     session_is_cu_heavy,
     titlebar_slugs,
@@ -200,6 +201,30 @@ class TestLocalWorkerHelpers:
         session.used_cu = False
         assert session_is_cu_heavy(session) is True
         assert session.used_cu is True
+
+    async def test_last_cu_surface_follows_the_log(self, tmp_path: Path) -> None:
+        session = Session(str(tmp_path))
+        assert last_cu_surface(session) is None
+        await session.event_log.add(
+            ToolCall(
+                session_id=session.id,
+                tool_call_id="t1",
+                name="browser_screenshot",
+                arguments={},
+                seq=1,
+            )
+        )
+        assert last_cu_surface(session) == "browser"
+        await session.event_log.add(
+            ToolCall(
+                session_id=session.id,
+                tool_call_id="t2",
+                name="desktop_screenshot",
+                arguments={},
+                seq=2,
+            )
+        )
+        assert last_cu_surface(session) == "desktop"
 
 
 class TestLocalWorkerLoop:

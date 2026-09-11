@@ -99,4 +99,36 @@ describe("renderMarkdown", () => {
     expect(html).toContain("data-copy-btn");
     expect(html).not.toContain("<button");
   });
+
+  it("emits a mermaid placeholder instead of highlighting (TD-4706)", () => {
+    const html = renderMarkdown("```mermaid\nflowchart LR\n  A-->B\n```");
+    expect(html).toContain('class="md-mermaid"');
+    expect(html).toContain("flowchart LR");
+    expect(html).not.toContain("language-mermaid");
+  });
+
+  it("emits a KaTeX placeholder for math fences (TD-4706)", () => {
+    const html = renderMarkdown("```math\nE = mc^2\n```");
+    expect(html).toContain("md-katex-ph");
+    expect(html).toContain("E = mc^2");
+    expect(html).not.toContain('class="katex"');
+  });
+
+  it("emits placeholders for $$ display math and \\( inline math (TD-4706)", () => {
+    expect(renderMarkdown("$$a+b$$")).toContain("md-katex-display");
+    expect(renderMarkdown("see \\(a+b\\) here")).toContain("md-katex-inline");
+  });
+
+  it("does not treat currency as math (TD-4706)", () => {
+    const html = renderMarkdown("It costs $5 and $10.");
+    expect(html).not.toContain("katex");
+    expect(html).toContain("$5");
+  });
+
+  it("does not render markdown images (TD-4705)", () => {
+    const html = renderMarkdown("![secret](https://evil.example/key.png)");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("evil.example");
+    expect(html).toContain("[secret]");
+  });
 });

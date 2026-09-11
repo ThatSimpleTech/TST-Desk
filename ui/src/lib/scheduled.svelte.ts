@@ -12,6 +12,7 @@ export const scheduled = $state({
 	loading: false,
 	error: null as string | null,
 	draft: emptyDraft(null),
+	parseText: "",
 });
 
 let started = false;
@@ -45,6 +46,7 @@ export function resetScheduled(): void {
 	scheduled.loading = false;
 	scheduled.error = null;
 	scheduled.draft = emptyDraft(null);
+	scheduled.parseText = "";
 }
 
 /** Ask the daemon for the job list. Prefills workspace when the draft is empty. */
@@ -63,6 +65,18 @@ export function setDraftField<K extends keyof JobDraftFields>(
 	value: JobDraftFields[K],
 ): void {
 	scheduled.draft = { ...scheduled.draft, [key]: value };
+}
+
+export function setParseText(value: string): void {
+	scheduled.parseText = value;
+}
+
+/** Ask the daemon to fill the draft from NL. Does not save. */
+export function parseJobRequest(): boolean {
+	ensureStarted();
+	scheduled.loading = true;
+	scheduled.error = null;
+	return sendToDaemon({ type: "parse_job", text: scheduled.parseText });
 }
 
 export function createJob(): boolean {
@@ -103,6 +117,23 @@ function reduce(event: DaemonEventUnion): void {
 			// Keep the workspace — the next job is usually in the same one.
 			scheduled.draft = emptyDraft(scheduled.draft.workspace || null);
 		}
+		return;
+	}
+	if (event.type === "job_draft") {
+		scheduled.loading = false;
+		if (!event.ok) {
+			scheduled.error = event.detail ?? "could not parse job request";
+			return;
+		}
+		scheduled.error = null;
+		scheduled.draft = {
+			workspace: event.workspace ?? scheduled.draft.workspace,
+			instruction: event.instruction ?? scheduled.draft.instruction,
+			cadence: event.cadence ?? scheduled.draft.cadence,
+			next_run: event.next_run ?? scheduled.draft.next_run,
+			deliver_to: event.deliver_to ?? scheduled.draft.deliver_to,
+			paused: event.paused ?? scheduled.draft.paused,
+		};
 		return;
 	}
 	if (event.type === "error" && (event.code === "job_invalid" || event.code === "job_not_found")) {

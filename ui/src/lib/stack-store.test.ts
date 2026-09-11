@@ -10,6 +10,7 @@ import {
 	createStackStore,
 	formatTokens,
 	memoryPlaceholderCopy,
+	warningBadge,
 	type StackState,
 } from "./stack-store";
 
@@ -57,6 +58,35 @@ describe("applyEvent", () => {
 		expect(state.tokenMethod).toBe("exact");
 		expect(state.lastCachedTokens).toBe(512);
 		expect(state.loaded).toBe(true);
+	});
+
+	it("lists skills separately from steering sources", () => {
+		const { state, store } = harness();
+		store.applyEvent(
+			stackEvent({
+				skills: [
+					{
+						name: "review",
+						description: "Review a PR",
+						source: "workspace",
+						loaded: true,
+						tokens: 40,
+					},
+				],
+			}),
+			"s1",
+		);
+		expect(state.skills.map((s) => s.name)).toEqual(["review"]);
+		expect(state.skills[0]?.loaded).toBe(true);
+		expect(state.sources.every((s) => !s.path.endsWith("SKILL.md"))).toBe(true);
+	});
+
+	it("a missing skills field becomes an empty list, not a steering row", () => {
+		const { state, store } = harness();
+		const event = stackEvent();
+		delete event.skills;
+		store.applyEvent(event, "s1");
+		expect(state.skills).toEqual([]);
 	});
 
 	it("names loaded and dropped memory files", () => {
@@ -227,6 +257,13 @@ describe("labels", () => {
 
 	it("empty memory quotes the prompt placeholder", () => {
 		expect(memoryPlaceholderCopy()).toBe("<!-- memory: none loaded for this session -->");
+	});
+
+	it("warningBadge shortens line-limit warnings from the daemon", () => {
+		expect(warningBadge("file exceeds 200 lines; long files measurably reduce adherence")).toBe(
+			"over 200 lines",
+		);
+		expect(warningBadge("appliesTo only scopes rules")).toBe("appliesTo only scopes rules");
 	});
 });
 

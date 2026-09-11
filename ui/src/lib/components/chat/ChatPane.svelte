@@ -20,6 +20,7 @@
 		sendUserMessage,
 		teardownChat,
 	} from "../../chat-store.svelte.js";
+	import { loadCommands, startCommands } from "../../commands.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
 	import { session, workspaceName } from "../../session-status.svelte.js";
 	import { settings } from "../../settings.svelte.js";
@@ -30,10 +31,27 @@
 	import Composer from "./Composer.svelte";
 	import MessageList from "./MessageList.svelte";
 	import QueuedMessages from "./QueuedMessages.svelte";
+	import WakeupCard from "../WakeupCard.svelte";
+	import { bindWakeup, startWakeup } from "../../wakeup.svelte.js";
 
 	onMount(() => {
 		initChat();
-		return teardownChat;
+		const offWakeup = startWakeup();
+		const offCommands = startCommands();
+		return () => {
+			teardownChat();
+			offWakeup();
+			offCommands();
+		};
+	});
+
+	$effect(() => {
+		const path = session.workspacePath;
+		if (path !== null) loadCommands(path);
+	});
+
+	$effect(() => {
+		bindWakeup(session.sessionId);
 	});
 
 	// Computed once per mount; the greeting isn't meant to tick live as the
@@ -108,6 +126,7 @@
 				onretry={retryLastUserMessage}
 			/>
 		{/if}
+		<WakeupCard />
 		<!-- TD-1607: fixed-height slot — the shimmer and the duration line
 		     swap without ever nudging the composer. -->
 		<div class="turn-status" aria-live="polite">
@@ -138,6 +157,7 @@
 			running={showCancel(chat.turnState) || chat.awaitingFirstToken}
 			bind:value={draft}
 			limits={session.attachmentLimits}
+			allowImages={session.vision}
 			onsubmit={(text, attachments) => {
 				sendUserMessage(text, attachments);
 			}}

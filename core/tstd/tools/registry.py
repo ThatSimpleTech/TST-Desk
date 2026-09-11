@@ -4,7 +4,9 @@ Each tool declares its name, description, JSON Schema parameters,
 side-effect class, and parallel-safety flag.  The registry is the
 single source of truth for what tools exist and how to call them.
 
-Registration is explicit in v0.1 — no dynamic discovery (TD-601).
+Builtins are registered explicitly (TD-601). In-process plugins then
+load from the ``tstd.tools`` entry-point group (TD-4601); they cannot
+replace a builtin name.
 """
 
 from __future__ import annotations
@@ -62,6 +64,9 @@ class Tool:
         actuates: Desktop computer-use only (TD-3301). ``None`` means this
             is not a CU tool. ``False`` is capture-only (Class A).
             ``True`` is pointer/keyboard actuation (Class B, ask).
+        provenance: Optional origin tag. MCP tools use ``mcp:<server-id>``
+            (TD-4401). In-process plugins use ``plugin:<distribution>``
+            (TD-4601). Builtins leave this unset.
     """
 
     name: str
@@ -82,6 +87,8 @@ class Tool:
     # path_fields would otherwise fall through to the worker as B for
     # screenshot too.
     actuates: bool | None = None
+    # ``mcp:<server-id>`` (TD-4401) or ``plugin:<dist>`` (TD-4601). None = builtin.
+    provenance: str | None = None
 
     def __post_init__(self) -> None:
         """Validate basic invariants."""
@@ -136,7 +143,8 @@ class ToolRegistry:
     """Registry of all available tools.
 
     Registration is explicit — tools must be registered before they can
-    be called or exposed to the model.  No dynamic discovery in v0.1.
+    be called or exposed to the model.  Builtins are listed in this
+    module; third-party plugins register through ``load_plugins``.
 
     Usage::
 
@@ -444,12 +452,18 @@ def _register_builtins(registry: ToolRegistry) -> None:
 
 
 def create_registry() -> ToolRegistry:
-    """Create a new ToolRegistry with all built-in tools pre-registered."""
+    """Create a registry with builtins, skills, delegate, then plugins."""
+    from ..context.skills import register_skill_tools
     from .browser import register_browser_tools
+    from .delegate import register_delegate_tools
     from .desktop import register_desktop_tools
+    from .plugins import load_plugins
 
     registry = ToolRegistry()
     _register_builtins(registry)
     register_desktop_tools(registry)
     register_browser_tools(registry)
+    register_skill_tools(registry)
+    register_delegate_tools(registry)
+    load_plugins(registry)
     return registry

@@ -108,9 +108,13 @@ function bridge() {
 	const badges: (string | null)[] = [];
 	const focused: string[] = [];
 	const switched: string[] = [];
+	const trayCounts: number[] = [];
 	const impl: CoworkerIndicatorBridge = {
 		setBadge: vi.fn(async (label) => {
 			badges.push(label);
+		}),
+		setTrayCount: vi.fn(async (count) => {
+			trayCounts.push(count);
 		}),
 		focusCard: vi.fn((id) => {
 			focused.push(id);
@@ -120,7 +124,7 @@ function bridge() {
 			switched.push(id);
 		}),
 	};
-	return { impl, badges, focused, switched };
+	return { impl, badges, trayCounts, focused, switched };
 }
 
 let stop = (): void => {};
@@ -295,9 +299,45 @@ describe("startCoworkerIndicator", () => {
 		expect(switched).toEqual([]);
 	});
 
-	it("does not ask the host for a tray", () => {
-		const { impl } = bridge();
+	it("updates the tray running-count from session_list", () => {
+		const { impl, trayCounts } = bridge();
 		stop = startCoworkerIndicator(impl);
-		expect(Object.keys(impl)).toEqual(["setBadge", "focusCard", "switchSession"]);
+		emit({
+			type: "session_list",
+			seq: 1,
+			sessions: [
+				{
+					session_id: "s1",
+					workspace_path: "/a",
+					state: "running",
+					created_at: "t",
+					updated_at: "t",
+					event_count: 1,
+					archived: false,
+					starred: false,
+				},
+				{
+					session_id: "s2",
+					workspace_path: "/b",
+					state: "awaiting_approval",
+					created_at: "t",
+					updated_at: "t",
+					event_count: 1,
+					archived: false,
+					starred: false,
+				},
+				{
+					session_id: "s3",
+					workspace_path: "/c",
+					state: "idle",
+					created_at: "t",
+					updated_at: "t",
+					event_count: 1,
+					archived: false,
+					starred: false,
+				},
+			],
+		});
+		expect(trayCounts.at(-1)).toBe(2);
 	});
 });

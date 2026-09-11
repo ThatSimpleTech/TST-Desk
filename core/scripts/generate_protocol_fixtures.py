@@ -31,11 +31,14 @@ from tstd.protocol import (
     Attach,
     Attachment,
     AutonomyStart,
+    AutonomySummary,
     BoundaryUpdate,
     Cancel,
     CharterDocument,
     CheckCuPermissions,
     CheckpointNotice,
+    CommandEntry,
+    CommandList,
     ContextCompacted,
     ContextPinEntry,
     ContextPins,
@@ -50,8 +53,10 @@ from tstd.protocol import (
     DeleteApiKey,
     DeleteCredential,
     DeleteJob,
+    DeleteMcpServer,
     DeleteSession,
     Deny,
+    DenyVerify,
     DesignHit,
     DesignHitBox,
     DesignHitTest,
@@ -80,9 +85,11 @@ from tstd.protocol import (
     InstructionFileEntry,
     InstructionFiles,
     InstructionStack,
+    JobDraftReply,
     JobEntry,
     JobList,
     ListArtifacts,
+    ListCommands,
     ListGrokExtensions,
     ListGrokSessions,
     ListInstructions,
@@ -92,6 +99,7 @@ from tstd.protocol import (
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    McpServerSummary,
     MemoryAccept,
     MemoryEdit,
     MemoryFileDiff,
@@ -104,6 +112,7 @@ from tstd.protocol import (
     OpenArtifact,
     OpenInTerminal,
     OpenWorkspace,
+    ParseJob,
     Ping,
     PolicyRules,
     PolicyRuleSummary,
@@ -115,6 +124,7 @@ from tstd.protocol import (
     RuleActivated,
     RunDiagnostics,
     RunGrokCommand,
+    RunVerify,
     SaveCharter,
     SaveJob,
     SaveMemory,
@@ -131,8 +141,11 @@ from tstd.protocol import (
     SetEngine,
     SetGrokMode,
     SetLoadGlobalMemory,
+    SetMcpServer,
+    SetPlan,
     SetPreset,
     SetRemoteAttach,
+    SetSessionPreset,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
@@ -142,6 +155,7 @@ from tstd.protocol import (
     SetWorkspacePin,
     ShellOutput,
     Shutdown,
+    SkillStackEntry,
     StartAutonomy,
     SteeringReloaded,
     TierState,
@@ -157,6 +171,7 @@ from tstd.protocol import (
     UserMessage,
     UserTurn,
     ValidateApiKey,
+    VerifyResult,
 )
 
 FIXTURES = {
@@ -199,11 +214,16 @@ FIXTURES = {
     "set_workspace_pin": SetWorkspacePin(path="/home/user/project", pinned=True),
     "resume": Resume(session_id="sess-1"),
     "cancel": Cancel(session_id="sess-1"),
+    "run_verify": RunVerify(session_id="sess-1"),
+    "deny_verify": DenyVerify(session_id="sess-1"),
     "attach": Attach(session_id="sess-1", from_seq=5),
     "detach": Detach(session_id="sess-1"),
     "set_tier": SetTier(session_id="sess-1", tier="brain"),
+    "set_plan": SetPlan(session_id="sess-1", on=True),
+    "set_session_preset": SetSessionPreset(session_id="sess-1", name="budget"),
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
     "list_instructions": ListInstructions(workspace_path="/home/user/project"),
+    "list_commands": ListCommands(workspace_path="/home/user/project"),
     "list_memory": ListMemory(workspace_path="/home/user/project"),
     "save_memory": SaveMemory(
         workspace_path="/home/user/project",
@@ -290,6 +310,13 @@ FIXTURES = {
     "set_credential": SetCredential(name="Local"),
     "delete_credential": DeleteCredential(credential="local"),
     "set_tier_credential": SetTierCredential(preset="local", tier="brain", credential="local"),
+    "set_mcp_server": SetMcpServer(
+        id="example",
+        transport="stdio",
+        command=["python", "-m", "some_mcp"],
+        enabled=True,
+    ),
+    "delete_mcp_server": DeleteMcpServer(id="example"),
     # Diagnostics (TD-1104 doctor)
     "run_diagnostics": RunDiagnostics(),
     # Usage and cost (TD-1706)
@@ -403,6 +430,14 @@ FIXTURES = {
         message="This workspace has uncommitted changes.",
         seq=10,
     ),
+    "verify_result": VerifyResult(
+        session_id="sess-1",
+        verdict="pass",
+        summary="Diff matches the tests.",
+        cost=0.002,
+        pending=False,
+        seq=10,
+    ),
     "cost_update": CostUpdate(
         session_id="sess-1",
         turn_cost=0.05,
@@ -450,6 +485,13 @@ FIXTURES = {
             "worker": "test-worker-slug",
             "validator": "test-validator-slug",
         },
+        preset="test",
+        hosts={
+            "brain": "mock.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
+        },
+        vision=False,
         seq=18,
     ),
     "tier_state_override": TierState(
@@ -461,7 +503,31 @@ FIXTURES = {
             "worker": "test-worker-slug",
             "validator": "test-validator-slug",
         },
+        preset="test",
+        hosts={
+            "brain": "mock.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
+        },
         seq=19,
+    ),
+    "tier_state_plan": TierState(
+        session_id="sess-1",
+        tier="brain",
+        override=None,
+        model_slugs={
+            "brain": "test-brain-slug",
+            "worker": "test-worker-slug",
+            "validator": "test-validator-slug",
+        },
+        preset="test",
+        hosts={
+            "brain": "mock.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
+        },
+        plan=True,
+        seq=20,
     ),
     # TD-1716 liveness frame: no session, no seq — deliberately unlike
     # every other daemon→client frame, which is the point of the fixture.
@@ -501,6 +567,15 @@ FIXTURES = {
         total_tokens=500,
         token_method="cl100k_base",
         seq=17,
+        skills=[
+            SkillStackEntry(
+                name="review",
+                description="Review a PR",
+                source="workspace",
+                loaded=False,
+                tokens=40,
+            )
+        ],
     ),
     "charter": CharterDocument(
         workspace_path="/home/user/project",
@@ -530,6 +605,18 @@ FIXTURES = {
         error=None,
         session_id="sess-autonomy",
     ),
+    "autonomy_summary": AutonomySummary(
+        session_id="sess-1",
+        reason="definition of done met",
+        branch="tst/auto/ship-the-csv-importer",
+        ledger_path=".tst/autonomy/DECISIONS.md",
+        changed=["src/importer.py"],
+        refusals=[],
+        ledger_excerpt=(
+            "## 2026-08-26T12:00:00Z · Class A · commit abc123\n**Chose:** format\n**Why:** ruff"
+        ),
+        seq=12,
+    ),
     "memory_files": MemoryFiles(
         workspace_path="/home/user/project",
         files=[
@@ -551,6 +638,17 @@ FIXTURES = {
             ),
         ],
         created=None,
+    ),
+    "command_list": CommandList(
+        workspace_path="/home/user/project",
+        commands=[
+            CommandEntry(
+                name="review",
+                description="Review the current diff",
+                source="workspace",
+                body="Please review the staged changes.\n",
+            )
+        ],
     ),
     "context_pins": ContextPins(
         workspace_path="/home/user/project",
@@ -582,6 +680,8 @@ FIXTURES = {
                 "updated_at": "2026-08-13T10:00:00Z",
                 "event_count": 0,
                 "title": "hello world",
+                "preset": "tst-default",
+                "busy": False,
             },
             # TD-1715: the list stays complete and marks what is filed away.
             {
@@ -593,6 +693,7 @@ FIXTURES = {
                 "event_count": 12,
                 "archived": True,
                 "starred": True,
+                "busy": False,
             },
         ]
     ),
@@ -624,6 +725,17 @@ FIXTURES = {
         ],
         tier_credentials={"brain": "openrouter", "worker": None, "validator": None},
         tier_loopback={"brain": False, "worker": True, "validator": True},
+        mcp_servers=[
+            McpServerSummary(
+                id="example",
+                transport="stdio",
+                command=["python", "-m", "some_mcp"],
+                url="",
+                enabled=True,
+            )
+        ],
+        speech_enabled=False,
+        speech_ready=False,
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so
@@ -785,6 +897,8 @@ FIXTURES = {
         deliver_to="window",
     ),
     "delete_job": DeleteJob(job_id="job-1"),
+    "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
+    "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
     "job_list": JobList(
         jobs=[
             JobEntry(
@@ -802,6 +916,14 @@ FIXTURES = {
                 last_session_id="sess-1",
             )
         ],
+    ),
+    "job_draft": JobDraftReply(
+        ok=True,
+        workspace="/ws/proj",
+        instruction="summarize the inbox",
+        cadence="every 2 hours",
+        deliver_to="slack",
+        paused=False,
     ),
     "grok_commands": GrokCommands(
         session_id="sess-1",
@@ -831,7 +953,7 @@ FIXTURES = {
     "grok_session_list": GrokSessionList(
         sessions=[GrokSessionEntry(id="abc", title="Fix login", cwd="/tmp/proj", updated_at="1")]
     ),
-    "transcript": Transcript(text="hello from the mic"),
+    "transcript": Transcript(ok=True, text="hello from the mic", detail=""),
     "grok_extensions": GrokExtensions(
         items=[GrokExtension(kind="skill", name="review", detail="user")]
     ),

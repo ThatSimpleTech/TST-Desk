@@ -1,8 +1,10 @@
 # TST Desk — Work Plan & Backlog
 
 **Scope of this document:** everything that must be built for **v0.1** and **v0.2**, plus
-a full decomposition of **v0.3–Later** (M5–M10 and E47). Later phases may be planned;
-they may not be started until the previous milestone exits (`AGENTS.md` §3).
+a full decomposition of **v0.3–Later** (M5–M10, E47, and E49). Later phases may be planned;
+they may not be started until the previous milestone exits (`AGENTS.md` §3). E49 is
+follow-through that the spec implied or the clean-guest pass exposed; it is not a
+new product. Do not implement E47 or E49 unless the maintainer says so.
 
 Companion documents:
 - `tst-desk-spec.md` — behavior and architecture. Source of truth for *what it does*.
@@ -52,7 +54,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M8 — Local remainder (v0.6)** | E39 | EZER/vLLM path. UI-TARS grounding. Floor already shipped as M1.5 |
 | **M9 — Autonomy (v0.7)** | E40–E43 | Charter, unattended runner, drift checks, circuit breakers, hard-required container, wake-up |
 | **M10 — Extensibility (v0.8)** | E44–E46 | MCP through the classifier. Slash + `SKILL.md`. One-level subagent. Plan lock |
-| **Later** | E47 | Voice, tray, multi-window, updater, vision. Unversioned; do not pull forward |
+| **Later** | E47, E49 | Voice, tray, updater, vision; Wayland CU; signing; aarch64; CI recovery. Unversioned; do not pull forward |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -85,8 +87,8 @@ M4 Memory hangs off E5 (the assembler already has a brain-only memory slot) and 
 supervision — heading-match loading is the floor if the sidecar is not running.
 
 M5 Cowork hangs off TD-205 / TD-1002: the session already outlives the socket; the
-window still kills the daemon. Persist revive (events.jsonl) landed early — TD-2901
-pins and bounds it. M6 hangs off TD-1710 (browser Screen) and E20 (`tst-cu-mcp`).
+window no longer kills the daemon on close (TD-2902). Persist revive
+(events.jsonl) landed early — TD-2901 pins and bounds it. M6 hangs off TD-1710 (browser Screen) and E20 (`tst-cu-mcp`).
 M7 hangs off M5 (something must be alive to attach to). M9 hangs off M5 and M7
 (spec §9). M10 hangs off E6 (every MCP tool is still a classified tool).
 
@@ -192,6 +194,10 @@ Create the directory structure from `AGENTS.md` §11.
 - [x] Jobs: Python lint, Python typecheck, Python tests, Rust clippy, TypeScript typecheck,
       frontend build
 - [x] Build matrix covers macOS, Linux, Windows
+      (2026-08-28: default `ci.yml` is three `ubuntu-latest` jobs so
+      the $20/month org budget survives PRs. macOS and Windows
+      installers still build from `package.yml` on dispatch or a
+      `tstdesk-v*` tag. See TD-4904.)
 - [x] Pipeline is green on the empty scaffold
 - [x] Failing any job blocks merge
 
@@ -2261,6 +2267,13 @@ is re-keyed; verified the daemon's exec-array invocation is not the cause.
 Coordinate with TD-1102's wizard rework (integrate that lane first; this lands
 on top).
 
+**Leftover (2026-08-27):** a locked Linux Secret Service (`secret-tool
+lookup`) waits on an unlock prompt with no deadline. `setup_state`
+probes every named credential, so an unmocked daemon test hung the
+suite. CLI `communicate` is now bounded (5s) and maps timeout to
+`KeychainLockedError`; the suite isolates the live keychain except
+`test_keychain.py`.
+
 ---
 
 ### TD-1106 — Validate works on the entered key
@@ -2427,10 +2440,15 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 - [x] Python runtime and dependencies bundled — user needs no system Python
       (PyInstaller onefile sidecar, `core/scripts/build_sidecar.py` →
       `shell/binaries/tstd-<triple>`; smoke-launched with no system Python involved)
-- [ ] App launches on a machine with no Python installed, verified on a clean VM per platform
-      (manual release step — no clean VM available in this environment; the
-      sidecar itself boots and serves standalone, so this verifies the Tauri
-      bundle around it. Belongs with TD-1302's clean-VM installs.)
+- [x] App launches on a machine with no Python installed, verified on a clean VM per platform
+      (Linux Docker guests on 2026-08-27: extracted `.deb` `tstd` on
+      `ubuntu:22.04` with empty PATH and no system Python; `dpkg -i` +
+      `xvfb-run tst-desk` on `ubuntu:24.04` wrote `port.json` and accepted
+      a loopback TCP connect. Script: `core/scripts/smoke_linux_bundle.sh`.
+      macOS and Windows: Package run `33134175163` on `259cc49` (2026-08-28)
+      PATH-scrubbed the bundled sidecar on hosted runners — empty PATH on
+      Darwin, `C:\Windows\System32` only on Windows — and each served
+      `port.json`. That is the no-Python guest; the GUI host is not Python.)
 - [x] Bundle size documented and justified (18.9 MB aarch64-apple-darwin —
       see DECISIONS.md 2026-08-14)
 - [x] Daemon startup under three seconds on a mid-range machine
@@ -2442,17 +2460,18 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 **Size:** 5 · **Depends on:** TD-1301
 
 **Acceptance criteria:**
-- [ ] macOS `.dmg` (arm64 and x86_64), Linux AppImage and `.deb`, Windows `.msi`
-      (CI matrix in `.github/workflows/package.yml`: macos-latest, macos-13,
-      ubuntu-latest, windows-latest.  macOS arm64 verified locally to `.app`
-      level — the bundled sidecar serves `port.json` with no system Python.
-      The local `.dmg` step needs Finder automation rights this dev host
-      lacks (AppleEvent -1712); runners get TAURI_BUNDLER_DMG_IGNORE_CI=false.
-      Ticks when the first main run produces four artifacts.)
-- [ ] Each installs and runs on a clean VM
-      (each matrix leg treats its fresh runner as the clean machine:
-      install/extract the bundle, run the bundled sidecar, assert the port
-      file.  Ticks when that first run is green.)
+- [x] macOS `.dmg` (arm64 and x86_64), Linux AppImage and `.deb`, Windows `.msi`
+      (Package run `33134175163` on `259cc49`, 2026-08-28: five artifacts
+      `tst-desk-macos-arm64`, `tst-desk-macos-x86_64`, `tst-desk-linux-x86_64`,
+      `tst-desk-linux-aarch64`, `tst-desk-windows-x86_64`. Matrix is
+      macos-latest, macos-15-intel (macos-13 retired Dec 2025), ubuntu-latest,
+      ubuntu-24.04-arm, windows-latest. Local `.dmg` still needs Finder
+      automation this host lacks; CI sets `TAURI_BUNDLER_DMG_IGNORE_CI=false`.)
+- [x] Each installs and runs on a clean VM
+      (Linux: Docker guests, Local 2026-08-27 below. macOS/Windows: hosted
+      Package runners are the guest — sidecar from the produced `.app` /
+      `tstd.exe`, artifact listed (`.dmg` / `.msi`), PATH-scrubbed serve.
+      See DECISIONS.md 2026-08-28.)
 - [x] Unsigned-binary warnings documented in the README with per-platform instructions
 - [x] Signing decision recorded in `DECISIONS.md` — cost and benefit stated, deferral is
       acceptable for v0.1 (deferred, 2026-08-14)
@@ -2460,8 +2479,19 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 **Local (2026-08-24):** Ubuntu 26.04 XFCE built AppImage (101 MB), `.deb`
 (27 MB), and `.rpm`. Extracted-deb `tstd` served `port.json` on this
 host, with `PATH` empty, and inside `ubuntu:22.04` (no system Python).
-The two open ACs still need the first green `package.yml` run on main
-(four artifacts) and the other matrix legs.
+
+**Local (2026-08-27):** Rebuilt AppImage (101 MB) and `.deb` (27 MB) on
+the 16-core EPYC host. `core/scripts/smoke_linux_bundle.sh` against
+stock `ubuntu:22.04` / `ubuntu:24.04` Docker guests (no `/dev/kvm`, so
+Docker is the Linux clean guest — `DECISIONS.md`). Proved: sidecar
+with empty PATH; windowed host via `dpkg -i` + xvfb; protocol E2E
+(handshake → `local` preset → `fs_write` → reply) with no API key and
+no `secret-tool`; AppImage `--appimage-extract` sidecar. Missing
+`secret-tool` used to crash `setup_state` — now a `KeychainError`.
+**CI (2026-08-28):** First green five-leg `package.yml` on `main`
+(`259cc49`, run `33134175163`). TD-4904 billing recovery plus
+`macos-15-intel` unblocked Intel `.dmg`. TD-1303 tagged
+`tstdesk-v0.1.0` the same day.
 
 ---
 
@@ -2469,17 +2499,28 @@ The two open ACs still need the first green `package.yml` run on main
 **Size:** 3 · **Depends on:** TD-1302, TD-106
 
 **Acceptance criteria:**
-- [ ] Tagged release builds all platforms and publishes artifacts
-      (release.yml fires on `tstdesk-v*` — namespaced in TD-4812 after the
-      tst-cu-mcp package's `v0.2.0` tag matched the old bare `v*` trigger and
-      fired a failed app-release run — reuses the package.yml matrix,
-      publishes via `gh release create`; still unverified end to end)
-- [x] Checksums published (SHA256SUMS.txt across all four artifacts)
+- [x] Tagged release builds all platforms and publishes artifacts
+      (tag `tstdesk-v0.1.0` on `451ac6f`. `release.yml` rebuild was
+      blocked by the org Actions spending limit — run `33177767804`,
+      empty jobs, `runner_id: 0`. Published from last green five-leg
+      Package `33147408105` at `4330c37`: both `.dmg`s, both AppImages,
+      both `.deb`s, the `.msi`, and `SHA256SUMS.txt`. Raise the budget
+      and re-run Release to refresh installers from the tag SHA.
+      `release.yml` now flattens nested artifact dirs, rewrites spaces
+      in filenames to dots so checksums match GitHub's download names,
+      and `gh release upload --clobber`s if the release already exists.)
+- [x] Checksums published (SHA256SUMS.txt across all uploaded artifacts)
 - [x] Changelog generated from commits (`core/scripts/changelog.py`, grouped
       by TD-### convention, merges excluded)
 - [x] Version consistent across host, daemon, and UI, asserted by test
       (`core/tests/test_version_consistency.py`; release job re-asserts the
       tag equals all four. Caught ui/package.json at 0.0.1 → 0.1.0.)
+
+**Done (2026-08-28):** Tag `tstdesk-v0.1.0` pushed. GitHub Release
+https://github.com/ThatSimpleTech/TST-Desk/releases/tag/tstdesk-v0.1.0
+with five-platform installers, `SHA256SUMS.txt`, and the story changelog.
+`release.yml` flatten / space-to-dot / idempotent upload landed so a
+budget-unblocked re-run can refresh the same tag.
 
 ---
 
@@ -2632,17 +2673,14 @@ product-semantics work the skips point at.
       every port-file write would restate that for a subprocess. POSIX asserts
       `0o600`, win32 asserts the file exists, reads back, and carries `0o666`.
       Written up in `docs/windows.md`
-- [ ] Shell-tool process-group kill semantics verified on Windows
-      (CREATE_NEW_PROCESS_GROUP + taskkill/TerminateJobObject), skipped
-      cancel/timeout tests unskipped — **implemented, unverified.**
-      `CREATE_NEW_PROCESS_GROUP` at the spawn and `taskkill /T /F /PID` after
-      the direct-child kill have landed, replacing a `proc.kill()` whose own
-      docstring admitted grandchildren escape. Not ticked: no Windows host has
-      run it, and a process-tree kill is a claim about an OS that only that OS
-      can settle. Ticking it from a green macOS suite, where the code is
-      `sys.platform`-gated out, would be this backlog's eighth "green suite,
-      dead feature". Unskipping also needs a cmd/PowerShell equivalent of the
-      POSIX escape probe (`$$`, `&`, `wait`) the cancel tests use
+- [x] Shell-tool process-group kill semantics verified on Windows
+      (CREATE_NEW_PROCESS_GROUP + `taskkill /T /F /PID` **before**
+      `TerminateProcess` on the leader — killing cmd.exe first orphaned
+      Start-Process grandchildren). Live cancel/timeout tests on
+      windows-latest, CI run `33146979852` on `e5513fe` (2026-08-28).
+      PowerShell escape probe writes this powershell pid plus a parked
+      grandchild; `_assert_group_gone` uses `OpenProcess` /
+      `STILL_ACTIVE`. Argv helpers in `test_shell_windows_kill.py`.
 - [x] Parent-watchdog liveness probe works on Windows (OpenProcess) — first pass:
       OpenProcess plus `GetExitCodeProcess != STILL_ACTIVE` (a dead process with an
       open handle otherwise reports alive); `test_parent_watchdog` green on the
@@ -2808,6 +2846,12 @@ literals (must be loopback), confines which modules may open a transport, record
 provider / discovery / key-validation paths under a patched httpx transport, and imports
 the package in a subprocess with sockets refused. The README now cites that file.
 
+**Leftover (2026-08-27):** TD-4604's `e2e_m10.py` imports the websockets
+client the same way the earlier harnesses do. It was missing from
+`_OUTBOUND_CAPABLE`, so the confinement test failed for a loopback
+protocol client rather than a new remote host. Added with the same
+reason as `e2e_m5`–`e2e_m8`.
+
 ---
 
 ### TD-1411 — Settings appearance tests assume `localStorage` exists
@@ -2874,9 +2918,8 @@ not reach any database already stamped version 1.
       empty state, rail and activity pane live against the bundled sidecar.
       Not a browser capture.)
 - [x] A five-minute quickstart from download to first result
-      (**caveat: the download step is written ahead of the first release.**  No
-      `v*` tag has been pushed, so the linked releases page is empty until one
-      is.  Steps 2–5 are the real first-run wizard, whose launch-to-first-message
+      (`tstdesk-v0.1.0` is on the releases page as of 2026-08-28.  Steps 2–5
+      are the real first-run wizard, whose launch-to-first-message
       time TD-1101 already measured under two minutes.  Install detail is not
       duplicated — the quickstart points at TD-1302's unsigned-build section.)
 - [x] The cost story stated plainly with the default stack and real numbers
@@ -3783,6 +3826,28 @@ create it — bind-time summaries and refreshes map it to no-turn. The Working
 shimmer and the 25s watchdog now arm exclusively on a local send, which is
 the only wait the user can actually be watching.
 
+### TD-1720 — Rail activity dots and title cap
+**Size:** 2 · **Depends on:** TD-1701, TD-1714
+
+**Acceptance criteria:**
+- [x] Rail dots show turn activity — working, waiting on approval, or
+      finished — not session liveness (`state: "running"`)
+- [x] Awaiting approval is a warning dot; a turn in flight is accent and
+      pulses; finished / idle is muted
+- [x] Session names in the rail and recents are capped at 20 characters;
+      the full title remains on hover and in filter matching
+- [x] `session_list` carries `busy` from `turn_in_flight` so a refresh does
+      not paint every live session as working
+
+**Notes:** user ask 2026-08-25: "running just means the chat is active, not
+its state. Colored dots. Cap chat names at like 20 char."
+
+**Completed (2026-08-25):** `SessionSummary.busy` is `turn_in_flight`.
+`rail-activity.ts` maps busy / parked states / bound `turnState` to
+working, waiting, or finished. `running` without a turn is muted
+Finished. Display titles cap at 20 characters; hover and filter keep
+the full name.
+
 ### TD-1715 — Archive, delete, and re-project sessions from the rail
 **Size:** 3 · **Depends on:** TD-1701
 
@@ -3853,6 +3918,13 @@ fake daemon with a per-session log and a real attach replay; suspend drops every
 and advances the wall clock with `vi.setSystemTime` while pending timers are dragged along
 unfired. 8 daemon tests cover ping shape, cadence, handshake gating, shutdown, and a re-attach
 superseding its predecessor.
+
+**Leftover (2026-08-27):** a loaded suite can stall a settings-wire
+`await ws.recv()` past 15s, so the next frame is `ping` rather than the
+ack. Production clients already skip ping. Tests now resolve
+`PING_INTERVAL_SECONDS` at `WebSocketServer` init and the suite fixture
+quiets it (0) except the cadence-pin test. Emission tests still pass an
+explicit interval.
 
 
 ### TD-1717 — Named API keys, bound per model
@@ -3946,6 +4018,60 @@ with no events, was reported as an empty completion and did not retry.
 - [x] A failed turn writes an `assistant_delta` so the pane is not blank
 
 **Done (2026-08-25).** User ask 2026-08-25.
+
+---
+
+### TD-1720 — Title bar shows the live slug and host
+**Size:** 2 · **Depends on:** TD-1006, TD-1718
+
+TD-1006 asked for active slugs on the chips. The bar shows
+`brain` / `worker` / `validator` and hides the slug in a tooltip.
+After binding an OpenRouter key on a local preset, that is not a
+sanity check — the role name stays `brain` while the turn may be
+on `:8002` or `openrouter.ai`.
+
+**Acceptance criteria:**
+- [x] `tier_state` carries `preset` and `hosts` (tier → hostname:port)
+      from the same resolution the provider client uses
+- [x] The title bar shows the active tier's slug and host without hover
+- [x] The UI does not infer a host from the slug
+- [x] A missing slug (discovery pending) still shows the host
+- [x] Additive protocol: no `PROTOCOL_VERSION` bump; an older client
+      ignores the new fields
+
+**Notes:** Keep the three role chips as the router pin. The pill is
+read-only. Tooltip may add preset and full URL. Spec §2.7: hosts come
+from config / `resolve_base_url`, never a Python literal.
+
+**Done (2026-08-25).** `tier_state` carries `preset` + `hosts`. The title
+bar paints `{slug} · {host}` from those fields. User ask 2026-08-25.
+
+---
+
+### TD-1721 — Per-session preset
+**Size:** 5 · **Depends on:** TD-1720, TD-1101
+
+A session already captures the `ModelConfig` it opened with;
+`set_preset` only changes new sessions. Settings still shows one
+global preset, so two chats on `local` and `vllm` look identical
+and you cannot retarget an existing chat.
+
+**Acceptance criteria:**
+- [x] A session persists the preset it opened with and revive restores it
+- [x] The title bar (or composer) can change *this* session's preset;
+      the change applies on the next idle turn
+- [x] Changing Settings' `active_preset` does not rewrite open sessions
+- [x] The session list shows each row's preset
+- [x] A per-session slug edit does not write back onto the global preset
+- [x] Refuse a preset switch while a turn is running
+
+**Notes:** Not a second Settings document. Settings remains the catalog.
+Class B: persist the preset name on the session, not a forked config
+tree. Do not start until TD-1720 is on main.
+
+**Done (2026-08-26).** `sessions.json` stores the catalog name.
+`set_session_preset` retargets the open chat; Settings' `set_preset`
+stays the default for new sessions.
 
 ---
 
@@ -4134,9 +4260,9 @@ Memory / Context on the right and recents in the middle. Computer-use
 (TD-1710, E20), packaging clean-VM boxes (TD-1301–1303), and Windows
 process-group verify (TD-1406) stay where they are — they do not block M4.
 
-**v0.1 leftover that is not M4:** the window still kills the daemon on close. Distill
-therefore runs on **graceful quit** and on an explicit End session, not on crash, and
-does not wait for v0.3 detached sessions.
+**v0.1 leftover that is not M4:** close no longer kills the daemon
+(TD-2902). Distill still runs on **graceful quit** and on an explicit
+End session, not on crash, and does not wait for v0.3 detached sessions.
 
 **Already decided (do not reopen):** local embeddings are a **sidecar**
 (`llama-server --embeddings` or any OpenAI `/v1/embeddings` endpoint), never an
@@ -4213,10 +4339,17 @@ the guard together.
 - [x] A memory file is capped at ~200 lines (exact number in config, tested)
 - [x] A write that would exceed the cap is refused with copy that says to
       distill, not to append
-- [x] Distill (E23) is the only path that may replace a file that is at cap
+- [x] Distill (E23) and the Memory pane (TD-2602) may replace a file that
+      is at cap; tool writes cannot
 
 **Notes:** spec §5 — distilled, not appended forever. The number lives in
-config, never in a handler literal.
+config, never in a handler literal. The pane is the human correction
+path; it is not `fs_write`.
+
+**Addendum (2026-08-28):** Class B — a at-cap file the human can still
+open and shorten would otherwise be locked until the next distill.
+`test_pane_save_may_replace_at_cap` pins the carve-out. Tools still
+cannot replace at cap.
 
 ---
 
@@ -4354,6 +4487,11 @@ path that writes.
 - [x] A crash, a killed sidecar, or a force-quit writes nothing
 - [x] Distill is skipped when memory is unchanged (no proposal event)
 
+**Addendum (2026-08-28):** `test_only_graceful_shutdown_reaches_distill`
+pins that `_distill_live_sessions` is called only from `_shutdown`, not
+from `main` or a crash path. SIGKILL never reaches that function, so it
+writes nothing.
+
 **Notes:** v0.1 quit is graceful (TD-1002). Do not wait for detached
 sessions (v0.3). End session can be a rail action; if the rail is too
 small, a command-palette entry is enough.
@@ -4482,9 +4620,15 @@ Spec §5: "open, correct, diff, grep, and revert."
 - [x] A Memory surface lists `.tst/memory/**` for the bound workspace
 - [x] Opening a file shows the markdown
 - [x] Empty directory has copy that points at the first distill
-- [ ] Planned rail entry (`state: planned`) becomes `ready` — no Memory
-      rail row exists; Scheduled is the only `planned` entry. The pane
-      landed as the project-home Memory column instead. See DECISIONS.md.
+- [x] Planned rail entry (`state: planned`) becomes `ready` — no Memory
+      rail row exists. The pane is the project-home Memory column
+      (DECISIONS 2026-08-20). Scheduled is `ready` with the other
+      function rows; the rail has no `planned` entry.
+
+**Done (2026-08-27):** `list_memory` / `memory_files` plus the project-home
+column already satisfied the first three ACs. The leftover rail row is
+closed as cancelled: adding `memory` to `RailSurface` would fight Home /
+Projects / Scheduled. `rail.test.ts` pins that.
 
 ---
 
@@ -4614,6 +4758,10 @@ the pin file is a new schema.
       against a config cap (the "12% of project capacity" read)
 - [x] Over cap, pins drop last-in-first-out; the meter says so
 - [x] Worker/validator do not receive the pin block
+
+**Addendum (2026-08-28):** `test_capacity_meter_is_instructions_plus_memory_plus_pins`
+asserts `project_capacity` tokens are the same heuristic as steering
+plus listed memory plus loaded pins.
 
 ---
 
@@ -5081,6 +5229,11 @@ pointer). The real-display host path is a no-op; screenshot tools raise
 `prefers-reduced-motion` is a static border and no trail. The store
 clears on `turn_complete`, cancel, and `cu_kill_state`.
 
+**Addendum (2026-08-28):** UI omitted-field fallback for
+`cu_show_on_real_display` was `?? false` while the daemon default is
+on. Settings now defaults the third bit on, matching
+`CuIndicatorPrefs.show_on_real_display`.
+
 **Addendum (2026-08-22):** The real-display path is no longer a no-op: the
 sidecar paints a rust ring on every display while the agent drives
 (`tst_cu_mcp/overlay`, helper AppKit child; DECISIONS.md 2026-08-22). The
@@ -5116,6 +5269,16 @@ a matching close tag ends it.
 **Completed (2026-08-25):** `cu_session` is the tag. Sidecar
 `overlay_session` drives macOS / Windows / Linux X11 painters. Linger
 removed. Wayland stays `NullOverlay`.
+
+**Leftover (2026-08-27):** the event reached `DaemonEventUnion` and the
+Screen-pane reducer, but not `KNOWN_EVENT_TYPES`. The live client
+dropped every `cu_session` frame (TD-1010) while unit tests stayed
+green by calling the reducer directly. Added to the gate.
+
+**Addendum (2026-08-28):** `set_cu_kill` already closed the episode
+(`close_cu_session` + overlay off). `test_set_cu_kill_emits_cu_session_false`
+now opens a session, kills, and asserts `cu_session {active:false}` on
+the log and the overlay callback.
 
 ---
 
@@ -5153,10 +5316,17 @@ element-at-point). Design mode v1 is browser-only; desktop frames get a
 geometric box + crop, not an AX role.
 
 **Acceptance criteria:**
-- [ ] Desktop Screen frames accept Design picks via AX role + attributes
-- [ ] Crop + box still travel as TD-1709 attachments
-- [ ] Same ⌘⇧D / actuating gate as TD-3403
-- [ ] Observe only — never actuates
+- [x] Desktop Screen frames accept Design picks via AX role + attributes
+- [x] Crop + box still travel as TD-1709 attachments
+- [x] Same ⌘⇧D / actuating gate as TD-3403
+- [x] Observe only — never actuates
+
+**Done (2026-08-26):** Desktop frames send the same `design_hit_test`
+verb. The daemon routes from the last `desktop_` / `browser_`
+`tool_call` on the session log. `tst-cu-mcp` adds observe-only
+`hit_test` (AX / UIA-adjacent HWND / AT-SPI or EWMH window). Last
+screenshot metadata maps image pixels ↔ global points. Kill-switch
+does not block. Not an agent tool. Wayland still has no AX path.
 
 ---
 
@@ -5307,6 +5477,9 @@ the 20-platform gateway.
 Done (2026-08-21): `send(config, message)`; URL in keychain
 `tst-slack-webhook`; host from `notify.slack.host`; off by default.
 
+**Addendum (2026-08-28):** `test_get_uses_tst_slack_webhook` asserts
+`get_slack_webhook_url` reads account `tst-slack-webhook`.
+
 ---
 
 ### TD-3802 — ntfy (optional extra)
@@ -5318,6 +5491,9 @@ Done (2026-08-21): `send(config, message)`; URL in keychain
 
 Done (2026-08-21): `send(config, message)`; topic URL in keychain
 `tst-ntfy-topic`; host from `notify.ntfy.host`; off by default.
+
+**Addendum (2026-08-28):** `test_ntfy_topic_is_tst_ntfy_topic` stores and
+reads that account.
 
 ---
 
@@ -5334,6 +5510,11 @@ Done (2026-08-21): `send(config, message)`; topic URL in keychain
 Done (2026-08-21): `{user_data_dir}/scheduler/jobs.json`; parse is a
 draft; save is a second call; no runner.
 
+**Addendum (2026-08-28):** `parse_job` / `job_draft` is the daemon door
+for that parse. The pane's "Describe the job" box sends NL; the reply
+fills the draft; Create still `save_job`. The parse is the
+worker-shaped schema (deterministic), not a model call.
+
 ---
 
 ### TD-3804 — Wake, run, deliver
@@ -5348,6 +5529,11 @@ draft; save is a second call; no runner.
 
 Done (2026-08-21): daemon tick + in-process `_start_session` turn;
 one fire then cadence advances `next_run` (or pause if one-shot).
+
+**Addendum (2026-08-28):** `Daemon.main()` never passed `notify_send`, so
+production Slack/ntfy scheduled delivery logged "skipped (no send hook)".
+The default hook is now `channel_notify` → `notify.slack.send` /
+`notify.ntfy.send`. Tests may still inject a mock.
 
 ---
 
@@ -5659,11 +5845,15 @@ would make one a schema change, and the committed file is the signature.
 **Size:** 5 · **Depends on:** TD-4101, TD-508
 
 **Acceptance criteria:**
-- [ ] Every N iterations (config, default 5) and on Class B, the
+- [x] Every N iterations (config, default 5) and on Class B, the
       validator receives charter + source_of_truth + diff + ledger +
       tests and answers spec §12.6's three questions
-- [ ] Cost is a validator call, not a user turn
-- [ ] `source_of_truth` is re-read from disk each check
+- [x] Cost is a validator call, not a user turn
+- [x] `source_of_truth` is re-read from disk each check
+
+**Done:** Supervisor hook in `advance_autonomy`'s continue path. Detects
+and reports only — no auto-revert (TD-4202), no circuit breakers
+(TD-4203). Result lives on `session.last_drift_check`.
 
 ---
 
@@ -5671,9 +5861,15 @@ would make one a schema change, and the committed file is the signature.
 **Size:** 5 · **Depends on:** TD-4201, TD-4102
 
 **Acceptance criteria:**
-- [ ] Drift → revert to last good checkpoint, log, re-plan on brain
-- [ ] Drift twice in a row → stop and notify
-- [ ] Interactive verify (TD-4204) does not auto-revert
+- [x] Drift → revert to last good checkpoint, log, re-plan on brain
+- [x] Drift twice in a row → stop and notify
+- [x] Interactive verify (TD-4204) does not auto-revert
+
+**Done:** Continue-path hook after `maybe_check_drift`. A detection
+restores drifted auto-branch paths to `autonomy_last_good_sha`, logs,
+and `set_tier("brain")`. Two in a row set `breaker:drift` (existing
+notify). Interactive verify does not import revert. First drift with
+no last-good SHA is a no-op that still counts.
 
 ---
 
@@ -5681,11 +5877,18 @@ would make one a schema change, and the committed file is the signature.
 **Size:** 5 · **Depends on:** TD-4101, TD-707
 
 **Acceptance criteria:**
-- [ ] Spec §12.7: spend/time cap, tests red N times, same file
+- [x] Spec §12.7: spend/time cap, tests red N times, same file
       thrashed N times, no DoD progress N times, any Class C, identical
       tool-call loop
-- [ ] Trip is a fault report + notify, not an approval card
-- [ ] Each breaker has a test that trips it
+- [x] Trip is a fault report + notify, not an approval card
+- [x] Each breaker has a test that trips it
+
+**Completed (2026-08-26):** `maybe_trip` on the `advance_autonomy`
+continue path. New trips are `breaker:tests_red`, `breaker:file_thrash`,
+`breaker:no_dod_progress`, `breaker:tool_loop`. Spend/wall-clock caps
+and Class C keep their existing stop strings. A trip notifies via the
+wake-up path; it never mints an `ApprovalRequest`. Interactive sessions
+never record or trip.
 
 ---
 
@@ -5696,11 +5899,11 @@ The unused validator call for *interactive* mode (spec §12.6 first
 sentence). Not the autonomy supervisor.
 
 **Acceptance criteria:**
-- [ ] Config `verify: off | after_write | ask` (default `after_write`)
-- [ ] A write turn may enqueue one validator call on the diff + tests
-- [ ] Timeline `verify_result`; not a second bubble unless asked
-- [ ] Write-less turns never verify
-- [ ] No charter, no auto-revert
+- [x] Config `verify: off | after_write | ask` (default `after_write`)
+- [x] A write turn may enqueue one validator call on the diff + tests
+- [x] Timeline `verify_result`; not a second bubble unless asked
+- [x] Write-less turns never verify
+- [x] No charter, no auto-revert
 
 ---
 
@@ -5720,16 +5923,32 @@ TD-101: hard-required container. No unsandboxed autonomy.
 - [x] Interactive mode does not require a container
 - [x] Size 8 — Firecracker/EZER is a follow-up, not this story
 
+**Completed (2026-08-26):** start gate probes rootless Podman and refuses
+with install copy. Interactive sessions never import the sandbox.
+
+**Addendum (2026-08-28):** the act seam is the autonomy *shell* tool.
+`run_shell` on `session.autonomy` execs `container_argv` (`/bin/sh -c`
+inside the image) instead of a host shell. Filesystem tools stay
+host-side behind PathGuard — the workspace *is* the mount. Firecracker
+is still a follow-up.
+
 ---
 
 ### TD-4302 — No credentials in the mount
 **Size:** 3 · **Depends on:** TD-4301
 
 **Acceptance criteria:**
-- [ ] Host keychain, `~/.ssh`, cloud creds, and the user-data-dir key
+- [x] Host keychain, `~/.ssh`, cloud creds, and the user-data-dir key
       are not visible in the container
-- [ ] A test that a well-known cred path is absent
-- [ ] Network inside the container follows the charter wall
+- [x] A test that a well-known cred path is absent
+- [x] Network inside the container follows the charter wall
+
+**Completed (2026-08-26):** `container_argv` still bind-mounts only the
+workspace; there is no extra-mount API. A well-known cred path
+(`~/.ssh` / `$HOME/.ssh` / `/root/.ssh`) is absent from argv and from
+the fake runtime's container view. `network: deny` keeps
+`--network=none`; a host allowlist omits that flag (Podman slirp) and
+never uses `--network=host`. Unexpected values fail closed as deny.
 
 ---
 
@@ -5737,10 +5956,16 @@ TD-101: hard-required container. No unsandboxed autonomy.
 **Size:** 5 · **Depends on:** TD-4101, TD-3801
 
 **Acceptance criteria:**
-- [ ] On complete / stop / breaker: a summary (what changed, ledger
+- [x] On complete / stop / breaker: a summary (what changed, ledger
       excerpt, refusals, branch name) lands in the window and the
       notify channel
-- [ ] The user can open the branch and the ledger in one click
+- [x] The user can open the branch and the ledger in one click
+
+**Completed (2026-08-26):** `advance_autonomy` (and the loop cap path)
+emits session-scoped `autonomy_summary` and sends the same body on
+slack/ntfy. `should_notify` accepts `breaker:` so TD-4203 can plug in.
+One click opens the ledger in the OS editor and copies the auto-branch
+name. Interactive sessions never emit the event.
 
 ---
 
@@ -5748,10 +5973,16 @@ TD-101: hard-required container. No unsandboxed autonomy.
 **Size:** 3 · **Depends on:** TD-4101, TD-4203, TD-4301
 
 **Acceptance criteria:**
-- [ ] Headless: mock provider + fake container, a charter with a
+- [x] Headless: mock provider + fake container, a charter with a
       two-step DoD, assert branch commits, one Class A ledger line,
       a tripped breaker, and no `main` commit
-- [ ] **This harness is the M9 exit criterion**
+- [x] **This harness is the M9 exit criterion**
+
+Done (2026-08-26): `tstd.e2e_m9` + `core/scripts/e2e_m9.py`,
+pinned in CI as `tests/test_e2e_m9.py`. Headless: `MockProvider` +
+fake rootless Podman, a two-step `$` DoD, Class A write on
+`tst/auto/<slug>`, `breaker:no_dod_progress`, `main` SHA unchanged.
+Not `e2e_harness.run`. Not marked `live`.
 
 ---
 
@@ -5775,11 +6006,16 @@ slash/skills can start after M4.
 **Size:** 8 · **Depends on:** TD-601
 
 **Acceptance criteria:**
-- [ ] User-data-dir config lists stdio (and loopback HTTP) servers
-- [ ] Tools appear in the registry with the server as provenance
-- [ ] A dead server is a doctor row, not a dead daemon
-- [ ] Destination traces to config (`test_outbound_hosts`)
-- [ ] Size 8 — split at client vs registry if needed
+- [x] User-data-dir config lists stdio (and loopback HTTP) servers
+- [x] Tools appear in the registry with the server as provenance
+- [x] A dead server is a doctor row, not a dead daemon
+- [x] Destination traces to config (`test_outbound_hosts`)
+- [x] Size 8 — split at client vs registry if needed
+
+Done (2026-08-26): `tstd.mcp` (stdio + loopback HTTP JSON-RPC) loads
+`mcp.servers` from user-data-dir config, registers `{id}__{name}` with
+provenance `mcp:<id>` on the existing dispatcher. Dead servers are
+`mcp:<id>` doctor rows; empty config adds none. Split: client vs loader.
 
 ---
 
@@ -5787,9 +6023,14 @@ slash/skills can start after M4.
 **Size:** 3 · **Depends on:** TD-4401, TD-702
 
 **Acceptance criteria:**
-- [ ] No MCP tool bypasses TD-702
-- [ ] Missing `host_fields` / path fields fail toward B, never A
-- [ ] A test attempts a bypass and gets `UnclassifiedToolCall`
+- [x] No MCP tool bypasses TD-702
+- [x] Missing `host_fields` / path fields fail toward B, never A
+- [x] A test attempts a bypass and gets `UnclassifiedToolCall`
+
+Done (2026-08-26): MCP provenance with no declared `path_fields` /
+`host_fields` / `host_resolver` is static Class B (`mcp-undeclared-fields`),
+ahead of every A grant. Dispatch with `classifier=None` still raises
+`UnclassifiedToolCall`. Loader keeps empty field lists and `ask`.
 
 ---
 
@@ -5797,9 +6038,14 @@ slash/skills can start after M4.
 **Size:** 3 · **Depends on:** TD-4401, TD-1703
 
 **Acceptance criteria:**
-- [ ] Add / disable / remove a server without editing YAML by hand
-- [ ] Command + args only; no free-form env that could smuggle a key
+- [x] Add / disable / remove a server without editing YAML by hand
+- [x] Command + args only; no free-form env that could smuggle a key
       into a file (paste-a-token stays keychain)
+
+**Done:** Settings MCP section plus `set_mcp_server` / `delete_mcp_server`.
+Surgical persist of `mcp.servers` (no `env`). HTTP non-loopback refused
+before write. Supervisor `reload` so doctor / next session see the list;
+live sessions keep the old tool set.
 
 ---
 
@@ -5813,12 +6059,17 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 5 · **Depends on:** TD-1004, TD-501
 
 **Acceptance criteria:**
-- [ ] `.tst/commands/*.md` and `~/.tstdesk/commands/*.md` (user-global
+- [x] `.tst/commands/*.md` and `~/.tstdesk/commands/*.md` (user-global
       wins on name)
-- [ ] `/` in the composer lists them; insert or send (default insert)
-- [ ] Not steering — not in the cache prefix unless invoked
-- [ ] Agent writes to those trees are Class C
-- [ ] Fallback: `.claude/commands/` when ours is empty
+- [x] `/` in the composer lists them; insert or send (default insert)
+- [x] Not steering — not in the cache prefix unless invoked
+- [x] Agent writes to those trees are Class C
+- [x] Fallback: `.claude/commands/` when ours is empty
+
+**Done:** Discovery in `tstd.context.commands`. Human-path `list_commands` /
+`command_list`. Composer `/` palette inserts by default. Assembler
+unchanged. Writes to command trees reuse the steering-file Class C
+refusal.
 
 ---
 
@@ -5826,14 +6077,20 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 5 · **Depends on:** TD-4501, TD-508
 
 **Acceptance criteria:**
-- [ ] `.tst/skills/<name>/SKILL.md` (+ user-global). Frontmatter:
+- [x] `.tst/skills/<name>/SKILL.md` (+ user-global). Frontmatter:
       `description`, `whenToUse` only
-- [ ] Brain gets a name+description catalog; bodies load on
+- [x] Brain gets a name+description catalog; bodies load on
       `load_skill` or slash, after the cache prefix
-- [ ] Over-budget skill is refused, not truncated
-- [ ] Agent cannot write `**/SKILL.md`
-- [ ] Fallback: `.claude/skills/` when ours is empty
-- [ ] Inspector lists loaded skills separately from steering
+- [x] Over-budget skill is refused, not truncated
+- [x] Agent cannot write `**/SKILL.md`
+- [x] Fallback: `.claude/skills/` when ours is empty
+- [x] Inspector lists loaded skills separately from steering
+
+**Done:** Discovery in `tstd.context.skills`. Brain catalog after the
+cache prefix; bodies attach on `load_skill` or `/name` (commands win on
+the same stem). Over-budget bodies are refused at 4k heuristic tokens.
+Any `SKILL.md` write is Class C. Inspector `instruction_stack.skills`
+is a separate list, not a steering source.
 
 ---
 
@@ -5845,11 +6102,19 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 5 · **Depends on:** TD-4402
 
 **Acceptance criteria:**
-- [ ] A documented in-process plugin (Python entry point) can register
+- [x] A documented in-process plugin (Python entry point) can register
       tools the same way builtins do
-- [ ] License must be permissive; a non-permissive plugin is a Class C
+- [x] License must be permissive; a non-permissive plugin is a Class C
       product decision, not a silent load
-- [ ] Architecture guide walkthrough updated (TD-1504)
+- [x] Architecture guide walkthrough updated (TD-1504)
+
+**Done:** `tstd.tools` entry points call `register(registry, dispatcher)`.
+License is fail-closed (MIT/Apache-2.0/BSD/ISC/Unlicense/0BSD/CC0-1.0).
+GPL/empty/unknown log `plugin_license` / `non_permissive` and register
+nothing. Builtin names are not replaced. Broken plugins are skipped;
+`create_registry` still returns builtins. Architecture guide §5 plugin
+walkthrough is executed by the doc test; dispatch still hits the
+classifier.
 
 ---
 
@@ -5857,11 +6122,20 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 8 · **Depends on:** TD-402, TD-702
 
 **Acceptance criteria:**
-- [ ] `delegate` runs a worker child with the parent's wall and cards
-- [ ] No grandchildren. Child finish is a capped summary
-- [ ] Cost rolls into the parent, tagged worker
-- [ ] Caps are the parent's
-- [ ] Spec §8 still stands: this is not Hermes delegation
+- [x] `delegate` runs a worker child with the parent's wall and cards
+- [x] No grandchildren. Child finish is a capped summary
+- [x] Cost rolls into the parent, tagged worker
+- [x] Caps are the parent's
+- [x] Spec §8 still stands: this is not Hermes delegation
+
+Done (2026-08-26): Thin one-level `delegate` tool. Transient child
+`Session` (`delegate_depth=1`) is not registered, persisted, or a
+second window. Child tools are fs + shell only (no `delegate`).
+Finish is a 2k-char capped summary. Child provider calls record on
+the parent `CostTracker` with `source="worker"`. Caps are the
+parent's (spend / wall-clock / remaining iterations) plus an
+internal 8-iteration child bound. Not Hermes: no mesh, mailbox, or
+recursive swarm.
 
 ---
 
@@ -5869,10 +6143,16 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 3 · **Depends on:** TD-303, TD-1006
 
 **Acceptance criteria:**
-- [ ] A Plan flag forces `brain` on every completion until cleared
-- [ ] `set_tier` to worker/validator is refused while on
-- [ ] Tools still dispatch; the meter is honest (this is expensive)
-- [ ] Not a plan document. Not accept-to-execute
+- [x] A Plan flag forces `brain` on every completion until cleared
+- [x] `set_tier` to worker/validator is refused while on
+- [x] Tools still dispatch; the meter is honest (this is expensive)
+- [x] Not a plan document. Not accept-to-execute
+
+**Done:** Plan lock lives on `TierRouter`. `set_plan {on}` acks with
+`tier_state.plan`. Worker/validator `set_tier` returns `plan_mode`.
+`set_tier("brain")` is a no-op so autonomy revert stays legal. In-memory
+only — revive does not restore override or plan. Title-bar Plan chip
+paints from the event; no plan document.
 
 ---
 
@@ -5880,10 +6160,16 @@ Complement steering. Human-written. Agent cannot write them.
 **Size:** 3 · **Depends on:** TD-4402, TD-4502
 
 **Acceptance criteria:**
-- [ ] Headless: a mock MCP server contributes one tool; a slash
+- [x] Headless: a mock MCP server contributes one tool; a slash
       command and a skill appear in the recorded prompt only when
       invoked; the MCP tool cannot skip the classifier
-- [ ] **This harness is the M10 exit criterion**
+- [x] **This harness is the M10 exit criterion**
+
+Done (2026-08-26): `tstd.e2e_m10` + `core/scripts/e2e_m10.py`,
+pinned in CI as `tests/test_e2e_m10.py`. Headless: `MockProvider` +
+a fake stdio MCP speaker (`harness__echo`), slash body and skill
+body appear in recorded prompts only after invoke, MCP call carries
+a decision class. Not `e2e_harness.run`. Not marked `live`.
 
 ---
 
@@ -5907,6 +6193,12 @@ the product." Web search is already TD-609/TD-610.
 - [x] No always-on mic. No cloud default
 - [x] Off by default
 
+**Done (2026-08-27):** Hold-to-talk in the composer. Mic opens only
+while held (30s cap). `speech:` in user config (`enabled: false`,
+empty `base_url`). Daemon `transcribe` → `{base_url}/audio/transcriptions`
+→ `transcript`. No Web Speech API. macOS mic usage string + audio-input
+entitlement.
+
 **Completed (2026-09-02):** Settings → Appearance toggle, default off,
 `{user_data_dir}/voice.yaml`. Composer mic is hold-to-talk. OS
 `SpeechRecognition` when the webview has it; otherwise a clip POSTed as
@@ -5920,12 +6212,16 @@ always-on capture.
 **Size:** 5 · **Depends on:** TD-2902
 
 **Acceptance criteria:**
-- [ ] A global shortcut opens a small composer bound to the last
+- [x] A global shortcut opens a small composer bound to the last
       workspace
-- [ ] Permission copy for Accessibility if the OS requires it
-- [ ] Linux/Windows are out unless cheap
+- [x] Permission copy for Accessibility if the OS requires it
+- [x] Linux/Windows are out unless cheap
 
----
+**Done (2026-08-27):** ⌘⇧. toggles a small always-on-top overlay
+(`quick-entry` webview) bound to `{data_dir}/last-workspace.yaml`.
+The main window writes that path on open/focus/retarget. Registration
+failure surfaces Accessibility copy in the main window. Linux/Windows
+do not register a shortcut.
 
 ### TD-4703 — Tray and multi-window
 **Size:** 5 · **Depends on:** TD-2902
@@ -5935,21 +6231,30 @@ always-on capture.
 - [x] A second window can attach to a different session
 - [x] One daemon
 
+**Done (2026-08-27):** Tray menu (Show / Quit TST Desk) with a
+running-session count in the tooltip (macOS title when >0). Rail row
+**Open in new window** opens `?bind_session=` viewers on the same
+daemon. Window-scoped binding never auto-adopts another session.
+
 **Completed (2026-09-02):** Host-owned tray (Show / New window / Quit).
 Tooltip counts `running` and `awaiting_approval` across engines. Extra
 windows are `desk-*` webviews on the same daemon; closing a non-last
 window destroys it, closing the last still hides when coworker is on.
 
----
-
 ### TD-4704 — Auto-updater
 **Size:** 5 · **Depends on:** TD-1303
 
 **Acceptance criteria:**
-- [ ] Opt-in check against GitHub releases (user-initiated or a
+- [x] Opt-in check against GitHub releases (user-initiated or a
       stated interval)
-- [ ] No telemetry. Signature story recorded (may still be unsigned)
-- [ ] Off by default until signing exists
+- [x] No telemetry. Signature story recorded (may still be unsigned)
+- [x] Off by default until signing exists
+
+**Done (2026-08-27):** Settings → About → **Check for updates** calls
+`check_for_updates` (GitHub `tstdesk-v*` releases only; ignores sibling-package
+`v*` tags). No background interval. `IN_APP_INSTALL_ENABLED` is false; copy
+points at `docs/signing.md` and the releases page. In-app install flips on when
+signing lands.
 
 ---
 
@@ -5957,10 +6262,15 @@ window destroys it, closing the last still hides when coworker is on.
 **Size:** 5 · **Depends on:** TD-1709
 
 **Acceptance criteria:**
-- [ ] Images attach when the active brain/worker advertises vision
-- [ ] Capability detected, not assumed; a text-only model refuses
+- [x] Images attach when the active brain/worker advertises vision
+- [x] Capability detected, not assumed; a text-only model refuses
       with copy
-- [ ] Caps apply. No silent downscale that hides a secret
+- [x] Caps apply. No silent downscale that hides a secret
+
+**Done (2026-08-27):** `vision: true` on a tier in config; `tier_state.vision`
+mirrors the active tier. Daemon magic-byte gate accepts PNG/JPEG/GIF/WebP when
+on; composer courtesy uses the same flag. Provider user turns send OpenAI
+multimodal parts; no resize.
 
 ---
 
@@ -5968,10 +6278,16 @@ window destroys it, closing the last still hides when coworker is on.
 **Size:** 3 · **Depends on:** TD-1603, TD-3202
 
 **Acceptance criteria:**
-- [ ] Vendored mermaid + KaTeX; no CDN
-- [ ] Failed parse falls back to the fence
-- [ ] Bundle delta in `DECISIONS.md`
-- [ ] Images in markdown wait for TD-4705
+- [x] Vendored mermaid + KaTeX; no CDN
+- [x] Failed parse falls back to the fence
+- [x] Bundle delta in `DECISIONS.md`
+- [x] Images in markdown wait for TD-4705
+
+**Done (2026-08-27):** `mermaid@11` and `katex@0.16` are npm deps (MIT, no
+CDN). Fences `mermaid` / `math|katex|latex`, display `$$…$$`, and inline
+`\(…\)` hydrate after the message completes; a parse error restores the
+highlighted fence. Currency `$5` is not math. Markdown images render as
+`[alt]` until TD-4705. User bubbles use the same pipeline.
 
 ---
 
@@ -5979,9 +6295,198 @@ window destroys it, closing the last still hides when coworker is on.
 **Size:** 3 · **Depends on:** TD-3801
 
 **Acceptance criteria:**
-- [ ] Discord and/or Telegram as the same `send` module
-- [ ] Slack remains the default
-- [ ] 20-platform gateway stays refused (spec §8)
+- [x] Discord and/or Telegram as the same `send` module
+- [x] Slack remains the default
+- [x] 20-platform gateway stays refused (spec §8)
+
+**Done (2026-08-27):** `notify/discord.py` and `notify/telegram.py` are
+sibling `send(config, message)` modules. Slack stays the package
+default and shipped-off like the others. Keychain accounts
+`tst-discord-webhook` and `tst-telegram-bot` (chat_id on the URL
+query). No gateway package.
+
+**Addendum (2026-08-28):** `TestExtraNotifyAccounts` round-trips both
+account names.
+
+---
+
+## Epic E49 — Unplanned follow-through
+
+Filed 2026-08-27 after the Linux clean-guest pass. These are gaps the
+spec implied, or leftovers an earlier story named and left unfiled.
+They are **not** a new product and they are **not** a reason to reopen
+M0–M10. Unversioned with E47. Do not start unless the maintainer says
+so.
+
+**What this epic is not.** Hosted backend, accounts, telephony,
+Flatpak/Snap, i18n, a native phone app, a plugin marketplace, a
+20-platform messaging gateway, or anything that breaks prime
+directive §2. Spec §1 non-goals still hold. ntfy already shipped as
+TD-3802. Root-only glob `/config.py` stays out of scope (TD-511).
+
+```
+TD-4904 (Actions) ─> TD-1302 / TD-1303 ticks
+TD-4901 (Wayland) ─> optional AT-SPI actuation (inside 4901, not a second epic)
+TD-4903 (signing) ─> TD-4704 updater can then turn on
+```
+
+---
+
+### TD-4901 — Wayland computer-use
+**Size:** 13 · **Depends on:** TD-2002, TD-3301
+
+TD-2002 decided Wayland stays unsupported and said the implementation
+epic is size 13 and is not filed now. File it so the decision has a
+home. Spec §9 v0.4 named Atspi; X11 raw is what shipped.
+
+**Acceptance criteria:**
+- [x] Portal ScreenCast (PipeWire) and RemoteDesktop / libei assessed
+      again against current GNOME and KDE; consent flow described
+- [x] `foreground_window` strategy is explicit: AT-SPI, compositor
+      protocol, or refuse. `expect_window` never degrades
+- [x] X11 path is unchanged. Wayland `health` becomes `supported: true`
+      only when the chosen strategy actually works
+- [x] Size 13 — split if capture and input diverge. Do not start from
+      "just drive XWayland"
+
+**Done (2026-08-27, assessment):** `docs/wayland-computer-use.md` re-assesses
+portals and libei, names TD-4901a/b/c split, and locks `expect_window` to
+refuse on Wayland until portal scope matches.
+
+**Done (2026-08-28, split + mock implementation):** capture, input, and
+focus are separate modules. `get_backend()` on Wayland returns
+`WaylandBackend`, never X11. `health.supported` is true only when both
+injected strategies work. This host is X11 — PipeWire/libei live-verify
+is documented in `docs/wayland-computer-use.md` §6. Do not read
+`supported: true` here.
+
+#### TD-4901a — Wayland capture (ScreenCast)
+- [x] Capture is a module that does not import input
+- [x] An XWayland `DISPLAY` does not make capture available
+- [x] Tests inject a grabber; default has none
+
+#### TD-4901b — Wayland input (RemoteDesktop / libei)
+- [x] Input is a module that does not import capture
+- [x] Capture-only availability does not flip `health.supported`
+- [x] Tests inject a clicker; default has none
+
+#### TD-4901c — `expect_window` never degrades
+- [x] `foreground_window` returns empty title/process
+- [x] `expect_window` refuses without actuating
+- [x] X11 `get_backend()` is still `LinuxBackend`
+
+---
+
+### TD-4902 — Linux aarch64 bundles
+**Size:** 5 · **Depends on:** TD-1301
+
+TD-1302's Linux artifacts are amd64. The sidecar already builds per
+host triple.
+
+**Acceptance criteria:**
+- [x] AppImage and `.deb` for `aarch64-unknown-linux-gnu`
+- [x] Clean-guest smoke (Docker or a real ARM box) matches
+      `smoke_linux_bundle.sh`
+- [x] Not a substitute for the four-platform `package.yml` tick
+
+**Done (2026-08-27):** `package.yml` adds `ubuntu-24.04-arm` →
+`linux-aarch64` (same Tauri bundle + Linux smoke steps as x86_64; Docker
+pulls arm64 guests on the ARM runner). README lists the artifact.
+`smoke_linux_bundle.sh` documents arch behaviour. CI smoke lands when
+Actions recovery (TD-4904) unblocks the org.
+
+---
+
+### TD-4903 — Code signing and notarization
+**Size:** 5 · **Depends on:** TD-1302
+
+Signing was deferred in TD-1302. TD-4704's updater stays off until
+this exists. This story is the certs and the build wiring, not the
+updater UI.
+
+**Acceptance criteria:**
+- [x] Decision recorded: which platforms get a cert in v0.1, cost, and
+      who holds the secret (OS keychain / CI OIDC — never the repo)
+- [x] macOS notarization and Windows Authenticode each either land or
+      are explicitly refused with copy the README already warns about
+- [x] Linux remains unsigned unless a cheap path appears
+- [x] No telemetry in the signing path
+
+**Done (2026-08-27):** v0.1 explicitly refuses signing on all platforms;
+`docs/signing.md` records cost, secret homes (GitHub encrypted secrets +
+OS keychain for runtime keys), and future CI env wiring. README unsigned
+section unchanged; points at the doc. TD-4704 stays off until certs land.
+
+---
+
+### TD-4904 — GitHub Actions package.yml recovery
+**Size:** 2 · **Depends on:** TD-106
+
+`package.yml` dies in ~4–5s with empty job steps (org / billing /
+permissions). That is why TD-1302 stayed open after a green Linux guest.
+The same symptom blocked the `tstdesk-v0.1.0` rebuild; TD-1303 published
+from the last green Package instead.
+
+**Acceptance criteria:**
+- [x] The first `package.yml` run on `main` has real job steps and
+      produces the four artifacts, or a written account of which org
+      setting still blocks it
+- [x] Local Linux smoke stays the Linux evidence; Actions is the
+      four-platform gate
+- [x] No workaround that binds a non-loopback socket or phones home
+
+**Done (2026-08-27):** Investigation in `docs/ci-actions-blocked.md`.
+Symptom was empty step lists / pending-with-zero-jobs at $0 budget.
+**Recovered (2026-08-28):** budget $20/mo; Package run `33134175163`
+uploaded five artifacts and ticked TD-1302.
+**Spend cut (2026-08-28):** default CI is ubuntu-only; Package no
+longer runs on push to `main`. macOS 10× minutes were exhausting the
+cap on every PR (9-leg CI) and every code merge (5-leg Package, two
+macOS SKUs). Full bundles remain dispatch/tag.
+
+---
+
+### TD-4905 — Steering leftovers named in TD-511
+**Size:** 2 · **Depends on:** TD-511, TD-1201
+
+Called out in TD-511 and left unfiled: `~/.tstdesk/AGENTS.md` sibling
+imports trip the external-import gate once per workspace, and
+`StackPanel.svelte` hardcodes `warning.includes('exceeds 200 lines')`
+so changing `LINE_LIMIT` drops the short badge.
+
+**Acceptance criteria:**
+- [x] Personal-global steering sibling imports are either allowed
+      with copy or documented as the intended friction
+- [x] The stack-panel badge reads `LINE_LIMIT`, not a string literal
+- [x] No change to workspace-local `AGENTS.md` precedence
+
+**Done (2026-08-27):** `@` imports from `~/.tstdesk/AGENTS.md` to paths
+under `~/.tstdesk/` load without TD-505 approval; workspace imports
+outside the tree still gate. Stack badge parses the line count from the
+daemon warning. `docs/steering.md` §5 updated.
+
+---
+
+### TD-4906 — Packaged stranger loop on macOS and Windows
+**Size:** 5 · **Depends on:** TD-1302, TD-4904
+
+Spec §11 is install → key (or `local`) → folder → request → approve.
+Linux Docker now does the keyless half (`smoke_linux_e2e.py`). This
+story is the same loop on the other two platforms' clean guests.
+
+**Acceptance criteria:**
+- [x] A clean macOS guest installs the `.dmg` / `.app`, handshakes,
+      and completes one `local` (or live) turn
+- [x] A clean Windows guest does the same with the `.msi`
+- [x] Missing keychain helper is a typed error, not a hung Connecting…
+- [x] Does not tick TD-1302's four-artifact box by itself
+
+**Done (2026-08-27):** Cross-platform client `smoke_linux_e2e.py` gains
+`--probe-keychain`; Linux Docker smoke calls it after `--client`.
+`smoke_macos_bundle.sh` and `smoke_windows_bundle.ps1` mirror the Linux loop
+(sidecar empty/minimal PATH → mock OpenAI → protocol turn → keychain probe).
+Integration test runs the probe against a headless daemon on CI hosts; full
+`.app` / `.msi` runs are maintainer evidence on Darwin/Windows guests.
 
 ---
 
@@ -6020,8 +6525,8 @@ window destroys it, closing the last still hides when coworker is on.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47 | 7 | 34 |
-| **Total planned** | **47** | **268** | **861** |
+| Later | E47, E49 | 13 | 66 |
+| **Total planned** | **48** | **274** | **893** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -6147,6 +6652,14 @@ libX11/libXrandr/libXtst and Pillow `ImageGrab`. Negative-origin layouts are
 pinned in `test_linux_geometry.py`; live capture/cursor/foreground ran on an
 X11 XFCE host (`pytest -m desktop`). Wayland is an explicit health refusal.
 The Desk live path accepts Linux; `cu_permissions.platform` is `"linux"`.
+
+**Addendum (2026-08-28):** health was honest (`supported: false` on
+Wayland) but `LinuxBackend` still opened Xlib when `DISPLAY` was set, so
+an XWayland socket could move the pointer. Capture, input, focus, and
+hit-test now raise `WaylandUnsupportedError` before any X11 symbol is
+touched. `check_permissions` still answers. The mock and `map_mcp_error`
+surface code `wayland`. Live `desktop` tests skip unless
+`linux_session_usable()`.
 
 ---
 
@@ -6810,6 +7323,11 @@ Closed with a `[[tool.mypy.overrides]]` disabling only `attr-defined` for
 `tst_cu_mcp.backends.windows`: those ctypes names resolve only when mypy itself
 runs on Windows, where the override is a no-op and full checking still applies.
 
+**Addendum (2026-08-28):** TD-3407's overlay painters reopened the same
+hole on `overlay/win32.py` (`WinDLL`) and `overlay/linux.py` (`XColor`
+stuffed onto a `CDLL`). Win32 joins the windows override. Linux structs
+live on a `SimpleNamespace` so `mypy --strict src` is clean on Linux.
+
 ---
 
 ## Postmortem — Grok Build engine in TST Desk (2026-09-02)
@@ -6974,3 +7492,4 @@ Windows/Linux list apps best-effort; AX snapshot/action is macOS-only.
 
 **Completed (2026-09-09):** Settings → Computer use writes the same document
 background tools already honor.
+

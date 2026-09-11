@@ -25,7 +25,12 @@ import websockets.exceptions
 from pydantic import ValidationError
 
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, to_entry
-from .attachments import AttachmentError, decode_attachments, render_user_content
+from .attachments import (
+    AttachmentError,
+    build_provider_user_content,
+    decode_attachments,
+    render_user_content,
+)
 from .audit import AuditStore
 from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
 from .audit_writer import AuditWriter
@@ -42,6 +47,7 @@ from .browser import BrowserDriver, BrowserError, browser_driver_from_config, no
 from .config import (
     DEFAULT_CREDENTIAL_ID,
     ConfigError,
+    McpServerConfig,
     ModelConfig,
     ModelDiscoveryError,
     TierConfig,
@@ -57,13 +63,16 @@ from .config import (
 )
 from .config_write import (
     delete_credential_entry,
+    delete_mcp_server_entry,
     save_active_preset,
     save_credential,
     save_engine_kind,
+    save_mcp_server,
     save_tier_credential,
     save_tier_slug,
 )
 from .context.assembler import ContextAssembler
+from .context.commands import list_workspace_commands_async
 from .context.instructions import (
     InstructionNameError,
     create_rule_file,
@@ -71,6 +80,7 @@ from .context.instructions import (
 )
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
+from .context.skills import list_workspace_skills_async
 from .context.stack import build_instruction_stack
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .coworker import load_coworker, save_coworker
@@ -109,9 +119,16 @@ from .keychain import (
     get_api_key,
     store_api_key,
 )
-from .local_worker import session_is_cu_heavy, titlebar_slugs
+from .local_worker import (
+    effective_tier,
+    last_cu_surface,
+    session_is_cu_heavy,
+    titlebar_hosts,
+    titlebar_slugs,
+)
 from .logging import get_logger, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
+from .mcp.loader import McpSupervisor
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
 from .memory_store import (
@@ -127,10 +144,12 @@ from .memory_trigger import (
     completed_turn_count,
     distill_if_due,
 )
+from .notify.discord import schedule as schedule_discord_notify
 from .notify.ntfy import schedule as schedule_ntfy_notify
 from .notify.ntfy import send as send_ntfy_notify
 from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
+from .notify.telegram import schedule as schedule_telegram_notify
 from .policy import (
     add_rule,
     load_approved_imports,
@@ -157,6 +176,8 @@ from .protocol import (
     CharterDocument,
     CheckCuPermissions,
     ClientMessageT,
+    CommandEntry,
+    CommandList,
     ContextPinEntry,
     ContextPins,
     CreateRule,
@@ -167,8 +188,10 @@ from .protocol import (
     DeleteApiKey,
     DeleteCredential,
     DeleteJob,
+    DeleteMcpServer,
     DeleteSession,
     Deny,
+    DenyVerify,
     DesignHit,
     DesignHitBox,
     DesignHitTest,
@@ -190,9 +213,11 @@ from .protocol import (
     HandshakeError,
     InstructionFileEntry,
     InstructionFiles,
+    JobDraftReply,
     JobEntry,
     JobList,
     ListArtifacts,
+    ListCommands,
     ListGrokExtensions,
     ListGrokSessions,
     ListInstructions,
@@ -202,6 +227,7 @@ from .protocol import (
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    McpServerSummary,
     MemoryAccept,
     MemoryEdit,
     MemoryFileEntry,
@@ -212,6 +238,7 @@ from .protocol import (
     OpenArtifact,
     OpenInTerminal,
     OpenWorkspace,
+    ParseJob,
     PolicyRules,
     PolicyRuleSummary,
     RemovePin,
@@ -221,6 +248,7 @@ from .protocol import (
     RevokePolicyRule,
     RunDiagnostics,
     RunGrokCommand,
+    RunVerify,
     SaveCharter,
     SaveJob,
     SaveMemory,
@@ -236,8 +264,11 @@ from .protocol import (
     SetEngine,
     SetGrokMode,
     SetLoadGlobalMemory,
+    SetMcpServer,
+    SetPlan,
     SetPreset,
     SetRemoteAttach,
+    SetSessionPreset,
     SetSessionStar,
     SetSkipAllApprovals,
     SetTier,
@@ -293,6 +324,7 @@ from .scheduler.models import DeliverTo, Job, JobDraft, JobValidationError
 from .scheduler.runner import (
     RecordingDeliver,
     TurnResult,
+    channel_notify,
     run_due_jobs,
     run_turn_on_daemon,
 )
@@ -300,6 +332,7 @@ from .scheduler.runner import SendFn as NotifySendFn
 from .scheduler.store import delete_job, get_job, list_jobs, save_job
 from .session import (
     TERMINAL_STATES,
+    QueuedUserMessage,
     Session,
     SessionEventLog,
     SessionRegistry,
@@ -309,6 +342,7 @@ from .session_lifecycle import archive_session, delete_session, move_session, re
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
+from .speech import transcribe as transcribe_speech
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .voice import (
@@ -518,6 +552,23 @@ def _approved_import_allowlist(workspace: str | Path) -> frozenset[Path]:
         return frozenset()
 
 
+def _session_model_config(session: Session, fallback: ModelConfig) -> ModelConfig:
+    """The catalog snapshot this session is actually calling (TD-1721)."""
+    return session.config if session.config is not None else fallback
+
+
+def _active_tier_vision(session: Session, config: ModelConfig) -> bool:
+    """Whether the active tier accepts image attachments (TD-4705)."""
+    if session.router is None:
+        return False
+    tier_cfg = effective_tier(
+        config,
+        session.router.active_tier,
+        cu_heavy=session_is_cu_heavy(session),
+    )
+    return tier_cfg.vision
+
+
 def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
     """Build the ``tier_state`` event for the title bar (TD-1006).
 
@@ -530,11 +581,17 @@ def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
     local-worker preset's worker, not the active preset's remote worker.
     """
     assert session.router is not None
+    cu_heavy = session_is_cu_heavy(session)
+    tier_cfg = effective_tier(config, session.router.active_tier, cu_heavy=cu_heavy)
     return TierState(
         session_id=session.id,
         tier=session.router.active_tier,
         override=session.router.override,
-        model_slugs=titlebar_slugs(config, cu_heavy=session_is_cu_heavy(session)),
+        model_slugs=titlebar_slugs(config, cu_heavy=cu_heavy),
+        preset=config.active_preset,
+        hosts=titlebar_hosts(config, cu_heavy=cu_heavy),
+        plan=session.router.plan_mode,
+        vision=tier_cfg.vision,
         seq=1,  # overwritten by the event log
     )
 
@@ -584,6 +641,11 @@ class Daemon:
             self.data_dir,
             log_max_events=self.config.session.log_max_events,
         )
+        # Persist is awaited outside SessionEventLog's seq lock, so two
+        # overlapping to_thread appends can take the file lock as 2 then 1
+        # (Windows CI). One asyncio lock per session keeps jsonl in seq
+        # order.
+        self._event_persist_locks: dict[str, asyncio.Lock] = {}
         self._artifacts = ArtifactStore(self._session_persist)
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
@@ -638,14 +700,18 @@ class Daemon:
         # Browser CU (TD-1710): mock unless computer_use.browser is playwright
         # and Playwright is importable. Profile lives under the data dir.
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
-        self._notify_send = notify_send
+        # User-listed MCP servers (TD-4401). Handshake is lazy; a dead
+        # server is a doctor row, never a failed Daemon.run.
+        self._mcp = McpSupervisor(self.config.mcp)
+        self._notify_send = notify_send if notify_send is not None else self._channel_notify
         self._scheduler_tick = scheduler_tick
         # TD-3807: default the hook instead of leaving it None. The real
         # entrypoint never passed one, so slack and ntfy delivery logged
         # "skipped (no send hook)" and the user saw nothing on any channel.
-        # Tests still inject their own.
+        # Tests still inject their own. Window delivery records the receipt
+        # on the job row (no unsolicited frame).
         self._scheduler_deliver = RecordingDeliver(
-            send=notify_send if notify_send is not None else self._send_scheduled_notify,
+            send=self._notify_send,
             on_window=self._deliver_to_window,
         )
 
@@ -751,13 +817,25 @@ class Daemon:
             cu_mode=self.cu_policy.mode,
             cu_unhide_on_finish=self.cu_policy.unhide_on_finish,
             cu_denied_apps=list(self.cu_policy.denied_apps),
+            mcp_servers=[
+                McpServerSummary(
+                    id=sid,
+                    transport=spec.transport,
+                    command=list(spec.command),
+                    url=spec.url,
+                    enabled=spec.enabled,
+                )
+                for sid, spec in sorted(self.config.mcp.servers.items())
+            ],
+            speech_enabled=self.config.speech.enabled,
+            speech_ready=self.config.speech.enabled and bool(self.config.speech.base_url),
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
         try:
             await get_api_key(credential_id)
             return True
-        except KeychainError:
+        except (KeychainError, FileNotFoundError):
             return False
 
     async def _credential_summaries(self) -> list[CredentialSummary]:
@@ -1054,7 +1132,8 @@ class Daemon:
         """Run the doctor checks (TD-1104) and return the report.
 
         Rows in display order: daemon → key → provider → git → workspace →
-        steering.  Blocking filesystem calls ride worker threads; the live
+        steering → optional ``mcp:<id>`` (only when ``mcp.servers`` is
+        non-empty).  Blocking filesystem calls ride worker threads; the live
         provider probe is the only slow row (one token, worst case the
         provider timeout).
         """
@@ -1122,6 +1201,21 @@ class Daemon:
         else:
             checks.append(await asyncio.to_thread(_check_writable, workspace))
             checks.append(await self._check_steering(workspace))
+
+        if self.config.mcp.servers:
+            try:
+                await self._mcp.ensure_loaded()
+            except Exception:
+                log.exception("mcp doctor probe failed")
+            for row in self._mcp.doctor_rows():
+                checks.append(
+                    DiagnosticCheck(
+                        name=f"mcp:{row.server_id}",
+                        status=row.status,
+                        detail=row.detail,
+                        fix=row.fix,
+                    )
+                )
 
         return DiagnosticsReport(seq=1, checks=checks)
 
@@ -1317,6 +1411,7 @@ class Daemon:
 
         await self.desktop_driver.aclose()
         await self.browser_driver.aclose()
+        await self._mcp.aclose()
 
         log.info("shutdown complete")
 
@@ -1334,6 +1429,9 @@ class Daemon:
         have a transcript, not a model context.
         """
         for record in self._session_store.records():
+            chosen = self._resolved_preset(record.preset)
+            if record.preset != chosen:
+                await self._session_store.set_preset(record.session_id, chosen)
             loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
             if loaded is not None and loaded.conversation is not None:
                 await self._revive_session(record.session_id, record.workspace_path, loaded)
@@ -1347,6 +1445,7 @@ class Daemon:
             sess = await self.session_registry.restore(
                 record.session_id, record.workspace_path, final_state
             )
+            sess.preset = chosen
             if loaded is not None and loaded.events:
                 sess.event_log.replace(loaded.events)
             if final_state != record.state:
@@ -1376,6 +1475,10 @@ class Daemon:
                 )
             except TimeoutError:
                 continue
+
+    async def _channel_notify(self, channel: DeliverTo, summary: str) -> None:
+        """Default scheduler delivery: Slack/ntfy ``send``, never a skip log."""
+        await channel_notify(self.config, channel, summary)
 
     async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
         """Wake due jobs against this daemon. Tests call this directly."""
@@ -1450,7 +1553,11 @@ class Daemon:
         """Write the event to disk and refresh the registry row."""
         session_id = getattr(event, "session_id", None)
         if isinstance(session_id, str) and session_id:
-            result = await asyncio.to_thread(self._session_persist.append_event, session_id, event)
+            persist_lock = self._event_persist_locks.setdefault(session_id, asyncio.Lock())
+            async with persist_lock:
+                result = await asyncio.to_thread(
+                    self._session_persist.append_event, session_id, event
+                )
             if result.trimmed:
                 await event_log.drop_before(result.earliest_seq)
         if isinstance(event, SessionStateEvent):
@@ -1465,6 +1572,12 @@ class Daemon:
         if task is not None:
             self._tasks.append(task)
         task = schedule_ntfy_notify(self.config, event)
+        if task is not None:
+            self._tasks.append(task)
+        task = schedule_discord_notify(self.config, event)
+        if task is not None:
+            self._tasks.append(task)
+        task = schedule_telegram_notify(self.config, event)
         if task is not None:
             self._tasks.append(task)
 
@@ -1554,7 +1667,14 @@ class Daemon:
             # message — the copy says so — rather than delivering a turn the
             # user believes carried files it did not.
             try:
-                decoded = decode_attachments(msg.attachments, found.boundary_config.attachments)
+                allow_images = found.engine == "grok" or _active_tier_vision(
+                    found, _session_model_config(found, self.config)
+                )
+                decoded = decode_attachments(
+                    msg.attachments,
+                    found.boundary_config.attachments,
+                    allow_images=allow_images,
+                )
             except AttachmentError as e:
                 log.info(
                     "attachment refused",
@@ -1573,7 +1693,9 @@ class Daemon:
                 for item in decoded
                 if item.data is not None and item.media_type is not None
             ]
-            await found.add_user_message(render_user_content(msg.content, decoded))
+            display = render_user_content(msg.content, decoded)
+            provider = build_provider_user_content(msg.content, decoded)
+            await found.add_user_message(QueuedUserMessage(display=display, provider=provider))
             # Title from the user's text, not the rendered body — an
             # attachment-only message must stay untitled (TD-3001).
             await self._session_store.maybe_set_title(msg.session_id, msg.content)
@@ -1631,6 +1753,24 @@ class Daemon:
                 return events[0].model_dump_json()
             return None
 
+        if isinstance(msg, (RunVerify, DenyVerify)):
+            # TD-4204 ask mode: the parked verify lives on the session,
+            # not an approval card. Unknown session is the same miss as
+            # cancel; a session with nothing pending is a silent no-op.
+            from .autonomy.verify import confirm_pending_verify, deny_pending_verify
+
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            if isinstance(msg, RunVerify):
+                await confirm_pending_verify(found)
+            else:
+                await deny_pending_verify(found)
+            return None
+
         if isinstance(msg, Resume):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -1666,6 +1806,12 @@ class Daemon:
             )
             return None
 
+        if isinstance(msg, SetPlan):
+            return await self._handle_set_plan(msg)
+
+        if isinstance(msg, SetSessionPreset):
+            return await self._handle_set_session_preset(msg)
+
         if isinstance(msg, SetTier):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -1678,6 +1824,12 @@ class Daemon:
                     "session_not_live",
                     f"Session {msg.session_id!r} has no live agent loop "
                     "(restored after restart); its tier cannot be changed",
+                )
+            if found.router.plan_mode and msg.tier != "brain":
+                return build_error(
+                    "plan_mode",
+                    "Plan mode is on; only the brain tier is allowed",
+                    session_id=found.id,
                 )
             try:
                 previous = found.router.active_tier
@@ -1695,7 +1847,9 @@ class Daemon:
             )
             # ...then acknowledge with the new state so the title bar snaps
             # over even before the next turn starts (TD-1006).
-            await found.event_log.add(_tier_state_event(found, self.config))
+            await found.event_log.add(
+                _tier_state_event(found, _session_model_config(found, self.config))
+            )
             log.info(
                 "tier override set",
                 extra={
@@ -1833,29 +1987,28 @@ class Daemon:
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, Transcribe):
-            if not self.voice_enabled:
-                return build_error(
-                    "voice_off",
-                    "Dictation is off. Turn it on in Settings → Appearance.",
-                )
-            try:
-                import base64
-                import binascii
+            if self.voice_enabled:
+                try:
+                    import base64
+                    import binascii
 
-                audio = base64.b64decode(msg.audio_b64, validate=True)
-            except (binascii.Error, ValueError):
-                return build_error("bad_request", "The audio clip was not valid base64.")
-            if len(audio) > MAX_AUDIO_BYTES:
-                return build_error(
-                    "attachment_too_large",
-                    f"That clip is {len(audio)} bytes; the limit is {MAX_AUDIO_BYTES}. "
-                    "Hold a shorter phrase, or use OS dictation.",
-                )
-            try:
-                text = await transcribe_audio(audio, msg.mime, self.config.voice)
-            except VoiceError as exc:
-                return Transcript(seq=1, text="", error=exc.message).model_dump_json()
-            return Transcript(seq=1, text=text).model_dump_json()
+                    audio = base64.b64decode(msg.audio_b64, validate=True)
+                except (binascii.Error, ValueError):
+                    return build_error("bad_request", "The audio clip was not valid base64.")
+                if len(audio) > MAX_AUDIO_BYTES:
+                    return build_error(
+                        "attachment_too_large",
+                        f"That clip is {len(audio)} bytes; the limit is {MAX_AUDIO_BYTES}. "
+                        "Hold a shorter phrase, or use OS dictation.",
+                    )
+                try:
+                    text = await transcribe_audio(audio, msg.mime, self.config.voice)
+                except VoiceError as exc:
+                    return Transcript(
+                        seq=1, text="", error=exc.message, ok=False, detail=exc.message
+                    ).model_dump_json()
+                return Transcript(seq=1, text=text, ok=True).model_dump_json()
+            return (await transcribe_speech(self.config, msg.audio_b64, msg.mime)).model_dump_json()
 
         if isinstance(msg, SetRemoteAttach):
             return await self._handle_set_remote_attach(msg)
@@ -1959,6 +2112,9 @@ class Daemon:
         if isinstance(msg, ListInstructions):
             return await self._handle_list_instructions(msg)
 
+        if isinstance(msg, ListCommands):
+            return await self._handle_list_commands(msg)
+
         if isinstance(msg, ListMemory):
             return await self._handle_list_memory(msg)
 
@@ -2004,9 +2160,15 @@ class Daemon:
         if isinstance(msg, DeleteJob):
             return await self._handle_delete_job(msg)
 
+        if isinstance(msg, ParseJob):
+            return await self._handle_parse_job(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, Transcribe):
+            return (await transcribe_audio(self.config, msg.audio_b64, msg.mime)).model_dump_json()
 
         if isinstance(msg, SetApiKey):
             try:
@@ -2216,6 +2378,38 @@ class Daemon:
             )
             return (await self._setup_state_event()).model_dump_json()
 
+        if isinstance(msg, SetMcpServer):
+            try:
+                spec = McpServerConfig(
+                    transport=msg.transport,
+                    command=msg.command,
+                    url=msg.url,
+                    enabled=msg.enabled,
+                )
+                save_mcp_server(msg.id, spec)
+            except (ConfigError, ValidationError) as e:
+                return build_error("bad_request", str(e))
+            try:
+                self._reload_user_config()
+            except ConfigError as e:
+                return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+            await self._mcp.reload(self.config.mcp)
+            log.info("mcp server saved", extra={"extra_fields": {"server_id": msg.id}})
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, DeleteMcpServer):
+            try:
+                delete_mcp_server_entry(msg.id)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            try:
+                self._reload_user_config()
+            except ConfigError as e:
+                return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+            await self._mcp.reload(self.config.mcp)
+            log.info("mcp server removed", extra={"extra_fields": {"server_id": msg.id}})
+            return (await self._setup_state_event()).model_dump_json()
+
         # ── Diagnostics (TD-1104 doctor) ─────────────────────────────
         if isinstance(msg, RunDiagnostics):
             return (await self._diagnostics_report()).model_dump_json()
@@ -2305,6 +2499,7 @@ class Daemon:
             sess.engine = "native"
         else:
             sess.engine = self.config.engine.kind
+        self._bind_session_preset(sess, record.preset if record is not None else "")
         if loaded.events:
             sess.event_log.replace(loaded.events)
         if loaded.conversation is not None:
@@ -2389,7 +2584,8 @@ class Daemon:
             )
 
         async def get_provider(tier_cfg: TierConfig | None = None) -> ProviderLike:
-            target = tier_cfg if tier_cfg is not None else self.config.tier("brain")
+            cfg = _session_model_config(sess, self.config)
+            target = tier_cfg if tier_cfg is not None else cfg.tier("brain")
             return await self._client_for(target)
 
         tool_registry = create_registry()
@@ -2405,6 +2601,14 @@ class Daemon:
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
         )
+        from .tools.plugins import bind_plugin_handlers
+
+        bind_plugin_handlers(tool_registry, tool_dispatcher)
+        try:
+            await self._mcp.ensure_loaded()
+            self._mcp.attach(tool_registry, tool_dispatcher)
+        except Exception:
+            log.exception("mcp tool attach failed; builtins still registered")
 
         sink = self._audit_writer
         if sess.engine == "grok":
@@ -2479,7 +2683,7 @@ class Daemon:
             )
             return
         assert sess.router is not None
-        await sess.event_log.add(_tier_state_event(sess, self.config))
+        await sess.event_log.add(_tier_state_event(sess, _session_model_config(sess, self.config)))
 
     async def _start_session(self, workspace_path: str) -> str | None:
         """Create, wire, and start a session in ``workspace_path``.
@@ -2497,7 +2701,10 @@ class Daemon:
         await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
         sess = await self.session_registry.create(workspace_path)
         sess.engine = self.config.engine.kind
-        await self._session_store.upsert(sess.id, workspace_path, sess.state, engine=sess.engine)
+        self._bind_session_preset(sess, self.config.active_preset)
+        await self._session_store.upsert(
+            sess.id, workspace_path, sess.state, engine=sess.engine, preset=sess.preset
+        )
         self._session_persist.prepare(sess.id)
         try:
             source = boundary_source(workspace_path)
@@ -2519,6 +2726,89 @@ class Daemon:
         events = sess.event_log.events_from(1)
         if events:
             return events[0].model_dump_json()
+        return None
+
+    def _resolved_preset(self, name: str) -> str:
+        """A catalog name, or the live default when *name* is gone."""
+        if name in self.config.presets:
+            return name
+        return self.config.active_preset
+
+    def _bind_session_preset(self, sess: Session, name: str) -> str:
+        """Point *sess* at a catalog snapshot. Does not write Settings."""
+        chosen = self._resolved_preset(name)
+        sess.preset = chosen
+        sess.config = self.config.model_copy(update={"active_preset": chosen})
+        return chosen
+
+    async def _handle_set_session_preset(self, msg: SetSessionPreset) -> str:
+        """Retarget one session at a catalog preset (TD-1721)."""
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+            )
+        if found.router is None:
+            return build_error(
+                "session_not_live",
+                f"Session {msg.session_id!r} has no live agent loop "
+                "(restored after restart); its preset cannot be changed",
+            )
+        if found.turn_in_flight:
+            return build_error(
+                "session_busy",
+                "Cannot change preset while a turn is running",
+                session_id=found.id,
+            )
+        if msg.name not in self.config.presets:
+            return build_error(
+                "unknown_preset",
+                f"Unknown preset {msg.name!r}; declared: {', '.join(sorted(self.config.presets))}",
+            )
+        self._bind_session_preset(found, msg.name)
+        await self._session_store.set_preset(found.id, found.preset)
+        await found.event_log.add(
+            _tier_state_event(found, _session_model_config(found, self.config))
+        )
+        log.info(
+            "session preset set",
+            extra={
+                "extra_fields": {
+                    "session_id": found.id,
+                    "preset": found.preset,
+                }
+            },
+        )
+        return await self._handle_list_sessions()
+
+    async def _handle_set_plan(self, msg: SetPlan) -> str | None:
+        """Turn plan mode on or off and ack with ``tier_state`` (TD-4603)."""
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+            )
+        if found.router is None:
+            return build_error(
+                "session_not_live",
+                f"Session {msg.session_id!r} has no live agent loop "
+                "(restored after restart); plan mode cannot be changed",
+            )
+        found.router.set_plan(msg.on)
+        await found.event_log.add(
+            _tier_state_event(found, _session_model_config(found, self.config))
+        )
+        log.info(
+            "plan mode set",
+            extra={
+                "extra_fields": {
+                    "session_id": found.id,
+                    "on": msg.on,
+                }
+            },
+        )
         return None
 
     async def _handle_set_remote_attach(self, msg: SetRemoteAttach) -> str:
@@ -2616,6 +2906,8 @@ class Daemon:
                     archived=record.archived,
                     starred=record.session_id in starred,
                     title=record.title,
+                    preset=record.preset,
+                    busy=sess.turn_in_flight if sess is not None else False,
                 )
             )
         summaries.sort(key=lambda s: (s.starred, s.updated_at), reverse=True)
@@ -2653,8 +2945,10 @@ class Daemon:
             tier,
             matched_paths=set(found.touched_paths),
             approved_imports=_approved_import_allowlist(found.workspace_path),
+            loaded_skills=list(found.loaded_skills),
         )
         tracker = found.cost_tracker
+        skills = await list_workspace_skills_async(found.workspace_path)
         return build_instruction_stack(
             found.id,
             assembled.steering,
@@ -2664,11 +2958,36 @@ class Daemon:
             # "nothing observed yet" the tracker itself reports (TD-1811).
             cache_observed=(tracker.cache_observed if tracker is not None else False),
             memory=found.last_memory,
+            skills=skills,
+            loaded_skill_names=found.loaded_skills,
         ).model_dump_json()
 
     async def _handle_list_instructions(self, msg: ListInstructions) -> str:
         """List a workspace's Instructions files (TD-2802). Not a tool."""
         return await self._instruction_files_reply(msg.workspace_path)
+
+    async def _handle_list_commands(self, msg: ListCommands) -> str:
+        """List a workspace's slash commands (TD-4501). Not a tool."""
+        root = Path(msg.workspace_path)
+        if not await asyncio.to_thread(root.is_dir):
+            return build_error(
+                "workspace_not_found",
+                f"Workspace path is not a directory: {root}",
+            )
+        listed = await list_workspace_commands_async(root)
+        return CommandList(
+            workspace_path=str(root),
+            commands=[
+                CommandEntry(
+                    name=c.name,
+                    description=c.description,
+                    source=c.source,
+                    body=c.body,
+                    too_large=c.too_large,
+                )
+                for c in listed
+            ],
+        ).model_dump_json()
 
     async def _context_pins_reply(self, workspace: str | Path) -> str:
         root = Path(workspace)
@@ -2803,6 +3122,24 @@ class Daemon:
             path=entry.path,
         ).model_dump_json()
 
+    async def _handle_parse_job(self, msg: ParseJob) -> str:
+        """Fill a draft from NL. Does not persist (TD-3803)."""
+        from .scheduler.parse import parse_job_request
+
+        try:
+            draft = parse_job_request(msg.text)
+        except JobValidationError as exc:
+            return JobDraftReply(ok=False, detail=str(exc)).model_dump_json()
+        return JobDraftReply(
+            ok=True,
+            workspace=draft.workspace,
+            instruction=draft.instruction,
+            cadence=draft.cadence,
+            next_run=draft.next_run,
+            deliver_to=draft.deliver_to,
+            paused=draft.paused,
+        ).model_dump_json()
+
     async def _handle_list_jobs(self) -> str:
         return await self._job_list_event()
 
@@ -2860,7 +3197,7 @@ class Daemon:
         )
 
     async def _handle_design_hit_test(self, msg: DesignHitTest) -> str:
-        """Observe the session browser at a CSS-pixel point (TD-3403)."""
+        """Observe the last CU surface at a CSS-pixel point (TD-3403 / TD-3406)."""
         found = self.session_registry.get(msg.session_id)
         if found is None:
             return build_error(
@@ -2869,8 +3206,11 @@ class Daemon:
                 session_id=msg.session_id,
             )
         try:
-            raw = await self.browser_driver.hit_test(msg.x, msg.y)
-        except BrowserError:
+            if last_cu_surface(found) == "desktop":
+                raw = await self.desktop_driver.hit_test(msg.x, msg.y)
+            else:
+                raw = await self.browser_driver.hit_test(msg.x, msg.y)
+        except (BrowserError, DesktopError):
             raw = {}
         node = normalize_hit(raw, msg.x, msg.y)
         box_raw = node.get("box")
@@ -3008,7 +3348,10 @@ class Daemon:
 
         sess.autonomy_notify = _notify
         sess.engine = self.config.engine.kind
-        await self._session_store.upsert(sess.id, str(workspace), sess.state, engine=sess.engine)
+        self._bind_session_preset(sess, self.config.active_preset)
+        await self._session_store.upsert(
+            sess.id, str(workspace), sess.state, engine=sess.engine, preset=sess.preset
+        )
         self._session_persist.prepare(sess.id)
         await self._attach_session_runtime(sess)
         await self._emit_working_context(sess, "charter")

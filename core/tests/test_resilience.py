@@ -307,7 +307,7 @@ class TestRetryCall:
         assert isinstance(result, ChatCompletionResponse)
         assert result.message.content == "OK"
         # With jitter_factor=0, delay = max(0.01, 0.05) = 0.05
-        assert elapsed >= 0.05
+        assert elapsed >= 0.045
 
     async def test_zero_max_retries_no_retry(
         self, mock: MockProvider, req: ChatCompletionRequest

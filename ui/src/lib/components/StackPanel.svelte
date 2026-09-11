@@ -16,7 +16,7 @@
 	// editor via tauri-plugin-opener.
 	import EmptyState from './EmptyState.svelte';
 	import { stack } from '../stack-store.svelte.js';
-	import { cacheBadge, cacheLabel, formatTokens, memoryPlaceholderCopy, memoryReasonLabel } from '../stack-store';
+	import { cacheBadge, cacheLabel, formatTokens, memoryPlaceholderCopy, memoryReasonLabel, warningBadge } from '../stack-store';
 	import { openInEditor } from '../open-file';
 	import Icon from './Icon.svelte';
 
@@ -28,11 +28,6 @@
 
 	function baseName(path: string): string {
 		return path.split('/').pop() ?? path;
-	}
-
-	/** Short badge for a warning line; full text stays in the tooltip. */
-	function warningBadge(warning: string): string {
-		return warning.includes('exceeds 200 lines') ? 'over 200 lines' : warning;
 	}
 </script>
 
@@ -98,6 +93,32 @@
 				</li>
 			{/each}
 		</ul>
+		{#if stack.skills.length > 0}
+			<section class="memory" aria-label="Skills">
+				<h2 class="memory-head">Skills</h2>
+				<ul class="sources">
+					{#each stack.skills as skill (skill.name)}
+						<li class="source" class:inactive={!skill.loaded}>
+							<div class="file">
+								<span class="name">{skill.name}</span>
+								<span class="tokens">{formatTokens(skill.tokens)} tok</span>
+							</div>
+							<div class="meta">
+								<span class="precedence">{skill.source}</span>
+								{#if skill.loaded}
+									<span class="chip chip-on">loaded</span>
+								{:else}
+									<span class="chip chip-off">catalog</span>
+								{/if}
+								{#if skill.description}
+									<span class="globs">{skill.description}</span>
+								{/if}
+							</div>
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
 		<section class="memory" aria-label="Memory">
 			<h2 class="memory-head">Memory</h2>
 			{#if stack.memoryPlaceholder && stack.memory.length === 0}

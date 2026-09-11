@@ -34,7 +34,9 @@ DEFAULT_PRESET = "tst-default"
 
 # Implicit keychain account for an unbound remote tier (TD-1717).
 DEFAULT_CREDENTIAL_ID = "openrouter"
-RESERVED_CREDENTIAL_IDS = frozenset({"slack-webhook", "ntfy-topic"})
+RESERVED_CREDENTIAL_IDS = frozenset(
+    {"slack-webhook", "ntfy-topic", "discord-webhook", "telegram-bot"}
+)
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # A second OpenRouter key slugifies to openrouter-2 (TD-1718). Same host.
 _OPENROUTER_FAMILY_RE = re.compile(r"^openrouter(?:-\d+)?$")
@@ -184,6 +186,10 @@ class TierConfig(BaseModel):
     cache_read_price: float = Field(ge=0)
     context_window: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
+    # When true, PNG/JPEG/GIF/WebP attachments are accepted on user turns
+    # routed to this tier (TD-4705). Default false — capability is config,
+    # never inferred from a slug in code.
+    vision: bool = False
     # Named key from the credentials catalog (TD-1717). None / omitted /
     # blank means unbound: loopback sends no key, remote uses openrouter.
     credential: str | None = None
@@ -374,7 +380,36 @@ class NtfyNotifyConfig(BaseModel):
     ``host`` is the only host ``tstd.notify.ntfy.send`` may reach. The
     topic URL itself is a keychain secret (account ``tst-ntfy-topic``),
     never this file, never a log, never the audit database. Empty ``host``
-    or ``enabled: false`` means no send. Discord/Telegram are TD-4707.
+    or ``enabled: false`` means no send.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class DiscordNotifyConfig(BaseModel):
+    """Discord incoming webhook (TD-4707). Off by default.
+
+    ``host`` is the only host ``tstd.notify.discord.send`` may reach. The
+    webhook URL itself is a keychain secret (account ``tst-discord-webhook``),
+    never this file, never a log, never the audit database. Empty ``host``
+    or ``enabled: false`` means no send.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
+class TelegramNotifyConfig(BaseModel):
+    """Telegram Bot API sendMessage (TD-4707). Off by default.
+
+    ``host`` is the only host ``tstd.notify.telegram.send`` may reach. The
+    bot URL itself is a keychain secret (account ``tst-telegram-bot``),
+    including ``chat_id`` as a query parameter. Never this file, never a
+    log, never the audit database. Empty ``host`` or ``enabled: false``
+    means no send.
     """
 
     enabled: bool = False
@@ -383,10 +418,64 @@ class NtfyNotifyConfig(BaseModel):
 
 
 class NotifyConfig(BaseModel):
-    """Outbound notification channels. Slack first, ntfy optional; no gateway."""
+    """Outbound notification channels. Slack is the default; no gateway."""
 
     slack: SlackNotifyConfig = Field(default_factory=SlackNotifyConfig)
     ntfy: NtfyNotifyConfig = Field(default_factory=NtfyNotifyConfig)
+    discord: DiscordNotifyConfig = Field(default_factory=DiscordNotifyConfig)
+    telegram: TelegramNotifyConfig = Field(default_factory=TelegramNotifyConfig)
+
+
+class SpeechConfig(BaseModel):
+    """Hold-to-talk transcription (TD-4701). Off by default.
+
+    ``base_url`` is the OpenAI-compatible transcriptions root (include
+    ``/v1``). Empty means unconfigured. There is no shipped cloud URL.
+    Optional ``credential`` names a keychain id; the secret is never this
+    file, never a log, never the audit database.
+    """
+
+    enabled: bool = False
+    base_url: str = ""
+    model: str = ""
+    timeout_seconds: float = Field(default=30.0, gt=0)
+    credential: str = ""
+
+    @field_validator("base_url")
+    @classmethod
+    def _strip_base_url(cls, value: str) -> str:
+        return value.strip().rstrip("/")
+
+    @field_validator("model")
+    @classmethod
+    def _strip_model(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("credential")
+    @classmethod
+    def _valid_credential(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            return ""
+        if cleaned in RESERVED_CREDENTIAL_IDS:
+            raise ValueError(
+                f"speech.credential {cleaned!r} is reserved for another keychain account"
+            )
+        if not CREDENTIAL_ID_RE.match(cleaned):
+            raise ValueError("speech.credential must be a lowercase slug [a-z][a-z0-9-]{0,31}")
+        return cleaned
+
+    @model_validator(mode="after")
+    def _base_url_is_http_when_set(self) -> SpeechConfig:
+        if not self.base_url:
+            return self
+        try:
+            parts = urlsplit(self.base_url)
+        except ValueError as e:
+            raise ValueError(f"speech.base_url is not a URL: {e}") from e
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError("speech.base_url must be an http(s) OpenAI-compatible endpoint")
+        return self
 
 
 class GroundingConfig(BaseModel):
@@ -521,17 +610,21 @@ class EngineConfig(BaseModel):
 
 
 class AutonomyConfig(BaseModel):
-    """Rootless container used only for autonomous runs (TD-4301).
+    """Autonomy and interactive-verify settings.
 
-    Interactive sessions ignore this block. ``runtime`` is the argv0
-    probed on PATH (or an absolute path). ``image`` is configuration,
-    never a Python literal — same rule as model slugs.
+    ``runtime`` / ``image`` are the rootless container used only for
+    autonomous runs (TD-4301). Interactive sessions ignore those two.
+    ``check_every`` is the autonomy drift-check cadence (TD-4201).
+    ``verify`` is the interactive validator review after writes (TD-4204,
+    spec §12.6 first sentence). It is not the autonomy supervisor.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     runtime: str = Field(default="podman", min_length=1)
     image: str = Field(default="docker.io/library/alpine:3.21", min_length=1)
+    check_every: int = Field(default=5, ge=1)
+    verify: Literal["off", "after_write", "ask"] = "after_write"
 
     @field_validator("runtime", "image")
     @classmethod
@@ -540,6 +633,58 @@ class AutonomyConfig(BaseModel):
         if not stripped:
             raise ValueError("must not be empty")
         return stripped
+
+
+class McpServerConfig(BaseModel):
+    """One user-listed MCP server (TD-4401).
+
+    Listed in user-data-dir config — no dynamic discovery. HTTP
+    destinations must be loopback; the client refuses anything else
+    before dialing. No ``env`` map: a token pasted here would land
+    on disk (TD-4403 keeps paste-a-token in the keychain).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    transport: Literal["stdio", "http"]
+    command: list[str] = Field(default_factory=list)
+    url: str = ""
+    enabled: bool = True
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _command_is_argv(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raise ValueError("command must be a list of argv tokens, not a string")
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        raise ValueError("command must be a list of argv tokens")
+
+    @field_validator("url")
+    @classmethod
+    def _strip_url(cls, value: str) -> str:
+        return value.strip()
+
+
+class McpConfig(BaseModel):
+    """User-listed MCP servers. Empty means none — no doctor rows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+
+    @field_validator("servers")
+    @classmethod
+    def _valid_server_ids(cls, value: dict[str, McpServerConfig]) -> dict[str, McpServerConfig]:
+        bad = sorted(sid for sid in value if not CREDENTIAL_ID_RE.match(sid))
+        if bad:
+            raise ValueError(
+                "mcp server id(s) must be a lowercase slug "
+                f"[a-z][a-z0-9-]{{0,31}}: {', '.join(bad)}"
+            )
+        return value
 
 
 class ModelConfig(BaseModel):
@@ -556,9 +701,11 @@ class ModelConfig(BaseModel):
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
+    speech: SpeechConfig = Field(default_factory=SpeechConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
     engine: EngineConfig = Field(default_factory=EngineConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
     @field_validator("credentials")
     @classmethod
@@ -717,8 +864,11 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "computer_use",
         "remote",
         "notify",
+        "speech",
         "autonomy",
         "engine",
+        "voice",
+        "mcp",
         "credentials",
     ):
         if key in data:

@@ -25,6 +25,7 @@ from .provider import (
     ChatCompletionResponse,
     ChatMessage,
     ProviderError,
+    content_as_text,
 )
 
 log = get_logger("tstd.memory_distill")
@@ -114,7 +115,7 @@ async def distill_session(
         return None
     if response.usage is not None and tracker is not None:
         tracker.record_off_turn("worker", response.usage, worker_cfg)
-    text = response.message.content or ""
+    text = content_as_text(response.message.content)
     raw = _parse_changes(text)
     if raw is None:
         log.warning("distill output was not a typed proposal")

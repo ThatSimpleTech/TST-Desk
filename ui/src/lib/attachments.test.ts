@@ -76,19 +76,26 @@ describe("acceptAttachment", () => {
 
   it("accepts a PNG header as an image", () => {
     expect(isImageBytes(PNG)).toBe(true);
-    const outcome = acceptAttachment("shot.png", PNG, limits());
-    expect(outcome.ok).toBe(true);
   });
 
-  it("accepts JPEG, GIF, and WebP headers as images", () => {
+  it("refuses an image without vision with copy naming config", () => {
+    const outcome = acceptAttachment("shot.png", PNG, limits());
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.refusal.code).toBe("attachment_no_vision");
+    expect(outcome.refusal.message).toContain("shot.png");
+    expect(outcome.refusal.message).toContain("vision: true");
+  });
+
+  it("accepts JPEG, GIF, and WebP headers as images when vision is enabled", () => {
     const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
     const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
     const webp = new Uint8Array([
       0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
     ]);
-    expect(acceptAttachment("a.jpg", jpeg, limits()).ok).toBe(true);
-    expect(acceptAttachment("a.gif", gif, limits()).ok).toBe(true);
-    expect(acceptAttachment("a.webp", webp, limits()).ok).toBe(true);
+    expect(acceptAttachment("a.jpg", jpeg, limits(), [], true).ok).toBe(true);
+    expect(acceptAttachment("a.gif", gif, limits(), [], true).ok).toBe(true);
+    expect(acceptAttachment("a.webp", webp, limits(), [], true).ok).toBe(true);
   });
 
   it("refuses a binary file with copy naming it and why", () => {
@@ -97,6 +104,20 @@ describe("acceptAttachment", () => {
     if (outcome.ok) return;
     expect(outcome.refusal.code).toBe("attachment_binary");
     expect(outcome.refusal.message).toContain("blob.dat");
+  });
+
+  it("accepts an image when vision is enabled", () => {
+    const outcome = acceptAttachment("shot.png", PNG, limits(), [], true);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.draft.name).toBe("shot.png");
+  });
+
+  it("still refuses non-image binary when vision is enabled", () => {
+    const outcome = acceptAttachment("blob.dat", new Uint8Array([0, 1, 2, 3]), limits(), [], true);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.refusal.code).toBe("attachment_binary");
   });
 
   it("refuses an oversize file and names the config key", () => {

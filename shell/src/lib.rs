@@ -4,7 +4,11 @@ pub(crate) mod cu_agent;
 mod cu_ax;
 pub mod cu_identity;
 pub mod daemon;
+mod quick_entry;
 mod read_text;
+mod session_window;
+mod tray;
+mod updater;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -69,8 +73,8 @@ fn quit_app(app: tauri::AppHandle) {
 
 /// Dock / taskbar badge while a hidden session is still working (TD-2904).
 /// Tray tooltip is `set_tray_tooltip` (TD-4703). The UI owns the copy.
+/// Tray running-count is TD-4703 (`set_tray_running_count`).
 const WINDOW_VISIBILITY_EVENT: &str = "window-visibility";
-const TRAY_ID: &str = "main";
 
 #[tauri::command]
 fn set_coworker_indicator(app: tauri::AppHandle, label: Option<String>) {
@@ -95,7 +99,7 @@ fn emit_window_visibility(app: &tauri::AppHandle, visible: bool) {
     let _ = app.emit(WINDOW_VISIBILITY_EVENT, visible);
 }
 
-fn show_any_window(app: &tauri::AppHandle) {
+pub(crate) fn show_main_window(app: &tauri::AppHandle) {
     let window = app
         .get_webview_window("main")
         .or_else(|| app.webview_windows().into_values().next());
@@ -118,10 +122,14 @@ fn show_any_window(app: &tauri::AppHandle) {
     }
 }
 
+fn show_any_window(app: &tauri::AppHandle) {
+    show_main_window(app);
+}
+
 #[tauri::command]
 fn set_tray_tooltip(app: tauri::AppHandle, tooltip: String) {
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_tooltip(Some(&tooltip));
+    if let Some(tray_icon) = app.tray_by_id(tray::TRAY_ID) {
+        let _ = tray_icon.set_tooltip(Some(&tooltip));
     }
 }
 
@@ -161,7 +169,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         log::warn!("no default window icon; tray not created");
         return Ok(());
     };
-    TrayIconBuilder::with_id(TRAY_ID)
+    TrayIconBuilder::with_id(tray::TRAY_ID)
         .icon(icon)
         .menu(&menu)
         .tooltip("TST Desk")
@@ -173,21 +181,21 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             "tray-quit" => request_quit(app),
             _ => {}
         })
-        .on_tray_icon_event(|tray, event| {
+        .on_tray_icon_event(|tray_icon, event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
             } = event
             {
-                show_any_window(tray.app_handle());
+                show_any_window(tray_icon.app_handle());
             }
         })
         .build(app)?;
     Ok(())
 }
 
-fn request_quit(app: &tauri::AppHandle) {
+pub(crate) fn request_quit(app: &tauri::AppHandle) {
     if !begin_quit() {
         return;
     }
@@ -284,7 +292,12 @@ fn build_app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&[quick_entry::WINDOW_LABEL])
+                .skip_initial_state(quick_entry::WINDOW_LABEL)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         // TD-1201: the stack panel opens resolved steering files in the
         // system editor. Paths come from the daemon's assembled stack.
@@ -312,6 +325,7 @@ pub fn run() {
             let embeddings = daemon::embeddings::start(data_dir);
             app.manage(handle);
             app.manage(embeddings);
+            quick_entry::setup(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -322,7 +336,13 @@ pub fn run() {
             set_coworker_indicator,
             set_tray_tooltip,
             new_desk_window,
-            approval_notice
+            approval_notice,
+            quick_entry::get_last_workspace,
+            quick_entry::set_last_workspace,
+            quick_entry::hide_quick_entry,
+            tray::set_tray_running_count,
+            session_window::open_session_window,
+            updater::check_for_updates,
         ])
         .on_menu_event(|app, event| {
             if event.id() == "quit-tst-desk" {
@@ -332,6 +352,14 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if is_quitting() {
+                    return;
+                }
+                if window.label() == quick_entry::WINDOW_LABEL {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    return;
+                }
+                if session_window::is_session_window_label(window.label()) {
                     return;
                 }
                 let coworker_on = daemon::load_coworker(&daemon::data_dir());

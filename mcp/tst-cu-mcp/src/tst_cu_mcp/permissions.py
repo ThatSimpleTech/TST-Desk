@@ -159,12 +159,14 @@ LINUX_NO_GATE = (
     "X session can see the screen and inject input."
 )
 
+# Extended by TD-4901: capture and input are separate strategies; see
+# docs/wayland-computer-use.md. This string is the product copy.
 WAYLAND_LIMIT = (
-    "This is a Wayland session. Wayland does not let an unprivileged client "
-    "capture the screen or synthesize global input. Use an X11 session. Portal "
-    "support was assessed (TD-2002) and is not in the current milestones. An "
-    "XWayland DISPLAY is not enough — it would only drive X11 clients, not "
-    "native Wayland apps."
+    "This is a Wayland session. Capture is portal ScreenCast + PipeWire; "
+    "input is portal RemoteDesktop / libei (TD-2002, TD-4901a/b). Both must "
+    "work before health.supported is true. expect_window never degrades "
+    "(TD-4901c). An XWayland DISPLAY is not enough — it would only drive "
+    "X11 clients, not native Wayland apps. See docs/wayland-computer-use.md."
 )
 
 XTEST_LIMIT = (

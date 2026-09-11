@@ -6363,6 +6363,10 @@ list. TD-2803 said this pane is hosted on the project home. Adding
 **Alternative rejected:** Opening only in the OS editor. The AC is
 "shows the markdown"; the column renders it. Edit/save is TD-2602.
 
+**Closed (2026-08-27):** The leftover "planned rail becomes ready" AC
+is ticked as cancelled, not shipped. Scheduled is `ready`. No
+`planned` rail row remains. `rail.test.ts` refuses a `memory` id.
+
 ---
 
 ## 2026-08-20 — TD-2602: pane save is a human verb, not memory_edit (Class B)
@@ -8231,6 +8235,1137 @@ user already has a config file; the patience belongs there.
 **Alternative rejected:** Inferring patience from the slug. Also
 rejected: raising the shipped default to three minutes. Also
 rejected: treating a `200` error envelope as a parse error.
+
+---
+
+## 2026-08-25 — TD-1720: title bar paints daemon-resolved host (Class B)
+
+**Decision:** `tier_state` grows additive `preset` and `hosts`
+(tier → hostname:port). The title bar shows `{slug} · {host}` for
+the active tier. The UI never parses a host out of a slug. The
+daemon fills `hosts` from the same `effective_tier` / credential
+resolution the provider client uses. No `PROTOCOL_VERSION` bump.
+
+**Rationale:** The chips named the routing role. The ox-alpha
+failure was a host mismatch that those labels could not show.
+
+**Alternative rejected:** Replacing chip labels with raw slugs
+(they wrap). Also rejected: inferring OpenRouter from `vendor/model`
+(TD-1718). Also rejected: showing Settings' `active_preset` as the
+session's host — existing sessions keep the config they opened with.
+
+---
+
+## 2026-08-25 — TD-1720: rail dots are turn activity, not liveness (Class B)
+
+**Decision:** `SessionSummary` gains an additive `busy: bool` sourced
+from `Session.turn_in_flight`. The rail paints **working** / **waiting**
+/ **finished** from that flag plus parked states (`awaiting_approval`,
+`paused`, `failed`). `state: "running"` is loop liveness (TD-1714) and
+must not colour a row as working. Display titles cap at 20 characters
+in the rail; storage stays at 60 (TD-3001). The bound pane's evidentiary
+`turnState` overlays the attached row so the dot moves with the
+composer. Switching away snapshots that evidence onto the leaving row
+because detach stops the event stream.
+
+**Rationale:** Every healthy session is `running` for its whole life, so
+the pre-existing liveness dots all read the same. The daemon already
+tracked open turns for Delete/Move refusals; putting that on the list
+is daemon truth, not a UI inference. A 20-char cap is a display
+choice — renaming and filter matching still see the full title.
+
+**Alternative rejected:** Remapping `running` → finished in the UI
+only. That would hide every background turn the list already knew
+about. Also rejected: attaching to every session just to watch
+`turn_complete`. Also rejected: lowering the stored title cap from 60
+to 20 — rename would silently truncate.
+
+---
+
+## 2026-08-26 — TD-4302: container net ns follows the charter wall (Class B)
+
+**Decision:** `container_argv` / `sandbox_exec` take `network` in the
+same shape as `BoundarySection.network` (`"deny"` or a host list).
+`"deny"` (the default) keeps `--network=none`. A non-empty host
+allowlist omits `--network=none` so Podman's default slirp can reach
+tool-level hosts, and never passes `--network=host`. Unexpected
+values fail closed as deny. The only `--mount` remains the workspace;
+there is no extra-mount API.
+
+**Rationale:** CNI cannot cheaply punch per-host holes. The classifier
+already enforces `network-new-host` (Class C) against the charter
+allowlist. The container net ns is the wall (none vs slirp), not host
+networking. Binding the host net ns would expose host listeners and
+is a prime-directive miss.
+
+**Alternative rejected:** `--network=host` for allowlisted charters —
+that mounts the host net ns. Also rejected: an extra-mount API for
+`$HOME` / creds, and a CNI plugin that filters by hostname.
+
+---
+
+## 2026-08-26 — TD-4303: wake-up summary (Class B)
+
+**Decision:** Additive session-scoped `autonomy_summary` event. No
+`PROTOCOL_VERSION` bump. The notify callback still takes one string;
+`notify_autonomy_stop` posts that string as the slack/ntfy body
+(the richer text is built in `wakeup.format_notify_text`). One click
+opens the ledger via the host `open_path` / `openInEditor` path and
+copies `tst/auto/<charter-slug>` — there is no daemon git-checkout
+verb. `should_notify` treats a reason that starts with `breaker:` as
+a notify so TD-4203 can trip without another edit here.
+
+**Rationale:** The daemon owns the session; the window is a viewer.
+Persisting the summary on the event log means a closed window still
+sees it on attach. A second daemon or a new client message to switch
+branches would invent a control plane this story does not need.
+
+**Alternative rejected:** Inferring the card from `turn_complete` plus
+`decision_logged`. Also rejected: wrapping the old one-liner inside
+`notify_autonomy_stop` (the callback would still look like
+"Autonomy complete: definition of done met"). Also rejected: a
+protocol checkout command.
+
+---
+
+## 2026-08-26 — TD-4204: interactive verify after writes (Class B)
+
+**Decision:** Detect a write turn from successful `fs_write` / `fs_edit`
+results this turn (an explicit session flag, cleared each turn). A
+`shell` that only echoes is not a write. After `turn_complete` on an
+interactive session, `autonomy.verify` (`off` | `after_write` | `ask`,
+default `after_write`) may enqueue one validator-tier completion via
+`assemble(..., tier="validator", diff=..., test_output=...)`. Cost is
+`CostTracker.record_off_turn("validator", ...)` — not
+`router.record_turn_start()`. The result is a `verify_result` timeline
+event, never an `assistant_delta`. Ask mode emits `pending: true` and
+waits for `run_verify` / `deny_verify` (not a reused `ApprovalRequest`).
+Autonomy sessions skip this path. No charter, no auto-revert.
+
+**Rationale:** Spec §12.6 first sentence is the unused interactive
+validator call. Reusing `ApprovalRequest` would lie about a tool
+approval. Folding the review into the chat transcript would invent a
+second bubble the user did not ask for.
+
+**Alternative rejected:** Treating every `mutates=True` tool as a write
+(shell echo would verify). Also rejected: streaming the validator reply
+as assistant text.
+
+---
+
+## 2026-08-26 — TD-4201: drift check is a session result, not a turn (Class B)
+
+**Decision:** The validator drift check (spec §12.6) is a supervisor
+call on the continue path of `advance_autonomy`. Cost goes through
+`CostTracker.record_off_turn` on the validator tier. The router is
+not advanced. The structured result is stored on
+`session.last_drift_check` for TD-4202; no new protocol event.
+
+`tstd.autonomy.__init__` does not import `supervisor`. Importing it
+there cycles through `tools.dispatch` and `local_worker` → `session`
+→ `policy` while the autonomy package is still loading.
+
+The validator answer is JSON with `serves_objective` /
+`class_a_drifted` / `progress_real`, or three YES/NO/DRIFT lines.
+Unparseable is fail-closed (`drift_detected=True`) and is reported
+only — this story does not revert.
+
+**Rationale:** Spec §12.6 names the inputs and questions, not the
+wire. A later revert story needs the last result on the session.
+A new event would force a protocol/UI change this story forbids.
+
+**Alternative rejected:** Calling `router.record_turn_start()` so
+the check looks like a user turn. Also rejected: exporting
+supervisor from `autonomy/__init__.py`. Also rejected: auto-revert
+or a circuit breaker here (TD-4202 / TD-4203).
+
+---
+
+## 2026-08-26 — TD-4203: circuit breakers are reason strings (Class B)
+
+**Decision:** New trips are `breaker:tests_red`, `breaker:file_thrash`,
+`breaker:no_dod_progress`, and `breaker:tool_loop`. `maybe_trip` runs
+once on the `advance_autonomy` continue path after the DoD poll and
+before `continue_prompt`. It sets `session.autonomy_stop_reason` only;
+it never creates an `ApprovalRequest`. Spend/wall-clock caps and Class C
+keep their existing reason prefixes and stop sites — this story does
+not double-stop them.
+
+N comes from charter `stop_conditions` prose when a line names a number
+(`tests red for 3`, `same file modified 5+`, no-progress, tool-loop);
+otherwise defaults are tests red 3, file thrash 5, no DoD progress 3,
+tool loop 3. No new config key.
+
+The loop records a fingerprint of each dispatch batch `(name, canonical
+args)` and successful `fs_write` / `fs_edit` paths. Interactive
+sessions never record and never trip. `tests_red` is consecutive
+all-red polls; `no_dod_progress` is consecutive polls whose green
+count does not rise. A rising green count clears file-write counts.
+
+**Rationale:** Spec §12.7 is a fault report. Wake-up already notifies
+`breaker:`. Parsing the signed charter keeps N with the human contract
+instead of a second config surface.
+
+**Alternative rejected:** A new protocol event or approval card. Also
+rejected: `breaker_n` on `AutonomyConfig` (charter already states N).
+Also rejected: rewriting the spend/wall-clock/Class C reason strings.
+
+---
+
+## 2026-08-26 — TD-4202: last good is a passing check; empty undo is a no-op (Class B)
+
+**Decision:** Last good is `session.autonomy_last_good_sha`, recorded
+only when a drift check returns `drift_detected=False` (the auto-branch
+tip at that check). A later detection restores only the paths that
+differ between that SHA and the current `tst/auto/<slug>` tip, via a
+temporary index and `checkout-index`, then `update-ref`s the auto
+branch to the last-good SHA. HEAD, the user's index, and
+`refs/heads/main` are never written.
+
+The first drift with no last-good SHA is a no-op revert that still
+counts as a streak of 1 and re-plans on brain (`router.set_tier`).
+It does not stop and does not invent a tree. A second consecutive
+detection sets `autonomy_stop_reason` to `breaker:drift` so the
+existing `should_notify` / wake-up path fires without editing
+`should_notify`. A clean check between detections resets the streak.
+
+Interactive verify does not import this module.
+
+**Rationale:** Spec §12.6 names the last good checkpoint, not HEAD.
+`autonomy_last_check_sha` is stamped during prompt assembly to the
+*current* tip, so it cannot be the undo target after a failed check.
+Stopping on the first check with no SHA would skip the required
+re-plan. `breaker:drift` reuses the TD-4303 notify prefix.
+
+**Alternative rejected:** `git checkout` / `git restore` against the
+default branch. Also rejected: treating `autonomy_last_check_sha` as
+last good. Also rejected: adding a new `should_notify` reason string.
+
+---
+
+## 2026-08-26 — TD-4304: M9 exit is a headless mock autonomy pass (Class B)
+
+**Decision:** `tstd.e2e_m9.run_m9` is a new module, not a branch of
+`e2e_harness.run`. The start path is `start_autonomy` /
+`run_autonomy_start` plus `Daemon._handle_start_autonomy`. The
+sandbox gate sees a fake rootless `podman` (`_fake_runtime` +
+`inspect=ROOTLESS`); no real engine. The mock brain writes one
+in-workspace file (Class A, checkpoint on `tst/auto/<slug>`), the
+two-step DoD stays partially red, and `no measurable progress for 2`
+trips `breaker:no_dod_progress`. `check_every` is 99 so the pass is
+about the breaker, not drift. Default `addopts` (`-m 'not live'`)
+keeps it in the default suite.
+
+**Rationale:** Folding autonomy into `e2e_harness.run` would change a
+frozen signature (TD-1401) and require a live container. M9's exit
+criterion is observable: branch commits, one Class A ledger heading,
+a `breaker:` stop, and an unchanged `main`. Requiring Podman would
+make CI a fact about the machine.
+
+**Alternative rejected:** Driving the runner without the start gate.
+Also rejected: marking the pin `@pytest.mark.live`.
+
+---
+
+## 2026-08-26 — TD-4603: Plan mode is a router lock, not a document (Class B)
+
+**Decision:** Plan mode is a boolean on `TierRouter` (`set_plan` /
+`plan_mode`). It wins over `set_tier` override, lead-turns expiry, and
+`clear_override`. `set_tier("worker"|"validator")` raises `PlanModeError`
+and the daemon returns a typed `plan_mode` error without applying the
+pin. `set_tier("brain")` is accepted as a no-op so autonomy revert
+(`revert.py`) stays legal. The title bar reads an additive `plan` field
+on the existing `tier_state` event — no `plan_state` event, no
+`.tst/plan.md`, no accept-to-execute.
+
+The lock is in-memory for the live session. Revive already builds a
+fresh `TierRouter` and does not restore `set_tier` override; plan is
+the same. No new persist store.
+
+**Rationale:** The title bar already paints from `tier_state`. A second
+event would let the loop's next `tier_state` clobber the flag unless
+every emitter learned a new type. `set_tier("brain")` must stay legal
+because TD-4202 calls it after drift. Refusing rather than silently
+ignoring worker/validator keeps the meter and the chips honest.
+
+**Alternative rejected:** A `plan_state` event. Also rejected: refusing
+`set_tier("brain")` as unnecessary. Also rejected: persisting plan
+across revive (override is not persisted either).
+
+---
+
+## 2026-08-26 — TD-4501: slash commands are a list with a body cap (Class B)
+
+**Decision:** `list_commands` is a connection-scoped human path (same
+shape as `list_instructions`). The reply is `command_list` with
+`{ name, description, source, body, too_large }`. The body is included
+so the composer can insert without a second round-trip. Cap is 32 KiB
+UTF-8 (`COMMAND_BODY_CAP`); over-cap commands keep name/description,
+omit the body, and set `too_large`. Extra YAML frontmatter keys are
+ignored — only `description` is read. Fallback when both
+`.tst/commands/` and `~/.tstdesk/commands/` have no `.md` files includes
+workspace `.claude/commands/` and `~/.claude/commands/` (user-global
+wins on stem in that set too). `source` is one of `workspace`, `user`,
+`claude_workspace`, `claude_user`. Command trees fold into
+`is_steering_write` and reuse the `steering_file` PathGuard refusal.
+
+**Rationale:** A second `get_command` verb would double the protocol
+surface for a picker that needs the body on pick. 32 KiB is enough for
+a human-written snippet and keeps the list payload bounded. Ignoring
+extra frontmatter lets Claude-style command files load without a
+migration. Symmetric `~/.claude/commands/` matches the CLAUDE.md
+fallback already in discovery.
+
+**Alternative rejected:** Fetching the body only on pick. Also rejected:
+forbidding unknown frontmatter keys. Also rejected: a new
+`command_file` refusal code (the model should see one read-only rule).
+
+---
+
+## 2026-08-26 — TD-4401: MCP tools are prefixed; HTTP is JSON-RPC POST (Class B)
+
+**Decision:** User-listed MCP tools register as `{server_id}__{remote_name}`
+with provenance `mcp:<server_id>` and `side_effect_class="ask"`. An MCP
+tool named `fs_read` therefore cannot replace the builtin. HTTP transport
+is a JSON-RPC POST to `mcp.servers.<id>.url` (loopback only, refused
+before dial). It is not SSE and not Streamable-HTTP session ids. There
+is no `env:` map on the server config (`extra="forbid"`). A dead or
+refused server is a doctor row `mcp:<id>` after `steering`; empty
+`mcp.servers` adds no rows. The computer-use sidecar stays
+`tstd.desktop` / `mcp/tst-cu-mcp`.
+
+**Rationale:** Prefixing is the cheapest collision rule that keeps
+TD-601's explicit builtin names stable. Speaking JSON-RPC ourselves
+avoids a new PyPI dependency. HTTP POST matches the story's scripted
+loopback server without inventing a second product transport. Doctor
+rows rather than a failed `Daemon.run` is the acceptance criterion.
+
+**Alternative rejected:** Replacing builtins on name clash. Also
+rejected: hijacking `tstd.desktop.stdio_mcp`. Also rejected: a free-form
+`env` map (TD-4403 keeps tokens in the keychain).
+
+---
+
+## 2026-08-26 — TD-4402: MCP tools without path/host metadata cannot be Class A (Class B)
+
+**Decision:** `DecisionRequest` carries optional `provenance` (default
+`None`) and `has_path_host_metadata`. `build_decision_request` copies
+`Tool.provenance` and sets the flag from declared `path_fields` /
+`host_fields` / `host_resolver` — never from JSON schema property names.
+The static rule `mcp-undeclared-fields` matches `provenance` starting
+with `mcp:` when that flag is false, and is Class B *before every A
+grant*. Loader keeps `path_fields`/`host_fields` empty and
+`side_effect_class="ask"`. Computer-use stays `tstd.desktop`, not `mcp:`.
+
+**Rationale:** An MCP tool re-registered as `side_effect_class="auto"`
+with no path/host metadata would otherwise fall through to the worker,
+which can return A. Putting provenance on the request keeps builtins
+unchanged (`None`). The rule sits with the other never-A floors
+(`shell-floor`) so `in-workspace-edit` cannot launder a write-bearing
+request that never declared `path_fields`. If an MCP tool later declares
+`host_fields`, `network-new-host` still applies; this story does not
+invent host allowlists.
+
+**Alternative rejected:** Treating empty reads+writes+hosts as B without
+provenance (weaker: a declared `host_field` that happened to be absent
+on one call would look the same as an undeclared tool). Also rejected:
+inferring `path`/`url` keys from the remote schema.
+
+---
+
+## 2026-08-26 — TD-4502: skills are a catalog with a 4k body cap (Class B)
+
+**Decision:** Skills live at `.tst/skills/<name>/SKILL.md` and
+`~/.tstdesk/skills/<name>/SKILL.md` (user-global wins on name). Frontmatter
+allows only `description` and `whenToUse`; extra keys skip that skill
+entirely (log + omit), missing required keys skip. When both of *our*
+trees have no `SKILL.md`, fall back to workspace `.claude/skills/` and
+`~/.claude/skills/` (same symmetry as TD-4501 commands). The brain prompt
+gets a name+description catalog after the cache prefix (blocks 1–2);
+worker and validator get neither catalog nor bodies. `load_skill` (builtin,
+`side_effect_class="auto"`) attaches the body to `session.loaded_skills`.
+Slash `/name` loads a skill only when that stem is not also a command
+(TD-4501 wins). The composer inserts `Load skill \`name\`.` for skill-only
+stems; the loop calls the same loader. Body cap is 4000 heuristic tokens
+(`SKILL_BODY_TOKEN_CAP`); over-cap is refused, not truncated. Any write
+whose basename is `SKILL.md` folds into `is_steering_write` and reuses
+the `steering_file` PathGuard refusal. Inspector lists skills on
+`instruction_stack.skills`, never mixed into steering `sources`.
+
+**Rationale:** A fixed 4k token cap is predictable and does not require
+re-assembling the prefix at load time. Commands win on stem so the
+composer does not rewrite TD-4501 insert behaviour. Basename `SKILL.md`
+(not just the skills tree) matches the AC that a nested `src/SKILL.md`
+is also Class C. Extra frontmatter is refused rather than ignored so a
+partial skill cannot load.
+
+**Alternative rejected:** Cap = remaining room after prefix+catalog
+(harder to test, varies by steering). Also rejected: putting the catalog
+in the cache prefix. Also rejected: a second stack event for skills.
+
+---
+
+## 2026-08-26 — TD-4403: Settings MCP writes; live sessions keep old tools (Class B)
+
+**Decision:** `set_mcp_server` and `delete_mcp_server` surgically persist
+`mcp.servers` in user-data-dir `config.yaml` and ack with `setup_state`
+carrying `mcp_servers`. There is no `env` / `environment` field on the
+messages (`extra="forbid"`). After a write the daemon reloads
+`McpSupervisor` so doctor and the next session see the new list. Sessions
+already attached keep the tool set they opened with; hot-attach is out
+of scope.
+
+**Rationale:** A general config-write verb could smuggle a token into a
+file. Narrow messages that carry argv tokens (or a loopback URL) cannot.
+Reloading the supervisor is enough for doctor; mutating a live session
+registry mid-turn is a different product.
+
+**Alternative rejected:** Hot-attaching MCP tools into running sessions.
+Also rejected: a free-form env map on the wire or in the file.
+
+---
+
+## 2026-08-26 — TD-4601: In-process tool plugins (Class B)
+
+**Decision:** Third-party tools load from the `tstd.tools` entry-point
+group. Each entry is a synchronous `register(registry: ToolRegistry,
+dispatcher: ToolDispatcher) -> None` that calls `registry.register` and
+`dispatcher.register_handler` the same way builtins do. Discovery uses
+`importlib.metadata.entry_points(group="tstd.tools")`. Tests inject
+fakes via `load_plugins(..., entries=...)`. Provenance is
+`plugin:<distribution>`. A plugin that reuses a builtin name (e.g.
+`fs_read`) is skipped and logged (`name_collision`); it does not replace
+the builtin and is not renamed the way MCP uses `{id}__{name}`.
+
+**License (fail closed):** Read `License-Expression`, else `License`,
+from the distribution metadata. The allowlist is MIT, Apache-2.0,
+BSD-2-Clause, BSD-3-Clause, ISC, Unlicense, 0BSD, CC0-1.0
+(case-insensitive). SPDX expressions pass only when every identifier is
+on that list, joined by AND or OR. `WITH` exceptions, GPL, AGPL, LGPL,
+Proprietary, empty, and unknown do not load. The refusal is a Class C
+*product* decision: log at warning with `reason=plugin_license` and
+`license_class=non_permissive`, register nothing. It is not a tool-call
+Class C and not a silent skip.
+
+**Broken plugins:** Import errors and bad `register` signatures are
+logged (`reason=broken`) and skipped. `create_registry()` still returns
+builtins; the daemon still starts. `create_registry` loads plugins
+(capturing handlers); the daemon binds them with `bind_plugin_handlers`
+next to MCP attach so session dispatchers actually run plugin handlers.
+No new runtime dependency.
+
+**Rationale:** Entry points are the stdlib plugin hook; a group name in
+pyproject is the public contract. Skipping collisions keeps TD-601
+builtin names stable without inventing a second prefix scheme. Fail-closed
+license keeps copyleft and proprietary code from becoming process-local
+tools without an explicit Class C product decision.
+
+**Alternative rejected:** Replacing builtins on name clash. Also
+rejected: loading non-permissive plugins with a log-only warning. Also
+rejected: a PyPI client library for SPDX. Also rejected: doctor rows for
+skipped plugins (log + skip; protocol.py is owned by other stories).
+
+---
+
+## 2026-08-26 — TD-4604: M10 exit is a new harness module (Class B)
+
+**Decision:** `tstd.e2e_m10.run_m10` is a new module, not a branch of
+`e2e_harness.run`. The pass is an interactive session (real WebSocket,
+in-process daemon, `MockProvider`) that plants user-data-dir
+`config.yaml` with known mock slugs and `mcp.servers.harness` pointing
+at a copied fake stdio speaker. Slash and skill bodies are unique
+tokens; the first recorded system prompt must show the skill catalog
+and must not show either body. Default `addopts` (`-m 'not live'`)
+keeps it in the default suite.
+
+**Rationale:** Folding M10 into `e2e_harness.run` would change a frozen
+signature (TD-1401). M10's exit criterion is observable: catalog-not-
+body, body-after-invoke, and an MCP `tool_call` that carries a decision
+class. A real MCP package or Podman would make CI a fact about the
+machine.
+
+**Alternative rejected:** Branching `e2e_harness.run`. Also rejected:
+marking the pin `@pytest.mark.live`.
+
+---
+
+## 2026-08-26 — TD-4602: one-level worker child is transient, not a session (Class B)
+
+**Decision:** `delegate` runs a slim in-process worker loop
+(`run_worker_child` in `tstd.tools.delegate`). The child is a
+transient `Session` with `delegate_depth=1` and `parent_id` set. It
+is not inserted into `SessionRegistry`, not persisted, and not
+revived. The parent `session.id` stays the conversation the user
+sees. Child timeline events stay off the parent event log except the
+parent `tool_call`/`tool_result` for `delegate` (and parent
+`cost_update` as child spend accrues). No new protocol event.
+
+The child reuses the parent's `PathGuard`, classifier, policy,
+`approval_handler`, `skip_all_fn`, checkpointer, and ledger so the
+wall cannot widen and Class B cards park on the parent session. The
+child registry is fs + shell only — `delegate` is omitted, and the
+handler also refuses when `delegate_depth >= 1`. The child model is
+the worker tier only. Cost records land on the parent tracker with
+`CallRecord.source="worker"` (empty default for the parent loop).
+Child iteration cap is `min(8, parent remaining max_iterations)`;
+spend and wall-clock are the parent's, checked before each child
+provider call. Spec §8 stands: this is not Hermes delegation — no
+peer agents, mailbox, recursive swarm, or second window.
+
+**Rationale:** A second top-level session would grow the session list
+and imply a second WS-owned loop. Re-entering `agent_loop` would
+pull in autonomy, CU overlay, and verify. A slim child loop plus a
+shared dispatcher is the thinnest thing that still goes through the
+classifier. Child `dispatch_many` is called from `loop.py`
+(`dispatch_worker_child_tools`) so the chokepoint inventory stays
+honest.
+
+**Alternative rejected:** A Hermes-style mesh / mailbox / nested
+swarm (spec §8: do not lift). Also rejected: registering the child
+in `SessionRegistry`. Also rejected: auto-only Class A tools on the
+child (sharing the parent's approval handler keeps cards on the
+parent). Also rejected: a new timeline event for child steps.
+
+---
+
+## 2026-08-26 — TD-1721: persist the preset name, not a forked config (Class B)
+
+**Decision:** A session stores the catalog preset *name* on
+`sessions.json` (`SessionRecord.preset`). The live loop holds a
+`ModelConfig` snapshot (`session.config = config.model_copy(update=
+{"active_preset": name})`) taken from the current catalog at open,
+revive, or `set_session_preset`. Settings' `set_preset` /
+`set_tier_slug` keep writing the catalog only. `set_session_preset`
+never calls `save_active_preset` or `save_tier_slug`. An empty or
+unknown stored name falls back to the live `active_preset` and
+backfills the row.
+
+The switch is refused while `turn_in_flight`. When idle, the
+snapshot is replaced immediately (title bar follows `tier_state`)
+and the loop rebinds `session.config` at the start of the next
+turn. Ack is `session_list` so the rail shows each row's preset.
+
+**Rationale:** The backlog forbids a second Settings document and a
+forked config tree. A name plus a snapshot is enough to keep two
+open chats on `local` and `vllm` honest across a restart, without
+writing session-local slugs back onto the catalog.
+
+**Alternative rejected:** Persisting a per-session copy of the
+preset's slugs/prices (a fork). Also rejected: applying Settings'
+`active_preset` to open loops. Also rejected: allowing a preset
+switch mid-turn (the next completion would mix two catalogs).
+
+---
+
+## 2026-08-26 — TD-3406: desktop Design hit-test is observe-only AX (Class B)
+
+**Decision:** Design-mode clicks on a desktop frame use the existing
+`design_hit_test` / `design_hit` wire (no new field). The daemon
+routes by the last `desktop_` / `browser_` `tool_call` on the
+session log. `tst-cu-mcp` adds an internal `hit_test` tool that
+never calls the kill-switch and is not registered as an agent tool.
+Last-screenshot metadata (cached on `capture()`) maps frozen-frame
+image pixels to global points and remaps the AX box back onto the
+frame. `xpath` stays null on desktop.
+
+**Rationale:** Design already freezes the last `screen_frame` and
+turns off on actuating CU tools, so the last sidecar grab is that
+frame. A new agent-facing `desktop_hit_test` would need the
+classifier chokepoint for a user-inspection path. Routing from the
+log keeps the protocol additive and leaves existing browser tests
+on the browser driver.
+
+**Alternative rejected:** A new `surface` field on `design_hit_test`
+(the log already knows). Also rejected: treating image pixels as
+global points. Also rejected: blocking hit-test on the kill-switch
+(screenshot already stays live). Also rejected: registering
+`desktop_hit_test` on the agent registry.
+
+---
+
+## 2026-08-27 — TD-1105: keychain CLI waits are bounded (Class B)
+
+**Decision:** `security` / `secret-tool` `communicate` waits at most
+5 seconds. A timeout kills the helper and raises `KeychainLockedError`
+with unlock-and-retry copy. The pytest suite patches the public
+keychain functions so tests never touch the host keyring, except
+`test_keychain.py`.
+
+**Rationale:** A locked Secret Service collection does not fail — it
+waits on a prompt. `setup_state` probes every named credential, so
+one hung `secret-tool lookup` stalls the daemon and the suite. TD-1105
+already mapped locked stderr to a retryable error; a hung CLI is the
+same user-visible state. Five seconds matches the other bounded
+helper waits (`taskkill`, kill grace) and is long enough for a
+responsive keyring, short enough that a missing prompt cannot look
+like a frozen app.
+
+**Alternative rejected:** Leaving the wait unbounded and only
+mocking in the tests that already knew to. The next unmocked
+`Daemon()` + `setup_state` would hang again. Also rejected: a
+sub-second timeout (a healthy lookup can be slower on a cold
+keyring).
+
+---
+
+## 2026-08-27 — TD-1302: Docker is the Linux clean guest (Class B)
+
+**Decision:** On a host without `/dev/kvm`, the Linux clean-VM
+acceptance for TD-1301 / TD-1302 is Docker, not qemu. `ubuntu:22.04`
+extracts the `.deb` and runs `tstd` with an empty `PATH` (same guest
+as `package.yml`). `ubuntu:24.04` runs `dpkg -i` plus `xvfb-run
+tst-desk` because the `.deb` needs `libwebkit2gtk-4.1`, which 22.04
+does not ship. Protocol E2E uses a stdlib loopback OpenAI mock on
+`127.0.0.1:11434` (the shipped `local` preset) so a guest with no
+Python in *the product* and no API key still completes
+workspace → tool write → reply.
+
+**Rationale:** This box is the right hardware for a clean guest
+(16-core, 123 GiB, Docker) but it is not a KVM host. A hardware VM
+that cannot boot is not more honest than a stock Ubuntu container.
+The guest still has no TST Desk, no venv, and no system Python on
+the sidecar `PATH`. macOS and Windows stay real VMs / Actions
+runners; this decision is Linux-only.
+
+**Alternative rejected:** qemu without KVM (too slow to be a
+release gate). Also rejected: ticking "per platform" / "four
+artifacts" from Linux Docker evidence. Also rejected: installing
+`libsecret-tools` in the protocol guest to hide a missing-helper
+crash — that crash is a first-run defect, so the smoke found it
+and the helper now raises `KeychainError`.
+
+---
+
+## 2026-08-27 — TD-4706: vendored mermaid + KaTeX, lazy (Class B)
+
+**Decision:** Ship `mermaid@^11.17.2` and `katex@^0.16.47` from npm
+(both MIT). No CDN. Marked emits placeholders; `Markdown.svelte`
+hydrates after the message is complete. Mermaid initializes with
+`securityLevel: "strict"` and `startOnLoad: false`; the SVG is
+DOMPurify-cleaned; `bindFunctions` is never called. KaTeX covers
+fences `math` / `katex` / `latex`, display `$$…$$`, and inline
+`\(…\)`. Single-dollar TeX is refused so `$5` stays currency.
+Markdown images stay inert `[alt]` until TD-4705.
+
+**Bundle (production `ui` build, gzip -9):**
+- First-paint chat page: 248 kB / 73 kB gzip JS, 108 kB / 13 kB gzip
+  CSS. Was ~60 kB gzip JS before this story; the +13 kB is
+  placeholder markup and tokenizers, not the libraries.
+- First mermaid fence: async chunks, largest 308 kB gzip (mermaid
+  core / diagram types). Not fetched until a `.md-mermaid` node
+  exists.
+- First math: KaTeX JS on demand, CSS 28 kB / 8 kB gzip, plus
+  ~250 kB of woff2 (browser fetches only faces the formula uses).
+  Static-importing KaTeX from `markdown.ts` had blown the page to
+  ~455 kB gzip; that is why hydrate is a dynamic `import()`.
+
+**Rationale:** The acceptance criterion asked for a recorded delta,
+not a smaller first paint at the cost of a CDN. Failed parse must
+be able to restore the fence, which a sync marked renderer cannot
+do for async mermaid.
+
+**Alternative rejected:** `marked` calling mermaid/KaTeX inline
+(blocks first paint; mermaid is async). Also rejected: `$…$` inline
+math. Also rejected: rendering markdown `<img>` here (TD-4705).
+
+---
+
+## 2026-08-27 — TD-4707: Discord and Telegram as sibling send() (Class B)
+
+**Decision:** Add `notify/discord.py` and `notify/telegram.py` as
+standalone `send(config, message)` modules, same shape as Slack and
+ntfy. Slack remains the default (`tstd.notify.send` still re-exports
+Slack; shipped yaml lists Slack first). There is no gateway, plugin
+loader, or extra channel. Discord POSTs `{"content": message}`.
+Telegram POSTs `{"chat_id", "text"}`; `chat_id` lives on the keychain
+URL as `?chat_id=`, not in yaml, so the config shape stays
+`enabled` / `host` / `timeout_seconds`. Hosts stay config-sourced.
+Secrets: `tst-discord-webhook`, `tst-telegram-bot`. Scheduler
+`deliver_to` stays `window | slack | ntfy` — extras fire on the same
+approval / turn-complete / autonomy-stop path as Slack, not a new
+job channel.
+
+**Rationale:** Spec §8 lifts notification channels as sibling modules
+and skips a 20-platform gateway. Putting `chat_id` in yaml would be a
+second secret-adjacent field and a different schema from Slack.
+
+**Alternative rejected:** A dispatcher that maps channel name to a
+module (that is a gateway). Also rejected: `notify.telegram.chat_id`
+in yaml. Also rejected: extending scheduler `deliver_to` in this
+story.
+
+---
+
+## 2026-08-27 — TD-4701: hold-to-talk via config-sourced STT (Class B)
+
+**Decision:** Dictation is hold-to-talk in the composer. The window
+opens the mic only while the control is held (max 30s), then sends
+`transcribe { audio_b64, mime }` to the daemon. The daemon POSTs
+multipart to `{speech.base_url}/audio/transcriptions` and answers
+with connection-scoped `transcript`. `speech.enabled` defaults
+false; empty `base_url` is unconfigured; the shipped file has no
+cloud URL. Optional `speech.credential` is a named keychain id
+(Bearer). Additive `setup_state` flags `speech_enabled` /
+`speech_ready` — never the URL. Not a tool, so not classified.
+No `PROTOCOL_VERSION` bump. macOS: `NSMicrophoneUsageDescription`
+plus `com.apple.security.device.audio-input`.
+
+**Rationale:** The Web Speech API on Linux/Chromium can reach a
+cloud recognizer, which would be a cloud default and a network call
+the user did not configure. Putting `fetch` in the UI would also
+bypass the outbound-host confinement that lives in Python.
+
+**Alternative rejected:** Web Speech API. Also rejected: always-on
+mic. Also rejected: a shipped OpenAI/OpenRouter transcriptions URL.
+Also rejected: treating transcribe as a tool (no classifier path
+needed; the user is holding a button).
+
+---
+
+## 2026-08-27 — TD-4702: macOS quick-entry overlay (Class B)
+
+**Decision:** Quick entry is macOS-only. ⌘⇧. toggles a dedicated
+`quick-entry` webview (always-on-top, not taskbar-visible, excluded
+from window-state restore). The last workspace path lives in
+`{data_dir}/last-workspace.yaml`; the main window writes it on
+`open_workspace`, rail focus, and workspace retarget. The overlay
+connects to the same daemon, attaches to the newest live session for
+that path or calls `open_workspace`, sends one `user_message`, then
+hides. Shortcut registration failure emits `quick-entry-permission`
+with Accessibility settings copy — no Linux/Windows shortcut.
+
+**Rationale:** A global chord needs a separate small surface; binding
+to “last workspace” must survive a hidden main window without inferring
+from UI-local recents alone. Keeping registration in the host matches
+dictation/mic patterns and avoids a JS-side shortcut API on platforms
+we do not ship.
+
+**Alternative rejected:** Linux/Windows parity (backlog: out unless
+cheap). Also rejected: opening the full main window (not a small
+composer). Also rejected: inferring last workspace only from
+`session_list` in the overlay (race with a napping main webview).
+
+---
+
+## 2026-08-27 — TD-4703: tray and multi-window (Class B)
+
+**Decision:** Ship a system tray with Show, Quit TST Desk (same
+`request_quit` path as the menu), and a running-session count derived
+from the same session-state map as the coworker badge. Secondary
+windows open with `?bind_session=<id>`; `chooseBoundSession` and
+`session_state` adoption honour that bind and never auto-switch to the
+newest live session. Session window labels are `session-{id}`; close
+destroys the viewer, not the daemon. Rail row action **Open in new
+window** is the entry point.
+
+**Rationale:** One daemon is a prime directive; viewers must not fight
+over auto-bind. Tray Quit must match menu Quit so close-hide-coworker
+semantics stay coherent. Explicit URL bind is simpler than cross-window
+RPC and survives webview restarts.
+
+**Alternative rejected:** One window only with in-app tabs (not the
+story). Also rejected: a second daemon or WS connection per window.
+
+---
+
+## 2026-08-27 — TD-4705: vision attachments (Class B)
+
+**Decision:** Image attach is gated by `vision: true` on the active tier
+in config — never inferred from a model slug in code. The daemon detects
+PNG/JPEG/GIF/WebP by magic bytes, applies the same attachment caps, and
+refuses with `attachment_no_vision` when off. Accepted images are sent
+as OpenAI-compatible multimodal user content (`image_url` data URLs) with
+no resize. `tier_state.vision` mirrors the active tier so the composer
+courtesy gate matches the daemon. The event log and UI keep a plain-text
+display body; the provider queue carries the multimodal payload.
+
+**Rationale:** Slug-based capability guessing violates prime directive §7
+and breaks when discovery remaps endpoints. Config is the user's explicit
+choice. No downscale avoids hiding secrets in pixels and keeps bytes
+honest for cost/audit. Split display vs provider payloads keeps replay
+and compaction text-only without losing vision on the wire.
+
+**Alternative rejected:** Inferring vision from slug prefixes or provider
+metadata in Python. Also rejected: storing images only in the workspace
+tree (attachments are turn-scoped on the wire). Also rejected: silent
+downscale to fit caps.
+
+---
+
+## 2026-08-27 — TD-4905: personal-global steering imports (Class B)
+
+**Decision:** `@` imports where both the importer and the target live under
+`~/.tstdesk/` bypass the TD-505 external-import gate. Workspace-local
+imports into `~/.tstdesk/` and imports from global steering to paths
+outside `.tstdesk/` still prompt. The stack-panel warning badge parses
+the line count from the daemon's warning text instead of hardcoding 200.
+
+**Rationale:** Splitting personal steering across files under
+`~/.tstdesk/` is a normal authoring pattern, not an untrusted read from
+a project tree. The gate remains for every workspace-scoped escape.
+Parsing the warning keeps UI copy aligned when `LINE_LIMIT` moves.
+
+**Alternative rejected:** Document-only friction (left the prompt on every
+workspace open). Also rejected: auto-approving all `~`-imports regardless
+of source (would weaken TD-505 for workspace files).
+
+---
+
+## 2026-08-27 — TD-4904: Actions blocked account (Class B)
+
+**Decision:** Record the org-level Actions failure in
+`docs/ci-actions-blocked.md` rather than adding in-repo workarounds.
+Filter `package.yml` `push` to packaging paths (`shell/`, `ui/`, `core/`,
+workflow file) so doc-only merges do not enqueue another full matrix
+while the queue is stuck.
+
+**Rationale:** CI jobs fail with empty step lists in ~4s — not a test or
+workflow syntax defect. Fixing billing/policy is an org-admin task.
+Path filtering reduces queue pressure once Actions works again without
+changing release (`workflow_call`) or manual (`workflow_dispatch`) bundles.
+
+**Alternative rejected:** Removing `main` push triggers entirely (would
+stale artifacts). Also rejected: binding a remote builder or self-hosted
+runner without an explicit later story.
+
+---
+
+## 2026-08-27 — TD-4902: Linux aarch64 CI leg (Class B)
+
+**Decision:** Add a fifth `package.yml` matrix leg on `ubuntu-24.04-arm`
+(`linux-aarch64`). Reuse the existing Linux smoke block — Docker pulls
+matching-arch images on the ARM runner. No cross-compile from amd64 dev
+hosts.
+
+**Rationale:** Sidecar and Tauri already build for the host triple via
+PyInstaller/rustc. A dedicated runner is simpler than a cross toolchain.
+Local amd64 smoke stays on x86_64 bundles; aarch64 evidence is CI (once
+Actions works) or a real ARM machine running `smoke_linux_bundle.sh`.
+
+**Alternative rejected:** Shipping only `.deb` without AppImage on ARM
+(Tauri `targets: all` already emits both). Also rejected: qemu user-static
+cross-smoke on amd64 CI (slow, flaky).
+
+---
+
+## 2026-08-27 — TD-4903: v0.1 unsigned on all platforms (Class B)
+
+**Decision:** v0.1 ships without macOS notarization, Windows Authenticode,
+or Linux codesigning. Record costs, secret homes, and future CI env wiring
+in `docs/signing.md`. Runtime API keys stay in the OS keychain only; release
+certificates would live in GitHub encrypted secrets when we opt in. TD-4704
+(auto-updater) stays off until signed releases exist.
+
+**Rationale:** Named early users can follow README Gatekeeper/SmartScreen copy.
+Buying certs and wiring notary/signtool before green CI artifacts (TD-1302)
+would spend money on a pipeline that does not yet publish. Explicit refusal
+satisfies TD-4903 without fake signing steps that no secret backs.
+
+**Alternative rejected:** Self-signed macOS cert shipped to users (same
+friction as unsigned for Gatekeeper). Also rejected: storing signing material
+in repo-adjacent config (violates prime directive §2).
+
+---
+
+## 2026-08-27 — TD-4906: one stdlib smoke client, platform shell wrappers (Class B)
+
+**Decision:** Keep a single stdlib-only Python client (`smoke_linux_e2e.py`) for
+`--serve`, `--client`, and `--probe-keychain`. macOS and Windows ship thin
+wrappers (`smoke_macos_bundle.sh`, `smoke_windows_bundle.ps1`) that start the
+bundled sidecar, loopback mock, and invoke the same client. The keychain probe
+switches to `tst-default`, asserts `has_api_key=false`, and requires
+`validate_api_key` → `ok=false` with actionable detail within 15s.
+
+**Rationale:** Duplicating the protocol loop per OS would drift. Linux Docker
+smoke already proved the pattern; extending one client keeps TD-1302 Linux
+evidence and TD-4906 Darwin/Windows evidence aligned. Full `.app`/`.msi` runs
+stay maintainer-local until Actions publishes artifacts (TD-4904).
+
+**Alternative rejected:** Separate macOS/Windows Python smoke scripts (copy/paste
+drift). Also rejected: counting these scripts toward TD-1302's four-artifact
+CI gate (they are guest smoke, not release publishing).
+
+---
+
+## 2026-08-27 — TD-4704: opt-in release check, no in-app install in v0.1 (Class B)
+
+**Decision:** Settings → About exposes a user-initiated **Check for updates**
+command (`shell/src/updater.rs`) that fetches GitHub releases and compares only
+`tstdesk-v*` tags to the bundled app version. No background timer or startup
+check. `IN_APP_INSTALL_ENABLED` stays `false` until TD-4903 signing ships;
+when an update exists the UI opens the releases page via `tauri-plugin-opener`,
+not `tauri-plugin-updater`.
+
+**Rationale:** Meets TD-4704 opt-in and no-telemetry AC without buying certs
+first. Ignoring bare `v*` tags avoids the tst-cu-mcp `v0.2.0` false positive
+(TD-4812). Full Tauri updater + `latest.json` lands when signed artifacts exist.
+
+**Alternative rejected:** Background daily check (violates “opt-in only” spirit
+for v0.1). Also rejected: treating any GitHub release as a TST Desk update.
+
+---
+
+## 2026-08-27 — TD-4901: Wayland CU split a/b/c (Class B)
+
+**Decision:** File the size-13 epic as three sub-stories: **4901a** capture
+(ScreenCast + PipeWire), **4901b** input (RemoteDesktop + libei), **4901c**
+foreground_window policy. Assessment lives in `docs/wayland-computer-use.md`.
+`expect_window` refuses on Wayland until portal-picked scope can be matched;
+AT-SPI is Design-mode hinting only. X11 EWMH path unchanged.
+
+**Rationale:** wlroots often ships ScreenCast without RemoteDesktop; capture and
+input diverge in practice. Starting from XWayland would lie about native app
+support (TD-2002).
+
+**Alternative rejected:** Single monolithic TD-4901 PR (unreviewable). Also
+rejected: flipping `health` to supported on XWayland `DISPLAY` alone.
+
+---
+
+## 2026-08-28 — TD-1302: Actions runners are the macOS/Windows guest (Class B)
+
+**Decision:** The macOS and Windows clean-guest evidence for TD-1301 /
+TD-1302 is the hosted Package job: install the produced bundle layout,
+PATH-scrub the sidecar (empty `PATH` on Darwin, `System32` only on
+Windows), require `port.json`, and upload `.dmg` / `.msi`. Linux stays
+Docker (`ubuntu:22.04` / `24.04`) as decided 2026-08-27.
+
+**Rationale:** This box is the Linux Docker host, not a Mac or Windows
+VM. The runner *is* a machine with no TST Desk install and, after
+PATH-scrub, no reachable Python. That matches the Python-bundling claim.
+The GUI host is Rust/Tauri; the no-Python AC is the sidecar.
+
+**Alternative rejected:** Leaving TD-1302 open until a maintainer
+hand-installs `.dmg` / `.msi` on spare hardware (would re-block M3 on
+machine access). Also rejected: ticking from Linux Docker alone.
+
+---
+
+## 2026-08-28 — TD-1302: macos-15-intel replaces macos-13 (Class B)
+
+**Decision:** Intel macOS Package runs on `macos-15-intel`. GitHub
+retired `macos-13` hosted images in December 2025; jobs assigned that
+label sat at `runner_id: 0` forever.
+
+**Rationale:** Same x86_64-apple-darwin triple. `macos-latest` is
+arm64. Unsigned `signingIdentity: "-"` is unchanged.
+
+**Alternative rejected:** Dropping the Intel `.dmg` (the TD-1302 AC
+names both architectures). Also rejected: `macos-14` Intel (15 is
+what GitHub currently labels).
+
+---
+
+## 2026-08-28 — TD-1406: taskkill the tree before killing the leader (Class B)
+
+**Decision:** On Windows the shell tool runs ``taskkill /T /F /PID``
+first, then ``TerminateProcess`` on the asyncio child. The old order
+orphaned ``Start-Process`` grandchildren.
+
+**Rationale:** ``taskkill /T`` walks the live parent tree. A dead
+leader is "not found" (exit 128) and the walk never happens. POSIX
+``killpg`` does not have this failure mode because the pgid outlives
+the leader. Hosted ``windows-latest`` (run ``33146979852``) is the
+verification the backlog required.
+
+**Alternative rejected:** Win32 Job Objects at spawn (better isolation,
+new surface). Also rejected: leaving the live tests skipped after the
+Windows Package sidecar already used ``taskkill``.
+
+---
+
+## 2026-08-28 — TD-1303: first release from last Package, not the tag rebuild (Class B)
+
+**Decision:** Tag `tstdesk-v0.1.0` at `451ac6f`. Publish installers from
+Package run `33147408105` (`4330c37`) via `gh release create`, because
+the tag's Release workflow could not start runners (spending limit).
+Record the SHA gap in the release notes. GitHub Releases rewrites spaces
+in asset names to dots; `SHA256SUMS.txt` uses those download names.
+`release.yml` flattens nested artifact dirs, applies the same rename
+before checksums, and clobbers an existing release so a later budget
+raise can rebuild the tag.
+
+**Rationale:** An empty release page after the maintainer said publish
+is worse than a documented two-commit sidecar gap (events.jsonl seq
+order). Rebuilding five platforms locally is not available on this host.
+Moving the tag back to `4330c37` would match binaries but hide the jsonl
+fix that is already on `main`.
+
+**Alternative rejected:** Waiting for billing before any GitHub Release
+(leaves strangers with clone-from-source only). Also rejected: attaching
+mismatched binaries with no note.
+
+---
+
+## 2026-08-28 — TD-4904: default CI is Linux; Package is on-demand (Class B)
+
+**Decision:** `ci.yml` runs python / rust / typescript on
+`ubuntu-latest` only, with a path filter so docs-only changes do not
+start runners. `package.yml` no longer triggers on push to `main`.
+Five-platform bundles (including both macOS SKUs at 10×) run on
+`workflow_dispatch` or from `release.yml` on a `tstdesk-v*` tag.
+This supersedes the 2026-08-27 decision that kept Package on filtered
+`main` pushes.
+
+**Rationale:** The org Actions budget is $20/month. One green
+nine-leg CI run is ~70–80 Linux-equivalent minutes (three macOS
+jobs at 10×). One green five-leg Package run is ~200 (two macOS
+legs). Rapid merges with `cancel-in-progress: false` queued extra
+Package matrices; the `tstdesk-v0.1.0` tag then failed immediately
+because the cap was already gone. Maintainer asked to rework the
+YAML rather than raise the cap. Ubuntu CI still gates lint, mypy,
+pytest, clippy, tsc, vitest, and the UI build. macOS/Windows
+installers stay a deliberate spend.
+
+**Alternative rejected:** Keeping a Linux-only Package job on every
+`main` push (still ~12 min per merge, and fourteen open PRs would
+have fired it fourteen times). Also rejected: a scheduled weekly
+macOS/Windows CI matrix (same 10× SKU on a budget that already
+died twice in one day). Also rejected: self-hosted runners.
+
+---
+
+## 2026-08-28 — TD-4901: split Wayland capture and input (Class B)
+
+**Decision:** Three modules: `wayland_capture` (ScreenCast),
+`wayland_input` (RemoteDesktop/libei), `WaylandBackend` composing them
+with an empty `foreground_window` (TD-4901c). `get_backend()` on a
+Wayland session returns `WaylandBackend`, never `LinuxBackend`.
+`health.supported` is true only when *both* strategies are available
+(an injected grabber *and* injector in tests). No new D-Bus or
+PipeWire dependency. Live frame grab / libei is a documented gap on
+this X11 host.
+
+**Rationale:** Capture and input already diverge on compositors (wlr
+has ScreenCast, often not RemoteDesktop). One backend that “just
+opens DISPLAY” would be XWayland. Empty foreground is the only
+compositor-neutral `expect_window` that does not degrade.
+
+**Alternative rejected:** jeepney/dbus-next for a live portal client
+on this X11 box (cannot live-verify; new dep). Also rejected:
+capture-only `supported: true`. Also rejected: AT-SPI as
+`foreground_window` (hint, not compositor focus).
+
+---
+
+## 2026-08-28 — TD-2001: Wayland refuses before any Xlib call (Class B)
+
+**Decision:** `LinuxBackend` methods other than `check_permissions` raise
+`WaylandUnsupportedError` when `linux_session_usable()` is false, even if
+`DISPLAY` is set (XWayland). `get_backend("linux")` still returns
+`LinuxBackend` so `health` and `check_permissions` can name
+`session_type`. The product surfaces the refuse as `DesktopError` code
+`wayland`. `expect_window` does not read EWMH through XWayland.
+
+**Rationale:** TD-2002 and `docs/linux.md` already promised a clean
+refusal. `health.supported: false` was honest; actuation was not.
+Driving XWayland clients while native Wayland apps stay unguarded is
+the lie TD-4901 forbids as a starting point.
+
+**Alternative rejected:** Raising `UnsupportedPlatformError` from
+`get_backend()` on Wayland (collapses `session_type` into "no backend").
+Also rejected: capture-only Wayland via XWayland while refusing input.
+
+---
+
+## 2026-08-28 — TD-4823: overlay ctypes follow the windows.py override (Class B)
+
+**Decision:** `overlay.win32` shares the `attr-defined` override with
+`backends.windows`. `overlay.linux` does not: XColor /
+XSetWindowAttributes hang off a SimpleNamespace instead of a CDLL.
+
+**Rationale:** Same ctypes platform split TD-4823 already recorded.
+Linux structs are ours; they do not need a Windows-host override.
+
+**Alternative rejected:** A blanket overlay.* attr-defined disable
+(hides real Linux mistakes).
+
+---
+
+## 2026-08-28 — TD-3804: production scheduler uses notify send modules (Class B)
+
+**Decision:** When `Daemon` is constructed without an injected
+`notify_send` (the `main()` path), `RecordingDeliver` gets
+`channel_notify`, which calls `tstd.notify.slack.send` /
+`tstd.notify.ntfy.send`. Tests may still inject a hook. Window
+delivery stays a log line / `on_window` callback.
+
+**Rationale:** Session approval/turn-complete already used
+`schedule_slack_notify`. Scheduled jobs went through a second pipe that
+was None in production, so "deliver a summary to the configured
+channel" was true only in tests.
+
+**Alternative rejected:** Passing `schedule()` into the scheduler (event
+shaped, not a summary string). Also rejected: constructing httpx in
+the runner.
+
+---
+
+## 2026-08-28 — TD-4301: autonomy shell execs in the container (Class B)
+
+**Decision:** Autonomous `shell` runs as `podman run … /bin/sh -c
+<command>` with only the workspace bind-mounted. Interactive `shell`
+is unchanged (host subprocess). Filesystem tools stay in the daemon
+process behind PathGuard. Git checkpoints stay host-side: they only
+touch the workspace repo, which is the mount.
+
+**Rationale:** Spec §12.5 requires the *run* in a container with no
+credentials. Wrapping the whole Python loop would fork the classifier
+chokepoint (rejected in TD-4101). Wrapping shell is the command-exec
+seam that actually inherits host env and can see `~/.ssh`. fs_write
+cannot escape the workspace wall.
+
+**Alternative rejected:** Wrapping every tool including `fs_write`
+(duplicate of PathGuard, and the daemon still has to persist events on
+the host). Also rejected: moving the SessionRunner into the container
+(new IPC, classifier would run twice).
+
+---
+
+## 2026-08-28 — TD-3803: parse_job is deterministic, not a worker call (Class B)
+
+**Decision:** `parse_job` runs `parse_job_request` in-process and
+returns `job_draft` for edit. It does not call the worker tier.
+
+**Rationale:** The parse module already *is* the schema a worker would
+fill. A model call would spend tokens to produce the same draft the
+user still has to edit. Save stays a second message.
+
+**Alternative rejected:** A worker-tier JSON completion (cost, mock
+surface, no extra accuracy on "every 2 hours in /ws").
+
+---
+
+## 2026-08-28 — TD-2103: Memory pane may replace at cap (Class B)
+
+**Decision:** Tool writes still cannot replace a file at `memory.max_lines`.
+Distill and the Memory pane may, so long as the new bytes stay under the
+cap.
+
+**Rationale:** Spec §5 is "open, correct, diff, grep, and revert." A
+200-line MEMORY.md the human cannot shorten is not correctable.
+
+**Alternative rejected:** Refusing pane save at cap (locks the user out
+until the next distill).
+
+---
+
+## 2026-08-28 — TD-4901: Wayland click names RemoteDesktop, not "no displays" (Class B)
+
+**Decision:** `input_control.assert_on_screen` raises
+`WaylandInputError` (portal RemoteDesktop copy) when the active
+backend is Wayland and `list_displays` is empty. Headless X11 still
+raises `RuntimeError("no active displays found")`.
+
+**Rationale:** After TD-4901, `get_backend()` on Wayland is
+`WaylandBackend`. Capture without a grabber returns no displays, so
+the policy layer never reached `backend.click` and a Wayland session
+looked like a headless X box. The refuse must still happen before
+any Xlib call.
+
+**Alternative rejected:** Returning a dummy display so click can
+fail later (would lie about geometry). Also rejected: empty-list
+as success for `get_screen_info` on Wayland (that path stays empty).
 
 ---
 

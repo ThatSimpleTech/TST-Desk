@@ -25,7 +25,7 @@ from .config import ConfigError, ModelConfig, default_config_yaml
 from .cost import compute_call_cost
 from .e2e_checks import HarnessResult, _check
 from .e2e_live import LiveProvider, off_box_refusal
-from .provider import ChatCompletionRequest, ChatMessage, ProviderError, Usage
+from .provider import ChatCompletionRequest, ChatMessage, ProviderError, Usage, content_as_text
 
 _PRESET = "vllm"
 _PROBE_TIMEOUT = 10.0
@@ -130,7 +130,7 @@ async def _live_turn(endpoint: str, model: str, config: ModelConfig) -> tuple[bo
     if isinstance(response, ProviderError):
         return False, f"{response.code}: {response.message}"
 
-    text = (response.message.content or "").strip()
+    text = content_as_text(response.message.content).strip()
     usage = response.usage if response.usage is not None else Usage()
     tokens = usage.total_tokens or (usage.prompt_tokens + usage.completion_tokens)
     cost = compute_call_cost(usage, config.tier("brain"))

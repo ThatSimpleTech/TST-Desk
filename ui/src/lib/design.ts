@@ -57,7 +57,7 @@ export function scriptedHitNode(x: number, y: number): HitNode {
 	};
 }
 
-/** Geometric pick when there is no DOM / AX hit-test (desktop v1). */
+/** Optimistic first paint before ``design_hit`` fills role / attributes. */
 export function geometricHitNode(box: CssBox): HitNode {
 	const x = Math.round(box.x);
 	const y = Math.round(box.y);

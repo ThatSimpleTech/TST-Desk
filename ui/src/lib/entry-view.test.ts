@@ -28,7 +28,8 @@ describe("KIND_LABELS", () => {
       "tier_switch",
       "compaction",
       "steering_reload",
-      "error"
+      "error",
+      "verify"
     ];
     for (const k of kinds) expect(KIND_LABELS[k]).toBeTruthy();
   });
@@ -55,6 +56,9 @@ describe("entryTone", () => {
 
   it("marks compaction as warning and decisions/tier/steering as info", () => {
     expect(entryTone(entry("compaction"))).toBe("warning");
+    expect(entryTone(entry("verify", { verdict: "pass" }))).toBe("success");
+    expect(entryTone(entry("verify", { verdict: "fail" }))).toBe("danger");
+    expect(entryTone(entry("verify", { pending: true }))).toBe("warning");
     expect(entryTone(entry("decision"))).toBe("info");
     expect(entryTone(entry("tier_switch"))).toBe("info");
     expect(entryTone(entry("steering_reload"))).toBe("info");

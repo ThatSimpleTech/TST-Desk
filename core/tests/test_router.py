@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from tstd.router import TIER_NAMES, TierRouter
+from tstd.router import TIER_NAMES, PlanModeError, TierRouter
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -264,6 +264,7 @@ class TestSummary:
         assert "lead_turns" in s
         assert "failure_threshold" in s
         assert "override" in s
+        assert "plan_mode" in s
 
     def test_summary_after_turns(self, router: TierRouter) -> None:
         router.record_turn_start()
@@ -274,3 +275,69 @@ class TestSummary:
         # After 2 turns, active_tier is worker (lead_turns=2, 2 < 2 is False)
         assert s["active_tier"] == "worker"
         assert s["consecutive_failures"] == 1
+        assert s["plan_mode"] is False
+
+
+# ── Plan mode (TD-4603) ────────────────────────────────────────────────
+
+
+class TestPlanMode:
+    """Brain lock: plan wins over lead-turns, override, and clear."""
+
+    @pytest.mark.parametrize("turn", [1, 2, 3, 4])
+    def test_plan_forces_brain_past_lead_turns(self, turn: int) -> None:
+        """Plan on → every record_turn_start / active_tier is brain."""
+        router = TierRouter(lead_turns=2)
+        router.set_plan(True)
+        seen: list[str] = []
+        for _ in range(turn):
+            seen.append(router.record_turn_start())
+        assert seen == ["brain"] * turn
+        assert router.active_tier == "brain"
+        assert router.plan_mode is True
+
+    @pytest.mark.parametrize("tier", ["worker", "validator"])
+    def test_set_tier_refused_while_plan_on(self, tier: str) -> None:
+        router = TierRouter()
+        router.set_plan(True)
+        with pytest.raises(PlanModeError, match="Plan mode is on"):
+            router.set_tier(tier)  # type: ignore[arg-type]
+        assert router.has_override is False
+        assert router.active_tier == "brain"
+        assert router.override is None
+
+    def test_set_tier_brain_accepted_as_noop(self) -> None:
+        """Autonomy revert calls set_tier('brain'); that stays legal."""
+        router = TierRouter()
+        router.set_plan(True)
+        router.set_tier("brain")
+        assert router.active_tier == "brain"
+        assert router.override == "brain"
+
+    def test_clear_override_stays_on_brain(self) -> None:
+        router = TierRouter(lead_turns=1)
+        router.set_plan(True)
+        router.set_tier("brain")
+        router.record_turn_start()
+        router.record_turn_start()
+        router.clear_override()
+        assert router.active_tier == "brain"
+        assert router.record_turn_start() == "brain"
+
+    def test_plan_off_restores_routing_and_set_tier(self) -> None:
+        router = TierRouter(lead_turns=1)
+        router.set_plan(True)
+        assert router.record_turn_start() == "brain"
+        router.set_plan(False)
+        assert router.record_turn_start() == "worker"
+        router.set_tier("validator")
+        assert router.active_tier == "validator"
+
+    def test_reset_clears_plan(self) -> None:
+        router = TierRouter(lead_turns=1)
+        router.set_plan(True)
+        router.record_turn_start()
+        router.reset()
+        assert router.plan_mode is False
+        assert router.record_turn_start() == "brain"
+        assert router.record_turn_start() == "worker"

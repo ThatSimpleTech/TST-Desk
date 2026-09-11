@@ -178,3 +178,79 @@ class TestTrailingCharAliases:
         assert decision.decision_class is DecisionClass.C
         assert decision.rule is not None
         assert decision.rule.id == "boundary-unsafe-path"
+
+
+class TestCommandFileGuard:
+    """Slash-command trees are Class C writes (TD-4501)."""
+
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            Path(".tst") / "commands" / "review.md",
+            Path(".claude") / "commands" / "review.md",
+            Path(".tst") / "COMMANDS" / "review.md",
+        ],
+    )
+    def test_command_paths_are_steering(self, tmp_path: Path, relative: Path) -> None:
+        b = _boundary(tmp_path)
+        target = tmp_path / relative
+        assert is_steering_write(b, target)
+
+    def test_classifier_refuses_command_write(self, tmp_path: Path) -> None:
+        decision = DecisionClassifier(_boundary(tmp_path)).classify(
+            DecisionRequest(
+                tool_name="fs_write",
+                writes=(tmp_path / ".tst" / "commands" / "evil.md",),
+                is_mutation=True,
+            )
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert decision.rule is not None
+        assert decision.rule.id == "steering-file-write"
+
+    def test_guard_refuses_command_write(self, tmp_path: Path) -> None:
+        g = PathGuard(_boundary(tmp_path))
+        with pytest.raises(RefusalError) as ei:
+            g.check_write(tmp_path / ".tst" / "commands" / "evil.md")
+        assert ei.value.code == "steering_file"
+
+    def test_fs_edit_target_is_also_refused(self, tmp_path: Path) -> None:
+        g = PathGuard(_boundary(tmp_path))
+        with pytest.raises(RefusalError) as ei:
+            g.check_write(tmp_path / ".claude" / "commands" / "review.md")
+        assert ei.value.code == "steering_file"
+
+
+class TestSkillFileGuard:
+    """Any SKILL.md basename is a Class C write (TD-4502)."""
+
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            Path(".tst") / "skills" / "foo" / "SKILL.md",
+            Path("src") / "SKILL.md",
+            Path("docs") / "skill.md",
+        ],
+    )
+    def test_skill_md_paths_are_steering(self, tmp_path: Path, relative: Path) -> None:
+        b = _boundary(tmp_path)
+        target = tmp_path / relative
+        assert is_steering_write(b, target)
+
+    def test_classifier_refuses_skill_write(self, tmp_path: Path) -> None:
+        decision = DecisionClassifier(_boundary(tmp_path)).classify(
+            DecisionRequest(
+                tool_name="fs_write",
+                writes=(tmp_path / "src" / "SKILL.md",),
+                is_mutation=True,
+            )
+        )
+        assert decision.decision_class is DecisionClass.C
+        assert decision.rule is not None
+        assert decision.rule.id == "steering-file-write"
+
+    def test_guard_refuses_nested_skill_md(self, tmp_path: Path) -> None:
+        g = PathGuard(_boundary(tmp_path))
+        with pytest.raises(RefusalError) as ei:
+            g.check_write(tmp_path / ".tst" / "skills" / "foo" / "SKILL.md")
+        assert ei.value.code == "steering_file"

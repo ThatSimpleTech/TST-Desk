@@ -18,6 +18,7 @@
 // (AGENTS §6: the UI never derives truth it wasn't given).
 
 import { sendToDaemon } from "./connection-status.svelte.js";
+import { openSessionWindow } from "./open-session-window";
 import { closeRowMenus, sessions } from "./sessions.svelte.js";
 import { workspaces } from "./workspaces.svelte.js";
 
@@ -130,4 +131,10 @@ export function moveRow(sessionId: string, workspacePath: string): boolean {
 	});
 	if (sent) sessions.moveFor = null;
 	return sent;
+}
+
+/** Open this session in a dedicated viewer window (TD-4703). */
+export function openSessionInNewWindow(sessionId: string): void {
+	closeRowMenus();
+	void openSessionWindow(sessionId);
 }

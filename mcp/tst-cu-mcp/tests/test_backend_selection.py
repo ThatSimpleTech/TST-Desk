@@ -104,6 +104,7 @@ class TestProtocolConformance:
             "cursor_position",
             "foreground_window",
             "check_permissions",
+            "hit_test",
         ):
             assert callable(getattr(backend, method)), method
 

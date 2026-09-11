@@ -10,8 +10,8 @@ the two disagree, the spec wins and this file is the bug.
 Every table and every code block below is checked against the code by
 `core/tests/test_docs_architecture_guide.py`. The protocol tables are compared against the
 discriminated unions in `core/tstd/protocol.py`, so adding a message without documenting it
-fails the suite. The "how to add a tool" walkthrough is registered and dispatched by that test,
-so a walkthrough that stopped working fails too.
+fails the suite. The "how to add a tool" walkthrough (and the plugin `register()` walkthrough)
+are registered and dispatched by that test, so a walkthrough that stopped working fails too.
 
 ---
 
@@ -62,7 +62,9 @@ Secrets live in `core/tstd/keychain.py`, which shells out to `security` on macOS
 on Linux, and the Windows credential store, all under the service name
 `com.thatsimpletech.tstdesk`. Native folder picking is likewise driven from the UI through the
 Tauri dialog plugin rather than from Rust. The host's native surface is narrow by design: window
-state, dialog, and opener. The opener's `opener:allow-open-path` grant is intentionally left
+state, dialog, opener, and tray (TD-4703). On macOS, a global shortcut (⌘⇧.) toggles
+the quick-entry overlay (TD-4702); registration failure surfaces
+Accessibility copy in the main window. The opener's `opener:allow-open-path` grant is intentionally left
 without a path scope (`shell/capabilities/default.json`): the paths the UI opens are
 daemon-assembled — stack files, diff headers, usage exports — and land under whichever workspace
 the user picked this session or in the app data dir, while Tauri opener scopes are static
@@ -75,7 +77,9 @@ paths, never free text) rather than by a glob.
 
 **The window (`ui/`)** is a renderer. AGENTS.md §6 again: *"The UI never derives truth it wasn't
 given — if the daemon didn't send it, don't infer it."* Every number in the title bar, every
-approval card, every timeline entry is a daemon event the UI was handed.
+approval card, every timeline entry is a daemon event the UI was handed. The live-model
+pill is `{slug} · {host}` from `tier_state` (TD-1720); the UI does not guess a host
+from the slug.
 
 ### Why a separate process at all
 
@@ -304,16 +308,21 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_load_global_memory` | — | Turn global memory on or off. Machine-wide; off never reads `~/.tstdesk/memory/`. Acked with `setup_state` (TD-2603). |
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
 | `set_voice` | — | Turn hold-to-talk dictation on or off. Machine-wide; persists `{user_data_dir}/voice.yaml`. Default off. Acked with `setup_state` (TD-4701). |
-| `transcribe` | — | POST a hold-to-talk clip to `voice.base_url`. Refused when dictation is off or no endpoint is configured. Acked with `transcript`. |
+| `transcribe` | — | Hold-to-talk audio. POSTs a clip to `voice.base_url` or `speech.base_url`. Refused when dictation is off or no endpoint is configured. Acked with `transcript`. Not a tool (TD-4701). |
 | `set_cu_indicators` | — | Computer-use glow, agent cursor, and real-display overlay. Machine-wide; persists `{user_data_dir}/cu-indicators.yaml`. Acked with `setup_state` (TD-3402). |
 | `set_workspace_pin` | — | Pin or unpin a workspace on the Projects list. Machine-wide. Acked with `setup_state` (TD-2806). |
 | `resume` | yes | Resume a session paused at a declared cap, after the cap was raised. |
 | `cancel` | yes | Cancel a running session. |
+| `run_verify` | yes | Confirm a pending interactive verify after a write (TD-4204 ask mode). |
+| `deny_verify` | yes | Skip a pending interactive verify (TD-4204 ask mode). |
 | `attach` | yes | Subscribe to a session, replaying from `from_seq`. |
 | `detach` | yes | Unsubscribe from a session; the session is unaffected. |
 | `set_tier` | yes | Pin the active model tier for the session. |
-| `get_instruction_stack` | yes | Ask for the resolved steering stack and its token counts. |
+| `set_plan` | yes | Turn plan mode (brain lock) on or off. Refused `set_tier` to worker/validator while on (TD-4603). |
+| `set_session_preset` | yes | Retarget this session at a catalog preset. Refused mid-turn. Does not write Settings. Acked with `session_list` (TD-1721). |
+| `get_instruction_stack` | yes | Ask for the resolved steering stack, token counts, and skills (TD-4502). |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |
+| `list_commands` | — | List a workspace's slash commands (`.tst/commands/*` and `~/.tstdesk/commands/*`, with `.claude/commands/` fallback). Human path (TD-4501). |
 | `list_memory` | — | List a workspace's Memory files (`.tst/memory/*.md`). Human path (TD-2601). |
 | `save_memory` | — | Save an edit from the Memory pane through the memory commit path. Never a tool (TD-2602). |
 | `create_rule` | — | Create a `.tst/rules/` file on the human path. Never a tool call (TD-2802). |
@@ -351,12 +360,14 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). |
 | `delete_credential` | — | Remove a named key, its secret, and tier bindings (TD-1717). |
 | `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). That key's `base_url` is the host the tier calls when set (TD-1718). |
+| `set_mcp_server` | — | Create or replace one listed MCP server (id, transport, command argv and/or url, enabled). No `env` field. Acked with `setup_state` (TD-4403). |
+| `delete_mcp_server` | — | Remove one listed MCP server by id. Unknown id is a typed error. Acked with `setup_state` (TD-4403). |
 | `run_diagnostics` | — | Run the doctor checks. |
 | `get_usage` | — | Ask for token and cost rollups by session, day and week (TD-1706). |
 | `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
 | `list_artifacts` | yes | List artifacts persisted with the session (TD-3201). Acked with `artifact_list`. |
 | `open_artifact` | yes | Open one artifact by id. Acked with `artifact` (metadata and path, not bytes). Unknown id is a typed error. |
-| `design_hit_test` | yes | Ask the session browser what is at a CSS-pixel point (TD-3403). Observe only. Acked with `design_hit`. |
+| `design_hit_test` | yes | Ask the last computer-use surface (browser DOM or desktop AX) what is at a CSS-pixel point (TD-3403 / TD-3406). Observe only. Acked with `design_hit`. |
 | `check_cu_permissions` | — | Re-probe computer-use OS permissions / integrity without raising a TCC prompt (TD-3302, TD-3303, TD-2001). Acked with `cu_permissions`. |
 | `reset_cu_permissions` | — | Reset this app's macOS TCC grants (Screen Recording, Accessibility) with `tccutil reset`, forget the prompt stamps, and raise both prompts again (TD-4823). A window action only, never a tool; off macOS it is just a re-probe. Acked with `cu_permissions`. |
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
@@ -364,6 +375,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
 | `save_job` | — | Create or replace a scheduled job from draft fields. Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
 | `delete_job` | — | Remove a scheduled job by id. Acked with `job_list`. Unknown id is a typed error (TD-3805). |
+| `parse_job` | — | Turn natural language into a job draft. Does not persist. Acked with `job_draft`. Save is a second call (TD-3803). |
 
 ### Daemon → client
 
@@ -386,24 +398,27 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write. |
 | `decision_logged` | session | A decision appended to the autonomy ledger. |
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
+| `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. |
-| `tier_state` | session | The active tier, any pinned override, and the configured slugs. Native-engine sessions only. |
+| `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |
-| `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state. |
+| `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state, and skills (TD-4502). |
 | `instruction_files` | connection | The workspace's Instructions column: root steering plus `.tst/rules/*` (TD-2802). |
+| `command_list` | connection | The workspace's slash commands: name, description, source, body (TD-4501). |
 | `context_pins` | connection | The workspace's Context column: pinned files and folders (TD-2804). |
 | `memory_files` | connection | The workspace's Memory column: `.tst/memory/*.md` with contents (TD-2601). |
 | `charter` | connection | The workspace's Charter column: parsed §12.4 fields, or absent (TD-4002). |
 | `autonomy_start` | connection | Reply to `start_autonomy`: signed, ready, optional `session_id` of the daemon-owned run, or the refusal (TD-4003, TD-4101). |
+| `autonomy_summary` | session | Unattended-run wrap-up: stop reason, turns, spend, refusals (TD-4303). |
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
-| `session_list` | connection | The current session list. |
+| `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach`. `remote_bind` is the bound Tailscale address, never a token. Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server`. `remote_bind` is the bound Tailscale address, never a token. Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
@@ -417,16 +432,17 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `screen_frame` | session | A computer-use screenshot (browser or desktop) was written to the session dir (TD-1710, TD-3401). Path, not bytes. |
 | `cu_kill_state` | connection | Process-wide computer-use kill-switch. Seq is fixed at 1 and it is not written to a session log (TD-3404). `killed=true` clears Screen-pane glow and cursor (TD-3402). |
 | `cu_session` | session | Computer-use episode open/close (TD-3407). `active=true` on the first `desktop_*` / `browser_*` tool of a turn; `false` on turn end, cancel, or kill-switch. The real-display ring and Screen-pane glow follow this tag. |
-| `design_hit` | connection | Reply to `design_hit_test`: xpath, role, attributes, box, styles (TD-3403). Not in the session log. |
+| `design_hit` | connection | Reply to `design_hit_test`: xpath, role, attributes, box, styles (TD-3403 / TD-3406). Not in the session log. |
 | `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), Windows UIPI / secure-desktop integrity (TD-3303), or Linux X11 no-gate / Wayland session limits (TD-2001). |
 | `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` asked for (TD-3805). |
+| `job_draft` | connection | Reply to `parse_job`: draft fields or a typed refusal. Not saved (TD-3803). |
 | `grok_commands` | session | Slash commands the Grok ACP agent advertised. |
 | `grok_plan` | session | Plan-mode markdown and entries from ACP `plan` updates. |
 | `grok_mode` | session | Current Grok ACP mode, the advertised set, and optional `model` the CLI is using. |
 | `grok_preview` | session | A workspace media file or loopback URL to show in Preview. |
 | `grok_session_list` | connection | TUI sessions under `~/.grok/sessions`. |
 | `grok_extensions` | connection | Read-only MCP / skills / plugins from `~/.grok`. Never secrets. |
-| `transcript` | connection | Result of `transcribe`. `text` on success, `error` copy on failure. |
+| `transcript` | connection | Reply to `transcribe`: `ok`, `text` on success, `error` copy or a short `detail` code on failure. Never a URL (TD-4701). |
 
 ### Adding a message
 
@@ -461,7 +477,8 @@ change; changing the same behaviour anywhere else usually is not.
 
 | Seam | Where | What it is for |
 |---|---|---|
-| `create_registry` | `core/tstd/tools/registry.py` | Declares which tools exist and their schemas, approval class, parallel safety, and classifier metadata. Registration is explicit — there is no dynamic discovery in v0.1. |
+| `create_registry` | `core/tstd/tools/registry.py` | Declares which tools exist and their schemas, approval class, parallel safety, and classifier metadata. Builtins are registered explicitly; `load_plugins` then loads the `tstd.tools` entry-point group (TD-4601). |
+| `load_plugins` | `core/tstd/tools/plugins.py` | Discovers in-process plugin packages, refuses non-permissive licenses, and calls each `register(registry, dispatcher)`. A broken plugin is logged and skipped. Name collisions with builtins are skipped, not replaced. |
 | `register_builtin_handlers` | `core/tstd/tools/handlers.py` | Binds each registered tool name to the async callable that executes it. Registry and handler are separate on purpose: a tool with no handler is a configuration error the model is told about, not a crash. |
 | `RULE_TABLE` | `core/tstd/autonomy/classifier.py` | The static decision rules, in priority order, first match wins. Anything the table cannot decide falls to the worker-tier classifier and defaults to class B — fail toward asking, never toward acting. |
 | `sandbox_start_error` | `core/tstd/autonomy/sandbox.py` | Why an autonomous run may not start: missing / down / rootful runtime. Interactive sessions do not import this module (TD-4301). |
@@ -606,6 +623,88 @@ Worth reading once, because it is the same path for every tool:
 
 Steps 3 through 5 are why a new tool inherits the entire trust surface for free, and why
 bypassing the dispatcher is never the right shortcut.
+
+### How to add a plugin
+
+A third-party package can register tools the same way builtins do, without editing
+`registry.py`. It exposes a `register(registry, dispatcher)` callable on the `tstd.tools`
+entry-point group. TST Desk loads those entry points from `create_registry`, checks the
+distribution's license, and skips the whole plugin if the license is not permissive. That skip
+is a Class C product decision (logged, not silent) — not a tool-call classification, and not
+an absent plugin with no log line.
+
+Plugins do not skip the classifier, PathGuard, or the policy gate. Every call still goes
+through `ToolDispatcher.dispatch`. Declare `path_fields` (and `host_fields`) for every
+argument that is a path or a host — omitting them does not make the tool unguarded; it makes
+those arguments invisible to the guard, which is worse. Missing path/host metadata on a
+non-MCP plugin is existing classifier behavior: `side_effect_class` is the floor (`ask` stays
+at least B).
+
+The license allowlist is MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unlicense, 0BSD,
+and CC0-1.0. SPDX expressions that are only those identifiers, combined with AND or OR, pass.
+`GPL`, `AGPL`, `LGPL`, `Proprietary`, empty, and unknown do not load. Provenance is
+`plugin:<distribution>`. A plugin that reuses a builtin name such as `fs_read` is skipped, not
+renamed — same spirit as MCP `{id}__{name}`.
+
+#### Step 1 — write `register()`
+
+<!-- verify: plugin-register -->
+```python
+def register(registry: ToolRegistry, dispatcher: ToolDispatcher) -> None:
+    async def shout(session: object, text: str, tool_call_id: str = "") -> str:
+        del session, tool_call_id
+        return text.upper()
+
+    registry.register(
+        Tool(
+            name="shout",
+            description="Uppercase a short string.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to shout",
+                    },
+                },
+                "required": ["text"],
+            },
+            side_effect_class="auto",
+            parallel_safe=True,
+            provenance="plugin:example",
+        )
+    )
+    dispatcher.register_handler("shout", shout)
+```
+
+#### Step 2 — declare the entry point
+
+In the plugin package's `pyproject.toml`:
+
+<!-- verify: plugin-entry-points -->
+```toml
+[project.entry-points."tstd.tools"]
+shout = "example_plugin:register"
+```
+
+#### Step 3 — a call still hits the classifier
+
+Given this call from the model:
+
+<!-- verify: plugin-arguments -->
+```json
+{"text": "hello"}
+```
+
+the dispatcher returns:
+
+<!-- verify: plugin-result -->
+```
+HELLO
+```
+
+and `decision_class` is set. An unclassified result would mean the plugin bypassed the
+chokepoint; that is a defect, not a feature of plugins.
 
 ---
 

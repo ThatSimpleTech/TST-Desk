@@ -4,16 +4,17 @@
 // session id + workspace path, state indicator, live cost with a per-tier
 // breakdown, the current tier + slugs, and the boundary ("wall").
 //
-// v0.1 is single-workspace: the first session_state event we see adopts
-// that session, and every session-scoped event afterwards is filtered to
-// it. Multi-session routing belongs to whichever story introduces a
-// second session.
+// v0.1 is single-workspace per window: the first session_state event we see
+// adopts that session unless this webview is bound with ?bind_session= (TD-4703).
+// Multi-session routing uses window-scoped binds and the rail's open-in-window.
 //
 // Pure TypeScript — no Tauri imports — so vitest can drive the reducer.
 
 import { DEFAULT_ATTACHMENT_LIMITS } from "./attachments";
 import type { ProtocolClient } from "./client";
+import { persistLastWorkspace } from "./last-workspace";
 import type { AttachmentLimits, BoundaryUpdate, DaemonEventUnion } from "./protocol";
+import { windowBindSessionId } from "./window-bind";
 
 export type SessionIndicator =
   | "none"
@@ -54,6 +55,16 @@ export const session = $state({
   modelSlugs: {} as Record<string, string>,
   /** Loop this session started with. Null until a session_state names it. */
   engine: null as "native" | "grok" | null,
+  /** Preset this session opened with (TD-1720). Empty until tier_state. */
+  preset: "" as string,
+  /** Tier → hostname:port the daemon will call (TD-1720). */
+  hosts: {} as Record<string, string>,
+  /** Plan mode (TD-4603). False until a tier_state says otherwise. */
+  planMode: false,
+  /** Active tier accepts image attachments (TD-4705). False until tier_state. */
+  vision: false,
+  /** A turn is owed (TD-1721). The daemon refuses a preset switch then. */
+  turnActive: false,
 });
 
 let client: ProtocolClient | null = null;
@@ -78,12 +89,19 @@ export function resetSession(): void {
   session.tierOverride = null;
   session.modelSlugs = {};
   session.engine = null;
+  session.preset = "";
+  session.hosts = {};
+  session.planMode = false;
+  session.vision = false;
+  session.turnActive = false;
   pendingPath = null;
 }
 
 /** Reduce one validated daemon event into the store. */
 export function ingestEvent(event: DaemonEventUnion): void {
   if (event.type === "session_state") {
+    const bind = windowBindSessionId();
+    if (bind !== null && event.session_id !== bind) return;
     // Adopt the first session we hear of. The open_workspace reply is a
     // session_state event, so a plain open lands here.
     if (session.sessionId === null) {
@@ -127,6 +145,16 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.tier = event.tier;
       session.tierOverride = event.override ?? null;
       session.modelSlugs = event.model_slugs;
+      session.preset = event.preset ?? "";
+      session.hosts = event.hosts ?? {};
+      session.planMode = event.plan ?? false;
+      session.vision = event.vision ?? false;
+      break;
+    case "user_turn":
+      session.turnActive = true;
+      break;
+    case "turn_complete":
+      session.turnActive = false;
       break;
     case "cost_update":
       session.cost = {
@@ -144,6 +172,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
 export function openWorkspace(path: string): void {
   pendingPath = path;
   client?.openWorkspace(path);
+  void persistLastWorkspace(path);
 }
 
 /** Re-target this store at another live session (TD-1701 rail selection).
@@ -162,7 +191,10 @@ export function focusSession(
 ): void {
   if (session.sessionId === sessionId) return;
   session.sessionId = sessionId;
-  if (workspacePath !== undefined) session.workspacePath = workspacePath;
+  if (workspacePath !== undefined) {
+    session.workspacePath = workspacePath;
+    void persistLastWorkspace(workspacePath);
+  }
   session.state = state;
   session.reason = null;
   session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
@@ -172,6 +204,11 @@ export function focusSession(
   session.tierOverride = null;
   session.modelSlugs = {};
   session.engine = null;
+  session.preset = "";
+  session.hosts = {};
+  session.planMode = false;
+  session.vision = false;
+  session.turnActive = false;
   pendingPath = null;
 }
 
@@ -183,12 +220,37 @@ export function focusSession(
 export function retargetWorkspace(sessionId: string, workspacePath: string): void {
   if (session.sessionId !== sessionId) return;
   session.workspacePath = workspacePath;
+  void persistLastWorkspace(workspacePath);
 }
 
 /** Pin a tier on the active session (a chip click). */
 export function setTier(tier: "brain" | "worker" | "validator"): void {
   if (session.sessionId === null) return;
   client?.setTier(session.sessionId, tier);
+}
+
+/** Turn plan mode on or off. The title bar reflects the next tier_state. */
+export function setPlan(on: boolean): void {
+  if (session.sessionId === null) return;
+  client?.setPlan(session.sessionId, on);
+}
+
+/** Retarget this session at a catalog preset. The title bar follows tier_state. */
+export function setSessionPreset(name: string): void {
+  if (session.sessionId === null) return;
+  client?.setSessionPreset(session.sessionId, name);
+}
+
+/** Active slug and host for the title-bar pill (TD-1720). */
+export function liveModelLabel(
+  tier: string,
+  slugs: Record<string, string>,
+  hosts: Record<string, string>,
+): string {
+  const slug = slugs[tier] ?? "";
+  const host = hosts[tier] ?? "";
+  if (slug && host) return `${slug} · ${host}`;
+  return slug || host;
 }
 
 /** Display name for the workspace row: basename of the path. */

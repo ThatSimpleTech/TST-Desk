@@ -16,6 +16,7 @@ import {
 	coworkerBadge,
 	firstAwaitingSession,
 	focusApprovalCard,
+	trayRunningCount,
 	trayTooltip,
 } from "./coworker-indicator";
 import type { DaemonEventUnion } from "./protocol";
@@ -24,6 +25,7 @@ export const WINDOW_VISIBILITY_EVENT = "window-visibility";
 
 export interface CoworkerIndicatorBridge {
 	setBadge(label: string | null): Promise<void>;
+	setTrayCount(count: number): Promise<void>;
 	setTrayTooltip?(tooltip: string): Promise<void>;
 	focusCard(toolCallId: string): boolean;
 	switchSession(sessionId: string): void;
@@ -109,6 +111,7 @@ function syncBadge(): void {
 		lastBadge = next;
 		void bridge.setBadge(next);
 	}
+	void bridge.setTrayCount(trayRunningCount(states));
 	const tooltip = trayTooltip(states);
 	if (tooltip !== lastTray) {
 		lastTray = tooltip;
@@ -160,6 +163,11 @@ export function createTauriCoworkerBridge(): CoworkerIndicatorBridge {
 			if (!isTauri()) return;
 			const { invoke } = await import("@tauri-apps/api/core");
 			await invoke("set_coworker_indicator", { label });
+		},
+		async setTrayCount(count) {
+			if (!isTauri()) return;
+			const { invoke } = await import("@tauri-apps/api/core");
+			await invoke("set_tray_running_count", { count: count > 0 ? count : null });
 		},
 		async setTrayTooltip(tooltip) {
 			if (!isTauri()) return;

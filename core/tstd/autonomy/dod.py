@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from ..provider import content_as_text
 from ..tools.results import ToolResult
 
 if TYPE_CHECKING:
@@ -140,7 +141,7 @@ def make_dod_poller(
         last = ""
         for message in reversed(session.conversation):
             if message.role == "assistant" and message.content:
-                last = message.content
+                last = content_as_text(message.content)
                 break
         objective = session.charter.objective if session.charter is not None else ""
         prompt = (

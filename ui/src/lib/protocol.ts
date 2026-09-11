@@ -159,6 +159,16 @@ export interface Cancel extends ClientMessage {
   session_id: string;
 }
 
+export interface RunVerify extends ClientMessage {
+  type: "run_verify";
+  session_id: string;
+}
+
+export interface DenyVerify extends ClientMessage {
+  type: "deny_verify";
+  session_id: string;
+}
+
 export interface Attach extends ClientMessage {
   type: "attach";
   session_id: string;
@@ -176,6 +186,21 @@ export interface SetTier extends ClientMessage {
   tier: "brain" | "worker" | "validator";
 }
 
+/** Turn plan mode (brain lock) on or off (TD-4603). */
+export interface SetPlan extends ClientMessage {
+  type: "set_plan";
+  session_id: string;
+  on: boolean;
+}
+
+/** Retarget this session at a catalog preset (TD-1721). Refused mid-turn.
+ *  Does not write Settings. Acked with session_list. */
+export interface SetSessionPreset extends ClientMessage {
+  type: "set_session_preset";
+  session_id: string;
+  name: string;
+}
+
 export interface GetInstructionStack extends ClientMessage {
   type: "get_instruction_stack";
   session_id: string;
@@ -184,6 +209,12 @@ export interface GetInstructionStack extends ClientMessage {
 /** List a workspace's Instructions files (TD-2802). Human path. */
 export interface ListInstructions extends ClientMessage {
   type: "list_instructions";
+  workspace_path: string;
+}
+
+/** List a workspace's slash commands (TD-4501). Human path. */
+export interface ListCommands extends ClientMessage {
+  type: "list_commands";
   workspace_path: string;
 }
 
@@ -412,6 +443,23 @@ export interface SetTierCredential extends ClientMessage {
   credential: string;
 }
 
+/** Create or replace one listed MCP server (TD-4403). Command is argv
+ *  tokens only — there is no env field. Acked with setup_state. */
+export interface SetMcpServer extends ClientMessage {
+  type: "set_mcp_server";
+  id: string;
+  transport: "stdio" | "http";
+  command?: string[];
+  url?: string;
+  enabled?: boolean;
+}
+
+/** Remove one listed MCP server (TD-4403). Unknown id is a typed error. */
+export interface DeleteMcpServer extends ClientMessage {
+  type: "delete_mcp_server";
+  id: string;
+}
+
 // TD-1703: name the model one tier of one preset uses. Deliberately narrow
 // rather than a general config write — a message carrying only a tier and a
 // slug cannot smuggle a secret into config.yaml. Acked with a fresh
@@ -559,6 +607,12 @@ export interface DeleteJob extends ClientMessage {
   job_id: string;
 }
 
+/** Turn natural language into a job draft (TD-3803). Does not persist. */
+export interface ParseJob extends ClientMessage {
+  type: "parse_job";
+  text: string;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -580,11 +634,16 @@ export type ClientMessageUnion =
   | SetWorkspacePin
   | Resume
   | Cancel
+  | RunVerify
+  | DenyVerify
   | Attach
   | Detach
   | SetTier
+  | SetPlan
+  | SetSessionPreset
   | GetInstructionStack
   | ListInstructions
+  | ListCommands
   | ListMemory
   | SaveMemory
   | CreateRule
@@ -622,6 +681,8 @@ export type ClientMessageUnion =
   | SetCredential
   | DeleteCredential
   | SetTierCredential
+  | SetMcpServer
+  | DeleteMcpServer
   | RunDiagnostics
   | GetUsage
   | ExportUsage
@@ -634,7 +695,9 @@ export type ClientMessageUnion =
   | SetRemoteAttach
   | ListJobs
   | SaveJob
-  | DeleteJob;
+  | DeleteJob
+  | ParseJob
+  | Transcribe;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -771,6 +834,15 @@ export interface CheckpointNotice extends DaemonEvent {
   message: string;
 }
 
+export interface VerifyResult extends DaemonEvent {
+  type: "verify_result";
+  session_id: string;
+  verdict: "pass" | "fail" | "error";
+  summary: string;
+  cost: number;
+  pending?: boolean;
+}
+
 export interface CostUpdate extends DaemonEvent {
   type: "cost_update";
   session_id: string;
@@ -782,13 +854,21 @@ export interface CostUpdate extends DaemonEvent {
   cost_by_tier: Record<string, number>;
 }
 
-/** Active tier + configured slugs (TD-1006). */
+/** Active tier + configured slugs (TD-1006, TD-1720). */
 export interface TierState extends DaemonEvent {
   type: "tier_state";
   session_id: string;
   tier: "brain" | "worker" | "validator";
   override: "brain" | "worker" | "validator" | null;
   model_slugs: Record<string, string>;
+  /** Preset this session opened with. Omitted by older daemons. */
+  preset?: string;
+  /** Tier → hostname:port the client will call. Omitted by older daemons. */
+  hosts?: Record<string, string>;
+  /** Plan mode (brain lock). Omitted by older daemons — treat as off. */
+  plan?: boolean;
+  /** Active tier accepts images (TD-4705). Omitted by older daemons — treat as off. */
+  vision?: boolean;
 }
 
 export interface BoundaryUpdate extends DaemonEvent {
@@ -888,6 +968,22 @@ export interface InstructionFiles extends DaemonEvent {
   created?: string | null;
 }
 
+/** One slash command the composer can insert (TD-4501). */
+export interface CommandEntry {
+  name: string;
+  description: string;
+  source: "workspace" | "user" | "claude_workspace" | "claude_user";
+  body: string;
+  too_large?: boolean;
+}
+
+/** Reply to list_commands. Connection-scoped. */
+export interface CommandList extends DaemonEvent {
+  type: "command_list";
+  workspace_path: string;
+  commands: CommandEntry[];
+}
+
 export interface MemoryFileEntry {
   path: string;
   name: string;
@@ -919,6 +1015,18 @@ export interface AutonomyStart extends DaemonEvent {
   session_id?: string | null;
 }
 
+/** Wake-up card for an unattended run that stopped (TD-4303). Session-scoped. */
+export interface AutonomySummary extends DaemonEvent {
+  type: "autonomy_summary";
+  session_id: string;
+  reason: string;
+  branch: string;
+  ledger_path: string;
+  changed: string[];
+  refusals: string[];
+  ledger_excerpt: string;
+}
+
 export interface MemoryFileDiff {
   action: "create" | "replace" | "delete";
   path: string;
@@ -941,6 +1049,15 @@ export interface MemoryStackEntry {
   reason: "always-index" | "heading" | "embedding";
 }
 
+/** One discovered skill on the instruction stack (TD-4502). */
+export interface SkillStackEntry {
+  name: string;
+  description: string;
+  source: "workspace" | "user" | "claude_workspace" | "claude_user";
+  loaded: boolean;
+  tokens: number;
+}
+
 export interface InstructionStack extends DaemonEvent {
   type: "instruction_stack";
   session_id: string;
@@ -956,6 +1073,7 @@ export interface InstructionStack extends DaemonEvent {
   memory?: MemoryStackEntry[];
   memory_dropped?: MemoryStackEntry[];
   memory_placeholder?: boolean;
+  skills?: SkillStackEntry[];
 }
 
 export interface SessionSummary {
@@ -982,6 +1100,11 @@ export interface SessionSummary {
   /** Auto-title from the first non-empty user message (TD-3001). Null
    *  until then — the rail falls back to the short id. Additive. */
   title?: string | null;
+  /** Catalog preset this session opened with, or last switched to (TD-1721). */
+  preset?: string;
+  /** A turn is in flight (TD-1720). Distinct from `state: "running"`,
+   *  which is loop liveness (TD-1714). Additive. */
+  busy?: boolean;
 }
 
 export interface SessionList extends DaemonEvent {
@@ -1048,6 +1171,19 @@ export interface SetupState extends DaemonEvent {
   cu_mode?: "background" | "full_control";
   cu_unhide_on_finish?: boolean;
   cu_denied_apps?: string[];
+  // TD-4403: listed MCP servers. Additive, default empty. Never a secret.
+  mcp_servers?: McpServerSummary[];
+  // TD-4701: hold-to-talk. Additive, default off. The URL never arrives.
+  speech_enabled?: boolean;
+  speech_ready?: boolean;
+}
+
+export interface McpServerSummary {
+  id: string;
+  transport: "stdio" | "http";
+  command: string[];
+  url: string;
+  enabled: boolean;
 }
 
 export interface CredentialSummary {
@@ -1193,7 +1329,7 @@ export interface CuSession extends DaemonEvent {
   active: boolean;
 }
 
-/** Reply to design_hit_test (TD-3403). Connection-scoped; seq is 1. */
+/** Reply to design_hit_test (TD-3403 / TD-3406). Connection-scoped; seq is 1. */
 export interface DesignHitBox {
   x: number;
   y: number;
@@ -1351,9 +1487,25 @@ export interface GrokExtensions extends DaemonEvent {
   items: GrokExtension[];
 }
 
+/** Response to parse_job (TD-3803). Connection-scoped. Not saved. */
+export interface JobDraftReply extends DaemonEvent {
+  type: "job_draft";
+  ok: boolean;
+  detail?: string;
+  workspace?: string | null;
+  instruction?: string | null;
+  cadence?: string | null;
+  next_run?: string | null;
+  deliver_to?: "window" | "slack" | "ntfy" | null;
+  paused?: boolean;
+}
+
+/** Reply to transcribe (TD-4701). Connection-scoped. detail is a code, never a URL. */
 export interface Transcript extends DaemonEvent {
   type: "transcript";
+  ok?: boolean;
   text?: string;
+  detail?: string;
   error?: string | null;
 }
 
@@ -1370,6 +1522,7 @@ export type DaemonEventUnion =
   | ApprovalRequest
   | DecisionLogged
   | CheckpointNotice
+  | VerifyResult
   | CostUpdate
   | BoundaryUpdate
   | TurnComplete
@@ -1380,10 +1533,12 @@ export type DaemonEventUnion =
   | TierSwitched
   | InstructionStack
   | InstructionFiles
+  | CommandList
   | ContextPins
   | MemoryFiles
   | CharterDocument
   | AutonomyStart
+  | AutonomySummary
   | MemoryProposal
   | SessionList
   | PolicyRules
@@ -1403,6 +1558,7 @@ export type DaemonEventUnion =
   | DesignHit
   | CuPermissions
   | JobList
+  | JobDraftReply
   | GrokCommands
   | GrokPlan
   | GrokMode

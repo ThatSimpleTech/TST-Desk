@@ -45,9 +45,17 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Checksums
-        working-directory: dist
-        run: sha256sum * > SHA256SUMS.txt
+      # Artifacts land in dmg/ appimage/ deb/ msi/ subdirs. GitHub Releases
+      # also rewrites spaces in asset names to dots (`TST Desk_…` →
+      # `TST.Desk_…`); checksums must use the download names.
+      - name: Flatten, rename, checksum
+        run: |
+          mkdir -p flat
+          find dist -type f -print0 | while IFS= read -r -d '' f; do
+            base=$(basename "$f")
+            cp "$f" "flat/${base// /.}"
+          done
+          (cd flat && sha256sum * > SHA256SUMS.txt)
 
       - name: Changelog
         working-directory: core
@@ -56,4 +64,10 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "TST Desk $GITHUB_REF_NAME" --notes-file CHANGELOG_RELEASE.md dist/*
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" flat/* --clobber
+            gh release edit "$GITHUB_REF_NAME" --title "TST Desk $GITHUB_REF_NAME" --notes-file CHANGELOG_RELEASE.md
+          else
+            gh release create "$GITHUB_REF_NAME" --title "TST Desk $GITHUB_REF_NAME" --notes-file CHANGELOG_RELEASE.md flat/*
+          fi

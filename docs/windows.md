@@ -109,18 +109,17 @@ On POSIX the child is started with `setsid`, so it leads its own process group a
 `SIGKILL` to the group takes backgrounded grandchildren with it.
 
 Windows has no `killpg`. The child is spawned with `CREATE_NEW_PROCESS_GROUP` so it is a group
-leader, and the kill path runs `TerminateProcess` on the direct child followed by
-`taskkill /T /F /PID`, which walks the parent chain the OS already records and kills the tree.
-`taskkill` ships with Windows, so this adds no dependency. The direct child dies first and
-independently, so a `taskkill` that cannot run still leaves the immediate command dead.
+leader, and the kill path runs `taskkill /T /F /PID` **while that leader is still alive**, then
+`TerminateProcess` on the direct child. `taskkill /T` walks the parent chain the OS already
+records. Killing the leader first orphans grandchildren; `taskkill` then reports the pid gone
+and leaves them running. `taskkill` ships with Windows, so this adds no dependency. If
+`taskkill` cannot run, `TerminateProcess` still kills the immediate command.
 
-**This is implemented and unverified.** No Windows host has executed it. A process-tree kill is
-a claim about an operating system's behaviour and the only evidence that counts is a Windows
-machine performing one, so the cancel and timeout tests in
-`core/tests/test_shell_tools.py` remain skipped on `win32` and the corresponding backlog
-criterion (TD-1406) remains unticked. Unskipping needs two things: a Windows CI leg, and a
-cmd or PowerShell equivalent of the POSIX escape probe those tests use, which is currently
-written with `$$`, `&` and `wait`.
+**Verified on windows-latest** (CI run `33146979852`, 2026-08-28, TD-1406). The cancel and
+timeout tests in `core/tests/test_shell_tools.py` run on `win32`: a PowerShell escape probe
+writes this powershell pid plus a parked grandchild, then `_assert_group_gone` asks
+`OpenProcess` whether those pids are still `STILL_ACTIVE`. Helper argv tests in
+`core/tests/test_shell_windows_kill.py` pin `taskkill /T /F /PID` on every host.
 
 ---
 
@@ -190,3 +189,20 @@ The report itself is `tst_cu_mcp.permissions.build_windows_report`. The daemon p
 does not grow a second Windows backend.
 
 See the TD-3303 entry in `DECISIONS.md`.
+
+---
+
+## 9. Clean-guest smoke
+
+After `npm run tauri:build` in `ui/`, from a built `.msi` / sidecar:
+
+```powershell
+pwsh -File core/scripts/smoke_windows_bundle.ps1 [path-to-tstd.exe]
+```
+
+The script proves: bundled sidecar serves with no Python on `PATH`, a protocol
+turn against the shipped `local` preset (loopback mock → `fs_write` → reply),
+and that a missing API key returns actionable copy instead of hanging on
+Connecting…. Linux uses `smoke_linux_bundle.sh`; macOS uses
+`smoke_macos_bundle.sh`. These scripts are maintainer/local guests; the
+CI four-/five-artifact box is `package.yml` (green on `259cc49`, 2026-08-28).

@@ -69,6 +69,10 @@ class SessionRecord:
     # written before the field existed — revive then follows current
     # config.engine.kind, which is what those sessions already did.
     engine: str | None = None
+    # Catalog preset name this session opened with (TD-1721). The name
+    # only — not a forked config tree. Defaulted so a store written
+    # before this field loads unchanged instead of being dropped.
+    preset: str = ""
 
 
 class SessionStore:
@@ -94,15 +98,29 @@ class SessionStore:
         state: str,
         created_at: str | None = None,
         engine: str | None = None,
+        preset: str | None = None,
     ) -> None:
         """Insert or refresh a session record and persist the store.
 
         ``created_at`` is only set on first insert, so later state refreshes
         preserve the original creation timestamp. ``engine`` is the loop
         this session started with; omitted on a refresh keeps the stored
-        value so a later ``set_engine`` cannot rewrite history.
+        value so a later ``set_engine`` cannot rewrite history. ``preset``
+        is the same: omitted keeps whatever the row already had (TD-1721).
         """
         existing = self._records.get(session_id)
+        if preset is not None:
+            chosen_preset = preset
+        elif existing is not None:
+            chosen_preset = existing.preset
+        else:
+            chosen_preset = ""
+        if engine is not None:
+            chosen_engine = engine
+        elif existing is not None:
+            chosen_engine = existing.engine
+        else:
+            chosen_engine = None
         record = SessionRecord(
             session_id=session_id,
             workspace_path=workspace_path,
@@ -111,7 +129,8 @@ class SessionStore:
             archived=existing.archived if existing else False,
             title=existing.title if existing else None,
             auto_title=existing.auto_title if existing else None,
-            engine=engine if engine is not None else (existing.engine if existing else None),
+            engine=chosen_engine,
+            preset=chosen_preset,
         )
         self._records[session_id] = record
         await self._persist()
@@ -175,6 +194,20 @@ class SessionStore:
             return False
         normalized = title_from_user_message(title) if title is not None else None
         record.title = normalized if normalized is not None else record.auto_title
+        record.updated_at = _now_iso()
+        await self._persist()
+        return True
+
+    async def set_preset(self, session_id: str, preset: str) -> bool:
+        """Record the catalog preset this session is using (TD-1721).
+
+        Name only — the catalog in Settings is unchanged. Returns False
+        when the id is unknown.
+        """
+        record = self._records.get(session_id)
+        if record is None:
+            return False
+        record.preset = preset
         record.updated_at = _now_iso()
         await self._persist()
         return True

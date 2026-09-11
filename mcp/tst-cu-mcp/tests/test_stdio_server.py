@@ -43,6 +43,7 @@ TOOL_NAMES = {
     "launch_app",
     "hide_other_apps",
     "unhide_apps",
+    "hit_test",
 }
 
 TIMEOUT_SECONDS = 60

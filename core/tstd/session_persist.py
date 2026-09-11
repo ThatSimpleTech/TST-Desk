@@ -152,6 +152,11 @@ class SessionPersist:
                 os.close(fd)
             events_path.chmod(0o600)
             loaded = self._load_events(events_path)
+            on_disk = [event.seq for event in loaded]
+            ordered_seqs = sorted(on_disk)
+            if on_disk != ordered_seqs:
+                loaded.sort(key=lambda event: event.seq)
+                self._rewrite_events(events_path, loaded)
             kept = self._apply_window(events_path, loaded)
             earliest = kept[0].seq if kept else event.seq
             return AppendResult(earliest_seq=earliest, trimmed=len(kept) < len(loaded))
@@ -173,7 +178,9 @@ class SessionPersist:
             return None
         events_path = path / _EVENTS
         with self._write_lock:
-            events = self._apply_window(events_path, self._load_events(events_path))
+            loaded = self._load_events(events_path)
+            loaded.sort(key=lambda event: event.seq)
+            events = self._apply_window(events_path, loaded)
         conversation = self._load_conversation(path / _CONVERSATION)
         return LoadedSession(events=events, conversation=conversation)
 

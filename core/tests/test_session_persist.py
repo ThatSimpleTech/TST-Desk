@@ -8,6 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from tests.platform_helpers import (
+    OWNER_ONLY_MODE,
+    assert_owner_only_mode,
+    assert_owner_only_oct_suffix,
+    skip_posix_file_modes,
+)
 from tstd.config import DEFAULT_LOG_MAX_EVENTS
 from tstd.protocol import AssistantDelta, UserTurn, parse_daemon_event
 from tstd.provider import ChatMessage, FunctionCall, ToolCall
@@ -53,9 +59,10 @@ class TestSessionPersist:
 
         events_path = persist.dir_for("s1") / "events.jsonl"
         convo_path = persist.dir_for("s1") / "conversation.json"
-        assert oct(events_path.stat().st_mode)[-3:] == "600"
-        assert oct(convo_path.stat().st_mode)[-3:] == "600"
+        assert_owner_only_oct_suffix(events_path)
+        assert_owner_only_oct_suffix(convo_path)
 
+    @skip_posix_file_modes
     def test_events_file_is_owner_only_from_the_first_write(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -86,10 +93,11 @@ class TestSessionPersist:
             capped.append_event("s1", AssistantDelta(session_id="s1", delta="d3", seq=3))
         finally:
             os.umask(old_umask)
-        assert modes_at_first_write == [0o600]
+        assert modes_at_first_write == [OWNER_ONLY_MODE]
         events_path = persist.dir_for("s1") / "events.jsonl"
-        assert events_path.stat().st_mode & 0o777 == 0o600
+        assert_owner_only_mode(events_path.stat().st_mode & 0o777)
 
+    @skip_posix_file_modes
     def test_conversation_snapshot_is_owner_only_from_the_first_write(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -115,9 +123,9 @@ class TestSessionPersist:
             )
         finally:
             os.umask(old_umask)
-        assert modes_at_first_write == [0o600]
+        assert modes_at_first_write == [OWNER_ONLY_MODE]
         convo_path = persist.dir_for("s1") / "conversation.json"
-        assert convo_path.stat().st_mode & 0o777 == 0o600
+        assert_owner_only_mode(convo_path.stat().st_mode & 0o777)
 
     def test_prepare_writes_empty_conversation_not_missing(self, tmp_path: Path) -> None:
         persist = _persist(tmp_path)
@@ -235,7 +243,7 @@ class TestSessionLogWindow:
             "e10",
         ]
         events_path = persist.dir_for("s1") / "events.jsonl"
-        assert oct(events_path.stat().st_mode)[-3:] == "600"
+        assert_owner_only_oct_suffix(events_path)
         assert events_path.read_text(encoding="utf-8").count("\n") == 3
 
     def test_load_windows_an_already_oversized_file(self, tmp_path: Path) -> None:
@@ -252,6 +260,26 @@ class TestSessionLogWindow:
         assert [e.seq for e in loaded.events] == [8, 9, 10]
         events_path = reader.dir_for("s1") / "events.jsonl"
         assert events_path.read_text(encoding="utf-8").count("\n") == 3
+
+    def test_append_rewrites_jsonl_into_seq_order(self, tmp_path: Path) -> None:
+        """Overlapping appends can land seq 2 before seq 1; the file must not."""
+        persist = _persist(tmp_path)
+        persist.prepare("s1")
+        persist.append_event(
+            "s1",
+            AssistantDelta(session_id="s1", delta="second", seq=2),
+        )
+        persist.append_event(
+            "s1",
+            AssistantDelta(session_id="s1", delta="first", seq=1),
+        )
+        events_path = persist.dir_for("s1") / "events.jsonl"
+        seqs = [
+            int(json.loads(line)["seq"])
+            for line in events_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert seqs == [1, 2]
 
 
 class TestParseUserTurn:

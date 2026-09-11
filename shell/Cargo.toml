@@ -26,12 +26,14 @@ tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
 tauri-plugin-window-state = "2"
 tokio = { version = "1", features = ["process", "net", "time", "rt", "sync", "macros", "io-util"] }
 tokio-tungstenite = "0.30"
 futures-util = "0.3"
 which = "7"
 dirs = "6"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6"

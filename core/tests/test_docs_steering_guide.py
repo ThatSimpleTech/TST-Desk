@@ -193,7 +193,11 @@ def _render_source(source: ResolvedSource, workspace: Path, home: Path) -> str:
 
 
 def _normalise(text: str, workspace: Path, home: Path) -> str:
-    return text.replace(workspace.as_posix(), _WORKSPACE).replace(home.as_posix(), _HOME)
+    out = text.replace("\\", "/")
+    for root, token in ((workspace, _WORKSPACE), (home, _HOME)):
+        for form in (str(root).replace("\\", "/"), root.as_posix()):
+            out = out.replace(form, token)
+    return out
 
 
 def _expected_lines(body: str) -> list[str]:

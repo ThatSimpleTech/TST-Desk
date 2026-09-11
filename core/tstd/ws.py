@@ -167,7 +167,7 @@ class WebSocketServer:
         handshake_timeout: float = 10.0,
         message_handler: Callable[[str, ServerConnection], Awaitable[str | None]] | None = None,
         on_disconnect: Callable[[ServerConnection], Awaitable[None]] | None = None,
-        ping_interval: float = PING_INTERVAL_SECONDS,
+        ping_interval: float | None = None,
         bind: str = "",
         interfaces: InterfaceEnumerator | None = None,
         is_remote_connection: Callable[[ServerConnection], bool] | None = None,
@@ -185,7 +185,9 @@ class WebSocketServer:
         self._handshake_timeout = handshake_timeout
         self._message_handler = message_handler
         self._on_disconnect = on_disconnect
-        self._ping_interval = ping_interval
+        # Resolved at init so a test can quiet the cadence by patching
+        # PING_INTERVAL_SECONDS without restating every constructor (TD-1716).
+        self._ping_interval = PING_INTERVAL_SECONDS if ping_interval is None else ping_interval
         self._ping_task: asyncio.Task[None] | None = None
         self._bind = bind
         self._interfaces = interfaces

@@ -509,6 +509,10 @@ def _mark_prompted(kind: str) -> None:
     except OSError:
         return
 
+    def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        """AX element at a global point. Never moves the pointer."""
+        return _ax_element_at(x, y)
+
 
 def _screen_recording_granted() -> bool:
     """True if capture is allowed for this process *or* its host app.
@@ -823,3 +827,104 @@ def _request_accessibility() -> bool:
     except (ImportError, AttributeError):
         return False
     return bool(AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}))
+
+
+def _ax_element_at(x: float, y: float) -> dict[str, Any]:
+    """Resolve the AX node under a global point. Empty dict is a miss."""
+    try:
+        from ApplicationServices import (
+            AXUIElementCopyElementAtPosition,
+            AXUIElementCreateSystemWide,
+            kAXDescriptionAttribute,
+            kAXIdentifierAttribute,
+            kAXPositionAttribute,
+            kAXRoleAttribute,
+            kAXSizeAttribute,
+            kAXTitleAttribute,
+            kAXValueCGPointType,
+            kAXValueCGSizeType,
+        )
+    except (ImportError, AttributeError):
+        return {}
+
+    try:
+        system = AXUIElementCreateSystemWide()
+        err, element = AXUIElementCopyElementAtPosition(system, float(x), float(y), None)
+    except (TypeError, ValueError, OSError):
+        return {}
+    if err or element is None:
+        return {}
+
+    role = _ax_string(element, kAXRoleAttribute)
+    attributes: dict[str, str] = {}
+    title = _ax_string(element, kAXTitleAttribute)
+    if title:
+        attributes["AXTitle"] = title
+    desc = _ax_string(element, kAXDescriptionAttribute)
+    if desc:
+        attributes["AXDescription"] = desc
+    try:
+        ident = _ax_string(element, kAXIdentifierAttribute)
+    except (TypeError, ValueError, OSError):
+        ident = ""
+    if ident:
+        attributes["AXIdentifier"] = ident
+
+    box = {"x": float(x), "y": float(y), "width": 1.0, "height": 1.0}
+    pos = _ax_value(element, kAXPositionAttribute, kAXValueCGPointType)
+    size = _ax_value(element, kAXSizeAttribute, kAXValueCGSizeType)
+    if pos is not None and size is not None:
+        box = {
+            "x": float(pos[0]),
+            "y": float(pos[1]),
+            "width": float(size[0]),
+            "height": float(size[1]),
+        }
+    return {
+        "xpath": None,
+        "role": role or None,
+        "attributes": attributes,
+        "box": box,
+        "styles": {},
+    }
+
+
+def _ax_string(element: object, attribute: object) -> str:
+    try:
+        from ApplicationServices import AXUIElementCopyAttributeValue
+    except (ImportError, AttributeError):
+        return ""
+    try:
+        err, value = AXUIElementCopyAttributeValue(element, attribute, None)
+    except (TypeError, ValueError, OSError):
+        return ""
+    if err or value is None:
+        return ""
+    return str(value)
+
+
+def _ax_value(element: object, attribute: object, value_type: object) -> tuple[float, float] | None:
+    try:
+        from ApplicationServices import AXUIElementCopyAttributeValue, AXValueGetValue
+    except (ImportError, AttributeError):
+        return None
+    try:
+        err, raw = AXUIElementCopyAttributeValue(element, attribute, None)
+        if err or raw is None:
+            return None
+        ok, parsed = AXValueGetValue(raw, value_type, None)
+    except (TypeError, ValueError, OSError):
+        return None
+    if not ok or parsed is None:
+        return None
+    x = getattr(parsed, "x", None)
+    y = getattr(parsed, "y", None)
+    if x is not None and y is not None:
+        return (float(x), float(y))
+    width = getattr(parsed, "width", None)
+    height = getattr(parsed, "height", None)
+    if width is not None and height is not None:
+        return (float(width), float(height))
+    if isinstance(parsed, (tuple, list)) and len(parsed) >= 2:
+        return (float(parsed[0]), float(parsed[1]))
+    return None

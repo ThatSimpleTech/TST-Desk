@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Hold-to-talk dictation in the composer. The microphone is only on while you hold the button.</string>
+	<string>Hold-to-talk dictation in the composer. The microphone is only on while you hold the button. Nothing is sent unless you have configured a speech endpoint.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Hold-to-talk dictation in the composer. Speech is not captured unless you hold the mic.</string>
 	<key>NSScreenCaptureUsageDescription</key>

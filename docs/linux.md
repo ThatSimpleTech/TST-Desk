@@ -43,7 +43,10 @@ keyring, then retry Store. There is no Keychain Access app on Linux.
 
 `secret-tool` is discovered at call time. The Linux backend is selected
 whenever `sys.platform` is Linux, even if the binary is missing — the first
-store or lookup is where that shows up.
+store or lookup is where that shows up. A missing binary is a typed
+`KeychainError` ("install libsecret-tools"), not a crash: `setup_state`
+probes every named credential, and a clean guest without libsecret must
+still handshake and run the keyless `local` preset.
 
 ---
 
@@ -83,7 +86,9 @@ actuation is refused.
 The real-display rust ring is the same session-scoped signal as macOS and
 Windows (TD-3407): it lights on the first computer-use tool of a turn and
 stays until turn end, cancel, or the kill-switch. Wayland has no ring.
-Desktop Design-mode AX is TD-3406.
+Desktop Design-mode hit-test (TD-3406) is observe-only: AT-SPI when
+the library is present, otherwise the EWMH window under the point on
+X11. Wayland still has no Design AX path.
 
 The browser computer-use path (Playwright) is not X11-specific.
 
@@ -100,7 +105,7 @@ Closing the window is not quitting the app (TD-2902).
 A second host process attaches to the live listener instead of spawning
 another daemon. The tray (TD-4703) is Show / New window / Quit; the tooltip
 counts running sessions. Restore after hide is tray Show, or launching the
-app again. There is no macOS `Reopen` event on Linux.
+app again — it depends on the desktop. There is no macOS `Reopen` event on Linux.
 
 While hidden, a running session or a parked approval updates the window title
 (the cheap Linux / Windows badge path). OS notifications still fire.
@@ -128,3 +133,23 @@ removes `network-manager-applet`.
 
 For where each of these decisions was made, see the TD-2001, TD-2002, and
 Linux data-dir entries in `DECISIONS.md`.
+
+---
+
+## 8. Clean-guest smoke
+
+This host has no `/dev/kvm`, so the Linux "clean VM" is Docker
+(`ubuntu:22.04` for the extracted sidecar, `ubuntu:24.04` for `dpkg -i`
+plus the windowed host). From a built `.deb` / AppImage:
+
+```
+core/scripts/smoke_linux_bundle.sh [path-to-deb] [path-to-appimage]
+```
+
+That script proves: no system Python on the sidecar (`ldd` + empty
+`PATH`), `dpkg -i` + `xvfb-run tst-desk` writes `port.json`, a protocol
+turn against the shipped `local` preset (loopback mock → `fs_write` →
+reply), and AppImage `--appimage-extract` of the same sidecar. It does
+not tick the four-platform packaging boxes. macOS and Windows guests use
+`core/scripts/smoke_macos_bundle.sh` and `core/scripts/smoke_windows_bundle.ps1`
+(TD-4906). GitHub Actions `package.yml` is a separate gate.

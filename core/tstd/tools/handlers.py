@@ -24,9 +24,11 @@ from pathlib import Path
 
 from ..browser import BrowserDriver, MockBrowserDriver
 from ..context.manifest import _FALLBACK_IGNORE
+from ..context.skills import register_skill_handlers
 from ..desktop import DesktopDriver, MockDesktopDriver
 from ..desktop.grounding_client import GroundingLocator
 from .browser import register_browser_handlers
+from .delegate import register_delegate_handlers
 from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
 from .shell import ShellPolicy, run_shell
@@ -181,3 +183,5 @@ def register_builtin_handlers(
     register_browser_handlers(
         dispatcher, browser_driver if browser_driver is not None else MockBrowserDriver()
     )
+    register_skill_handlers(dispatcher)
+    register_delegate_handlers(dispatcher)

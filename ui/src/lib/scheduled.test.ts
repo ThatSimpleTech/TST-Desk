@@ -32,11 +32,13 @@ vi.mock("./connection-status.svelte.js", () => ({
 import {
 	createJob,
 	deleteScheduledJob,
+	parseJobRequest,
 	pauseJob,
 	refreshJobs,
 	resetScheduled,
 	scheduled,
 	setDraftField,
+	setParseText,
 	startScheduled,
 } from "./scheduled.svelte.js";
 
@@ -149,6 +151,30 @@ describe("scheduled store", () => {
 		});
 		expect(scheduled.items.map((row) => row.id)).toEqual(["j1"]);
 		expect(scheduled.loading).toBe(false);
+	});
+
+	it("parses NL into the draft without saving", () => {
+		setParseText("every 2 hours in /ws/proj summarize the inbox deliver to slack");
+		expect(parseJobRequest()).toBe(true);
+		expect(mocks.sent.at(-1)).toEqual({
+			type: "parse_job",
+			text: "every 2 hours in /ws/proj summarize the inbox deliver to slack",
+		});
+		emit({
+			type: "job_draft",
+			seq: 1,
+			ok: true,
+			workspace: "/ws/proj",
+			instruction: "summarize the inbox",
+			cadence: "every 2 hours",
+			deliver_to: "slack",
+			paused: false,
+		});
+		expect(scheduled.draft.workspace).toBe("/ws/proj");
+		expect(scheduled.draft.instruction).toBe("summarize the inbox");
+		expect(scheduled.draft.cadence).toBe("every 2 hours");
+		expect(scheduled.draft.deliver_to).toBe("slack");
+		expect(scheduled.items).toEqual([]);
 	});
 
 	it("creates from draft fields, not NL", () => {

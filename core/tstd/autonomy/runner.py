@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING
 
 from ..config import ModelConfig
 from ..logging import get_logger
+from .breakers import maybe_trip
 from .charter import Charter
+from .revert import apply_drift_result
+from .supervisor import maybe_check_drift
 
 if TYPE_CHECKING:
     from ..session import Session
@@ -56,8 +59,8 @@ def stop_reason(
     """Why the scheduler should stop, or ``None`` to enqueue another turn.
 
     Definition-of-done is polled in ``advance_autonomy`` (TD-4103) and
-    wins over the iteration cap on the same turn. Drift / circuit
-    breakers are E42.
+    wins over the iteration cap on the same turn. Circuit breakers
+    (TD-4203) run after the poll on the continue path.
     """
     if class_c:
         return CLASS_C_STOP
@@ -67,16 +70,18 @@ def stop_reason(
 
 
 def should_notify(reason: str) -> bool:
-    """Class C, cap faults, and a met definition of done notify.
+    """Class C, cap faults, a met definition of done, and breaker trips.
 
-    A met DoD is the short complete summary (TD-4103). The richer
-    wake-up is TD-4303. Other clean stops still do not notify.
+    A met DoD is a complete stop (TD-4103). The wake-up body is TD-4303.
+    Breaker reasons are prefixed ``breaker:`` so TD-4203 can plug in
+    without another edit here.
     """
     return (
         reason in (CLASS_C_STOP, DOD_MET)
         or reason.startswith("iteration cap")
         or reason.startswith("spend cap")
         or reason.startswith("wall-clock cap")
+        or reason.startswith("breaker:")
     )
 
 
@@ -95,8 +100,13 @@ async def advance_autonomy(session: Session) -> bool:
             except Exception:
                 log.exception("definition-of-done poll failed")
                 poll = None
+            session.last_dod_poll = poll
             if poll is not None and poll.all_green:
                 session.autonomy_stop_reason = DOD_MET
+        if session.autonomy_stop_reason is None:
+            reason = maybe_trip(session)
+            if reason:
+                session.autonomy_stop_reason = reason
         if session.autonomy_stop_reason is None:
             reason = stop_reason(
                 charter=charter,
@@ -104,21 +114,34 @@ async def advance_autonomy(session: Session) -> bool:
                 class_c=session.autonomy_class_c,
             )
             if reason is None:
-                await session.add_user_message(continue_prompt(charter, session.autonomy_turns))
-                return True
-            session.autonomy_stop_reason = reason
-    reason = session.autonomy_stop_reason
-    if session.autonomy_notify is not None and should_notify(reason):
-        await session.autonomy_notify(reason)
+                result = None
+                try:
+                    result = await maybe_check_drift(session)
+                except Exception:
+                    log.exception("validator drift check failed")
+                if not await apply_drift_result(session, result):
+                    await session.add_user_message(continue_prompt(charter, session.autonomy_turns))
+                    return True
+            else:
+                session.autonomy_stop_reason = reason
+    from .wakeup import deliver_wakeup
+
+    await deliver_wakeup(session)
     return False
 
 
 async def notify_autonomy_stop(config: ModelConfig, message: str) -> None:
-    """Deliver *message* on the M7 channels. No-op when they are off."""
+    """Deliver *message* on the M7 / E47 channels. No-op when they are off.
+
+    *message* is the wake-up body (TD-4303), not a one-line reason.
+    Slack stays the default export; Discord and Telegram are extras.
+    """
+    from ..notify.discord import send as discord_send
     from ..notify.ntfy import send as ntfy_send
     from ..notify.slack import send as slack_send
+    from ..notify.telegram import send as telegram_send
 
-    prefix = "Autonomy complete" if message == DOD_MET else "Autonomy stopped"
-    text = f"{prefix}: {message}"
-    await slack_send(config, text)
-    await ntfy_send(config, text)
+    await slack_send(config, message)
+    await ntfy_send(config, message)
+    await discord_send(config, message)
+    await telegram_send(config, message)

@@ -22,8 +22,11 @@ import type {
   Attach,
   Detach,
   SetTier,
+  SetPlan,
+  SetSessionPreset,
   GetInstructionStack,
   ListInstructions,
+  ListCommands,
   ListMemory,
   SaveMemory,
   GetCharter,
@@ -31,6 +34,7 @@ import type {
   StartAutonomy,
   CharterDocument,
   AutonomyStart,
+  AutonomySummary,
   AddPin,
   ContextPins,
   CreateRule,
@@ -38,6 +42,7 @@ import type {
   RemovePin,
   EndSession,
   InstructionFiles,
+  CommandList,
   MemoryFiles,
   MemoryAccept,
   MemoryEdit,
@@ -57,6 +62,7 @@ import type {
   ApprovalRequest,
   DecisionLogged,
   CheckpointNotice,
+  VerifyResult,
   CostUpdate,
   TierState,
   TurnComplete,
@@ -65,6 +71,7 @@ import type {
   RuleActivated,
   TierSwitched,
   InstructionStack,
+  SkillStackEntry,
   SessionList,
   SessionSummary,
   ArchiveSession,
@@ -82,6 +89,8 @@ import type {
   SetCredential,
   DeleteCredential,
   SetTierCredential,
+  SetMcpServer,
+  DeleteMcpServer,
   SetSkipAllApprovals,
   SetLoadGlobalMemory,
   SetCoworker,
@@ -114,7 +123,11 @@ import type {
   ListJobs,
   SaveJob,
   DeleteJob,
+  ParseJob,
   JobList,
+  JobDraftReply,
+  Transcribe,
+  Transcript,
   Ping,
   Error,
   Attachment,
@@ -289,6 +302,20 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(m.tier).toBe("brain");
   });
 
+  it("set_plan", () => {
+    const m = fixtures.set_plan as SetPlan;
+    expect(m.type).toBe("set_plan");
+    expect(m.on).toBe(true);
+    expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("set_session_preset", () => {
+    const m = fixtures.set_session_preset as SetSessionPreset;
+    expect(m.type).toBe("set_session_preset");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.name)).toBe(true);
+  });
+
   it("get_instruction_stack", () => {
     const m = fixtures.get_instruction_stack as GetInstructionStack;
     expect(m.type).toBe("get_instruction_stack");
@@ -298,6 +325,12 @@ describe("Client message fixtures match TypeScript types", () => {
   it("list_instructions", () => {
     const m = fixtures.list_instructions as ListInstructions;
     expect(m.type).toBe("list_instructions");
+    expect(isString(m.workspace_path)).toBe(true);
+  });
+
+  it("list_commands", () => {
+    const m = fixtures.list_commands as ListCommands;
+    expect(m.type).toBe("list_commands");
     expect(isString(m.workspace_path)).toBe(true);
   });
 
@@ -440,6 +473,21 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(m.type).toBe("set_tier_credential");
     expect(isString(m.preset)).toBe(true);
     expect(isString(m.tier)).toBe(true);
+  });
+
+  it("set_mcp_server", () => {
+    const m = fixtures.set_mcp_server as SetMcpServer;
+    expect(m.type).toBe("set_mcp_server");
+    expect(isString(m.id)).toBe(true);
+    expect(m.transport === "stdio" || m.transport === "http").toBe(true);
+    expect(Array.isArray(m.command)).toBe(true);
+    expect("env" in m).toBe(false);
+  });
+
+  it("delete_mcp_server", () => {
+    const m = fixtures.delete_mcp_server as DeleteMcpServer;
+    expect(m.type).toBe("delete_mcp_server");
+    expect(isString(m.id)).toBe(true);
   });
 
   // TD-1104 doctor
@@ -619,6 +667,16 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("verify_result", () => {
+    const m = fixtures.verify_result as VerifyResult;
+    expect(m.type).toBe("verify_result");
+    expect(isString(m.session_id)).toBe(true);
+    expect(["pass", "fail", "error"]).toContain(m.verdict);
+    expect(isString(m.summary)).toBe(true);
+    expect(isNumber(m.cost)).toBe(true);
+    expect(isNumber(m.seq)).toBe(true);
+  });
+
   it("cost_update", () => {
     const m = fixtures.cost_update as CostUpdate;
     expect(m.type).toBe("cost_update");
@@ -637,9 +695,15 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(["brain", "worker", "validator"]).toContain(m.tier);
     expect(m.override).toBeNull();
     expect(isString(m.model_slugs.brain)).toBe(true);
+    expect(isString(m.preset)).toBe(true);
+    expect(isString(m.hosts?.brain)).toBe(true);
     const ov = fixtures.tier_state_override as TierState;
     expect(ov.tier).toBe("validator");
     expect(ov.override).toBe("validator");
+    expect(m.plan).toBe(false);
+    const plan = fixtures.tier_state_plan as TierState;
+    expect(plan.plan).toBe(true);
+    expect(plan.tier).toBe("brain");
   });
 
   it("boundary_update carries the attachment caps (TD-1709)", () => {
@@ -762,6 +826,12 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.credentials?.every((c) => isString(c.id) && isString(c.name) && isBoolean(c.stored))).toBe(
       true,
     );
+    expect(Array.isArray(m.mcp_servers)).toBe(true);
+    expect(m.mcp_servers?.every((s) => isString(s.id) && (s.transport === "stdio" || s.transport === "http"))).toBe(
+      true,
+    );
+    expect(isBoolean(m.speech_enabled)).toBe(true);
+    expect(isBoolean(m.speech_ready)).toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
   });
@@ -875,15 +945,15 @@ describe("All fixtures have required shape", () => {
       "set_load_global_memory",
       "set_coworker",
       "set_voice",
-      "transcribe",
       "set_cu_indicators",
       "set_cu_policy",
       "set_workspace_pin",
       "set_session_star",
       "rename_session",
-      "cancel", "attach", "detach", "set_tier",
+      "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier", "set_plan",
+      "set_session_preset",
       "get_instruction_stack",
-      "list_instructions", "list_memory", "save_memory", "create_rule",
+      "list_instructions", "list_commands", "list_memory", "save_memory", "create_rule",
       "get_charter", "save_charter", "start_autonomy",
       "list_pins", "add_pin", "remove_pin",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
@@ -891,6 +961,7 @@ describe("All fixtures have required shape", () => {
       "set_grok_mode", "run_grok_command", "list_grok_sessions", "open_in_terminal",
       "approve_grok_plan", "list_grok_extensions",
       "set_credential", "delete_credential", "set_tier_credential",
+      "set_mcp_server", "delete_mcp_server",
       "run_diagnostics",
       "get_usage", "export_usage",
       "list_artifacts", "open_artifact",
@@ -899,6 +970,8 @@ describe("All fixtures have required shape", () => {
       "set_cu_kill",
       "set_remote_attach",
       "list_jobs", "save_job", "delete_job",
+      "parse_job",
+      "transcribe",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -911,9 +984,9 @@ describe("All fixtures have required shape", () => {
       "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_denied",
       "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
-      "checkpoint_notice", "cost_update", "boundary_update", "turn_complete",
-      "tier_state", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "context_pins", "memory_files", "charter", "autonomy_start", "memory_proposal", "session_list", "policy_rules", "error",
+      "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "turn_complete",
+      "tier_state", "tier_state_plan", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
+      "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact",
@@ -923,6 +996,7 @@ describe("All fixtures have required shape", () => {
       "design_hit",
       "cu_permissions",
       "job_list",
+      "job_draft",
       "grok_commands",
       "grok_plan",
       "grok_mode",
@@ -1010,11 +1084,41 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(isString(m.session_id)).toBe(true);
   });
 
+  it("autonomy_summary", () => {
+    const m = fixtures.autonomy_summary as AutonomySummary;
+    expect(m.type).toBe("autonomy_summary");
+    expect(isString(m.session_id)).toBe(true);
+    expect(isString(m.reason)).toBe(true);
+    expect(isString(m.branch)).toBe(true);
+    expect(isString(m.ledger_path)).toBe(true);
+    expect(Array.isArray(m.changed)).toBe(true);
+    expect(Array.isArray(m.refusals)).toBe(true);
+    expect(isString(m.ledger_excerpt)).toBe(true);
+  });
+
   it("instruction_files", () => {
     const m = fixtures.instruction_files as InstructionFiles;
     expect(m.type).toBe("instruction_files");
     expect(isString(m.workspace_path)).toBe(true);
     expect(Array.isArray(m.files)).toBe(true);
+  });
+
+  it("instruction_stack", () => {
+    const m = fixtures.instruction_stack as InstructionStack;
+    expect(m.type).toBe("instruction_stack");
+    expect(Array.isArray(m.skills)).toBe(true);
+    const skill = m.skills?.[0] as SkillStackEntry;
+    expect(isString(skill.name)).toBe(true);
+    expect(typeof skill.loaded).toBe("boolean");
+  });
+
+  it("command_list", () => {
+    const m = fixtures.command_list as CommandList;
+    expect(m.type).toBe("command_list");
+    expect(isString(m.workspace_path)).toBe(true);
+    expect(Array.isArray(m.commands)).toBe(true);
+    expect(isString(m.commands[0]?.name)).toBe(true);
+    expect(isString(m.commands[0]?.body)).toBe(true);
   });
 
   it("context_pins", () => {
@@ -1038,7 +1142,9 @@ describe("Session lifecycle messages match TypeScript types", () => {
     for (const s of list.sessions as SessionSummary[]) {
       expect(isBoolean(s.archived)).toBe(true);
       expect(isBoolean(s.starred)).toBe(true);
+      expect(s.preset === undefined || isString(s.preset)).toBe(true);
     }
+    expect(list.sessions.some((s) => s.preset === "tst-default")).toBe(true);
     expect(list.sessions.some((s) => s.archived)).toBe(true);
     expect(list.sessions.some((s) => !s.archived)).toBe(true);
     expect(list.sessions.some((s) => s.starred)).toBe(true);
@@ -1189,6 +1295,18 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isBoolean(m.no_display_applies)).toBe(true);
   });
 
+  it("parse_job / job_draft (TD-3803)", () => {
+    const req = fixtures.parse_job as ParseJob;
+    expect(req.type).toBe("parse_job");
+    expect(isString(req.text)).toBe(true);
+    expect("session_id" in req).toBe(false);
+    const draft = fixtures.job_draft as JobDraftReply;
+    expect(draft.type).toBe("job_draft");
+    expect(isBoolean(draft.ok)).toBe(true);
+    expect(isNumber(draft.seq)).toBe(true);
+    expect("session_id" in draft).toBe(false);
+  });
+
   it("list_jobs / save_job / delete_job / job_list (TD-3805)", () => {
     const list = fixtures.list_jobs as ListJobs;
     expect(list.type).toBe("list_jobs");
@@ -1208,9 +1326,29 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect("session_id" in jobs).toBe(false);
   });
 
+  it("transcribe / transcript (TD-4701)", () => {
+    const req = fixtures.transcribe as Transcribe;
+    expect(req.type).toBe("transcribe");
+    expect(isString(req.audio_b64)).toBe(true);
+    expect(isString(req.mime)).toBe(true);
+    expect("session_id" in req).toBe(false);
+    const reply = fixtures.transcript as Transcript;
+    expect(reply.type).toBe("transcript");
+    expect(isBoolean(reply.ok)).toBe(true);
+    expect(isString(reply.text)).toBe(true);
+    expect(isNumber(reply.seq)).toBe(true);
+    expect("session_id" in reply).toBe(false);
+  });
+
   it("session_list carries the auto-title field (TD-3001)", () => {
     const list = fixtures.session_list as SessionList;
     expect(list.sessions[0]?.title).toBe("hello world");
     expect(list.sessions[1]?.title ?? null).toBeNull();
+  });
+
+  it("session_list carries busy, distinct from running (TD-1720)", () => {
+    const list = fixtures.session_list as SessionList;
+    expect(list.sessions[0]?.busy).toBe(false);
+    expect(list.sessions[1]?.busy).toBe(false);
   });
 });

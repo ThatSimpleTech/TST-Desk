@@ -63,6 +63,9 @@ import {
 	selectedCredential,
 	credentialHost,
 	validateNamedKey,
+	saveMcpServer,
+	setMcpServerEnabled,
+	deleteMcpServer,
 } from "./settings.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -437,11 +440,11 @@ describe("remote attach", () => {
 });
 
 describe("computer-use indicators", () => {
-	it("defaults glow and cursor on, real display off", () => {
+	it("defaults glow, cursor, and real display on", () => {
 		startSettings();
 		expect(settings.cuGlow).toBe(true);
 		expect(settings.cuAgentCursor).toBe(true);
-		expect(settings.cuShowOnRealDisplay).toBe(false);
+		expect(settings.cuShowOnRealDisplay).toBe(true);
 	});
 
 	it("reads the three bits from setup_state", () => {
@@ -458,13 +461,13 @@ describe("computer-use indicators", () => {
 		expect(settings.cuShowOnRealDisplay).toBe(true);
 	});
 
-	it("treats omitted glow/cursor as on and real display as off", () => {
+	it("treats omitted glow/cursor/real-display as on", () => {
 		startSettings();
 		emit(
 			setupState({
 				cu_glow: false,
 				cu_agent_cursor: false,
-				cu_show_on_real_display: true,
+				cu_show_on_real_display: false,
 			}),
 		);
 		const {
@@ -476,7 +479,7 @@ describe("computer-use indicators", () => {
 		emit(without as SetupState);
 		expect(settings.cuGlow).toBe(true);
 		expect(settings.cuAgentCursor).toBe(true);
-		expect(settings.cuShowOnRealDisplay).toBe(false);
+		expect(settings.cuShowOnRealDisplay).toBe(true);
 	});
 
 	it("sends set_cu_indicators and waits for the ack", () => {
@@ -488,7 +491,7 @@ describe("computer-use indicators", () => {
 				type: "set_cu_indicators",
 				glow: false,
 				agent_cursor: true,
-				show_on_real_display: false,
+				show_on_real_display: true,
 			},
 		]);
 		expect(settings.cuGlow).toBe(true);
@@ -596,5 +599,102 @@ describe("key section", () => {
 			{ type: "delete_credential", credential: "local" },
 			{ type: "validate_api_key", credential: "local" },
 		]);
+	});
+});
+
+describe("mcp section", () => {
+	it("lists servers from setup_state and does not invent them", () => {
+		startSettings();
+		expect(settings.mcpServers).toEqual([]);
+		emit(
+			setupState({
+				mcp_servers: [
+					{
+						id: "example",
+						transport: "stdio",
+						command: ["python", "-m", "some_mcp"],
+						url: "",
+						enabled: true,
+					},
+				],
+			}),
+		);
+		expect(settings.mcpServers).toEqual([
+			{
+				id: "example",
+				transport: "stdio",
+				command: ["python", "-m", "some_mcp"],
+				url: "",
+				enabled: true,
+			},
+		]);
+	});
+
+	it("add / disable / remove send the verbs", () => {
+		startSettings();
+		emit(
+			setupState({
+				mcp_servers: [
+					{
+						id: "example",
+						transport: "stdio",
+						command: ["true"],
+						url: "",
+						enabled: true,
+					},
+				],
+			}),
+		);
+		saveMcpServer({
+			id: "loop",
+			transport: "http",
+			command: [],
+			url: "http://127.0.0.1:9/mcp",
+			enabled: true,
+		});
+		setMcpServerEnabled("example", false);
+		deleteMcpServer("example");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_mcp_server",
+				id: "loop",
+				transport: "http",
+				command: [],
+				url: "http://127.0.0.1:9/mcp",
+				enabled: true,
+			},
+			{
+				type: "set_mcp_server",
+				id: "example",
+				transport: "stdio",
+				command: ["true"],
+				url: "",
+				enabled: false,
+			},
+			{ type: "delete_mcp_server", id: "example" },
+		]);
+	});
+
+	it("disable does not invent a server the daemon never sent", () => {
+		startSettings();
+		emit(setupState({ mcp_servers: [] }));
+		setMcpServerEnabled("ghost", false);
+		expect(mocks.sent).toEqual([]);
+	});
+});
+
+describe("speech flags (TD-4701)", () => {
+	it("reads speech_enabled and speech_ready from setup_state", () => {
+		startSettings();
+		emit(setupState({ speech_enabled: true, speech_ready: true }));
+		expect(settings.speechEnabled).toBe(true);
+		expect(settings.speechReady).toBe(true);
+	});
+
+	it("stays off when the daemon omits the fields", () => {
+		startSettings();
+		emit(setupState());
+		expect(settings.speechEnabled).toBe(false);
+		expect(settings.speechReady).toBe(false);
 	});
 });

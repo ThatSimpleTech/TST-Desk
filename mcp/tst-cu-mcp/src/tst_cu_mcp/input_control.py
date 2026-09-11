@@ -76,6 +76,16 @@ def assert_on_screen(x: float, y: float) -> None:
     """Raise ValueError if (x, y) is outside the union of all displays."""
     bounds = _display_bounds_union()
     if bounds is None:
+        # Wayland with no ScreenCast grabber returns an empty list, not
+        # X11's "no displays". Name the portal so this is not confused
+        # with a headless Xvfb box (TD-2001 / TD-4901).
+        if get_backend().name == "wayland":
+            from tst_cu_mcp.backends.wayland_input import WaylandInputError
+
+            raise WaylandInputError(
+                "Wayland input requires portal RemoteDesktop / libei "
+                "(TD-4901b). An XWayland DISPLAY is not a substitute."
+            )
         raise RuntimeError("no active displays found")
     min_x, min_y, max_x, max_y = bounds
     if not (min_x <= x <= max_x and min_y <= y <= max_y):

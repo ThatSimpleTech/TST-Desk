@@ -107,6 +107,39 @@ describe("eventToEntry", () => {
     expect(denied!.details.error_code).toBe("approval_denied");
   });
 
+  it("maps a verify_result to a timeline row, not a chat bubble", () => {
+    const entry = eventToEntry(
+      evt({
+        type: "verify_result",
+        session_id: "s1",
+        verdict: "pass",
+        summary: "Diff matches the tests.",
+        cost: 0.002,
+        pending: false,
+        seq: 11,
+      }),
+    );
+    expect(entry).not.toBeNull();
+    expect(entry!.kind).toBe("verify");
+    expect(entry!.title).toBe("Verify pass");
+    expect(entry!.preview).toBe("Diff matches the tests.");
+    expect(entry!.details.pending).toBe(false);
+
+    const pending = eventToEntry(
+      evt({
+        type: "verify_result",
+        session_id: "s1",
+        verdict: "error",
+        summary: "Confirm to review this write.",
+        cost: 0,
+        pending: true,
+        seq: 12,
+      }),
+    );
+    expect(pending!.title).toBe("Verify pending");
+    expect(pending!.details.pending).toBe(true);
+  });
+
   it("maps a decision_logged to a decision entry with class + rule", () => {
     const entry = eventToEntry(
       evt({

@@ -8,6 +8,7 @@
 
 import { describe, it, expect } from "vitest";
 import { applyBind, chooseBoundSession, type BindContext } from "./session-binding";
+import { trayRunningCount } from "./coworker-indicator";
 import { createChatState } from "./chat-store";
 import type { SessionSummary } from "./protocol";
 
@@ -104,6 +105,31 @@ describe("choosing a session to bind", () => {
       "bound",
     );
     expect(choice).toEqual({ action: "keep", turnState: null });
+  });
+
+  it("binds a window-scoped viewer to its session id (TD-4703)", () => {
+    const list = summaries([
+      { id: "newest", updated: "2026-08-14T10:00:00Z", state: "idle" },
+      { id: "bound", updated: "2026-08-14T09:00:00Z", state: "idle" },
+    ]);
+    expect(chooseBoundSession(list, null, "bound")).toEqual({
+      action: "bind",
+      sessionId: "bound",
+      turnState: "idle",
+    });
+    expect(chooseBoundSession(list, "bound", "bound")).toEqual({
+      action: "keep",
+      turnState: "idle",
+    });
+    expect(chooseBoundSession(list, "bound", "other")).toEqual({
+      action: "unbind",
+    });
+  });
+});
+
+describe("tray running-count", () => {
+  it("counts running and awaiting_approval only", () => {
+    expect(trayRunningCount(["idle", "running", "awaiting_approval", "complete"])).toBe(2);
   });
 });
 
