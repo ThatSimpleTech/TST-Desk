@@ -67,6 +67,21 @@ def _daemon(tmp_path: Path, workspace: Path) -> Daemon:
     return daemon
 
 
+def test_only_graceful_shutdown_reaches_distill() -> None:
+    """A crash / SIGKILL / force-quit never calls distill, so it writes nothing."""
+    src = Path(__file__).resolve().parents[1] / "tstd" / "daemon.py"
+    text = src.read_text(encoding="utf-8")
+    assert text.count("self._distill_live_sessions()") == 1
+    shutdown_at = text.index("async def _shutdown")
+    call_at = text.index("await self._distill_live_sessions()")
+    assert shutdown_at < call_at
+    next_def = text.find("\n    async def ", shutdown_at + 1)
+    body = text[shutdown_at : next_def if next_def != -1 else len(text)]
+    assert "await self._distill_live_sessions()" in body
+    main_at = text.index("def main(")
+    assert "_distill_live_sessions" not in text[main_at:]
+
+
 class TestEndSession:
     async def test_end_session_emits_proposal_and_does_not_write(self, tmp_path: Path) -> None:
         ws = tmp_path / "ws"

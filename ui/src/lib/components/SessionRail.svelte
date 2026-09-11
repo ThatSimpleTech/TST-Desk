@@ -21,14 +21,12 @@
 	import EmptyState from './EmptyState.svelte';
 	import RailSessionRow from './RailSessionRow.svelte';
 	import { chat } from '../chat-store.svelte.js';
-	import { workspaceName } from '../session-status.svelte.js';
 	import {
 		archivedToggle,
 		attentionCount,
 		attentionHint,
 		emptyRowsCopy,
 		groupRowsByRecency,
-		needsAttention,
 		railSections,
 		starredToggle
 	} from '../rail';
@@ -42,8 +40,10 @@
 		toggleCollapsed,
 		selectRow,
 		newSession,
-		stateTone,
-		ROW_STATE_LABELS,
+		activityTone,
+		ACTIVITY_LABELS,
+		liveActivity,
+		rowTitleFull,
 		type SessionRow,
 	} from '../sessions.svelte.js';
 	import { DIVIDER_HIT_MIN_PX, attachDragListeners } from '../splitpane';
@@ -128,7 +128,8 @@
 	});
 
 	function activeTitle(row: SessionRow): string {
-		return `${workspaceName(row.workspacePath)} · ${ROW_STATE_LABELS[row.state]}`;
+		const activity = liveActivity(row);
+		return `${rowTitleFull(row)} · ${ACTIVITY_LABELS[activity]}`;
 	}
 
 	let rows = $derived(visibleRows());
@@ -206,13 +207,13 @@
 					class:mini-active={row.sessionId === chat.sessionId}
 					type="button"
 					title={activeTitle(row)}
-					aria-label={`Attach to session ${row.sessionId.slice(0, 8)} (${ROW_STATE_LABELS[row.state]})`}
+					aria-label={`Attach to session ${rowTitleFull(row)} (${ACTIVITY_LABELS[liveActivity(row)]})`}
 					aria-current={row.sessionId === chat.sessionId ? 'true' : undefined}
 					onclick={() => selectRow(row.sessionId)}
 				>
 					<span
-						class="dot dot-{stateTone(row.state)}"
-						class:dot--attention={needsAttention(row.state)}
+						class="dot dot-{activityTone(liveActivity(row))}"
+						class:dot-live={liveActivity(row) === 'working'}
 						aria-hidden="true"
 					></span>
 				</button>
@@ -630,6 +631,26 @@
 	}
 	.dot-muted {
 		background: var(--color-ink-muted);
+	}
+
+	.dot-live {
+		animation: dot-pulse 1.4s ease-in-out infinite;
+	}
+
+	@keyframes dot-pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.4;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.dot-live {
+			animation: none;
+		}
 	}
 
 	/* A waiting session's dot breathes. The strip has no words, so the

@@ -150,6 +150,15 @@ class McpDesktopDriver:
         await self._client.call_tool(MCP_TOOLS["scroll"], args)
         return json.dumps({"scrolled": {"dx": dx, "dy": dy}})
 
+    async def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        # Observe only: kill-switch must not block this, same as screenshot.
+        self._refuse_if_no_live_path()
+        result = await self._client.call_tool(
+            "hit_test",
+            {"x": x, "y": y, "coordinate_space": "image"},
+        )
+        return _hit_json(result)
+
     async def aclose(self) -> None:
         await self._client.aclose()
 
@@ -170,6 +179,23 @@ def _screenshot_json(result: Any) -> str:
         if block.get("type") == "image" and isinstance(block.get("data"), str):
             return json.dumps({"png_base64": block["data"]})
     raise map_mcp_error(f"screenshot returned no image: {result!r}")
+
+
+def _hit_json(result: Any) -> dict[str, Any]:
+    """Pull a Design-mode node out of an MCP ``tools/call`` result."""
+    for block in _content_blocks(result):
+        if not isinstance(block, dict) or block.get("type") != "text":
+            continue
+        text = block.get("text")
+        if not isinstance(text, str):
+            continue
+        try:
+            parsed: Any = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
 
 
 def _content_blocks(result: Any) -> list[Any]:

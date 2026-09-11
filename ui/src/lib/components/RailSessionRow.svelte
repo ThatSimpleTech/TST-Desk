@@ -11,15 +11,18 @@
 	// alone knows if a turn is in flight, so both are always offered and its
 	// refusal renders in place, under the row that asked.
 	import Icon from './Icon.svelte';
-	import { DELETE_CONFIRM, needsAttention, rowActions, type RailRowActionId } from '../rail';
+	import { DELETE_CONFIRM, rowActions, type RailRowActionId } from '../rail';
 	import { workspaceName } from '../session-status.svelte.js';
 	import {
 		closeRowMenus,
+		ACTIVITY_LABELS,
+		liveActivity,
 		ROW_STATE_LABELS,
 		rowSubtitle,
 		rowTitle,
+		rowTitleFull,
 		sessions,
-		stateTone,
+		activityTone,
 		type SessionRow
 	} from '../sessions.svelte.js';
 	import {
@@ -27,6 +30,7 @@
 		confirmDelete,
 		moveRow,
 		moveTargets,
+		openSessionInNewWindow,
 		renameSession,
 		requestDelete,
 		requestMove,
@@ -43,6 +47,7 @@
 	let confirming = $derived(sessions.confirmDeleteFor === row.sessionId);
 	let moving = $derived(sessions.moveFor === row.sessionId);
 	let renaming = $derived(sessions.renameFor === row.sessionId);
+	let activity = $derived(liveActivity(row));
 	let targets = $derived(moving ? moveTargets(row.sessionId) : []);
 	let draft = $state('');
 	let inputEl = $state<HTMLInputElement | undefined>(undefined);
@@ -65,7 +70,7 @@
 			return;
 		}
 		if (renameSeed === row.sessionId) return;
-		draft = rowTitle(row);
+		draft = rowTitleFull(row);
 		renameSeed = row.sessionId;
 	});
 
@@ -83,6 +88,7 @@
 		else if (id === 'archive') setArchived(row.sessionId, true);
 		else if (id === 'unarchive') setArchived(row.sessionId, false);
 		else if (id === 'move') requestMove(row.sessionId);
+		else if (id === 'open-window') openSessionInNewWindow(row.sessionId);
 		else if (id === 'delete') requestDelete(row.sessionId);
 	}
 
@@ -113,14 +119,14 @@
 			onclick={onselect}
 		>
 			<span
-				class="dot dot-{stateTone(row.state)}"
-				class:dot--attention={needsAttention(row.state)}
+				class="dot dot-{activityTone(activity)}"
+				class:dot-live={activity === 'working'}
 				aria-hidden="true"
 			></span>
 			<span class="row-text">
-				<span class="row-title" class:row-title--id={untitled}>{rowTitle(row)}</span>
+				<span class="row-title" class:row-title--id={untitled} title={rowTitleFull(row)}>{rowTitle(row)}</span>
 				<span class="row-sub">
-					{rowSubtitle(row)}{#if stateNote !== null} · <span class="row-state">{stateNote}</span>{/if}
+					{rowSubtitle(row)} · {ACTIVITY_LABELS[activity]}{#if stateNote !== null} · <span class="row-state">{stateNote}</span>{/if}
 				</span>
 			</span>
 		</button>
@@ -129,14 +135,14 @@
 			class:more-open={menuOpen}
 			type="button"
 			title="Session actions"
-			aria-label={`Actions for session ${rowTitle(row)}`}
+			aria-label={`Actions for session ${rowTitleFull(row)}`}
 			aria-expanded={menuOpen}
 			onclick={() => toggleRowMenu(row.sessionId)}><Icon name="ellipsis" size={14} /></button
 		>
 	</div>
 
 	{#if menuOpen}
-		<div class="menu" role="group" aria-label={`Actions for session ${rowTitle(row)}`}>
+		<div class="menu" role="group" aria-label={`Actions for session ${rowTitleFull(row)}`}>
 			{#each rowActions(row.archived, row.starred) as action (action.id)}
 				<button
 					class="action"
@@ -302,6 +308,49 @@
 		flex-direction: column;
 		min-width: 0;
 		line-height: var(--leading-tight);
+	}
+
+	.dot {
+		width: var(--space-2);
+		height: var(--space-2);
+		border-radius: var(--radius-full);
+		flex-shrink: 0;
+	}
+
+	.dot-info {
+		background: var(--color-accent);
+	}
+	.dot-warning {
+		background: var(--color-warn);
+	}
+	.dot-danger {
+		background: var(--color-err);
+	}
+	.dot-success {
+		background: var(--color-ok);
+	}
+	.dot-muted {
+		background: var(--color-ink-muted);
+	}
+
+	.dot-live {
+		animation: dot-pulse 1.4s ease-in-out infinite;
+	}
+
+	@keyframes dot-pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.4;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.dot-live {
+			animation: none;
+		}
 	}
 
 	.row-title {

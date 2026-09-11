@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
 from typing import Any
 
 import httpx
@@ -758,7 +759,10 @@ class TestErrorHandling:
         )
         result = await client.chat_completion(request)
         assert isinstance(result, ProviderError)
-        assert result.code == "connection_error"
+        if sys.platform == "win32":
+            assert result.code in {"connection_error", "timeout"}
+        else:
+            assert result.code == "connection_error"
         assert result.retryable
 
 

@@ -25,6 +25,7 @@ from tstd.config import (
     NtfyNotifyConfig,
     RemoteConfig,
     SlackNotifyConfig,
+    SpeechConfig,
     TierConfig,
     allocate_credential_id,
     cached_config,
@@ -236,22 +237,68 @@ class TestTiers:
         assert cfg.notify.ntfy.host == ""
         assert NtfyNotifyConfig().enabled is False
 
+    def test_shipped_discord_and_telegram_notify_are_off(self, tmp_path: Path) -> None:
+        """TD-4707: extras are off; Slack stays the default channel."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.notify.discord.enabled is False
+        assert cfg.notify.telegram.enabled is False
+        assert cfg.notify.slack.enabled is False
+
+    def test_shipped_speech_is_off(self, tmp_path: Path) -> None:
+        """TD-4701: packaged config has no mic path and no cloud STT URL."""
+        cfg = _load_shipped(tmp_path)
+        assert cfg.speech.enabled is False
+        assert cfg.speech.base_url == ""
+        assert cfg.speech.model == ""
+        assert cfg.speech.credential == ""
+        assert SpeechConfig().enabled is False
+
+    def test_omitted_speech_is_filled_from_shipped(self, tmp_path: Path) -> None:
+        data = yaml.safe_load(default_config_yaml())
+        assert isinstance(data, dict)
+        data.pop("speech", None)
+        cfg = load_config(_write_config(tmp_path, yaml.safe_dump(data)))
+        assert cfg.speech.enabled is False
+        assert cfg.speech.base_url == ""
+
+    def test_speech_rejects_a_non_http_url(self) -> None:
+        with pytest.raises(ValidationError):
+            SpeechConfig(base_url="not-a-url")
+
+    def test_speech_rejects_a_reserved_credential(self) -> None:
+        with pytest.raises(ValidationError):
+            SpeechConfig(credential="slack-webhook")
+
     def test_shipped_autonomy_is_rootless_podman(self, tmp_path: Path) -> None:
         """TD-4301: packaged config names Podman; image is not a Python literal."""
         cfg = _load_shipped(tmp_path)
         assert cfg.autonomy.runtime == "podman"
         assert cfg.autonomy.image == "docker.io/library/alpine:3.21"
+        assert cfg.autonomy.check_every == 5
+        assert cfg.autonomy.verify == "after_write"
         assert AutonomyConfig().runtime == "podman"
 
     def test_omitted_autonomy_is_filled_from_shipped(self, tmp_path: Path) -> None:
         text = default_config_yaml().replace(
-            "autonomy:\n  runtime: podman\n  image: docker.io/library/alpine:3.21\n\n",
+            "autonomy:\n  runtime: podman\n  image: docker.io/library/alpine:3.21\n"
+            "  check_every: 5\n  verify: after_write\n\n",
             "",
         )
         assert "\nautonomy:" not in text
         cfg = load_config(_write_config(tmp_path, text))
         assert cfg.autonomy.runtime == "podman"
         assert cfg.autonomy.image == "docker.io/library/alpine:3.21"
+
+    def test_shipped_mcp_servers_empty(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
+        assert cfg.mcp.servers == {}
+
+    def test_omitted_mcp_defaults_empty(self, tmp_path: Path) -> None:
+        data = yaml.safe_load(default_config_yaml())
+        assert isinstance(data, dict)
+        data.pop("mcp", None)
+        cfg = load_config(_write_config(tmp_path, yaml.safe_dump(data)))
+        assert cfg.mcp.servers == {}
 
     def test_computer_use_command_accepts_string_or_list(self) -> None:
         assert ComputerUseConfig(command="python -m tst_cu_mcp").command == ("python -m tst_cu_mcp")

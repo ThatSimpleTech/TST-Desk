@@ -19,23 +19,26 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
+	import { commands, loadCommands } from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
-	import type { AttachmentLimits } from "../../protocol";
+	import type { AttachmentLimits, CommandEntry } from "../../protocol";
 	import { grok, matchingGrokCommands, runGrokCommand } from "../../grok.svelte.js";
 	import { session } from "../../session-status.svelte.js";
-	import { settings } from "../../settings.svelte.js";
-	import { appendTranscript, canDictate, dictationHint, osDictationAvailable } from "../../voice";
-	import { beginDictation, endDictation, voice } from "../../voice.svelte.js";
+	import { filterCommands, insertCommandBody, mergeSlashItems, slashQuery } from "../../slash-commands";
+	import { stack } from "../../stack-store.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
+	import DictationButton from "./DictationButton.svelte";
+	import SlashPalette from "./SlashPalette.svelte";
 
 	let {
 		disabled = false,
 		running = false,
 		value = $bindable(""),
 		limits,
+		allowImages = false,
 		onsubmit,
 		oncancel,
 	}: {
@@ -47,6 +50,8 @@
 		value?: string;
 		/** The workspace's caps, from `boundary_update` (TD-1709). */
 		limits: AttachmentLimits;
+		/** Active tier accepts images (TD-4705), from `tier_state`. */
+		allowImages?: boolean;
 		onsubmit: (text: string, attachments: readonly AttachmentDraft[]) => void;
 		oncancel?: () => void;
 	} = $props();
@@ -59,6 +64,26 @@
 	let refusal: AttachmentRefusal | null = $state(null);
 	let dragging = $state(false);
 	let nextAttachmentId = 0;
+	let slashIndex = $state(0);
+	let slashDismissed = $state(false);
+
+	const query = $derived(slashQuery(value));
+	const paletteOpen = $derived(query !== null && !slashDismissed);
+	const slashItems = $derived(mergeSlashItems(commands.items, stack.skills));
+	const visibleCommands = $derived(query === null ? [] : filterCommands(slashItems, query));
+
+	$effect(() => {
+		void visibleCommands.length;
+		slashIndex = 0;
+	});
+
+	let lastQuery: string | null = null;
+	$effect(() => {
+		if (query !== lastQuery) {
+			lastQuery = query;
+			slashDismissed = false;
+		}
+	});
 
 	// Re-measure on every edit; cap growth at MAX_ROWS lines.
 	$effect(() => {
@@ -80,7 +105,7 @@
 		refusal = null;
 		for (const file of files) {
 			const bytes = new Uint8Array(await file.arrayBuffer());
-			const outcome = acceptAttachment(file.name, bytes, limits, attachments);
+			const outcome = acceptAttachment(file.name, bytes, limits, attachments, allowImages);
 			if (!outcome.ok) {
 				refusal = outcome.refusal;
 				return;
@@ -143,26 +168,6 @@
 	}
 
 	let slashHits = $derived(value.startsWith("/") ? matchingGrokCommands(value) : []);
-	let dictateOk = $derived(
-		canDictate({
-			enabled: settings.voiceEnabled,
-			osAvailable: osDictationAvailable(),
-			hasEndpoint: settings.voiceHasEndpoint,
-		}),
-	);
-
-	function holdMic(event: PointerEvent): void {
-		if (!dictateOk || disabled) return;
-		event.preventDefault();
-		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-		beginDictation((spoken) => {
-			value = appendTranscript(value, spoken);
-		});
-	}
-
-	function releaseMic(): void {
-		endDictation();
-	}
 
 	function pickSlash(name: string): void {
 		if (session.sessionId === null) {
@@ -176,16 +181,65 @@
 		refusal = null;
 	}
 
+	function applyCommand(command: CommandEntry, send: boolean): void {
+		if (command.too_large) return;
+		value = insertCommandBody(value, command.body);
+		if (send) submit();
+	}
+
+	function handleFocus(): void {
+		const path = session.workspacePath;
+		if (path !== null) loadCommands(path);
+	}
+
 	function handleKeydown(event: KeyboardEvent): void {
 		if (slashHits.length > 0 && event.key === "Tab") {
 			event.preventDefault();
 			pickSlash(slashHits[0].name);
 			return;
 		}
+		if (paletteOpen) {
+			if (event.key === "ArrowDown") {
+				event.preventDefault();
+				if (visibleCommands.length === 0) return;
+				slashIndex = (slashIndex + 1) % visibleCommands.length;
+				return;
+			}
+			if (event.key === "ArrowUp") {
+				event.preventDefault();
+				if (visibleCommands.length === 0) return;
+				slashIndex = (slashIndex - 1 + visibleCommands.length) % visibleCommands.length;
+				return;
+			}
+			if (event.key === "Escape") {
+				event.preventDefault();
+				slashDismissed = true;
+				return;
+			}
+			if (event.key === "Enter" && !event.shiftKey) {
+				event.preventDefault();
+				const chosen = visibleCommands[slashIndex];
+				if (chosen === undefined) return;
+				applyCommand(chosen, event.metaKey || event.ctrlKey);
+				return;
+			}
+		}
 		if (shouldSubmit(event.key, event.shiftKey)) {
 			event.preventDefault();
 			submit();
 		}
+	}
+
+	function appendDictation(text: string): void {
+		const piece = text.trim();
+		if (!piece) return;
+		const cur = value;
+		if (!cur) {
+			value = piece;
+			return;
+		}
+		const sep = /[\s\n]$/.test(cur) ? "" : " ";
+		value = `${cur}${sep}${piece}`;
 	}
 </script>
 
@@ -227,6 +281,15 @@
 				onremove={removeAttachment}
 			/>
 		{/if}
+		{#if paletteOpen}
+			<SlashPalette
+				items={visibleCommands}
+				selectedIndex={slashIndex}
+				oninsert={(command) => applyCommand(command, false)}
+				onsend={(command) => applyCommand(command, true)}
+				onhover={(index) => (slashIndex = index)}
+			/>
+		{/if}
 		<div class="row">
 			<textarea
 				bind:this={textarea}
@@ -235,9 +298,14 @@
 				{disabled}
 				placeholder={disabled ? "Waiting for a session…" : "Message the agent…"}
 				aria-label="Message composer"
+				aria-expanded={paletteOpen}
+				aria-controls={paletteOpen ? "slash-list" : undefined}
+				aria-autocomplete="list"
 				onkeydown={handleKeydown}
 				onpaste={handlePaste}
+				onfocus={handleFocus}
 			></textarea>
+			<DictationButton {disabled} ontranscript={appendDictation} />
 			<input
 				bind:this={picker}
 				type="file"
@@ -257,26 +325,6 @@
 			>
 				<Icon name="paperclip" size={16} />
 			</button>
-			{#if settings.voiceEnabled}
-				<button
-					type="button"
-					class="attach"
-					class:listening={voice.listening}
-					disabled={disabled || !dictateOk}
-					title={dictationHint({
-						enabled: settings.voiceEnabled,
-						osAvailable: osDictationAvailable(),
-						hasEndpoint: settings.voiceHasEndpoint,
-					})}
-					aria-label="Hold to talk"
-					aria-pressed={voice.listening}
-					onpointerdown={holdMic}
-					onpointerup={releaseMic}
-					onpointercancel={releaseMic}
-				>
-					<Icon name="mic" size={16} />
-				</button>
-			{/if}
 			{#if running && !disabled}
 				<button
 					type="button"
@@ -303,8 +351,6 @@
 	</div>
 	{#if refusal !== null}
 		<p class="refusal" role="alert">{refusal.message}</p>
-	{:else if voice.error !== null}
-		<p class="refusal" role="alert">{voice.error}</p>
 	{:else}
 		<p class="disclaimer">TST Desk can make mistakes — check its work.</p>
 	{/if}

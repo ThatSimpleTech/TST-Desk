@@ -13,7 +13,7 @@ from typing import Any
 
 from .permissions import normalize_cu_platform, windows_report
 from .permissions_linux import linux_report
-from .protocol import TINY_PNG, DesktopError, window_matches
+from .protocol import TINY_PNG, DesktopError, scripted_ax_hit_node, window_matches
 
 
 class MockDesktopDriver:
@@ -57,7 +57,20 @@ class MockDesktopDriver:
     async def set_overlay_session(self, active: bool) -> None:
         self.calls.append(("overlay_session", {"active": bool(active)}))
 
+    def _refuse_if_wayland(self) -> None:
+        if normalize_cu_platform(self.platform) != "linux":
+            return
+        if self.session_type != "wayland":
+            return
+        raise DesktopError(
+            DesktopError.WAYLAND,
+            "Linux computer-use is X11 only (TD-2002); "
+            "session_type='wayland' is not supported. "
+            "An XWayland DISPLAY is not a substitute for native Wayland apps.",
+        )
+
     def _refuse_if_denied(self) -> None:
+        self._refuse_if_wayland()
         if self.secure_desktop_blocked:
             raise DesktopError(
                 DesktopError.SECURE_DESKTOP,
@@ -170,6 +183,12 @@ class MockDesktopDriver:
         self._guard(expect_window, actuating=True)
         self._record("scroll", True, dx=dx, dy=dy, x=x, y=y, expect_window=expect_window)
         return json.dumps({"scrolled": {"dx": dx, "dy": dy}})
+
+    async def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        # Observe only: the kill-switch must not blind Design mode.
+        self._refuse_if_denied()
+        self._record("hit_test", False, x=x, y=y)
+        return scripted_ax_hit_node(x, y)
 
     async def aclose(self) -> None:
         return None

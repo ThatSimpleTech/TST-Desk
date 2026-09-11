@@ -74,7 +74,7 @@ def build(triple: str) -> Path:
             "--noconfirm",
         ]
         for src, dest in DATAS:
-            cmd += ["--add-data", f"{src}:{dest}"]
+            cmd += ["--add-data", f"{src}{os.pathsep}{dest}"]
         cmd.append(str(ENTRY))
         subprocess.run(cmd, check=True, cwd=CORE)
         # PyInstaller appends .exe on Windows, and Tauri's externalBin
@@ -137,7 +137,9 @@ def _identity_available(name: str) -> bool:
 
 
 def _parent_pid(pid: int) -> int | None:
-    """Best-effort ppid via `ps`. None if the process is gone."""
+    """Best-effort ppid. None if the process is gone."""
+    if sys.platform == "win32":
+        return _win_parent_pid(pid)
     proc = subprocess.run(
         ["ps", "-o", "ppid=", "-p", str(pid)],
         capture_output=True,
@@ -154,6 +156,53 @@ def _parent_pid(pid: int) -> int | None:
     except ValueError:
         return None
     return parsed if parsed > 0 else None
+
+
+def _win_parent_pid(pid: int) -> int | None:
+    """Parent pid via Toolhelp32 — ``wmic`` is gone on current Windows runners."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = (
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        )
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32NextW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return None
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        if not kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+            return None
+        while True:
+            if int(entry.th32ProcessID) == pid:
+                parent = int(entry.th32ParentProcessID)
+                return parent if parent > 0 else None
+            if not kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                return None
+    finally:
+        kernel32.CloseHandle(snap)
 
 
 def _is_descendant(ancestor: int, pid: int) -> bool:
@@ -175,10 +224,16 @@ def _is_descendant(ancestor: int, pid: int) -> bool:
 
 def _reap_group(proc: subprocess.Popen[bytes]) -> None:
     """Kill the sidecar's process group so a onefile grandchild cannot linger."""
-    if proc.pid:
+    if proc.pid and sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
+    elif proc.pid:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
+        except (ProcessLookupError, PermissionError, OSError, AttributeError):
             proc.kill()
     try:
         proc.wait(timeout=10.0)
@@ -189,7 +244,7 @@ def _reap_group(proc: subprocess.Popen[bytes]) -> None:
 
 def smoke(binary: Path) -> float:
     """Launch the bundle like the shell does; return seconds to port.json."""
-    with tempfile.TemporaryDirectory(prefix="tstd-smoke-") as data_dir:
+    with tempfile.TemporaryDirectory(prefix="tstd-smoke-", ignore_cleanup_errors=True) as data_dir:
         started = time.monotonic()
         proc = subprocess.Popen(
             [str(binary), "--data-dir", data_dir, "--log-level", "INFO"],

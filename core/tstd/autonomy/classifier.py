@@ -12,11 +12,15 @@ the *obvious* cases — the ones that must never reach the model:
 - any path outside the workspace → C, always
 - a network call to a host outside the allowlist → C
 - a write to a steering file (``AGENTS.md`` / ``CLAUDE.md`` /
-  ``.tst/rules/**``, and the signed charter at
-  ``.tst/autonomy/CHARTER.md`` — TD-4001) → C, even inside the workspace
+  ``.tst/rules/**``, slash-command trees ``.tst/commands/**`` /
+  ``.claude/commands/**`` — TD-4501, any ``SKILL.md`` — TD-4502, and the
+  signed charter at ``.tst/autonomy/CHARTER.md`` — TD-4001) → C, even
+  inside the workspace
 - a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
 - an in-workspace edit inside ``writable_paths`` → A
+- an MCP tool with no declared path or host metadata → B, never A
+  (TD-4402; even if ``side_effect_class`` was reset to ``auto``)
 
 Anything the table cannot decide is left unclassified so the worker-tier
 classifier (TD-703) can handle it, defaulting to **B** — fail toward
@@ -57,8 +61,18 @@ class DecisionClass(StrEnum):
 
 # ── Boundary and request models ────────────────────────────────────────
 
-_STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md"})
+_STEERING_BASENAMES = frozenset({"AGENTS.md", "CLAUDE.md", "SKILL.md"})
 _STEERING_RULES_DIR_PARTS = (".tst", "rules")
+# Slash-command trees (TD-4501). Same Class C refusal as steering so the
+# model sees one read-only rule. ``.tstdesk/commands`` covers a
+# writable_paths hole that could reach the user-global tree.
+_COMMAND_DIR_PAIRS = frozenset(
+    {
+        (".tst", "commands"),
+        (".claude", "commands"),
+        (".tstdesk", "commands"),
+    }
+)
 _MEMORY_DIR_PARTS = (".tst", "memory")
 # The approval policy lives here (spec §6). Not a steering file by name,
 # but a write to it rewrites the guardrails — the self-escalation the
@@ -134,6 +148,11 @@ class DecisionRequest:
             every grant; ``ask`` is at least B via the terminal floor
             rule, so specific grants (memory, in-workspace edit) keep
             their deliberate class.
+        provenance: Copied from ``Tool.provenance``. MCP tools are
+            ``mcp:<server-id>`` (TD-4402). Builtins leave this ``None``.
+        has_path_host_metadata: ``True`` when the tool declared
+            ``path_fields``, ``host_fields``, or a ``host_resolver``.
+            An MCP tool without that declaration cannot be Class A.
     """
 
     tool_name: str
@@ -144,6 +163,8 @@ class DecisionRequest:
     is_mutation: bool = False
     actuates: bool | None = None
     side_effect_class: str = "auto"
+    provenance: str | None = None
+    has_path_host_metadata: bool = False
 
 
 # ── Rule table ─────────────────────────────────────────────────────────
@@ -257,18 +278,32 @@ def is_memory_write(boundary: Boundary, path: Path) -> bool:
     return relative[-1].upper() not in {s.upper() for s in _STEERING_BASENAMES}
 
 
+def _has_command_dir(parts: Sequence[str]) -> bool:
+    """Whether *parts* contain a reserved slash-command directory pair."""
+    folded = _fold(parts)
+    return any((folded[i], folded[i + 1]) in _COMMAND_DIR_PAIRS for i in range(len(folded) - 1))
+
+
 def is_steering_write(boundary: Boundary, path: Path) -> bool:
     """Whether *path* is a write target the daemon refuses (prime §2.4).
 
-    Steering files — ``AGENTS.md``, ``CLAUDE.md``, anything under
-    ``.tst/rules/``, the approval policy at ``.tst/config.yaml``
-    (TD-4803), and the signed charter at ``.tst/autonomy/CHARTER.md``
-    (TD-4001; spec §12.4) — are read-only to the agent,
-    unconditionally.  The charter's own directory stays otherwise
-    writable: ``DECISIONS.md`` there is the ledger the loop appends to.
-    ``.tst/memory/`` is the carve-out (TD-2102); never fold it into
-    ``.tst/**``.  Directory comparisons case-fold (TD-4804): see ``_fold``.
+    Steering files — ``AGENTS.md``, ``CLAUDE.md``, any ``SKILL.md``
+    (TD-4502), anything under
+    ``.tst/rules/``, slash-command trees (``.tst/commands/``,
+    ``.claude/commands/``, and ``.tstdesk/commands/`` — TD-4501), the
+    approval policy at ``.tst/config.yaml`` (TD-4803), and the signed
+    charter at ``.tst/autonomy/CHARTER.md`` (TD-4001; spec §12.4) — are
+    read-only to the agent, unconditionally.  The charter's own
+    directory stays otherwise writable: ``DECISIONS.md`` there is the
+    ledger the loop appends to.  ``.tst/memory/`` is the carve-out
+    (TD-2102); never fold it into ``.tst/**``.  Directory comparisons
+    case-fold (TD-4804): see ``_fold``.
     """
+    # Full-path pair check first so ~/.tstdesk/commands is refused even
+    # when the workspace wall would otherwise treat it as outside (a
+    # writable_paths hole) or when relative_parts is empty.
+    if _has_command_dir(path.parts):
+        return True
     relative = relative_parts(path, boundary.workspace_root) if boundary.workspace_root else []
     if not relative:
         return False
@@ -280,6 +315,8 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     if _fold(relative) == _POLICY_FILE_PARTS:
         return True
     if _fold(relative) == _CHARTER_FILE_PARTS:
+        return True
+    if _has_command_dir(relative):
         return True
     return _fold(relative[:2]) == _STEERING_RULES_DIR_PARTS
 
@@ -431,6 +468,23 @@ def _rule_shell_floor(req: DecisionRequest, _boundary: Boundary) -> bool:
     return req.tool_name == "shell"
 
 
+def _rule_mcp_undeclared_fields(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """MCP tools with no declared path/host metadata are never Class A.
+
+    Missing ``path_fields`` and ``host_fields`` (and no ``host_resolver``)
+    fail toward B, even if someone re-registers the tool as
+    ``side_effect_class="auto"`` so the ask floor would not fire.  The
+    worker must not grant A either — this is a static match, not a
+    fall-through.  Declared host/path metadata leaves the rule silent so
+    ``network-new-host`` and in-workspace writes still apply.  Computer-use
+    tools are ``tstd.desktop``, not ``mcp:`` provenance.
+    """
+    provenance = req.provenance
+    if provenance is None or not provenance.startswith("mcp:"):
+        return False
+    return not req.has_path_host_metadata
+
+
 def _rule_memory_write(req: DecisionRequest, boundary: Boundary) -> bool:
     """The call writes only under ``.tst/memory/`` (Class A, TD-2102)."""
     return (
@@ -502,7 +556,7 @@ RULE_TABLE: tuple[Rule, ...] = (
     ),
     Rule(
         id="steering-file-write",
-        description="action writes a steering file (AGENTS.md/CLAUDE.md/.tst/rules)",
+        description="action writes a steering, slash-command, or SKILL.md file",
         decision_class=DecisionClass.C,
         match=_rule_steering_write,
     ),
@@ -539,6 +593,16 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="shell commands always require approval (never model-granted A)",
         decision_class=DecisionClass.B,
         match=_rule_shell_floor,
+    ),
+    # Before every A grant: an MCP tool that never declared path/host
+    # metadata must not be laundered into A by in-workspace-edit (if
+    # writes were smuggled onto the request) or by the worker tier
+    # (TD-4402).  C rules above still win — never, caps, new hosts.
+    Rule(
+        id="mcp-undeclared-fields",
+        description="MCP tool with no declared path or host metadata — never model-granted A",
+        decision_class=DecisionClass.B,
+        match=_rule_mcp_undeclared_fields,
     ),
     Rule(
         id="memory-file-write",

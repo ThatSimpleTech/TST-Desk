@@ -63,6 +63,16 @@ class TestStore:
             save_workspace_memory(tmp_path, "topic.md", "new\n", 200)
         assert not (memory_dir(tmp_path) / "topic.md").exists()
 
+    def test_pane_save_may_replace_at_cap(self, tmp_path: Path) -> None:
+        """Human correction is not fs_write. Distill and the pane may replace at cap."""
+        root = memory_dir(tmp_path)
+        root.mkdir(parents=True)
+        target = root / "MEMORY.md"
+        target.write_text("a\nb\nc\n", encoding="utf-8")
+        written = save_workspace_memory(tmp_path, "MEMORY.md", "short\n", 3)
+        assert written == target
+        assert target.read_text(encoding="utf-8") == "short\n"
+
 
 class TestDaemon:
     async def test_save_writes_and_lists(self, tmp_path: Path) -> None:

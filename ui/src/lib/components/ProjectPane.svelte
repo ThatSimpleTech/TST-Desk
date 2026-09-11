@@ -4,7 +4,8 @@
 	// Rail Projects lands here instead of the title-bar recents menu.
 	// Selecting a row shows a home: folder name, New chat (`new_session`
 	// in that workspace), and recents filtered to that path. Columns
-	// Context is a later story. Memory is TD-2601.
+	// Context is a later story. Memory is the project-home column (TD-2601),
+	// not a rail row.
 	import EmptyState from './EmptyState.svelte';
 	import Icon from './Icon.svelte';
 	import { workspaceName } from '../session-status.svelte.js';
@@ -24,13 +25,15 @@
 	} from '../projects';
 	import { setWorkspacePin } from '../workspaces.svelte.js';
 	import {
-		ROW_STATE_LABELS,
+		ACTIVITY_LABELS,
+		activityTone,
+		liveActivity,
 		newSessionInWorkspace,
 		recencyLabel,
 		rowTitle,
+		rowTitleFull,
 		selectRow,
 		sessions,
-		stateTone,
 	} from '../sessions.svelte.js';
 	import { toggleArchivedView } from '../session-actions.svelte.js';
 	import { archivedToggle } from '../rail';
@@ -164,11 +167,15 @@
 							{#each recents as row (row.sessionId)}
 								<li>
 									<button class="card" type="button" onclick={() => openRecent(row.sessionId)}>
-										<span class="dot dot-{stateTone(row.state)}" aria-hidden="true"></span>
+										<span
+											class="dot dot-{activityTone(liveActivity(row))}"
+											class:dot-live={liveActivity(row) === 'working'}
+											aria-hidden="true"
+										></span>
 										<span class="card-text">
-											<span class="card-name">{rowTitle(row)}</span>
+											<span class="card-name" title={rowTitleFull(row)}>{rowTitle(row)}</span>
 											<span class="card-path"
-												>{ROW_STATE_LABELS[row.state]} · {recencyLabel(row.updatedAt)}</span
+												>{ACTIVITY_LABELS[liveActivity(row)]} · {recencyLabel(row.updatedAt)}</span
 											>
 										</span>
 									</button>
@@ -409,5 +416,25 @@
 	}
 	.dot-muted {
 		background: var(--color-ink-muted);
+	}
+
+	.dot-live {
+		animation: dot-pulse 1.4s ease-in-out infinite;
+	}
+
+	@keyframes dot-pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.4;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.dot-live {
+			animation: none;
+		}
 	}
 </style>

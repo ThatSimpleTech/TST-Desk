@@ -34,6 +34,7 @@ from tstd.autonomy.runner import (
     should_notify,
     stop_reason,
 )
+from tstd.autonomy.supervisor import maybe_check_drift
 from tstd.autonomy.worker import AmbiguousClassifier
 from tstd.boundary_config import BoundaryConfig, CapsSection
 from tstd.daemon import Daemon
@@ -53,12 +54,13 @@ def make_charter(
     wall_clock_hours: float = 8.0,
     definition_of_done: list[str] | None = None,
     allowed_commands: list[str] | None = None,
+    source_of_truth: list[str] | None = None,
 ) -> Charter:
     return Charter.model_validate(
         {
             "objective": "Ship the CSV importer",
             "definition_of_done": definition_of_done or ["The suite is green"],
-            "source_of_truth": [],
+            "source_of_truth": source_of_truth or [],
             "boundary": {
                 "writable_paths": ["**"],
                 "allowed_commands": allowed_commands or ["echo"],
@@ -121,6 +123,63 @@ class TestScheduler:
         assert session.autonomy_stop_reason is not None
         assert session.autonomy_stop_reason.startswith("iteration cap")
 
+    async def test_advance_hooks_supervisor_every_n(self, tmp_path: Path) -> None:
+        session = Session(str(tmp_path))
+        session.autonomy = True
+        session.charter = make_charter(max_iterations=20)
+        session.autonomy_check_every = 5
+        prompts: list[str] = []
+
+        async def _validator(prompt: str) -> str:
+            prompts.append(prompt)
+            return '{"serves_objective": true, "class_a_drifted": false, "progress_real": true}'
+
+        session.validator_call = _validator
+        for _ in range(4):
+            assert await advance_autonomy(session) is True
+        assert prompts == []
+        assert await advance_autonomy(session) is True
+        assert len(prompts) == 1
+        assert session.last_drift_check is not None
+        assert session.last_drift_check.serves_objective is True
+
+    async def test_advance_hooks_supervisor_on_class_b(self, tmp_path: Path) -> None:
+        session = Session(str(tmp_path))
+        session.autonomy = True
+        session.charter = make_charter(max_iterations=20)
+        session.autonomy_class_b = True
+        calls = 0
+
+        async def _validator(_prompt: str) -> str:
+            nonlocal calls
+            calls += 1
+            return "YES\nNO\nYES"
+
+        session.validator_call = _validator
+        assert await advance_autonomy(session) is True
+        assert session.autonomy_turns == 1
+        assert calls == 1
+        assert session.autonomy_class_b is False
+        assert session.last_drift_check is not None
+        assert session.last_drift_check.progress_real is True
+
+    async def test_interactive_advance_helper_never_checks(self, tmp_path: Path) -> None:
+        session = Session(str(tmp_path))
+        session.autonomy = False
+        session.charter = make_charter(max_iterations=20)
+        session.autonomy_turns = 5
+        session.autonomy_class_b = True
+        called = False
+
+        async def _validator(_prompt: str) -> str:
+            nonlocal called
+            called = True
+            return "YES\nNO\nYES"
+
+        session.validator_call = _validator
+        assert await maybe_check_drift(session) is None
+        assert called is False
+
 
 # ── Loop ─────────────────────────────────────────────────────────────────
 
@@ -148,6 +207,8 @@ class TestUnattendedLoop:
         follow = [m.content for m in brain[1].messages if m.role == "user"]
         assert any(c is not None and CONTINUE_PREFIX in c for c in follow)
         assert notified  # iteration cap notifies
+        assert any("iteration cap" in n for n in notified)
+        assert any("Branch:" in n for n in notified)
         assert session.autonomy_stop_reason is not None
         assert session.autonomy_stop_reason.startswith("iteration cap")
 
@@ -238,7 +299,8 @@ class TestUnattendedLoop:
         await wait_for_state(session, "complete")
         assert session.autonomy_class_c
         assert session.autonomy_stop_reason == CLASS_C_STOP
-        assert notified == [CLASS_C_STOP]
+        assert any(CLASS_C_STOP in n for n in notified)
+        assert any("Branch:" in n for n in notified)
         assert (ws / "AGENTS.md").read_text(encoding="utf-8") == "# hi\n"
         assert not runner.is_running
 
@@ -257,7 +319,8 @@ class TestUnattendedLoop:
         await session.add_user_message(first_prompt(charter))
         await wait_for_state(session, "complete")
         assert session.state != "paused"
-        assert any(n.startswith("spend cap") for n in notified)
+        assert any("spend cap" in n for n in notified)
+        assert any("Branch:" in n for n in notified)
         assert not runner.is_running
 
 
@@ -273,7 +336,7 @@ class TestLaunch:
         async def _idle(session: Session, *_args: object, **_kwargs: object) -> None:
             content = await session.wait_for_user_message()
             if content is not None:
-                seen.append(content)
+                seen.append(content.display)
 
         monkeypatch.setattr("tstd.daemon.agent_loop", _idle)
         daemon = Daemon(data_dir=tmp_path / "data")

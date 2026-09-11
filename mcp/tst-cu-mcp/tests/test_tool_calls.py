@@ -172,6 +172,7 @@ class TestToolCatalogue:
             "launch_app",
             "hide_other_apps",
             "unhide_apps",
+            "hit_test",
         }
 
     async def test_the_episode_bracket_is_not_offered_to_the_model(self) -> None:

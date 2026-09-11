@@ -25,6 +25,7 @@ from tstd.desktop import (
     McpDesktopDriver,
     MockDesktopDriver,
     driver_for_command,
+    scripted_ax_hit_node,
     window_matches,
 )
 from tstd.desktop.protocol import TINY_PNG_B64
@@ -300,6 +301,32 @@ class TestNoPathGuard:
         assert guard.seen == []
 
 
+class TestWaylandRefuse:
+    async def test_click_does_not_actuate(self, tmp_path: Path) -> None:
+        driver = MockDesktopDriver(platform="linux", session_type="wayland")
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        result = await dispatcher.dispatch("c1", "desktop_click", {"x": 1, "y": 2})
+        assert result.status == "error"
+        assert result.error_code == DesktopError.WAYLAND
+        assert driver.actuations == []
+        assert driver.calls == []
+
+    async def test_screenshot_does_not_capture(self, tmp_path: Path) -> None:
+        driver = MockDesktopDriver(platform="linux", session_type="wayland")
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        result = await dispatcher.dispatch("c1", "desktop_screenshot", {})
+        assert result.status == "error"
+        assert result.error_code == DesktopError.WAYLAND
+        assert driver.calls == []
+
+    async def test_x11_session_still_actuates(self, tmp_path: Path) -> None:
+        driver = MockDesktopDriver(platform="linux", session_type="x11")
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        result = await dispatcher.dispatch("c1", "desktop_click", {"x": 1, "y": 2})
+        assert result.status == "success"
+        assert driver.actuations == ["click"]
+
+
 class TestLinuxAndLivePath:
     def test_empty_command_is_mock(self) -> None:
         assert isinstance(driver_for_command(""), MockDesktopDriver)
@@ -351,6 +378,27 @@ class TestLinuxAndLivePath:
             assert exc.value.code == "focus_mismatch"
         finally:
             await driver.aclose()
+
+    async def test_hit_test_is_observe_only_on_live_path(self) -> None:
+        class _Client:
+            async def call_tool(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
+                assert name == "hit_test"
+                assert arguments["coordinate_space"] == "image"
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                scripted_ax_hit_node(float(arguments["x"]), float(arguments["y"]))
+                            ),
+                        }
+                    ]
+                }
+
+        driver = McpDesktopDriver(["/bin/false"], platform="linux", client=_Client())  # type: ignore[arg-type]
+        driver.set_killed(True)
+        node = await driver.hit_test(12.0, 34.0)
+        assert node == scripted_ax_hit_node(12.0, 34.0)
 
     def test_desktop_package_does_not_bind(self) -> None:
         root = Path(__file__).resolve().parents[1] / "tstd" / "desktop"

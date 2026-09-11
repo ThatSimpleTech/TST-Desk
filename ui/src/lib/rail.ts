@@ -37,7 +37,8 @@ export interface RailEntry {
  *
  * Home, Projects, Artifacts, and Scheduled trade `current` / `ready` so
  * the rail is honest about which pane the window is showing (TD-2801 /
- * TD-3202 / TD-3805).
+ * TD-3202 / TD-3805). Memory is the project-home column, not a fifth
+ * function row (TD-2601).
  */
 export function railFunctions(current: RailSurface = "home"): RailEntry[] {
 	return [
@@ -212,6 +213,7 @@ export type RailRowActionId =
 	| "archive"
 	| "unarchive"
 	| "move"
+	| "open-window"
 	| "delete";
 
 export interface RailRowAction {
@@ -287,6 +289,13 @@ export function rowActions(archived: boolean, starred = false): RailRowAction[] 
 					hint: "Hide this session from the list. Keeps everything, cancels nothing.",
 				},
 		{ id: "move", label: "Move to project", icon: "folder", danger: false, hint: MOVE_HINT },
+		{
+			id: "open-window",
+			label: "Open in new window",
+			icon: "layers",
+			danger: false,
+			hint: "Open this session in a separate window. One daemon serves both.",
+		},
 		{
 			id: "delete",
 			label: "Delete",

@@ -5,6 +5,9 @@ Routing rules (TD-303):
 - Validator is invoked on demand only (never scheduled in v0.1).
 - Worker may escalate back to brain after ``failure_threshold`` consecutive failures.
 - Runtime override via ``set_tier`` persists until changed or cleared.
+- Plan mode (TD-4603) forces brain on every turn until cleared. ``set_tier``
+  to worker or validator is refused while it is on; ``set_tier("brain")``
+  is accepted as a no-op so autonomy revert stays legal.
 """
 
 from __future__ import annotations
@@ -16,6 +19,10 @@ TIER_NAMES: tuple[TierName, ...] = ("brain", "worker", "validator")
 
 LEAD_TURNS_DEFAULT = 2
 FAILURE_THRESHOLD_DEFAULT = 3
+
+
+class PlanModeError(ValueError):
+    """``set_tier`` tried to leave brain while plan mode is on."""
 
 
 class TierRouter:
@@ -51,6 +58,9 @@ class TierRouter:
         self._override: TierName | None = None
         self._last_tier: TierName = "brain"
         self._escalated: bool = False
+        # TD-4603: in-memory only. Revive builds a fresh router; neither
+        # override nor plan is persisted.
+        self._plan_mode: bool = False
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -59,11 +69,15 @@ class TierRouter:
         """The tier that should handle the current (or next) turn.
 
         Priority:
-        1. Explicit override (set_tier)
-        2. Escalation (worker -> brain after repeated failures)
-        3. Lead turns (brain for first N turns)
-        4. Default fallback (worker)
+        1. Plan mode (forces brain until cleared)
+        2. Explicit override (set_tier)
+        3. Escalation (worker -> brain after repeated failures)
+        4. Lead turns (brain for first N turns)
+        5. Default fallback (worker)
         """
+        if self._plan_mode:
+            return "brain"
+
         if self._override is not None:
             return self._override
 
@@ -140,13 +154,27 @@ class TierRouter:
         return False
 
     def set_tier(self, tier: TierName) -> None:
-        """Override the active tier. Takes effect on the next turn."""
+        """Override the active tier. Takes effect on the next turn.
+
+        While plan mode is on, worker and validator are refused. Brain is
+        accepted (a no-op for routing) so autonomy revert stays legal.
+        """
         if tier not in TIER_NAMES:
             raise ValueError(f"Invalid tier: {tier!r}. Must be one of {TIER_NAMES}")
+        if self._plan_mode and tier != "brain":
+            raise PlanModeError("Plan mode is on; only the brain tier is allowed")
         self._override = tier
 
+    def set_plan(self, on: bool) -> None:
+        """Turn plan mode (brain lock) on or off."""
+        self._plan_mode = on
+
     def clear_override(self) -> None:
-        """Remove a runtime override, returning to normal routing."""
+        """Remove a runtime override, returning to normal routing.
+
+        Plan mode is unchanged: clearing a pin cannot drop to worker
+        while the lock is on.
+        """
         self._override = None
 
     @property
@@ -160,6 +188,11 @@ class TierRouter:
         normally."""
         return self._override
 
+    @property
+    def plan_mode(self) -> bool:
+        """Whether plan mode is locking every turn to brain (TD-4603)."""
+        return self._plan_mode
+
     def reset(self) -> None:
         """Reset the router to its initial state (for a new session)."""
         self._turn_count = 0
@@ -167,6 +200,7 @@ class TierRouter:
         self._override = None
         self._last_tier = "brain"
         self._escalated = False
+        self._plan_mode = False
 
     # ── Serialization / inspection ────────────────────────────────────
 
@@ -180,4 +214,5 @@ class TierRouter:
             "failure_threshold": self._failure_threshold,
             "override": self._override,
             "escalated": self._escalated,
+            "plan_mode": self._plan_mode,
         }

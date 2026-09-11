@@ -19,6 +19,14 @@ from tstd.scheduler.runner import RecordingDeliver, run_due_jobs, run_turn_on_da
 from tstd.scheduler.schedule import advance_job, due_jobs, next_run_after
 from tstd.scheduler.store import list_jobs, save_job
 
+_SCHED_FIXTURE_ROOT = Path(__file__).resolve().parent / "_sched_fixture_ws"
+
+
+def _fixture_ws(name: str = "ws") -> Path:
+    path = (_SCHED_FIXTURE_ROOT / name).resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 
 def _now() -> datetime:
     return datetime(2026, 8, 21, 15, 0, tzinfo=UTC)
@@ -80,28 +88,28 @@ async def _stop_daemon(daemon: Daemon, task: asyncio.Task[None]) -> None:
 
 
 def test_paused_is_never_due() -> None:
-    job = _job(Path("/ws"), job_id="p", paused=True)
+    job = _job(_fixture_ws(), job_id="p", paused=True)
     assert due_jobs([job], _now()) == []
 
 
 def test_future_next_run_is_not_due() -> None:
-    job = _job(Path("/ws"), job_id="f", next_run="2026-08-21T16:00:00+00:00")
+    job = _job(_fixture_ws(), job_id="f", next_run="2026-08-21T16:00:00+00:00")
     assert due_jobs([job], _now()) == []
 
 
 def test_past_next_run_is_due() -> None:
-    job = _job(Path("/ws"), job_id="d", next_run="2026-08-21T12:00:00+00:00")
+    job = _job(_fixture_ws(), job_id="d", next_run="2026-08-21T12:00:00+00:00")
     assert [item.id for item in due_jobs([job], _now())] == ["d"]
 
 
 def test_cadence_only_is_not_due_until_armed() -> None:
-    job = _job(Path("/ws"), job_id="c", cadence="every 1 hour", next_run=None)
+    job = _job(_fixture_ws(), job_id="c", cadence="every 1 hour", next_run=None)
     assert due_jobs([job], _now()) == []
 
 
 def test_overdue_interval_advances_once_from_now() -> None:
     job = _job(
-        Path("/ws"),
+        _fixture_ws(),
         job_id="h",
         cadence="every 1 hour",
         next_run="2026-08-21T12:00:00+00:00",
@@ -113,7 +121,7 @@ def test_overdue_interval_advances_once_from_now() -> None:
 
 
 def test_one_shot_pauses() -> None:
-    job = _job(Path("/ws"), job_id="once", cadence=None, next_run="2026-08-21T12:00:00+00:00")
+    job = _job(_fixture_ws(), job_id="once", cadence=None, next_run="2026-08-21T12:00:00+00:00")
     advanced = advance_job(job, _now())
     assert advanced.paused is True
     assert advanced.cadence is None
@@ -196,9 +204,10 @@ def test_sunday_is_both_zero_and_seven() -> None:
 
 
 def test_job_may_carry_cadence_and_next_run() -> None:
+    ws_one = _fixture_ws("one")
     job = Job(
         id="both",
-        workspace="/ws/one",
+        workspace=str(ws_one),
         instruction="ping",
         cadence="every 1 hour",
         next_run="2026-08-21T16:00:00+00:00",
@@ -209,10 +218,11 @@ def test_job_may_carry_cadence_and_next_run() -> None:
 
 
 def test_draft_create_still_rejects_both() -> None:
+    ws_one = _fixture_ws("one")
     with pytest.raises(Exception, match="not both"):
         validate_draft(
             JobDraft(
-                workspace="/ws/one",
+                workspace=str(ws_one),
                 instruction="ping",
                 cadence="every 1 hour",
                 next_run="2026-08-21T16:00:00+00:00",
@@ -636,6 +646,35 @@ async def _echo_turn(workspace: Path, message: str) -> str:
     return f"echo: {message}"
 
 
+@pytest.mark.parametrize(
+    ("channel", "module"),
+    [("slack", "tstd.notify.slack.send"), ("ntfy", "tstd.notify.ntfy.send")],
+)
+async def test_daemon_default_hook_calls_real_send(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    channel: str,
+    module: str,
+) -> None:
+    """Production Daemon() must not skip Slack/ntfy (TD-3804)."""
+    sent: list[str] = []
+
+    async def fake_send(config: object, message: str, **_kwargs: object) -> None:
+        sent.append(message)
+
+    monkeypatch.setattr(module, fake_send)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    workspace = _workspace(tmp_path)
+    save_job(data_dir, _job(workspace, job_id=f"prod-{channel}", deliver_to=channel))
+    mock = MockProvider(default=Script(kind="stream", content="done"))
+    daemon = Daemon(data_dir=data_dir, provider=mock)
+    daemon.config = make_config()
+    await daemon.run_due_jobs(_now())
+    assert sent == ["done"]
+    assert daemon._scheduler_deliver.records == [(channel, "done")]
+
+
 async def test_ntfy_without_send_is_recorded_not_http(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -722,8 +761,13 @@ async def test_daemon_tick_on_start_revives_once(tmp_path: Path) -> None:
         assert len(mock.calls) == 1
         stored = get_only(data_dir)
         assert stored.next_run is not None
-        when = datetime.fromisoformat(stored.next_run)
-        assert when > datetime.now(UTC)
+        # Persist happens before notify, but wait on the stored slot so a
+        # slow Windows flush cannot observe the overdue next_run.
+        for _ in range(80):
+            if due_jobs(list_jobs(data_dir), datetime.now(UTC)) == []:
+                break
+            await asyncio.sleep(0.05)
+        assert due_jobs(list_jobs(data_dir), datetime.now(UTC)) == []
     finally:
         await _stop_daemon(daemon, task)
 

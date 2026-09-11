@@ -35,13 +35,22 @@ from .autonomy import (
     DecisionClassifier,
     DecisionLedger,
 )
+from .autonomy.breakers import record_autonomy_round
 from .autonomy.checkpoint import auto_branch
 from .autonomy.dod import make_dod_poller
-from .autonomy.runner import advance_autonomy, should_notify
+from .autonomy.runner import advance_autonomy
+from .autonomy.supervisor import attach_drift_check
+from .autonomy.verify import (
+    clear_turn_writes,
+    maybe_verify_after_turn,
+    note_tool_result,
+)
+from .autonomy.wakeup import deliver_wakeup
 from .compaction import maybe_compact
 from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
+from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
@@ -51,6 +60,7 @@ from .local_worker import (
     effective_tier,
     mark_cu_tool,
     session_is_cu_heavy,
+    titlebar_hosts,
     titlebar_slugs,
 )
 from .logging import get_logger
@@ -60,6 +70,8 @@ from .protocol import (
     AssistantDelta,
     AssistantReasoning,
     ContextCompacted,
+    DaemonEvent,
+    DecisionLogged,
     RuleActivated,
     SteeringReloaded,
     TierState,
@@ -77,6 +89,7 @@ from .provider import (
     ProviderError,
     StreamChunk,
     Usage,
+    content_as_text,
 )
 from .provider import (
     ToolCall as ProviderToolCall,
@@ -85,7 +98,7 @@ from .provider import (
     ToolDefinition as ProviderToolDefinition,
 )
 from .router import TierName, TierRouter
-from .session import Session
+from .session import Session, SessionEventLog
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.dispatch import build_decision_request
@@ -489,7 +502,23 @@ async def _dispatch_and_append_results(
                 tool_call_id=r.tool_call_id,
             )
         )
+        note_tool_result(session, r.name, r.status, diff=r.diff, output=r.output)
+    record_autonomy_round(session, dispatch_items, results)
     await session.conversation_changed()
+
+
+async def dispatch_worker_child_tools(
+    dispatcher: ToolDispatcher,
+    session: Session,
+    items: list[tuple[str, str, dict[str, Any]]],
+) -> list[Any]:
+    """Run child-worker tools through the same classifier gate (TD-4602).
+
+    Lives here so the chokepoint inventory keeps seeing ``dispatch_many``
+    only in ``loop.py`` / ``dispatch.py`` / ``dod.py``.  Results stay on
+    *session* (the transient child), not the parent timeline.
+    """
+    return await dispatcher.dispatch_many(items, session)
 
 
 async def agent_loop(
@@ -604,7 +633,7 @@ async def agent_loop(
             tracker.record_classifier("worker", resp.usage, worker_cfg)
             # Classifier / DoD cost shows up in the meter too (TD-1006).
             await session.event_log.add(tracker.emit_cost_update(session.id))
-        return resp.message.content or ""
+        return content_as_text(resp.message.content)
 
     # Decision classifier chokepoint (TD-702/703, prime §2.6).  Every tool
     # call routes through it: the static rule table first; ambiguous cases
@@ -675,10 +704,23 @@ async def agent_loop(
             ask_worker=_worker_completion,
         )
 
+    if session.autonomy:
+
+        async def _note_class_b(event: DaemonEvent, _log: SessionEventLog) -> None:
+            if isinstance(event, DecisionLogged) and event.decision_class == "B":
+                session.autonomy_class_b = True
+
+        session.event_log.subscribe(_note_class_b)  # type: ignore[arg-type]
+        attach_drift_check(session, config=config, client_for=client_for, tracker=tracker)
+
     # Pre-compute tool definitions if we have a registry
     tool_definitions: list[ProviderToolDefinition] | None = None
     if tool_registry is not None:
         tool_definitions = tool_registry.to_provider_definitions()
+        if session.delegate_depth >= 1:
+            tool_definitions = [
+                d for d in tool_definitions if d.function is None or d.function.name != "delegate"
+            ]
 
     # Tracks the last steering prefix hash for change detection (TD-509).
     _last_prefix_hash: str | None = None
@@ -695,6 +737,19 @@ async def agent_loop(
     _session_start = time.time()
     _iterations = 0
 
+    # TD-4602: bind the parent host so ``delegate`` can run a worker child
+    # against this loop's provider, dispatcher, and remaining caps.
+    if tool_dispatcher is not None:
+        from .tools.delegate import DelegateRuntime
+
+        session.delegate_runtime = DelegateRuntime(
+            provider_factory=client_for,
+            config=config,
+            dispatcher=tool_dispatcher,
+            assembler=assembler,
+            session_start=_session_start,
+        )
+
     # Tier visibility (TD-1006): slugs for the wire, and the last tier the
     # UI was told about so tier_state only fires on change.  Filled once
     # slug resolution has run (TD-1805), so the title bar is never told a
@@ -702,13 +757,23 @@ async def agent_loop(
     _model_slugs: dict[str, str] = {}
     _last_reported_tier: TierName | None = None
     _last_reported_slugs: dict[str, str] | None = None
+    _last_reported_hosts: dict[str, str] | None = None
 
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:
         # 1. Wait for user input
-        user_content = await session.wait_for_user_message()
-        if user_content is None:
+        queued = await session.wait_for_user_message()
+        if queued is None:
             break  # session was cancelled
+        apply_slash_skill(session, queued.display)
+
+        # TD-1721: a preset switch while idle is applied on this turn.
+        if session.config is not None:
+            config = session.config
+            tracker.bind_config(config)
+            runtime = session.delegate_runtime
+            if runtime is not None:
+                runtime.config = config
 
         # Turn observability (TD-1713): mark the dequeue itself. The
         # existing "turn start" log lands after prompt assembly, so a
@@ -721,16 +786,16 @@ async def agent_loop(
             extra={
                 "session_id": session.id,
                 "queued_messages": session.pending_user_messages,
-                "content_length": len(user_content),
+                "content_length": len(queued.display),
             },
         )
 
-        messages.append(ChatMessage(role="user", content=user_content))
+        messages.append(ChatMessage(role="user", content=queued.provider))
         await session.event_log.add(
             UserTurn(
                 session_id=session.id,
                 turn_id=str(uuid.uuid4()),
-                content=user_content,
+                content=queued.display,
                 seq=1,
             )
         )
@@ -744,6 +809,7 @@ async def agent_loop(
         #     accounting is untouched — the ledger row and the cost_update
         #     ride on ``record()``, once per call (TD-1804).
         tracker.begin_turn()
+        clear_turn_writes(session)
         turn_start = time.time()
 
         # 1b. Resolve any tier that leaves its slug unset (TD-1805).  This
@@ -817,19 +883,29 @@ async def agent_loop(
                     )
                     break
             _model_slugs = titlebar_slugs(config, cu_heavy=cu_heavy)
-            if tier != _last_reported_tier or _model_slugs != _last_reported_slugs:
+            _hosts = titlebar_hosts(config, cu_heavy=cu_heavy)
+            if (
+                tier != _last_reported_tier
+                or _model_slugs != _last_reported_slugs
+                or _hosts != _last_reported_hosts
+            ):
                 _last_reported_tier = tier
                 _last_reported_slugs = _model_slugs
-                # TD-1006: tell the title bar which tier (and slug) is
-                # live — lead-turns handoffs and failure escalations
-                # included, not just manual set_tier overrides. Slug
-                # changes (TD-3903 remap) also emit so the chip stays honest.
+                _last_reported_hosts = _hosts
+                tier_cfg = effective_tier(config, tier, cu_heavy=cu_heavy)
+                # TD-1006 / TD-1720: tell the title bar which tier, slug,
+                # and host are live. Host changes (credential remap, CU
+                # worker) also emit so the pill stays honest.
                 await session.event_log.add(
                     TierState(
                         session_id=session.id,
                         tier=tier,
                         override=router.override,
                         model_slugs=_model_slugs,
+                        preset=config.active_preset,
+                        hosts=_hosts,
+                        plan=router.plan_mode,
+                        vision=tier_cfg.vision,
                         seq=1,
                     )
                 )
@@ -846,7 +922,7 @@ async def agent_loop(
                 if tier == "brain":
                     loaded = await load_memory_for_turn(
                         session.workspace_path,
-                        user_content,
+                        queued.display,
                         embeddings_client,
                         load_global=session.load_global_memory,
                     )
@@ -862,12 +938,13 @@ async def agent_loop(
                     project_context = ctx.block
                 assembled = await assembler.assemble(
                     tier,
-                    task=user_content if tier == "worker" else None,
+                    task=queued.display if tier == "worker" else None,
                     matched_paths=set(session.touched_paths),
                     memory=memory_block,
                     project_context=project_context if tier == "brain" else None,
                     approved_imports=frozenset(approved_imports),
                     denied_imports=frozenset(denied_imports),
+                    loaded_skills=list(session.loaded_skills),
                 )
                 pending = [p for p in assembled.steering.pending_imports if p not in denied_imports]
                 if not pending:
@@ -958,6 +1035,8 @@ async def agent_loop(
                         last_cached_tokens=tracker.last_cached_prompt_tokens,
                         cache_observed=tracker.cache_observed,
                         memory=session.last_memory,
+                        skills=list_workspace_skills(session.workspace_path),
+                        loaded_skill_names=session.loaded_skills,
                     )
                 )
                 log.info(
@@ -1082,8 +1161,7 @@ async def agent_loop(
                     break
                 if session.autonomy:
                     session.autonomy_stop_reason = violation
-                    if session.autonomy_notify is not None and should_notify(violation):
-                        await session.autonomy_notify(violation)
+                    await deliver_wakeup(session)
                     return
                 log.warning(
                     "cap pause",
@@ -1097,6 +1175,8 @@ async def agent_loop(
                 await session.pause_at_cap(violation)
                 await session.wait_for_resume()
             _iterations += 1
+            if session.delegate_runtime is not None:
+                session.delegate_runtime.iterations = _iterations
 
             # 2d. Call provider (streaming)
             collected_content, tool_calls, failed, error_msg, error_code = await _stream_and_parse(
@@ -1237,6 +1317,7 @@ async def agent_loop(
 
             # 2h. No tool calls (or no dispatcher) — turn is complete
             await _emit_turn_complete(session, tier, turn_start, tracker)
+            await maybe_verify_after_turn(session, config, tracker, client_for, assembler)
             session.snapshot_branches()
             if session.autonomy and not await advance_autonomy(session):
                 return

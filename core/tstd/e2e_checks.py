@@ -37,6 +37,7 @@ from typing import Any
 from .audit import AuditStore
 from .audit_queries import cost_by_session
 from .e2e_plan import HarnessPlan, RecordingProvider
+from .provider import content_as_text
 
 # The tool call the pass is about, and the file it must leave behind.
 # Both plans script the same task, so this is a fact about the harness
@@ -143,7 +144,7 @@ def _check_steering(result: HarnessResult, provider: RecordingProvider) -> None:
     if provider.calls:
         first = provider.calls[0]
         if first.messages and first.messages[0].role == "system":
-            first_system = first.messages[0].content or ""
+            first_system = content_as_text(first.messages[0].content)
     _check(
         result,
         "steering resolved",

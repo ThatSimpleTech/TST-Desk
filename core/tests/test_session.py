@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+from tests.platform_helpers import outside_workspace_path
 from tstd.protocol import AssistantDelta
 from tstd.protocol import SessionState as SessionStateEvent
 from tstd.session import Session, SessionError, SessionEventLog, SessionRegistry, SessionRunner
@@ -52,6 +53,15 @@ class TestSessionEventLog:
         await log.add(AssistantDelta(session_id="s", delta="a", seq=1))
         assert log.last_seq == 1
         await log.add(AssistantDelta(session_id="s", delta="b", seq=1))
+        assert log.last_seq == 2
+
+    def test_replace_orders_by_seq_not_file_order(self) -> None:
+        """Revive must not replay jsonl insertion order (Windows persist race)."""
+        log = SessionEventLog()
+        first = AssistantDelta(session_id="s", delta="a", seq=1)
+        second = AssistantDelta(session_id="s", delta="b", seq=2)
+        log.replace([second, first])
+        assert [event.seq for event in log.events_from(1)] == [1, 2]
         assert log.last_seq == 2
 
     async def test_drop_before_matches_a_window_and_keeps_last_seq(self) -> None:
@@ -441,7 +451,7 @@ class TestRecordTouched:
 
     def test_absolute_outside_workspace_dropped(self, tmp_path) -> None:
         session = Session(str(tmp_path))
-        session.record_touched(["/etc/passwd"])
+        session.record_touched([outside_workspace_path()])
         assert session.touched_paths == set()
 
     def test_empty_and_repeat_records_idempotent(self, tmp_path) -> None:

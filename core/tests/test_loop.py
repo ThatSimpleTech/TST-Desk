@@ -395,6 +395,71 @@ class TestToolCalls:
 
         await runner.cancel()
 
+    async def test_plan_mode_dispatches_tools_and_records_brain_cost(self) -> None:
+        """Plan lock keeps brain past lead_turns; tools still run; meter is honest."""
+        session = Session("/tmp/ws")
+        router = TierRouter(lead_turns=1)
+        router.set_plan(True)
+        config = make_config()
+        registry = ToolRegistry()
+        registry.register(
+            Tool(
+                name="echo",
+                parameters={
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                },
+                side_effect_class="auto",
+                parallel_safe=True,
+            )
+        )
+        dispatcher = attach_auto_approver(ToolDispatcher(registry))
+
+        async def echo_handler(session, message, tool_call_id=""):
+            return f"Echo: {message}"
+
+        dispatcher.register_handler("echo", echo_handler)
+
+        mock = MockProvider(
+            sequences={
+                "test-brain": [
+                    Script(
+                        kind="tool_call",
+                        tool_name="echo",
+                        tool_arguments='{"message": "hi"}',
+                    ),
+                    Script(kind="stream", content="Done"),
+                    Script(kind="stream", content="Still brain"),
+                ]
+            }
+        )
+
+        factory = mock_factory(mock)
+        runner = SessionRunner(
+            session,
+            loop_factory=lambda s: agent_loop(
+                s, router, factory, config, tool_registry=registry, tool_dispatcher=dispatcher
+            ),
+        )
+        await runner.start()
+        await session.add_user_message("Say hi")
+        tc1 = await wait_for_turn(session, 1)
+        await session.add_user_message("Again")
+        tc2 = await wait_for_turn(session, 2)
+        await runner.cancel()
+
+        assert tc1.tier == "brain"
+        assert tc2.tier == "brain"
+        results = [e for e in session.event_log.all_events if isinstance(e, ToolResultEvent)]
+        assert results
+        assert session.cost_tracker is not None
+        by_tier = session.cost_tracker.cost_by_tier()
+        assert "brain" in by_tier
+        assert "worker" not in by_tier
+        assert mock.calls[0].model == "test-brain"
+        # Classifier calls may use worker; turn completions stay brain.
+
     async def test_tool_call_followed_by_text_turn(self) -> None:
         """Multi-turn: tool call turn, then a text turn, both succeed."""
         session = Session("/tmp/ws")

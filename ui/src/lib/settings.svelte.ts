@@ -13,17 +13,35 @@
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
 
-export type SettingsSection = "appearance" | "computer" | "engine" | "model" | "policy" | "key";
+export type SettingsSection =
+	| "appearance"
+	| "computer"
+	| "engine"
+	| "model"
+	| "policy"
+	| "mcp"
+	| "key"
+	| "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
 	"computer",
 	"engine",
 	"model",
 	"policy",
+	"mcp",
 	"key",
+	"about",
 ] as const;
 
 export type CuMode = "background" | "full_control";
+
+export type McpServerRow = {
+	id: string;
+	transport: "stdio" | "http";
+	command: string[];
+	url: string;
+	enabled: boolean;
+};
 
 export type Theme = "light" | "system" | "dark";
 export const THEMES: readonly Theme[] = ["light", "system", "dark"] as const;
@@ -65,8 +83,8 @@ export const settings = $state({
 	cuGlow: true,
 	/** Screen-pane agent cursor (TD-3402). Default on; from setup_state. */
 	cuAgentCursor: true,
-	/** Host overlay on the real display (TD-3402). Default off. */
-	cuShowOnRealDisplay: false,
+	/** Host overlay on the real display (TD-3402 addendum). Default on. */
+	cuShowOnRealDisplay: true,
 	/** Tailscale remote attach (TD-3603). Default off; from setup_state. */
 	remoteAttachEnabled: false,
 	/** Bound Tailscale address, never a token. */
@@ -85,6 +103,11 @@ export const settings = $state({
 	cuMode: "background" as CuMode,
 	cuUnhideOnFinish: true,
 	cuDeniedApps: [] as string[],
+	/** Listed MCP servers (TD-4403). From setup_state, never inferred. */
+	mcpServers: [] as McpServerRow[],
+	/** Hold-to-talk (TD-4701). From setup_state; the URL never arrives. */
+	speechEnabled: false,
+	speechReady: false,
 });
 
 let started = false;
@@ -124,7 +147,7 @@ export function resetSettings(): void {
 	settings.coworkerEnabled = true;
 	settings.cuGlow = true;
 	settings.cuAgentCursor = true;
-	settings.cuShowOnRealDisplay = false;
+	settings.cuShowOnRealDisplay = true;
 	settings.remoteAttachEnabled = false;
 	settings.remoteBind = null;
 	settings.engine = "native";
@@ -137,6 +160,9 @@ export function resetSettings(): void {
 	settings.cuMode = "background";
 	settings.cuUnhideOnFinish = true;
 	settings.cuDeniedApps = [];
+	settings.mcpServers = [];
+	settings.speechEnabled = false;
+	settings.speechReady = false;
 	started = false;
 }
 
@@ -160,7 +186,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.coworkerEnabled = event.coworker_enabled ?? true;
 		settings.cuGlow = event.cu_glow ?? true;
 		settings.cuAgentCursor = event.cu_agent_cursor ?? true;
-		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? false;
+		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? true;
 		settings.remoteAttachEnabled = event.remote_attach_enabled ?? false;
 		settings.remoteBind = event.remote_bind ?? null;
 		settings.engine = event.engine ?? "native";
@@ -173,6 +199,15 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuMode = event.cu_mode === "full_control" ? "full_control" : "background";
 		settings.cuUnhideOnFinish = event.cu_unhide_on_finish ?? true;
 		settings.cuDeniedApps = event.cu_denied_apps ?? [];
+		settings.mcpServers = (event.mcp_servers ?? []).map((row) => ({
+			id: row.id,
+			transport: row.transport,
+			command: row.command ?? [],
+			url: row.url ?? "",
+			enabled: row.enabled ?? true,
+		}));
+		settings.speechEnabled = event.speech_enabled ?? false;
+		settings.speechReady = event.speech_ready ?? false;
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -388,4 +423,33 @@ export function setCuPolicy(next: {
 		unhide_on_finish: next.unhideOnFinish ?? settings.cuUnhideOnFinish,
 		denied_apps: next.deniedApps ?? settings.cuDeniedApps,
 	});
+}
+
+// ── MCP servers (TD-4403) ────────────────────────────────────────────
+
+/** Persist one listed server. Command is argv tokens; there is no env. */
+export function saveMcpServer(server: McpServerRow): void {
+	const id = server.id.trim();
+	if (id === "") return;
+	sendToDaemon({
+		type: "set_mcp_server",
+		id,
+		transport: server.transport,
+		command: server.command,
+		url: server.url,
+		enabled: server.enabled,
+	});
+}
+
+/** Disable or re-enable a server the daemon already listed. */
+export function setMcpServerEnabled(id: string, enabled: boolean): void {
+	const row = settings.mcpServers.find((s) => s.id === id);
+	if (!row) return;
+	saveMcpServer({ ...row, enabled });
+}
+
+/** Remove a listed server. */
+export function deleteMcpServer(id: string): void {
+	if (id.trim() === "") return;
+	sendToDaemon({ type: "delete_mcp_server", id });
 }

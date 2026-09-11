@@ -434,6 +434,35 @@ def build_server() -> MCPServer:
                 get_overlay().end_session()
             return {"active": bool(active)}
 
+    @server.tool(
+        name="hit_test",
+        description=(
+            "Observe the accessibility node at a point (AX / UIA / AT-SPI). "
+            "Never moves the pointer and is not blocked by the kill-switch. "
+            "Coordinates match click: image space uses the last screenshot. "
+            "Internal TST Desk Design-mode path (TD-3406)."
+        ),
+        structured_output=False,
+    )
+    def hit_test(
+        x: float,
+        y: float,
+        coordinate_space: str = "image",
+        image_width: int | None = None,
+        image_height: int | None = None,
+        region: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        from tst_cu_mcp.hit_test import observe_at
+
+        return observe_at(
+            x,
+            y,
+            coordinate_space=coordinate_space,
+            image_width=image_width,
+            image_height=image_height,
+            region=region,
+        )
+
     return server
 
 

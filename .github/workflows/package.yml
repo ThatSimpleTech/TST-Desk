@@ -1,10 +1,12 @@
 name: Package
 
-# TD-1302: per-platform bundles.  Runs on main (keeps artifacts fresh) and
-# on demand.  TD-1303 builds the tagged-release publishing on top of this.
+# TD-1302: per-platform bundles. Not on push to main — two macOS legs
+# (arm64 + intel) bill at 10× and one green five-leg run is ~200
+# Linux-equivalent minutes. Rapid main merges with cancel-in-progress:
+# false queued overlapping matrices and exhausted the $20/month budget
+# (TD-4904). Build on demand, or when release.yml calls this from a
+# tstdesk-v* tag.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
   workflow_call: # TD-1303 release.yml reuses this matrix
 
@@ -27,10 +29,12 @@ jobs:
           # sidecar triple; artifact names follow tauri's bundle layout.
           - os: macos-latest # aarch64-apple-darwin
             platform: macos-arm64
-          - os: macos-13 # x86_64-apple-darwin (Intel runner)
+          - os: macos-15-intel # x86_64-apple-darwin (macos-13 retired Dec 2025)
             platform: macos-x86_64
           - os: ubuntu-latest # x86_64-unknown-linux-gnu
             platform: linux-x86_64
+          - os: ubuntu-24.04-arm # aarch64-unknown-linux-gnu (TD-4902)
+            platform: linux-aarch64
           - os: windows-latest # x86_64-pc-windows-msvc
             platform: windows-x86_64
     runs-on: ${{ matrix.os }}
@@ -46,7 +50,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -78,6 +82,7 @@ jobs:
         run: npm run tauri:build
         working-directory: ui
         env:
+          TAURI_APP_PATH: ../shell
           TAURI_BUNDLER_DMG_IGNORE_CI: "false"
 
       # The smoke test treats the runner as the clean machine: install the

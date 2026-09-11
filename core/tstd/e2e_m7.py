@@ -132,11 +132,14 @@ async def _stop_daemon(daemon: Daemon, task: asyncio.Task[None]) -> None:
         return
     daemon._shutdown_event.set()
     with contextlib.suppress(TimeoutError):
-        await asyncio.wait_for(task, timeout=10.0)
+        await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
     if not task.done():
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+    if daemon._audit_writer is not None:
+        await daemon._audit_writer.close()
+        daemon._audit_writer = None
 
 
 async def run_m7(workspace: Path, data_dir: Path) -> HarnessResult:
@@ -166,6 +169,14 @@ async def run_m7(workspace: Path, data_dir: Path) -> HarnessResult:
     try:
         hello = await _hello_loopback(data_dir)
         hosts = daemon.ws_server.bound_hosts
+        # The background scheduler loop also calls run_due_jobs; on Windows
+        # it can race the explicit runs below and deliver twice (TD-3806).
+        for task in list(daemon._tasks):
+            if not task.done():
+                task.cancel()
+        if daemon._tasks:
+            await asyncio.gather(*daemon._tasks, return_exceptions=True)
+            daemon._tasks.clear()
         _seed_job(data_dir, workspace)
         ran = await daemon.run_due_jobs(_NOW)
         again = await daemon.run_due_jobs(_NOW)

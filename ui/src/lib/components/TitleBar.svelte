@@ -1,13 +1,20 @@
 <script lang="ts">
-	// Title bar (TD-1006): workspace picker, the model chip with its tier
-	// menu, the live cost meter and its spend-against-cap bar, and the session
-	// state indicator. Presentational only — everything shown is reduced from
-	// daemon events via session-status; the UI never derives truth it wasn't
-	// given (AGENTS §6).
+	// Title bar (TD-1006, TD-1720, TD-1721, TD-4603): workspace picker,
+	// grok chip (or Plan lock + model chip), session preset, live model
+	// pill, cost meter, session state, and the boundary ("wall").
+	// Presentational only — everything shown is reduced from daemon events
+	// via session-status; the UI never derives a host from a slug.
 	//
 	// The picker and the meter own their own markup and styles in
 	// WorkspacePicker/CostMeter; what stays here is the row itself.
-	import { session, setTier, type SessionIndicator } from '../session-status.svelte.js';
+	import {
+		liveModelLabel,
+		session,
+		setPlan,
+		setSessionPreset,
+		setTier,
+		type SessionIndicator,
+	} from '../session-status.svelte.js';
 	import { settings } from '../settings.svelte.js';
 	import { grok, setGrokMode } from '../grok.svelte.js';
 	import { formatUsd } from '../cost-format.js';
@@ -74,6 +81,23 @@
 		tierMenuOpen = false;
 	}
 
+	const presetOptions = $derived(
+		session.preset && !settings.presets.includes(session.preset)
+			? [session.preset, ...settings.presets]
+			: settings.presets,
+	);
+	const liveLabel = $derived(liveModelLabel(session.tier, session.modelSlugs, session.hosts));
+	const liveTip = $derived(
+		[
+			session.preset ? `preset: ${session.preset}` : null,
+			`tier: ${session.tier}`,
+			session.modelSlugs[session.tier] ? `model: ${session.modelSlugs[session.tier]}` : null,
+			session.hosts[session.tier] ? `host: ${session.hosts[session.tier]}` : null,
+		]
+			.filter((line): line is string => line !== null)
+			.join('\n') || undefined,
+	);
+
 	// Spend against the cap, drawn as a bar so the eye reads it without
 	// arithmetic. Hours and iterations stay in the tooltip: they are limits
 	// nobody watches turn by turn.
@@ -123,7 +147,19 @@
 				</div>
 			{/if}
 		{:else}
-			<!-- Model chip + tier menu -->
+			<!-- Plan lock (TD-4603) + model chip with tier menu -->
+			<button
+				class="chip"
+				class:chip--active={session.planMode}
+				type="button"
+				aria-pressed={session.planMode}
+				title={session.planMode
+					? 'Plan mode on — every turn uses brain. Click to clear.'
+					: 'Plan mode — lock every turn to brain'}
+				onclick={() => setPlan(!session.planMode)}
+			>
+				Plan
+			</button>
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div class="model" bind:this={tierRoot} onkeydown={onTierKeydown}>
 				<button
@@ -152,6 +188,7 @@
 								role="menuitemradio"
 								aria-checked={session.tier === tier}
 								type="button"
+								disabled={session.planMode && tier !== 'brain'}
 								onclick={() => pickTier(tier)}
 							>
 								<span class="menu-tier">
@@ -167,6 +204,30 @@
 					</div>
 				{/if}
 			</div>
+		{/if}
+
+		{#if liveLabel}
+			<span class="live-model" title={liveTip} aria-label="Live model">{liveLabel}</span>
+		{/if}
+
+		{#if presetOptions.length > 0}
+			<select
+				class="preset-select"
+				aria-label="Session preset"
+				title={session.turnActive
+					? 'Cannot change preset while a turn is running'
+					: 'Preset for this session'}
+				value={session.preset}
+				disabled={session.turnActive}
+				onchange={(e) => {
+					const name = e.currentTarget.value;
+					if (name !== session.preset) setSessionPreset(name);
+				}}
+			>
+				{#each presetOptions as name (name)}
+					<option value={name}>{name}</option>
+				{/each}
+			</select>
 		{/if}
 
 		<CostMeter />
@@ -222,9 +283,14 @@
 			color var(--transition-fast);
 	}
 
-	.chip:hover {
+	.chip:hover:not(:disabled) {
 		border-color: var(--color-ink-muted);
 		color: var(--color-ink);
+	}
+
+	.chip:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
 	}
 
 	.chip--active {
@@ -260,6 +326,34 @@
 	.chip-caret {
 		display: inline-flex;
 		color: var(--color-ink-muted);
+	}
+
+	.preset-select {
+		max-width: 10rem;
+		font-size: var(--text-xs);
+		font-weight: var(--weight-medium);
+		color: var(--color-ink-secondary);
+		background: transparent;
+		border: var(--border-width) solid var(--color-hairline);
+		border-radius: var(--radius-full);
+		padding: var(--space-1) var(--space-2);
+		cursor: pointer;
+	}
+
+	.preset-select:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.live-model {
+		min-width: 0;
+		max-width: 22rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: var(--text-xs);
+		font-family: var(--font-mono);
+		color: var(--color-ink-secondary);
 	}
 
 	.pin {
@@ -307,6 +401,11 @@
 
 	.menu-item:hover {
 		background: var(--color-sunken);
+	}
+
+	.menu-item:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
 	}
 
 	.menu-item--active .menu-tier {

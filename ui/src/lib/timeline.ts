@@ -33,7 +33,8 @@ export type EntryKind =
   | "tier_switch"
   | "compaction"
   | "steering_reload"
-  | "error";
+  | "error"
+  | "verify";
 
 export interface TimelineEntry {
   /** Stable identity across re-renders: `${kind}:${seq}` (session-scoped). */
@@ -136,6 +137,20 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
           // The rule that fired (AC #5)
           why: event.why,
           commit: event.commit,
+        },
+      };
+    case "verify_result":
+      return {
+        id: `verify:${event.seq}`,
+        kind: "verify",
+        seq: event.seq,
+        title: event.pending ? "Verify pending" : `Verify ${event.verdict}`,
+        preview: event.summary,
+        details: {
+          verdict: event.verdict,
+          summary: event.summary,
+          cost: event.cost,
+          pending: event.pending ?? false,
         },
       };
     case "tier_switched":

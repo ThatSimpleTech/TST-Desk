@@ -161,6 +161,13 @@ describe("surfaces that can't be clicked", () => {
 		expect(entry("scheduled")?.state).toBe("ready");
 	});
 
+	it("does not put Memory on the rail (TD-2601)", () => {
+		const ids = railFunctions("home").map((e) => e.id);
+		expect(ids).not.toContain("memory");
+		expect(ids).toEqual(["home", "projects", "artifacts", "scheduled"]);
+		expect(railFunctions("home").every((e) => e.state !== "planned")).toBe(true);
+	});
+
 	it("marks Home current rather than a destination — the pane is already it", () => {
 		expect(entry("home")?.state).toBe("current");
 	});
@@ -259,17 +266,31 @@ describe("accountRow", () => {
 
 describe("rowActions", () => {
 	it("offers archive, move and delete on a live row", () => {
-		expect(rowActions(false).map((a) => a.id)).toEqual(["star", "rename", "archive", "move", "delete"]);
+		expect(rowActions(false).map((a) => a.id)).toEqual([
+			"star",
+			"rename",
+			"archive",
+			"move",
+			"open-window",
+			"delete",
+		]);
 	});
 
 	it("swaps archive for unarchive on a filed row, never both", () => {
 		const ids = rowActions(true).map((a) => a.id);
-		expect(ids).toEqual(["star", "rename", "unarchive", "move", "delete"]);
+		expect(ids).toEqual(["star", "rename", "unarchive", "move", "open-window", "delete"]);
 		expect(ids).not.toContain("archive");
 	});
 
 	it("swaps star for unstar on a starred row, never both", () => {
-		expect(rowActions(false, true).map((a) => a.id)).toEqual(["unstar", "rename", "archive", "move", "delete"]);
+		expect(rowActions(false, true).map((a) => a.id)).toEqual([
+			"unstar",
+			"rename",
+			"archive",
+			"move",
+			"open-window",
+			"delete",
+		]);
 		expect(rowActions(false, false).map((a) => a.id)).not.toContain("unstar");
 	});
 

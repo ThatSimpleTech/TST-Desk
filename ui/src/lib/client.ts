@@ -36,6 +36,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "approval_request",
   "decision_logged",
   "checkpoint_notice",
+  "verify_result",
   "cost_update",
   "boundary_update",
   "turn_complete",
@@ -46,10 +47,12 @@ const KNOWN_EVENT_TYPES = new Set([
   "tier_switched",
   "instruction_stack",
   "instruction_files",
+  "command_list",
   "context_pins",
   "memory_files",
   "charter",
   "autonomy_start",
+  "autonomy_summary", // TD-4303
   "memory_proposal",
   "session_list",
   "policy_rules", // TD-803: was missing; settings events arrived as unknown
@@ -65,17 +68,18 @@ const KNOWN_EVENT_TYPES = new Set([
   "error",
   "screen_frame", // TD-1710
   "cu_kill_state", // TD-3402 / TD-3404
-  "cu_session", // TD-3407: was missing; the Screen-pane glow never opened
+  "cu_session", // TD-3407: Screen-pane glow; was missing and the gate dropped it
   "design_hit", // TD-3403
   "cu_permissions", // TD-3302
   "job_list", // TD-3805
+  "job_draft", // TD-3803
   "grok_commands",
   "grok_plan",
   "grok_mode",
   "grok_preview",
   "grok_session_list",
   "grok_extensions",
-  "transcript",
+  "transcript", // TD-4701
 ]);
 
 /**
@@ -245,6 +249,26 @@ export class ProtocolClient {
     this.send({ type: "set_tier", session_id: sessionId, tier });
   }
 
+  /** Turn plan mode (brain lock) on or off (TD-4603). Acked with tier_state. */
+  setPlan(sessionId: string, on: boolean): void {
+    this.send({ type: "set_plan", session_id: sessionId, on });
+  }
+
+  /** Retarget this session at a catalog preset (TD-1721). Acked with session_list. */
+  setSessionPreset(sessionId: string, name: string): void {
+    this.send({ type: "set_session_preset", session_id: sessionId, name });
+  }
+
+  /** Confirm a pending interactive verify (TD-4204 ask mode). */
+  runVerify(sessionId: string): boolean {
+    return this.send({ type: "run_verify", session_id: sessionId });
+  }
+
+  /** Skip a pending interactive verify (TD-4204 ask mode). */
+  denyVerify(sessionId: string): boolean {
+    return this.send({ type: "deny_verify", session_id: sessionId });
+  }
+
   // ── Onboarding (TD-1101 first-run wizard) ───────────────────────────
 
   /** Ask for the setup state (key presence, presets). Replies with setup_state. */
@@ -265,6 +289,29 @@ export class ProtocolClient {
   /** Choose the active model preset. Acked with setup_state. */
   setPreset(name: string): void {
     this.send({ type: "set_preset", name });
+  }
+
+  /** Create or replace a listed MCP server. Acked with setup_state. */
+  setMcpServer(server: {
+    id: string;
+    transport: "stdio" | "http";
+    command?: string[];
+    url?: string;
+    enabled?: boolean;
+  }): void {
+    this.send({
+      type: "set_mcp_server",
+      id: server.id,
+      transport: server.transport,
+      command: server.command ?? [],
+      url: server.url ?? "",
+      enabled: server.enabled ?? true,
+    });
+  }
+
+  /** Remove a listed MCP server. Acked with setup_state. */
+  deleteMcpServer(id: string): void {
+    this.send({ type: "delete_mcp_server", id });
   }
 
   // ── Diagnostics (TD-1104 doctor) ────────────────────────────────────
@@ -450,6 +497,12 @@ export class ProtocolClient {
     // acceptSequenced would drop it after attach the same way it dropped
     // instruction_stack snapshots before TD-1204.
     if (type === "design_hit") {
+      this.dispatch(msg as DaemonEventUnion);
+      return;
+    }
+
+    // TD-4701: transcript is connection-scoped (seq=1, not in the log).
+    if (type === "transcript") {
       this.dispatch(msg as DaemonEventUnion);
       return;
     }

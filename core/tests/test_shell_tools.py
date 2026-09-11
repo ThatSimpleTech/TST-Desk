@@ -63,6 +63,37 @@ _ESCAPE_PROBE_CMD = (
     "wait"
 )
 
+# cmd.exe is the CREATE_NEW_PROCESS_GROUP leader (create_subprocess_shell).
+# This script is that cmd's powershell child. It records its own pid plus
+# a parked grandchild, then waits on the grandchild. The grandchild writes
+# kicked.txt only after release.txt exists — same release gate as POSIX
+# (TD-1409). Checking both pids is the Windows stand-in for killpg(0).
+# Do not look up the cmd parent via CIM: that WMI round-trip is slow and
+# flaky on hosted runners, and taskkill /T from the cmd pid already walks
+# this powershell and the Start-Process child.
+_WINDOWS_ESCAPE_PROBE_PS1 = """
+$child = Start-Process -PassThru -WindowStyle Hidden -FilePath powershell -ArgumentList @(
+    '-NoProfile', '-File', 'escape_grandchild.ps1'
+)
+Set-Content -Path pgid.txt -Value "$PID`n$($child.Id)"
+Wait-Process -Id $child.Id
+"""
+
+_WINDOWS_GRANDCHILD_PS1 = """
+while (-not (Test-Path release.txt)) { Start-Sleep -Milliseconds 50 }
+Set-Content kicked.txt x
+"""
+
+
+def _escape_probe(tmp_path: Path) -> str:
+    """Platform escape probe. Workspace is *tmp_path* (the shell cwd)."""
+    if sys.platform != "win32":
+        return _ESCAPE_PROBE_CMD
+    (tmp_path / "escape_probe.ps1").write_text(_WINDOWS_ESCAPE_PROBE_PS1, encoding="utf-8")
+    (tmp_path / "escape_grandchild.ps1").write_text(_WINDOWS_GRANDCHILD_PS1, encoding="utf-8")
+    return "powershell -NoProfile -File escape_probe.ps1"
+
+
 # macOS intermittently vetoes same-uid process-group kills with EPERM:
 # the refusal attaches to the group and no userspace retry or external
 # kill breaks it, so the command survives the whole test.  The product
@@ -70,29 +101,25 @@ _ESCAPE_PROBE_CMD = (
 # kill; only then are group-death assertions vacuous.
 _KILL_REFUSED = "kill refused"
 
-# TD-1406 gave Windows a tree kill — CREATE_NEW_PROCESS_GROUP at the spawn
-# and `taskkill /T /F` in `_kill_process_group` — but no Windows run has
-# executed it, and a process-tree kill means nothing until a real OS has
-# been asked to perform one.  The escape probe is also POSIX shell (`$$`,
-# `&`, `wait`), so unskipping needs a cmd/PowerShell equivalent as well as
-# a green Windows leg.  Kept a skip rather than a passing assertion so the
-# suite does not claim a guarantee nobody has observed.
-requires_posix_process_group = pytest.mark.skipif(
+# Kill-refusal tests patch ``os.killpg``, which does not exist as a
+# Windows tree-kill seam. Those stay POSIX-only. Live group-kill tests
+# use ``_escape_probe`` and run on Windows (TD-1406).
+requires_posix_killpg = pytest.mark.skipif(
     sys.platform == "win32",
-    reason=(
-        "TD-1406: the Windows tree kill (CREATE_NEW_PROCESS_GROUP + taskkill /T /F) is "
-        "implemented but unverified — no Windows run has exercised it, and the escape "
-        "probe is a POSIX shell command; unskip once a Windows leg confirms both"
-    ),
+    reason="TD-1406: kill-refusal tests patch os.killpg; Windows uses taskkill",
 )
 
 
-async def _wait_for_file(path: Path, seconds: float = 5.0) -> None:
+async def _wait_for_file(path: Path, seconds: float | None = None) -> None:
     """Poll for *path* to appear — the condition a fixed sleep approximates.
 
     Failing to appear within *seconds* means the command never started:
     a product failure worth failing the test for, not a flake to absorb.
+    Windows probes spawn a nested powershell; hosted runners need more
+    than the POSIX 5s for that to write pgid.txt (TD-1406).
     """
+    if seconds is None:
+        seconds = 15.0 if sys.platform == "win32" else 5.0
     deadline = asyncio.get_running_loop().time() + seconds
     while not await asyncio.to_thread(path.exists):
         if asyncio.get_running_loop().time() > deadline:
@@ -100,7 +127,7 @@ async def _wait_for_file(path: Path, seconds: float = 5.0) -> None:
         await asyncio.sleep(0.02)
 
 
-async def _assert_group_gone(tmp_path: Path, seconds: float = 5.0) -> None:
+async def _assert_group_gone(tmp_path: Path, seconds: float | None = None) -> None:
     """Assert the killed process group is gone (TD-1407).
 
     The condition the old kicked.txt + ``sleep 2`` marker approximated: a
@@ -114,27 +141,61 @@ async def _assert_group_gone(tmp_path: Path, seconds: float = 5.0) -> None:
     nothing was ever forked, so nothing could escape — the assertion is
     vacuous and passes by waiting the file out.
     """
+    if seconds is None:
+        seconds = 15.0 if sys.platform == "win32" else 5.0
     pgid_file = tmp_path / "pgid.txt"
     deadline = asyncio.get_running_loop().time() + seconds
     while not await asyncio.to_thread(pgid_file.exists):
         if asyncio.get_running_loop().time() > deadline:
             return
         await asyncio.sleep(0.02)
-    pgid = int((await asyncio.to_thread(pgid_file.read_text)).strip())
+    raw = await asyncio.to_thread(pgid_file.read_text)
+    pids = [int(token) for token in raw.split() if token.strip()]
     deadline = asyncio.get_running_loop().time() + seconds
     while True:
-        try:
-            os.killpg(pgid, 0)
-        except ProcessLookupError:
+        survivors = [pid for pid in pids if _pid_alive(pid)]
+        if not survivors:
             return
-        except PermissionError:
-            # Probing is still kill(2): a vetoed group reads alive.  We
-            # only probe on a reported-delivered kill, so this is out of
-            # model — treat it as alive and let the deadline decide.
-            pass
         if asyncio.get_running_loop().time() > deadline:
-            pytest.fail(f"process group {pgid} survived the reported kill — a grandchild escaped")
+            pytest.fail(
+                f"process group {pids} survived the reported kill — still alive: {survivors}"
+            )
         await asyncio.sleep(0.02)
+
+
+def _pid_alive(pid: int) -> bool:
+    """True when *pid* (POSIX pgid / Windows PID) still exists."""
+    if sys.platform == "win32":
+        return _windows_pid_alive(pid)
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Probing is still kill(2): a vetoed group reads alive.  We
+        # only probe on a reported-delivered kill, so this is out of
+        # model — treat it as alive and let the deadline decide.
+        return True
+    return True
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    """OpenProcess + STILL_ACTIVE. Import-safe off Windows."""
+    import ctypes
+
+    process_query_limited = 0x1000
+    still_active = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(process_query_limited, False, pid)
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return int(code.value) == still_active
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _python(code: str) -> str:
@@ -206,13 +267,12 @@ class TestWorkspaceCwd:
 
 
 class TestTimeoutAndGroupKill:
-    @requires_posix_process_group
     async def test_timeout_kills_process_group(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         start = asyncio.get_running_loop().time()
         result = await dispatcher.dispatch(
-            "c1", "shell", {"command": _ESCAPE_PROBE_CMD, "timeout_secs": 1}, session
+            "c1", "shell", {"command": _escape_probe(tmp_path), "timeout_secs": 1}, session
         )
         elapsed = asyncio.get_running_loop().time() - start
         assert result.status == "success"
@@ -247,12 +307,11 @@ class TestTimeoutAndGroupKill:
 
 
 class TestCancel:
-    @requires_posix_process_group
     async def test_cancel_kills_process_group(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         task = asyncio.create_task(
-            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
+            dispatcher.dispatch("c1", "shell", {"command": _escape_probe(tmp_path)}, session)
         )
         # Cancel only once the group provably exists — its leader wrote
         # its pgid — so this always exercises the mid-run cancel path.
@@ -275,7 +334,6 @@ class TestCancel:
         assert result.status == "success"
         assert result.output == "cancelled — command not started"
 
-    @requires_posix_process_group
     async def test_cancelled_error_path_kills_group(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -285,7 +343,7 @@ class TestCancel:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         task = asyncio.create_task(
-            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
+            dispatcher.dispatch("c1", "shell", {"command": _escape_probe(tmp_path)}, session)
         )
         # Cancel only once the group provably exists — never mid-spawn,
         # which is the next test's window.
@@ -297,7 +355,6 @@ class TestCancel:
             return  # the OS vetoed the kill; the command ran out
         await _assert_group_gone(tmp_path)
 
-    @requires_posix_process_group
     async def test_escape_writer_does_not_fire_on_a_clock(self, tmp_path: Path) -> None:
         """TD-1409: a ``sleep 2; touch kicked`` writer would produce the
         marker during a 3s delayed kill.  The release-gated writer must
@@ -305,7 +362,7 @@ class TestCancel:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         task = asyncio.create_task(
-            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
+            dispatcher.dispatch("c1", "shell", {"command": _escape_probe(tmp_path)}, session)
         )
         await _wait_for_file(tmp_path / "pgid.txt")
         # The old race window, plus margin.  If the writer is still a
@@ -325,7 +382,6 @@ class TestCancel:
         await asyncio.sleep(0.2)
         assert not (tmp_path / "kicked.txt").exists()
 
-    @requires_posix_process_group
     async def test_cancel_during_spawn_kills_group(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -344,7 +400,7 @@ class TestCancel:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
         task = asyncio.create_task(
-            dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
+            dispatcher.dispatch("c1", "shell", {"command": _escape_probe(tmp_path)}, session)
         )
         # Cancel only once the handler is provably inside the spawn.
         await entered.wait()
@@ -355,7 +411,7 @@ class TestCancel:
             return  # the OS vetoed the kill; the command ran out
         await _assert_group_gone(tmp_path)
 
-    @requires_posix_process_group
+    @requires_posix_killpg
     async def test_kill_refusal_reported_in_result(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -377,7 +433,7 @@ class TestCancel:
         assert _KILL_REFUSED in result.output
         assert "process group killed" not in result.output
 
-    @requires_posix_process_group
+    @requires_posix_killpg
     async def test_kill_refusal_on_task_cancel_logged(
         self,
         tmp_path: Path,

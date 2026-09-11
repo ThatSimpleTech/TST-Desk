@@ -122,6 +122,14 @@
     "type": "cancel",
     "session_id": "sess-1"
   },
+  "run_verify": {
+    "type": "run_verify",
+    "session_id": "sess-1"
+  },
+  "deny_verify": {
+    "type": "deny_verify",
+    "session_id": "sess-1"
+  },
   "attach": {
     "type": "attach",
     "session_id": "sess-1",
@@ -136,12 +144,26 @@
     "session_id": "sess-1",
     "tier": "brain"
   },
+  "set_plan": {
+    "type": "set_plan",
+    "session_id": "sess-1",
+    "on": true
+  },
+  "set_session_preset": {
+    "type": "set_session_preset",
+    "session_id": "sess-1",
+    "name": "budget"
+  },
   "get_instruction_stack": {
     "type": "get_instruction_stack",
     "session_id": "sess-1"
   },
   "list_instructions": {
     "type": "list_instructions",
+    "workspace_path": "/home/user/project"
+  },
+  "list_commands": {
+    "type": "list_commands",
     "workspace_path": "/home/user/project"
   },
   "list_memory": {
@@ -378,6 +400,22 @@
     "tier": "brain",
     "credential": "local"
   },
+  "set_mcp_server": {
+    "type": "set_mcp_server",
+    "id": "example",
+    "transport": "stdio",
+    "command": [
+      "python",
+      "-m",
+      "some_mcp"
+    ],
+    "url": "",
+    "enabled": true
+  },
+  "delete_mcp_server": {
+    "type": "delete_mcp_server",
+    "id": "example"
+  },
   "run_diagnostics": {
     "type": "run_diagnostics"
   },
@@ -567,6 +605,15 @@
     "code": "dirty_baseline",
     "message": "This workspace has uncommitted changes."
   },
+  "verify_result": {
+    "type": "verify_result",
+    "seq": 10,
+    "session_id": "sess-1",
+    "verdict": "pass",
+    "summary": "Diff matches the tests.",
+    "cost": 0.002,
+    "pending": false
+  },
   "cost_update": {
     "type": "cost_update",
     "seq": 11,
@@ -635,7 +682,15 @@
       "brain": "test-brain-slug",
       "worker": "test-worker-slug",
       "validator": "test-validator-slug"
-    }
+    },
+    "preset": "test",
+    "hosts": {
+      "brain": "mock.local",
+      "worker": "mock.local",
+      "validator": "mock.local"
+    },
+    "plan": false,
+    "vision": false
   },
   "tier_state_override": {
     "type": "tier_state",
@@ -647,7 +702,35 @@
       "brain": "test-brain-slug",
       "worker": "test-worker-slug",
       "validator": "test-validator-slug"
-    }
+    },
+    "preset": "test",
+    "hosts": {
+      "brain": "mock.local",
+      "worker": "mock.local",
+      "validator": "mock.local"
+    },
+    "plan": false,
+    "vision": false
+  },
+  "tier_state_plan": {
+    "type": "tier_state",
+    "seq": 20,
+    "session_id": "sess-1",
+    "tier": "brain",
+    "override": null,
+    "model_slugs": {
+      "brain": "test-brain-slug",
+      "worker": "test-worker-slug",
+      "validator": "test-validator-slug"
+    },
+    "preset": "test",
+    "hosts": {
+      "brain": "mock.local",
+      "worker": "mock.local",
+      "validator": "mock.local"
+    },
+    "plan": true,
+    "vision": false
   },
   "ping": {
     "type": "ping"
@@ -714,7 +797,16 @@
     "cache_observed": false,
     "memory": [],
     "memory_dropped": [],
-    "memory_placeholder": false
+    "memory_placeholder": false,
+    "skills": [
+      {
+        "name": "review",
+        "description": "Review a PR",
+        "source": "workspace",
+        "loaded": false,
+        "tokens": 40
+      }
+    ]
   },
   "charter": {
     "type": "charter",
@@ -759,6 +851,19 @@
     "error": null,
     "session_id": "sess-autonomy"
   },
+  "autonomy_summary": {
+    "type": "autonomy_summary",
+    "seq": 12,
+    "session_id": "sess-1",
+    "reason": "definition of done met",
+    "branch": "tst/auto/ship-the-csv-importer",
+    "ledger_path": ".tst/autonomy/DECISIONS.md",
+    "changed": [
+      "src/importer.py"
+    ],
+    "refusals": [],
+    "ledger_excerpt": "## 2026-08-26T12:00:00Z \u00b7 Class A \u00b7 commit abc123\n**Chose:** format\n**Why:** ruff"
+  },
   "memory_files": {
     "type": "memory_files",
     "seq": 1,
@@ -788,6 +893,20 @@
       }
     ],
     "created": null
+  },
+  "command_list": {
+    "type": "command_list",
+    "seq": 1,
+    "workspace_path": "/home/user/project",
+    "commands": [
+      {
+        "name": "review",
+        "description": "Review the current diff",
+        "source": "workspace",
+        "body": "Please review the staged changes.\n",
+        "too_large": false
+      }
+    ]
   },
   "context_pins": {
     "type": "context_pins",
@@ -836,7 +955,9 @@
         "event_count": 0,
         "archived": false,
         "starred": false,
-        "title": "hello world"
+        "title": "hello world",
+        "preset": "tst-default",
+        "busy": false
       },
       {
         "session_id": "sess-2",
@@ -847,7 +968,9 @@
         "event_count": 12,
         "archived": true,
         "starred": true,
-        "title": null
+        "title": null,
+        "preset": "",
+        "busy": false
       }
     ]
   },
@@ -914,7 +1037,22 @@
     "cu_enabled": true,
     "cu_mode": "background",
     "cu_unhide_on_finish": true,
-    "cu_denied_apps": []
+    "cu_denied_apps": [],
+    "mcp_servers": [
+      {
+        "id": "example",
+        "transport": "stdio",
+        "command": [
+          "python",
+          "-m",
+          "some_mcp"
+        ],
+        "url": "",
+        "enabled": true
+      }
+    ],
+    "speech_enabled": false,
+    "speech_ready": false
   },
   "api_key_validated": {
     "type": "api_key_validated",
@@ -1153,6 +1291,10 @@
     "type": "delete_job",
     "job_id": "job-1"
   },
+  "parse_job": {
+    "type": "parse_job",
+    "text": "every 2 hours in /ws/proj summarize the inbox deliver to slack"
+  },
   "job_list": {
     "type": "job_list",
     "seq": 1,
@@ -1171,6 +1313,18 @@
         "last_session_id": "sess-1"
       }
     ]
+  },
+  "job_draft": {
+    "type": "job_draft",
+    "seq": 1,
+    "ok": true,
+    "detail": "",
+    "workspace": "/ws/proj",
+    "instruction": "summarize the inbox",
+    "cadence": "every 2 hours",
+    "next_run": null,
+    "deliver_to": "slack",
+    "paused": false
   },
   "grok_commands": {
     "type": "grok_commands",
@@ -1231,7 +1385,9 @@
   "transcript": {
     "type": "transcript",
     "seq": 1,
+    "ok": true,
     "text": "hello from the mic",
+    "detail": "",
     "error": null
   },
   "grok_extensions": {

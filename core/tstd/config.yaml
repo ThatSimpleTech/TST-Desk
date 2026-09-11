@@ -275,23 +275,43 @@ remote:
   bind: ""
 
 # Rootless container for autonomous runs only (TD-4301). Interactive
-# sessions ignore this block. runtime is argv0 (PATH or an absolute
+# sessions ignore runtime and image. runtime is argv0 (PATH or an absolute
 # path). image is the tag the argv execs — never a Python literal.
 # A missing or rootful runtime refuses start with install copy.
+# check_every: validator drift check every N autonomy turns (TD-4201).
+# verify: interactive post-write review (TD-4204): off | after_write | ask.
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21
+  check_every: 5
+  verify: after_write
 
-# Slack incoming webhook (TD-3801) and ntfy topic POST (TD-3802). Off by
-# default. Destination URLs are keychain secrets (tst-slack-webhook,
-# tst-ntfy-topic), never this file. host is the only destination send()
-# may reach — set it to the URL's hostname when you enable a channel.
+# User-listed MCP servers (TD-4401). Empty is none — no doctor rows,
+# no dynamic discovery. HTTP urls must be loopback. No env: map
+# (tokens stay in the keychain; Settings is TD-4403).
+mcp:
+  servers: {}
+
+# Slack incoming webhook (TD-3801), ntfy (TD-3802), Discord and Telegram
+# (TD-4707). Off by default. Slack is the default channel. Destination
+# URLs are keychain secrets (tst-slack-webhook, tst-ntfy-topic,
+# tst-discord-webhook, tst-telegram-bot), never this file. host is the
+# only destination send() may reach — set it to the URL's hostname when
+# you enable a channel. There is no 20-platform gateway.
 notify:
   slack:
     enabled: false
     host: ""
     timeout_seconds: 5
   ntfy:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  discord:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  telegram:
     enabled: false
     host: ""
     timeout_seconds: 5
@@ -314,3 +334,14 @@ voice:
   base_url: ""
   credential: ""
   timeout_seconds: 30
+
+# Hold-to-talk (TD-4701). Off by default. There is no cloud speech URL.
+# Set base_url to an OpenAI-compatible transcriptions root (include /v1),
+# typically a loopback whisper server. Optional credential is a named
+# keychain id; the secret is never this file.
+speech:
+  enabled: false
+  base_url: ""
+  model: ""
+  timeout_seconds: 30
+  credential: ""

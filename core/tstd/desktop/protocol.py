@@ -28,6 +28,7 @@ class DesktopError(Exception):
     PERMISSION_DENIED = "permission_denied"
     UIPI = "uipi"
     SECURE_DESKTOP = "secure_desktop"
+    WAYLAND = "wayland"
     # First-run / Settings reopen: TCC deny or a Windows integrity refuse.
     REOPEN_CODES = frozenset({PERMISSION_DENIED, UIPI, SECURE_DESKTOP})
 
@@ -92,5 +93,28 @@ class DesktopDriver(Protocol):
     async def check_permissions(self) -> dict[str, Any]:
         """Probe capture/input status. Must not prompt or hang."""
 
+    async def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        """Observe the AX / UIA / AT-SPI node at a frame pixel. Never actuates.
+
+        Kill-switch must not block this — same contract as screenshot.
+        """
+
     async def aclose(self) -> None:
         """Reap a sidecar if this driver owns one."""
+
+
+def scripted_ax_hit_node(x: float, y: float) -> dict[str, Any]:
+    """CI / mock desktop node for Design mode (TD-3406). Capture never actuates."""
+    ix, iy = int(x), int(y)
+    return {
+        "xpath": None,
+        "role": "AXButton",
+        "attributes": {
+            "AXTitle": "Mock",
+            "AXIdentifier": "mock-target",
+            "data-x": str(ix),
+            "data-y": str(iy),
+        },
+        "box": {"x": x - 20.0, "y": y - 10.0, "width": 80.0, "height": 24.0},
+        "styles": {},
+    }

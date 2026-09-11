@@ -22,7 +22,9 @@
 	import PolicyRuleList from './PolicyRuleList.svelte';
 	import SettingsKeys from './SettingsKeys.svelte';
 	import SettingsEngine from './SettingsEngine.svelte';
+	import SettingsMcp from './SettingsMcp.svelte';
 	import SettingsModels from './SettingsModels.svelte';
+	import SettingsAbout from './SettingsAbout.svelte';
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
 	import CuPolicyPane from './CuPolicyPane.svelte';
 	import Icon from './Icon.svelte';
@@ -33,7 +35,9 @@
 		engine: 'Engine',
 		model: 'Model',
 		policy: 'Policy',
+		mcp: 'MCP servers',
 		key: 'API keys',
+		about: 'About',
 	};
 
 	function pick(next: SettingsSection): void {
@@ -159,6 +163,10 @@
 					<SettingsModels />
 				{:else if settings.section === 'policy'}
 					<PolicyRuleList sessionId={session.sessionId} />
+				{:else if settings.section === 'mcp'}
+					<SettingsMcp />
+				{:else if settings.section === 'about'}
+					<SettingsAbout />
 				{:else}
 					<SettingsKeys />
 				{/if}

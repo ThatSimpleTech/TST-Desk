@@ -15,15 +15,27 @@ import tstd.keychain as kc_mod
 import tstd.keychain_macos as keychain_macos  # must import off-macOS
 import tstd.keychain_windows as keychain_windows  # must import off-Windows
 from tstd.keychain import (
+    DISCORD_WEBHOOK_ACCOUNT,
     KeychainBackend,
     KeychainError,
     KeychainLockedError,
     MacOSKeychain,
+    NTFY_TOPIC_ACCOUNT,
+    SLACK_WEBHOOK_ACCOUNT,
+    TELEGRAM_BOT_ACCOUNT,
     _classify_cli_failure,
     delete_api_key,
     get_api_key,
+    get_discord_webhook_url,
+    get_ntfy_topic_url,
+    get_slack_webhook_url,
+    get_telegram_bot_url,
     has_keychain_backend,
     store_api_key,
+    store_discord_webhook_url,
+    store_ntfy_topic_url,
+    store_slack_webhook_url,
+    store_telegram_bot_url,
 )
 from tstd.provider import ProviderClient
 
@@ -69,6 +81,30 @@ def _patch_keychain(monkeypatch: pytest.MonkeyPatch) -> MockKeychain:
 
 
 # ── Tests ───────────────────────────────────────────────────────────────
+
+
+class TestNotifyAccounts:
+    async def test_slack_webhook_is_tst_slack_webhook(self) -> None:
+        assert SLACK_WEBHOOK_ACCOUNT == "tst-slack-webhook"
+        await store_slack_webhook_url("https://hooks.slack.com/services/x")
+        assert await get_slack_webhook_url() == "https://hooks.slack.com/services/x"
+
+    async def test_ntfy_topic_is_tst_ntfy_topic(self) -> None:
+        assert NTFY_TOPIC_ACCOUNT == "tst-ntfy-topic"
+        await store_ntfy_topic_url("https://ntfy.sh/desk")
+        assert await get_ntfy_topic_url() == "https://ntfy.sh/desk"
+
+
+class TestExtraNotifyAccounts:
+    async def test_discord_webhook_is_tst_discord_webhook(self) -> None:
+        assert DISCORD_WEBHOOK_ACCOUNT == "tst-discord-webhook"
+        await store_discord_webhook_url("https://discord.com/api/webhooks/x")
+        assert await get_discord_webhook_url() == "https://discord.com/api/webhooks/x"
+
+    async def test_telegram_bot_is_tst_telegram_bot(self) -> None:
+        assert TELEGRAM_BOT_ACCOUNT == "tst-telegram-bot"
+        await store_telegram_bot_url("https://api.telegram.org/botx/sendMessage?chat_id=1")
+        assert "api.telegram.org" in await get_telegram_bot_url()
 
 
 class TestKeychainCRUD:
@@ -351,7 +387,7 @@ class TestLockedClassification:
         class _Proc:
             returncode = 0
 
-            async def communicate(self) -> tuple[bytes, bytes]:
+            async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
                 return b"", b""
 
         async def _fake_exec(*args: Any, **kwargs: Any) -> _Proc:
@@ -365,3 +401,52 @@ class TestLockedClassification:
         )
         with pytest.raises(KeychainLockedError):
             await MacOSKeychain().set_secret("tst-openrouter", "sk-x")
+
+
+class TestMissingHelper:
+    """A clean guest without secret-tool must not crash setup_state."""
+
+    async def test_missing_secret_tool_is_keychain_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def missing(*_args: object, **_kwargs: object) -> object:
+            raise FileNotFoundError(2, "No such file or directory", "secret-tool")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", missing)
+        with pytest.raises(KeychainError, match="secret-tool"):
+            await kc_mod.LinuxSecretService().get_secret("tst-openrouter")
+
+
+class TestCliTimeout:
+    """A hung secret-tool / security prompt is a locked keychain (TD-1105)."""
+
+    async def test_hung_lookup_raises_locked_and_kills_the_cli(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hung = _HungProc()
+
+        async def fake_exec(*_args: object, **_kwargs: object) -> _HungProc:
+            return hung
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        monkeypatch.setattr(kc_mod, "_CLI_TIMEOUT_SECS", 0.05)
+        with pytest.raises(KeychainLockedError, match="did not respond"):
+            await kc_mod.LinuxSecretService().get_secret("tst-openrouter")
+        assert hung.killed
+
+
+class _HungProc:
+    returncode = None
+
+    def __init__(self) -> None:
+        self.killed = False
+
+    def kill(self) -> None:
+        self.killed = True
+
+    async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+        await asyncio.sleep(30)
+        return b"", b""
+
+    async def wait(self) -> int:
+        return 0

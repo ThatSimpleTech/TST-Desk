@@ -11,8 +11,9 @@ workspace as the working directory.  Three safety rails surround it:
 - **Process-group kill.**  The child starts a new session
   (``start_new_session``), so it leads its own process group.  On timeout
   or cancel the whole group is SIGKILLed — backgrounded children cannot
-  outlive the command.  Windows has no process-group kill; the direct
-  child is terminated instead.
+  outlive the command.  Windows has no ``killpg``: the child is spawned
+  with ``CREATE_NEW_PROCESS_GROUP`` and ``taskkill /T /F`` walks the
+  tree (TD-1406).
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
@@ -47,6 +48,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -285,8 +287,11 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
     SIGKILL to the group takes backgrounded grandchildren with it.
     Windows has no ``killpg``; the child leads its own process group
     (``CREATE_NEW_PROCESS_GROUP``) and ``taskkill /T /F`` walks the tree
-    from it.  ``proc.kill()`` still runs first there, so the direct child
-    dies even if the helper cannot (TD-1406).
+    from it.  ``taskkill`` must run while the leader is still alive —
+    ``TerminateProcess`` on the leader first orphans the grandchildren,
+    after which ``taskkill /T`` reports the pid gone and leaves them
+    running (TD-1406, Windows CI).  ``proc.kill()`` still runs after, so
+    the direct child dies even if the helper cannot.
 
     Returns None when the kill was delivered (or the processes were
     already gone).  macOS occasionally vetoes same-uid kills with EPERM —
@@ -295,13 +300,14 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> str | None:
     so a short note comes back for honest reporting instead.
     """
     if sys.platform == "win32":
+        note = _kill_windows_tree(proc.pid)
         try:
             proc.kill()
         except ProcessLookupError:
-            return None
+            pass
         except OSError:
-            return "process kill refused by the OS; it may still be running"
-        return _kill_windows_tree(proc.pid)
+            return note or "process kill refused by the OS; it may still be running"
+        return note
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -391,6 +397,47 @@ def _format_result(
     return "\n".join(lines)
 
 
+def _open_shell_process(session: Session, command: str) -> Awaitable[asyncio.subprocess.Process]:
+    """Host shell for interactive sessions; container argv when autonomous."""
+    env = sanitized_env()
+    if not session.autonomy:
+        return asyncio.create_subprocess_shell(
+            command,
+            cwd=session.workspace_path,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+            creationflags=_CREATE_NEW_PROCESS_GROUP,
+        )
+    from ..autonomy.sandbox import SandboxError, autonomy_shell_argv
+
+    cfg = session.config
+    if cfg is None:
+        raise ValueError("autonomy shell requires a model config")
+    network: str | list[str] = "deny"
+    if session.charter is not None:
+        network = session.charter.boundary.network
+    try:
+        argv = autonomy_shell_argv(
+            Path(session.workspace_path),
+            command,
+            runtime=cfg.autonomy.runtime,
+            image=cfg.autonomy.image,
+            network=network,
+        )
+    except SandboxError as e:
+        raise ValueError(str(e)) from e
+    return asyncio.create_subprocess_exec(
+        *argv,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+        creationflags=_CREATE_NEW_PROCESS_GROUP,
+    )
+
+
 async def run_shell(
     session: Session | None,
     command: str,
@@ -424,22 +471,7 @@ async def run_shell(
     # and losing the handle would orphan the whole process group (TD-605
     # AC2; the TestCancel flake family).  On cancellation, wait for the
     # spawn to settle, kill the group, and let cancellation propagate.
-    spawn = asyncio.ensure_future(
-        asyncio.create_subprocess_shell(
-            command,
-            cwd=session.workspace_path,
-            env=sanitized_env(),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            # POSIX: setsid, so the child leads a killable process group.
-            # start_new_session is silently ignored on Windows, where the
-            # equivalent is a creation flag — without it the child joins
-            # the daemon's own group and a tree walk from its pid has no
-            # defined edge (TD-1406).
-            start_new_session=True,
-            creationflags=_CREATE_NEW_PROCESS_GROUP,
-        )
-    )
+    spawn = asyncio.ensure_future(_open_shell_process(session, command))
     try:
         proc = await asyncio.shield(spawn)
     except asyncio.CancelledError:

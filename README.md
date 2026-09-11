@@ -16,16 +16,20 @@ network at all.
 
 ## Install
 
-v0.1 has not been tagged yet, so the release page below is empty until the first
-`tstdesk-v*` tag is pushed. When it lands, each platform gets these artifacts, built by
+[v0.1.0](https://github.com/ThatSimpleTech/TST-Desk/releases/tag/tstdesk-v0.1.0)
+is on the releases page. Each platform gets these artifacts, built by
 [`.github/workflows/package.yml`](.github/workflows/package.yml):
 
 | Platform | Artifact |
 |---|---|
-| macOS (Apple silicon) | `.dmg`, `aarch64-apple-darwin` |
-| macOS (Intel) | `.dmg`, `x86_64-apple-darwin` |
-| Linux | `.AppImage` and `.deb`, `x86_64` |
-| Windows | `.msi`, `x86_64` |
+| macOS (Apple silicon) | `TST.Desk_0.1.0_aarch64.dmg` |
+| macOS (Intel) | `TST.Desk_0.1.0_x64.dmg` |
+| Linux (x86_64) | `TST.Desk_0.1.0_amd64.AppImage` and `TST.Desk_0.1.0_amd64.deb` |
+| Linux (ARM64) | `TST.Desk_0.1.0_aarch64.AppImage` and `TST.Desk_0.1.0_arm64.deb` |
+| Windows | `TST.Desk_0.1.0_x64_en-US.msi` |
+
+GitHub Releases rewrites spaces in Tauri's `TST Desk_…` names to dots;
+`SHA256SUMS.txt` uses the download names.
 
 1. Download the artifact for your platform from
    [the releases page](https://github.com/ThatSimpleTech/TST-Desk/releases).
@@ -38,7 +42,7 @@ v0.1 has not been tagged yet, so the release page below is empty until the first
    [Installing an unsigned build](#installing-an-unsigned-build) below for the per-platform
    click-through.
 
-Until there is a release, the app runs from source — see [Development](#development).
+The app also runs from source — see [Development](#development).
 
 ## Quickstart
 
@@ -46,18 +50,17 @@ Five minutes, launch to first result. The first-run wizard is: welcome → API k
 workspace → done.
 
 1. **Download it, install it, open it.** [Install](#install) above has the per-platform steps;
-   clearing the unsigned-build warning on first launch is a one-time click. (Until the first
-   release is tagged there is nothing to download — run it from source instead.)
+   clearing the unsigned-build warning on first launch is a one-time click.
 2. **Paste an API key.** The wizard links to where to get one and validates it with a single
    cheap live call. The key goes into your OS keychain, not a file.
    *Or skip this entirely:* pick the `local` preset instead. It ships pointed at Ollama's
    default loopback port, and for a loopback endpoint no key is asked for and none is sent.
    (vLLM or EZER: pick the `vllm` preset instead — it ships pointed at
    `http://127.0.0.1:8000/v1`. A different port is a `base_url` edit in `config.yaml`.)
-3. **Pick a preset.** `tst-default`, `budget`, `local`, or `vllm`. You can change presets from settings,
-   and pin which tier handles the turn from the title bar mid-session. Changing the *model*
-   behind a tier is also a settings change, but it applies to new sessions — a running session
-   keeps the model it opened with.
+3. **Pick a preset.** `tst-default`, `budget`, `local`, or `vllm`. Settings' preset is the
+   default for *new* sessions. The title bar can retarget the open chat at another catalog
+   preset without rewriting Settings. Changing the *model* behind a tier is still a settings
+   change and applies to new sessions — a running session keeps the slugs it opened with.
 4. **Pick a workspace.** A native folder picker. The folder is the unit of work — TST Desk
    scaffolds a `.tst/` directory in it with a commented default config, resolves any `AGENTS.md`
    or `CLAUDE.md` it finds, and shows you the resolved instruction stack.
@@ -210,11 +213,14 @@ model choice, the audit trail, and the code.
 
 ## Status
 
-v0.1 — **in development, not yet released.** No Desk release has been published, so there
-is nothing to download yet; packaging runs in CI but has not yet produced a green artifact
-set (`TD-1302`, `TD-1303`). App releases now tag as `tstdesk-v*` (`TD-4812`) so a package
-tag like `v0.2.0` (the `tst-cu-mcp` server, not the app) cannot fire the app workflow.
-Running it today means running it from source.
+v0.1.0 is tagged (`tstdesk-v0.1.0`); installers are on
+[the releases page](https://github.com/ThatSimpleTech/TST-Desk/releases/tag/tstdesk-v0.1.0).
+GitHub Actions is budget-capped at **$20/month**. Default CI is three
+Linux jobs; five-platform Package runs only on demand or on a new
+`tstdesk-v*` tag — see [`docs/ci-actions-blocked.md`](docs/ci-actions-blocked.md).
+App releases tag as `tstdesk-v*` (`TD-4812`) so a package tag like
+`v0.2.0` (the `tst-cu-mcp` server, not the app) cannot fire the app
+workflow. The app also runs from source.
 
 What works: streaming chat, the three-tier router, the steering assembler and instruction
 inspector, filesystem and shell tools behind a decision classifier and approval cards, path
@@ -225,12 +231,14 @@ below), headless runs via `tst run`, computer-use — a screenshot and clicks th
 same classifier, behind a kill switch — on macOS, Windows, and Linux X11 via `tst-cu-mcp` (browser
 path on any OS), remote attach over Tailscale (never `0.0.0.0`) with Slack/ntfy notify
 and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
-a validating `CHARTER.md` schema and the project-home charter editor, plus the
-session rail, settings, diagnostics, and keyless local-model support.
+a validating `CHARTER.md` schema and the project-home charter editor, the
+autonomy engine (unattended runner, circuit breakers, hard-required container),
+slash commands, `SKILL.md`, plan lock, MCP loading,
+Design mode on browser and desktop frames,
+plus the session rail, settings, diagnostics, and keyless local-model support.
 
-What is not built yet, and is not claimed anywhere above: the autonomy engine
-(supervisor, hard-required container act), MCP loading, slash
-commands, `SKILL.md`, and plan lock, Wayland desktop capture, and desktop Design-mode AX.
+What is not built yet, and is not claimed anywhere above: Wayland desktop
+capture.
 Those are later stories — see [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) §9 for
 the phasing.
 
@@ -252,8 +260,8 @@ The first time you close the window: that hides TST Desk. **Quit TST Desk** is w
 
 OS notifications for an approval or a finished turn still fire while the window is hidden.
 While hidden, a running session or a parked approval badges the Dock (macOS) or the
-taskbar tooltip (Windows / Linux). Clicking the app icon shows the window and focuses
-the approval if one is waiting. There is no tray icon.
+taskbar tooltip (Windows / Linux). A tray icon shows the running-session count; **Quit TST Desk** lives in the tray menu too. Clicking the app icon shows the window and focuses
+the approval if one is waiting.
 
 See [`docs/tst-desk-backlog.md`](docs/tst-desk-backlog.md) for the current milestone and
 [`docs/tst-desk-spec.md`](docs/tst-desk-spec.md) for the full architecture spec. How the pieces
@@ -340,7 +348,9 @@ git commit --no-verify
 
 ## Installing an unsigned build
 
-v0.1 builds are not code-signed or notarized (see `DECISIONS.md`, 2026-08-14).
+v0.1 builds are not code-signed or notarized (see `DECISIONS.md`, 2026-08-14, and
+[`docs/signing.md`](docs/signing.md) for the v0.1 refusal, future CI wiring, and
+where release secrets would live).
 Each OS will warn on first launch; that is expected, not a defect.
 
 - **macOS** — Gatekeeper blocks the unsigned app. Right-click the app and

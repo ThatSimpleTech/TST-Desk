@@ -3,10 +3,10 @@
 Spec §12.5 and TD-101: autonomy is hard-required to run in a container
 with only the workspace bound in. This module is the isolation primitive
 — probe the configured runtime, refuse start with install copy when it
-is missing or not rootless, and build the argv a later runner execs.
-
-Interactive sessions must not import this module. There is no start
-button here (TD-4003) and no Firecracker path (follow-up).
+is missing or not rootless, and build the argv the autonomy *shell*
+tool execs. Filesystem tools stay host-side behind PathGuard (the
+workspace *is* the mount). Interactive sessions never import this
+module from the loop. No Firecracker path (follow-up).
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -61,7 +62,7 @@ class SandboxError(Exception):
 
 @dataclass(frozen=True)
 class SandboxExec:
-    """Result of one ``runtime run`` (used by tests and, later, TD-4101)."""
+    """Result of one ``runtime run`` (tests and ``sandbox_exec``)."""
 
     argv: list[str]
     returncode: int
@@ -165,18 +166,39 @@ async def sandbox_start_error(
     return None
 
 
+def _network_denied(network: str | list[str]) -> bool:
+    """True when the charter wall forbids container egress.
+
+    Same shape as ``BoundarySection.network``: ``"deny"`` or a host list.
+    A non-empty list of non-blank hosts is the only shape that opens
+    slirp. Empty lists, other strings, and mixed junk fail closed as
+    deny — CNI cannot punch per-host holes, so unexpected values must
+    not widen the net ns.
+    """
+    return not (
+        isinstance(network, list)
+        and bool(network)
+        and all(isinstance(host, str) and host.strip() for host in network)
+    )
+
+
 def container_argv(
     workspace: Path,
     *,
     runtime: str,
     image: str,
     inner: Sequence[str],
+    network: str | list[str] = "deny",
 ) -> list[str]:
     """Argv that execs *inner* with only *workspace* bind-mounted.
 
-    ``--network=none`` until the charter wall can punch holes (TD-4302).
-    ``--pull=never`` so a start check cannot phone a registry. No
-    ``$HOME``, no host network, no privileged flag.
+    The only ``--mount`` is the workspace. There is no extra-mount
+    argument — host ``$HOME``, keychain, ``~/.ssh``, cloud creds, and
+    the user-data-dir cannot be bound in. ``network="deny"`` (the
+    default) is ``--network=none``. A host allowlist omits that flag so
+    Podman's default slirp can reach tool-level hosts; it never uses
+    ``--network=host``. Unexpected values fail closed as deny.
+    ``--pull=never`` so a start check cannot phone a registry.
     """
     if not inner:
         raise SandboxError("container command is empty")
@@ -185,25 +207,62 @@ def container_argv(
     if not runtime.strip():
         raise SandboxError("autonomy.runtime is empty")
     ws = workspace.resolve()
-    if any(ch in str(ws) for ch in ",:"):
-        raise SandboxError("workspace path cannot contain comma or colon")
-    return [
-        runtime,
-        "run",
-        "--rm",
-        "--network=none",
-        "--userns=keep-id",
-        "--security-opt",
-        "no-new-privileges",
-        "--pull",
-        "never",
-        "--mount",
-        f"type=bind,src={ws},dst={WORKSPACE_DEST}",
-        "--workdir",
-        WORKSPACE_DEST,
-        image,
-        *inner,
-    ]
+    ws_text = str(ws)
+    if "," in ws_text:
+        raise SandboxError("workspace path cannot contain comma")
+    if sys.platform == "win32":
+        # Drive-absolute C:\… is required on Windows; drive-relative C:foo is not.
+        if len(ws_text) >= 2 and ws_text[1] == ":" and ws_text[2:3] not in ("\\", "/"):
+            raise SandboxError("workspace path cannot contain drive-relative colon form")
+    elif ":" in ws_text:
+        raise SandboxError("workspace path cannot contain colon")
+    argv = [runtime, "run", "--rm"]
+    if _network_denied(network):
+        argv.append("--network=none")
+    argv.extend(
+        [
+            "--userns=keep-id",
+            "--security-opt",
+            "no-new-privileges",
+            "--pull",
+            "never",
+            "--mount",
+            f"type=bind,src={ws},dst={WORKSPACE_DEST}",
+            "--workdir",
+            WORKSPACE_DEST,
+            image,
+            *inner,
+        ]
+    )
+    return argv
+
+
+def autonomy_shell_argv(
+    workspace: Path,
+    command: str,
+    *,
+    runtime: str,
+    image: str,
+    network: str | list[str] = "deny",
+    which: WhichFn | None = None,
+) -> list[str]:
+    """Argv that runs *command* inside the sandbox via ``/bin/sh -c``.
+
+    The inner shell is the *image's* ``/bin/sh``, not the host's. Used by
+    the product shell tool on autonomous sessions (TD-4301).
+    """
+    if not command.strip():
+        raise SandboxError("container command is empty")
+    resolved = resolve_runtime(runtime, which=_which(which))
+    if resolved is None:
+        raise SandboxError(INSTALL_MISSING)
+    return container_argv(
+        workspace,
+        runtime=str(resolved),
+        image=image,
+        inner=["/bin/sh", "-c", command],
+        network=network,
+    )
 
 
 async def sandbox_exec(
@@ -213,6 +272,7 @@ async def sandbox_exec(
     config: AutonomyConfig | ModelConfig,
     which: WhichFn | None = None,
     inspect: InspectFn | None = None,
+    network: str | list[str] = "deny",
 ) -> SandboxExec:
     """Run *inner* inside the sandbox, or raise :class:`SandboxError`."""
     autonomy = _autonomy_of(config)
@@ -227,6 +287,7 @@ async def sandbox_exec(
         runtime=str(resolved),
         image=autonomy.image,
         inner=inner,
+        network=network,
     )
     try:
         proc = await asyncio.create_subprocess_exec(

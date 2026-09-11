@@ -20,7 +20,7 @@ from .e2e_checks import HarnessResult
 from .e2e_plan import MemoryHarnessPlan, MemoryResolution
 from .memory_commit import MEMORY_COMMIT_SUBJECT
 from .memory_distill import DISTILL_SYSTEM_PROMPT
-from .provider import ChatCompletionRequest
+from .provider import ChatCompletionRequest, content_as_text
 
 
 def git(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -43,7 +43,7 @@ def workspace_bytes(workspace: Path) -> dict[str, bytes]:
 
 def _system_text(request: ChatCompletionRequest) -> str:
     if request.messages and request.messages[0].role == "system":
-        return request.messages[0].content or ""
+        return content_as_text(request.messages[0].content)
     return ""
 
 

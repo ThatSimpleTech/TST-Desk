@@ -33,10 +33,12 @@ __all__ = [
     "MODS",
     "UNSUPPORTED_MODS",
     "LinuxBackend",
+    "WaylandUnsupportedError",
     "linux_session_kind",
     "linux_session_usable",
     "order_displays",
     "parse_key_combo",
+    "require_native_x11",
 ]
 
 BUTTONS = {"left": 1, "right": 3}
@@ -61,6 +63,32 @@ def linux_session_kind() -> str:
 def linux_session_usable() -> bool:
     """True when this process is in a native X11 session."""
     return linux_session_kind() == "x11"
+
+
+class WaylandUnsupportedError(RuntimeError):
+    """Native Wayland cannot be captured or driven (TD-2002).
+
+    Distinct from a missing backend: ``get_backend()`` still returns
+    ``LinuxBackend`` so ``health`` / ``check_permissions`` can name
+    ``session_type``. Capture and input must not follow that selection
+    onto an XWayland ``DISPLAY``.
+    """
+
+
+def require_native_x11() -> None:
+    """Refuse before any Xlib call when this is not a native X11 session.
+
+    An XWayland ``DISPLAY`` on a Wayland session does not count as support:
+    it would only drive X11 clients and would lie about native apps (TD-2001).
+    """
+    if linux_session_usable():
+        return
+    kind = linux_session_kind()
+    raise WaylandUnsupportedError(
+        "Linux computer-use is X11 only (TD-2002); "
+        f"session_type={kind!r} is not supported. "
+        "An XWayland DISPLAY is not a substitute for native Wayland apps."
+    )
 
 
 def order_displays(
@@ -89,27 +117,32 @@ class LinuxBackend:
     name = "linux"
 
     def list_displays(self) -> list[DisplayInfo]:
+        require_native_x11()
         from tst_cu_mcp.backends import linux_x11
 
         return order_displays(linux_x11.list_raw_displays())
 
     def capture_png(self, rect: Rect) -> bytes:
+        require_native_x11()
         from tst_cu_mcp.backends import linux_x11
 
         return linux_x11.capture_png(rect)
 
     def move_mouse(self, x: float, y: float) -> None:
+        require_native_x11()
         from tst_cu_mcp.backends import linux_x11
 
         linux_x11.move_mouse(x, y)
 
     def click(self, x: float, y: float, button: str, count: int) -> None:
+        require_native_x11()
         from tst_cu_mcp.backends import linux_x11
 
         self.move_mouse(x, y)
         linux_x11.click_button(BUTTONS[button], count)
 
     def type_text(self, text: str) -> None:
+        require_native_x11()
         from tst_cu_mcp.backends import linux_x11
 
         for ch in text:
@@ -125,6 +158,7 @@ class LinuxBackend:
         return parse_key_combo(combo)
 
     def press_keys(self, combo: str) -> None:
+        require_native_x11()
         from tst_cu_mcp.backends import linux_x11
 
         mod_syms, base = parse_key_combo(combo)
@@ -136,16 +170,19 @@ class LinuxBackend:
             linux_x11.press_keysym(sym, down=False)
 
     def scroll(self, dx: int, dy: int) -> None:
+        require_native_x11()
         from tst_cu_mcp.backends import linux_x11
 
         linux_x11.scroll_buttons(dx, dy)
 
     def cursor_position(self) -> tuple[int, int]:
+        require_native_x11()
         from tst_cu_mcp.backends import linux_x11
 
         return linux_x11.cursor_position()
 
     def foreground_window(self) -> WindowInfo:
+        require_native_x11()
         from tst_cu_mcp.backends import linux_x11
 
         return linux_x11.foreground_window()
@@ -165,3 +202,10 @@ class LinuxBackend:
             display=display_ok,
             xtest=xtest_ok,
         )
+
+    def hit_test(self, x: float, y: float) -> dict[str, Any]:
+        """AT-SPI node, or the EWMH window under the point. Never actuates."""
+        require_native_x11()
+        from tst_cu_mcp.backends.linux_hit import observe_at
+
+        return observe_at(x, y)

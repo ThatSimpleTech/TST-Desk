@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
+from ..config import ModelConfig
 from ..logging import get_logger
 from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
@@ -59,6 +60,23 @@ class SessionHost(Protocol):
 
     @property
     def session_registry(self) -> object: ...
+
+
+async def channel_notify(config: ModelConfig, channel: DeliverTo, summary: str) -> None:
+    """Production Slack/ntfy POST. Window delivery stays on RecordingDeliver.
+
+    ``Daemon`` uses this when no test injects ``notify_send``. Operational
+    failures stay inside ``notify.*.send`` (logged, never raised, URL redacted).
+    """
+    if channel == "slack":
+        from ..notify.slack import send as slack_send
+
+        await slack_send(config, summary)
+        return
+    if channel == "ntfy":
+        from ..notify.ntfy import send as ntfy_send
+
+        await ntfy_send(config, summary)
 
 
 class RecordingDeliver:
@@ -132,9 +150,9 @@ async def _run_one(
             extra={"extra_fields": {"job_id": job.id, "error": str(exc)}},
         )
         result = TurnResult(summary=f"scheduled run failed: {exc}", ok=False)
-    await deliver(job.deliver_to, result.summary)
-    # Advance first, then stamp the receipt on the advanced copy, so the
-    # saved row carries both the next slot and what just happened.
+    # Stamp the next slot (and the run receipt) before notify. Deliver-first
+    # left an overdue ``next_run`` on disk if the test (or a crash) observed
+    # the record before ``save_job`` finished — a second tick would fire again.
     stamped = record_run(
         advance_job(job, now),
         now,
@@ -143,6 +161,7 @@ async def _run_one(
         session_id=result.session_id,
     )
     await asyncio.to_thread(save_job, data_dir, stamped)
+    await deliver(job.deliver_to, result.summary)
 
 
 async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -> TurnResult:

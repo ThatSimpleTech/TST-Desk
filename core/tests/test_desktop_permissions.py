@@ -107,6 +107,14 @@ class TestMcpPermissionMapping:
         err = map_mcp_error("sidecar exploded")
         assert err.code == "cu_error"
 
+    def test_wayland_xwayland_refuse_is_typed(self) -> None:
+        err = map_mcp_error(
+            "Linux computer-use is X11 only (TD-2002); "
+            "session_type='wayland' is not supported. "
+            "An XWayland DISPLAY is not a substitute for native Wayland apps."
+        )
+        assert err.code == DesktopError.WAYLAND
+
     def test_sendinput_uipi_is_typed(self) -> None:
         err = map_mcp_error(
             "SendInput delivered 0 of 2 events (last error 5). "

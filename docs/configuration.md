@@ -69,7 +69,8 @@ no effect.
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
-| `autonomy` | mapping | see below | Rootless container used only for autonomous runs (TD-4301). Interactive sessions ignore this block. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
+| `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
+| `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. No `env` map — tokens stay in the keychain. |
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 
 ### `credentials`
@@ -86,8 +87,9 @@ many as you need — OpenRouter, a keyed local server, a second remote. A tier's
 | `name` | string, 1–40 chars | *required* | The local given name. Shown in Settings → Model. Never a secret. |
 | `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. |
 
-Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook` and
-`ntfy-topic` are reserved for other keychain accounts.
+Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook`,
+`ntfy-topic`, `discord-webhook`, and `telegram-bot` are reserved for
+other keychain accounts.
 
 <!-- verify: model -->
 ```yaml
@@ -206,18 +208,20 @@ when omitted, same as a loopback tier (TD-1805).
 
 ### `notify`
 
-Outbound notification channels (TD-3801, TD-3802). Each channel is a
-standalone `send(config, message)` — Slack first, ntfy optional, no
-20-platform gateway (spec §8). Discord/Telegram are TD-4707. Off by
+Outbound notification channels (TD-3801, TD-3802, TD-4707). Each channel is a
+standalone `send(config, message)` — Slack is the default, ntfy / `discord`
+/ `telegram` are extras, no 20-platform gateway (spec §8). Off by
 default. Destination URLs are keychain secrets (`tst-slack-webhook`,
-`tst-ntfy-topic`), never this file, never the audit log. `host` is the
-only host a notifier may reach; the keychain URL's host must match it
-or the send is dropped.
+`tst-ntfy-topic`, `tst-discord-webhook`, `tst-telegram-bot`), never this
+file, never the audit log. `host` is the only host a notifier may reach;
+the keychain URL's host must match it or the send is dropped.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `slack` | mapping | see below | Slack incoming webhook. |
+| `slack` | mapping | see below | Slack incoming webhook. Default channel. |
 | `ntfy` | mapping | see below | ntfy topic POST. |
+| `discord` | mapping | see below | Discord incoming webhook. |
+| `telegram` | mapping | see below | Telegram Bot API `sendMessage`. |
 
 #### `notify.slack`
 
@@ -234,6 +238,74 @@ or the send is dropped.
 | `enabled` | bool | `false` | When false, approval-needed and turn-complete never POST. |
 | `host` | string | *empty* | Allowed destination hostname. Empty disables even if `enabled` is true. Typical public instance is ntfy.sh. |
 | `timeout_seconds` | float > 0 | `5` | How long a topic POST may run. Failures are logged and never fail the turn. |
+
+#### `notify.discord`
+
+Same keys as Slack. Store the webhook URL in the keychain as
+`tst-discord-webhook`. Set `host` to that URL's hostname (commonly
+`discord.com`).
+
+#### `notify.telegram`
+
+Same keys as Slack. Store `https://<host>/bot<token>/sendMessage?chat_id=<id>`
+in the keychain as `tst-telegram-bot`. `chat_id` is a query parameter on
+that secret URL, not a yaml field. Set `host` to that URL's hostname.
+
+### `speech`
+
+Hold-to-talk dictation (TD-4701). Off by default. There is no cloud
+speech URL and no Web Speech API path. The window records only while
+the control is held, then the daemon POSTs to
+`{base_url}/audio/transcriptions`. Empty `base_url` is unconfigured:
+the control (when `enabled`) tells the user to set this key. Optional
+`credential` is a named keychain id used as a Bearer token; the secret
+is never this file. Omit `credential` for a keyless loopback whisper
+server.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | When false, the hold-to-talk control is hidden. |
+| `base_url` | string | *empty* | OpenAI-compatible transcriptions root, including `/v1`. Empty disables even if `enabled` is true. No shipped cloud URL. |
+| `model` | string | *empty* | Transcriptions `model` field. Empty omits it (local servers often have a default). |
+| `timeout_seconds` | float > 0 | `30` | How long the POST may run. |
+| `credential` | string | *empty* | Named keychain id sent as `Authorization: Bearer`. Empty sends no key. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  demo:
+    brain:
+      slug: demo/brain
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    worker:
+      slug: demo/worker
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    validator:
+      slug: demo/validator
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+active_preset: demo
+speech:
+  enabled: false
+  base_url: http://127.0.0.1:8080/v1
+  model: ""
+  timeout_seconds: 30
+  credential: ""
+```
 
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
@@ -295,18 +367,61 @@ Settings; this branch still types them.
 
 ### `autonomy`
 
-Rootless container isolation for autonomous runs (TD-4301, spec §12.5).
-Interactive sessions do not require this. The start button (TD-4003)
-refuses without a live sandbox. `runtime` and `image` live here, never
-in Python — same rule as model slugs. The named runtime is Podman;
-another binary is accepted only if it speaks the same `run` argv
-(`--network=none`, `--userns=keep-id`, one bind mount of the workspace
-at `/workspace`). Firecracker / EZER is a follow-up, not this key.
+Rootless container isolation for autonomous runs (TD-4301, TD-4302,
+spec §12.5). Interactive sessions do not require this. The start
+button (TD-4003) refuses without a live sandbox. `runtime` and `image`
+live here, never in Python — same rule as model slugs. The named
+runtime is Podman; another binary is accepted only if it speaks the
+same `run` argv (`--userns=keep-id`, one bind mount of the workspace
+at `/workspace`, `--network=none` when the charter wall is deny; a
+host allowlist omits that flag so Podman slirp can work, and never
+`--network=host`). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
+creds, the OS keychain, or the user-data-dir; there is no extra-mount
+API. Firecracker / EZER is a follow-up, not this key.
+
+`verify` is the unused validator call for *interactive* mode (spec §12.6
+first sentence, TD-4204). It is not the autonomy supervisor. A write
+turn may enqueue one validator review of the diff and tests. Write-less
+turns never verify. There is no charter and no auto-revert.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `runtime` | string | `podman` | Argv0 probed on PATH, or an absolute path to an executable. Empty is a load error. |
 | `image` | string | `docker.io/library/alpine:3.21` | Image the container execs. Empty is a load error. Pre-pull it; the argv passes `--pull=never` so a start check cannot phone a registry. |
+| `check_every` | int ≥ 1 | `5` | Autonomy turns between validator drift checks (TD-4201, spec §12.6). A Class B decision this turn also checks, even if N is not reached. Interactive sessions ignore this. |
+| `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. |
+
+### `mcp`
+
+User-listed MCP servers (TD-4401). The user names each server in
+user-data-dir `config.yaml` — that listing is the load, not dynamic
+discovery (TD-601). Interactive and autonomy sessions both load them.
+A dead or refused server is a doctor row (`mcp:<id>` after `steering`),
+not a dead daemon. Builtins stay registered. The computer-use sidecar
+(`computer_use.command` → `mcp/tst-cu-mcp`) is a different product.
+
+Tool names are prefixed `{server_id}__{remote_name}` so an MCP tool
+named `fs_read` cannot replace the builtin. Registry provenance is
+`mcp:<server_id>`. The approval floor is `ask` (TD-4402 classifies
+path/host fields). No free-form `env` map — a token pasted here would
+land on disk; Settings (TD-4403) keeps paste-a-token in the keychain.
+Settings persist add / disable / remove through `set_mcp_server` and
+`delete_mcp_server`; the write is surgical so teaching comments survive.
+There is no `env` field on those messages. Live sessions keep the tool
+set they attached with until a new session.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `servers` | mapping of id → server | `{}` | Listed servers. Ids are lowercase slugs `[a-z][a-z0-9-]{0,31}`, same as credentials. Empty or omitted means none — no extra doctor rows. |
+
+#### `mcp.servers.<id>`
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `transport` | `stdio` or `http` | *required* | How the daemon talks to the server. stdio spawns `command`. http POSTs JSON-RPC to `url`. |
+| `command` | list of strings | `[]` | Argv for a stdio server. Required when `transport` is `stdio`. A string is a load error (not split). Empty skips the server with a doctor fail. |
+| `url` | string | *empty* | Loopback `http(s)` endpoint for an http server. Required when `transport` is `http`. Non-loopback is refused before any request. Empty skips the server with a doctor fail. |
+| `enabled` | bool | `true` | When false, the server is skipped (doctor `skip`). |
 
 <!-- verify: model -->
 ```yaml
@@ -377,9 +492,29 @@ notify:
     enabled: false
     host: ""
     timeout_seconds: 5
+  discord:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
+  telegram:
+    enabled: false
+    host: ""
+    timeout_seconds: 5
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21
+  check_every: 5
+  verify: after_write
+mcp:
+  servers:
+    example:
+      transport: stdio
+      command: ["python", "-m", "some_mcp"]
+      enabled: true
+    loop:
+      transport: http
+      url: http://127.0.0.1:9
+      enabled: true
 engine:
   kind: native
   binary: ""
@@ -418,7 +553,7 @@ Every preset declares all three tiers. Omitting one is a load error naming it.
 |---|---|---|
 | `brain` | tier | Planning turns. The router opens every session here for the first two turns, and escalates back to it after three consecutive worker failures. |
 | `worker` | tier | Token-heavy execution — edits, and the tool-call classifier. Where turns land once the lead turns are spent. |
-| `validator` | tier | Reviewing diffs and tests. **Not scheduled automatically in v0.1** — it is on-demand only, so its prices rarely move your bill today. |
+| `validator` | tier | Reviewing diffs and tests. Interactive mode may call it once after a write turn (`autonomy.verify`, TD-4204). Autonomy supervision is a later story. |
 
 Routing is turn-count and failure driven; it does not read anything from this file beyond the
 three tier definitions. You can pin a tier for a session from the title bar.
@@ -435,6 +570,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
 | `max_output_tokens` | int > 0 | *required* | The answer reservation subtracted from `context_window` — see below. |
+| `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so

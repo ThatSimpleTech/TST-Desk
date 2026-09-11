@@ -10,6 +10,7 @@ import type { MessageQueue } from "./chat-queue";
 import type { FirstTokenWait } from "./first-token-wait";
 import type { DaemonEventUnion, SessionState } from "./protocol";
 import { chooseBoundSession, isTerminal } from "./session-binding";
+import { windowBindSessionId } from "./window-bind";
 
 /** Collaborators the reducer may touch. The store keeps the rest. */
 export interface ChatEventContext {
@@ -187,7 +188,11 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       return;
     }
     case "session_list": {
-      const choice = chooseBoundSession(event.sessions, state.sessionId);
+      const choice = chooseBoundSession(
+        event.sessions,
+        state.sessionId,
+        windowBindSessionId(),
+      );
       if (choice.action === "bind") {
         ctx.switchSession(choice.sessionId, choice.turnState);
       } else if (choice.action === "unbind") {
@@ -240,6 +245,9 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       block.errorCode = event.error_code ?? null;
       return;
     }
+    case "verify_result":
+      // Timeline only (TD-4204). Never a second assistant bubble.
+      return;
     default:
       // Cost, approvals, and the rest stay the activity timeline's
       // domain (TD-1005/TD-1007).

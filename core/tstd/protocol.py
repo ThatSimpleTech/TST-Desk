@@ -15,7 +15,7 @@ import json
 import secrets
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from .attachments import AttachmentLimits
 from .autonomy.charter import Charter
@@ -274,19 +274,6 @@ class SetVoice(ClientMessage):
     enabled: bool
 
 
-class Transcribe(ClientMessage):
-    """Send a hold-to-talk clip to the configured speech endpoint.
-
-    Used only when Settings has dictation on *and* ``voice.base_url`` is
-    set. OS dictation never reaches this verb. The daemon is the gate:
-    off, oversize, and missing-endpoint are refused here.
-    """
-
-    type: Literal["transcribe"] = "transcribe"
-    audio_b64: str
-    mime: str = "audio/webm"
-
-
 class SetCuIndicators(ClientMessage):
     """Computer-use glow / agent cursor / real-display overlay (TD-3402).
 
@@ -348,6 +335,20 @@ class Cancel(ClientMessage):
     session_id: str
 
 
+class RunVerify(ClientMessage):
+    """Confirm a pending interactive verify (TD-4204 ask mode)."""
+
+    type: Literal["run_verify"] = "run_verify"
+    session_id: str
+
+
+class DenyVerify(ClientMessage):
+    """Skip a pending interactive verify (TD-4204 ask mode)."""
+
+    type: Literal["deny_verify"] = "deny_verify"
+    session_id: str
+
+
 class Attach(ClientMessage):
     """Attach to a session, replaying events from `from_seq`."""
 
@@ -371,6 +372,33 @@ class SetTier(ClientMessage):
     tier: Literal["brain", "worker", "validator"]
 
 
+class SetPlan(ClientMessage):
+    """Turn plan mode (brain lock) on or off (TD-4603).
+
+    While on, every completion is ``brain`` and ``set_tier`` to
+    worker or validator is refused. Not a plan document.
+    """
+
+    type: Literal["set_plan"] = "set_plan"
+    session_id: str
+    on: bool
+
+
+class SetSessionPreset(ClientMessage):
+    """Retarget this session at a catalog preset (TD-1721).
+
+    Settings' ``set_preset`` stays the machine-wide default for new
+    sessions. This verb writes the preset *name* onto the session
+    record — not a forked config tree — and is refused while a turn
+    is running. Acked with ``session_list``; the title bar follows
+    the ``tier_state`` the session log also emits.
+    """
+
+    type: Literal["set_session_preset"] = "set_session_preset"
+    session_id: str
+    name: str = Field(min_length=1)
+
+
 class GetInstructionStack(ClientMessage):
     """Request the current instruction stack for a session."""
 
@@ -382,6 +410,13 @@ class ListInstructions(ClientMessage):
     """List a workspace's Instructions files (TD-2802). Human path."""
 
     type: Literal["list_instructions"] = "list_instructions"
+    workspace_path: str
+
+
+class ListCommands(ClientMessage):
+    """List a workspace's slash commands (TD-4501). Human path."""
+
+    type: Literal["list_commands"] = "list_commands"
     workspace_path: str
 
 
@@ -763,6 +798,68 @@ class SetTierCredential(ClientMessage):
     credential: str = ""
 
 
+class SetMcpServer(ClientMessage):
+    """Create or replace one listed MCP server (TD-4403).
+
+    Command is argv tokens only. There is no ``env`` field — a token
+    pasted here would land in ``config.yaml``. Extra keys are forbidden
+    so ``env`` / ``environment`` cannot sneak in later. Acked with
+    ``setup_state``. Live sessions keep their previous tool set until a
+    new session; hot-attach is out of scope.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["set_mcp_server"] = "set_mcp_server"
+    id: str = Field(min_length=1)
+    transport: Literal["stdio", "http"]
+    command: list[str] = Field(default_factory=list)
+    url: str = ""
+    enabled: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_env(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            for key in ("env", "environment"):
+                if key in value:
+                    raise ValueError(
+                        "MCP server messages cannot carry env; tokens stay in the keychain"
+                    )
+        return value
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _command_is_argv(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raise ValueError("command must be a list of argv tokens, not a string")
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        raise ValueError("command must be a list of argv tokens")
+
+
+class DeleteMcpServer(ClientMessage):
+    """Remove one listed MCP server (TD-4403). Unknown id is a typed error."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["delete_mcp_server"] = "delete_mcp_server"
+    id: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_env(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            for key in ("env", "environment"):
+                if key in value:
+                    raise ValueError(
+                        "MCP server messages cannot carry env; tokens stay in the keychain"
+                    )
+        return value
+
+
 class RunDiagnostics(ClientMessage):
     """Ask the daemon to run the doctor checks (TD-1104 diagnostics).
 
@@ -823,10 +920,11 @@ class OpenArtifact(ClientMessage):
 
 
 class DesignHitTest(ClientMessage):
-    """Ask the session browser what is at a CSS-pixel point (TD-3403).
+    """Ask the last computer-use surface what is at a CSS-pixel point.
 
-    Observe only — never actuates. The reply is connection-scoped
-    ``design_hit``, not a session-log event.
+    Browser DOM (TD-3403) or desktop AX / UIA / AT-SPI (TD-3406). Observe
+    only — never actuates. The reply is connection-scoped ``design_hit``,
+    not a session-log event.
     """
 
     type: Literal["design_hit_test"] = "design_hit_test"
@@ -908,6 +1006,32 @@ class DeleteJob(ClientMessage):
 
     type: Literal["delete_job"] = "delete_job"
     job_id: str = Field(min_length=1)
+
+
+class ParseJob(ClientMessage):
+    """Turn natural language into a job draft (TD-3803).
+
+    Does not persist. The daemon answers with ``job_draft`` for the user
+    to edit before ``save_job``. The parse is the worker-shaped schema
+    (deterministic); it is not a model call and not a save.
+    """
+
+    type: Literal["parse_job"] = "parse_job"
+    text: str = ""
+
+
+class Transcribe(ClientMessage):
+    """Hold-to-talk audio for speech-to-text (TD-4701).
+
+    Used when Settings has dictation on. The daemon POSTs to
+    ``voice.base_url`` or ``speech.base_url`` and answers with
+    ``transcript``. ``audio_b64`` is the recording's bytes. There is no
+    cloud default; OS dictation never reaches this verb.
+    """
+
+    type: Literal["transcribe"] = "transcribe"
+    audio_b64: str = Field(min_length=1, max_length=2_800_000)
+    mime: str = Field(default="audio/webm", min_length=1, max_length=128)
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────
@@ -1103,6 +1227,21 @@ class CheckpointNotice(DaemonEvent):
     message: str
 
 
+class VerifyResult(DaemonEvent):
+    """Interactive validator review of a write turn (TD-4204).
+
+    Timeline activity, not a chat bubble. ``pending`` is ask-mode only:
+    the validator has not run until the human confirms.
+    """
+
+    type: Literal["verify_result"] = "verify_result"
+    session_id: str
+    verdict: Literal["pass", "fail", "error"]
+    summary: str
+    cost: float = Field(ge=0)
+    pending: bool = False
+
+
 class CostUpdate(DaemonEvent):
     """Accrued cost for the session."""
 
@@ -1124,12 +1263,16 @@ class CostUpdate(DaemonEvent):
 
 
 class TierState(DaemonEvent):
-    """Active model tier and configured slugs (TD-1006).
+    """Active model tier and configured slugs (TD-1006, TD-1720).
 
     Emitted when a session opens, when a ``set_tier`` override lands, and
     whenever the router changes tier between turns (lead-turns handoff,
     failure escalation). ``tier`` is what handles the next turn;
     ``override`` is the pinned override when the user picked one.
+    ``preset`` and ``hosts`` are the identity the title bar paints;
+    ``hosts`` is hostname:port from the URL the client will call, not
+    a guess from the slug (TD-1718). ``plan`` is the brain lock
+    (TD-4603). Additive — no PROTOCOL_VERSION bump.
     """
 
     type: Literal["tier_state"] = "tier_state"
@@ -1138,6 +1281,14 @@ class TierState(DaemonEvent):
     override: TierName | None = None
     # tier name → configured model slug, "brain"/"worker"/"validator".
     model_slugs: dict[str, str] = Field(default_factory=dict)
+    preset: str = ""
+    # tier name → hostname:port the provider client will call.
+    hosts: dict[str, str] = Field(default_factory=dict)
+    # Plan mode (TD-4603): when true, every completion is brain until
+    # cleared. Default false so older fixtures and emitters stay valid.
+    plan: bool = False
+    # Active tier accepts image attachments (TD-4705). Default false.
+    vision: bool = False
 
 
 class BoundaryUpdate(DaemonEvent):
@@ -1359,6 +1510,23 @@ class AutonomyStart(DaemonEvent):
     session_id: str | None = None
 
 
+class AutonomySummary(DaemonEvent):
+    """Wake-up card for an unattended run that stopped (TD-4303).
+
+    Session-scoped: persisted on the event log so a closed window still
+    sees it on attach. Interactive sessions never emit this type.
+    """
+
+    type: Literal["autonomy_summary"] = "autonomy_summary"
+    session_id: str
+    reason: str
+    branch: str
+    ledger_path: str
+    changed: list[str] = Field(default_factory=list)
+    refusals: list[str] = Field(default_factory=list)
+    ledger_excerpt: str = ""
+
+
 class ContextPinEntry(BaseModel):
     """One pinned path on the Context column (TD-2804)."""
 
@@ -1393,12 +1561,41 @@ class InstructionFiles(DaemonEvent):
     created: str | None = None
 
 
+class CommandEntry(BaseModel):
+    """One slash command the composer can insert (TD-4501)."""
+
+    name: str
+    description: str = ""
+    source: Literal["workspace", "user", "claude_workspace", "claude_user"]
+    body: str = ""
+    too_large: bool = False
+
+
+class CommandList(DaemonEvent):
+    """Reply to ``list_commands``. Connection-scoped."""
+
+    type: Literal["command_list"] = "command_list"
+    seq: int = 1
+    workspace_path: str
+    commands: list[CommandEntry] = Field(default_factory=list)
+
+
 class MemoryStackEntry(BaseModel):
     """One memory file the inspector names (TD-2604)."""
 
     path: str
     tokens: int = Field(ge=0)
     reason: Literal["always-index", "heading", "embedding"]
+
+
+class SkillStackEntry(BaseModel):
+    """One discovered skill on the instruction stack (TD-4502)."""
+
+    name: str
+    description: str = ""
+    source: Literal["workspace", "user", "claude_workspace", "claude_user"]
+    loaded: bool = False
+    tokens: int = Field(ge=0)
 
 
 class InstructionStack(DaemonEvent):
@@ -1425,6 +1622,8 @@ class InstructionStack(DaemonEvent):
     memory: list[MemoryStackEntry] = Field(default_factory=list)
     memory_dropped: list[MemoryStackEntry] = Field(default_factory=list)
     memory_placeholder: bool = False
+    # Discovered skills, separate from steering sources (TD-4502).
+    skills: list[SkillStackEntry] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):
@@ -1458,6 +1657,14 @@ class SessionSummary(BaseModel):
     # Auto-title from the first non-empty user message (TD-3001). None
     # until then — the rail falls back to the short id. Additive.
     title: str | None = None
+    # Catalog preset this session opened with, or last switched to
+    # (TD-1721). Empty on a store written before the field. Additive.
+    preset: str = ""
+    # A turn is in flight (TD-1720). Distinct from ``state: running``,
+    # which is loop liveness and spans the session's whole life
+    # (TD-1714). Additive with a default — a client that ignores it
+    # still reads the list it always did.
+    busy: bool = False
 
 
 class SessionList(DaemonEvent):
@@ -1495,6 +1702,16 @@ class CredentialSummary(BaseModel):
     name: str
     stored: bool
     base_url: str | None = None
+
+
+class McpServerSummary(BaseModel):
+    """One listed MCP server as shown in settings (TD-4403). Never a secret."""
+
+    id: str
+    transport: Literal["stdio", "http"]
+    command: list[str] = Field(default_factory=list)
+    url: str = ""
+    enabled: bool = True
 
 
 class SetupState(DaemonEvent):
@@ -1564,6 +1781,14 @@ class SetupState(DaemonEvent):
     cu_mode: Literal["background", "full_control"] = "background"
     cu_unhide_on_finish: bool = True
     cu_denied_apps: list[str] = Field(default_factory=list)
+    # TD-4403: listed MCP servers. Additive, default empty. Never a secret;
+    # there is no env map. An older client ignores the field.
+    mcp_servers: list[McpServerSummary] = Field(default_factory=list)
+    # TD-4701: hold-to-talk. Additive, default off. ``speech_ready`` is
+    # enabled plus a configured base_url — the URL itself never leaves
+    # the daemon. An older client ignores both fields.
+    speech_enabled: bool = False
+    speech_ready: bool = False
 
 
 class GrokCommand(BaseModel):
@@ -1646,15 +1871,6 @@ class GrokExtensions(DaemonEvent):
     type: Literal["grok_extensions"] = "grok_extensions"
     seq: int = 1
     items: list[GrokExtension] = Field(default_factory=list)
-
-
-class Transcript(DaemonEvent):
-    """Result of ``transcribe``. Connection-scoped; seq is fixed at 1."""
-
-    type: Literal["transcript"] = "transcript"
-    seq: int = 1
-    text: str = ""
-    error: str | None = None
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1893,7 +2109,7 @@ class DesignHitBox(BaseModel):
 
 
 class DesignHit(DaemonEvent):
-    """Reply to ``design_hit_test`` (TD-3403). Connection-scoped.
+    """Reply to ``design_hit_test`` (TD-3403 / TD-3406). Connection-scoped.
 
     Not written to the session log — a pick is user inspection, not an
     agent turn. ``seq`` is fixed at 1 so it cannot rewind attach.
@@ -1996,6 +2212,36 @@ class JobList(DaemonEvent):
     jobs: list[JobEntry] = Field(default_factory=list)
 
 
+class JobDraftReply(DaemonEvent):
+    """Response to ``parse_job`` (TD-3803). Connection-scoped. Not saved."""
+
+    type: Literal["job_draft"] = "job_draft"
+    seq: int = 1
+    ok: bool = True
+    detail: str = ""
+    workspace: str | None = None
+    instruction: str | None = None
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    paused: bool = False
+
+
+class Transcript(DaemonEvent):
+    """Reply to ``transcribe`` (TD-4701). Connection-scoped.
+
+    ``detail`` is a short error code on failure (never a URL). ``text`` is
+    the transcript on success. Seq is fixed at 1 so it cannot rewind attach.
+    """
+
+    type: Literal["transcript"] = "transcript"
+    seq: int = 1
+    ok: bool = True
+    text: str = ""
+    detail: str = ""
+    error: str | None = None
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -2013,17 +2259,21 @@ ClientMessageT = Annotated[
     | SetLoadGlobalMemory
     | SetCoworker
     | SetVoice
-    | Transcribe
     | SetCuIndicators
     | SetCuPolicy
     | SetWorkspacePin
     | Resume
     | Cancel
+    | RunVerify
+    | DenyVerify
     | Attach
     | Detach
     | SetTier
+    | SetPlan
+    | SetSessionPreset
     | GetInstructionStack
     | ListInstructions
+    | ListCommands
     | ListMemory
     | SaveMemory
     | CreateRule
@@ -2060,6 +2310,8 @@ ClientMessageT = Annotated[
     | SetCredential
     | DeleteCredential
     | SetTierCredential
+    | SetMcpServer
+    | DeleteMcpServer
     | RunDiagnostics
     | GetUsage
     | ExportUsage
@@ -2073,7 +2325,9 @@ ClientMessageT = Annotated[
     | SetRemoteAttach
     | ListJobs
     | SaveJob
-    | DeleteJob,
+    | DeleteJob
+    | ParseJob
+    | Transcribe,
     Field(discriminator="type"),
 ]
 
@@ -2090,6 +2344,7 @@ DaemonEventT = Annotated[
     | ApprovalRequest
     | DecisionLogged
     | CheckpointNotice
+    | VerifyResult
     | CostUpdate
     | BoundaryUpdate
     | TurnComplete
@@ -2100,10 +2355,12 @@ DaemonEventT = Annotated[
     | TierSwitched
     | InstructionStack
     | InstructionFiles
+    | CommandList
     | ContextPins
     | MemoryFiles
     | CharterDocument
     | AutonomyStart
+    | AutonomySummary
     | MemoryProposal
     | SessionList
     | PolicyRules
@@ -2124,6 +2381,7 @@ DaemonEventT = Annotated[
     | DesignHit
     | CuPermissions
     | JobList
+    | JobDraftReply
     | GrokCommands
     | GrokPlan
     | GrokMode
@@ -2154,17 +2412,21 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_load_global_memory",
         "set_coworker",
         "set_voice",
-        "transcribe",
         "set_cu_indicators",
         "set_cu_policy",
         "set_workspace_pin",
         "resume",
         "cancel",
+        "run_verify",
+        "deny_verify",
         "attach",
         "detach",
         "set_tier",
+        "set_plan",
+        "set_session_preset",
         "get_instruction_stack",
         "list_instructions",
+        "list_commands",
         "list_memory",
         "save_memory",
         "create_rule",
@@ -2202,6 +2464,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_credential",
         "delete_credential",
         "set_tier_credential",
+        "set_mcp_server",
+        "delete_mcp_server",
         "run_diagnostics",
         "get_usage",
         "export_usage",
@@ -2215,6 +2479,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_jobs",
         "save_job",
         "delete_job",
+        "parse_job",
+        "transcribe",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -2231,6 +2497,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "approval_request",
         "decision_logged",
         "checkpoint_notice",
+        "verify_result",
         "cost_update",
         "boundary_update",
         "turn_complete",
@@ -2241,10 +2508,12 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tier_switched",
         "instruction_stack",
         "instruction_files",
+        "command_list",
         "context_pins",
         "memory_files",
         "charter",
         "autonomy_start",
+        "autonomy_summary",
         "memory_proposal",
         "session_list",
         "policy_rules",
@@ -2265,6 +2534,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "design_hit",
         "cu_permissions",
         "job_list",
+        "job_draft",
         "grok_commands",
         "grok_plan",
         "grok_mode",

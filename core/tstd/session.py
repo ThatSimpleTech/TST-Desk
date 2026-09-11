@@ -30,12 +30,30 @@ from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
 
 if TYPE_CHECKING:
+    from .config import ModelConfig
     from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
     from .router import TierRouter
     from .tools.registry import Tool
 
 log = get_logger("tstd.session")
+
+
+@dataclass(frozen=True)
+class QueuedUserMessage:
+    """A user turn waiting for the loop (TD-4705).
+
+    ``display`` feeds the event log, memory loader, and assembler;
+    ``provider`` is what the OpenAI-compatible client sends (plain text
+    or multimodal parts when images are attached).
+    """
+
+    display: str
+    provider: str | list[dict[str, Any]]
+
+    @classmethod
+    def plain(cls, text: str) -> QueuedUserMessage:
+        return cls(display=text, provider=text)
 
 
 class SessionError(Exception):
@@ -155,7 +173,7 @@ class SessionEventLog:
         """Return all events with seq >= `seq`."""
         if seq < 1:
             seq = 1
-        return [e for e in self._events if e.seq >= seq]
+        return sorted((e for e in self._events if e.seq >= seq), key=lambda event: event.seq)
 
     async def wait_for_new_event(self, seen_seq: int) -> int:
         """Wait until a new event beyond `seen_seq` is available.
@@ -190,8 +208,9 @@ class SessionEventLog:
 
         Used on revive. Re-adding would mint new seqs and rewrite disk.
         """
-        self._events = list(events)
-        self._seq = events[-1].seq if events else 0
+        ordered = sorted(events, key=lambda event: event.seq)
+        self._events = ordered
+        self._seq = max(event.seq for event in ordered) if ordered else 0
 
 
 # ── Session ────────────────────────────────────────────────────────────
@@ -228,7 +247,7 @@ class Session:
         self._state = "idle"
         self.event_log = SessionEventLog()
         self._cancel_event = asyncio.Event()
-        self._user_message_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._user_message_queue: asyncio.Queue[QueuedUserMessage] = asyncio.Queue()
         # The loop's conversation lives here so a fork can truncate it
         # (TD-1708).  The loop aliases this list; it must not rebind.
         self.conversation: list[ChatMessage] = []
@@ -238,9 +257,11 @@ class Session:
         self._resume_event = asyncio.Event()
         # Workspace boundary (TD-706), resolved by the daemon on open.
         self.boundary_config = BoundaryConfig()
-        # Tier router (TD-1006), attached by the daemon on open so a
-        # ``set_tier`` message reaches the loop's router. ``None`` on a
-        # restored tombstone — its loop is gone for good.
+        # Tier router (TD-1006 / TD-4603), attached by the daemon on
+        # open so ``set_tier`` and ``set_plan`` reach the live loop.
+        # Plan mode lives on the router. ``None`` on a restored
+        # tombstone — its loop is gone for good. Revive does not
+        # restore override or plan (neither is persisted).
         self.router: TierRouter | None = None
         # Cost tracker (TD-1201), attached by the loop at startup so the
         # daemon can answer cache-state queries. Same tombstone rule.
@@ -271,6 +292,19 @@ class Session:
         # Last brain-turn memory selection (TD-2604). None until a brain
         # turn has run the loader.
         self.last_memory: MemoryLoad | None = None
+        # TD-4502: skill names loaded this session via load_skill or slash.
+        self.loaded_skills: list[str] = []
+        # TD-4602: 0 = user-visible parent; 1 = transient worker child.
+        # Children are not registered, persisted, or revived.
+        self.delegate_depth: int = 0
+        self.parent_id: str | None = None
+        # Bound by agent_loop so ``delegate`` can spawn a worker child.
+        self.delegate_runtime: Any = None
+        # Catalog preset this loop is using (TD-1721). Name on the
+        # session record; ``config`` is a snapshot of that catalog
+        # entry, not a fork written back to Settings.
+        self.preset: str = ""
+        self.config: ModelConfig | None = None
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False
@@ -287,8 +321,12 @@ class Session:
         self.charter: Charter | None = None
         self.autonomy_turns = 0
         self.autonomy_class_c = False
+        self.autonomy_class_b = False
         self.autonomy_stop_reason: str | None = None
         self.autonomy_notify: Callable[[str], Awaitable[None]] | None = None
+        # TD-4303: Class C reasons kept after the stop reason is rewritten
+        # to CLASS_C_STOP, plus any other stored refusal strings.
+        self.autonomy_refusals: list[str] = []
         # TD-4103: attached by the loop on an unattended run. Interactive
         # sessions leave this None so a turn complete never polls DoD.
         self.dod_poller: Callable[[], Awaitable[Any]] | None = None
@@ -299,10 +337,30 @@ class Session:
         # Loop this session started with. New sessions take config.engine.kind;
         # a running session keeps this even if Settings later flips.
         self.engine: Literal["native", "grok"] = "native"
+        self.last_dod_poll: Any = None
+        # TD-4203: circuit-breaker counters. Interactive sessions never
+        # trip; the loop only records when autonomy is on.
+        self.red_dod_streak: int = 0
+        self.no_dod_progress_streak: int = 0
+        self.last_dod_green_count: int | None = None
+        self.file_write_counts: dict[str, int] = {}
+        self.last_tool_fingerprint: tuple[tuple[str, str], ...] | None = None
+        self.tool_loop_streak: int = 0
+        self._breaker_seen_turn: int | None = None
+        # TD-4201 / TD-4202: validator drift check, last good checkpoint,
+        # and consecutive-drift streak. Interactive sessions never set these.
+        self.autonomy_check_every = 5
+        self.autonomy_last_check_sha: str | None = None
+        self.autonomy_last_good_sha: str | None = None
+        self.autonomy_drift_streak: int = 0
+        self.autonomy_ledger_seen = 0
+        self.last_drift_check: Any = None
+        self.validator_call: Callable[[str], Awaitable[str]] | None = None
 
     def mark_class_c(self, reason: str) -> None:
         """A Class C call on an autonomous run — stop after this turn."""
         self.autonomy_class_c = True
+        self.autonomy_refusals.append(reason)
         if self.autonomy_stop_reason is None:
             self.autonomy_stop_reason = reason
 
@@ -730,17 +788,17 @@ class Session:
         """
         return self._user_message_queue.qsize()
 
-    async def add_user_message(self, content: str) -> None:
+    async def add_user_message(self, content: str | QueuedUserMessage) -> None:
         """Enqueue a user message for the agent loop to process."""
         self._open_turns += 1
-        self._user_message_queue.put_nowait(content)
+        queued = QueuedUserMessage.plain(content) if isinstance(content, str) else content
+        self._user_message_queue.put_nowait(queued)
 
-    async def wait_for_user_message(self) -> str | None:
+    async def wait_for_user_message(self) -> QueuedUserMessage | None:
         """Wait for the next user message.
 
-        Returns the message content, or ``None`` if the session is
-        cancelled while waiting.  Uses a short poll so cancellation is
-        responsive.
+        Returns the queued turn, or ``None`` if the session is cancelled
+        while waiting.  Uses a short poll so cancellation is responsive.
         """
         while True:
             if self._cancel_event.is_set():
@@ -824,8 +882,10 @@ class Session:
         restored = deepcopy(siblings[sibling_index])
         self.conversation[:] = restored
         self._drain_user_queue()
+        from .provider import content_as_text
+
         users = [m for m in self.conversation if m.role == "user"]
-        text = users[user_index].content or "" if user_index < len(users) else ""
+        text = content_as_text(users[user_index].content) if user_index < len(users) else ""
         return self._emit_reset(user_index, text)
 
     @property

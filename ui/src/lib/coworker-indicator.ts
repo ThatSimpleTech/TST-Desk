@@ -1,4 +1,4 @@
-// Coworker indicator (TD-2904).
+// Coworker indicator (TD-2904) and tray running-count (TD-4703).
 //
 // Pure: given window visibility and session states, either the dock should
 // say the coworker is still working or it should not. The host invoke is
@@ -8,6 +8,13 @@ export const BADGE_RUNNING = "Running";
 export const BADGE_APPROVAL = "Approval needed";
 
 export type CoworkerBadge = typeof BADGE_RUNNING | typeof BADGE_APPROVAL | null;
+
+/** Sessions actively working or parked on approval — tray badge input. */
+export function trayRunningCount(sessionStates: readonly string[]): number {
+  return sessionStates.filter(
+    (state) => state === "running" || state === "awaiting_approval",
+  ).length;
+}
 
 /** Dock / taskbar copy while hidden, or null when idle or the window is up. */
 export function coworkerBadge(

@@ -182,6 +182,8 @@ class TestSetupState:
                 assert resp["has_api_key"] is False
                 assert resp["active_preset"] == "tst-default"
                 assert {"tst-default", "budget", "local", "vllm"} <= set(resp["presets"])
+                assert resp["speech_enabled"] is False
+                assert resp["speech_ready"] is False
                 await ws.close()
             finally:
                 await _stop_daemon(task)
@@ -383,7 +385,7 @@ class TestDeleteApiKey:
                 assert resp["has_api_key"] is False
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_is_a_typed_error(self, fake_keychain: FakeKeychain) -> None:
@@ -398,7 +400,7 @@ class TestDeleteApiKey:
                 assert resp["code"] == "key_delete_failed"
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     @pytest.mark.asyncio
     async def test_delete_failure_is_a_typed_error(self, fake_keychain: FakeKeychain) -> None:
@@ -417,7 +419,7 @@ class TestDeleteApiKey:
                 assert fake_keychain.stored["openrouter"] == "sk-stuck"
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     @pytest.mark.asyncio
     async def test_delete_custom_provider_leaves_default(self, fake_keychain: FakeKeychain) -> None:
@@ -435,7 +437,7 @@ class TestDeleteApiKey:
                 assert resp["has_api_key"] is True
                 await ws.close()
             finally:
-                task.cancel()
+                await _stop_daemon(task)
 
     def test_delete_parses_with_default_provider(self) -> None:
         msg = parse_client_message('{"type": "delete_api_key"}')

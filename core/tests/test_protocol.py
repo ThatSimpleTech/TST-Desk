@@ -30,6 +30,7 @@ from tstd.protocol import (
     DecisionLogged,
     DeleteSession,
     Deny,
+    DenyVerify,
     Detach,
     EndSession,
     Error,
@@ -53,12 +54,14 @@ from tstd.protocol import (
     RenameSession,
     Resume,
     RevokePolicyRule,
+    RunVerify,
     SessionState,
     SetCoworker,
     SetCuIndicators,
     SetCuKill,
     SetCuPolicy,
     SetLoadGlobalMemory,
+    SetPlan,
     SetRemoteAttach,
     SetSessionStar,
     SetSkipAllApprovals,
@@ -73,6 +76,7 @@ from tstd.protocol import (
     UsageReport,
     UsageRollup,
     UserMessage,
+    VerifyResult,
     build_error,
     build_hello_ack,
     parse_client_message,
@@ -258,6 +262,15 @@ class TestClientMessages:
         with pytest.raises(ValidationError):
             SetTier(session_id="sess-1", tier="superbrain")  # type: ignore[arg-type]
 
+    def test_set_plan(self) -> None:
+        msg = SetPlan(session_id="sess-1", on=True)
+        back = _roundtrip(msg)
+        assert isinstance(back, SetPlan)
+        assert back.on is True
+        off = _roundtrip(SetPlan(session_id="sess-1", on=False))
+        assert isinstance(off, SetPlan)
+        assert off.on is False
+
     def test_get_instruction_stack(self) -> None:
         msg = GetInstructionStack(session_id="sess-1")
         back = _roundtrip(msg)
@@ -269,6 +282,14 @@ class TestClientMessages:
         msg = ListInstructions(workspace_path="/home/user/project")
         back = _roundtrip(msg)
         assert isinstance(back, ListInstructions)
+        assert back.workspace_path == "/home/user/project"
+
+    def test_list_commands(self) -> None:
+        from tstd.protocol import ListCommands
+
+        msg = ListCommands(workspace_path="/home/user/project")
+        back = _roundtrip(msg)
+        assert isinstance(back, ListCommands)
         assert back.workspace_path == "/home/user/project"
 
     def test_list_memory(self) -> None:
@@ -357,6 +378,26 @@ class TestClientMessages:
             session_id="sess-autonomy",
         )
         assert _roundtrip(ready).session_id == "sess-autonomy"
+
+    def test_autonomy_summary(self) -> None:
+        from tstd.protocol import AutonomySummary
+
+        ev = AutonomySummary(
+            session_id="sess-1",
+            reason="definition of done met",
+            branch="tst/auto/ship-the-csv-importer",
+            ledger_path=".tst/autonomy/DECISIONS.md",
+            changed=["src/importer.py"],
+            refusals=["Class C decision — autonomy stops"],
+            ledger_excerpt="**Chose:** format",
+            seq=12,
+        )
+        back = _roundtrip(ev)
+        assert isinstance(back, AutonomySummary)
+        assert back.branch == "tst/auto/ship-the-csv-importer"
+        assert back.ledger_path == ".tst/autonomy/DECISIONS.md"
+        assert back.changed == ["src/importer.py"]
+        assert back.refusals == ["Class C decision — autonomy stops"]
 
     def test_charter_document(self) -> None:
         from tstd.autonomy.charter import Charter
@@ -718,6 +759,50 @@ class TestDaemonEvents:
         assert isinstance(back, MemoryFiles)
         assert back.files[0].name == "MEMORY.md"
 
+    def test_instruction_stack_skills_are_separate(self) -> None:
+        from tstd.protocol import InstructionStack, SkillStackEntry
+
+        evt = InstructionStack(
+            session_id="sess-1",
+            sources=[],
+            total_tokens=0,
+            token_method="approximation (4 chars/token)",
+            seq=1,
+            skills=[
+                SkillStackEntry(
+                    name="review",
+                    description="Review a PR",
+                    source="workspace",
+                    loaded=True,
+                    tokens=12,
+                )
+            ],
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, InstructionStack)
+        assert back.skills[0].name == "review"
+        assert back.skills[0].loaded is True
+        assert back.sources == []
+
+    def test_command_list(self) -> None:
+        from tstd.protocol import CommandEntry, CommandList
+
+        evt = CommandList(
+            workspace_path="/home/user/project",
+            commands=[
+                CommandEntry(
+                    name="review",
+                    description="Review the diff",
+                    source="workspace",
+                    body="Please review.\n",
+                )
+            ],
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, CommandList)
+        assert back.commands[0].name == "review"
+        assert back.commands[0].source == "workspace"
+
     def test_memory_proposal(self) -> None:
         from tstd.protocol import MemoryFileDiff
 
@@ -851,6 +936,27 @@ class TestDaemonEvents:
         assert back.killed is True
         assert back.seq == 1
         assert "session_id" not in CuKillState.model_fields
+
+    def test_verify_result(self) -> None:
+        evt = VerifyResult(
+            session_id="sess-1",
+            verdict="pass",
+            summary="Diff matches the tests.",
+            cost=0.002,
+            pending=False,
+            seq=10,
+        )
+        back = _roundtrip(evt)
+        assert isinstance(back, VerifyResult)
+        assert back.verdict == "pass"
+        assert back.pending is False
+        assert back.cost == pytest.approx(0.002)
+
+    def test_run_verify_and_deny_verify(self) -> None:
+        run = _roundtrip(RunVerify(session_id="sess-1"))
+        assert isinstance(run, RunVerify)
+        deny = _roundtrip(DenyVerify(session_id="sess-1"))
+        assert isinstance(deny, DenyVerify)
 
     def test_cu_session(self) -> None:
         evt = CuSession(session_id="sess-1", active=True, seq=24)

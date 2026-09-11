@@ -152,3 +152,96 @@ class TestSetTier:
             await ws.close()
             daemon._shutdown_event.set()
             await asyncio.gather(daemon_task, return_exceptions=True)
+
+
+class TestSetPlan:
+    @pytest.mark.asyncio
+    async def test_set_plan_locks_brain_and_refuses_worker(self, tmp_path: Path) -> None:
+        """Plan on forces brain; set_tier worker/validator is a typed error."""
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, daemon_task = await _start_daemon(tmp)
+            uri = f"ws://127.0.0.1:{daemon.ws_server.port}"
+            ws = await _connect_and_handshake(uri, daemon.ws_server.token)
+
+            session_state = await _open_workspace(ws, str(tmp_path))
+            session_id = session_state["session_id"]
+
+            await ws.send(json.dumps({"type": "set_plan", "session_id": session_id, "on": True}))
+            await asyncio.sleep(0.1)
+
+            sess = daemon.session_registry.get(session_id)
+            assert sess is not None
+            router = sess.router
+            assert router is not None
+            assert router.plan_mode is True
+            assert router.active_tier == "brain"
+
+            await ws.send(
+                json.dumps({"type": "set_tier", "session_id": session_id, "tier": "worker"})
+            )
+            refused = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+            assert refused["type"] == "error"
+            assert refused["code"] == "plan_mode"
+            assert router.has_override is False
+            assert router.active_tier == "brain"
+
+            await ws.send(
+                json.dumps({"type": "set_tier", "session_id": session_id, "tier": "validator"})
+            )
+            refused_v = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+            assert refused_v["type"] == "error"
+            assert refused_v["code"] == "plan_mode"
+            assert router.override is None
+
+            # Brain is accepted (no-op for routing; autonomy revert stays legal).
+            await ws.send(
+                json.dumps({"type": "set_tier", "session_id": session_id, "tier": "brain"})
+            )
+            await asyncio.sleep(0.1)
+            assert router.active_tier == "brain"
+
+            await ws.send(json.dumps({"type": "set_plan", "session_id": session_id, "on": False}))
+            await asyncio.sleep(0.1)
+            assert router.plan_mode is False
+
+            await ws.send(
+                json.dumps({"type": "set_tier", "session_id": session_id, "tier": "worker"})
+            )
+            await asyncio.sleep(0.1)
+            assert router.active_tier == "worker"
+
+            # Replay the log: plan-on ack paints the title bar; later
+            # set_tier worker only lands after plan is cleared.
+            await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 1}))
+            replayed = []
+            for _ in range(9):
+                evt = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+                replayed.append(evt)
+            types = [e["type"] for e in replayed]
+            assert types[0] == "session_state"
+            plan_on = next(e for e in replayed if e["type"] == "tier_state" and e.get("plan"))
+            assert plan_on["tier"] == "brain"
+            worker_ack = next(
+                e for e in replayed if e["type"] == "tier_state" and e.get("override") == "worker"
+            )
+            assert worker_ack["plan"] is False
+
+            await ws.close()
+            daemon._shutdown_event.set()
+            await asyncio.gather(daemon_task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_set_plan_unknown_session_returns_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon, daemon_task = await _start_daemon(tmp)
+            uri = f"ws://127.0.0.1:{daemon.ws_server.port}"
+            ws = await _connect_and_handshake(uri, daemon.ws_server.token)
+
+            await ws.send(json.dumps({"type": "set_plan", "session_id": "nonexistent", "on": True}))
+            response = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+            assert response["type"] == "error"
+            assert response["code"] == "session_not_found"
+
+            await ws.close()
+            daemon._shutdown_event.set()
+            await asyncio.gather(daemon_task, return_exceptions=True)

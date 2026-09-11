@@ -64,6 +64,7 @@
 	import { screenTabVisible } from '../screen';
 	import { startOsNotify, createTauriOsNotifyBridge } from '../os-notify.svelte.js';
 	import { startCloseHint } from '../close-hint';
+	import { startQuickEntryPermission } from '../quick-entry-permission';
 	import { startCoworkerIndicator } from '../coworker-indicator.svelte.js';
 	import { isTauri } from '../open-file';
 	import { session } from '../session-status.svelte.js';
@@ -191,6 +192,10 @@
 		void startCloseHint().then((off) => {
 			offCloseHint = off;
 		});
+		let offQuickEntryPermission = () => {};
+		void startQuickEntryPermission().then((off) => {
+			offQuickEntryPermission = off;
+		});
 		const mq = window.matchMedia(narrowMediaQuery());
 		const syncNarrow = () => {
 			narrow = mq.matches;
@@ -221,6 +226,7 @@
 			offGrok();
 			offVoice();
 			offCloseHint();
+			offQuickEntryPermission();
 			mq.removeEventListener('change', syncNarrow);
 		};
 	});
