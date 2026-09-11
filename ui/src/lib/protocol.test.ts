@@ -87,6 +87,7 @@ import type {
   SetCoworker,
   SetRemoteAttach,
   SetCuIndicators,
+  SetCuPolicy,
   SetWorkspacePin,
   SetupState,
   ApiKeyValidated,
@@ -237,6 +238,16 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(isBoolean(m.glow)).toBe(true);
     expect(isBoolean(m.agent_cursor)).toBe(true);
     expect(isBoolean(m.show_on_real_display)).toBe(true);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("set_cu_policy", () => {
+    const m = fixtures.set_cu_policy as SetCuPolicy;
+    expect(m.type).toBe("set_cu_policy");
+    expect(isBoolean(m.enabled)).toBe(true);
+    expect(m.mode === "background" || m.mode === "full_control").toBe(true);
+    expect(isBoolean(m.unhide_on_finish)).toBe(true);
+    expect(Array.isArray(m.denied_apps)).toBe(true);
     expect("session_id" in m).toBe(false);
   });
 
@@ -866,6 +877,7 @@ describe("All fixtures have required shape", () => {
       "set_voice",
       "transcribe",
       "set_cu_indicators",
+      "set_cu_policy",
       "set_workspace_pin",
       "set_session_star",
       "rename_session",

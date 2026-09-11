@@ -80,6 +80,7 @@ from .cu_indicators import (
     save_cu_indicators,
     set_current_prefs,
 )
+from .cu_policy import CuPolicy, load_cu_policy, save_cu_policy
 from .desktop import DesktopDriver, desktop_driver_from_config
 from .desktop.grounding_client import GroundingClient
 from .desktop.host_probe import host_permissions
@@ -94,7 +95,12 @@ from .desktop.permissions import (
 from .desktop.protocol import DesktopError
 from .discovery import resolve_tier_slugs
 from .grok_acp import GrokEngineError, find_grok_binary
-from .grok_home import list_grok_extensions, list_grok_sessions, open_in_terminal
+from .grok_home import (
+    grok_configured_model,
+    list_grok_extensions,
+    list_grok_sessions,
+    open_in_terminal,
+)
 from .grok_loop import grok_loop
 from .keychain import (
     KeychainError,
@@ -226,6 +232,7 @@ from .protocol import (
     SetCredential,
     SetCuIndicators,
     SetCuKill,
+    SetCuPolicy,
     SetEngine,
     SetGrokMode,
     SetLoadGlobalMemory,
@@ -601,6 +608,7 @@ class Daemon:
         self.remote_attach_enabled, self.remote_attach_last_bind = load_remote_attach(self.data_dir)
         self.cu_indicators = load_cu_indicators(self.data_dir)
         set_current_prefs(self.cu_indicators)
+        self.cu_policy = load_cu_policy()
         self.workspace_pins = load_workspace_pins(self.data_dir)
         self.session_stars = load_session_stars(self.data_dir)
         bind = ""
@@ -739,6 +747,10 @@ class Daemon:
             grok_binary=str(grok_path) if grok_path is not None else None,
             voice_enabled=self.voice_enabled,
             voice_has_endpoint=voice_has_endpoint(self.config.voice),
+            cu_enabled=self.cu_policy.enabled,
+            cu_mode=self.cu_policy.mode,
+            cu_unhide_on_finish=self.cu_policy.unhide_on_finish,
+            cu_denied_apps=list(self.cu_policy.denied_apps),
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
@@ -1858,6 +1870,18 @@ class Daemon:
             set_current_prefs(self.cu_indicators)
             return (await self._setup_state_event()).model_dump_json()
 
+        if isinstance(msg, SetCuPolicy):
+            denied = tuple(item.strip() for item in msg.denied_apps if item.strip())
+            self.cu_policy = CuPolicy(
+                enabled=msg.enabled,
+                mode=msg.mode,
+                unhide_on_finish=msg.unhide_on_finish,
+                denied_apps=denied,
+                allowed_apps=self.cu_policy.allowed_apps,
+            )
+            save_cu_policy(self.cu_policy)
+            return (await self._setup_state_event()).model_dump_json()
+
         if isinstance(msg, SetWorkspacePin):
             pins = [p for p in self.workspace_pins if p != msg.path]
             if msg.pinned:
@@ -2274,6 +2298,13 @@ class Daemon:
     ) -> None:
         """Start a loop on a persisted conversation. Does not invent messages."""
         sess = await self.session_registry.restore(session_id, workspace_path, "idle")
+        record = self._session_store.get(session_id)
+        if record is not None and record.engine == "grok":
+            sess.engine = "grok"
+        elif record is not None and record.engine == "native":
+            sess.engine = "native"
+        else:
+            sess.engine = self.config.engine.kind
         if loaded.events:
             sess.event_log.replace(loaded.events)
         if loaded.conversation is not None:
@@ -2376,7 +2407,7 @@ class Daemon:
         )
 
         sink = self._audit_writer
-        if self.config.engine.kind == "grok":
+        if sess.engine == "grok":
 
             async def grok_factory(s: Session) -> None:
                 await grok_loop(
@@ -2433,6 +2464,20 @@ class Daemon:
                 seq=1,
             )
         )
+        if sess.engine == "grok":
+            # Native slugs are not what will answer. Name the Grok model
+            # the CLI is configured to use so an empty chat can show it
+            # before the first ACP prompt.
+            await sess.event_log.add(
+                GrokMode(
+                    session_id=sess.id,
+                    mode="",
+                    modes=[],
+                    model=grok_configured_model(),
+                    seq=1,
+                )
+            )
+            return
         assert sess.router is not None
         await sess.event_log.add(_tier_state_event(sess, self.config))
 
@@ -2451,7 +2496,8 @@ class Daemon:
         # overwrites; config scaffold stays OpenWorkspace-only.
         await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
         sess = await self.session_registry.create(workspace_path)
-        await self._session_store.upsert(sess.id, workspace_path, sess.state)
+        sess.engine = self.config.engine.kind
+        await self._session_store.upsert(sess.id, workspace_path, sess.state, engine=sess.engine)
         self._session_persist.prepare(sess.id)
         try:
             source = boundary_source(workspace_path)
@@ -2961,7 +3007,8 @@ class Daemon:
             await notify_autonomy_stop(self.config, message)
 
         sess.autonomy_notify = _notify
-        await self._session_store.upsert(sess.id, str(workspace), sess.state)
+        sess.engine = self.config.engine.kind
+        await self._session_store.upsert(sess.id, str(workspace), sess.state, engine=sess.engine)
         self._session_persist.prepare(sess.id)
         await self._attach_session_runtime(sess)
         await self._emit_working_context(sess, "charter")

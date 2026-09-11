@@ -10,7 +10,15 @@ from pathlib import Path
 
 import pytest
 
-from tstd.grok_acp import AcpClient, GrokEngineError, find_grok_binary, pick_permission_option
+from tstd.grok_acp import (
+    STDOUT_LINE_LIMIT,
+    AcpClient,
+    GrokEngineError,
+    find_grok_binary,
+    persist_prompt_images,
+    pick_permission_option,
+    prompt_image_supported,
+)
 
 FAKE_AGENT = r"""
 import json, sys
@@ -102,6 +110,45 @@ if __name__ == "__main__":
 """
 
 
+LONG_LINE_AGENT = r"""
+import json, sys
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+payload = "A" * 70000
+for raw in sys.stdin:
+    raw = raw.strip()
+    if not raw:
+        continue
+    msg = json.loads(raw)
+    method = msg.get("method")
+    msg_id = msg.get("id")
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {"protocolVersion": 1}})
+    elif method == "session/new":
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": "s1"}})
+    elif method == "session/prompt":
+        send({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "s1",
+                "update": {
+                    "sessionUpdate": "user_message_chunk",
+                    "content": {
+                        "type": "image",
+                        "mimeType": "image/jpeg",
+                        "data": payload,
+                    },
+                },
+            },
+        })
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {"stopReason": "end_turn"}})
+"""
+
+
 def _write_agent(tmp_path: Path) -> Path:
     path = tmp_path / "fake_grok_agent.py"
     path.write_text(FAKE_AGENT, encoding="utf-8")
@@ -168,3 +215,50 @@ class TestAcpClient:
             assert "tool_call" in kinds
         finally:
             await client.close()
+
+    @pytest.mark.asyncio
+    async def test_prompt_survives_a_70kib_stdout_line(self, tmp_path: Path) -> None:
+        # Grok echoes an attached photo as one NDJSON user_message_chunk.
+        # The default StreamReader limit is 64KiB; a 53KB JPEG already
+        # exceeds that and used to surface as agent_exited.
+        agent = tmp_path / "long_line_agent.py"
+        agent.write_text(LONG_LINE_AGENT, encoding="utf-8")
+        client = AcpClient()
+        await client.start([sys.executable, str(agent)], cwd=str(tmp_path), env=os.environ.copy())
+        try:
+            assert client._proc is not None and client._proc.stdout is not None
+            assert client._proc.stdout._limit >= STDOUT_LINE_LIMIT
+            await client.initialize("tst-desk", "0.1.0")
+            session_id = await client.session_new(str(tmp_path))
+            result = await asyncio.wait_for(client.prompt(session_id, "look"), timeout=5)
+            assert result.get("stopReason") == "end_turn"
+        finally:
+            await client.close()
+
+
+class TestPromptImages:
+    def test_image_capability_reads_initialize_result(self) -> None:
+        assert prompt_image_supported({}) is False
+        assert (
+            prompt_image_supported(
+                {"agentCapabilities": {"promptCapabilities": {"image": False}}}
+            )
+            is False
+        )
+        assert (
+            prompt_image_supported(
+                {"agentCapabilities": {"promptCapabilities": {"image": True}}}
+            )
+            is True
+        )
+
+    def test_persist_writes_under_workspace_attachments(self, tmp_path: Path) -> None:
+        png = b"\x89PNG\r\n\x1a\n"
+        saved = persist_prompt_images(str(tmp_path), "sess-1", [("shot.png", png, "image/png")])
+        name, rel, media, uri = saved[0]
+        assert name == "shot.png"
+        assert rel == ".tst/attachments/sess-1/shot.png"
+        assert media == "image/png"
+        dest = tmp_path / ".tst" / "attachments" / "sess-1" / "shot.png"
+        assert dest.read_bytes() == png
+        assert uri == dest.resolve().as_uri()

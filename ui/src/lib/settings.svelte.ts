@@ -13,14 +13,17 @@
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
 
-export type SettingsSection = "appearance" | "engine" | "model" | "policy" | "key";
+export type SettingsSection = "appearance" | "computer" | "engine" | "model" | "policy" | "key";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
+	"computer",
 	"engine",
 	"model",
 	"policy",
 	"key",
 ] as const;
+
+export type CuMode = "background" | "full_control";
 
 export type Theme = "light" | "system" | "dark";
 export const THEMES: readonly Theme[] = ["light", "system", "dark"] as const;
@@ -77,6 +80,11 @@ export const settings = $state({
 	voiceEnabled: false,
 	/** Whether config.yaml names a transcription URL. */
 	voiceHasEndpoint: false,
+	/** TD-4830: computer-use policy. */
+	cuEnabled: true,
+	cuMode: "background" as CuMode,
+	cuUnhideOnFinish: true,
+	cuDeniedApps: [] as string[],
 });
 
 let started = false;
@@ -125,6 +133,10 @@ export function resetSettings(): void {
 	settings.savingEngine = false;
 	settings.voiceEnabled = false;
 	settings.voiceHasEndpoint = false;
+	settings.cuEnabled = true;
+	settings.cuMode = "background";
+	settings.cuUnhideOnFinish = true;
+	settings.cuDeniedApps = [];
 	started = false;
 }
 
@@ -157,6 +169,10 @@ function reduce(event: DaemonEventUnion): void {
 		settings.savingEngine = false;
 		settings.voiceEnabled = event.voice_enabled ?? false;
 		settings.voiceHasEndpoint = event.voice_has_endpoint ?? false;
+		settings.cuEnabled = event.cu_enabled ?? true;
+		settings.cuMode = event.cu_mode === "full_control" ? "full_control" : "background";
+		settings.cuUnhideOnFinish = event.cu_unhide_on_finish ?? true;
+		settings.cuDeniedApps = event.cu_denied_apps ?? [];
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -355,5 +371,21 @@ export function setCuIndicators(next: {
 		glow: next.glow ?? settings.cuGlow,
 		agent_cursor: next.agentCursor ?? settings.cuAgentCursor,
 		show_on_real_display: next.showOnRealDisplay ?? settings.cuShowOnRealDisplay,
+	});
+}
+
+/** Persist computer-use policy (TD-4830). Acked with setup_state. */
+export function setCuPolicy(next: {
+	enabled?: boolean;
+	mode?: CuMode;
+	unhideOnFinish?: boolean;
+	deniedApps?: string[];
+}): void {
+	sendToDaemon({
+		type: "set_cu_policy",
+		enabled: next.enabled ?? settings.cuEnabled,
+		mode: next.mode ?? settings.cuMode,
+		unhide_on_finish: next.unhideOnFinish ?? settings.cuUnhideOnFinish,
+		denied_apps: next.deniedApps ?? settings.cuDeniedApps,
 	});
 }

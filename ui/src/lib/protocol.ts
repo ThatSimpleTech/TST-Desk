@@ -127,6 +127,15 @@ export interface SetCuIndicators extends ClientMessage {
   show_on_real_display: boolean;
 }
 
+/** Background vs full-control computer use, denylist, master switch (TD-4830). */
+export interface SetCuPolicy extends ClientMessage {
+  type: "set_cu_policy";
+  enabled: boolean;
+  mode: "background" | "full_control";
+  unhide_on_finish: boolean;
+  denied_apps: string[];
+}
+
 /** Turn Tailscale remote attach on or off (TD-3603). Machine-wide, no session. */
 export interface SetRemoteAttach extends ClientMessage {
   type: "set_remote_attach";
@@ -567,6 +576,7 @@ export type ClientMessageUnion =
   | SetVoice
   | Transcribe
   | SetCuIndicators
+  | SetCuPolicy
   | SetWorkspacePin
   | Resume
   | Cancel
@@ -663,6 +673,8 @@ export interface SessionState extends DaemonEvent {
     | "cancelled"
     | "interrupted";
   reason?: string | null;
+  /** Loop this session started with. Additive; older daemons omit it. */
+  engine?: "native" | "grok" | null;
 }
 
 /** The conversation forked or a sibling was selected (TD-1708). */
@@ -1031,6 +1043,11 @@ export interface SetupState extends DaemonEvent {
   voice_enabled?: boolean;
   /** Whether config.yaml names a transcription URL — never the URL. */
   voice_has_endpoint?: boolean;
+  /** TD-4830: computer-use policy. Additive; older daemons omit them. */
+  cu_enabled?: boolean;
+  cu_mode?: "background" | "full_control";
+  cu_unhide_on_finish?: boolean;
+  cu_denied_apps?: string[];
 }
 
 export interface CredentialSummary {
@@ -1298,6 +1315,8 @@ export interface GrokMode extends DaemonEvent {
   session_id: string;
   mode: string;
   modes?: string[];
+  /** Model the Grok CLI is using. Additive; older daemons omit it. */
+  model?: string | null;
 }
 
 export interface GrokPreview extends DaemonEvent {

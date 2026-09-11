@@ -159,13 +159,20 @@ is set (TD-2204). A filled `base_url` with no `command` is attach-only.
 
 ### `computer_use`
 
-Desktop screenshot / move / click / type / scroll (TD-3301). Empty
-`command` is the in-process mock (CI, no display). A non-empty value is
-the argv for `mcp/tst-cu-mcp` over stdio — the daemon owns the child and
-does not bind a socket. Linux X11 is a live path (TD-2001): first-run
+Desktop screenshot / move / click / type / scroll (TD-3301), plus
+background app-scoped tools (`list_apps`, `ui_snapshot`, `ui_action`,
+`launch_app`) that do not take the pointer (TD-4829). Empty `command`
+is the in-process mock (CI, no display). A non-empty value is the argv
+for `mcp/tst-cu-mcp` over stdio — the daemon owns the child and does
+not bind a socket. Linux X11 is a live path (TD-2001): first-run
 onboarding is the same kind of honesty as Windows (no grant dialog). A
 Wayland session is unsupported (TD-2002); `health` reports
 `supported: false` and `session_type: "wayland"`.
+
+Settings → Computer use (TD-4830) writes `~/.tst-cu-mcp/config.yaml`
+(or `$TST_CU_MCP_CONFIG`): `actuation.enabled`, `mode` (`background` or
+`full_control`), `scoping.denied_apps`, `scoping.unhide_on_finish`. The
+MCP server re-reads that file on each background tool call.
 
 Browser computer-use (TD-1710): `browser` selects the in-process mock
 (CI, never launches Chrome) or Playwright with a persistent profile

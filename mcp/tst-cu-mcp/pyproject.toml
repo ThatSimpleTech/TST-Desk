@@ -90,6 +90,10 @@ module = "tst_cu_mcp.backends.windows"
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
+module = "tst_cu_mcp.running"
+disable_error_code = ["attr-defined", "untyped-decorator"]
+
+[[tool.mypy.overrides]]
 module = "tst_cu_mcp.backends.linux_x11"
 disable_error_code = ["attr-defined"]
 

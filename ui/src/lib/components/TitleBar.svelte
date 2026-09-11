@@ -103,9 +103,12 @@
 	<CuKillSwitch />
 
 	{#if session.sessionId !== null}
-		{#if settings.engine === 'grok'}
+		{#if (session.engine ?? settings.engine) === 'grok'}
 			<span class="chip chip--active" title={settings.grokBinary ?? 'Grok Build CLI'}>grok</span>
-			{#if grok.modes.length > 0 && session.sessionId !== null}
+			{#if grok.model && grok.sessionId === session.sessionId}
+				<span class="chip" title="Grok model">{grok.model}</span>
+			{/if}
+			{#if grok.modes.length > 0 && grok.sessionId === session.sessionId}
 				<div class="tiers" role="group" aria-label="Grok mode">
 					{#each grok.modes as mode (mode)}
 						<button

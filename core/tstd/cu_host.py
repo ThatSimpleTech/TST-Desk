@@ -307,7 +307,45 @@ def dispatch(text: str) -> tuple[bytes, bytes | None]:
         except (ValueError, UnicodeError):
             return b"err\n", None
         return (b"ok\n" if _type_text(typed) else b"err\n"), None
+    if text.startswith("json "):
+        return _json_command(text[5:]), None
     return b"err\n", None
+
+
+def _json_command(raw: str) -> bytes:
+    """AX snapshot/act in this process. Never call the host socket: we are it."""
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError:
+        return b'{"ok":false,"error":"bad json"}\n'
+    if not isinstance(body, dict):
+        return b'{"ok":false,"error":"bad json"}\n'
+    try:
+        from tst_cu_mcp.backends import darwin_ax
+    except ImportError:
+        return b'{"ok":false,"error":"darwin_ax unavailable"}\n'
+    op = str(body.get("op") or "")
+    try:
+        pid = int(body.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    try:
+        if op == "ui_snapshot":
+            tree = darwin_ax._read_tree(pid)
+            payload = {"ok": True, "pid": pid, "tree": tree, "path": "daemon"}
+        elif op == "ui_act":
+            payload = darwin_ax._local_act(
+                pid,
+                str(body.get("id") or ""),
+                str(body.get("action") or ""),
+                str(body.get("value") or ""),
+            )
+            payload["ok"] = True
+        else:
+            payload = {"ok": False, "error": f"unknown op {op}"}
+    except Exception as exc:
+        payload = {"ok": False, "error": str(exc)}
+    return json.dumps(payload).encode("utf-8") + b"\n"
 
 
 def _permissions_dict() -> dict[str, object]:

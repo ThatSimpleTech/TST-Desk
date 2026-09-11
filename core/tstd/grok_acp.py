@@ -27,6 +27,18 @@ log = get_logger("tstd.grok_acp")
 PermissionHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 UpdateHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
+# asyncio.StreamReader.readline defaults to 64KiB. Grok echoes an image
+# prompt as one NDJSON ``user_message_chunk`` whose base64 payload is
+# larger than that, which used to kill the reader and surface as
+# ``agent_exited`` the moment the user attached a photo.
+STDOUT_LINE_LIMIT = 16 * 1024 * 1024
+
+# asyncio.StreamReader.readline defaults to 64KiB. Grok echoes an image
+# prompt as one NDJSON ``user_message_chunk`` whose base64 payload is
+# larger than that, which used to kill the reader and surface as
+# ``agent_exited`` the moment the user attached a photo.
+STDOUT_LINE_LIMIT = 16 * 1024 * 1024
+
 
 class GrokEngineError(Exception):
     """The Grok CLI could not be found, started, or spoken to."""
@@ -65,6 +77,44 @@ def find_grok_binary(configured: str = "") -> Path:
         "Grok CLI not found. Install Grok Build, run `grok login`, "
         "or set engine.binary in config.yaml.",
     )
+
+
+def prompt_image_supported(initialize_result: dict[str, Any]) -> bool:
+    """Whether ``session/prompt`` may carry ACP image content blocks."""
+    caps = initialize_result.get("agentCapabilities")
+    if not isinstance(caps, dict):
+        return False
+    prompt = caps.get("promptCapabilities")
+    if not isinstance(prompt, dict):
+        return False
+    return bool(prompt.get("image"))
+
+
+def persist_prompt_images(
+    workspace: str,
+    session_id: str,
+    images: list[tuple[str, bytes, str]],
+) -> list[tuple[str, str, str, str]]:
+    """Write attached images into the workspace so Grok can Read them.
+
+    Grok 1.0.13 advertises ``promptCapabilities.image: false`` and drops
+    ACP image blocks. A file under the workspace is something its tools
+    can open. Returns ``(name, relative_path, mime, file_uri)``.
+    """
+    root = Path(workspace) / ".tst" / "attachments" / session_id
+    root.mkdir(parents=True, exist_ok=True)
+    saved: list[tuple[str, str, str, str]] = []
+    for index, (name, raw, media) in enumerate(images):
+        base = Path(name.replace("\\", "/")).name.strip() or f"image-{index}"
+        if base in {".", ".."}:
+            base = f"image-{index}"
+        dest = root / base
+        if dest.exists():
+            dest = root / f"{dest.stem}-{index}{dest.suffix}"
+        dest.write_bytes(raw)
+        rel = dest.relative_to(workspace).as_posix()
+        saved.append((base, rel, media, dest.resolve().as_uri()))
+    return saved
 
 
 class AcpClient:
@@ -112,6 +162,8 @@ class AcpClient:
             cwd=cwd,
             env=env,
         )
+        if self._proc.stdout is not None:
+            self._proc.stdout._limit = STDOUT_LINE_LIMIT
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._drain_stderr())
 
@@ -159,6 +211,7 @@ class AcpClient:
         session_id: str,
         text: str,
         images: list[tuple[str, bytes, str]] | None = None,
+        files: list[tuple[str, str, str]] | None = None,
     ) -> dict[str, Any]:
         blocks: list[dict[str, Any]] = []
         if text:
@@ -169,6 +222,15 @@ class AcpClient:
                     "type": "image",
                     "mimeType": media,
                     "data": base64.b64encode(raw).decode("ascii"),
+                }
+            )
+        for name, uri, media in files or []:
+            blocks.append(
+                {
+                    "type": "resource_link",
+                    "uri": uri,
+                    "name": name,
+                    "mimeType": media,
                 }
             )
         if not blocks:
@@ -244,7 +306,17 @@ class AcpClient:
             return
         try:
             while True:
-                line = await proc.stdout.readline()
+                try:
+                    line = await proc.stdout.readline()
+                except ValueError as exc:
+                    # StreamReader.readline raises ValueError when a line
+                    # exceeds ``_limit``. Treat it as a closed agent so the
+                    # turn fails with copy the user can act on.
+                    log.error(
+                        "ACP stdout line exceeded reader limit",
+                        extra={"extra_fields": {"error": str(exc)}},
+                    )
+                    break
                 if not line:
                     break
                 text = line.decode("utf-8", errors="replace").strip()

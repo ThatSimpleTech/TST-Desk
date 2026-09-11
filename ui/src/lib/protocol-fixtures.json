@@ -100,6 +100,15 @@
     "agent_cursor": true,
     "show_on_real_display": false
   },
+  "set_cu_policy": {
+    "type": "set_cu_policy",
+    "enabled": true,
+    "mode": "background",
+    "unhide_on_finish": true,
+    "denied_apps": [
+      "1Password"
+    ]
+  },
   "set_workspace_pin": {
     "type": "set_workspace_pin",
     "path": "/home/user/project",
@@ -416,7 +425,8 @@
     "seq": 2,
     "session_id": "sess-1",
     "state": "running",
-    "reason": null
+    "reason": null,
+    "engine": "native"
   },
   "conversation_reset": {
     "type": "conversation_reset",
@@ -432,7 +442,8 @@
     "seq": 2,
     "session_id": "sess-1",
     "state": "paused",
-    "reason": "spend cap exceeded: $0.0205 >= $0.01"
+    "reason": "spend cap exceeded: $0.0205 >= $0.01",
+    "engine": null
   },
   "user_turn": {
     "type": "user_turn",
@@ -899,7 +910,11 @@
     "grok_available": false,
     "grok_binary": null,
     "voice_enabled": false,
-    "voice_has_endpoint": false
+    "voice_has_endpoint": false,
+    "cu_enabled": true,
+    "cu_mode": "background",
+    "cu_unhide_on_finish": true,
+    "cu_denied_apps": []
   },
   "api_key_validated": {
     "type": "api_key_validated",
@@ -1109,7 +1124,17 @@
     "xtest": "",
     "xtest_applies": false,
     "no_display": "",
-    "no_display_applies": false
+    "no_display_applies": false,
+    "actuation_path": "",
+    "signing": "",
+    "bundle_path": "",
+    "stale_screen_recording": false,
+    "stale_accessibility": false,
+    "unbundled_dev_binary": false,
+    "fix_screen_recording": "",
+    "fix_accessibility": "",
+    "reset_supported": false,
+    "reset_error": ""
   },
   "list_jobs": {
     "type": "list_jobs"
@@ -1179,7 +1204,8 @@
       "default",
       "plan",
       "yolo"
-    ]
+    ],
+    "model": "grok-4.6"
   },
   "grok_preview": {
     "type": "grok_preview",

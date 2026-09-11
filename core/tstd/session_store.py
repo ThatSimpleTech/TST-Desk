@@ -65,6 +65,10 @@ class SessionRecord:
     # `title` only; empty rename restores this (TD-3002). Defaulted so a
     # store written before this field loads unchanged.
     auto_title: str | None = None
+    # Loop this session started with (`native` | `grok`). None on a store
+    # written before the field existed — revive then follows current
+    # config.engine.kind, which is what those sessions already did.
+    engine: str | None = None
 
 
 class SessionStore:
@@ -89,11 +93,14 @@ class SessionStore:
         workspace_path: str,
         state: str,
         created_at: str | None = None,
+        engine: str | None = None,
     ) -> None:
         """Insert or refresh a session record and persist the store.
 
         ``created_at`` is only set on first insert, so later state refreshes
-        preserve the original creation timestamp.
+        preserve the original creation timestamp. ``engine`` is the loop
+        this session started with; omitted on a refresh keeps the stored
+        value so a later ``set_engine`` cannot rewrite history.
         """
         existing = self._records.get(session_id)
         record = SessionRecord(
@@ -104,6 +111,7 @@ class SessionStore:
             archived=existing.archived if existing else False,
             title=existing.title if existing else None,
             auto_title=existing.auto_title if existing else None,
+            engine=engine if engine is not None else (existing.engine if existing else None),
         )
         self._records[session_id] = record
         await self._persist()

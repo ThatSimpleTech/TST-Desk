@@ -375,7 +375,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | Event | Seq | Purpose |
 |---|---|---|
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
-| `session_state` | session | A session state transition, with an optional reason. |
+| `session_state` | session | A session state transition, with an optional reason. Additive `engine` (`native` \| `grok`) names the loop this session started with. |
 | `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
@@ -389,7 +389,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. |
-| `tier_state` | session | The active tier, any pinned override, and the configured slugs. |
+| `tier_state` | session | The active tier, any pinned override, and the configured slugs. Native-engine sessions only. |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
@@ -422,7 +422,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` asked for (TD-3805). |
 | `grok_commands` | session | Slash commands the Grok ACP agent advertised. |
 | `grok_plan` | session | Plan-mode markdown and entries from ACP `plan` updates. |
-| `grok_mode` | session | Current Grok ACP mode and the advertised set. |
+| `grok_mode` | session | Current Grok ACP mode, the advertised set, and optional `model` the CLI is using. |
 | `grok_preview` | session | A workspace media file or loopback URL to show in Preview. |
 | `grok_session_list` | connection | TUI sessions under `~/.grok/sessions`. |
 | `grok_extensions` | connection | Read-only MCP / skills / plugins from `~/.grok`. Never secrets. |

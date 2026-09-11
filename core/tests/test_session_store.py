@@ -81,6 +81,26 @@ class TestSessionStore:
             assert rec.state == "running"
             assert rec.workspace_path == "/ws"
 
+    async def test_engine_survives_a_state_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle", engine="grok")
+            await store.upsert("s1", "/ws", "running")
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.engine == "grok"
+            reloaded = SessionStore(Path(tmp)).get("s1")
+            assert reloaded is not None
+            assert reloaded.engine == "grok"
+
+    async def test_missing_engine_stays_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SessionStore(Path(tmp))
+            await store.upsert("s1", "/ws", "idle")
+            rec = store.get("s1")
+            assert rec is not None
+            assert rec.engine is None
+
     async def test_missing_store_loads_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = SessionStore(Path(tmp))

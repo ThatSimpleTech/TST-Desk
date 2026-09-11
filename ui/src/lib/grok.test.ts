@@ -96,6 +96,28 @@ describe("events", () => {
 		});
 		expect(grok.mode).toBe("plan");
 		expect(grok.modes).toEqual(["agent", "plan"]);
+		expect(grok.sessionId).toBe("s1");
+	});
+
+	it("keeps the Grok model when ACP names one", () => {
+		emit({
+			type: "grok_mode",
+			seq: 1,
+			session_id: "s1",
+			mode: "agent",
+			modes: ["agent", "plan"],
+			model: "grok-4.6",
+		});
+		expect(grok.model).toBe("grok-4.6");
+		emit({
+			type: "grok_mode",
+			seq: 2,
+			session_id: "s1",
+			mode: "plan",
+			modes: ["agent", "plan"],
+		});
+		expect(grok.mode).toBe("plan");
+		expect(grok.model).toBe("grok-4.6");
 	});
 
 	it("opens the preview tab on a preview event", () => {

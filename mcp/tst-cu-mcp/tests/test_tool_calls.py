@@ -134,6 +134,13 @@ class TestArgumentValidation:
         result = await call_raw("scroll", {"dy": 10_000_000})
         assert result.is_error is True
 
+    async def test_ui_action_unknown_verb_is_an_error(self) -> None:
+        result = await call_raw(
+            "ui_action",
+            {"app": "Safari", "element_id": "0", "action": "explode"},
+        )
+        assert result.is_error is True
+
     async def test_unknown_tool_returns_an_error_result(self) -> None:
         # An error result rather than a raised exception: the model gets something
         # it can read and correct, instead of the connection failing under it.
@@ -159,6 +166,12 @@ class TestToolCatalogue:
             "get_cursor_position",
             "wait",
             "wait_for_window",
+            "list_apps",
+            "ui_snapshot",
+            "ui_action",
+            "launch_app",
+            "hide_other_apps",
+            "unhide_apps",
         }
 
     async def test_the_episode_bracket_is_not_offered_to_the_model(self) -> None:

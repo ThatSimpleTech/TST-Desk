@@ -49,6 +49,32 @@ def grok_home() -> Path:
     return Path.home() / ".grok"
 
 
+def grok_configured_model() -> str | None:
+    """Grok CLI's configured default model, or None if unset / unreadable.
+
+    Read from ``~/.grok/config.toml`` ``[models] default``. This is what a
+    new Grok session uses before ACP names a model; it is not a guess.
+    """
+    path = grok_home() / "config.toml"
+    if not path.is_file():
+        return None
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover
+        return None
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    models = data.get("models")
+    if not isinstance(models, dict):
+        return None
+    default = models.get("default")
+    if isinstance(default, str) and default.strip():
+        return default.strip()
+    return None
+
+
 def list_grok_sessions(limit: int = 40) -> list[dict[str, str]]:
     """Newest-first summaries from ``~/.grok/sessions``."""
     root = grok_home() / "sessions"

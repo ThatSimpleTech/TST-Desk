@@ -37,6 +37,12 @@ TOOL_NAMES = {
     "get_cursor_position",
     "wait",
     "wait_for_window",
+    "list_apps",
+    "ui_snapshot",
+    "ui_action",
+    "launch_app",
+    "hide_other_apps",
+    "unhide_apps",
 }
 
 TIMEOUT_SECONDS = 60

@@ -10,6 +10,7 @@ import pytest
 from tstd.grok_home import (
     acp_mcp_servers,
     computer_use_mcp,
+    grok_configured_model,
     mcp_servers_for_acp,
     media_kind,
     open_in_terminal,
@@ -39,6 +40,15 @@ def test_resolve_workspace_file(tmp_path: Path) -> None:
     assert resolve_workspace_file(str(tmp_path), str(inside)) == inside.resolve()
     assert resolve_workspace_file(str(tmp_path), "../shot.png") is None
     assert resolve_workspace_file(str(tmp_path), "missing.png") is None
+
+
+def test_grok_configured_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import tstd.grok_home as grok_home
+
+    monkeypatch.setattr(grok_home, "grok_home", lambda: tmp_path)
+    assert grok_configured_model() is None
+    (tmp_path / "config.toml").write_text('[models]\ndefault = "grok-4.6"\n', encoding="utf-8")
+    assert grok_configured_model() == "grok-4.6"
 
 
 def test_list_grok_sessions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

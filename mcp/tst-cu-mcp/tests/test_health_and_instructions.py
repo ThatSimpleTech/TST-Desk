@@ -136,6 +136,12 @@ class TestInstructions:
             text = server.instructions(platform)
             assert "no per-action approval gate" in text
 
+    def test_instructions_prefer_background_tools(self) -> None:
+        text = server.instructions("darwin")
+        assert "ui_snapshot" in text
+        assert "ui_action" in text
+        assert "list_apps" in text
+
 
 class TestPermissionHint:
     def test_macos_hint_names_the_permissions(self) -> None:

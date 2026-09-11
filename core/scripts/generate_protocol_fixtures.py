@@ -126,6 +126,7 @@ from tstd.protocol import (
     SetCoworker,
     SetCredential,
     SetCuIndicators,
+    SetCuPolicy,
     SetCuKill,
     SetEngine,
     SetGrokMode,
@@ -189,6 +190,12 @@ FIXTURES = {
     "set_voice": SetVoice(enabled=True),
     "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
+    "set_cu_policy": SetCuPolicy(
+        enabled=True,
+        mode="background",
+        unhide_on_finish=True,
+        denied_apps=["1Password"],
+    ),
     "set_workspace_pin": SetWorkspacePin(path="/home/user/project", pinned=True),
     "resume": Resume(session_id="sess-1"),
     "cancel": Cancel(session_id="sess-1"),
@@ -297,7 +304,9 @@ FIXTURES = {
     "set_remote_attach": SetRemoteAttach(enabled=True),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
-    "session_state": SessionState(session_id="sess-1", state="running", seq=2),
+    "session_state": SessionState(
+        session_id="sess-1", state="running", engine="native", seq=2
+    ),
     "conversation_reset": ConversationReset(
         session_id="sess-1",
         user_index=0,
@@ -806,7 +815,11 @@ FIXTURES = {
         seq=3,
     ),
     "grok_mode": GrokMode(
-        session_id="sess-1", mode="plan", modes=["default", "plan", "yolo"], seq=4
+        session_id="sess-1",
+        mode="plan",
+        modes=["default", "plan", "yolo"],
+        model="grok-4.6",
+        seq=4,
     ),
     "grok_preview": GrokPreview(
         session_id="sess-1",
