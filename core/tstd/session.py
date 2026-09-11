@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
 from .autonomy.charter import Charter
 from .autonomy.classifier import DecisionClass
@@ -296,6 +296,9 @@ class Session:
         self.pending_images: list[tuple[str, bytes, str]] = []
         self.grok_acp: Any = None
         self.grok_session_id: str | None = None
+        # Loop this session started with. New sessions take config.engine.kind;
+        # a running session keeps this even if Settings later flips.
+        self.engine: Literal["native", "grok"] = "native"
 
     def mark_class_c(self, reason: str) -> None:
         """A Class C call on an autonomous run — stop after this turn."""
@@ -422,6 +425,7 @@ class Session:
             state=cast(Any, new_state),
             seq=1,
             reason=reason,
+            engine=self.engine,
         )
         await self.event_log.add(event)
 

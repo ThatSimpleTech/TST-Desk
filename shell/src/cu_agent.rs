@@ -82,6 +82,7 @@ enum Command<'a> {
     Type {
         b64: &'a str,
     },
+    Json(&'a str),
     Unknown,
 }
 
@@ -161,6 +162,9 @@ fn parse_line(text: &str) -> Command<'_> {
     }
     if let Some(b64) = text.strip_prefix("type ") {
         return Command::Type { b64: b64.trim() };
+    }
+    if let Some(rest) = text.strip_prefix("json ") {
+        return Command::Json(rest.trim());
     }
     Command::Unknown
 }
@@ -481,8 +485,19 @@ mod macos {
                 Some(typed) => (ok_err(type_text(&typed)), None),
                 None => (b"err\n".to_vec(), None),
             },
+            Command::Json(raw) => (json_reply(raw), None),
             Command::Unknown => (b"err\n".to_vec(), None),
         }
+    }
+
+    fn json_reply(raw: &str) -> Vec<u8> {
+        let body = match serde_json::from_str::<serde_json::Value>(raw) {
+            Ok(value) => crate::cu_ax::handle(&value),
+            Err(_) => serde_json::json!({"ok": false, "error": "bad json"}),
+        };
+        let mut bytes = body.to_string().into_bytes();
+        bytes.push(b'\n');
+        bytes
     }
 
     fn ok_err(ok: bool) -> Vec<u8> {
@@ -965,5 +980,9 @@ mod tests {
             Command::Type { b64: "aGVsbG8=" }
         );
         assert_eq!(parse_line("nope"), Command::Unknown);
+        assert_eq!(
+            parse_line("json {\"op\":\"ui_snapshot\",\"pid\":1}"),
+            Command::Json("{\"op\":\"ui_snapshot\",\"pid\":1}")
+        );
     }
 }

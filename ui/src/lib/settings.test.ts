@@ -55,6 +55,7 @@ import {
 	setRemoteAttach,
 	setEngine,
 	setCuIndicators,
+	setCuPolicy,
 	storeNamedKey,
 	deleteNamedKey,
 	renameCredential,
@@ -493,6 +494,24 @@ describe("computer-use indicators", () => {
 		expect(settings.cuGlow).toBe(true);
 		emit(setupState({ cu_glow: false }));
 		expect(settings.cuGlow).toBe(false);
+	});
+
+	it("sends set_cu_policy from the computer-use section", () => {
+		startSettings();
+		emit(setupState({ cu_enabled: true, cu_mode: "background", cu_denied_apps: [] }));
+		setCuPolicy({ mode: "full_control", deniedApps: ["Bank"] });
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_cu_policy",
+				enabled: true,
+				mode: "full_control",
+				unhide_on_finish: true,
+				denied_apps: ["Bank"],
+			},
+		]);
+		emit(setupState({ cu_mode: "full_control", cu_denied_apps: ["Bank"] }));
+		expect(settings.cuMode).toBe("full_control");
+		expect(settings.cuDeniedApps).toEqual(["Bank"]);
 	});
 });
 

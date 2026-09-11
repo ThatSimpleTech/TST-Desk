@@ -26,7 +26,9 @@ from .grok_acp import (
     AcpClient,
     GrokEngineError,
     find_grok_binary,
+    persist_prompt_images,
     pick_permission_option,
+    prompt_image_supported,
 )
 from .grok_home import acp_mcp_servers, media_kind, resolve_workspace_file, sniff_local_url
 from .logging import get_logger
@@ -111,6 +113,31 @@ def _save_grok_session_id(session: Session, grok_id: str) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(grok_id + "\n", encoding="utf-8")
+
+
+def grok_model_from_payload(payload: dict[str, Any] | None) -> str | None:
+    """Pull a model id out of an ACP result or session update.
+
+    Grok puts ``modelId`` on ``_meta`` of session updates; some payloads
+    name it at the top level. Empty / missing stays None — the greeting
+    must not invent a slug the CLI did not name.
+    """
+    if not isinstance(payload, dict):
+        return None
+    candidates: list[Any] = []
+    meta = payload.get("_meta")
+    if isinstance(meta, dict):
+        candidates.extend(meta.get(key) for key in ("modelId", "model_id", "model"))
+    update = payload.get("update")
+    if isinstance(update, dict):
+        nested = grok_model_from_payload(update)
+        if nested:
+            return nested
+    candidates.extend(payload.get(key) for key in ("modelId", "model_id", "currentModelId"))
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _block_text(block: dict[str, Any]) -> str:
@@ -255,9 +282,26 @@ async def grok_loop(
     grok_id: str | None = None
     started = False
     after_tool = False
+    current_mode = ""
+    current_modes: list[str] = []
+    current_model: str | None = None
+    image_ok = False
+
+    async def emit_mode() -> None:
+        if not current_mode and not current_model:
+            return
+        await session.event_log.add(
+            GrokMode(
+                session_id=session.id,
+                mode=current_mode,
+                modes=current_modes,
+                model=current_model,
+                seq=1,
+            )
+        )
 
     async def ensure_started() -> None:
-        nonlocal grok_id, started
+        nonlocal grok_id, started, current_model, image_ok
         if started and acp.alive:
             return
         started = False
@@ -272,7 +316,11 @@ async def grok_loop(
                     raise
         from tstd import __version__
 
-        await acp.initialize("tst-desk", __version__)
+        init = await acp.initialize("tst-desk", __version__)
+        image_ok = prompt_image_supported(init if isinstance(init, dict) else {})
+        named = grok_model_from_payload(init if isinstance(init, dict) else None)
+        if named:
+            current_model = named
         resume = _load_grok_session_id(session)
         servers = acp_mcp_servers(cu_command, search_from=session.workspace_path)
         log.info(
@@ -295,11 +343,16 @@ async def grok_loop(
         session.grok_acp = acp
         session.grok_session_id = grok_id
         started = True
+        await emit_mode()
 
     async def on_update(params: dict[str, Any]) -> None:
-        nonlocal after_tool
+        nonlocal after_tool, current_model, current_mode, current_modes
         update = params.get("update") if isinstance(params.get("update"), dict) else params
         assert isinstance(update, dict)
+        named = grok_model_from_payload(params) or grok_model_from_payload(update)
+        if named and named != current_model:
+            current_model = named
+            await emit_mode()
         kind = str(update.get("sessionUpdate") or update.get("session_update") or "")
         if kind in {"agent_message_chunk", "agent_message"}:
             raw = _update_text(update)
@@ -408,9 +461,9 @@ async def grok_loop(
                 else []
             )
             if mode:
-                await session.event_log.add(
-                    GrokMode(session_id=session.id, mode=mode, modes=modes, seq=1)
-                )
+                current_mode = mode
+                current_modes = modes
+                await emit_mode()
             return
 
     async def on_permission(params: dict[str, Any]) -> dict[str, Any]:
@@ -467,7 +520,30 @@ async def grok_loop(
                 assert grok_id is not None
                 images = list(session.pending_images)
                 session.pending_images = []
-                prompt_task = asyncio.create_task(acp.prompt(grok_id, user_content, images))
+                prompt_text = user_content
+                prompt_images = images
+                files: list[tuple[str, str, str]] | None = None
+                # Grok 1.0.13 drops ACP image blocks (image: false). Write
+                # them into the workspace and pass a resource_link so the
+                # agent can Read the file instead of crashing the NDJSON
+                # reader on the echoed base64 line.
+                if images and not image_ok:
+                    saved = persist_prompt_images(
+                        session.workspace_path, session.id, images
+                    )
+                    notes = "\n".join(
+                        f"--- attached image: {name} ({media}) at {rel} ---"
+                        for name, rel, media, _uri in saved
+                    )
+                    prompt_text = f"{user_content}\n\n{notes}" if user_content else notes
+                    files = [(name, uri, media) for name, _rel, media, uri in saved]
+                    prompt_images = None
+                prompt_kwargs: dict[str, Any] = {}
+                if files:
+                    prompt_kwargs["files"] = files
+                prompt_task = asyncio.create_task(
+                    acp.prompt(grok_id, prompt_text, prompt_images, **prompt_kwargs)
+                )
                 followup = False
                 while not prompt_task.done():
                     followup = session.pending_user_messages > 0

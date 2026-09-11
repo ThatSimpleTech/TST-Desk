@@ -6940,3 +6940,37 @@ round-trips — `settle_ms` on actions, `after_ms` on screenshot, the foreground
 window returned with every action result, and a `launch_app` tool so opening an
 app is one call instead of a Spotlight pantomime. Not filed; not in this
 milestone.
+
+---
+
+### TD-4829 — Background computer use: drive apps without taking the pointer
+**Size:** 8 · **Depends on:** TD-4823, TD-4828
+
+**Acceptance criteria:**
+- [x] `list_apps` / `ui_snapshot` / `ui_action` / `launch_app` are MCP tools
+- [x] `ui_action` uses AXPress / AXSetValue / AXFocused — it does not move the pointer
+- [x] Denied apps and a non-empty allowlist refuse before the OS is touched
+- [x] Kill-switch still gates actuation; snapshot and list_apps remain reads
+- [x] Packaged host socket accepts `json` AX commands so TCC stays on TST Desk
+- [x] Tests: matching, flatten ids, denied/kill-switch, tool catalogue; no desktop required
+
+**Notes:** Claude Desktop's Computer use (2026-09) is app-scoped and
+background-first. Ours was whole-desktop screenshot+click. This story is the
+engine; TD-4830 is the Settings page.
+
+**Completed (2026-09-09):** `tst-cu-mcp` background tools plus host `cu_ax`.
+Windows/Linux list apps best-effort; AX snapshot/action is macOS-only.
+
+---
+
+### TD-4830 — Computer use Settings: enable, mode, denylist, TCC rows
+**Size:** 5 · **Depends on:** TD-4829, TD-1703, TD-3302
+
+**Acceptance criteria:**
+- [x] Settings has a Computer use section: Enable, Background/Full control, Unhide when finished, Denied apps, Accessibility and Screen Recording status
+- [x] Policy persists to `~/.tst-cu-mcp/config.yaml` (the file the MCP re-reads)
+- [x] `set_cu_policy` is acked with `setup_state`
+- [x] Tests: yaml roundtrip, protocol, settings store send/ack
+
+**Completed (2026-09-09):** Settings → Computer use writes the same document
+background tools already honor.

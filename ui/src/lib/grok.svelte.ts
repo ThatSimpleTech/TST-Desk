@@ -17,6 +17,10 @@ export const grok = $state({
 	planEntries: [] as GrokPlanEntry[],
 	mode: "",
 	modes: [] as string[],
+	model: "",
+	/** Session the live grok_* fields belong to. Greeting/title bar ignore
+	 *  them when this is not the focused chat. */
+	sessionId: null as string | null,
 	preview: null as GrokPreview | null,
 	sessions: [] as GrokSessionEntry[],
 	extensions: [] as GrokExtension[],
@@ -43,6 +47,8 @@ export function resetGrok(): void {
 	grok.planEntries = [];
 	grok.mode = "";
 	grok.modes = [];
+	grok.model = "";
+	grok.sessionId = null;
 	grok.preview = null;
 	grok.sessions = [];
 	grok.extensions = [];
@@ -50,21 +56,26 @@ export function resetGrok(): void {
 
 function reduce(event: DaemonEventUnion): void {
 	if (event.type === "grok_commands") {
+		grok.sessionId = event.session_id;
 		grok.commands = event.commands;
 		return;
 	}
 	if (event.type === "grok_plan") {
+		grok.sessionId = event.session_id;
 		grok.planMarkdown = event.markdown ?? "";
 		grok.planEntries = event.entries ?? [];
 		showRightPane("plan");
 		return;
 	}
 	if (event.type === "grok_mode") {
+		grok.sessionId = event.session_id;
 		grok.mode = event.mode;
 		grok.modes = event.modes ?? [];
+		if (event.model) grok.model = event.model;
 		return;
 	}
 	if (event.type === "grok_preview") {
+		grok.sessionId = event.session_id;
 		grok.preview = event;
 		showRightPane("preview");
 		return;

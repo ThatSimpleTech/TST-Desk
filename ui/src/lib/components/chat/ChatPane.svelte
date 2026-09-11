@@ -22,8 +22,10 @@
 	} from "../../chat-store.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
 	import { session, workspaceName } from "../../session-status.svelte.js";
+	import { settings } from "../../settings.svelte.js";
+	import { grok } from "../../grok.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
-	import { greetingForHour, SUGGESTIONS } from "../../greeting";
+	import { greetingContext, greetingForHour, SUGGESTIONS } from "../../greeting";
 	import { workingVerb } from "../../working-flavor";
 	import Composer from "./Composer.svelte";
 	import MessageList from "./MessageList.svelte";
@@ -54,6 +56,23 @@
 		return () => clearInterval(tick);
 	});
 	const waitElapsedMs = $derived(chat.awaitingSince === null ? 0 : Math.max(0, now - chat.awaitingSince));
+
+	// Engine this chat started with, falling back to Settings only when an
+	// older daemon never named it. Grok fields are ignored unless they
+	// belong to the focused session.
+	const greetingEngine = $derived(session.engine ?? settings.engine);
+	const grokForThisChat = $derived(grok.sessionId === session.sessionId);
+	const contextLine = $derived(
+		greetingContext({
+			workspace:
+				session.workspacePath !== null ? workspaceName(session.workspacePath) : null,
+			engine: greetingEngine,
+			tier: session.tier,
+			slug: session.modelSlugs[session.tier] ?? null,
+			grokMode: grokForThisChat ? grok.mode : null,
+			grokModel: grokForThisChat ? grok.model : null,
+		}),
+	);
 </script>
 
 <div class="chat-pane">
@@ -62,20 +81,10 @@
 			<div class="empty" aria-label="Getting started">
 				<div class="hello">
 					<p class="greeting">{greeting}.</p>
-					{#if chat.sessionId !== null}
-						<!-- Where you are and what will answer: the two facts a blank
-						     conversation can't show any other way. -->
-						<p class="context">
-							{#if session.workspacePath !== null}
-								<span>{workspaceName(session.workspacePath)}</span>
-								<span class="context-sep" aria-hidden="true">·</span>
-							{/if}
-							<span>
-								{session.tier}{session.modelSlugs[session.tier]
-									? ` · ${session.modelSlugs[session.tier]}`
-									: ""}
-							</span>
-						</p>
+					{#if chat.sessionId !== null && contextLine}
+						<!-- Where you are and what will answer: workspace, engine,
+						     and the model for this chat. -->
+						<p class="context">{contextLine}</p>
 					{/if}
 				</div>
 				{#if chat.sessionId === null}
@@ -183,15 +192,8 @@
 
 	.context {
 		margin: 0;
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
 		font-size: var(--text-sm);
 		color: var(--color-ink-muted);
-	}
-
-	.context-sep {
-		color: var(--color-hairline);
 	}
 
 	.pointer {

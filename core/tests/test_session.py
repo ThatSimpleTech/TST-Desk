@@ -185,6 +185,14 @@ class TestSession:
         assert isinstance(events[0], SessionStateEvent)
         assert events[0].state == "running"
         assert events[0].session_id == s.id
+        assert events[0].engine == "native"
+
+    async def test_set_state_stamps_grok_engine(self) -> None:
+        s = Session("/tmp/test")
+        s.engine = "grok"
+        await s.set_state("running")
+        events = s.event_log.events_from(1)
+        assert cast(SessionStateEvent, events[0]).engine == "grok"
 
     async def test_set_state_with_reason(self) -> None:
         s = Session("/tmp/test")

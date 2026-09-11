@@ -301,6 +301,20 @@ class SetCuIndicators(ClientMessage):
     show_on_real_display: bool
 
 
+class SetCuPolicy(ClientMessage):
+    """Background vs full-control computer use, denylist, master switch (TD-4830).
+
+    Machine-wide, no session. Persists ``~/.tst-cu-mcp/config.yaml`` so the
+    MCP server re-reads it on the next tool call. Acked with ``setup_state``.
+    """
+
+    type: Literal["set_cu_policy"] = "set_cu_policy"
+    enabled: bool
+    mode: Literal["background", "full_control"]
+    unhide_on_finish: bool
+    denied_apps: list[str] = Field(default_factory=list)
+
+
 class SetRemoteAttach(ClientMessage):
     """Turn Tailscale remote attach on or off (TD-3603).
 
@@ -924,6 +938,11 @@ class SessionState(DaemonEvent):
         "interrupted",
     ]
     reason: str | None = None
+    # Agent engine this session is running. Additive; older clients ignore
+    # it. None on a log event written before the field existed — the UI
+    # must not invent native/grok from that silence. New events always
+    # stamp the loop the session actually started with.
+    engine: Literal["native", "grok"] | None = None
 
 
 class ConversationReset(DaemonEvent):
@@ -1540,6 +1559,11 @@ class SetupState(DaemonEvent):
     # whether config.yaml names a transcription URL — never the URL itself.
     voice_enabled: bool = False
     voice_has_endpoint: bool = False
+    # TD-4830: computer-use policy. Additive; older clients ignore them.
+    cu_enabled: bool = True
+    cu_mode: Literal["background", "full_control"] = "background"
+    cu_unhide_on_finish: bool = True
+    cu_denied_apps: list[str] = Field(default_factory=list)
 
 
 class GrokCommand(BaseModel):
@@ -1578,6 +1602,10 @@ class GrokMode(DaemonEvent):
     session_id: str
     mode: str
     modes: list[str] = Field(default_factory=list)
+    # Model the Grok CLI is using for this session. Additive; older
+    # clients ignore it. None until ACP or Grok's config names one —
+    # never a guessed slug.
+    model: str | None = None
 
 
 class GrokPreview(DaemonEvent):
@@ -1987,6 +2015,7 @@ ClientMessageT = Annotated[
     | SetVoice
     | Transcribe
     | SetCuIndicators
+    | SetCuPolicy
     | SetWorkspacePin
     | Resume
     | Cancel
@@ -2127,6 +2156,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_voice",
         "transcribe",
         "set_cu_indicators",
+        "set_cu_policy",
         "set_workspace_pin",
         "resume",
         "cancel",

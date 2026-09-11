@@ -24,6 +24,7 @@ from tst_cu_mcp.displays import screen_info
 from tst_cu_mcp.focus import foreground_window
 from tst_cu_mcp.permissions import check_permissions
 from tst_cu_mcp.stdio_transport import DrainingStdioServer
+from tst_cu_mcp.tools.background import register_background_tools
 from tst_cu_mcp.tools.health import health_report
 
 # The model reads these strings and acts on them, so they must describe the host
@@ -52,8 +53,13 @@ def internal_tools_enabled() -> bool:
 _BASE_INSTRUCTIONS = (
     "Local computer-use server. Use `health` for liveness and `check_permissions` "
     "for this platform's capture/input status before capturing the screen or "
-    "driving input. This server can see the whole desktop and control mouse and "
-    "keyboard; there is no per-action approval gate."
+    "driving input. Prefer background tools: `list_apps`, `ui_snapshot`, and "
+    "`ui_action` drive an allowed app through its accessibility tree without "
+    "taking the pointer or keyboard, so the user can keep using the computer. "
+    "`launch_app` opens an app by name. Screenshot / click / type / press_keys "
+    "take full control of the screen, mouse, and keyboard — use them only when "
+    "the accessibility tree cannot reach the control. Denied apps are refused. "
+    "There is no per-action approval gate."
 )
 
 _PLATFORM_INSTRUCTIONS = {
@@ -406,6 +412,8 @@ def build_server() -> MCPServer:
             input_control.move_mouse(gx, gy, expect_window=expect_window)
         input_control.scroll(dx, dy, expect_window=expect_window)
         return {"scrolled": {"dx": dx, "dy": dy}}
+
+    register_background_tools(server)
 
     if internal_tools_enabled():
 

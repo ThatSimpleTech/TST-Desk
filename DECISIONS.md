@@ -8708,3 +8708,97 @@ server build.
 forwards the list. That leaves the tool callable by name on a surface the
 model reaches, and every other client that spawns this server directly
 (Kiro, Claude Desktop, Goose) would still be offered it.
+
+---
+
+## 2026-09-04 — Greeting and title bar follow the session's engine (Class B)
+
+**Decision:** Each session stamps the engine it started with (`native` |
+`grok`) on `Session`, persists it on `SessionRecord`, and carries it on
+`session_state`. The empty-chat greeting and the title-bar model chip
+read that field, not `setup_state.engine` (which is only what *new*
+sessions will use). Grok sessions emit `grok_mode.model` (configured
+default at open, ACP `_meta.modelId` once the CLI names one) instead of
+native `tier_state` slugs. A store written before the field existed
+revives with current `config.engine.kind`, which is what those sessions
+already did.
+
+**Rationale:** Settings → Engine applies to new sessions; a running
+session keeps the loop it started with. The greeting was showing
+`brain · <native slug>` on every empty chat, including Grok ones, so it
+named a model that would not answer. Per-session engine is the honest
+source for "what will answer this chat".
+
+**Alternative rejected:** Reading the global Settings engine in the
+greeting (matches the old title bar, lies after an engine switch with
+mixed sessions). Also rejected: spawning Grok at session open just to
+learn the model — the CLI's configured default is enough for an empty
+chat, and ACP updates it on the first turn.
+
+---
+
+## 2026-09-04 — Grok photos: raise ACP line limit; file links when image:false (Class B)
+
+**Decision:** The ACP stdout reader uses a 16MiB `StreamReader` limit
+instead of asyncio's 64KiB default. When Grok's initialize result has
+`promptCapabilities.image: false` (1.0.13 does), attached photos are
+written to `{workspace}/.tst/attachments/{session_id}/` and sent as
+ACP `resource_link` blocks plus a text path, not as `type: image`
+content. If the agent later advertises image support, image blocks
+are still sent.
+
+**Rationale:** Attaching a ~53KB photo made the Grok CLI look like it
+had died (`agent_exited` / "Grok agent process closed stdout"). The
+process was alive: it echoed the image as one NDJSON
+`user_message_chunk` whose base64 line exceeded 64KiB, and
+`StreamReader.readline` raised `ValueError`, which the reader treated
+as a closed agent. Separately, Grok 1.0.13 advertises `image: false`
+and drops image blocks (`image_dropped`) even when the line fits, so
+the model never saw the photo. A workspace file is something its
+Read tool can open; `.tst/attachments/` is gitignored with the rest
+of `.tst/` runtime state.
+
+**Alternative rejected:** Sending image blocks anyway and catching
+`image_dropped`. The line-limit crash still happens, and the model
+still does not see the photo. Also rejected: data-URI resource blobs
+(same oversized NDJSON line).
+
+---
+
+## 2026-09-09 — Background computer use is app-scoped AX, not a second pointer (Class B)
+
+**Decision:** Computer use gains a background path that targets an
+*application* through its accessibility tree (`list_apps`,
+`ui_snapshot`, `ui_action`, `launch_app`). Those actions do not move
+the pointer or synthesize keystrokes. Screenshot / click / type remain
+as full control. Denied apps (and a non-empty allowlist) are enforced
+in `tst_cu_mcp.apps` before any OS call. The default mode is
+`background`. `actuation.enabled` stays default-on because computer
+use already shipped; Settings exposes the switch rather than
+silently turning the existing path off.
+
+AX snapshot and press run in the TST Desk host (`cu_ax.rs` over
+`cu-agent.sock`) when the MCP process is not the host identity, same
+TCC seam as click. Flattening and path ids (`0.2.1`) live in Python
+(`tree.py`) so the host can return a nested tree and one implementation
+assigns ids. Hide/unhide are primitives for full control;
+`unhide_on_finish` registers `atexit` after a hide so a crashed
+session restores windows.
+
+**Rationale:** Claude Desktop's Computer use panel is opt-in,
+app-scoped, and background-first on macOS 15+. Coordinate-driven
+automation cannot share the keyboard with the user. The accessibility
+tree can. Matching Claude's *settings* without this engine would be
+theater.
+
+**Alternative rejected:** Refusing click/type while mode is background.
+The tools stay available for controls the tree cannot reach; server
+instructions tell the model to prefer `ui_action`. Also rejected:
+shipping a default finance/crypto denylist — TST Desk has no account
+and does not copy Anthropic's product policy onto the user's machine.
+The denylist starts empty.
+
+**Follow-up:** TD-4830 is the Settings page that writes
+`~/.tst-cu-mcp/config.yaml`. Per-app "allow for this session" prompts
+and category tiers (view-only browsers, click-only IDEs) are not in
+this story.

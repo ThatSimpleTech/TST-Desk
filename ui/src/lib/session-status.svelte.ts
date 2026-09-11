@@ -52,6 +52,8 @@ export const session = $state({
   tier: "brain" as "brain" | "worker" | "validator",
   tierOverride: null as "brain" | "worker" | "validator" | null,
   modelSlugs: {} as Record<string, string>,
+  /** Loop this session started with. Null until a session_state names it. */
+  engine: null as "native" | "grok" | null,
 });
 
 let client: ProtocolClient | null = null;
@@ -75,6 +77,7 @@ export function resetSession(): void {
   session.tier = "brain";
   session.tierOverride = null;
   session.modelSlugs = {};
+  session.engine = null;
   pendingPath = null;
 }
 
@@ -96,6 +99,9 @@ export function ingestEvent(event: DaemonEventUnion): void {
     if (event.session_id !== session.sessionId) return;
     session.state = event.state;
     session.reason = event.reason ?? null;
+    if (event.engine === "native" || event.engine === "grok") {
+      session.engine = event.engine;
+    }
     return;
   }
 
@@ -165,6 +171,7 @@ export function focusSession(
   session.tier = "brain";
   session.tierOverride = null;
   session.modelSlugs = {};
+  session.engine = null;
   pendingPath = null;
 }
 

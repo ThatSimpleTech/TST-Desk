@@ -17,12 +17,14 @@ from tstd.grok_loop import (
     _update_text,
     _visible_delta,
     grok_loop,
+    grok_model_from_payload,
 )
 from tstd.protocol import (
     ApprovalRequest,
     AssistantDelta,
     CuSession,
     Error,
+    GrokMode,
     ToolCall,
     ToolResult,
     TurnComplete,
@@ -387,10 +389,56 @@ async def test_grok_loop_emits_preview_and_mode(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_grok_loop_forwards_pending_images() -> None:
+async def test_grok_loop_forwards_pending_images(tmp_path: Path) -> None:
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    fake = FakeAcp()
+    received: list[
+        tuple[list[tuple[str, bytes, str]] | None, list[tuple[str, str, str]] | None]
+    ] = []
+
+    async def prompt_images(
+        session_id: str,
+        text: str,
+        images: list[tuple[str, bytes, str]] | None = None,
+        files: list[tuple[str, str, str]] | None = None,
+    ) -> dict[str, Any]:
+        received.append((images, files))
+        return {"stopReason": "end_turn"}
+
+    fake.prompt = prompt_images  # type: ignore[method-assign]
+    png = b"\x89PNG\r\n\x1a\n"
+    session.pending_images = [("shot.png", png, "image/png")]
+    task = asyncio.create_task(grok_loop(session, client=fake, binary=""))  # type: ignore[arg-type]
+    await session.add_user_message("look")
+    for _ in range(50):
+        if received:
+            break
+        await asyncio.sleep(0.02)
+    await session.cancel()
+    await asyncio.wait_for(task, timeout=2)
+    # Grok advertises image: false (FakeAcp initialize has no caps), so
+    # the photo is written to the workspace and sent as a resource_link.
+    images, files = received[0]
+    assert images is None
+    assert files is not None
+    assert files[0][0] == "shot.png"
+    assert files[0][2] == "image/png"
+    dest = tmp_path / ".tst" / "attachments" / session.id / "shot.png"
+    assert dest.read_bytes() == png
+    assert session.pending_images == []
+
+
+@pytest.mark.asyncio
+async def test_grok_loop_sends_image_blocks_when_agent_supports_them() -> None:
     session = Session("/tmp")
     await session.set_state("running")
     fake = FakeAcp()
+
+    async def initialize(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"agentCapabilities": {"promptCapabilities": {"image": True}}}
+
+    fake.initialize = initialize  # type: ignore[method-assign]
     received: list[list[tuple[str, bytes, str]] | None] = []
 
     async def prompt_images(
@@ -445,6 +493,56 @@ def test_leaked_tool_json_is_not_prose() -> None:
     assert _is_leaked_tool_json('"is_background": false')
     assert _is_leaked_tool_json("}")
     assert not _is_leaked_tool_json("Hello there")
+
+
+def test_grok_model_from_payload() -> None:
+    assert grok_model_from_payload(None) is None
+    assert grok_model_from_payload({"_meta": {"modelId": "grok-4.6"}}) == "grok-4.6"
+    assert (
+        grok_model_from_payload(
+            {"update": {"sessionUpdate": "agent_message_chunk", "_meta": {"modelId": "grok-4.6"}}}
+        )
+        == "grok-4.6"
+    )
+    assert grok_model_from_payload({"modelId": "custom"}) == "custom"
+    assert grok_model_from_payload({"model": "not-this"}) is None
+
+
+@pytest.mark.asyncio
+async def test_grok_loop_records_model_from_update_meta() -> None:
+    session = Session("/tmp")
+    await session.set_state("running")
+    fake = FakeAcp()
+
+    async def prompt_with_model(
+        session_id: str, text: str, images: list[tuple[str, bytes, str]] | None = None
+    ) -> dict[str, Any]:
+        assert fake._update is not None
+        await fake._update(
+            {
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": "hi"},
+                    "_meta": {"modelId": "grok-4.6"},
+                }
+            }
+        )
+        return {"stopReason": "end_turn"}
+
+    fake.prompt = prompt_with_model  # type: ignore[method-assign]
+    task = asyncio.create_task(grok_loop(session, client=fake, binary=""))  # type: ignore[arg-type]
+    await session.add_user_message("hi")
+    for _ in range(50):
+        if any(isinstance(e, TurnComplete) for e in session.event_log.events_from(1)):
+            break
+        await asyncio.sleep(0.02)
+    await session.cancel()
+    await asyncio.wait_for(task, timeout=2)
+    modes = [e for e in session.event_log.events_from(1) if e.type == "grok_mode"]
+    assert modes
+    last = modes[-1]
+    assert isinstance(last, GrokMode)
+    assert last.model == "grok-4.6"
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,7 @@
 mod approval_notice;
 pub(crate) mod cu_agent;
+#[cfg(target_os = "macos")]
+mod cu_ax;
 pub mod cu_identity;
 pub mod daemon;
 mod read_text;
