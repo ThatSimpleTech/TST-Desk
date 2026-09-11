@@ -19,7 +19,13 @@
 // TD-1405's suspenders: the UI never trusts that wire text arrived clean.
 
 import pkg from "../../package.json";
-import { daemonErrorCopy, sessionStateCopy, turnFailureCopy, type NoticeSpec } from "./error-copy";
+import {
+	checkpointNoticeCopy,
+	daemonErrorCopy,
+	sessionStateCopy,
+	turnFailureCopy,
+	type NoticeSpec,
+} from "./error-copy";
 import type { DaemonEventUnion } from "./protocol";
 import { redact } from "./redact";
 import { session } from "./session-status.svelte.js";
@@ -140,6 +146,13 @@ export function notifyEvent(event: DaemonEventUnion): void {
 			}
 			break;
 		}
+		// TD-705 / TD-2104: checkpointing or memory versioning degraded for
+		// this workspace. The daemon sends each code once per session; before
+		// this case the event passed the client gate and died at the sink, so
+		// a user with a non-git workspace was never told undo was off.
+		case "checkpoint_notice":
+			notify(`checkpoint:${event.code}`, checkpointNoticeCopy(event.code, event.message));
+			break;
 		case "error":
 			notify(`daemon:${event.code}`, daemonErrorCopy(event.code, event.message));
 			break;

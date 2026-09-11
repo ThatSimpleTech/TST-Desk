@@ -11,6 +11,8 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseAction {
     Hide,
+    /// Let this window die. The daemon and other windows stay up.
+    Destroy,
     Shutdown,
 }
 
@@ -36,8 +38,18 @@ pub fn indicator_badge_count(label: Option<&str>) -> Option<i64> {
 
 /// Close hides when coworker is on. Quit always shuts down.
 pub fn window_close_action(event: LifecycleEvent, coworker_on: bool) -> CloseAction {
+    window_close_action_with_count(event, coworker_on, 1)
+}
+
+/// Extra windows destroy; only the last window hides or quits (TD-4703).
+pub fn window_close_action_with_count(
+    event: LifecycleEvent,
+    coworker_on: bool,
+    window_count: usize,
+) -> CloseAction {
     match event {
         LifecycleEvent::Quit => CloseAction::Shutdown,
+        LifecycleEvent::CloseRequested if window_count > 1 => CloseAction::Destroy,
         LifecycleEvent::CloseRequested if coworker_on => CloseAction::Hide,
         LifecycleEvent::CloseRequested => CloseAction::Shutdown,
     }
@@ -120,6 +132,18 @@ mod tests {
     fn close_hides_when_coworker_on() {
         assert_eq!(
             window_close_action(LifecycleEvent::CloseRequested, true),
+            CloseAction::Hide
+        );
+    }
+
+    #[test]
+    fn extra_window_destroys_without_quitting() {
+        assert_eq!(
+            window_close_action_with_count(LifecycleEvent::CloseRequested, true, 2),
+            CloseAction::Destroy
+        );
+        assert_eq!(
+            window_close_action_with_count(LifecycleEvent::CloseRequested, true, 1),
             CloseAction::Hide
         );
     }

@@ -59,6 +59,7 @@ from tstd.protocol import (
     SetCoworker,
     SetCuIndicators,
     SetCuKill,
+    SetCuPolicy,
     SetLoadGlobalMemory,
     SetPlan,
     SetRemoteAttach,
@@ -176,6 +177,19 @@ class TestClientMessages:
         assert back.agent_cursor is True
         assert back.show_on_real_display is True
         assert "session_id" not in SetCuIndicators.model_fields
+
+    def test_set_cu_policy(self) -> None:
+        msg = SetCuPolicy(
+            enabled=True,
+            mode="full_control",
+            unhide_on_finish=False,
+            denied_apps=["Bank"],
+        )
+        back = _roundtrip(msg)
+        assert isinstance(back, SetCuPolicy)
+        assert back.mode == "full_control"
+        assert back.denied_apps == ["Bank"]
+        assert "session_id" not in SetCuPolicy.model_fields
 
     def test_set_workspace_pin(self) -> None:
         msg = SetWorkspacePin(path="/ws", pinned=True)
@@ -556,6 +570,9 @@ class TestDaemonEvents:
         back = _roundtrip(evt)
         assert isinstance(back, SessionState)
         assert back.state == "running"
+        assert back.engine is None
+        grok = SessionState(session_id="sess-1", state="running", engine="grok", seq=2)
+        assert _roundtrip(grok).engine == "grok"  # type: ignore[union-attr]
         for s in ("idle", "running", "awaiting_approval", "complete", "failed", "cancelled"):
             m = SessionState(session_id="sess-1", state=s, seq=3)
             r = _roundtrip(m)
@@ -942,11 +959,15 @@ class TestDaemonEvents:
         assert isinstance(deny, DenyVerify)
 
     def test_cu_session(self) -> None:
-        evt = CuSession(session_id="sess-1", active=True, seq=1)
+        evt = CuSession(session_id="sess-1", active=True, seq=24)
         back = _roundtrip(evt)
         assert isinstance(back, CuSession)
         assert back.active is True
         assert back.session_id == "sess-1"
+        # Session-scoped: it is appended to the session log, which stamps
+        # seq, so the field is required and carries through (TD-3407).
+        assert back.seq == 24
+        assert CuSession.model_fields["seq"].is_required()
 
 
 # ── Discriminated union dispatch ───────────────────────────────────────

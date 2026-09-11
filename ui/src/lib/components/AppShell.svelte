@@ -20,11 +20,14 @@
 	import StackPanel from './StackPanel.svelte';
 	import UsagePanel from './UsagePanel.svelte';
 	import ScreenPane from './ScreenPane.svelte';
+	import PreviewPane from './PreviewPane.svelte';
+	import PlanPane from './PlanPane.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
 	import MemoryProposalBar from './MemoryProposalBar.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
-	import { push } from '../timeline-store.svelte.js';
-	import { setPickForNewSession } from '../sessions.svelte.js';
+	import { entries, push } from '../timeline-store.svelte.js';
+	import { inspectorCounts, tabCount } from '../inspector';
+	import { selectRow, setPickForNewSession, visibleRows } from '../sessions.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
 	import ProjectPane from './ProjectPane.svelte';
 	import ArtifactPane from './ArtifactPane.svelte';
@@ -52,7 +55,7 @@
 	import { startDoctor, runDoctor, closeDoctor, doctor } from '../doctor.svelte.js';
 	import { startDecisions, openDecisions, closeDecisions, decisions } from '../decisions.svelte.js';
 	import { palette, openPalette, closePalette } from '../palette-store.svelte.js';
-	import { rightPane, showRightPane } from '../right-pane.svelte.js';
+	import { rightPane, showRightPane, type RightPaneTab } from '../right-pane.svelte.js';
 	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
 	import { startStack, refreshStack } from '../stack-store.svelte.js';
 	import { startScreen, screen } from '../screen.svelte.js';
@@ -66,7 +69,10 @@
 	import { isTauri } from '../open-file';
 	import { session } from '../session-status.svelte.js';
 	import { startCuKill, setCuKill } from '../cu-kill.svelte.js';
-	import { resolveShortcut } from '../shortcuts';
+	import { startGrok } from '../grok.svelte.js';
+	import { startVoice } from '../voice.svelte.js';
+	import { resolveShortcut, sessionSlot } from '../shortcuts';
+	import { groupRowsByRecency, railOrder, sessionIdAtSlot, stepSessionId } from '../rail';
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
 	import { workspaces, closeWorkspaceMenu } from '../workspaces.svelte.js';
@@ -90,6 +96,7 @@
 				metaKey: event.metaKey,
 				ctrlKey: event.ctrlKey,
 				shiftKey: event.shiftKey,
+				altKey: event.altKey,
 			},
 			{
 				workspaceMenuOpen: workspaces.menuOpen,
@@ -114,7 +121,27 @@
 		else if (action === 'toggle-design') {
 			if (toggleDesign()) showRightPane('screen');
 		} else if (action === 'stop-computer-use') setCuKill(true);
-		else openSettings();
+		else if (action === 'next-session' || action === 'prev-session') {
+			const id = stepSessionId(sessionOrder(), chat.sessionId, action === 'next-session' ? 1 : -1);
+			if (id !== null) selectRow(id);
+		} else if (action === 'pick-session') {
+			const slot = sessionSlot({
+				key: event.key,
+				metaKey: event.metaKey,
+				ctrlKey: event.ctrlKey,
+				shiftKey: event.shiftKey,
+				altKey: event.altKey,
+			});
+			const id = slot === null ? null : sessionIdAtSlot(sessionOrder(), slot);
+			if (id !== null) selectRow(id);
+		} else openSettings();
+	}
+
+	// The rail's rows in the order it draws them (navigation round, 2026-09):
+	// what ⌘⌥↑ / ⌘⌥↓ step through and what ⌘1…⌘9 index into. Read at the
+	// keypress rather than derived, so the shell keeps no copy of the rail.
+	function sessionOrder(): string[] {
+		return railOrder(groupRowsByRecency(visibleRows()));
 	}
 
 	// Top-most first, matching DOM order at the same --z-modal (settings is
@@ -159,6 +186,8 @@
 		const offDesign = startDesign();
 		const offCoworker = startCoworkerIndicator();
 		const offCuKill = startCuKill();
+		const offGrok = startGrok();
+		const offVoice = startVoice();
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
 			offCloseHint = off;
@@ -194,6 +223,8 @@
 			offDesign();
 			offCoworker();
 			offCuKill();
+			offGrok();
+			offVoice();
 			offCloseHint();
 			offQuickEntryPermission();
 			mq.removeEventListener('change', syncNarrow);
@@ -251,12 +282,66 @@
 		}
 	});
 
+	// Three tabs you reach for every turn stay on the strip; the rest wait
+	// under More. Eight tabs at the same weight was a row nobody could scan.
+	// When a More view is showing, the More button takes that view's name.
+	const PRIMARY_TABS: readonly (readonly [RightPaneTab, string])[] = [
+		['activity', 'Activity'],
+		['files', 'Files'],
+		['work', 'Work'],
+	];
+	let moreTabs = $derived<(readonly [RightPaneTab, string])[]>([
+		['stack', 'Stack'],
+		['usage', 'Usage'],
+		...(showScreenTab ? ([['screen', 'Screen']] as const) : []),
+		['preview', 'Preview'],
+		['plan', 'Plan'],
+	]);
+	let moreOpen = $state(false);
+	let moreRoot: HTMLElement | undefined = $state();
+	let activeMore = $derived(moreTabs.find(([id]) => id === rightPane.tab) ?? null);
+
+	// Files and Work carry their counts on the strip, from the same fold the
+	// panes render from, so "did the agent write anything?" needs no click.
+	let counts = $derived(inspectorCounts(entries));
+
+	function badgeFor(id: RightPaneTab): string | null {
+		if (id === 'files') return tabCount(counts.files);
+		if (id === 'work') return tabCount(counts.work);
+		return null;
+	}
+
+	function pickTab(id: RightPaneTab): void {
+		moreOpen = false;
+		if (id === 'usage') showUsage();
+		else showRightPane(id);
+	}
+
+	function onWindowClick(event: MouseEvent): void {
+		if (!moreOpen) return;
+		if (moreRoot !== undefined && event.target instanceof Node && moreRoot.contains(event.target)) {
+			return;
+		}
+		moreOpen = false;
+	}
+
+	function onMoreKeydown(event: KeyboardEvent): void {
+		if (event.key !== 'Escape' || !moreOpen) return;
+		// The menu is the layer to peel; the global Esc must not also cancel
+		// a live turn underneath it.
+		event.preventDefault();
+		event.stopPropagation();
+		moreOpen = false;
+	}
 </script>
 
-<svelte:window onkeydown={onGlobalKeydown} />
+<svelte:window onkeydown={onGlobalKeydown} onclick={onWindowClick} />
 
 <header class="shell-header">
 	<span class="shell-title">TST Desk</span>
+	<!-- Connection state (TD-1003) sits beside the wordmark: nothing at all
+	     while connected, a labelled pill for anything else. -->
+	<ConnectionBanner />
 	<TitleBar />
 	<span class="shell-spacer"></span>
 	<!-- Command palette (TD-1707) — also ⌘K. The title is how the shortcut is
@@ -299,12 +384,11 @@
 			title="Inspector"
 			aria-label="Show inspector"
 			aria-pressed={showInspector}
-			onclick={() => (showInspector = !showInspector)}>Inspector</button
+			onclick={() => (showInspector = !showInspector)}><Icon name="panel-right" size={16} /></button
 		>
 	{/if}
 	<!-- Settings is reached from the rail's account anchor (TD-1712) or ⌘,;
 	     the header no longer buries it behind a gear. -->
-	<ConnectionBanner />
 </header>
 
 <NotificationBanner />
@@ -349,64 +433,56 @@
 		{#snippet right()}
 			<section class="pane-activity" aria-label="Activity, files, work, stack, usage, and screen pane">
 				<div class="pane-tabs" role="tablist" aria-label="Right pane views">
-					<button
-						role="tab"
-						aria-selected={rightPane.tab === 'activity'}
-						class="tab"
-						class:tab-active={rightPane.tab === 'activity'}
-						onclick={() => showRightPane('activity')}
-					>
-						Activity
-					</button>
-					<!-- Files (TD-1705): the same event stream, folded by path. -->
-					<button
-						role="tab"
-						aria-selected={rightPane.tab === 'files'}
-						class="tab"
-						class:tab-active={rightPane.tab === 'files'}
-						onclick={() => showRightPane('files')}
-					>
-						Files
-					</button>
-					<button
-						role="tab"
-						aria-selected={rightPane.tab === 'work'}
-						class="tab"
-						class:tab-active={rightPane.tab === 'work'}
-						onclick={() => showRightPane('work')}
-					>
-						Work
-					</button>
-					<button
-						role="tab"
-						aria-selected={rightPane.tab === 'stack'}
-						class="tab"
-						class:tab-active={rightPane.tab === 'stack'}
-						onclick={() => showRightPane('stack')}
-					>
-						Stack
-					</button>
-					<!-- Usage (TD-1706): the audit store's rollups and exports. -->
-					<button
-						role="tab"
-						aria-selected={rightPane.tab === 'usage'}
-						class="tab"
-						class:tab-active={rightPane.tab === 'usage'}
-						onclick={showUsage}
-					>
-						Usage
-					</button>
-					{#if showScreenTab}
+					<!-- Activity (TD-1005), Files (TD-1705: the same event stream,
+					     folded by path), Work (TD-3203). -->
+					{#each PRIMARY_TABS as [id, label] (id)}
+						{@const badge = badgeFor(id)}
 						<button
 							role="tab"
-							aria-selected={rightPane.tab === 'screen'}
+							type="button"
+							aria-selected={rightPane.tab === id}
 							class="tab"
-							class:tab-active={rightPane.tab === 'screen'}
-							onclick={() => showRightPane('screen')}
+							class:tab-active={rightPane.tab === id}
+							onclick={() => pickTab(id)}
 						>
-							Screen
+							{label}
+							{#if badge !== null}
+								<span class="tab-count">{badge}</span>
+							{/if}
 						</button>
-					{/if}
+					{/each}
+					<!-- Stack (TD-1201), Usage (TD-1706: the audit store's rollups
+					     and exports), Screen, Preview and Plan wait under More. -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="more" bind:this={moreRoot} onkeydown={onMoreKeydown}>
+						<button
+							class="tab tab-more"
+							class:tab-active={activeMore !== null}
+							type="button"
+							aria-haspopup="menu"
+							aria-expanded={moreOpen}
+							onclick={() => (moreOpen = !moreOpen)}
+						>
+							{activeMore === null ? 'More' : activeMore[1]}
+							<span class="tab-caret" aria-hidden="true"><Icon name="chevron-down" size={12} /></span>
+						</button>
+						{#if moreOpen}
+							<div class="more-menu" role="menu" aria-label="More views">
+								{#each moreTabs as [id, label] (id)}
+									<button
+										class="more-item"
+										class:more-item-active={rightPane.tab === id}
+										role="menuitemradio"
+										aria-checked={rightPane.tab === id}
+										type="button"
+										onclick={() => pickTab(id)}
+									>
+										{label}
+									</button>
+								{/each}
+							</div>
+						{/if}
+					</div>
 				</div>
 				{#if rightPane.tab === 'activity'}
 					<ActivityTimeline />
@@ -418,6 +494,10 @@
 					<UsagePanel />
 				{:else if rightPane.tab === 'screen'}
 					<ScreenPane />
+				{:else if rightPane.tab === 'preview'}
+					<PreviewPane />
+				{:else if rightPane.tab === 'plan'}
+					<PlanPane />
 				{:else}
 					<StackPanel />
 				{/if}
@@ -446,8 +526,8 @@
 		gap: var(--space-4);
 		height: var(--space-12);
 		padding: 0 var(--space-6);
-		border-bottom: var(--border-width) solid var(--color-border);
-		background: var(--color-bg-raised);
+		border-bottom: var(--border-width) solid var(--color-hairline);
+		background: var(--color-lifted);
 		flex-shrink: 0;
 	}
 
@@ -456,22 +536,23 @@
 		font-size: var(--text-base);
 		font-weight: var(--weight-medium);
 		letter-spacing: var(--tracking-display);
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
-	/* Push the connection banner to the right edge of the shell header. */
+	/* Push the header's tool buttons to the right edge. */
 	.shell-spacer {
 		flex: 1;
 	}
 
-	/* Header affordances: decisions (TD-1202), doctor (TD-1104). */
+	/* Header affordances: palette (TD-1707), decisions (TD-1202), doctor
+	   (TD-1104), and the narrow-viewport rail/inspector toggles (TD-3701). */
 	.shell-gear {
 		display: inline-flex;
 		align-items: center;
 		border: none;
 		background: transparent;
 		font-size: var(--text-base);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		cursor: pointer;
 		padding: var(--space-1) var(--space-2);
 		border-radius: var(--radius-md);
@@ -479,8 +560,12 @@
 	}
 
 	.shell-gear:hover {
-		background: var(--color-bg-subtle);
-		color: var(--color-text);
+		background: var(--color-sunken);
+		color: var(--color-ink);
+	}
+
+	.shell-gear[aria-pressed='true'] {
+		color: var(--color-accent);
 	}
 
 	.shell-body {
@@ -499,8 +584,8 @@
 	.pane-chat,
 	.pane-activity {
 		height: 100%;
-		background: var(--color-bg);
-		color: var(--color-text);
+		background: var(--color-ground);
+		color: var(--color-ink);
 	}
 
 	.pane-layer {
@@ -514,37 +599,112 @@
 
 	/* Subtle tonal separation so the two-pane split reads at a glance. */
 	.pane-activity {
-		background: var(--color-bg-subtle);
+		background: var(--color-sunken);
 		display: flex;
 		flex-direction: column;
 	}
 
 	.pane-tabs {
 		display: flex;
+		align-items: flex-end;
 		gap: var(--space-1);
 		padding: var(--space-2) var(--space-4) 0;
-		border-bottom: var(--border-width) solid var(--color-border);
+		border-bottom: var(--border-width) solid var(--color-hairline);
 		flex-shrink: 0;
 	}
 
 	.tab {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
 		padding: var(--space-1) var(--space-3);
 		border: none;
 		border-bottom: 2px solid transparent;
 		background: none;
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 		font-size: var(--text-sm);
 		cursor: pointer;
+		transition: color var(--transition-fast);
 	}
 
 	.tab:hover {
-		color: var(--color-text);
+		color: var(--color-ink);
+	}
+
+	.tab:focus-visible {
+		outline-offset: -2px;
+		border-radius: var(--radius-sm);
 	}
 
 	.tab-active {
-		color: var(--color-text);
+		color: var(--color-ink);
 		font-weight: var(--weight-semibold);
-		border-bottom-color: var(--color-info);
+		border-bottom-color: var(--color-accent);
+	}
+
+	.tab-caret {
+		display: inline-flex;
+		color: var(--color-ink-muted);
+	}
+
+	/* Count pill: quiet enough to sit on an inactive tab, readable on the
+	   active one. Tabular digits keep 9 → 10 from nudging the strip. */
+	.tab-count {
+		display: inline-flex;
+		align-items: center;
+		min-width: 1.25rem;
+		justify-content: center;
+		padding: 0 var(--space-1);
+		font-size: var(--text-xs);
+		font-weight: var(--weight-medium);
+		line-height: 1.25rem;
+		color: var(--color-ink-secondary);
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
+		border-radius: var(--radius-full);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.more {
+		position: relative;
+		margin-left: auto;
+	}
+
+	.more-menu {
+		position: absolute;
+		top: calc(100% + var(--space-1));
+		right: 0;
+		z-index: 5;
+		min-width: 10rem;
+		display: flex;
+		flex-direction: column;
+		padding: var(--space-1);
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-lg);
+		animation: rise var(--dur-enter) var(--ease-out);
+	}
+
+	.more-item {
+		width: 100%;
+		padding: var(--space-1) var(--space-2);
+		border: 0;
+		background: transparent;
+		border-radius: var(--radius-sm);
+		text-align: left;
+		font-size: var(--text-sm);
+		color: var(--color-ink);
+		cursor: pointer;
+	}
+
+	.more-item:hover {
+		background: var(--color-sunken);
+	}
+
+	.more-item-active {
+		color: var(--color-accent);
+		font-weight: var(--weight-semibold);
 	}
 
 	.pane-activity > :global(.timeline),

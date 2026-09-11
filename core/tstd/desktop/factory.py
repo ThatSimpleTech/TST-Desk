@@ -24,6 +24,13 @@ if TYPE_CHECKING:
 #: cross-package import.
 OVERLAY_ENV = "TST_CU_MCP_OVERLAY"
 
+#: Sidecar env var that unlocks the internal tools — today just
+#: ``overlay_session``, the episode bracket this driver drives. Grok spawns its
+#: own copy of the same binary without this set, so the model's tool list never
+#: carries a control the daemon owns. Mirrors tst_cu_mcp.server.INTERNAL_ENV
+#: without a cross-package import.
+INTERNAL_ENV = "TST_CU_MCP_INTERNAL"
+
 
 def argv_from_command(command: str | list[str]) -> list[str]:
     """Normalize a config command to argv. Empty means mock."""
@@ -45,6 +52,10 @@ def desktop_driver_from_config(
     config: ModelConfig, cu_prefs: CuIndicatorPrefs | None = None
 ) -> DesktopDriver:
     env: dict[str, str] | None = None
-    if cu_prefs is not None and argv_from_command(config.computer_use.command):
-        env = {OVERLAY_ENV: "1" if cu_prefs.show_on_real_display else "0"}
+    if argv_from_command(config.computer_use.command):
+        # This child is ours: it gets the internal tools whether or not the
+        # user wants the ring painted.
+        env = {INTERNAL_ENV: "1"}
+        if cu_prefs is not None:
+            env[OVERLAY_ENV] = "1" if cu_prefs.show_on_real_display else "0"
     return driver_for_command(config.computer_use.command, env=env)

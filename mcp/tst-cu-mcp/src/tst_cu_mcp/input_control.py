@@ -15,7 +15,9 @@ guard, because it never gets the chance to forget them.
 Immediately after the kill-switch passes, every action pings
 :func:`tst_cu_mcp.overlay.get_overlay` so the real-display glow tracks the
 attempt — including attempts that then fail validation, which are still the
-agent driving.
+agent driving. A refusal from the backend itself — the OS said no, as with a
+missing Accessibility grant — puts the glow out again
+(:func:`tst_cu_mcp.safety.notify_blocked`): nothing was driven.
 
 The order within it matters too. The kill-switch comes first because "stop"
 should not depend on anything else being well-formed. Argument validation comes
@@ -29,6 +31,9 @@ output), top-left origin.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
 
 from tst_cu_mcp import safety
 from tst_cu_mcp.backends import get_backend
@@ -44,6 +49,15 @@ MAX_SCROLL_LINES = 10000
 # case (a model looping clicks at one point) far below harmful while leaving
 # every legitimate spelling room.
 MAX_CLICK_COUNT = 100
+
+
+def _actuate(act: Callable[..., None], *args: Any) -> None:
+    """Run one backend act; if the OS refuses it, the glow goes dark."""
+    try:
+        act(*args)
+    except Exception:
+        safety.notify_blocked()
+        raise
 
 
 def _display_bounds_union() -> tuple[int, int, int, int] | None:
@@ -97,7 +111,7 @@ def move_mouse(x: float, y: float, expect_window: str | None = None) -> None:
     get_overlay().activity()
     assert_on_screen(x, y)
     assert_foreground(expect_window)
-    get_backend().move_mouse(float(x), float(y))
+    _actuate(get_backend().move_mouse, float(x), float(y))
 
 
 def click(
@@ -118,7 +132,7 @@ def click(
         raise ValueError(f"click count too large ({count} > {MAX_CLICK_COUNT})")
     assert_on_screen(x, y)
     assert_foreground(expect_window)
-    get_backend().click(float(x), float(y), button, count)
+    _actuate(get_backend().click, float(x), float(y), button, count)
 
 
 def parse_key_combo(combo: str) -> object:
@@ -153,7 +167,7 @@ def type_text(text: str, expect_window: str | None = None) -> None:
         raise ValueError(f"text too long ({units} UTF-16 units > {MAX_TEXT_LEN})")
     assert_foreground(expect_window)
     if text:
-        get_backend().type_text(text)
+        _actuate(get_backend().type_text, text)
 
 
 def press_keys(combo: str, expect_window: str | None = None) -> None:
@@ -165,7 +179,7 @@ def press_keys(combo: str, expect_window: str | None = None) -> None:
     # half-pressed modifier left down on the user's keyboard.
     backend.parse_key_combo(combo)
     assert_foreground(expect_window)
-    backend.press_keys(combo)
+    _actuate(backend.press_keys, combo)
 
 
 def scroll(dx: int, dy: int, expect_window: str | None = None) -> None:
@@ -176,4 +190,4 @@ def scroll(dx: int, dy: int, expect_window: str | None = None) -> None:
         raise ValueError(f"scroll magnitude too large (max {MAX_SCROLL_LINES} lines)")
     assert_foreground(expect_window)
     if dx or dy:
-        get_backend().scroll(int(dx), int(dy))
+        _actuate(get_backend().scroll, int(dx), int(dy))

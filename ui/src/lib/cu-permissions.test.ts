@@ -32,6 +32,7 @@ import {
 	resetCuPermissions,
 	openCuPermissions,
 	retryCuPermissions,
+	resetCuGrants,
 	closeCuPermissions,
 } from "./cu-permissions.svelte.js";
 
@@ -241,5 +242,64 @@ describe("settings reopen and retry", () => {
 		emit(report());
 		closeCuPermissions();
 		expect(cuPermissions.open).toBe(false);
+	});
+});
+
+describe("host diagnosis and reset (TD-4823)", () => {
+	it("carries the host diagnosis", () => {
+		startCuPermissions();
+		emit(
+			report({
+				actuation_path: "host",
+				signing: "adhoc",
+				bundle_path: "/Applications/TST Desk.app",
+				stale_screen_recording: true,
+				stale_accessibility: false,
+				unbundled_dev_binary: false,
+				fix_screen_recording: "Reset grants",
+				fix_accessibility: "",
+				reset_supported: true,
+				reset_error: "",
+			}),
+		);
+		expect(cuPermissions.actuationPath).toBe("host");
+		expect(cuPermissions.signing).toBe("adhoc");
+		expect(cuPermissions.bundlePath).toContain("TST Desk.app");
+		expect(cuPermissions.staleScreenRecording).toBe(true);
+		expect(cuPermissions.staleAccessibility).toBe(false);
+		expect(cuPermissions.fixScreenRecording).toBe("Reset grants");
+		expect(cuPermissions.resetSupported).toBe(true);
+	});
+
+	it("defaults the host diagnosis when an older daemon omits it", () => {
+		startCuPermissions();
+		emit(report());
+		expect(cuPermissions.actuationPath).toBe("");
+		expect(cuPermissions.signing).toBe("");
+		expect(cuPermissions.staleScreenRecording).toBe(false);
+		expect(cuPermissions.staleAccessibility).toBe(false);
+		expect(cuPermissions.unbundledDevBinary).toBe(false);
+		expect(cuPermissions.resetSupported).toBe(false);
+		expect(cuPermissions.resetError).toBe("");
+	});
+
+	it("reset grants sends reset_cu_permissions and clears the last error", () => {
+		startCuPermissions();
+		emit(report({ reset_supported: true, reset_error: "tccutil exited 1" }));
+		expect(cuPermissions.resetError).toBe("tccutil exited 1");
+		resetCuGrants();
+		expect(mocks.sent).toEqual([{ type: "reset_cu_permissions" }]);
+		expect(cuPermissions.probing).toBe(true);
+		expect(cuPermissions.resetError).toBe("");
+		emit(report({ reset_supported: true, stale_screen_recording: false }));
+		expect(cuPermissions.probing).toBe(false);
+	});
+
+	it("reset grants does not hang probing when the socket is down", () => {
+		startCuPermissions();
+		mocks.sendOk = false;
+		resetCuGrants();
+		expect(mocks.sent).toEqual([{ type: "reset_cu_permissions" }]);
+		expect(cuPermissions.probing).toBe(false);
 	});
 });

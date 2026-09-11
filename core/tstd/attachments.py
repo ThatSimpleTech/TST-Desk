@@ -76,17 +76,23 @@ class AttachmentLike(Protocol):
 
 @dataclass(frozen=True)
 class DecodedAttachment:
-    """One attachment the daemon has accepted, decoded and measured itself."""
+    """One attachment the daemon has accepted, decoded and measured itself.
+
+    Images carry ``data`` and ``media_type`` and leave ``text`` empty so a
+    native loop can mention the file without dumping bytes into the prompt.
+    """
 
     name: str
     size: int
     text: str | None = None
     mime: str | None = None
     data_b64: str | None = None
+    data: bytes | None = None
+    media_type: str | None = None
 
     @property
     def is_image(self) -> bool:
-        return self.mime is not None
+        return self.mime is not None or self.media_type is not None
 
 
 def format_bytes(count: int) -> str:
@@ -129,13 +135,18 @@ def detect_image_mime(raw: bytes) -> str | None:
     return None
 
 
+def sniff_image(raw: bytes) -> str | None:
+    """Return a media type for a well-known image header, else None."""
+    return detect_image_mime(raw)
+
+
 def _decode_text(name: str, raw: bytes) -> str:
     """Strict UTF-8, plus a NUL scan — the whole text/binary test."""
     binary = AttachmentError(
         "attachment_binary",
-        f"{name} isn't a text file, so it can't be attached. Attach a text "
-        "file, or enable vision on the active tier in config.yaml if this is "
-        "an image. Nothing was sent.",
+        f"{name} isn't a text file or a PNG/JPEG/GIF/WebP image, so it can't "
+        "be attached. Attach a text file, or enable vision on the active "
+        "tier in config.yaml if this is an image. Nothing was sent.",
     )
     if b"\x00" in raw:
         raise binary
@@ -213,7 +224,10 @@ def decode_attachments(
                 DecodedAttachment(
                     name=name,
                     size=len(raw),
+                    text="",
                     mime=mime,
+                    media_type=mime,
+                    data=raw,
                     data_b64=base64.b64encode(raw).decode("ascii"),
                 )
             )

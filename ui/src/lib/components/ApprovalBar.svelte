@@ -20,8 +20,8 @@
 		flex-direction: column;
 		gap: var(--space-3);
 		padding: var(--space-3) var(--space-4);
-		border-top: var(--border-width) solid var(--color-border);
-		background: var(--color-bg-raised);
+		border-top: var(--border-width) solid var(--color-hairline);
+		background: var(--color-lifted);
 		max-height: 40%;
 		overflow-y: auto;
 		flex-shrink: 0;

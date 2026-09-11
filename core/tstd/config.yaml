@@ -316,6 +316,25 @@ notify:
     host: ""
     timeout_seconds: 5
 
+# Agent engine. native is the TST 3-tier OpenAI-compatible loop.
+# grok spawns the installed Grok Build CLI over ACP — the CLI remains
+# the engine, this window is a viewer. Empty binary means PATH, then
+# ~/.grok/bin/grok. Grok credentials stay in ~/.grok/auth.json.
+engine:
+  kind: native
+  binary: ""
+
+# Hold-to-talk dictation (TD-4701). Off in Settings until you turn it on.
+# Empty base_url uses OS dictation in the composer (no network from tstd).
+# A filled URL is an OpenAI-compatible /v1 root; tstd POSTs
+# /audio/transcriptions. The host lives here, never in Python.
+# credential names a key from the catalog above; required when base_url
+# is off-box, omitted on loopback.
+voice:
+  base_url: ""
+  credential: ""
+  timeout_seconds: 30
+
 # Hold-to-talk (TD-4701). Off by default. There is no cloud speech URL.
 # Set base_url to an OpenAI-compatible transcriptions root (include /v1),
 # typically a loopback whisper server. Optional credential is a named

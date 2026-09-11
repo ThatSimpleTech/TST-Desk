@@ -65,6 +65,10 @@ class SessionRecord:
     # `title` only; empty rename restores this (TD-3002). Defaulted so a
     # store written before this field loads unchanged.
     auto_title: str | None = None
+    # Loop this session started with (`native` | `grok`). None on a store
+    # written before the field existed — revive then follows current
+    # config.engine.kind, which is what those sessions already did.
+    engine: str | None = None
     # Catalog preset name this session opened with (TD-1721). The name
     # only — not a forked config tree. Defaulted so a store written
     # before this field loads unchanged instead of being dropped.
@@ -93,13 +97,16 @@ class SessionStore:
         workspace_path: str,
         state: str,
         created_at: str | None = None,
+        engine: str | None = None,
         preset: str | None = None,
     ) -> None:
         """Insert or refresh a session record and persist the store.
 
         ``created_at`` is only set on first insert, so later state refreshes
-        preserve the original creation timestamp. ``preset`` is the same:
-        omitted keeps whatever the row already had (TD-1721).
+        preserve the original creation timestamp. ``engine`` is the loop
+        this session started with; omitted on a refresh keeps the stored
+        value so a later ``set_engine`` cannot rewrite history. ``preset``
+        is the same: omitted keeps whatever the row already had (TD-1721).
         """
         existing = self._records.get(session_id)
         if preset is not None:
@@ -108,6 +115,12 @@ class SessionStore:
             chosen_preset = existing.preset
         else:
             chosen_preset = ""
+        if engine is not None:
+            chosen_engine = engine
+        elif existing is not None:
+            chosen_engine = existing.engine
+        else:
+            chosen_engine = None
         record = SessionRecord(
             session_id=session_id,
             workspace_path=workspace_path,
@@ -116,6 +129,7 @@ class SessionStore:
             archived=existing.archived if existing else False,
             title=existing.title if existing else None,
             auto_title=existing.auto_title if existing else None,
+            engine=chosen_engine,
             preset=chosen_preset,
         )
         self._records[session_id] = record

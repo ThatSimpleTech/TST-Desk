@@ -16,7 +16,7 @@
 // gap from this side.
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 // Same shape as timeline-bench.test.ts and tokens.test.ts: the app tree is
@@ -80,5 +80,67 @@ describe("the client's event gate", () => {
 		// "accept everything", which would satisfy the tests above trivially.
 		expect(CLIENT).toContain("ignored unknown event type");
 		expect(CLIENT).toMatch(/if \(!known\) \{/);
+	});
+});
+
+// The gate is only the first place an event can die. Passing it and then
+// reaching a sink no store reduces is the same dead feature with a longer
+// walk: `checkpoint_notice` did exactly that for three milestones — the
+// daemon raised it from two call sites, `client.ts` waved it through, and
+// nothing in the app ever looked at it, so a user whose workspace was not a
+// git repository was never told checkpoints were off.
+describe("every declared event reaches something", () => {
+	/**
+	 * Every app source that could *read* an event.
+	 *
+	 * `protocol.ts` is excluded because declaring the type is the thing
+	 * being audited. `client.ts` is included but with `KNOWN_EVENT_TYPES`
+	 * cut out — that array names every event by construction, so leaving it
+	 * in makes this whole check vacuous. What remains of `client.ts` still
+	 * counts as a reader: `log_trimmed` is consumed entirely by the cursor
+	 * jump in `dispatch` and has nothing left for a store to do.
+	 */
+	function readerSources(): string[] {
+		const out: string[] = [];
+		const walk = (dir: string): void => {
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				const full = `${dir}/${entry.name}`;
+				if (entry.isDirectory()) {
+					walk(full);
+					continue;
+				}
+				if (!/\.(ts|svelte)$/.test(entry.name)) continue;
+				if (entry.name === "protocol.ts" || entry.name.includes(".test.")) continue;
+				if (entry.name.endsWith(".d.ts")) continue;
+				out.push(entry.name === "client.ts" ? withoutGateList(full) : readFileSync(full, "utf-8"));
+			}
+		};
+		walk(resolve(process.cwd(), "src"));
+		return out;
+	}
+
+	function withoutGateList(path: string): string {
+		const text = readFileSync(path, "utf-8");
+		const start = text.indexOf("const KNOWN_EVENT_TYPES");
+		if (start < 0) throw new Error("KNOWN_EVENT_TYPES not found in client.ts");
+		const end = text.indexOf("]", start);
+		if (end < 0) throw new Error("KNOWN_EVENT_TYPES is not a closed array literal");
+		return text.slice(0, start) + text.slice(end);
+	}
+
+	it("cut the gate list out, so this check cannot pass on the gate alone", () => {
+		const client = readerSources().find((src) => src.includes("KNOWN_EVENT_TYPES")) ?? "";
+		expect(client).not.toBe("");
+		// Pick an event that only the gate mentions in client.ts.
+		expect(client).not.toContain('"conversation_reset"');
+	});
+
+	it("finds a reader for every DaemonEventUnion member", () => {
+		const blob = readerSources().join("\n");
+		expect(blob.length).toBeGreaterThan(1000);
+		const unread = declaredEventTypes().filter(
+			(type) => !blob.includes(`"${type}"`) && !blob.includes(`'${type}'`),
+		);
+		expect(unread).toEqual([]);
 	});
 });

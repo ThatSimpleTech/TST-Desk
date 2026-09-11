@@ -563,6 +563,52 @@ class RemoteConfig(BaseModel):
         return value.strip()
 
 
+class VoiceConfig(BaseModel):
+    """Optional speech-to-text endpoint for hold-to-talk (TD-4701).
+
+    Empty ``base_url`` means the composer uses OS dictation only. A filled
+    URL is an OpenAI-compatible ``/audio/transcriptions`` root; the host
+    comes from this file, never from Python. Dictation itself is off until
+    Settings turns it on (``{user_data_dir}/voice.yaml``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str = ""
+    credential: str = ""
+    timeout_seconds: float = Field(default=30.0, gt=0)
+
+    @field_validator("base_url", "credential")
+    @classmethod
+    def _strip_voice(cls, value: str) -> str:
+        return value.strip()
+
+
+class EngineConfig(BaseModel):
+    """Which agent loop a new session uses.
+
+    ``native`` is the TST 3-tier OpenAI-compatible loop. ``grok`` spawns
+    the installed Grok Build CLI over ACP. Auth for grok stays in the
+    CLI (``~/.grok/auth.json``); this file never holds those credentials.
+    Empty ``binary`` means PATH, then ``~/.grok/bin/grok``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["native", "grok"] = "native"
+    binary: str = ""
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("binary")
+    @classmethod
+    def _binary(cls, value: str) -> str:
+        return value.strip()
+
+
 class AutonomyConfig(BaseModel):
     """Autonomy and interactive-verify settings.
 
@@ -657,6 +703,8 @@ class ModelConfig(BaseModel):
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
+    engine: EngineConfig = Field(default_factory=EngineConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
 
     @field_validator("credentials")
@@ -818,6 +866,8 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "notify",
         "speech",
         "autonomy",
+        "engine",
+        "voice",
         "mcp",
         "credentials",
     ):

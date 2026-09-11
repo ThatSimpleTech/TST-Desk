@@ -265,10 +265,7 @@ pub fn yaml_is_attach_only(text: &str) -> bool {
 }
 
 fn has_embeddings_section(map: &YamlMap) -> bool {
-    matches!(
-        map.get("embeddings"),
-        Some(serde_yml::Value::Mapping(_))
-    )
+    matches!(map.get("embeddings"), Some(serde_yml::Value::Mapping(_)))
 }
 
 #[cfg(test)]

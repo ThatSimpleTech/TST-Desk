@@ -1,3 +1,8 @@
+mod approval_notice;
+pub(crate) mod cu_agent;
+#[cfg(target_os = "macos")]
+mod cu_ax;
+pub mod cu_identity;
 pub mod daemon;
 mod quick_entry;
 mod read_text;
@@ -5,25 +10,27 @@ mod session_window;
 mod tray;
 mod updater;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use daemon::close_hint::{
     take_first_close_hint, CLOSE_HINT_BODY, CLOSE_HINT_EVENT, CLOSE_HINT_TITLE,
 };
 #[cfg(not(target_os = "macos"))]
 use daemon::coworker::{indicator_badge_count, indicator_window_title};
-use daemon::coworker::{window_close_action, CloseAction, LifecycleEvent};
+use daemon::coworker::{window_close_action_with_count, CloseAction, LifecycleEvent};
 use daemon::embeddings::EmbeddingsHandle;
 use daemon::DaemonHandle;
 use read_text::read_text_file;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{Emitter, Manager};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 /// Set at the start of [`request_quit`] so CloseRequested during Quit
 /// does not hide, and a second ExitRequested is allowed to finish.
 static QUITTING: AtomicBool = AtomicBool::new(false);
+static WINDOW_SEQ: AtomicU32 = AtomicU32::new(2);
 
 fn begin_quit() -> bool {
     !QUITTING.swap(true, Ordering::SeqCst)
@@ -65,6 +72,7 @@ fn quit_app(app: tauri::AppHandle) {
 }
 
 /// Dock / taskbar badge while a hidden session is still working (TD-2904).
+/// Tray tooltip is `set_tray_tooltip` (TD-4703). The UI owns the copy.
 /// Tray running-count is TD-4703 (`set_tray_running_count`).
 const WINDOW_VISIBILITY_EVENT: &str = "window-visibility";
 
@@ -112,6 +120,79 @@ pub(crate) fn show_main_window(app: &tauri::AppHandle) {
         }
         emit_window_visibility(app, true);
     }
+}
+
+fn show_any_window(app: &tauri::AppHandle) {
+    show_main_window(app);
+}
+
+#[tauri::command]
+fn set_tray_tooltip(app: tauri::AppHandle, tooltip: String) {
+    if let Some(tray_icon) = app.tray_by_id(tray::TRAY_ID) {
+        let _ = tray_icon.set_tooltip(Some(&tooltip));
+    }
+}
+
+#[tauri::command]
+fn new_desk_window(app: tauri::AppHandle) -> Result<(), String> {
+    open_desk_window(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn approval_notice(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+    session_id: String,
+    tool_call_id: String,
+) {
+    approval_notice::spawn(app, title, body, session_id, tool_call_id);
+}
+
+fn open_desk_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let n = WINDOW_SEQ.fetch_add(1, Ordering::SeqCst);
+    let label = format!("desk-{n}");
+    WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+        .title("TST Desk")
+        .inner_size(1200.0, 800.0)
+        .build()?;
+    Ok(())
+}
+
+fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    let h = app.handle();
+    let show = MenuItem::with_id(h, "tray-show", "Show TST Desk", true, None::<&str>)?;
+    let new_win = MenuItem::with_id(h, "tray-new-window", "New window", true, None::<&str>)?;
+    let quit = MenuItem::with_id(h, "tray-quit", "Quit TST Desk", true, None::<&str>)?;
+    let menu = Menu::with_items(h, &[&show, &new_win, &quit])?;
+    let Some(icon) = app.default_window_icon().cloned() else {
+        log::warn!("no default window icon; tray not created");
+        return Ok(());
+    };
+    TrayIconBuilder::with_id(tray::TRAY_ID)
+        .icon(icon)
+        .menu(&menu)
+        .tooltip("TST Desk")
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "tray-show" => show_any_window(app),
+            "tray-new-window" => {
+                let _ = open_desk_window(app);
+            }
+            "tray-quit" => request_quit(app),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray_icon, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_any_window(tray_icon.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
 }
 
 pub(crate) fn request_quit(app: &tauri::AppHandle) {
@@ -231,16 +312,20 @@ pub fn run() {
                 )?;
             }
             app.set_menu(build_app_menu(app)?)?;
+            if let Err(e) = build_tray(app) {
+                log::warn!("tray icon not created: {e}");
+            }
             // Spawn and supervise the daemon for the life of the app.
             // Embeddings is a parallel supervisor (TD-2204): its death
             // never shares tstd's restart budget.
             let data_dir = daemon::data_dir();
+            // Bind the CU socket first so tstd does not take over actuation.
+            cu_agent::bind_and_serve(&data_dir);
             let handle = daemon::start(app.handle().clone(), data_dir.clone());
             let embeddings = daemon::embeddings::start(data_dir);
             app.manage(handle);
             app.manage(embeddings);
             quick_entry::setup(app)?;
-            tray::setup(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -249,6 +334,9 @@ pub fn run() {
             read_text_file,
             quit_app,
             set_coworker_indicator,
+            set_tray_tooltip,
+            new_desk_window,
+            approval_notice,
             quick_entry::get_last_workspace,
             quick_entry::set_last_workspace,
             quick_entry::hide_quick_entry,
@@ -274,17 +362,26 @@ pub fn run() {
                 if session_window::is_session_window_label(window.label()) {
                     return;
                 }
-                api.prevent_close();
                 let coworker_on = daemon::load_coworker(&daemon::data_dir());
-                match window_close_action(LifecycleEvent::CloseRequested, coworker_on) {
+                let count = window.app_handle().webview_windows().len();
+                match window_close_action_with_count(
+                    LifecycleEvent::CloseRequested,
+                    coworker_on,
+                    count,
+                ) {
+                    CloseAction::Destroy => {}
                     CloseAction::Hide => {
+                        api.prevent_close();
                         // Close ≠ quit. The host stays up so reopen does
                         // not spawn a second process; tstd keeps running.
                         let _ = window.hide();
                         emit_window_visibility(window.app_handle(), false);
                         maybe_notice_close_is_not_quit(window.app_handle());
                     }
-                    CloseAction::Shutdown => request_quit(window.app_handle()),
+                    CloseAction::Shutdown => {
+                        api.prevent_close();
+                        request_quit(window.app_handle());
+                    }
                 }
             }
         })
@@ -305,7 +402,7 @@ pub fn run() {
                     daemon::embeddings::best_effort_kill(&app_handle.state::<EmbeddingsHandle>());
                 }
                 #[cfg(target_os = "macos")]
-                tauri::RunEvent::Reopen { .. } => show_main_window(app_handle),
+                tauri::RunEvent::Reopen { .. } => show_any_window(app_handle),
                 _ => {}
             }
         });

@@ -85,6 +85,7 @@ import type {
   SetApiKey,
   ValidateApiKey,
   SetPreset,
+  SetEngine,
   SetCredential,
   DeleteCredential,
   SetTierCredential,
@@ -95,6 +96,7 @@ import type {
   SetCoworker,
   SetRemoteAttach,
   SetCuIndicators,
+  SetCuPolicy,
   SetWorkspacePin,
   SetupState,
   ApiKeyValidated,
@@ -249,6 +251,16 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(isBoolean(m.glow)).toBe(true);
     expect(isBoolean(m.agent_cursor)).toBe(true);
     expect(isBoolean(m.show_on_real_display)).toBe(true);
+    expect("session_id" in m).toBe(false);
+  });
+
+  it("set_cu_policy", () => {
+    const m = fixtures.set_cu_policy as SetCuPolicy;
+    expect(m.type).toBe("set_cu_policy");
+    expect(isBoolean(m.enabled)).toBe(true);
+    expect(m.mode === "background" || m.mode === "full_control").toBe(true);
+    expect(isBoolean(m.unhide_on_finish)).toBe(true);
+    expect(Array.isArray(m.denied_apps)).toBe(true);
     expect("session_id" in m).toBe(false);
   });
 
@@ -436,6 +448,12 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.set_preset as SetPreset;
     expect(m.type).toBe("set_preset");
     expect(isString(m.name)).toBe(true);
+  });
+
+  it("set_engine", () => {
+    const m = fixtures.set_engine as SetEngine;
+    expect(m.type).toBe("set_engine");
+    expect(m.kind === "native" || m.kind === "grok").toBe(true);
   });
 
   it("set_credential", () => {
@@ -926,7 +944,9 @@ describe("All fixtures have required shape", () => {
       "set_skip_all_approvals",
       "set_load_global_memory",
       "set_coworker",
+      "set_voice",
       "set_cu_indicators",
+      "set_cu_policy",
       "set_workspace_pin",
       "set_session_star",
       "rename_session",
@@ -937,7 +957,9 @@ describe("All fixtures have required shape", () => {
       "get_charter", "save_charter", "start_autonomy",
       "list_pins", "add_pin", "remove_pin",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
-      "get_setup_state", "set_api_key", "validate_api_key", "set_preset",
+      "get_setup_state", "set_api_key", "validate_api_key", "set_preset", "set_engine",
+      "set_grok_mode", "run_grok_command", "list_grok_sessions", "open_in_terminal",
+      "approve_grok_plan", "list_grok_extensions",
       "set_credential", "delete_credential", "set_tier_credential",
       "set_mcp_server", "delete_mcp_server",
       "run_diagnostics",
@@ -948,6 +970,7 @@ describe("All fixtures have required shape", () => {
       "set_cu_kill",
       "set_remote_attach",
       "list_jobs", "save_job", "delete_job",
+      "parse_job",
       "transcribe",
     ];
     for (const key of clientTypes) {
@@ -973,6 +996,13 @@ describe("All fixtures have required shape", () => {
       "design_hit",
       "cu_permissions",
       "job_list",
+      "job_draft",
+      "grok_commands",
+      "grok_plan",
+      "grok_mode",
+      "grok_preview",
+      "grok_session_list",
+      "grok_extensions",
       "transcript",
     ];
     for (const key of eventTypes) {

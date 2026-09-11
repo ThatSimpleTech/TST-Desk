@@ -339,6 +339,26 @@ class WebSocketServer:
                 with contextlib.suppress(websockets.exceptions.ConnectionClosed):
                     await conn.send(frame)
 
+    async def broadcast(self, payload: str) -> int:
+        """Send one frame to every handshaken client. Returns how many got it.
+
+        Unlike a session event, which goes to the connections attached to
+        that session, this reaches every client that finished the handshake
+        — the right shape for state that belongs to the user data dir
+        rather than to a session, such as the scheduled-job list.
+
+        A client that closed between the snapshot and the send is skipped,
+        not an error: it will re-read the state when it reconnects.
+        """
+        sent = 0
+        for conn in list(self._handshaken):
+            try:
+                await conn.send(payload)
+            except (websockets.exceptions.ConnectionClosed, OSError, RuntimeError):
+                continue
+            sent += 1
+        return sent
+
     async def stop(self) -> None:
         """Stop the WebSocket server and close all connections."""
         log.info("ws server stopping")

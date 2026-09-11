@@ -31,7 +31,7 @@ CORE = Path(__file__).resolve().parent.parent
 REPO = CORE.parent
 ENTRY = CORE / "scripts" / "tstd_sidecar_entry.py"
 BINARIES = REPO / "shell" / "binaries"
-STARTUP_BUDGET_S = 3.0
+STARTUP_BUDGET_S = 5.0
 
 # Data files importlib.resources must find inside the frozen bundle.
 DATAS = [(CORE / "tstd" / "config.yaml", "tstd")]
@@ -84,7 +84,56 @@ def build(triple: str) -> Path:
         target = target_path(triple)
         shutil.move(str(built), target)
         target.chmod(0o755)
+        if sys.platform == "darwin":
+            _sign_macos(target)
         return target
+
+
+def _sign_macos(binary: Path) -> None:
+    """Sign with the app bundle id so TCC sees one client, TST Desk.
+
+    Prefer the stable identity from ``shell/scripts/ensure-signing-identity.sh``
+    (``TST_SIGN_IDENTITY``, a name or SHA-1, default ``tst-desk-dev``). TCC pins each grant to
+    the signing requirement; an ad-hoc signature's is the per-build cdhash,
+    so grants would reset on every rebuild (TD-4823).
+    """
+    entitlements = REPO / "shell" / "macos-entitlements.plist"
+    identity = os.environ.get("TST_SIGN_IDENTITY", "tst-desk-dev")
+    cmd = ["codesign", "--force"]
+    if _identity_available(identity):
+        cmd += ["--sign", identity, "--options", "runtime", "--timestamp=none"]
+    else:
+        print(
+            f"warning: no codesigning identity {identity!r}; ad-hoc signing tstd — "
+            "TCC grants will reset on every rebuild. Run "
+            "shell/scripts/ensure-signing-identity.sh",
+            file=sys.stderr,
+        )
+        cmd += ["--sign", "-"]
+    cmd += ["--identifier", "com.thatsimpletech.tstdesk"]
+    if entitlements.is_file():
+        cmd += ["--entitlements", str(entitlements)]
+    cmd.append(str(binary))
+    subprocess.run(cmd, check=True)
+
+
+def _identity_available(name: str) -> bool:
+    """True when ``security find-identity`` lists a valid codesigning identity.
+
+    *name* is the certificate's common name or its 40-hex SHA-1; the
+    installer passes the hash so a stale twin of the name cannot make
+    ``codesign`` ambiguous.
+    """
+    proc = subprocess.run(
+        ["security", "find-identity", "-v", "-p", "codesigning"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return False
+    is_hash = len(name) == 40 and all(c in "0123456789abcdefABCDEF" for c in name)
+    return (name.upper() in proc.stdout) if is_hash else (f'"{name}"' in proc.stdout)
 
 
 def _parent_pid(pid: int) -> int | None:

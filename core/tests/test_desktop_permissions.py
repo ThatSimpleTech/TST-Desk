@@ -30,6 +30,7 @@ from tstd.desktop.permissions import (
     WINDOWS_NO_GATE,
     build_cu_permissions,
     cu_permissions_from_report,
+    host_diagnosis,
     is_permission_failure,
     is_secure_desktop_failure,
     is_uipi_failure,
@@ -44,6 +45,7 @@ from tstd.desktop.stdio_mcp import map_mcp_error
 from tstd.protocol import (
     CheckCuPermissions,
     CuPermissions,
+    ResetCuPermissions,
     ToolCall,
     ToolResult,
     parse_client_message,
@@ -559,3 +561,159 @@ class TestLinuxOnboarding:
         assert event.granted is False
         assert event.xtest_applies is True
         assert "XTEST" in event.xtest
+
+
+# ── TD-4823: the host's diagnosis, and reset ────────────────────────────
+
+_HOST_REPORT: dict[str, Any] = {
+    "platform": "macos",
+    "screen_recording": {"granted": False, "required_for": "capture"},
+    "accessibility": {"granted": False, "required_for": "input"},
+    "all_granted": False,
+    "actuation_path": "host",
+    "process_trusted": {"screen_recording": False, "accessibility": False},
+    "identity": {
+        "signing": "adhoc",
+        "identifier": "com.thatsimpletech.tstdesk",
+        "cdhash": "abc123",
+        "team_id": "",
+        "designated_requirement": 'cdhash H"abc123"',
+        "bundle_path": "/Applications/TST Desk.app",
+        "bundled": True,
+    },
+    "stale_grant_suspected": {"screen_recording": True, "accessibility": False},
+    "unbundled_dev_binary": False,
+    "fix": {
+        "screen_recording": "System Settings may still show TST Desk ON; use Reset grants.",
+        "accessibility": "Open System Settings > Accessibility, enable TST Desk.",
+    },
+    "reset_supported": True,
+    "host_caveat": "pinned to the build",
+}
+
+
+class TestHostDiagnosis:
+    """The host (cu-agent.sock) is the TCC identity; its diagnosis wins."""
+
+    def test_host_fields_map_onto_the_event(self) -> None:
+        diag = host_diagnosis(_HOST_REPORT)
+        assert diag["actuation_path"] == "host"
+        assert diag["signing"] == "adhoc"
+        assert diag["bundle_path"] == "/Applications/TST Desk.app"
+        assert diag["stale_screen_recording"] is True
+        assert diag["stale_accessibility"] is False
+        assert diag["unbundled_dev_binary"] is False
+        assert "Reset grants" in diag["fix_screen_recording"]
+        assert "Accessibility" in diag["fix_accessibility"]
+        assert diag["reset_supported"] is True
+        assert diag["reset_error"] == ""
+
+        event = cu_permissions_from_report(_HOST_REPORT, first_run=False)
+        assert event.platform == "macos"
+        assert event.granted is False
+        assert event.actuation_path == "host"
+        assert event.signing == "adhoc"
+        assert event.stale_screen_recording is True
+        assert event.reset_supported is True
+        assert "Reset grants" in event.fix_screen_recording
+
+    def test_unknown_values_normalize_to_empty(self) -> None:
+        raw = dict(_HOST_REPORT)
+        raw["actuation_path"] = "teleport"
+        raw["identity"] = {"signing": "notarized", "bundle_path": 7}
+        raw["stale_grant_suspected"] = "yes"
+        raw["fix"] = ["nope"]
+        raw["reset_error"] = {"code": 1}
+        diag = host_diagnosis(raw)
+        assert diag["actuation_path"] == ""
+        assert diag["signing"] == ""
+        assert diag["bundle_path"] == ""
+        assert diag["stale_screen_recording"] is False
+        assert diag["fix_screen_recording"] == ""
+        assert diag["reset_error"] == ""
+        # Still a valid event: the Literal fields never reject a live report.
+        event = cu_permissions_from_report(raw, first_run=False)
+        assert event.actuation_path == ""
+
+    def test_reset_error_survives(self) -> None:
+        raw = dict(_HOST_REPORT)
+        raw["reset_error"] = "tccutil reset ScreenCapture failed (exit 1)"
+        event = cu_permissions_from_report(raw, first_run=False)
+        assert "tccutil" in event.reset_error
+
+    def test_mock_report_keeps_defaults(self) -> None:
+        event = cu_permissions_from_report(
+            {"all_granted": True, "screen_recording": True, "accessibility": True},
+            first_run=False,
+        )
+        assert event.granted is True
+        assert event.actuation_path == ""
+        assert event.signing == ""
+        assert event.stale_screen_recording is False
+        assert event.reset_supported is False
+
+    def test_reset_message_round_trips(self) -> None:
+        msg = ResetCuPermissions()
+        assert msg.type == "reset_cu_permissions"
+        assert json.loads(msg.model_dump_json()) == {"type": "reset_cu_permissions"}
+
+    async def test_daemon_prefers_the_host_over_the_mock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[bool] = []
+
+        async def fake_host(data_dir: Any, *, reset: bool = False) -> dict[str, Any]:
+            calls.append(reset)
+            return dict(_HOST_REPORT)
+
+        monkeypatch.setattr("tstd.daemon.host_permissions", fake_host)
+        daemon = Daemon(data_dir=tmp_path)
+        daemon.desktop_driver = MockDesktopDriver()  # always granted on its own
+        raw = await daemon._handle_message('{"type": "check_cu_permissions"}', None)
+        assert raw is not None
+        event = json.loads(raw)
+        assert event["type"] == "cu_permissions"
+        assert event["granted"] is False
+        assert event["actuation_path"] == "host"
+        assert event["stale_screen_recording"] is True
+        assert event["reset_supported"] is True
+        assert calls == [False]
+
+    async def test_reset_forwards_to_the_host(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[bool] = []
+
+        async def fake_host(data_dir: Any, *, reset: bool = False) -> dict[str, Any]:
+            calls.append(reset)
+            report = dict(_HOST_REPORT)
+            report["stale_grant_suspected"] = {"screen_recording": False, "accessibility": False}
+            return report
+
+        monkeypatch.setattr("tstd.daemon.host_permissions", fake_host)
+        daemon = Daemon(data_dir=tmp_path)
+        daemon.desktop_driver = MockDesktopDriver()
+        raw = await daemon._handle_message('{"type": "reset_cu_permissions"}', None)
+        assert raw is not None
+        event = json.loads(raw)
+        assert event["type"] == "cu_permissions"
+        assert event["first_run"] is False
+        assert event["stale_screen_recording"] is False
+        assert calls == [True]
+
+    async def test_no_host_falls_back_to_the_driver(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def no_host(data_dir: Any, *, reset: bool = False) -> None:
+            return None
+
+        monkeypatch.setattr("tstd.daemon.host_permissions", no_host)
+        daemon = Daemon(data_dir=tmp_path)
+        daemon.desktop_driver = MockDesktopDriver()
+        raw = await daemon._handle_message('{"type": "check_cu_permissions"}', None)
+        assert raw is not None
+        event = json.loads(raw)
+        assert event["granted"] is True
+        # The mock names itself so the pane can say the host is not running.
+        assert event["actuation_path"] == "mock"
+        assert event["reset_supported"] is False

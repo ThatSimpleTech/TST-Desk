@@ -3,6 +3,12 @@
 <plist version="1.0">
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Hold-to-talk dictation records audio only while you hold the microphone button. Nothing is sent unless you have configured a speech endpoint.</string>
+	<string>Hold-to-talk dictation in the composer. The microphone is only on while you hold the button. Nothing is sent unless you have configured a speech endpoint.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Hold-to-talk dictation in the composer. Speech is not captured unless you hold the mic.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Computer use takes a screenshot of the desktop when the agent needs to see the screen. Nothing is recorded or sent off this Mac.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>macOS groups screen capture with system-audio capture. TST Desk does not record the microphone for computer use.</string>
 </dict>
 </plist>

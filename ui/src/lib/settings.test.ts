@@ -51,8 +51,11 @@ import {
 	setSkipAllApprovals,
 	setLoadGlobalMemory,
 	setCoworker,
+	setVoice,
 	setRemoteAttach,
+	setEngine,
 	setCuIndicators,
+	setCuPolicy,
 	storeNamedKey,
 	deleteNamedKey,
 	renameCredential,
@@ -110,6 +113,31 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.unstubAllGlobals();
+});
+
+describe("engine", () => {
+	it("defaults to native and records a grok setup_state", () => {
+		startSettings();
+		expect(settings.engine).toBe("native");
+		emit(
+			setupState({
+				engine: "grok",
+				grok_available: true,
+				grok_binary: "/Users/me/.grok/bin/grok",
+				key_required: false,
+			}),
+		);
+		expect(settings.engine).toBe("grok");
+		expect(settings.grokAvailable).toBe(true);
+		expect(settings.grokBinary).toBe("/Users/me/.grok/bin/grok");
+		expect(settings.keyRequired).toBe(false);
+	});
+
+	it("sends set_engine", () => {
+		startSettings();
+		setEngine("grok");
+		expect(mocks.sent).toEqual([{ type: "set_engine", kind: "grok" }]);
+	});
 });
 
 describe("opening", () => {
@@ -344,6 +372,31 @@ describe("coworker", () => {
 	});
 });
 
+describe("voice", () => {
+	it("defaults off before the daemon speaks", () => {
+		startSettings();
+		expect(settings.voiceEnabled).toBe(false);
+		expect(settings.voiceHasEndpoint).toBe(false);
+	});
+
+	it("reads voice from setup_state", () => {
+		startSettings();
+		emit(setupState({ voice_enabled: true, voice_has_endpoint: true }));
+		expect(settings.voiceEnabled).toBe(true);
+		expect(settings.voiceHasEndpoint).toBe(true);
+	});
+
+	it("sends set_voice and waits for the ack", () => {
+		startSettings();
+		emit(setupState());
+		setVoice(true);
+		expect(mocks.sent).toEqual([{ type: "set_voice", enabled: true }]);
+		expect(settings.voiceEnabled).toBe(false);
+		emit(setupState({ voice_enabled: true }));
+		expect(settings.voiceEnabled).toBe(true);
+	});
+});
+
 describe("remote attach", () => {
 	it("defaults off before the daemon speaks", () => {
 		startSettings();
@@ -444,6 +497,24 @@ describe("computer-use indicators", () => {
 		expect(settings.cuGlow).toBe(true);
 		emit(setupState({ cu_glow: false }));
 		expect(settings.cuGlow).toBe(false);
+	});
+
+	it("sends set_cu_policy from the computer-use section", () => {
+		startSettings();
+		emit(setupState({ cu_enabled: true, cu_mode: "background", cu_denied_apps: [] }));
+		setCuPolicy({ mode: "full_control", deniedApps: ["Bank"] });
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_cu_policy",
+				enabled: true,
+				mode: "full_control",
+				unhide_on_finish: true,
+				denied_apps: ["Bank"],
+			},
+		]);
+		emit(setupState({ cu_mode: "full_control", cu_denied_apps: ["Bank"] }));
+		expect(settings.cuMode).toBe("full_control");
+		expect(settings.cuDeniedApps).toEqual(["Bank"]);
 	});
 });
 

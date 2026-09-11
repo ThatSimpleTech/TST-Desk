@@ -20,6 +20,7 @@ from tstd.protocol import (
     ApiKeyValidated,
     ApprovalRequest,
     Approve,
+    ApproveGrokPlan,
     ArchiveSession,
     Artifact,
     ArtifactEntry,
@@ -70,6 +71,16 @@ from tstd.protocol import (
     GetInstructionStack,
     GetSetupState,
     GetUsage,
+    GrokCommand,
+    GrokCommands,
+    GrokExtension,
+    GrokExtensions,
+    GrokMode,
+    GrokPlan,
+    GrokPlanEntry,
+    GrokPreview,
+    GrokSessionEntry,
+    GrokSessionList,
     Hello,
     InstructionFileEntry,
     InstructionFiles,
@@ -79,6 +90,8 @@ from tstd.protocol import (
     JobList,
     ListArtifacts,
     ListCommands,
+    ListGrokExtensions,
+    ListGrokSessions,
     ListInstructions,
     ListJobs,
     ListMemory,
@@ -97,6 +110,7 @@ from tstd.protocol import (
     MemoryReject,
     MoveSession,
     OpenArtifact,
+    OpenInTerminal,
     OpenWorkspace,
     ParseJob,
     Ping,
@@ -109,6 +123,7 @@ from tstd.protocol import (
     RevokePolicyRule,
     RuleActivated,
     RunDiagnostics,
+    RunGrokCommand,
     RunVerify,
     SaveCharter,
     SaveJob,
@@ -121,7 +136,10 @@ from tstd.protocol import (
     SetCoworker,
     SetCredential,
     SetCuIndicators,
+    SetCuPolicy,
     SetCuKill,
+    SetEngine,
+    SetGrokMode,
     SetLoadGlobalMemory,
     SetMcpServer,
     SetPlan,
@@ -133,6 +151,7 @@ from tstd.protocol import (
     SetTier,
     SetTierCredential,
     SetupState,
+    SetVoice,
     SetWorkspacePin,
     ShellOutput,
     Shutdown,
@@ -183,7 +202,15 @@ FIXTURES = {
     "set_skip_all_approvals": SetSkipAllApprovals(enabled=True),
     "set_load_global_memory": SetLoadGlobalMemory(enabled=True),
     "set_coworker": SetCoworker(enabled=True),
+    "set_voice": SetVoice(enabled=True),
+    "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
+    "set_cu_policy": SetCuPolicy(
+        enabled=True,
+        mode="background",
+        unhide_on_finish=True,
+        denied_apps=["1Password"],
+    ),
     "set_workspace_pin": SetWorkspacePin(path="/home/user/project", pinned=True),
     "resume": Resume(session_id="sess-1"),
     "cancel": Cancel(session_id="sess-1"),
@@ -273,6 +300,13 @@ FIXTURES = {
     "delete_api_key": DeleteApiKey(),
     "validate_api_key": ValidateApiKey(),
     "set_preset": SetPreset(name="tst-default"),
+    "set_engine": SetEngine(kind="grok"),
+    "set_grok_mode": SetGrokMode(session_id="sess-1", mode="plan"),
+    "run_grok_command": RunGrokCommand(session_id="sess-1", name="compact", argument="keep tests"),
+    "list_grok_sessions": ListGrokSessions(),
+    "open_in_terminal": OpenInTerminal(session_id="sess-1"),
+    "approve_grok_plan": ApproveGrokPlan(session_id="sess-1", comment="go"),
+    "list_grok_extensions": ListGrokExtensions(),
     "set_credential": SetCredential(name="Local"),
     "delete_credential": DeleteCredential(credential="local"),
     "set_tier_credential": SetTierCredential(preset="local", tier="brain", credential="local"),
@@ -297,7 +331,9 @@ FIXTURES = {
     "set_remote_attach": SetRemoteAttach(enabled=True),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
-    "session_state": SessionState(session_id="sess-1", state="running", seq=2),
+    "session_state": SessionState(
+        session_id="sess-1", state="running", engine="native", seq=2
+    ),
     "conversation_reset": ConversationReset(
         session_id="sess-1",
         user_index=0,
@@ -822,7 +858,8 @@ FIXTURES = {
     ),
     # TD-3404: process-wide kill-switch. Connection-scoped; no session_id.
     "cu_kill_state": CuKillState(killed=True),
-    "cu_session": CuSession(session_id="sess-1", active=True, seq=1),
+    # TD-3407: episode open/close. Session-scoped; it lives in the session log.
+    "cu_session": CuSession(session_id="sess-1", active=True, seq=24),
     "design_hit": DesignHit(
         session_id="sess-1",
         x=12.0,
@@ -871,6 +908,12 @@ FIXTURES = {
                 cadence="every 1 hour",
                 deliver_to="window",
                 paused=False,
+                # TD-3807: a real receipt, not nulls — an all-null sample
+                # would not prove the TypeScript side accepts the values.
+                last_run="2026-08-21T15:00:00+00:00",
+                last_status="ok",
+                last_summary="3 threads need a reply",
+                last_session_id="sess-1",
             )
         ],
     ),
@@ -882,7 +925,38 @@ FIXTURES = {
         deliver_to="slack",
         paused=False,
     ),
+    "grok_commands": GrokCommands(
+        session_id="sess-1",
+        commands=[GrokCommand(name="compact", description="Compress history")],
+        seq=2,
+    ),
+    "grok_plan": GrokPlan(
+        session_id="sess-1",
+        markdown="# Plan\n\nDo the thing.",
+        entries=[GrokPlanEntry(content="Step one", status="pending")],
+        seq=3,
+    ),
+    "grok_mode": GrokMode(
+        session_id="sess-1",
+        mode="plan",
+        modes=["default", "plan", "yolo"],
+        model="grok-4.6",
+        seq=4,
+    ),
+    "grok_preview": GrokPreview(
+        session_id="sess-1",
+        kind="image",
+        path="/tmp/out.png",
+        title="out.png",
+        seq=5,
+    ),
+    "grok_session_list": GrokSessionList(
+        sessions=[GrokSessionEntry(id="abc", title="Fix login", cwd="/tmp/proj", updated_at="1")]
+    ),
     "transcript": Transcript(ok=True, text="hello from the mic", detail=""),
+    "grok_extensions": GrokExtensions(
+        items=[GrokExtension(kind="skill", name="review", detail="user")]
+    ),
 }
 
 

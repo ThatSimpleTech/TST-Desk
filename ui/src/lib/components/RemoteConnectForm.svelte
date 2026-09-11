@@ -61,7 +61,7 @@
 	.attach-overlay {
 		position: fixed;
 		inset: 0;
-		background: color-mix(in srgb, var(--color-bg) 78%, transparent);
+		background: color-mix(in srgb, var(--color-ground) 78%, transparent);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -71,8 +71,8 @@
 
 	.attach {
 		width: min(34rem, calc(100vw - var(--space-8)));
-		background: var(--color-bg-raised);
-		border: var(--border-width) solid var(--color-border);
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-xl);
 		box-shadow: var(--shadow-lg);
 		padding: var(--space-6);
@@ -87,13 +87,13 @@
 		font-size: var(--text-xl);
 		font-weight: var(--weight-medium);
 		letter-spacing: var(--tracking-display);
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.body {
 		margin: 0;
 		font-size: var(--text-sm);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		line-height: 1.5;
 	}
 
@@ -112,23 +112,23 @@
 	.field-label {
 		font-size: var(--text-xs);
 		font-weight: var(--weight-medium);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.field-input {
 		font-size: var(--text-sm);
 		font-family: var(--font-mono);
 		padding: var(--space-2) var(--space-3);
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-md);
-		background: var(--color-bg);
-		color: var(--color-text);
+		background: var(--color-ground);
+		color: var(--color-ink);
 	}
 
 	.error {
 		margin: 0;
 		font-size: var(--text-xs);
-		color: var(--color-danger);
+		color: var(--color-err);
 	}
 
 	.actions {
@@ -141,14 +141,14 @@
 		font-weight: var(--weight-medium);
 		padding: var(--space-2) var(--space-3);
 		border-radius: var(--radius-md);
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		cursor: pointer;
 	}
 
 	.btn--primary {
 		background: var(--color-accent);
 		border-color: var(--color-accent);
-		color: var(--color-accent-text);
+		color: var(--color-on-accent);
 	}
 
 	.btn--primary:hover {

@@ -33,17 +33,56 @@
 }
 
 html {
-  font-family: var(--font-family);
+  font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: var(--leading-normal);
   color: var(--color-ink);
   background: var(--color-ground);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Digits share one width everywhere, so costs, caps and timestamps line
+     up in columns and don't jitter as they tick. */
+  font-variant-numeric: tabular-nums;
 }
 
 body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+/* Keyboard focus: one ring for every control, drawn only for keyboard
+   focus so mouse clicks stay quiet. A component may pull the offset
+   inside its own box (rail rows do) but never removes the ring. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Motion: what appears rises into place; what leaves just goes. Components
+   reference these by name — Svelte leaves a keyframe name it did not
+   declare unscoped — so every entrance shares one curve and one duration
+   (tokens: --ease-out, --dur-enter, --dur-exit). */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

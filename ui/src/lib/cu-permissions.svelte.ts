@@ -6,6 +6,9 @@
 // macOS copy is TCC. Windows copy is the missing grant dialog plus UIPI
 // and the secure desktop. Linux copy is X11 no-gate honesty plus named
 // Wayland / XTEST / display limits. The pane branches on `platform`.
+// macOS also carries the host's own diagnosis (TD-4823): how the app is
+// signed, whether a grant is stale (Settings shows ON for an older
+// build), and a reset action — a window action, never a tool.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { isTauri } from "./open-file";
@@ -36,6 +39,16 @@ export const cuPermissions = $state({
 	xtestApplies: false,
 	noDisplay: "",
 	noDisplayApplies: false,
+	actuationPath: "" as "" | "host" | "daemon" | "mock" | "none",
+	signing: "" as "" | "identity" | "adhoc" | "unsigned",
+	bundlePath: "",
+	staleScreenRecording: false,
+	staleAccessibility: false,
+	unbundledDevBinary: false,
+	fixScreenRecording: "",
+	fixAccessibility: "",
+	resetSupported: false,
+	resetError: "",
 });
 
 let started = false;
@@ -75,6 +88,16 @@ export function resetCuPermissions(): void {
 	cuPermissions.xtestApplies = false;
 	cuPermissions.noDisplay = "";
 	cuPermissions.noDisplayApplies = false;
+	cuPermissions.actuationPath = "";
+	cuPermissions.signing = "";
+	cuPermissions.bundlePath = "";
+	cuPermissions.staleScreenRecording = false;
+	cuPermissions.staleAccessibility = false;
+	cuPermissions.unbundledDevBinary = false;
+	cuPermissions.fixScreenRecording = "";
+	cuPermissions.fixAccessibility = "";
+	cuPermissions.resetSupported = false;
+	cuPermissions.resetError = "";
 	started = false;
 }
 
@@ -99,6 +122,17 @@ function applyReport(event: CuPermissions): void {
 	cuPermissions.xtestApplies = event.xtest_applies;
 	cuPermissions.noDisplay = event.no_display;
 	cuPermissions.noDisplayApplies = event.no_display_applies;
+	// Optional on the wire: an older daemon omits the host diagnosis.
+	cuPermissions.actuationPath = event.actuation_path ?? "";
+	cuPermissions.signing = event.signing ?? "";
+	cuPermissions.bundlePath = event.bundle_path ?? "";
+	cuPermissions.staleScreenRecording = event.stale_screen_recording ?? false;
+	cuPermissions.staleAccessibility = event.stale_accessibility ?? false;
+	cuPermissions.unbundledDevBinary = event.unbundled_dev_binary ?? false;
+	cuPermissions.fixScreenRecording = event.fix_screen_recording ?? "";
+	cuPermissions.fixAccessibility = event.fix_accessibility ?? "";
+	cuPermissions.resetSupported = event.reset_supported ?? false;
+	cuPermissions.resetError = event.reset_error ?? "";
 	cuPermissions.probing = false;
 	cuPermissions.open = true;
 }
@@ -131,6 +165,18 @@ export function openCuPermissions(): void {
 export function retryCuPermissions(): void {
 	cuPermissions.probing = true;
 	const sent = sendToDaemon({ type: "check_cu_permissions" });
+	if (!sent) cuPermissions.probing = false;
+}
+
+/**
+ * Reset this app's macOS TCC rows and re-request (TD-4823). The host runs
+ * `tccutil reset` and prompts again; the fresh report closes `probing`.
+ * User action from the pane only — never reachable from a tool.
+ */
+export function resetCuGrants(): void {
+	cuPermissions.probing = true;
+	cuPermissions.resetError = "";
+	const sent = sendToDaemon({ type: "reset_cu_permissions" });
 	if (!sent) cuPermissions.probing = false;
 }
 

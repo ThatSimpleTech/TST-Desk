@@ -10,10 +10,12 @@
 	// while this tab is the visible one; the alternative, a second store
 	// subscribed to the same event stream, would keep two copies of the
 	// session's writes in step for no gain.
+	import EmptyState from './EmptyState.svelte';
 	import { entries } from '../timeline-store.svelte.js';
 	import { baseName, dirName, foldFileWrites } from '../files';
 	import { openInEditor } from '../open-file';
 	import DiffPreview from './DiffPreview.svelte';
+	import Icon from './Icon.svelte';
 
 	let summary = $derived(foldFileWrites(entries));
 	let expanded = $state<string | null>(null);
@@ -31,13 +33,15 @@
 
 <div class="files-panel">
 	{#if summary.files.length === 0}
-		<p class="empty">
-			No files written yet. Every file this session writes appears here — its diff, its line
-			counts, and a click to open it in your editor.
-		</p>
+		<EmptyState
+			icon="file"
+			title="No files written yet"
+			body="Every file this session writes appears here — its diff, its line counts, and a click to open it in your editor."
+		/>
 	{:else}
 		<ul class="files">
 			{#each summary.files as file (file.path)}
+				{@const isOpen = expanded === file.path}
 				<li class="file">
 					<div class="row">
 						<button
@@ -55,10 +59,14 @@
 						<button
 							class="chevron"
 							type="button"
-							aria-expanded={expanded === file.path}
+							aria-expanded={isOpen}
 							aria-label={`Diff for ${file.path}`}
-							onclick={() => toggle(file.path)}>{expanded === file.path ? '▾' : '▸'}</button
+							onclick={() => toggle(file.path)}
 						>
+							<span class="chevron-icon" class:chevron-icon--open={isOpen} aria-hidden="true">
+								<Icon name="chevron-right" size={14} />
+							</span>
+						</button>
 					</div>
 					<div class="meta">
 						{#if dirName(file.path)}
@@ -69,7 +77,7 @@
 							{file.writes.length === 1 ? 'write' : 'writes'}</span
 						>
 					</div>
-					{#if expanded === file.path}
+					{#if isOpen}
 						<div class="diffs">
 							<!-- Unkeyed: the list only ever appends, and one result can
 							     name the same path twice (a move onto itself), so seq is
@@ -107,14 +115,7 @@
 		flex-direction: column;
 	}
 
-	.empty {
-		padding: var(--space-6);
-		color: var(--color-text-muted);
-		font-size: var(--text-sm);
-		line-height: var(--leading-relaxed);
-		text-align: center;
-	}
-
+	/* Same empty treatment as the Activity and Work panes. */
 	.files {
 		flex: 1;
 		list-style: none;
@@ -124,12 +125,12 @@
 
 	.file {
 		padding: var(--space-2) var(--space-4);
-		border-bottom: var(--border-width) solid var(--color-border);
+		border-bottom: var(--border-width) solid var(--color-hairline);
 	}
 
 	.row {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		gap: var(--space-3);
 	}
 
@@ -139,7 +140,7 @@
 		padding: 0;
 		border: none;
 		background: none;
-		color: var(--color-text);
+		color: var(--color-ink);
 		font-family: var(--font-mono);
 		font-size: var(--text-sm);
 		font-weight: var(--weight-semibold);
@@ -159,29 +160,47 @@
 		gap: var(--space-2);
 		font-size: var(--text-xs);
 		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
 	}
 
 	.added {
-		color: var(--color-success);
+		color: var(--color-ok);
 	}
 
 	.removed {
-		color: var(--color-danger);
+		color: var(--color-err);
 	}
 
+	/* Same disclosure control as the timeline rows: an icon chevron that
+	   turns to point down when the diff is open. */
 	.chevron {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		width: 1.5rem;
+		height: 1.5rem;
 		padding: 0;
 		border: none;
+		border-radius: var(--radius-sm);
 		background: none;
-		color: var(--color-text-muted);
-		font-size: var(--text-xs);
-		line-height: 1;
+		color: var(--color-ink-muted);
 		cursor: pointer;
 	}
 
 	.chevron:hover {
-		color: var(--color-text);
+		color: var(--color-ink);
+		background: var(--color-sunken);
+	}
+
+	.chevron-icon {
+		display: inline-flex;
+		transition: transform var(--dur-exit) var(--ease-out);
+	}
+
+	.chevron-icon--open {
+		transform: rotate(90deg);
 	}
 
 	.meta {
@@ -190,7 +209,7 @@
 		gap: var(--space-2);
 		margin-top: var(--space-1);
 		font-size: var(--text-xs);
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	/* The directory is context, not the identity — it yields the width. The
@@ -212,6 +231,7 @@
 		flex-direction: column;
 		gap: var(--space-2);
 		margin-top: var(--space-2);
+		animation: rise var(--dur-enter) var(--ease-out);
 	}
 
 	.write {
@@ -224,7 +244,7 @@
 		margin: 0;
 		font-size: var(--text-xs);
 		font-weight: var(--weight-semibold);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.totals {
@@ -233,11 +253,11 @@
 		align-items: baseline;
 		gap: var(--space-3);
 		padding: var(--space-3) var(--space-4);
-		border-top: var(--border-width) solid var(--color-border);
+		border-top: var(--border-width) solid var(--color-hairline);
 		font-size: var(--text-sm);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		position: sticky;
 		bottom: 0;
-		background: var(--color-bg-raised);
+		background: var(--color-lifted);
 	}
 </style>

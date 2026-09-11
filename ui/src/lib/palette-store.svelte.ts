@@ -20,7 +20,7 @@ import {
 import { isTauri } from "./open-file";
 import { setCuKill } from "./cu-kill.svelte.js";
 import { chat } from "./chat-store.svelte.js";
-import { endSession } from "./session-actions.svelte.js";
+import { endSession, openInTerminal } from "./session-actions.svelte.js";
 import { openDecisions } from "./decisions.svelte.js";
 import { runDoctor } from "./doctor.svelte.js";
 import { openSettings, setTheme, settings } from "./settings.svelte.js";
@@ -115,6 +115,15 @@ function dispatch(command: PaletteCommand): void {
 		case "show-work":
 			showRightPane("work");
 			return;
+		case "show-preview":
+			showRightPane("preview");
+			return;
+		case "show-plan":
+			showRightPane("plan");
+			return;
+		case "open-in-terminal":
+			if (chat.sessionId !== null) openInTerminal(chat.sessionId);
+			return;
 		case "open-settings":
 			openSettings();
 			return;
@@ -135,6 +144,11 @@ function dispatch(command: PaletteCommand): void {
 		case "toggle-design":
 			toggleDesign();
 			showRightPane("screen");
+			return;
+		case "new-window":
+			if (isTauri()) {
+				void invoke("new_desk_window");
+			}
 			return;
 		case "quit-app":
 			if (isTauri()) {

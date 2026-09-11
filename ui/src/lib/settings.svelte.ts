@@ -13,15 +13,27 @@
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
 
-export type SettingsSection = "appearance" | "model" | "policy" | "mcp" | "key" | "about";
+export type SettingsSection =
+	| "appearance"
+	| "computer"
+	| "engine"
+	| "model"
+	| "policy"
+	| "mcp"
+	| "key"
+	| "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
+	"computer",
+	"engine",
 	"model",
 	"policy",
 	"mcp",
 	"key",
 	"about",
 ] as const;
+
+export type CuMode = "background" | "full_control";
 
 export type McpServerRow = {
 	id: string;
@@ -77,6 +89,20 @@ export const settings = $state({
 	remoteAttachEnabled: false,
 	/** Bound Tailscale address, never a token. */
 	remoteBind: null as string | null,
+	/** Agent engine for new sessions. */
+	engine: "native" as "native" | "grok",
+	grokAvailable: false,
+	grokBinary: null as string | null,
+	savingEngine: false,
+	/** Hold-to-talk (TD-4701). Default off; from setup_state. */
+	voiceEnabled: false,
+	/** Whether config.yaml names a transcription URL. */
+	voiceHasEndpoint: false,
+	/** TD-4830: computer-use policy. */
+	cuEnabled: true,
+	cuMode: "background" as CuMode,
+	cuUnhideOnFinish: true,
+	cuDeniedApps: [] as string[],
 	/** Listed MCP servers (TD-4403). From setup_state, never inferred. */
 	mcpServers: [] as McpServerRow[],
 	/** Hold-to-talk (TD-4701). From setup_state; the URL never arrives. */
@@ -124,6 +150,16 @@ export function resetSettings(): void {
 	settings.cuShowOnRealDisplay = true;
 	settings.remoteAttachEnabled = false;
 	settings.remoteBind = null;
+	settings.engine = "native";
+	settings.grokAvailable = false;
+	settings.grokBinary = null;
+	settings.savingEngine = false;
+	settings.voiceEnabled = false;
+	settings.voiceHasEndpoint = false;
+	settings.cuEnabled = true;
+	settings.cuMode = "background";
+	settings.cuUnhideOnFinish = true;
+	settings.cuDeniedApps = [];
 	settings.mcpServers = [];
 	settings.speechEnabled = false;
 	settings.speechReady = false;
@@ -153,6 +189,16 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? true;
 		settings.remoteAttachEnabled = event.remote_attach_enabled ?? false;
 		settings.remoteBind = event.remote_bind ?? null;
+		settings.engine = event.engine ?? "native";
+		settings.grokAvailable = event.grok_available ?? false;
+		settings.grokBinary = event.grok_binary ?? null;
+		settings.savingEngine = false;
+		settings.voiceEnabled = event.voice_enabled ?? false;
+		settings.voiceHasEndpoint = event.voice_has_endpoint ?? false;
+		settings.cuEnabled = event.cu_enabled ?? true;
+		settings.cuMode = event.cu_mode === "full_control" ? "full_control" : "background";
+		settings.cuUnhideOnFinish = event.cu_unhide_on_finish ?? true;
+		settings.cuDeniedApps = event.cu_denied_apps ?? [];
 		settings.mcpServers = (event.mcp_servers ?? []).map((row) => ({
 			id: row.id,
 			transport: row.transport,
@@ -210,6 +256,12 @@ export function setTheme(theme: Theme): void {
 	settings.theme = theme;
 	applyTheme(theme);
 	if (typeof localStorage !== "undefined") localStorage.setItem(THEME_KEY, theme);
+}
+
+export function setEngine(kind: "native" | "grok"): void {
+	settings.savingEngine = true;
+	const sent = sendToDaemon({ type: "set_engine", kind });
+	if (!sent) settings.savingEngine = false;
 }
 
 // ── Model ─────────────────────────────────────────────────────────────
@@ -333,6 +385,11 @@ export function setCoworker(enabled: boolean): void {
 	sendToDaemon({ type: "set_coworker", enabled });
 }
 
+/** Turn hold-to-talk dictation on or off (TD-4701). Acked with setup_state. */
+export function setVoice(enabled: boolean): void {
+	sendToDaemon({ type: "set_voice", enabled });
+}
+
 /** Turn remote attach on or off (TD-3603). Acked with setup_state. */
 export function setRemoteAttach(enabled: boolean): void {
 	sendToDaemon({ type: "set_remote_attach", enabled });
@@ -349,6 +406,22 @@ export function setCuIndicators(next: {
 		glow: next.glow ?? settings.cuGlow,
 		agent_cursor: next.agentCursor ?? settings.cuAgentCursor,
 		show_on_real_display: next.showOnRealDisplay ?? settings.cuShowOnRealDisplay,
+	});
+}
+
+/** Persist computer-use policy (TD-4830). Acked with setup_state. */
+export function setCuPolicy(next: {
+	enabled?: boolean;
+	mode?: CuMode;
+	unhideOnFinish?: boolean;
+	deniedApps?: string[];
+}): void {
+	sendToDaemon({
+		type: "set_cu_policy",
+		enabled: next.enabled ?? settings.cuEnabled,
+		mode: next.mode ?? settings.cuMode,
+		unhide_on_finish: next.unhideOnFinish ?? settings.cuUnhideOnFinish,
+		denied_apps: next.deniedApps ?? settings.cuDeniedApps,
 	});
 }
 

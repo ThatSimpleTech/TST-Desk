@@ -29,7 +29,7 @@
     "category": "DeveloperTool",
     "externalBin": ["binaries/tstd"],
     "macOS": {
-      "signingIdentity": "-",
+      "signingIdentity": "tst-desk-dev",
       "entitlements": "./macos-entitlements.plist",
       "infoPlist": "./macos-info.plist"
     },

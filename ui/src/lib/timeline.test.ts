@@ -211,6 +211,8 @@ describe("eventToEntry", () => {
       evt({ type: "assistant_delta", session_id: "s1", delta: "hi", seq: 1 }),
       evt({ type: "session_state", session_id: "s1", state: "running", seq: 1 }),
       evt({ type: "turn_complete", session_id: "s1", tokens: 1, cost: 0, tier: "worker", duration: 1, failed: false, error_code: null, seq: 1 }),
+      // Turn boundaries are the Timeline's to fold, not a per-event map.
+      evt({ type: "user_turn", session_id: "s1", turn_id: "t1", content: "hi", seq: 1 }),
       evt({
         type: "shell_output",
         session_id: "s1",
@@ -400,5 +402,108 @@ describe("Timeline", () => {
     expect(t.length).toBe(1);
     t.clear();
     expect(t.length).toBe(0);
+  });
+});
+
+describe("Timeline turns", () => {
+  const userTurn = (seq: number, content = "Review the auth middleware") =>
+    evt({ type: "user_turn", session_id: "s1", turn_id: `t${seq}`, content, seq });
+  const toolCall = (seq: number) =>
+    evt({
+      type: "tool_call",
+      session_id: "s1",
+      tool_call_id: `tc${seq}`,
+      name: "fs_read",
+      arguments: { path: "a.txt" },
+      seq,
+    });
+  const complete = (seq: number, failed = false) =>
+    evt({
+      type: "turn_complete",
+      session_id: "s1",
+      tokens: 1204,
+      cost: 0.03,
+      tier: "brain",
+      duration: 12.4,
+      failed,
+      error_code: failed ? "provider_error" : null,
+      seq,
+    });
+
+  it("opens a numbered header on each user_turn, in order", () => {
+    const t = bound();
+    t.push(userTurn(1));
+    t.push(toolCall(2));
+    t.push(userTurn(3, "  Now   fix\nit "));
+    expect(t.entries.map((e) => e.kind)).toEqual(["turn", "tool_call", "turn"]);
+    expect(t.entries[0].title).toBe("Turn 1");
+    expect(t.entries[0].preview).toBe("Review the auth middleware");
+    expect(t.entries[0].details.status).toBe("running");
+    expect(t.entries[2].title).toBe("Turn 2");
+    // Whitespace collapses so the header stays one line.
+    expect(t.entries[2].preview).toBe("Now fix it");
+  });
+
+  it("closes the open turn with the daemon's duration and cost, adding no row", () => {
+    const t = bound();
+    t.push(userTurn(1));
+    t.push(toolCall(2));
+    t.push(complete(3));
+    expect(t.length).toBe(2);
+    const turn = t.entries[0];
+    expect(turn.details.status).toBe("complete");
+    expect(turn.details.duration).toBe(12.4);
+    expect(turn.details.cost).toBe(0.03);
+    expect(turn.details.tokens).toBe(1204);
+    expect(turn.details.tier).toBe("brain");
+  });
+
+  it("marks a failed turn and keeps the error code", () => {
+    const t = bound();
+    t.push(userTurn(1));
+    t.push(complete(2, true));
+    expect(t.entries[0].details.status).toBe("failed");
+    expect(t.entries[0].details.error_code).toBe("provider_error");
+  });
+
+  it("settles a still-running turn when the session stops", () => {
+    const t = bound();
+    t.push(userTurn(1));
+    t.push(evt({ type: "session_state", session_id: "s1", state: "cancelled", seq: 2 }));
+    expect(t.entries[0].details.status).toBe("cancelled");
+  });
+
+  it("leaves a closed turn alone when a later session_state lands", () => {
+    const t = bound();
+    t.push(userTurn(1));
+    t.push(complete(2));
+    t.push(evt({ type: "session_state", session_id: "s1", state: "idle", seq: 3 }));
+    t.push(evt({ type: "session_state", session_id: "s1", state: "cancelled", seq: 4 }));
+    expect(t.entries[0].details.status).toBe("complete");
+  });
+
+  it("annotates only the most recent turn", () => {
+    const t = bound();
+    t.push(userTurn(1));
+    t.push(complete(2));
+    t.push(userTurn(3));
+    t.push(complete(4, true));
+    expect(t.entries[0].details.status).toBe("complete");
+    expect(t.entries[1].details.status).toBe("failed");
+  });
+
+  it("drops a turn_complete with no header to annotate", () => {
+    const t = bound();
+    t.push(complete(1));
+    expect(t.length).toBe(0);
+  });
+
+  it("restarts numbering after clear", () => {
+    const t = bound();
+    t.push(userTurn(1));
+    t.push(userTurn(2));
+    t.clear();
+    t.push(userTurn(3));
+    expect(t.entries[0].title).toBe("Turn 1");
   });
 });

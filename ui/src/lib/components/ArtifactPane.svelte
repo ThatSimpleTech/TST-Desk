@@ -5,6 +5,7 @@
 	// markdown, highlighted code (the chat stack, not Monaco), or HTML in
 	// a network-blocked sandbox. Copy is the source. Open in editor is
 	// only a workspace path. Not a file tree; no apply/reject.
+	import EmptyState from './EmptyState.svelte';
 	import Markdown from './chat/Markdown.svelte';
 	import {
 		asFencedMarkdown,
@@ -46,7 +47,7 @@
 		<h1 class="title">Artifacts</h1>
 		<p class="lede">Products of the bound session. Not the files it wrote along the way.</p>
 		{#if artifacts.items.length === 0}
-			<p class="empty">{empty}</p>
+			<EmptyState align="start" body={empty} />
 		{:else}
 			<ul class="list">
 				{#each artifacts.items as row (row.artifact_id)}
@@ -67,9 +68,11 @@
 	</section>
 	<section class="preview-col" aria-label="Artifact preview">
 		{#if preview === null}
-			<p class="empty">
-				{artifacts.loading ? 'Opening…' : 'Select an artifact to preview.'}
-			</p>
+			<EmptyState
+				compact
+				align="start"
+				body={artifacts.loading ? 'Opening…' : 'Select an artifact to preview.'}
+			/>
 		{:else}
 			<header class="preview-head">
 				<h2 class="preview-title">{preview.title}</h2>
@@ -92,7 +95,7 @@
 			{#if artifacts.error !== null}
 				<p class="error">{artifacts.error}</p>
 			{:else if preview.source === null}
-				<p class="empty">Opening…</p>
+				<EmptyState compact align="start" body="Opening…" />
 			{:else if preview.kind === 'html'}
 				<iframe
 					class="html-frame"
@@ -152,12 +155,6 @@
 		margin: var(--space-3) 0 0;
 		font-size: var(--text-sm);
 		color: var(--color-ink-secondary);
-	}
-
-	.empty {
-		margin: var(--space-8) 0 0;
-		font-size: var(--text-sm);
-		color: var(--color-ink-muted);
 	}
 
 	.error {

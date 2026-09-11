@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 from typing import Any
 
@@ -23,24 +24,57 @@ from tst_cu_mcp.displays import screen_info
 from tst_cu_mcp.focus import foreground_window
 from tst_cu_mcp.permissions import check_permissions
 from tst_cu_mcp.stdio_transport import DrainingStdioServer
+from tst_cu_mcp.tools.background import register_background_tools
 from tst_cu_mcp.tools.health import health_report
 
 # The model reads these strings and acts on them, so they must describe the host
 # it is actually driving. A hardcoded "macOS" here told every Windows model to
 # reach for cmd-shortcuts and to expect permission prompts that do not exist.
 
+#: Set by the daemon when it spawns its own copy of this server. Everything
+#: registered behind it is machinery, not a model tool.
+INTERNAL_ENV = "TST_CU_MCP_INTERNAL"
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def internal_tools_enabled() -> bool:
+    """Whether this process is the daemon's own sidecar.
+
+    A tool in the list is a tool the model will eventually call: an episode
+    bracket it can open and close at will is a way to leave the ring lit with
+    nothing running. The daemon drives that bracket itself and is the only
+    caller that needs it, so it is the only launcher that gets it. Grok, Kiro
+    and Claude Desktop spawn this server without the flag and never see it.
+    """
+    return os.environ.get(INTERNAL_ENV, "").strip().lower() in _TRUTHY
+
+
 _BASE_INSTRUCTIONS = (
     "Local computer-use server. Use `health` for liveness and `check_permissions` "
     "for this platform's capture/input status before capturing the screen or "
-    "driving input. This server can see the whole desktop and control mouse and "
-    "keyboard; there is no per-action approval gate."
+    "driving input. Prefer background tools: `list_apps`, `ui_snapshot`, and "
+    "`ui_action` drive an allowed app through its accessibility tree without "
+    "taking the pointer or keyboard, so the user can keep using the computer. "
+    "`launch_app` opens an app by name. Screenshot / click / type / press_keys "
+    "take full control of the screen, mouse, and keyboard — use them only when "
+    "the accessibility tree cannot reach the control. Denied apps are refused. "
+    "There is no per-action approval gate."
 )
 
 _PLATFORM_INSTRUCTIONS = {
     "darwin": (
-        " Host: macOS. Screen Recording and Accessibility permissions must be "
-        "granted to the launching app. Shortcut modifiers: cmd, shift, alt/option, "
-        "ctrl, fn."
+        " Host: macOS. Screen Recording and Accessibility must be granted to the "
+        "launching app (TST Desk, Terminal, ...), not this server. Call "
+        "check_permissions with request=false to probe. request=true raises each "
+        "OS prompt at most once — do not pass it again; clicking Allow repeatedly "
+        "does not stick. After enabling the host in System Settings, the host "
+        "must be fully quit and reopened (Cmd+Q). If check_permissions reports "
+        "stale_grant_suspected, stop: no amount of request=true will help; tell "
+        "the user to run Reset grants in TST Desk → Settings → Computer use, "
+        "relaunch, and allow again. Never run the screencapture "
+        "shell command — it re-prompts Screen Recording; use the screenshot tool. "
+        "Shortcut modifiers: cmd, shift, alt/option, ctrl, fn."
     ),
     "win32": (
         " Host: Windows. No permissions to grant. Shortcut modifiers: ctrl, shift, "
@@ -134,11 +168,15 @@ def build_server() -> MCPServer:
         name="check_permissions",
         description=(
             "Report this platform's capture and input status. On macOS: Screen "
-            "Recording and Accessibility grants for the host process, with fix steps "
-            "and the host-restart caveat; pass request=true to trigger the OS prompts "
-            "for anything missing. On Windows: nothing is gated, so it reports the two "
-            "conditions under which input silently does nothing — elevated windows "
-            "(UIPI) and the secure desktop. Safe to call anytime."
+            "Recording and Accessibility grants for the host app, with fix steps "
+            "and the host-restart caveat. Prefer request=false. request=true raises "
+            "each OS prompt at most once; later calls only re-probe — do not keep "
+            "passing request=true. stale_grant_suspected means System Settings "
+            "shows the host ON for an older build: only a reset by the user "
+            "(TST Desk → Settings → Computer use → Reset grants) repairs it. On "
+            "Windows: nothing is gated, so it reports the "
+            "two conditions under which input silently does nothing — elevated "
+            "windows (UIPI) and the secure desktop. Safe to call anytime."
         ),
         structured_output=False,
     )
@@ -375,22 +413,26 @@ def build_server() -> MCPServer:
         input_control.scroll(dx, dy, expect_window=expect_window)
         return {"scrolled": {"dx": dx, "dy": dy}}
 
-    @server.tool(
-        name="overlay_session",
-        description=(
-            "Internal TST Desk signal: computer-use episode open/close. "
-            "Not a model tool. Lights or darkens the real-display ring."
-        ),
-        structured_output=False,
-    )
-    def overlay_session(active: bool) -> dict[str, Any]:
-        from tst_cu_mcp.overlay import get_overlay
+    register_background_tools(server)
 
-        if active:
-            get_overlay().begin_session()
-        else:
-            get_overlay().end_session()
-        return {"active": bool(active)}
+    if internal_tools_enabled():
+
+        @server.tool(
+            name="overlay_session",
+            description=(
+                "Internal TST Desk signal: computer-use episode open/close. "
+                "Not a model tool. Lights or darkens the real-display ring."
+            ),
+            structured_output=False,
+        )
+        def overlay_session(active: bool) -> dict[str, Any]:
+            from tst_cu_mcp.overlay import get_overlay
+
+            if active:
+                get_overlay().begin_session()
+            else:
+                get_overlay().end_session()
+            return {"active": bool(active)}
 
     @server.tool(
         name="hit_test",

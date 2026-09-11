@@ -151,6 +151,7 @@ class TestWithoutWorkspace:
                 "api_key",
                 "provider",
                 "git",
+                "grok_cli",
                 "workspace",
                 "steering",
             ]
@@ -159,6 +160,7 @@ class TestWithoutWorkspace:
             assert _row(checks, "api_key")["status"] == "ok"
             assert _row(checks, "provider")["status"] == "ok"
             assert _row(checks, "git")["status"] == "ok"
+            assert _row(checks, "grok_cli")["status"] in {"ok", "skip"}
             # No workspace opened: both workspace-scoped rows skip.
             assert _row(checks, "workspace")["status"] == "skip"
             assert _row(checks, "steering")["status"] == "skip"

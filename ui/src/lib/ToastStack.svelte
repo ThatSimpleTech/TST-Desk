@@ -4,6 +4,7 @@
 	// on the store's timer; the close button is the manual path. Lives in a
 	// fixed stack so it never displaces the workspace layout.
 	import { toasts, dismiss } from './notifications.svelte.js';
+	import Icon from './components/Icon.svelte';
 </script>
 
 {#if toasts.length > 0}
@@ -19,7 +20,7 @@
 					class="toast-close"
 					type="button"
 					aria-label="Dismiss {toast.title}"
-					onclick={() => dismiss(toast.id)}>&times;</button
+					onclick={() => dismiss(toast.id)}><Icon name="x" size={14} /></button
 				>
 			</div>
 		{/each}
@@ -43,17 +44,20 @@
 		align-items: flex-start;
 		gap: var(--space-2);
 		padding: var(--space-3);
-		background: var(--color-bg-raised);
-		border: var(--border-width) solid var(--color-border);
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-lg);
+		/* Slides in from the edge it lives on; a toast that pops reads as an
+		   alarm, one that arrives reads as a note. */
+		animation: slide-in var(--dur-enter) var(--ease-out);
 	}
 
 	.dot {
 		width: var(--space-2);
 		height: var(--space-2);
 		border-radius: var(--radius-full);
-		background: var(--color-warning);
+		background: var(--color-warn);
 		margin-top: var(--space-1);
 		flex-shrink: 0;
 	}
@@ -63,34 +67,39 @@
 		flex-direction: column;
 		gap: var(--space-1);
 		min-width: 0;
+		flex: 1;
 	}
 
 	.toast-title {
 		font-size: var(--text-sm);
 		font-weight: var(--weight-medium);
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.toast-body {
 		font-size: var(--text-xs);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		line-height: 1.4;
 		/* Long tokens in copy (config paths, error codes) wrap, never overflow. */
 		overflow-wrap: break-word;
 	}
 
 	.toast-close {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		background: transparent;
 		border: 0;
-		padding: 0 var(--space-1);
-		font-size: var(--text-lg);
+		padding: var(--space-1);
+		border-radius: var(--radius-sm);
 		line-height: 1;
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 		cursor: pointer;
 		flex-shrink: 0;
 	}
 
 	.toast-close:hover {
-		color: var(--color-text);
+		color: var(--color-ink);
+		background: var(--color-sunken);
 	}
 </style>

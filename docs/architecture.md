@@ -143,7 +143,10 @@ is the contents of `remote-token`.
 
 On a viewport narrower than 640px the same `AppShell` hides the session rail
 and the inspector so the phone is chat + approval. Either pane can be shown
-again; they are not a separate product.
+again; they are not a separate product. On a wide viewport both sidebars are
+pixel-width and user-draggable: the session rail from its right edge, the
+inspector from the chat|activity divider. Each persists in `localStorage` and
+is clamped only so the other columns keep a usable minimum.
 
 ---
 
@@ -304,6 +307,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_skip_all_approvals` | — | Turn skip-all (dangerously skip permissions) on or off. Machine-wide; every ask including shell and Class C runs as auto; caps do not pause; `never` still refuses. Acked with `setup_state`. |
 | `set_load_global_memory` | — | Turn global memory on or off. Machine-wide; off never reads `~/.tstdesk/memory/`. Acked with `setup_state` (TD-2603). |
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
+| `set_voice` | — | Turn hold-to-talk dictation on or off. Machine-wide; persists `{user_data_dir}/voice.yaml`. Default off. Acked with `setup_state` (TD-4701). |
+| `transcribe` | — | Hold-to-talk audio. POSTs a clip to `voice.base_url` or `speech.base_url`. Refused when dictation is off or no endpoint is configured. Acked with `transcript`. Not a tool (TD-4701). |
 | `set_cu_indicators` | — | Computer-use glow, agent cursor, and real-display overlay. Machine-wide; persists `{user_data_dir}/cu-indicators.yaml`. Acked with `setup_state` (TD-3402). |
 | `set_workspace_pin` | — | Pin or unpin a workspace on the Projects list. Machine-wide. Acked with `setup_state` (TD-2806). |
 | `resume` | yes | Resume a session paused at a declared cap, after the cap was raised. |
@@ -344,6 +349,13 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `validate_api_key` | — | Probe a key with one cheap live call. |
 | `delete_api_key` | — | Remove an API key from the OS keychain. |
 | `set_preset` | — | Choose the active model preset. |
+| `set_engine` | — | Choose the agent engine for new sessions (`native` or `grok`). Acked with `setup_state`. |
+| `set_grok_mode` | yes | Switch the live Grok ACP session mode. |
+| `run_grok_command` | yes | Enqueue `/{name} {argument}` as the next Grok prompt. |
+| `list_grok_sessions` | — | List TUI sessions on disk under `~/.grok/sessions`. |
+| `open_in_terminal` | yes | Open `grok --resume` in the user's terminal for this session's Grok id. |
+| `approve_grok_plan` | yes | Tell Grok to approve the current plan and implement. |
+| `list_grok_extensions` | — | List MCP / skills / plugins discovered in `~/.grok` (no secrets). |
 | `set_tier_slug` | — | Set the model slug for one tier of one preset. |
 | `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). |
 | `delete_credential` | — | Remove a named key, its secret, and tier bindings (TD-1717). |
@@ -357,13 +369,13 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `open_artifact` | yes | Open one artifact by id. Acked with `artifact` (metadata and path, not bytes). Unknown id is a typed error. |
 | `design_hit_test` | yes | Ask the last computer-use surface (browser DOM or desktop AX) what is at a CSS-pixel point (TD-3403 / TD-3406). Observe only. Acked with `design_hit`. |
 | `check_cu_permissions` | — | Re-probe computer-use OS permissions / integrity without raising a TCC prompt (TD-3302, TD-3303, TD-2001). Acked with `cu_permissions`. |
+| `reset_cu_permissions` | — | Reset this app's macOS TCC grants (Screen Recording, Accessibility) with `tccutil reset`, forget the prompt stamps, and raise both prompts again (TD-4823). A window action only, never a tool; off macOS it is just a re-probe. Acked with `cu_permissions`. |
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
 | `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener. Acked with `setup_state` (TD-3603). |
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
 | `save_job` | — | Create or replace a scheduled job from draft fields. Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
 | `delete_job` | — | Remove a scheduled job by id. Acked with `job_list`. Unknown id is a typed error (TD-3805). |
 | `parse_job` | — | Turn natural language into a job draft. Does not persist. Acked with `job_draft`. Save is a second call (TD-3803). |
-| `transcribe` | — | Hold-to-talk audio. The daemon POSTs to `speech.base_url` and answers with `transcript`. Not a tool (TD-4701). |
 
 ### Daemon → client
 
@@ -375,7 +387,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | Event | Seq | Purpose |
 |---|---|---|
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
-| `session_state` | session | A session state transition, with an optional reason. |
+| `session_state` | session | A session state transition, with an optional reason. Additive `engine` (`native` \| `grok`) names the loop this session started with. |
 | `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
@@ -390,7 +402,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. |
-| `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). |
+| `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
@@ -406,7 +418,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server`. `remote_bind` is the bound Tailscale address, never a token. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server`. `remote_bind` is the bound Tailscale address, never a token. Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
@@ -424,7 +436,13 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), Windows UIPI / secure-desktop integrity (TD-3303), or Linux X11 no-gate / Wayland session limits (TD-2001). |
 | `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` asked for (TD-3805). |
 | `job_draft` | connection | Reply to `parse_job`: draft fields or a typed refusal. Not saved (TD-3803). |
-| `transcript` | connection | Reply to `transcribe`: `ok`, `text`, and a short `detail` code on failure. Never a URL (TD-4701). |
+| `grok_commands` | session | Slash commands the Grok ACP agent advertised. |
+| `grok_plan` | session | Plan-mode markdown and entries from ACP `plan` updates. |
+| `grok_mode` | session | Current Grok ACP mode, the advertised set, and optional `model` the CLI is using. |
+| `grok_preview` | session | A workspace media file or loopback URL to show in Preview. |
+| `grok_session_list` | connection | TUI sessions under `~/.grok/sessions`. |
+| `grok_extensions` | connection | Read-only MCP / skills / plugins from `~/.grok`. Never secrets. |
+| `transcript` | connection | Reply to `transcribe`: `ok`, `text` on success, `error` copy or a short `detail` code on failure. Never a URL (TD-4701). |
 
 ### Adding a message
 
@@ -466,7 +484,8 @@ change; changing the same behaviour anywhere else usually is not.
 | `sandbox_start_error` | `core/tstd/autonomy/sandbox.py` | Why an autonomous run may not start: missing / down / rootful runtime. Interactive sessions do not import this module (TD-4301). |
 | `Precedence` | `core/tstd/context/discover.py` | The steering hierarchy: `user global` < `workspace` < `rules` < `nested`. Adding a scope means adding a level here, and `docs/steering.md` documents each one. |
 | `ToolDispatcher` | `core/tstd/tools/dispatch.py` | The single chokepoint every tool call passes through: schema validation, classifier, path guard, policy gate, handler, checkpoint, ledger. Prime directive §2.6 lives here, and reaching a handler unclassified raises rather than executing. |
-| `Daemon` | `core/tstd/daemon.py` | `_attach_session_runtime` is where a session is wired: router, boundary, policy, tool stack, and the provider factory. Open and revive both call it. The provider is a closure, not an object, so a session can be opened and attached before any API key exists — the key is only needed when the loop makes its first model call. |
+| `Daemon` | `core/tstd/daemon.py` | `_attach_session_runtime` is where a session is wired: router, boundary, policy, tool stack, and the provider factory. Open and revive both call it. The provider is a closure, not an object, so a session can be opened and attached before any API key exists — the key is only needed when the loop makes its first model call. When `engine.kind` is `grok`, the loop factory is `grok_loop` instead of `agent_loop`. |
+| `grok_loop` | `core/tstd/grok_loop.py` | ACP-backed loop. Spawns `grok agent stdio` and maps session updates onto the same event log native turns use. The CLI remains the engine; this is a viewer. |
 
 Two seams that look like extension points and are not:
 

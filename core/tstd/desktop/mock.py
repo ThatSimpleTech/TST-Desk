@@ -104,6 +104,9 @@ class MockDesktopDriver:
             "screen_recording": {"granted": granted},
             "accessibility": {"granted": granted},
             "all_granted": granted,
+            # TD-4823: name the path honestly. The pane warns when the
+            # report did not come from the host (``cu-agent.sock``).
+            "actuation_path": "mock",
         }
 
     def _guard(self, expect_window: str | None, *, actuating: bool) -> None:

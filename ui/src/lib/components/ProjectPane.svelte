@@ -4,7 +4,9 @@
 	// Rail Projects lands here instead of the title-bar recents menu.
 	// Selecting a row shows a home: folder name, New chat (`new_session`
 	// in that workspace), and recents filtered to that path. Columns
-	// Memory is the project-home column (TD-2601), not a rail row.
+	// Context is a later story. Memory is the project-home column (TD-2601),
+	// not a rail row.
+	import EmptyState from './EmptyState.svelte';
 	import Icon from './Icon.svelte';
 	import { workspaceName } from '../session-status.svelte.js';
 	import { workspaces } from '../workspaces.svelte.js';
@@ -63,7 +65,7 @@
 			<h1 class="title">Projects</h1>
 			<p class="lede">Workspaces this window has opened. The folder is the project.</p>
 			{#if known.length === 0 && pinned.length === 0}
-				<p class="empty">{projectListEmptyCopy()}</p>
+				<EmptyState align="start" body={projectListEmptyCopy()} />
 			{:else}
 				{#if pinned.length > 0}
 					<h2 class="section">Pinned</h2>
@@ -159,7 +161,7 @@
 						</button>
 					</div>
 					{#if recents.length === 0}
-						<p class="empty">{projectRecentsEmptyCopy(sessions.showArchived)}</p>
+						<EmptyState align="start" body={projectRecentsEmptyCopy(sessions.showArchived)} />
 					{:else}
 						<ul class="list">
 							{#each recents as row (row.sessionId)}
@@ -219,12 +221,6 @@
 		margin: var(--space-3) 0 0;
 		font-size: var(--text-sm);
 		color: var(--color-ink-secondary);
-	}
-
-	.empty {
-		margin: var(--space-8) 0 0;
-		font-size: var(--text-sm);
-		color: var(--color-ink-muted);
 	}
 
 	.list {

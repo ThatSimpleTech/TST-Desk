@@ -25,21 +25,44 @@ ACCESSIBILITY = "accessibility"
 
 HOST_CAVEAT = (
     "macOS grants these permissions to the application that launches this server "
-    "(Kiro, Claude Desktop, Goose, or your terminal) — not to the server itself. "
-    "After enabling a permission, fully quit and reopen that host app: macOS caches "
-    "the grant per-binary, so reconnecting alone will not pick it up."
+    "(TST Desk, Kiro, Claude Desktop, Goose, or your terminal) — not to the "
+    "server itself — and pins each grant to that app's code signature. Clicking "
+    "Allow on the in-app prompt is not enough: enable the host in System Settings, "
+    "then fully quit and reopen it (Cmd+Q, not closing the window). If System "
+    "Settings already shows the host ON and it still fails, the grant belongs to "
+    "an older build of the host: reset it (in TST Desk: Settings → Computer use → "
+    "Reset grants; otherwise `tccutil reset ScreenCapture <host bundle id>` and "
+    "`tccutil reset Accessibility <host bundle id>`), relaunch the host, and allow "
+    "again. Re-prompting cannot repair a stale grant."
 )
 
 _FIX = {
     SCREEN_RECORDING: (
         "Open System Settings > Privacy & Security > Screen Recording, enable the "
-        "host app, then quit and reopen it."
+        "host app, then quit and reopen it. If it already shows ON, the grant "
+        "belongs to an older build of the host app: reset it (in TST Desk: "
+        "Settings → Computer use → Reset grants; otherwise `tccutil reset "
+        "ScreenCapture <host bundle id>`), relaunch the host, and allow again. Do "
+        "not keep clicking Allow on the prompt or passing request=true — neither "
+        "can repair a stale grant."
     ),
     ACCESSIBILITY: (
         "Open System Settings > Privacy & Security > Accessibility, enable the host "
-        "app, then quit and reopen it."
+        "app, then quit and reopen it. If it already shows ON, the grant belongs "
+        "to an older build of the host app: reset it (in TST Desk: Settings → "
+        "Computer use → Reset grants; otherwise `tccutil reset Accessibility "
+        "<host bundle id>`), relaunch the host, and allow again. Do not keep "
+        "clicking Allow on the prompt or passing request=true — neither can "
+        "repair a stale grant."
     ),
 }
+
+# Darwin socket client with no host to talk to (TD-4823).
+NO_HOST_FIX = (
+    "The TST Desk host actuator (cu-agent.sock) is not running, so nothing here "
+    "can capture or click as TST Desk. Start TST Desk (the packaged app) and call "
+    "check_permissions again."
+)
 
 _REQUIRED_FOR = {
     SCREEN_RECORDING: "capturing the screen (screenshot / vision)",

@@ -5569,6 +5569,79 @@ once through `run_due_jobs` on the in-process daemon; injected
 
 ---
 
+### TD-3807 — A scheduled job ran and told nobody
+**Size:** 3 · **Depends on:** TD-3804, TD-3805, TD-3806
+
+**Acceptance criteria:**
+- [x] The daemon's own entrypoint delivers on every channel, not only
+      when a test injects `notify_send`
+- [x] `deliver_to: window` reaches the user rather than a log line
+- [x] A job carries what its last fire did — when, whether it worked,
+      what it said, and which session it ran in — on disk and on the row
+- [x] The Scheduled pane shows the receipt, and a failed run is legible
+      as one without opening anything
+- [x] An OS notification fires for a `window` job that ran while the
+      window was in the background; `slack` / `ntfy` do not double up
+- [x] Cron day-of-month and day-of-week OR when both are restricted
+- [x] A spent one-shot cannot be re-fired by the rail's Pause/Resume
+- [x] A regression test drives the real handler, not an injected hook
+
+Done (2026-08-31): the scheduler ran jobs correctly and produced nothing
+a user could see. `Daemon.__init__` built `RecordingDeliver(send=notify_send)`
+and the real entrypoint never passes `notify_send`, so `send` was `None`
+on every non-test path: slack and ntfy logged "delivery skipped (no send
+hook)" and `window` logged a summary length. TD-3806's harness stayed
+green throughout because injecting that hook is exactly what it does —
+the one path CI exercised was the one path production never took. `send`
+now defaults to `_send_scheduled_notify` and `on_window` to
+`_deliver_to_window`.
+
+Delivery alone was still not enough to see: nothing recorded that a fire
+had happened, so a job whose turn failed looked identical to one that had
+never run. `Job` gains `last_run` / `last_status` / `last_summary` /
+`last_session_id` (all optional, so an existing `jobs.json` still loads),
+stamped by `record_run` on the advanced copy and preserved across edits —
+Pause is a `save_job`, and the first cut of it erased the history it was
+meant to show. `run_turn_on_daemon` returns a `TurnResult` instead of a
+bare string so every early return (a workspace that moved, a session that
+never registered) lands on the row as a failure rather than as silence,
+and a turn that produced no text is a failure too. `run_due_jobs` pushes
+a fresh `job_list` only when something actually ran.
+
+`window` delivery is the receipt plus an OS notification: the pane shows
+"Ran"/"Failed" with the summary, and `os-notify` rings for a run that
+landed while the window was in the background, keyed on `last_run` so
+reconnecting never replays history and a run the user watched happen does
+not ring afterwards. `slack` and `ntfy` deliver themselves and are left
+alone.
+
+Two more the audit turned up. `_day_matches` ANDed day-of-month with
+day-of-week, so `0 0 1 * 1` fired only on Mondays falling on the 1st
+instead of Vixie's "the 1st, and every Monday" — most of such a schedule's
+fires were silently dropped. And `advance_job` paused a spent one-shot
+while leaving its `next_run` in the past, so Resume — the rail's only
+handle on a row — re-ran last week's instruction on the next tick; the
+slot is now cleared, which widens `Job`'s "cadence or next_run" invariant
+to allow a job that has already run (create still refuses both-empty via
+`validate_draft`).
+
+Two protocol-parity leaks closed while in here, both the same shape as
+TD-803 and TD-1706: `cu_session` was absent from `client.ts`'s
+`KNOWN_EVENT_TYPES`, so the Screen pane's glow was dead at runtime and
+green in every unit test; and `checkpoint_notice` passed the gate but no
+store reduced it, so a user whose workspace was not a git repository was
+never told checkpoints were off. `core/tests/test_protocol_parity.py` now
+pins the daemon↔UI type sets in both directions, and
+`client-event-gate.test.ts` gained a check that every declared event has a
+reader — the gate list itself excluded, or the check passes on the gate
+alone.
+
+Suite: 2760 passed / 8 skipped, ruff + `mypy --strict` clean over 118
+files, vitest 1105, svelte-check 451 files 0 errors 0 warnings, cargo
+clippy `-D warnings` clean, 47 Rust tests.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
@@ -6126,6 +6199,13 @@ empty `base_url`). Daemon `transcribe` → `{base_url}/audio/transcriptions`
 → `transcript`. No Web Speech API. macOS mic usage string + audio-input
 entitlement.
 
+**Completed (2026-09-02):** Settings → Appearance toggle, default off,
+`{user_data_dir}/voice.yaml`. Composer mic is hold-to-talk. OS
+`SpeechRecognition` when the webview has it; otherwise a clip POSTed as
+`transcribe` to `voice.base_url` (config-sourced, never a Python
+literal). Fills the composer for whichever engine is running. No
+always-on capture.
+
 ---
 
 ### TD-4702 — macOS quick-entry overlay
@@ -6155,6 +6235,11 @@ do not register a shortcut.
 running-session count in the tooltip (macOS title when >0). Rail row
 **Open in new window** opens `?bind_session=` viewers on the same
 daemon. Window-scoped binding never auto-adopts another session.
+
+**Completed (2026-09-02):** Host-owned tray (Show / New window / Quit).
+Tooltip counts `running` and `awaiting_approval` across engines. Extra
+windows are `desk-*` webviews on the same daemon; closing a non-last
+window destroys it, closing the last still hides when coworker is on.
 
 ### TD-4704 — Auto-updater
 **Size:** 5 · **Depends on:** TD-1303
@@ -7242,4 +7327,169 @@ runs on Windows, where the override is a no-op and full checking still applies.
 hole on `overlay/win32.py` (`WinDLL`) and `overlay/linux.py` (`XColor`
 stuffed onto a `CDLL`). Win32 joins the windows override. Linux structs
 live on a `SimpleNamespace` so `mypy --strict src` is clean on Linux.
+
+---
+
+## Postmortem — Grok Build engine in TST Desk (2026-09-02)
+
+Not a v0.1 story. Built against the Grok Desktop plan and rolled into this
+shell instead of a second Electron app. The CLI remains the engine
+(`grok agent stdio` over ACP). TST Desk is the viewer.
+
+### What landed
+
+- **Engine switch** (`engine.kind` native | grok) in Settings → Engine.
+- **ACP loop** mapping text, thinking, tools, permissions, plan, slash
+  commands, modes, usage, and preview (media paths + loopback URLs).
+- **Preview / Plan** right-pane tabs. Imagine-style image/video/PDF/HTML
+  paths and `http://127.0.0.1` URLs open in Preview. Plan mode can be
+  approved from the pane.
+- **Image attachments** (PNG/JPEG/GIF/WebP by magic bytes) go to Grok as
+  ACP image blocks. Native loop still inlines a mention, not bytes.
+- **Slash palette** in the composer when Grok advertises commands.
+- **Open in Terminal** (`grok --resume`) from the command palette.
+- **Grok TUI session list and extensions** (MCP/skills/plugins) read from
+  `~/.grok` — no secrets, no second session store.
+
+### Engine-agnostic furniture (2026-09-02)
+
+Voice, tray, and notification Approve/Deny shipped because they work
+with whichever loop is running — they never talk to ACP.
+
+- **Voice (TD-4701):** hold-to-talk into the composer.
+- **Tray (TD-4703):** running-count, New window, Quit.
+- **Notification Approve/Deny:** class-B only. Class C still opens the card.
+
+### Still missing vs an ideal Grok app
+
+- `grok://` URLs, bundled CLI updates.
+- Embedded TUI PTY (Open in Terminal is the escape hatch).
+- Client-owned ACP `fs` / `terminal` capabilities (Grok still owns tools).
+- Grok spend on the title-bar meter is best-effort from ACP usage; many
+  backends omit cost, so `$0` can still mean "unreported".
+- Computer-use Screen pane is the native `desktop_`/`browser_` tools.
+  A Grok-engine session only fills Screen if Grok writes the same events.
+
+### Files
+
+`core/tstd/grok_acp.py`, `grok_loop.py`, `grok_home.py`; protocol events
+`grok_*`; UI `PreviewPane`, `PlanPane`, `grok.svelte.ts`, Engine settings.
+
+---
+
+### TD-4827 — Inspector and session rail resize to any width
+**Size:** 2 · **Depends on:** TD-1001, TD-1701
+
+**Acceptance criteria:**
+- [x] Dragging the chat|activity divider sets the inspector to a pixel width,
+      not a 20–80% ratio of the split
+- [x] Dragging the session rail's right edge is not capped at 440px
+- [x] Both bars keep a 200px floor; the inspector also leaves the chat ≥280px;
+      the rail leaves chat+inspector their minima
+- [x] Widths persist in `localStorage` and restore on launch
+- [x] Tests: clamp/persist math for both bars; TD-1011 drag still resizes after
+      leaving the 4px divider
+
+**Notes:** User request 2026-09-03: the bar to the right of the sessions should
+resize to whatever size they want. Class B recorded in DECISIONS.md.
+
+**Completed (2026-09-03):** SplitPane sizes the right pane in pixels
+(`tstd-desktop.splitpane.rightPx`). The rail drops `MAX_RAIL_PX`.
+
+
+---
+
+### TD-4828 — Computer use: the foreground window was never read, and the model could light the ring
+**Size:** 2 · **Depends on:** TD-3407, TD-4823
+
+**Acceptance criteria:**
+- [x] `get_foreground_window` names the window actually in front, from the window
+      server's z-order, not from the calling process's activation context
+- [x] Menu bar, status items, the Dock and our own session ring are never
+      reported as the foreground window
+- [x] `wait_for_window` matches a window that is already in front, and on
+      timeout names what is in front instead
+- [x] `expect_window` refuses a mismatch instead of passing everything
+- [x] `overlay_session` is absent from the tool list a model sees, and still
+      present for the daemon's own sidecar
+- [x] Tests: selection policy table-driven over recorded listings, no desktop
+      needed; both halves of the tool gate proved against real subprocesses
+
+**Post-mortem.** A 68.7-minute live session spent 36 minutes and 59 of its 98
+tool calls lost on a Mac it was already driving correctly. Two defects in this
+package, both silent, both invisible to the model:
+
+*The foreground window was never read.* `foreground_window` asked
+`NSWorkspace.frontmostApplication()` for a pid, then searched the window list
+for that pid's first window. That call answers "which application is active for
+the caller's activation context", which a sidecar spawned by the host app does
+not reliably share: it named the host app on all seven calls while Spotlight,
+then Finder, then a remote-desktop window had the screen — once with an empty
+title. `wait_for_window` and every `expect_window` guard are the same call, so
+all three were dead for the whole session: the guards passed whatever they were
+given. The model noticed the tool was lying, called it a bug, and fell back to
+40 full-resolution screenshots and six consecutive region zooms to find one
+icon. Nothing errored. That is why nothing stopped it.
+
+*The model could see the ring's switch.* `overlay_session` brackets a
+computer-use episode for the daemon's real-display ring (TD-3407). Its
+description said "Not a model tool", which is a comment, not a boundary — it was
+in the list, and a list is an invitation. A ring lit by a model says an episode
+is running when none is, and nothing in a turn tells that child when to put it
+out.
+
+**Closed (2026-09-04):** `foreground_window` reads
+`CGWindowListCopyWindowInfo` directly and takes the frontmost entry that could
+receive input — window level in `[0, 20)`, non-zero alpha, larger than a pixel
+each side. That bound is where the desktop stops being an input target: status
+items (25), the menu bar (24) and the Dock (20) sit in front of every
+application window, while normal windows (0) and floating, modal and utility
+panels (3, 8, 19) all take input. The ring paints at the screen-saver level, so
+the same bound excludes our own overlay for free. Selection and reading are pure
+functions (`frontmost_entry`, `window_from_entry`) beside `focus.window_matches`,
+so the policy is tested without a desktop. `overlay_session` now registers only
+behind `TST_CU_MCP_INTERNAL`, which `desktop_driver_from_config` sets on the
+daemon's child and `grok_home.computer_use_mcp` does not. Two Class B entries in
+DECISIONS.md.
+
+**Not closed here.** The session's other findings are separate work: 99% of its
+wall clock was time-to-first-token (mean 41s), so the unit to optimize is
+round-trips — `settle_ms` on actions, `after_ms` on screenshot, the foreground
+window returned with every action result, and a `launch_app` tool so opening an
+app is one call instead of a Spotlight pantomime. Not filed; not in this
+milestone.
+
+---
+
+### TD-4829 — Background computer use: drive apps without taking the pointer
+**Size:** 8 · **Depends on:** TD-4823, TD-4828
+
+**Acceptance criteria:**
+- [x] `list_apps` / `ui_snapshot` / `ui_action` / `launch_app` are MCP tools
+- [x] `ui_action` uses AXPress / AXSetValue / AXFocused — it does not move the pointer
+- [x] Denied apps and a non-empty allowlist refuse before the OS is touched
+- [x] Kill-switch still gates actuation; snapshot and list_apps remain reads
+- [x] Packaged host socket accepts `json` AX commands so TCC stays on TST Desk
+- [x] Tests: matching, flatten ids, denied/kill-switch, tool catalogue; no desktop required
+
+**Notes:** Claude Desktop's Computer use (2026-09) is app-scoped and
+background-first. Ours was whole-desktop screenshot+click. This story is the
+engine; TD-4830 is the Settings page.
+
+**Completed (2026-09-09):** `tst-cu-mcp` background tools plus host `cu_ax`.
+Windows/Linux list apps best-effort; AX snapshot/action is macOS-only.
+
+---
+
+### TD-4830 — Computer use Settings: enable, mode, denylist, TCC rows
+**Size:** 5 · **Depends on:** TD-4829, TD-1703, TD-3302
+
+**Acceptance criteria:**
+- [x] Settings has a Computer use section: Enable, Background/Full control, Unhide when finished, Denied apps, Accessibility and Screen Recording status
+- [x] Policy persists to `~/.tst-cu-mcp/config.yaml` (the file the MCP re-reads)
+- [x] `set_cu_policy` is acked with `setup_state`
+- [x] Tests: yaml roundtrip, protocol, settings store send/ack
+
+**Completed (2026-09-09):** Settings → Computer use writes the same document
+background tools already honor.
 

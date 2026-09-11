@@ -71,6 +71,7 @@ no effect.
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 | `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
 | `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. No `env` map — tokens stay in the keychain. |
+| `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 
 ### `credentials`
 
@@ -160,13 +161,20 @@ is set (TD-2204). A filled `base_url` with no `command` is attach-only.
 
 ### `computer_use`
 
-Desktop screenshot / move / click / type / scroll (TD-3301). Empty
-`command` is the in-process mock (CI, no display). A non-empty value is
-the argv for `mcp/tst-cu-mcp` over stdio — the daemon owns the child and
-does not bind a socket. Linux X11 is a live path (TD-2001): first-run
+Desktop screenshot / move / click / type / scroll (TD-3301), plus
+background app-scoped tools (`list_apps`, `ui_snapshot`, `ui_action`,
+`launch_app`) that do not take the pointer (TD-4829). Empty `command`
+is the in-process mock (CI, no display). A non-empty value is the argv
+for `mcp/tst-cu-mcp` over stdio — the daemon owns the child and does
+not bind a socket. Linux X11 is a live path (TD-2001): first-run
 onboarding is the same kind of honesty as Windows (no grant dialog). A
 Wayland session is unsupported (TD-2002); `health` reports
 `supported: false` and `session_type: "wayland"`.
+
+Settings → Computer use (TD-4830) writes `~/.tst-cu-mcp/config.yaml`
+(or `$TST_CU_MCP_CONFIG`): `actuation.enabled`, `mode` (`background` or
+`full_control`), `scoping.denied_apps`, `scoping.unhide_on_finish`. The
+MCP server re-reads that file on each background tool call.
 
 Browser computer-use (TD-1710): `browser` selects the in-process mock
 (CI, never launches Chrome) or Playwright with a persistent profile
@@ -507,7 +515,35 @@ mcp:
       transport: http
       url: http://127.0.0.1:9
       enabled: true
+engine:
+  kind: native
+  binary: ""
+voice:
+  base_url: ""
+  credential: ""
+  timeout_seconds: 30
 ```
+
+### `engine`
+
+Which agent loop new sessions start. The window is always a viewer; this picks whose loop it is viewing.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `kind` | `native` or `grok` | `native` | `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP (`grok agent stdio`). Auth for grok stays in `~/.grok/auth.json` — never this file. New sessions pick up a change; a running session keeps the engine it started with. |
+| `binary` | string | empty | Path to the `grok` executable. Empty means PATH, then `~/.grok/bin/grok`. |
+
+The Grok CLI itself is unchanged: `grok`, `grok -p`, `grok agent stdio`, SSH, and tmux keep working with or without TST Desk.
+
+### `voice`
+
+Hold-to-talk dictation (TD-4701). The Settings toggle is off by default and lives in `{user_data_dir}/voice.yaml`, not this file. This block only names a transcription endpoint. Empty `base_url` means the composer uses OS dictation (no network from `tstd`). Works with whichever engine the session is running — it fills the composer, it does not talk to the agent loop.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `base_url` | string | *empty* | OpenAI-compatible `/v1` root. `tstd` POSTs `{base_url}/audio/transcriptions`. Empty disables the endpoint path. The host is configuration, never Python. |
+| `credential` | string | *empty* | Named key from the catalog. Required when `base_url` is off-box; omit on loopback. |
+| `timeout_seconds` | float > 0 | `30` | How long to wait for the transcription response. |
 
 ### A preset
 
