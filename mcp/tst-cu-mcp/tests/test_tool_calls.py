@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from mcp.client.client import Client
 
-from tst_cu_mcp.server import build_server
+from tst_cu_mcp.server import INTERNAL_ENV, build_server
 
 
 async def call(name: str, arguments: dict[str, Any] | None = None) -> Any:
@@ -134,6 +134,13 @@ class TestArgumentValidation:
         result = await call_raw("scroll", {"dy": 10_000_000})
         assert result.is_error is True
 
+    async def test_ui_action_unknown_verb_is_an_error(self) -> None:
+        result = await call_raw(
+            "ui_action",
+            {"app": "Safari", "element_id": "0", "action": "explode"},
+        )
+        assert result.is_error is True
+
     async def test_unknown_tool_returns_an_error_result(self) -> None:
         # An error result rather than a raised exception: the model gets something
         # it can read and correct, instead of the connection failing under it.
@@ -159,9 +166,31 @@ class TestToolCatalogue:
             "get_cursor_position",
             "wait",
             "wait_for_window",
-            "overlay_session",
+            "list_apps",
+            "ui_snapshot",
+            "ui_action",
+            "launch_app",
+            "hide_other_apps",
+            "unhide_apps",
             "hit_test",
         }
+
+    async def test_the_episode_bracket_is_not_offered_to_the_model(self) -> None:
+        """It brackets a computer-use episode for the daemon's ring. A model
+        holding that control can light the ring with nothing running, and
+        nothing in a turn tells it when to put it out."""
+        async with Client(build_server(), mode="legacy") as client:
+            listed = {tool.name for tool in (await client.list_tools()).tools}
+        assert "overlay_session" not in listed
+
+    async def test_the_daemons_own_child_still_gets_the_episode_bracket(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(INTERNAL_ENV, "1")
+        async with Client(build_server(), mode="legacy") as client:
+            listed = {tool.name for tool in (await client.list_tools()).tools}
+            assert "overlay_session" in listed
+            assert await client.call_tool("overlay_session", {"active": True})
 
     async def test_instructions_reach_the_client(self) -> None:
         async with Client(build_server(), mode="legacy") as client:

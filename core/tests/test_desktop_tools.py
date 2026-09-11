@@ -471,12 +471,51 @@ class TestOverlayEnvPlumbing:
         assert driver._client._env is not None
         assert driver._client._env["TST_CU_MCP_OVERLAY"] == "0"
 
-    def test_without_prefs_no_env_override(self) -> None:
+    def test_without_prefs_the_sidecar_picks_its_own_overlay_default(self) -> None:
         from tstd.desktop.factory import desktop_driver_from_config
 
         driver = desktop_driver_from_config(_config_with_cu_command("python -m tst_cu_mcp"))
         assert isinstance(driver, McpDesktopDriver)
-        assert driver._client._env is None
+        assert driver._client._env is not None
+        assert "TST_CU_MCP_OVERLAY" not in driver._client._env
+
+
+class TestInternalToolEnvPlumbing:
+    """``overlay_session`` exists for this driver and no one else.
+
+    The sidecar only registers it when its launcher claims the internal
+    identity, so the daemon has to claim it — and Grok, which spawns the same
+    binary for the model to drive, must not.
+    """
+
+    def test_the_daemons_own_child_is_marked_internal(self) -> None:
+        from tstd.desktop.factory import desktop_driver_from_config
+
+        driver = desktop_driver_from_config(_config_with_cu_command("python -m tst_cu_mcp"))
+        assert isinstance(driver, McpDesktopDriver)
+        assert driver._client._env is not None
+        assert driver._client._env["TST_CU_MCP_INTERNAL"] == "1"
+
+    def test_the_mark_does_not_depend_on_the_ring_being_wanted(self) -> None:
+        from tstd.cu_indicators import CuIndicatorPrefs
+        from tstd.desktop.factory import desktop_driver_from_config
+
+        driver = desktop_driver_from_config(
+            _config_with_cu_command("python -m tst_cu_mcp"),
+            CuIndicatorPrefs(show_on_real_display=False),
+        )
+        assert isinstance(driver, McpDesktopDriver)
+        assert driver._client._env is not None
+        assert driver._client._env["TST_CU_MCP_INTERNAL"] == "1"
+        assert driver._client._env["TST_CU_MCP_OVERLAY"] == "0"
+
+    def test_the_model_facing_child_is_not_marked_internal(self) -> None:
+        """Grok's copy of the sidecar. Its tool list is what the model sees."""
+        from tstd.grok_home import computer_use_mcp
+
+        spec = computer_use_mcp(f"{sys.executable} -m tst_cu_mcp")
+        assert spec is not None
+        assert "TST_CU_MCP_INTERNAL" not in {item["name"] for item in spec["env"]}
 
     def test_empty_command_is_mock_even_with_prefs(self) -> None:
         from tstd.cu_indicators import CuIndicatorPrefs

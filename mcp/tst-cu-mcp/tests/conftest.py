@@ -7,6 +7,7 @@ from collections.abc import Iterator
 import pytest
 
 from tst_cu_mcp.overlay import NullOverlay, reset_overlay, set_overlay
+from tst_cu_mcp.server import INTERNAL_ENV
 
 
 @pytest.fixture(autouse=True)
@@ -22,3 +23,14 @@ def isolate_overlay() -> Iterator[None]:
     set_overlay(NullOverlay())
     yield
     reset_overlay()
+
+
+@pytest.fixture(autouse=True)
+def hide_internal_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default every test to the surface a model sees.
+
+    ``TST_CU_MCP_INTERNAL`` is the daemon's own flag. A developer who exports it
+    would otherwise get a different tool list from the one CI asserts; the tests
+    that mean to be the daemon set it themselves.
+    """
+    monkeypatch.delenv(INTERNAL_ENV, raising=False)

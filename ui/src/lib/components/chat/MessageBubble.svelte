@@ -155,7 +155,7 @@
 							onclick={() =>
 								setBranch(message.userIndex!, (message.siblingIndex ?? 0) - 1)}
 						>
-							‹
+							<Icon name="chevron-left" size={14} />
 						</button>
 						<span class="stamp"
 							>{(message.siblingIndex ?? 0) + 1}/{message.siblingCount}</span
@@ -169,7 +169,7 @@
 							onclick={() =>
 								setBranch(message.userIndex!, (message.siblingIndex ?? 0) + 1)}
 						>
-							›
+							<Icon name="chevron-right" size={14} />
 						</button>
 					{/if}
 					<button

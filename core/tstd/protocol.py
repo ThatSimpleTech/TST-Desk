@@ -263,6 +263,17 @@ class SetCoworker(ClientMessage):
     enabled: bool
 
 
+class SetVoice(ClientMessage):
+    """Turn hold-to-talk dictation on or off (TD-4701).
+
+    Machine-wide, no session. Persists ``{user_data_dir}/voice.yaml``.
+    The daemon answers with ``setup_state``. Default off. No always-on mic.
+    """
+
+    type: Literal["set_voice"] = "set_voice"
+    enabled: bool
+
+
 class SetCuIndicators(ClientMessage):
     """Computer-use glow / agent cursor / real-display overlay (TD-3402).
 
@@ -275,6 +286,20 @@ class SetCuIndicators(ClientMessage):
     glow: bool
     agent_cursor: bool
     show_on_real_display: bool
+
+
+class SetCuPolicy(ClientMessage):
+    """Background vs full-control computer use, denylist, master switch (TD-4830).
+
+    Machine-wide, no session. Persists ``~/.tst-cu-mcp/config.yaml`` so the
+    MCP server re-reads it on the next tool call. Acked with ``setup_state``.
+    """
+
+    type: Literal["set_cu_policy"] = "set_cu_policy"
+    enabled: bool
+    mode: Literal["background", "full_control"]
+    unhide_on_finish: bool
+    denied_apps: list[str] = Field(default_factory=list)
 
 
 class SetRemoteAttach(ClientMessage):
@@ -671,6 +696,57 @@ class SetPreset(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class SetEngine(ClientMessage):
+    """Pick the agent engine for new sessions (native TST loop or Grok ACP)."""
+
+    type: Literal["set_engine"] = "set_engine"
+    kind: Literal["native", "grok"]
+
+
+class SetGrokMode(ClientMessage):
+    """Switch the live Grok ACP session mode (plan / default / yolo)."""
+
+    type: Literal["set_grok_mode"] = "set_grok_mode"
+    session_id: str
+    mode: str = Field(min_length=1)
+
+
+class RunGrokCommand(ClientMessage):
+    """Send a Grok slash command as the next prompt (``/{name} {argument}``)."""
+
+    type: Literal["run_grok_command"] = "run_grok_command"
+    session_id: str
+    name: str = Field(min_length=1)
+    argument: str = ""
+
+
+class ListGrokSessions(ClientMessage):
+    """Ask for TUI sessions stored under ``~/.grok/sessions``."""
+
+    type: Literal["list_grok_sessions"] = "list_grok_sessions"
+
+
+class OpenInTerminal(ClientMessage):
+    """Open the real Grok TUI on this session's Grok id (``grok --resume``)."""
+
+    type: Literal["open_in_terminal"] = "open_in_terminal"
+    session_id: str
+
+
+class ApproveGrokPlan(ClientMessage):
+    """Tell Grok to approve the current plan and start implementing."""
+
+    type: Literal["approve_grok_plan"] = "approve_grok_plan"
+    session_id: str
+    comment: str = ""
+
+
+class ListGrokExtensions(ClientMessage):
+    """Ask for MCP / skills / plugins discovered in ``~/.grok`` (no secrets)."""
+
+    type: Literal["list_grok_extensions"] = "list_grok_extensions"
+
+
 class SetTierSlug(ClientMessage):
     """Name the model one tier of one preset uses (TD-1703).
 
@@ -868,6 +944,19 @@ class CheckCuPermissions(ClientMessage):
     type: Literal["check_cu_permissions"] = "check_cu_permissions"
 
 
+class ResetCuPermissions(ClientMessage):
+    """Reset this app's macOS TCC grants and re-request them (TD-4823).
+
+    Connection-scoped.  The host runs ``tccutil reset`` for Screen
+    Recording and Accessibility, forgets its prompt stamps, raises both
+    prompts again, and the daemon answers with a fresh ``cu_permissions``.
+    A user action from the window only — never exposed as a tool.  Off
+    macOS (no host socket) this is just a re-probe.
+    """
+
+    type: Literal["reset_cu_permissions"] = "reset_cu_permissions"
+
+
 class SetCuKill(ClientMessage):
     """Engage or clear the process-wide computer-use kill-switch (TD-3404).
 
@@ -934,14 +1023,15 @@ class ParseJob(ClientMessage):
 class Transcribe(ClientMessage):
     """Hold-to-talk audio for speech-to-text (TD-4701).
 
-    Not a tool: the daemon POSTs to ``speech.base_url`` and answers with
+    Used when Settings has dictation on. The daemon POSTs to
+    ``voice.base_url`` or ``speech.base_url`` and answers with
     ``transcript``. ``audio_b64`` is the recording's bytes. There is no
-    cloud default; an empty or disabled speech config fails typed.
+    cloud default; OS dictation never reaches this verb.
     """
 
     type: Literal["transcribe"] = "transcribe"
     audio_b64: str = Field(min_length=1, max_length=2_800_000)
-    mime: str = Field(min_length=1, max_length=128)
+    mime: str = Field(default="audio/webm", min_length=1, max_length=128)
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────
@@ -972,6 +1062,11 @@ class SessionState(DaemonEvent):
         "interrupted",
     ]
     reason: str | None = None
+    # Agent engine this session is running. Additive; older clients ignore
+    # it. None on a log event written before the field existed — the UI
+    # must not invent native/grok from that silence. New events always
+    # stamp the loop the session actually started with.
+    engine: Literal["native", "grok"] | None = None
 
 
 class ConversationReset(DaemonEvent):
@@ -1672,6 +1767,20 @@ class SetupState(DaemonEvent):
     credentials: list[CredentialSummary] = Field(default_factory=list)
     tier_credentials: dict[str, str | None] = Field(default_factory=dict)
     tier_loopback: dict[str, bool] = Field(default_factory=dict)
+    # Agent engine for new sessions. Additive; older clients ignore it.
+    # grok_available is a PATH probe, never a credential.
+    engine: Literal["native", "grok"] = "native"
+    grok_available: bool = False
+    grok_binary: str | None = None
+    # TD-4701: hold-to-talk. Additive, default off. voice_has_endpoint is
+    # whether config.yaml names a transcription URL — never the URL itself.
+    voice_enabled: bool = False
+    voice_has_endpoint: bool = False
+    # TD-4830: computer-use policy. Additive; older clients ignore them.
+    cu_enabled: bool = True
+    cu_mode: Literal["background", "full_control"] = "background"
+    cu_unhide_on_finish: bool = True
+    cu_denied_apps: list[str] = Field(default_factory=list)
     # TD-4403: listed MCP servers. Additive, default empty. Never a secret;
     # there is no env map. An older client ignores the field.
     mcp_servers: list[McpServerSummary] = Field(default_factory=list)
@@ -1680,6 +1789,88 @@ class SetupState(DaemonEvent):
     # the daemon. An older client ignores both fields.
     speech_enabled: bool = False
     speech_ready: bool = False
+
+
+class GrokCommand(BaseModel):
+    """One slash command advertised by the Grok ACP agent."""
+
+    name: str
+    description: str = ""
+
+
+class GrokCommands(DaemonEvent):
+    """Slash commands the live Grok session advertised."""
+
+    type: Literal["grok_commands"] = "grok_commands"
+    session_id: str
+    commands: list[GrokCommand] = Field(default_factory=list)
+
+
+class GrokPlanEntry(BaseModel):
+    content: str
+    status: str = "pending"
+
+
+class GrokPlan(DaemonEvent):
+    """Plan mode document / entries from ACP ``plan`` updates."""
+
+    type: Literal["grok_plan"] = "grok_plan"
+    session_id: str
+    markdown: str = ""
+    entries: list[GrokPlanEntry] = Field(default_factory=list)
+
+
+class GrokMode(DaemonEvent):
+    """Current Grok ACP session mode and the advertised set."""
+
+    type: Literal["grok_mode"] = "grok_mode"
+    session_id: str
+    mode: str
+    modes: list[str] = Field(default_factory=list)
+    # Model the Grok CLI is using for this session. Additive; older
+    # clients ignore it. None until ACP or Grok's config names one —
+    # never a guessed slug.
+    model: str | None = None
+
+
+class GrokPreview(DaemonEvent):
+    """A media file or loopback URL the Grok engine wants shown."""
+
+    type: Literal["grok_preview"] = "grok_preview"
+    session_id: str
+    kind: Literal["image", "video", "html", "pdf", "url"]
+    path: str | None = None
+    url: str | None = None
+    title: str = ""
+
+
+class GrokSessionEntry(BaseModel):
+    id: str
+    title: str
+    cwd: str = ""
+    updated_at: str = ""
+
+
+class GrokSessionList(DaemonEvent):
+    """TUI sessions on disk under ``~/.grok/sessions``."""
+
+    type: Literal["grok_session_list"] = "grok_session_list"
+    seq: int = 1
+    sessions: list[GrokSessionEntry] = Field(default_factory=list)
+
+
+class GrokExtension(BaseModel):
+    kind: Literal["mcp", "skill", "plugin"]
+    name: str
+    detail: str = ""
+
+
+class GrokExtensions(DaemonEvent):
+    """Read-only catalog of Grok CLI extensions. Never secrets."""
+
+    type: Literal["grok_extensions"] = "grok_extensions"
+    seq: int = 1
+    items: list[GrokExtension] = Field(default_factory=list)
 
 
 class ApiKeyValidated(DaemonEvent):
@@ -1973,10 +2164,29 @@ class CuPermissions(DaemonEvent):
     xtest_applies: bool = False
     no_display: str = ""
     no_display_applies: bool = False
+    # TD-4823: the host's own diagnosis. Defaults keep Windows / Linux /
+    # mock payloads unchanged. ``stale_*`` means System Settings shows
+    # TST Desk ON but the row belongs to an older build; only a reset
+    # repairs it. ``fix_*`` is the host's per-service repair copy.
+    actuation_path: Literal["host", "daemon", "mock", "none", ""] = ""
+    signing: Literal["identity", "adhoc", "unsigned", ""] = ""
+    bundle_path: str = ""
+    stale_screen_recording: bool = False
+    stale_accessibility: bool = False
+    unbundled_dev_binary: bool = False
+    fix_screen_recording: str = ""
+    fix_accessibility: str = ""
+    reset_supported: bool = False
+    reset_error: str = ""
 
 
 class JobEntry(BaseModel):
-    """One persisted job on ``job_list`` (TD-3805)."""
+    """One persisted job on ``job_list`` (TD-3805).
+
+    The ``last_*`` fields are the run receipt (TD-3807). Without them the
+    rail can say when a job will next fire but not whether it has ever
+    worked, which is the question a user actually has.
+    """
 
     id: str
     workspace: str
@@ -1985,6 +2195,10 @@ class JobEntry(BaseModel):
     next_run: str | None = None
     deliver_to: Literal["window", "slack", "ntfy"]
     paused: bool = False
+    last_run: str | None = None
+    last_status: Literal["ok", "failed"] | None = None
+    last_summary: str | None = None
+    last_session_id: str | None = None
 
 
 class JobList(DaemonEvent):
@@ -2022,9 +2236,10 @@ class Transcript(DaemonEvent):
 
     type: Literal["transcript"] = "transcript"
     seq: int = 1
-    ok: bool
+    ok: bool = True
     text: str = ""
     detail: str = ""
+    error: str | None = None
 
 
 # ── Discriminated unions ───────────────────────────────────────────────
@@ -2043,7 +2258,9 @@ ClientMessageT = Annotated[
     | SetSkipAllApprovals
     | SetLoadGlobalMemory
     | SetCoworker
+    | SetVoice
     | SetCuIndicators
+    | SetCuPolicy
     | SetWorkspacePin
     | Resume
     | Cancel
@@ -2082,6 +2299,13 @@ ClientMessageT = Annotated[
     | SetApiKey
     | ValidateApiKey
     | SetPreset
+    | SetEngine
+    | SetGrokMode
+    | RunGrokCommand
+    | ListGrokSessions
+    | OpenInTerminal
+    | ApproveGrokPlan
+    | ListGrokExtensions
     | SetTierSlug
     | SetCredential
     | DeleteCredential
@@ -2096,6 +2320,7 @@ ClientMessageT = Annotated[
     | OpenArtifact
     | DesignHitTest
     | CheckCuPermissions
+    | ResetCuPermissions
     | SetCuKill
     | SetRemoteAttach
     | ListJobs
@@ -2157,6 +2382,12 @@ DaemonEventT = Annotated[
     | CuPermissions
     | JobList
     | JobDraftReply
+    | GrokCommands
+    | GrokPlan
+    | GrokMode
+    | GrokPreview
+    | GrokSessionList
+    | GrokExtensions
     | Transcript,
     Field(discriminator="type"),
 ]
@@ -2180,7 +2411,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_skip_all_approvals",
         "set_load_global_memory",
         "set_coworker",
+        "set_voice",
         "set_cu_indicators",
+        "set_cu_policy",
         "set_workspace_pin",
         "resume",
         "cancel",
@@ -2220,6 +2453,13 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "validate_api_key",
         "delete_api_key",
         "set_preset",
+        "set_engine",
+        "set_grok_mode",
+        "run_grok_command",
+        "list_grok_sessions",
+        "open_in_terminal",
+        "approve_grok_plan",
+        "list_grok_extensions",
         "set_tier_slug",
         "set_credential",
         "delete_credential",
@@ -2233,6 +2473,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "open_artifact",
         "design_hit_test",
         "check_cu_permissions",
+        "reset_cu_permissions",
         "set_cu_kill",
         "set_remote_attach",
         "list_jobs",
@@ -2294,6 +2535,12 @@ _KNOWN_EVENT_TYPES = frozenset(
         "cu_permissions",
         "job_list",
         "job_draft",
+        "grok_commands",
+        "grok_plan",
+        "grok_mode",
+        "grok_preview",
+        "grok_session_list",
+        "grok_extensions",
         "transcript",
     }
 )

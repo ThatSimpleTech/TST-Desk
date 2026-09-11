@@ -78,6 +78,24 @@ describe("session adoption", () => {
   });
 });
 
+describe("engine", () => {
+  it("stamps the session's engine from session_state", () => {
+    ingestEvent({
+      type: "session_state",
+      session_id: "s1",
+      state: "running",
+      engine: "grok",
+      seq: 1,
+    } as DaemonEventUnion);
+    expect(session.engine).toBe("grok");
+  });
+
+  it("does not invent an engine when the daemon omitted it", () => {
+    ingestEvent(sessionState("s1"));
+    expect(session.engine).toBeNull();
+  });
+});
+
 describe("tier state", () => {
   it("follows tier_state and sends set_tier", () => {
     ingestEvent(sessionState("s1"));

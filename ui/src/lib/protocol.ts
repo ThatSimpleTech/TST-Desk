@@ -127,6 +127,15 @@ export interface SetCuIndicators extends ClientMessage {
   show_on_real_display: boolean;
 }
 
+/** Background vs full-control computer use, denylist, master switch (TD-4830). */
+export interface SetCuPolicy extends ClientMessage {
+  type: "set_cu_policy";
+  enabled: boolean;
+  mode: "background" | "full_control";
+  unhide_on_finish: boolean;
+  denied_apps: string[];
+}
+
 /** Turn Tailscale remote attach on or off (TD-3603). Machine-wide, no session. */
 export interface SetRemoteAttach extends ClientMessage {
   type: "set_remote_attach";
@@ -467,6 +476,57 @@ export interface SetPreset extends ClientMessage {
   name: string;
 }
 
+/** Pick native TST loop or Grok Build ACP for new sessions. */
+export interface SetEngine extends ClientMessage {
+  type: "set_engine";
+  kind: "native" | "grok";
+}
+
+/** Turn hold-to-talk dictation on or off (TD-4701). Acked with setup_state. */
+export interface SetVoice extends ClientMessage {
+  type: "set_voice";
+  enabled: boolean;
+}
+
+/** Send a hold-to-talk clip when a transcription endpoint is configured. */
+export interface Transcribe extends ClientMessage {
+  type: "transcribe";
+  audio_b64: string;
+  mime?: string;
+}
+
+export interface SetGrokMode extends ClientMessage {
+  type: "set_grok_mode";
+  session_id: string;
+  mode: string;
+}
+
+export interface RunGrokCommand extends ClientMessage {
+  type: "run_grok_command";
+  session_id: string;
+  name: string;
+  argument?: string;
+}
+
+export interface ListGrokSessions extends ClientMessage {
+  type: "list_grok_sessions";
+}
+
+export interface OpenInTerminal extends ClientMessage {
+  type: "open_in_terminal";
+  session_id: string;
+}
+
+export interface ApproveGrokPlan extends ClientMessage {
+  type: "approve_grok_plan";
+  session_id: string;
+  comment?: string;
+}
+
+export interface ListGrokExtensions extends ClientMessage {
+  type: "list_grok_extensions";
+}
+
 // ── Diagnostics (TD-1104 doctor) ─────────────────────────────────────
 
 export interface RunDiagnostics extends ClientMessage {
@@ -513,6 +573,11 @@ export interface CheckCuPermissions extends ClientMessage {
   type: "check_cu_permissions";
 }
 
+/** Reset this app's macOS TCC grants and re-request them (TD-4823). Connection-scoped; window only. */
+export interface ResetCuPermissions extends ClientMessage {
+  type: "reset_cu_permissions";
+}
+
 /** Engage or clear the process-wide computer-use kill-switch (TD-3404). */
 export interface SetCuKill extends ClientMessage {
   type: "set_cu_kill";
@@ -548,13 +613,6 @@ export interface ParseJob extends ClientMessage {
   text: string;
 }
 
-/** Hold-to-talk audio (TD-4701). Connection-scoped. Not a tool. */
-export interface Transcribe extends ClientMessage {
-  type: "transcribe";
-  audio_b64: string;
-  mime: string;
-}
-
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -569,7 +627,10 @@ export type ClientMessageUnion =
   | SetSkipAllApprovals
   | SetLoadGlobalMemory
   | SetCoworker
+  | SetVoice
+  | Transcribe
   | SetCuIndicators
+  | SetCuPolicy
   | SetWorkspacePin
   | Resume
   | Cancel
@@ -609,6 +670,13 @@ export type ClientMessageUnion =
   | DeleteApiKey
   | ValidateApiKey
   | SetPreset
+  | SetEngine
+  | SetGrokMode
+  | RunGrokCommand
+  | ListGrokSessions
+  | OpenInTerminal
+  | ApproveGrokPlan
+  | ListGrokExtensions
   | SetTierSlug
   | SetCredential
   | DeleteCredential
@@ -622,6 +690,7 @@ export type ClientMessageUnion =
   | OpenArtifact
   | DesignHitTest
   | CheckCuPermissions
+  | ResetCuPermissions
   | SetCuKill
   | SetRemoteAttach
   | ListJobs
@@ -667,6 +736,8 @@ export interface SessionState extends DaemonEvent {
     | "cancelled"
     | "interrupted";
   reason?: string | null;
+  /** Loop this session started with. Additive; older daemons omit it. */
+  engine?: "native" | "grok" | null;
 }
 
 /** The conversation forked or a sibling was selected (TD-1708). */
@@ -1087,11 +1158,24 @@ export interface SetupState extends DaemonEvent {
   credentials?: CredentialSummary[];
   tier_credentials?: Record<string, string | null>;
   tier_loopback?: Record<string, boolean>;
-	// TD-4403: listed MCP servers. Additive, default empty. Never a secret.
-	mcp_servers?: McpServerSummary[];
-	// TD-4701: hold-to-talk. Additive, default off. The URL never arrives.
-	speech_enabled?: boolean;
-	speech_ready?: boolean;
+  /** Agent engine for new sessions. Additive; older daemons omit it. */
+  engine?: "native" | "grok";
+  grok_available?: boolean;
+  grok_binary?: string | null;
+  /** Hold-to-talk. Additive, default off. */
+  voice_enabled?: boolean;
+  /** Whether config.yaml names a transcription URL — never the URL. */
+  voice_has_endpoint?: boolean;
+  /** TD-4830: computer-use policy. Additive; older daemons omit them. */
+  cu_enabled?: boolean;
+  cu_mode?: "background" | "full_control";
+  cu_unhide_on_finish?: boolean;
+  cu_denied_apps?: string[];
+  // TD-4403: listed MCP servers. Additive, default empty. Never a secret.
+  mcp_servers?: McpServerSummary[];
+  // TD-4701: hold-to-talk. Additive, default off. The URL never arrives.
+  speech_enabled?: boolean;
+  speech_ready?: boolean;
 }
 
 export interface McpServerSummary {
@@ -1288,6 +1372,17 @@ export interface CuPermissions extends DaemonEvent {
   xtest_applies: boolean;
   no_display: string;
   no_display_applies: boolean;
+  // TD-4823: the host's own diagnosis; optional so older daemons still parse.
+  actuation_path?: "host" | "daemon" | "mock" | "none" | "";
+  signing?: "identity" | "adhoc" | "unsigned" | "";
+  bundle_path?: string;
+  stale_screen_recording?: boolean;
+  stale_accessibility?: boolean;
+  unbundled_dev_binary?: boolean;
+  fix_screen_recording?: string;
+  fix_accessibility?: string;
+  reset_supported?: boolean;
+  reset_error?: string;
 }
 
 export interface ContextCompacted extends DaemonEvent {
@@ -1315,12 +1410,81 @@ export interface JobEntry {
   next_run: string | null;
   deliver_to: "window" | "slack" | "ntfy";
   paused: boolean;
+  /** The last fire's receipt (TD-3807). Null until the job has run once. */
+  last_run: string | null;
+  last_status: "ok" | "failed" | null;
+  last_summary: string | null;
+  last_session_id: string | null;
 }
 
 /** Response to list_jobs / save_job / delete_job (TD-3805). Connection-scoped. */
 export interface JobList extends DaemonEvent {
   type: "job_list";
   jobs: JobEntry[];
+}
+
+export interface GrokCommand {
+  name: string;
+  description?: string;
+}
+
+export interface GrokCommands extends DaemonEvent {
+  type: "grok_commands";
+  session_id: string;
+  commands: GrokCommand[];
+}
+
+export interface GrokPlanEntry {
+  content: string;
+  status?: string;
+}
+
+export interface GrokPlan extends DaemonEvent {
+  type: "grok_plan";
+  session_id: string;
+  markdown?: string;
+  entries?: GrokPlanEntry[];
+}
+
+export interface GrokMode extends DaemonEvent {
+  type: "grok_mode";
+  session_id: string;
+  mode: string;
+  modes?: string[];
+  /** Model the Grok CLI is using. Additive; older daemons omit it. */
+  model?: string | null;
+}
+
+export interface GrokPreview extends DaemonEvent {
+  type: "grok_preview";
+  session_id: string;
+  kind: "image" | "video" | "html" | "pdf" | "url";
+  path?: string | null;
+  url?: string | null;
+  title?: string;
+}
+
+export interface GrokSessionEntry {
+  id: string;
+  title: string;
+  cwd?: string;
+  updated_at?: string;
+}
+
+export interface GrokSessionList extends DaemonEvent {
+  type: "grok_session_list";
+  sessions: GrokSessionEntry[];
+}
+
+export interface GrokExtension {
+  kind: "mcp" | "skill" | "plugin";
+  name: string;
+  detail?: string;
+}
+
+export interface GrokExtensions extends DaemonEvent {
+  type: "grok_extensions";
+  items: GrokExtension[];
 }
 
 /** Response to parse_job (TD-3803). Connection-scoped. Not saved. */
@@ -1339,9 +1503,10 @@ export interface JobDraftReply extends DaemonEvent {
 /** Reply to transcribe (TD-4701). Connection-scoped. detail is a code, never a URL. */
 export interface Transcript extends DaemonEvent {
   type: "transcript";
-  ok: boolean;
+  ok?: boolean;
   text?: string;
   detail?: string;
+  error?: string | null;
 }
 
 export type DaemonEventUnion =
@@ -1394,4 +1559,10 @@ export type DaemonEventUnion =
   | CuPermissions
   | JobList
   | JobDraftReply
+  | GrokCommands
+  | GrokPlan
+  | GrokMode
+  | GrokPreview
+  | GrokSessionList
+  | GrokExtensions
   | Transcript;

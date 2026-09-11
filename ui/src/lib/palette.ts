@@ -18,13 +18,17 @@ export type PaletteCommand =
 	| { kind: "run-doctor" }
 	| { kind: "show-stack" }
 	| { kind: "show-work" }
+	| { kind: "show-preview" }
+	| { kind: "show-plan" }
+	| { kind: "open-in-terminal" }
 	| { kind: "open-settings" }
 	| { kind: "toggle-theme" }
 	| { kind: "end-session" }
 	| { kind: "stop-computer-use" }
 	| { kind: "resume-computer-use" }
 	| { kind: "toggle-design" }
-	| { kind: "quit-app" };
+	| { kind: "quit-app" }
+	| { kind: "new-window" };
 
 export interface PaletteEntry {
 	/** Stable key for the rendered list. */
@@ -82,6 +86,30 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 		command: { kind: "show-work" },
 	},
 	{
+		id: "action:show-preview",
+		title: "Open preview",
+		subtitle: "Images, video, HTML, and loopback servers Grok produced",
+		icon: "file",
+		keywords: "image video html pdf localhost preview pane",
+		command: { kind: "show-preview" },
+	},
+	{
+		id: "action:show-plan",
+		title: "Open plan",
+		subtitle: "Grok plan mode review and approve",
+		icon: "layers",
+		keywords: "plan approve implement",
+		command: { kind: "show-plan" },
+	},
+	{
+		id: "action:open-in-terminal",
+		title: "Open in Terminal",
+		subtitle: "Resume this Grok session in the real TUI",
+		icon: "settings",
+		keywords: "tui grok resume terminal escape hatch",
+		command: { kind: "open-in-terminal" },
+	},
+	{
 		id: "action:open-settings",
 		title: "Open settings",
 		subtitle: "Appearance, model, policy, API key",
@@ -128,6 +156,14 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 		icon: "mouse-pointer",
 		keywords: "design pick xpath inspect click shift drag screen",
 		command: { kind: "toggle-design" },
+	},
+	{
+		id: "action:new-window",
+		title: "New window",
+		subtitle: "Open another window on the same daemon",
+		icon: "plus",
+		keywords: "second window tray multi",
+		command: { kind: "new-window" },
 	},
 	{
 		id: "action:quit-app",

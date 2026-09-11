@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import pkg from "../../package.json";
 import type { DaemonEventUnion } from "./protocol";
-import { sessionStateCopy, turnFailureCopy } from "./error-copy";
+import { checkpointNoticeCopy, sessionStateCopy, turnFailureCopy } from "./error-copy";
 import { redact } from "./redact";
 import {
   TOAST_TIMEOUT_MS,
@@ -118,6 +118,12 @@ describe("error copy", () => {
     for (const code of ["rate_limited", "server_error", "bad_gateway", "service_unavailable", "gateway_timeout"]) {
       expect(turnFailureCopy(code)?.severity).toBe("toast");
     }
+  });
+
+  it("Grok ACP engine faults are named toasts, not unrecognised codes", () => {
+    expect(turnFailureCopy("already_started")?.title).toBe("Grok is already running");
+    expect(turnFailureCopy("agent_exited")?.title).toBe("Grok stopped");
+    expect(turnFailureCopy("already_started")?.body).not.toContain("unrecognised");
   });
 
   it("a cancelled turn and a null code stay silent", () => {
@@ -348,5 +354,76 @@ describe("diagnostics", () => {
     const failing = { writeText: () => Promise.reject(new Error("denied")) };
     const ok = await copyDiagnostics({ ws: "connected", daemonState: "connected", daemonRestart: 0 }, failing);
     expect(ok).toBe(false);
+  });
+});
+
+// TD-705 / TD-2104. The daemon has always emitted these and the client gate
+// has always let them through; nothing reduced them, so a user whose
+// workspace is not a git repository was never told checkpoints were off.
+describe("checkpoint notices", () => {
+  function notice(code: string, message: string): DaemonEventUnion {
+    return {
+      type: "checkpoint_notice",
+      session_id: "s1",
+      seq: 1,
+      code,
+      message,
+    } as DaemonEventUnion;
+  }
+
+  it("raises a toast naming the degradation", () => {
+    notifyEvent(notice("no_git", "This workspace is not a git repository."));
+    expect(banners).toEqual([]);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe("Checkpoints are off");
+    expect(toasts[0].body).toBe("This workspace is not a git repository.");
+  });
+
+  it("keeps the daemon's wording rather than restating it", () => {
+    // The daemon owns this copy; two versions of the same sentence in two
+    // languages is how they drift.
+    const message = "Checkpointing paused: a git rebase is in progress.";
+    notifyEvent(notice("rebase_in_progress", message));
+    expect(toasts[0].body).toBe(message);
+  });
+
+  it("shares the rail with memory notices", () => {
+    notifyEvent(notice("memory_no_git", "Memory edits are not committed."));
+    expect(toasts[0].title).toBe("Memory edits are not versioned");
+  });
+
+  it("still surfaces a code this table has never heard of", () => {
+    // A code the daemon adds first must not vanish — that is the whole
+    // failure mode this case exists to end.
+    notifyEvent(notice("some_future_code", "Something degraded."));
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].body).toBe("Something degraded.");
+  });
+
+  it("keys per code, so two rails do not overwrite each other", () => {
+    notifyEvent(notice("no_git", "no git here"));
+    notifyEvent(notice("dirty_baseline", "you have uncommitted changes"));
+    expect(toasts.map((t) => t.body)).toEqual(["no git here", "you have uncommitted changes"]);
+  });
+
+  it("is a toast for every known code — none of them block work", () => {
+    for (const code of [
+      "no_git",
+      "dirty_baseline",
+      "rebase_in_progress",
+      "git_error",
+      "memory_no_git",
+    ]) {
+      expect(checkpointNoticeCopy(code, "x").severity).toBe("toast");
+      expect(checkpointNoticeCopy(code, "x").title).not.toBe("Checkpoint notice");
+    }
+  });
+
+  it("redacts the body on the way into diagnostics", () => {
+    const key = "sk-or-v1-" + "0".repeat(52); // tst-secret-ok
+    notifyEvent(notice("git_error", `Checkpoint failed: ${key}`));
+    const report = buildDiagnostics({ ws: "open", daemonState: "running", daemonRestart: 0 });
+    expect(report).not.toContain(key);
+    expect(report).toContain("[REDACTED]");
   });
 });

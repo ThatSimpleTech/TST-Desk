@@ -11,6 +11,8 @@ export interface ShortcutEvent {
 	ctrlKey: boolean;
 	/** ⌘⇧D / Ctrl+Shift+D toggles Design mode (TD-3403). */
 	shiftKey?: boolean;
+	/** ⌘⌥↑ / ⌘⌥↓ step between sessions (navigation round, 2026-09). */
+	altKey?: boolean;
 }
 
 export interface ShortcutContext {
@@ -32,7 +34,20 @@ export type ShortcutAction =
 	| "open-settings"
 	| "open-palette"
 	| "toggle-design"
-	| "stop-computer-use";
+	| "stop-computer-use"
+	| "prev-session"
+	| "next-session"
+	| "pick-session";
+
+/** The 1-based rail slot a ⌘1…⌘9 / Ctrl+1…9 press names, or null. Shift
+ *  and Option are excluded so ⌘⇧1-style system combos and the characters
+ *  Option types on a Mac keyboard stay out of it. */
+export function sessionSlot(event: ShortcutEvent): number | null {
+	if (!(event.metaKey || event.ctrlKey)) return null;
+	if (event.shiftKey === true || event.altKey === true) return null;
+	if (!/^[1-9]$/.test(event.key)) return null;
+	return Number(event.key);
+}
 
 /** Map a keydown to one app-level action, or null when nothing applies. */
 export function resolveShortcut(
@@ -69,5 +84,15 @@ export function resolveShortcut(
 	// panic key must work over a modal; resume is palette / title bar.
 	if (event.key === "." && (event.metaKey || event.ctrlKey))
 		return "stop-computer-use";
+	// ⌘⌥↓ / ⌘⌥↑ — the next or previous session in rail order. Option is
+	// in the chord so a bare arrow, and ⌘↑ / ⌘↓ (start and end of a text
+	// field), keep their text meaning in the composer.
+	if ((event.metaKey || event.ctrlKey) && event.altKey === true) {
+		if (event.key === "ArrowDown") return "next-session";
+		if (event.key === "ArrowUp") return "prev-session";
+	}
+	// ⌘1…⌘9 — straight to a rail slot, counted from the top. The shell
+	// reads the digit back with `sessionSlot`.
+	if (sessionSlot(event) !== null) return "pick-session";
 	return null;
 }

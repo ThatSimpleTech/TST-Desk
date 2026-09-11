@@ -14,7 +14,17 @@ from typing import Any
 
 import pytest
 
+from tst_cu_mcp.backends import darwin
 from tst_cu_mcp.backends.darwin import DarwinBackend
+
+
+@pytest.fixture(autouse=True)
+def force_cli_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin tempfile cleanup on the CLI path, not CoreGraphics."""
+    monkeypatch.setattr(darwin, "_is_host_identity", lambda: True)
+    monkeypatch.setattr(darwin, "_sock_path", lambda: None)
+    monkeypatch.setattr(darwin, "_cg_capture_png", lambda _rect: None)
+    monkeypatch.setattr(darwin, "_cg_preflight", lambda: True)
 
 
 @pytest.fixture

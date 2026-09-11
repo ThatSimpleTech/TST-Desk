@@ -53,6 +53,8 @@ export const session = $state({
   tier: "brain" as "brain" | "worker" | "validator",
   tierOverride: null as "brain" | "worker" | "validator" | null,
   modelSlugs: {} as Record<string, string>,
+  /** Loop this session started with. Null until a session_state names it. */
+  engine: null as "native" | "grok" | null,
   /** Preset this session opened with (TD-1720). Empty until tier_state. */
   preset: "" as string,
   /** Tier → hostname:port the daemon will call (TD-1720). */
@@ -86,6 +88,7 @@ export function resetSession(): void {
   session.tier = "brain";
   session.tierOverride = null;
   session.modelSlugs = {};
+  session.engine = null;
   session.preset = "";
   session.hosts = {};
   session.planMode = false;
@@ -114,6 +117,9 @@ export function ingestEvent(event: DaemonEventUnion): void {
     if (event.session_id !== session.sessionId) return;
     session.state = event.state;
     session.reason = event.reason ?? null;
+    if (event.engine === "native" || event.engine === "grok") {
+      session.engine = event.engine;
+    }
     return;
   }
 
@@ -197,6 +203,7 @@ export function focusSession(
   session.tier = "brain";
   session.tierOverride = null;
   session.modelSlugs = {};
+  session.engine = null;
   session.preset = "";
   session.hosts = {};
   session.planMode = false;

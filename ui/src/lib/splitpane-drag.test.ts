@@ -28,6 +28,15 @@ beforeEach(() => {
 		},
 	};
 	Object.defineProperty(window, "localStorage", { configurable: true, value: storage });
+	// bind:clientWidth needs ResizeObserver; jsdom has none. The drag
+	// path reads getBoundingClientRect (stubbed below), so observe is a no-op.
+	if (typeof globalThis.ResizeObserver === "undefined") {
+		globalThis.ResizeObserver = class {
+			observe(): void {}
+			unobserve(): void {}
+			disconnect(): void {}
+		} as unknown as typeof ResizeObserver;
+	}
 });
 
 afterEach(() => {
@@ -65,8 +74,8 @@ function dispatch(target: EventTarget, type: string, clientX: number): void {
 describe("split divider drag (TD-1011)", () => {
 	it("pointerdown on the divider, then move and up outside it, resizes and clears dragging", async () => {
 		// jsdom does not layout, so getBoundingClientRect is 0×0 unless we
-		// stub it. 1000px wide matches the harness frame and makes the
-		// percentage math a clean 1px = 0.1%.
+		// stub it. 1000px wide matches the harness frame; the right pane
+		// width is container.right - pointer x.
 		app = mount(SplitPaneHarness, { target: document.body });
 		await tick();
 		const root = pane();
@@ -83,7 +92,7 @@ describe("split divider drag (TD-1011)", () => {
 				toJSON: () => ({}),
 			}) as DOMRect;
 
-		const start = Number(root.dataset.leftPct);
+		const start = Number(root.dataset.rightPx);
 		expect(root.dataset.dragging).toBe("false");
 
 		dispatch(divider(), "pointerdown", 400);
@@ -98,7 +107,7 @@ describe("split divider drag (TD-1011)", () => {
 		await tick();
 
 		expect(root.dataset.dragging).toBe("false");
-		expect(Number(root.dataset.leftPct)).toBe(70);
-		expect(Number(root.dataset.leftPct)).not.toBe(start);
+		expect(Number(root.dataset.rightPx)).toBe(300);
+		expect(Number(root.dataset.rightPx)).not.toBe(start);
 	});
 });

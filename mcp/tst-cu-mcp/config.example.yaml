@@ -34,7 +34,17 @@ overlay:
   # sets it from the user's "show indicators on the real display" preference.
   enabled: true
 
+# How the agent drives apps. `background` uses the accessibility tree
+# (list_apps / ui_snapshot / ui_action) and does not take the pointer.
+# `full_control` is screenshot + click/type and may hide other apps.
+mode: background
+
 scoping:
-  # Reserved for a future milestone and currently unenforced. Listing apps here
-  # does nothing yet; it is not a restriction you can rely on today.
+  # Empty allowlist means every app except denied. A non-empty list is an
+  # allowlist: anything not named is refused.
   allowed_apps: []
+  # Requests to see or drive these apps are rejected. Substring against
+  # display name or bundle id, same matching as list_apps.
+  denied_apps: []
+  # After a full-control task that hid other apps, restore them.
+  unhide_on_finish: true

@@ -8256,6 +8256,32 @@ session's host — existing sessions keep the config they opened with.
 
 ---
 
+## 2026-08-25 — TD-1720: rail dots are turn activity, not liveness (Class B)
+
+**Decision:** `SessionSummary` gains an additive `busy: bool` sourced
+from `Session.turn_in_flight`. The rail paints **working** / **waiting**
+/ **finished** from that flag plus parked states (`awaiting_approval`,
+`paused`, `failed`). `state: "running"` is loop liveness (TD-1714) and
+must not colour a row as working. Display titles cap at 20 characters
+in the rail; storage stays at 60 (TD-3001). The bound pane's evidentiary
+`turnState` overlays the attached row so the dot moves with the
+composer. Switching away snapshots that evidence onto the leaving row
+because detach stops the event stream.
+
+**Rationale:** Every healthy session is `running` for its whole life, so
+the pre-existing liveness dots all read the same. The daemon already
+tracked open turns for Delete/Move refusals; putting that on the list
+is daemon truth, not a UI inference. A 20-char cap is a display
+choice — renaming and filter matching still see the full title.
+
+**Alternative rejected:** Remapping `running` → finished in the UI
+only. That would hide every background turn the list already knew
+about. Also rejected: attaching to every session just to watch
+`turn_complete`. Also rejected: lowering the stored title cap from 60
+to 20 — rename would silently truncate.
+
+---
+
 ## 2026-08-26 — TD-4302: container net ns follows the charter wall (Class B)
 
 **Decision:** `container_argv` / `sandbox_exec` take `network` in the
@@ -9343,29 +9369,571 @@ as success for `get_screen_info` on Wayland (that path stays empty).
 
 ---
 
-## 2026-08-25 — TD-1720: rail dots are turn activity, not liveness (Class B)
+## 2026-08-31 — TD-3807: scheduled delivery defaults to the real hook (Class B)
 
-**Decision:** `SessionSummary` gains an additive `busy: bool` sourced
-from `Session.turn_in_flight`. The rail paints **working** / **waiting**
-/ **finished** from that flag plus parked states (`awaiting_approval`,
-`paused`, `failed`). `state: "running"` is loop liveness (TD-1714) and
-must not colour a row as working. Display titles cap at 20 characters
-in the rail; storage stays at 60 (TD-3001). The bound pane's evidentiary
-`turnState` overlays the attached row so the dot moves with the
-composer. Switching away snapshots that evidence onto the leaving row
-because detach stops the event stream.
+**Decision:** `Daemon.__init__` defaults `RecordingDeliver`'s `send` to
+`_send_scheduled_notify` and `on_window` to `_deliver_to_window`. The
+`notify_send` parameter stays, for tests that need to observe delivery,
+but it is now an override and not the only way delivery happens.
 
-**Rationale:** Every healthy session is `running` for its whole life, so
-the pre-existing liveness dots all read the same. The daemon already
-tracked open turns for Delete/Move refusals; putting that on the list
-is daemon truth, not a UI inference. A 20-char cap is a display
-choice — renaming and filter matching still see the full title.
+**Rationale:** `send=notify_send` with `notify_send=None` on the real
+entrypoint meant every channel was silent in production while the M7
+exit harness — whose whole job is to inject that hook — stayed green.
+A default that only a test supplies is a default that ships broken.
+The parameter's absence must degrade to the real behaviour, not to none.
 
-**Alternative rejected:** Remapping `running` → finished in the UI
-only. That would hide every background turn the list already knew
-about. Also rejected: attaching to every session just to watch
-`turn_complete`. Also rejected: lowering the stored title cap from 60
-to 20 — rename would silently truncate.
+**Alternative rejected:** Making `notify_send` required. The harness and
+several unit tests construct a `Daemon` without one, and a required
+argument would have moved the same silence into the constructor's
+callers. Also rejected: raising when it is `None` at delivery time — the
+job has already run by then, and refusing to deliver its result is worse
+than delivering it.
 
 ---
 
+## 2026-08-31 — TD-3807: a job records its last fire (Class B)
+
+**Decision:** `Job` carries `last_run`, `last_status`, `last_summary`,
+`last_session_id`, stamped by `record_run` and preserved across edits.
+All four are optional so an existing `jobs.json` loads unchanged.
+`window` delivery is that receipt plus an OS notification when the
+window is in the background; `slack` and `ntfy` deliver themselves and
+do not also ring.
+
+**Rationale:** Without a receipt a job that failed and a job that never
+ran are the same row, and "the scheduler is broken" is unfalsifiable
+from the UI. `window` had no meaning at all — there is no unsolicited
+"here is some text" frame in the protocol, and inventing one would put
+model output on screen with no session behind it.
+
+**Alternative rejected:** A run-history list per job. The receipt answers
+"did the last one work", which is the question a rail row is asked; a
+history needs a surface to read it in, and that is its own story.
+Also rejected: ringing the OS for every channel — a slack job that also
+raised a banner would be two notifications for one delivery.
+
+---
+
+## 2026-08-31 — TD-3807: a spent one-shot has no schedule (Class B)
+
+**Decision:** `advance_job` clears `next_run` as well as setting
+`paused` when a one-shot fires. `Job`'s "cadence or next_run is
+required" invariant now admits a job that has already run
+(`last_run is not None`); `validate_draft` still refuses both-empty at
+create, so nothing unschedulable can be made — only loaded.
+
+**Rationale:** Pause/Resume is the only handle the rail gives a job.
+Leaving the spent slot in the past meant toggling a finished one-shot
+re-ran its instruction on the very next tick, with nothing on screen
+saying it would. A row with nothing left to do should read
+"Unscheduled", and Resume on it should be inert.
+
+**Alternative rejected:** Skipping spent one-shots in `due_jobs` and
+keeping the stale `next_run` on disk. That fixes the firing but leaves
+the row claiming a future time that will never arrive — the same class
+of lie, moved from behaviour into copy.
+
+---
+
+## 2026-08-31 — TD-3807: protocol parity is tested from both languages (Class B)
+
+**Decision:** `core/tests/test_protocol_parity.py` compares the Python
+event and message type sets against the declarations in `protocol.ts`,
+both directions. `client-event-gate.test.ts` additionally asserts every
+declared event has a reader somewhere in the app — with `client.ts`'s
+`KNOWN_EVENT_TYPES` literal cut out of the search, since that array
+names every event by construction and leaving it in makes the check
+pass on itself.
+
+**Rationale:** This is the fourth shipped-but-dead feature of the same
+shape (TD-803 policy rules, TD-1706 usage, TD-3407's `cu_session` glow,
+`checkpoint_notice`). Stores are tested by calling their reducers
+directly, so nothing exercised the boundary; each of these was green in
+every unit test and invisible at runtime. Neither language can enumerate
+the other's types, so the check reads the declarations as text. Crude,
+and it is the only thing watching this seam.
+
+**Alternative rejected:** Generating `protocol.ts` from the Python
+models. That is the real fix and a much larger one — the hand-written
+file carries comments and doc links the models do not, and a generator
+would have to preserve them or lose them. The fixtures generator already
+covers shape; this covers existence.
+
+---
+
+## 2026-09-02 — Grok Build as an optional ACP engine (Class B)
+
+**Decision:** TST Desk grows an `engine.kind` of `native` | `grok`. `grok`
+spawns the installed Grok Build CLI (`grok agent --no-leader stdio`) and
+maps ACP onto the existing session event log, approval cards, and
+coworker mode. The CLI is not forked, reimplemented, or given a second
+session store. Credentials stay in `~/.grok/auth.json`. New sessions
+pick up the engine; running sessions keep the loop they started with.
+
+**Rationale:** The Grok Desktop plan is an ACP client, not a second
+agent. TST Desk already is the shell that plan described (window,
+workspace, approvals, diffs, computer-use, browser, survive-window-close,
+remote attach). Rolling Grok in as an engine avoids a parallel Electron
+app and lets the same window host either loop. Prime directives hold:
+the daemon still owns the session; the window is a viewer; no Grok token
+is written to config.yaml.
+
+**Alternatives rejected:**
+- A standalone Electron Grok Desktop. Duplicates the shell TST Desk
+  already has.
+- Calling `grok -p` per turn. No permission UX, no streaming tool cards.
+- Scraping the TUI PTY. Loses structure and fights every TUI change.
+
+**CLI contract:** `grok`, `grok -p`, `grok agent stdio`, SSH, tmux, and
+`~/.grok` keep working with TST Desk installed or not. Escape hatch:
+`grok --resume <id>` still opens the real TUI.
+
+---
+
+## 2026-09-02 — Voice, tray, notification actions are engine-agnostic (Class B)
+
+**Decision:** Hold-to-talk, the tray, and notification Approve/Deny are
+shell features. They do not branch on `engine.kind`. They fill the
+composer, badge the host, or send the existing `approve`/`deny` verbs.
+
+**Rationale:** Both loops already share the composer, session list, and
+approval cards. A Grok-only mic or a native-only tray would be a second
+product. Dictation is off by default, never always-on, and has no cloud
+host in Python: OS speech, or `voice.base_url` from config. Notification
+Approve is class B only — class C still requires the in-window card.
+
+**Not built (Grok-only, would not work on native):** `grok://` URLs,
+bundled CLI updates, embedded TUI PTY, client-owned ACP `fs`/`terminal`.
+
+---
+
+## 2026-09-02 — macOS TCC prompts at most once; host grant counts
+
+**Decision:** `tst-cu-mcp` on Darwin treats a readable `kCGWindowName` (or a
+working AX read) as granted even when `CGPreflightScreenCaptureAccess` /
+`AXIsProcessTrusted` are false in the checkout Python. `request=true` raises
+each of Screen Recording and Accessibility at most once (stamp under
+`~/.tst-cu-mcp/macos-tcc-prompted` plus process memory). Later calls only
+re-probe. The host-app grant is what macOS records; re-prompting from this
+interpreter cannot make it stick. Rebuilding or ad-hoc re-signing the host
+resets the grant.
+
+**Rationale:** Grok calls `check_permissions(request=true)` every turn. The
+dialog is attributed to TST Desk, but preflight stays false in the spawned
+`tst-cu-mcp` venv, so Allow never "takes" from the model's point of view and
+the prompt loops. TD-3302 already forbids `request=True` on the native
+sidecar probe; the Grok engine talks to the MCP directly.
+
+**Not done this turn:** bundling capture inside `Contents/MacOS` so the TCC
+identity is TST Desk itself. That needs a rebuild, and an ad-hoc
+`codesign --sign -` would wipe the grant the user just clicked. Info.plist
+gained screen/audio usage strings for the next signed build.
+
+---
+
+## 2026-09-02 — Darwin capture uses CoreGraphics, not `screencapture`
+
+**Decision:** `DarwinBackend.capture_png` takes pixels with
+`CGWindowListCreateImage` and encodes PNG via AppKit. The `screencapture`
+CLI runs only when `CGPreflightScreenCaptureAccess` is true for *this*
+process. If CoreGraphics returns nothing and preflight is false, raise
+instead of spawning `screencapture`.
+
+**Rationale:** Grok reported Screen Recording granted (window titles / host
+TCC), then `screenshot` still raised "TST Desk would like to record this
+computer's screen and audio." That dialog is `screencapture` itself. Allow
+still lands on the host app; the checkout Python helper is not that binary,
+so the next screenshot prompts again. CoreGraphics does not present that
+dialog.
+
+---
+
+## 2026-09-02 — Computer-use MCP is `tstd --cu-mcp` (host TCC identity)
+
+**Decision:** Packaged Grok sessions spawn
+`/Applications/TST Desk.app/Contents/MacOS/tstd --cu-mcp` with
+`TST_CU_MCP_HOST=1`. That process imports checkout `tst-cu-mcp` and serves
+it on stdio, so capture and input run in the sidecar (same app identity as
+the grant). Checkout Python must not call `CGWindowListCreateImage`,
+`screencapture`, or `CGRequestScreenCaptureAccess` — those APIs prompt as
+TST Desk and never attach to the helper. Fallback: `tstd --cu-capture x y w h`.
+
+**Rationale:** Switching the helper from `screencapture` to CoreGraphics did
+not stop the dialog. Both APIs prompt when the calling binary is not the
+granted host. The new session at 15:21 still showed Screen Recording after
+Grok said it would capture. The only identity that can keep the grant is
+the binary inside `TST Desk.app`.
+
+---
+
+## 2026-09-02 — `tstd` must share TST Desk's code identifier
+
+**Decision:** Sign `Contents/MacOS/tstd` with
+`--identifier com.thatsimpletech.tstdesk` (same as `tst-desk`). Computer-use
+capture and permission probes run in a long-lived `tstd --cu-agent` spawned
+by checkout `tst-cu-mcp`. Checkout Python never calls capture APIs.
+
+**Rationale:** Session `acf267b8` got a successful screenshot *and* the
+Screen Recording dialog. `tstd --cu-capture` was signed as `tstd-<cdhash>`,
+so TCC treated it as a second app while labeling the prompt TST Desk.
+Accessibility was already on for TST Desk in System Settings; Python's
+`AXIsProcessTrusted` was still false, so Grok kept saying Accessibility was
+off. After matching identifiers, `tstd --cu-agent` reports both grants true
+and returns PNG without a new prompt.
+
+---
+
+## 2026-09-02 — CU actuator lives in the running daemon
+
+**Decision:** On Darwin the daemon opens
+`{data_dir}/cu-agent.sock` (loopback Unix socket, mode 0600). Checkout
+`tst-cu-mcp` is a client: screenshot, permissions, move, click, key,
+scroll, and type go through that socket. No second `tstd` process.
+Screen granted iff a tiny capture returns a PNG. Clicks run in the
+daemon PID TST Desk launched. `build_sidecar.py` ad-hoc signs with
+`--identifier com.thatsimpletech.tstdesk`. Install replaces only
+`Contents/MacOS/tstd`.
+
+**Rationale:** Session `8dab2f4c` spawned `tstd --cu-agent` as a new PID.
+That helper's preflight was false while screenshots still worked, and
+clicks stayed in checkout Python. Grok then died (`agent_exited`) after
+a long turn. Actuating in the already-running sidecar matches the TCC
+row the user granted.
+
+---
+
+## 2026-09-02 — CU actuator lives in the TST Desk host process
+
+**Decision:** On Darwin, `tst-desk` (the Tauri host, main executable of
+`TST Desk.app`) binds `{data_dir}/cu-agent.sock` before spawning `tstd`
+and runs capture + `CGEventPost` in that process. Checkout `tst-cu-mcp`
+is still a client of the same protocol. The sidecar binds the socket
+only when the host is absent (CLI `tstd`, tests) and must not unlink a
+live host socket. `check_permissions(request=true)` is forwarded as
+`permissions request` so the host, not a helper, may raise TCC dialogs.
+
+**Rationale:** Ad-hoc signing has no Team ID, so each Mach-O is a
+separate TCC client even with identifier `com.thatsimpletech.tstdesk`.
+Screen Recording was attributed to the `.app` (**TST Desk**);
+Accessibility Events from `CGEventPost` in `tstd` was attributed to the
+parent executable filename (**tst-desk**). Two Settings rows. Putting
+both APIs in the host process makes them one CDHash — the bundle —
+so Settings can collapse to **TST Desk**. A Developer ID / Team ID
+would also unify helpers, but this machine has no codesigning identity.
+Replacing `Contents/MacOS/tst-desk` changes the host CDHash, so the
+previous grants reset once; the next grant is the host itself.
+
+**Install:** replace `Contents/MacOS/TST Desk` and `Contents/MacOS/tstd`,
+ad-hoc sign each with `--identifier com.thatsimpletech.tstdesk`, then
+the `.app` (not `--deep`). Quit (Cmd+Q) so the new host is the process
+that receives the grant.
+
+---
+
+## 2026-09-02 — Host executable stays `tst-desk`
+
+**Decision:** `CFBundleExecutable` remains `tst-desk`. Do not set
+`mainBinaryName` to `TST Desk`. Accessibility Events will keep naming
+the posting process **tst-desk**; Screen Recording still names the
+bundle **TST Desk**. Keep both Settings rows on. TCC prompts from the
+host are stamped on disk and never re-raised after Deny. (Corrected at
+TD-4823: the `cu-tcc-prompted-*` files this entry originally named never
+existed — the state was two in-process flags, so every launch re-prompted.
+The stamps now live under `{data_dir}/cu-tcc/`, keyed by the build's
+cdhash; see the TD-4823 entry below.)
+
+**Rationale:** Renaming the Mach-O to `Contents/MacOS/TST Desk` (space)
+left a blank webview: Tauri's asset protocol breaks on a space in the
+main binary name. Restoring `tst-desk` brings the UI back. A Developer
+ID is still the way to one Settings name; a space in the executable is
+not.
+
+---
+
+## 2026-09-03 — TD-4823: TCC grants pin to the code signature; sign with a stable identity
+
+**Decision:** TST Desk is signed with a self-signed code-signing identity
+named `tst-desk-dev`, created once by
+`shell/scripts/ensure-signing-identity.sh` and used by `tauri.conf.json`
+(`bundle.macOS.signingIdentity`) and by `core/scripts/build_sidecar.py`
+for `tstd` (`TST_SIGN_IDENTITY` overrides the name; without the identity
+the sidecar build falls back to ad-hoc with a warning).
+`shell/scripts/install-macos.sh` is the only install path: it builds,
+re-signs the sidecar with the bundle id if Tauri's bundler changed it,
+verifies `codesign --deep --strict`, requires a `certificate leaf`
+designated requirement on both `tst-desk` and `tstd`, refuses to replace
+a running app, and prints the one-time `tccutil reset` when the previous
+install had a different requirement. This supersedes the hand-patch
+install in "CU actuator lives in the TST Desk host process" and its
+claim that "this machine has no codesigning identity". Hand-copying
+binaries into `/Applications/TST Desk.app` is forbidden.
+
+The host reads its own identity (`shell/src/cu_identity.rs`, via
+Security.framework `SecCodeCopySelf` / `SecCodeCopySigningInformation` /
+`SecCodeCopyDesignatedRequirement`) and keeps four stamps under
+`{data_dir}/cu-tcc/` — `prompted-screen`, `prompted-ax`,
+`granted-screen`, `granted-ax` — each holding the cdhash that prompted
+or was last seen granted. `permissions` over `cu-agent.sock` now reports
+`identity`, `stale_grant_suspected` (last seen granted under another
+build and denied now), `unbundled_dev_binary`, per-service `fix` copy,
+and `reset_supported`. A stale grant is never re-prompted: the dialog
+cannot repair it. `permissions reset` runs `tccutil reset ScreenCapture`
+and `tccutil reset Accessibility` for `com.thatsimpletech.tstdesk`,
+clears the stamps, and re-prompts; the daemon exposes it as
+`reset_cu_permissions`, a window action that is never a tool. The
+Settings pane asks the host (`core/tstd/desktop/host_probe.py`) before
+the driver, so it no longer shows the mock driver's "granted / granted"
+while the host is denied. The MCP server passes the host's diagnosis
+through and its copy tells the model to stop re-requesting on
+`stale_grant_suspected`.
+
+**Rationale:** TCC keys each grant on the bundle id *and* a stored
+code-signing requirement (`csreq`). An ad-hoc signature's requirement is
+`cdhash H"…"`, unique per build, so every rebuild silently invalidated
+the grants. System Settings shows the stored `auth_value` without
+revalidating, so the toggles stayed ON while
+`CGPreflightScreenCaptureAccess` / `AXIsProcessTrusted` returned false;
+the host re-raised the Screen Recording dialog on every launch and
+refused every input command (`tool_output_error` on
+`computer-use__click` / `press_keys` in Grok sessions). A
+certificate-based signature — self-signed is enough, because TCC
+evaluates the requirement rather than Gatekeeper trust — yields
+`identifier "com.thatsimpletech.tstdesk" and certificate leaf = H"…"`,
+which is stable across rebuilds. The lowercase **tst-desk** rows in
+Settings are path-keyed rows (`client_type = 1`) left by unbundled or
+hand-patched binaries; they never apply to the bundle and can be
+removed. Expected after the one-time reset: one **TST Desk** row per
+service that survives `install-macos.sh` reinstalls.
+
+---
+
+## 2026-09-03 — Grok engine: the daemon owns the real-display ring (Class B)
+
+**Decision:** A Grok session's computer-use episode is tagged by the
+daemon exactly as a native one is: `cu_session` opens on the first
+`computer-use__*` tool the ACP stream reports (diagnostics —
+`check_permissions`, `health`, `overlay_session` — excluded) and closes
+on turn complete, failed turn, interruption, cancel, or kill-switch.
+The daemon's own `tst-cu-mcp` child paints the ring from those tags;
+the child Grok spawns for actuation gets `TST_CU_MCP_OVERLAY=0`
+whenever a `computer_use.command` is configured. The macOS painter's
+panel is `NSWindowSharingNone`, so a capture from any process — Grok's
+child included — never contains the ring. A backend refusal (the host
+said no, as with a missing Accessibility grant) puts the glow out, and
+the sidecar-identity Quartz path now refuses before posting when
+`AXIsProcessTrusted` is false, as the socket path already did — macOS
+drops such events silently, so the model was hearing "ok" for clicks
+that never landed. Grok Build reports MCP calls as `use_tool` with
+`{tool_name, tool_input}`; the loop unwraps that, so the timeline,
+approval cards, and these tags see `computer-use__click`.
+
+**Rationale:** Grok drives its own MCP child, which lights the ring on
+every actuation (`activity` is `begin_session`) and hears nothing at
+turn end, so the ring lingered until the Grok process died — and the
+Screen-pane glow never opened at all, since no `cu_session` was ever
+emitted. Nothing can reach that child between tool calls without
+polling, so the painter has to be the process the daemon already
+talks to. One pair of tags is then the source of truth for pane and
+glass on both engines (TD-3407).
+
+**Alternative rejected:** A linger in the Grok child ("no tool for N
+seconds") — TD-3407 rejected inference, and it would still be a second
+painter. Also rejected: a file or socket side-channel to that child
+(polling), and a host-drawn ring (`notify_host_real_display_overlay`
+stays the no-op it is).
+
+---
+
+## 2026-09-03 — Inspector and session rail are pixel-width, not ratio-clamped (Class B)
+
+**Decision:** The chat|activity divider sizes the inspector in pixels
+(`tstd-desktop.splitpane.rightPx`), not as a 20–80% left-pane ratio.
+The session rail keeps pixels (`tstd-desktop.sessionRail.widthPx`) and
+drops the 440px ceiling. Both clamp only against the live layout: the
+inspector cannot shrink past 200px or grow past `container − 280px`
+(chat minimum); the rail cannot shrink past 200px or grow past
+`viewport − inspector min − chat min`. A wide preference that does not
+fit the current window is held and returns when the window grows. The
+old `tstd-desktop.splitpane.leftPct` key is ignored.
+
+**Rationale:** A percentage split cannot be dragged to an arbitrary size
+— 20% of a large window is still a large inspector, 80% still leaves
+chat a fifth of the pane. A 440px rail cap truncates session titles
+that the user can otherwise read by giving the list more room. Pixel
+sidebars with keep-alive minima match the rail's existing model and
+let either bar take as much of the window as the user wants.
+
+**Alternative rejected:** Loosening the percentage clamp to 5–95%. Still
+a ratio, still not "this many pixels", and a window resize still moves
+the inspector. Also rejected: no minima (chat and tabs collapse to
+unusable).
+
+---
+
+## 2026-09-04 — The foreground window comes from the window server's z-order (Class B)
+
+**Decision:** `DarwinBackend.foreground_window` reads
+`CGWindowListCopyWindowInfo` (on-screen, desktop elements excluded) and
+returns the first entry that could receive input: window level in
+`[0, 20)`, non-zero alpha, larger than one pixel on each side. It no
+longer asks `NSWorkspace.frontmostApplication()` for a pid and then
+searches that pid's windows. The selection policy is a pure function
+(`frontmost_entry`) beside a pure reader (`window_from_entry`), the way
+`focus.window_matches` is pure, so the policy is testable without a
+desktop. When nothing qualifies the answer is an empty `WindowInfo`
+rather than a guess.
+
+**Rationale:** `frontmostApplication()` answers "which application is
+active for the caller's activation context", which a sidecar spawned by
+the host app does not reliably share. In a recorded session it named the
+host app on all seven calls while Spotlight, then Finder, then a
+remote-desktop window had the screen. `get_foreground_window`,
+`wait_for_window` and every `expect_window` guard are the same call, so
+all three were silently dead for that session — the guards passed
+whatever they were given. The window list is the window server's own
+z-order and has no caller context to get wrong. It also names the window
+that is actually in front rather than the active application's frontmost
+window, which are not the same thing when a panel or a sheet is up.
+
+The `[0, 20)` bound is where the desktop stops being an input target:
+status items (25), the menu bar (24) and the Dock (20) sit in front of
+every application window — status items are literally first in the list —
+while normal windows (0) and floating, modal and utility panels (3, 8,
+19) all take input. The session ring paints at the screen-saver level, so
+the same bound keeps our own overlay out of the answer for free.
+
+**Consequence accepted:** the reported bounds belong to the topmost
+window, which for an app showing a banner (Chrome Remote Desktop's
+sharing bar) is the banner rather than the content window. Identity —
+the field the guards match on — is right either way, and picking "the
+biggest window of the front app" instead would report the wrong thing
+whenever a small dialog is the point.
+
+**Alternative rejected:** The Accessibility route
+(`kAXFocusedApplicationAttribute` on the system-wide element), which is
+the true keyboard-focus owner and would read titles without Screen
+Recording. It needs a grant this call currently does not, and it needs
+the window-list fallback anyway when the grant is absent. Worth
+revisiting as the primary source with this as the fallback. Also
+rejected: keeping `NSWorkspace` as a cross-check — a wrong pid that
+happens to own a window is exactly the failure being removed.
+
+---
+
+## 2026-09-04 — Internal sidecar tools are registered only for the daemon's own child (Class B)
+
+**Decision:** `tst-cu-mcp` registers `overlay_session` only when
+`TST_CU_MCP_INTERNAL` is truthy in its environment. `desktop_driver_from_config`
+sets it on the child it spawns, alongside the existing `TST_CU_MCP_OVERLAY`
+value and independent of it. Grok's copy of the same binary
+(`grok_home.computer_use_mcp`) does not set it, so the tool is absent from
+the list the model sees. The tests default to the model-facing surface: an
+autouse fixture clears the variable, and the two tests that mean to be the
+daemon set it themselves.
+
+**Rationale:** `overlay_session` is an episode bracket the daemon opens and
+closes around a computer-use turn; it is the only caller that knows when a
+turn ends. A model that can see the tool will eventually call it, and a ring
+lit by a model says an episode is running when none is — with nothing left
+to close it. The description said "Not a model tool", which is a comment,
+not a boundary. This makes it one, without splitting the binary or the
+server build.
+
+**Alternative rejected:** Filtering the tool out in `grok_loop` when it
+forwards the list. That leaves the tool callable by name on a surface the
+model reaches, and every other client that spawns this server directly
+(Kiro, Claude Desktop, Goose) would still be offered it.
+
+---
+
+## 2026-09-04 — Greeting and title bar follow the session's engine (Class B)
+
+**Decision:** Each session stamps the engine it started with (`native` |
+`grok`) on `Session`, persists it on `SessionRecord`, and carries it on
+`session_state`. The empty-chat greeting and the title-bar model chip
+read that field, not `setup_state.engine` (which is only what *new*
+sessions will use). Grok sessions emit `grok_mode.model` (configured
+default at open, ACP `_meta.modelId` once the CLI names one) instead of
+native `tier_state` slugs. A store written before the field existed
+revives with current `config.engine.kind`, which is what those sessions
+already did.
+
+**Rationale:** Settings → Engine applies to new sessions; a running
+session keeps the loop it started with. The greeting was showing
+`brain · <native slug>` on every empty chat, including Grok ones, so it
+named a model that would not answer. Per-session engine is the honest
+source for "what will answer this chat".
+
+**Alternative rejected:** Reading the global Settings engine in the
+greeting (matches the old title bar, lies after an engine switch with
+mixed sessions). Also rejected: spawning Grok at session open just to
+learn the model — the CLI's configured default is enough for an empty
+chat, and ACP updates it on the first turn.
+
+---
+
+## 2026-09-04 — Grok photos: raise ACP line limit; file links when image:false (Class B)
+
+**Decision:** The ACP stdout reader uses a 16MiB `StreamReader` limit
+instead of asyncio's 64KiB default. When Grok's initialize result has
+`promptCapabilities.image: false` (1.0.13 does), attached photos are
+written to `{workspace}/.tst/attachments/{session_id}/` and sent as
+ACP `resource_link` blocks plus a text path, not as `type: image`
+content. If the agent later advertises image support, image blocks
+are still sent.
+
+**Rationale:** Attaching a ~53KB photo made the Grok CLI look like it
+had died (`agent_exited` / "Grok agent process closed stdout"). The
+process was alive: it echoed the image as one NDJSON
+`user_message_chunk` whose base64 line exceeded 64KiB, and
+`StreamReader.readline` raised `ValueError`, which the reader treated
+as a closed agent. Separately, Grok 1.0.13 advertises `image: false`
+and drops image blocks (`image_dropped`) even when the line fits, so
+the model never saw the photo. A workspace file is something its
+Read tool can open; `.tst/attachments/` is gitignored with the rest
+of `.tst/` runtime state.
+
+**Alternative rejected:** Sending image blocks anyway and catching
+`image_dropped`. The line-limit crash still happens, and the model
+still does not see the photo. Also rejected: data-URI resource blobs
+(same oversized NDJSON line).
+
+---
+
+## 2026-09-09 — Background computer use is app-scoped AX, not a second pointer (Class B)
+
+**Decision:** Computer use gains a background path that targets an
+*application* through its accessibility tree (`list_apps`,
+`ui_snapshot`, `ui_action`, `launch_app`). Those actions do not move
+the pointer or synthesize keystrokes. Screenshot / click / type remain
+as full control. Denied apps (and a non-empty allowlist) are enforced
+in `tst_cu_mcp.apps` before any OS call. The default mode is
+`background`. `actuation.enabled` stays default-on because computer
+use already shipped; Settings exposes the switch rather than
+silently turning the existing path off.
+
+AX snapshot and press run in the TST Desk host (`cu_ax.rs` over
+`cu-agent.sock`) when the MCP process is not the host identity, same
+TCC seam as click. Flattening and path ids (`0.2.1`) live in Python
+(`tree.py`) so the host can return a nested tree and one implementation
+assigns ids. Hide/unhide are primitives for full control;
+`unhide_on_finish` registers `atexit` after a hide so a crashed
+session restores windows.
+
+**Rationale:** Claude Desktop's Computer use panel is opt-in,
+app-scoped, and background-first on macOS 15+. Coordinate-driven
+automation cannot share the keyboard with the user. The accessibility
+tree can. Matching Claude's *settings* without this engine would be
+theater.
+
+**Alternative rejected:** Refusing click/type while mode is background.
+The tools stay available for controls the tree cannot reach; server
+instructions tell the model to prefer `ui_action`. Also rejected:
+shipping a default finance/crypto denylist — TST Desk has no account
+and does not copy Anthropic's product policy onto the user's machine.
+The denylist starts empty.
+
+**Follow-up:** TD-4830 is the Settings page that writes
+`~/.tst-cu-mcp/config.yaml`. Per-app "allow for this session" prompts
+and category tiers (view-only browsers, click-only IDEs) are not in
+this story.

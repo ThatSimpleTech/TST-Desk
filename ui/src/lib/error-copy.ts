@@ -23,6 +23,39 @@ export interface NoticeSpec {
 	body: string;
 }
 
+// ── Checkpoint / memory degradation notices (TD-705, TD-2104) ────────────
+
+/** Title per notice code. The body is the daemon's own message. */
+const CHECKPOINT_NOTICE_TITLES: Record<string, string> = {
+	no_git: "Checkpoints are off",
+	dirty_baseline: "Checkpoints skip your own changes",
+	rebase_in_progress: "Checkpoints paused",
+	git_error: "Checkpoint failed",
+	memory_no_git: "Memory edits are not versioned",
+};
+
+/**
+ * Copy for a one-time checkpoint or memory degradation notice.
+ *
+ * The body is the daemon's message verbatim: it already names the
+ * workspace condition and what it means for the session, it is the side
+ * that knows which of the two rails raised it, and restating it here is
+ * two copies of the same sentence drifting apart in two languages.
+ *
+ * A toast, not a banner: none of these stop work — checkpoints degrade,
+ * the turn still runs. The daemon sends each code at most once per
+ * session and the store keys them per code, so they neither stack nor
+ * repeat. An unrecognised code still says something, because a code the
+ * daemon added before this table did is exactly how a notice goes silent.
+ */
+export function checkpointNoticeCopy(code: string, message: string): NoticeSpec {
+	return {
+		severity: "toast",
+		title: CHECKPOINT_NOTICE_TITLES[code] ?? "Checkpoint notice",
+		body: message,
+	};
+}
+
 // ── Turn failures (turn_complete.failed + error_code) ────────────────────
 
 const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
@@ -104,6 +137,16 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 	// partial answer to explain away. Naming the provider matters — the turn
 	// used to surface as "the model finished without a reply", which blames
 	// the model for output the provider never sent.
+	already_started: {
+		severity: "toast",
+		title: "Grok is already running",
+		body: "This session already has a Grok agent. Send another message, or start a new session.",
+	},
+	agent_exited: {
+		severity: "toast",
+		title: "Grok stopped",
+		body: "The Grok CLI closed. Send another message to start it again.",
+	},
 	empty_stream: {
 		severity: "toast",
 		title: "Provider sent nothing",

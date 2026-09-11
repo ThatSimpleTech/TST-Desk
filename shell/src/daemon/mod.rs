@@ -517,6 +517,13 @@ pub fn spawn_daemon_with(
         .arg("INFO")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(target_os = "macos")]
+    {
+        cmd.env(
+            crate::cu_agent::SOCK_ENV,
+            crate::cu_agent::sock_path(data_dir),
+        );
+    }
     daemon_pid::apply_process_group(&mut cmd);
     cmd.spawn().map_err(|e| format!("spawn failed: {e}"))
 }

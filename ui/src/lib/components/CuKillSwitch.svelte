@@ -33,9 +33,9 @@
 		gap: var(--space-1);
 		font-size: var(--text-xs);
 		font-weight: var(--weight-medium);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		background: transparent;
-		border: 1px solid var(--color-border);
+		border: 1px solid var(--color-hairline);
 		border-radius: var(--radius-full);
 		padding: var(--space-1) var(--space-2);
 		cursor: pointer;
@@ -45,17 +45,17 @@
 	}
 
 	.kill:hover {
-		border-color: var(--color-danger);
-		color: var(--color-danger);
+		border-color: var(--color-err);
+		color: var(--color-err);
 	}
 
 	.kill--engaged {
-		color: var(--color-danger);
-		border-color: var(--color-danger);
-		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+		color: var(--color-err);
+		border-color: var(--color-err);
+		background: color-mix(in srgb, var(--color-err) 12%, transparent);
 	}
 
 	.kill--engaged:hover {
-		background: color-mix(in srgb, var(--color-danger) 20%, transparent);
+		background: color-mix(in srgb, var(--color-err) 20%, transparent);
 	}
 </style>

@@ -2,7 +2,7 @@
 // and the chip copy are the contract ChatPane renders.
 
 import { describe, expect, it } from "vitest";
-import { greetingForHour, SUGGESTIONS } from "./greeting";
+import { greetingContext, greetingForHour, SUGGESTIONS } from "./greeting";
 
 describe("greetingForHour", () => {
 	it("greets morning from 05:00 through 11:59", () => {
@@ -30,5 +30,51 @@ describe("SUGGESTIONS", () => {
 			"Find what's failing",
 			"Explain this codebase",
 		]);
+	});
+});
+
+describe("greetingContext", () => {
+	it("names native engine, tier, and slug for this chat", () => {
+		expect(
+			greetingContext({
+				workspace: "TST-Desk",
+				engine: "native",
+				tier: "brain",
+				slug: "Stealth/ox-alpha",
+			}),
+		).toBe("TST-Desk · native · brain · Stealth/ox-alpha");
+	});
+
+	it("names grok engine and the Grok model, not native slugs", () => {
+		expect(
+			greetingContext({
+				workspace: "TST-Desk",
+				engine: "grok",
+				tier: "brain",
+				slug: "Stealth/ox-alpha",
+				grokModel: "grok-4.6",
+				grokMode: "plan",
+			}),
+		).toBe("TST-Desk · grok · grok-4.6");
+	});
+
+	it("falls back to grok mode when no model is named yet", () => {
+		expect(
+			greetingContext({
+				workspace: "TST-Desk",
+				engine: "grok",
+				grokMode: "plan",
+			}),
+		).toBe("TST-Desk · grok · plan");
+	});
+
+	it("omits anything the daemon has not named", () => {
+		expect(greetingContext({ workspace: "TST-Desk", engine: "grok" })).toBe(
+			"TST-Desk · grok",
+		);
+		expect(greetingContext({ engine: "native", tier: "brain" })).toBe(
+			"native · brain",
+		);
+		expect(greetingContext({})).toBe("");
 	});
 });

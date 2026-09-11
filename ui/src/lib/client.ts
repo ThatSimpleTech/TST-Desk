@@ -73,6 +73,12 @@ const KNOWN_EVENT_TYPES = new Set([
   "cu_permissions", // TD-3302
   "job_list", // TD-3805
   "job_draft", // TD-3803
+  "grok_commands",
+  "grok_plan",
+  "grok_mode",
+  "grok_preview",
+  "grok_session_list",
+  "grok_extensions",
   "transcript", // TD-4701
 ]);
 

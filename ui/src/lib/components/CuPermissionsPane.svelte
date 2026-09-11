@@ -3,13 +3,15 @@
 	// Same panel for first-run and Settings reopen. macOS is TCC; Windows
 	// is the missing grant dialog plus UIPI and the secure desktop; Linux
 	// is X11 no-gate honesty plus named Wayland / XTEST / display limits.
+	// The macOS branch lives in CuPermissionsMacos.svelte (TD-4823): it
+	// also shows stale grants and the reset action.
 	import {
 		cuPermissions,
 		closeCuPermissions,
 		openCuPermissions,
-		openSystemSettings,
 		retryCuPermissions,
 	} from '../cu-permissions.svelte.js';
+	import CuPermissionsMacos from './CuPermissionsMacos.svelte';
 	import Icon from './Icon.svelte';
 
 	interface Props {
@@ -20,8 +22,6 @@
 
 	const isWindows = $derived(cuPermissions.platform === 'windows');
 	const isLinux = $derived(cuPermissions.platform === 'linux');
-	const screenOk = $derived(cuPermissions.screenRecording);
-	const accessOk = $derived(cuPermissions.accessibility);
 
 	const settingsHint = $derived(
 		isWindows
@@ -174,53 +174,7 @@
 					</p>
 				{/if}
 			{:else}
-				<p class="body">
-					Desktop computer use needs two macOS permissions, granted to this app — not the sidecar.
-					After you enable them, fully quit and reopen TST Desk; macOS caches the grant per-binary.
-				</p>
-				<ul class="perms">
-					<li>
-						<strong>Screen Recording</strong>
-						— capture the desktop (screenshots).
-						<span class="status" class:status--ok={screenOk} class:status--bad={!screenOk}>
-							{screenOk ? 'granted' : 'denied'}
-						</span>
-					</li>
-					<li>
-						<strong>Accessibility</strong>
-						— move the pointer, click, type, and scroll.
-						<span class="status" class:status--ok={accessOk} class:status--bad={!accessOk}>
-							{accessOk ? 'granted' : 'denied'}
-						</span>
-					</li>
-				</ul>
-				<div class="actions">
-					<button
-						class="btn"
-						type="button"
-						disabled={cuPermissions.screenRecordingUrl === ''}
-						onclick={() => void openSystemSettings(cuPermissions.screenRecordingUrl)}
-						>Screen Recording settings</button
-					>
-					<button
-						class="btn"
-						type="button"
-						disabled={cuPermissions.accessibilityUrl === ''}
-						onclick={() => void openSystemSettings(cuPermissions.accessibilityUrl)}
-						>Accessibility settings</button
-					>
-					<button
-						class="btn btn--primary"
-						type="button"
-						disabled={cuPermissions.probing}
-						onclick={() => retryCuPermissions()}>Retry</button
-					>
-				</div>
-				{#if cuPermissions.probing}
-					<p class="hint" aria-live="polite">Checking permissions…</p>
-				{:else if cuPermissions.granted}
-					<p class="hint" aria-live="polite">Both permissions are granted. You can retry the turn.</p>
-				{/if}
+				<CuPermissionsMacos />
 			{/if}
 		</div>
 	</div>
@@ -253,7 +207,7 @@
 	}
 
 	.title {
-		font-size: var(--text-md);
+		font-size: var(--text-lg);
 		font-weight: var(--weight-semibold);
 		color: var(--color-ink);
 		margin: 0;

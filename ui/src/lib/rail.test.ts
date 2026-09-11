@@ -20,9 +20,79 @@ import {
 	archivedToggle,
 	starredToggle,
 	emptyRowsCopy,
+	groupRowsByRecency,
 	DELETE_CONFIRM,
 	MOVE_HINT,
+	attentionCount,
+	attentionHint,
+	needsAttention,
+	railOrder,
+	sessionIdAtSlot,
+	stepSessionId,
 } from "./rail";
+
+// ── Recency groups ────────────────────────────────────────────────────────
+//
+// Built in local time on purpose: the rail's "Today" is the user's today,
+// and the boundary that matters is local midnight, not UTC's.
+
+describe("groupRowsByRecency", () => {
+	const now = new Date(2026, 7, 14, 12, 0, 0).getTime(); // Aug 14, noon, local
+	const at = (y: number, m: number, d: number, h = 9) => new Date(y, m, d, h).toISOString();
+	const row = (id: string, updatedAt: string, starred = false) => ({ id, updatedAt, starred });
+
+	it("buckets by local calendar day and keeps the incoming order inside a bucket", () => {
+		const groups = groupRowsByRecency(
+			[
+				row("t1", at(2026, 7, 14, 11)),
+				row("t2", at(2026, 7, 14, 0)),
+				row("y1", at(2026, 7, 13, 23)),
+				row("w1", at(2026, 7, 10)),
+				row("e1", at(2026, 7, 1)),
+			],
+			now,
+		);
+		expect(groups.map((g) => g.id)).toEqual(["today", "yesterday", "week", "earlier"]);
+		expect(groups[0].rows.map((r) => r.id)).toEqual(["t1", "t2"]);
+		expect(groups[1].rows.map((r) => r.id)).toEqual(["y1"]);
+	});
+
+	it("labels the groups for the heading", () => {
+		const labels = groupRowsByRecency(
+			[row("a", at(2026, 7, 14)), row("b", at(2026, 7, 13)), row("c", at(2026, 7, 9)), row("d", at(2026, 6, 1))],
+			now,
+		).map((g) => g.label);
+		expect(labels).toEqual(["Today", "Yesterday", "This week", "Earlier"]);
+	});
+
+	it("omits empty groups, so one day's sessions get one heading", () => {
+		const groups = groupRowsByRecency([row("a", at(2026, 7, 14)), row("b", at(2026, 7, 14))], now);
+		expect(groups.map((g) => g.id)).toEqual(["today"]);
+	});
+
+	it("holds starred rows in their own group at the top, whatever their date", () => {
+		const groups = groupRowsByRecency(
+			[row("s", at(2026, 6, 1), true), row("a", at(2026, 7, 14))],
+			now,
+		);
+		expect(groups.map((g) => g.id)).toEqual(["starred", "today"]);
+	});
+
+	it("puts an unparseable timestamp under Earlier rather than dropping the row", () => {
+		const groups = groupRowsByRecency([row("x", "not-a-date")], now);
+		expect(groups.map((g) => g.id)).toEqual(["earlier"]);
+		expect(groups[0].rows).toHaveLength(1);
+	});
+
+	it("treats a timestamp ahead of the clock as today", () => {
+		const groups = groupRowsByRecency([row("f", at(2026, 7, 14, 18))], now);
+		expect(groups.map((g) => g.id)).toEqual(["today"]);
+	});
+
+	it("returns nothing for no rows", () => {
+		expect(groupRowsByRecency([], now)).toEqual([]);
+	});
+});
 
 describe("rail sections", () => {
 	it("groups function entries above session history", () => {
@@ -299,5 +369,69 @@ describe("emptyRowsCopy", () => {
 
 	it("does not claim a filter hid rows when the shelf itself is empty", () => {
 		expect(emptyRowsCopy(true, true, false)).toBe("No archived sessions");
+	});
+});
+
+// ── Attention and keyboard order (navigation round, 2026-09) ─────────────
+
+describe("attention", () => {
+	it("counts sessions parked on an approval, archived ones aside", () => {
+		expect(attentionCount([])).toBe(0);
+		expect(attentionCount([{ state: "running" }, { state: "idle" }])).toBe(0);
+		expect(
+			attentionCount([
+				{ state: "awaiting_approval" },
+				{ state: "running" },
+				{ state: "awaiting_approval", archived: true },
+				{ state: "awaiting_approval", archived: false },
+			]),
+		).toBe(2);
+	});
+
+	it("names the one state that needs the user", () => {
+		expect(needsAttention("awaiting_approval")).toBe(true);
+		expect(needsAttention("running")).toBe(false);
+		expect(needsAttention("failed")).toBe(false);
+	});
+
+	it("reads as a sentence in the singular and the plural", () => {
+		expect(attentionHint(1)).toBe("1 session is waiting for your approval");
+		expect(attentionHint(3)).toBe("3 sessions are waiting for your approval");
+	});
+});
+
+describe("keyboard order", () => {
+	const groups = [
+		{ rows: [{ sessionId: "s1" }] },
+		{ rows: [{ sessionId: "t1" }, { sessionId: "t2" }] },
+		{ rows: [{ sessionId: "e1" }] },
+	];
+	const order = railOrder(groups);
+
+	it("flattens the groups in drawn order", () => {
+		expect(order).toEqual(["s1", "t1", "t2", "e1"]);
+		expect(railOrder([])).toEqual([]);
+	});
+
+	it("steps to the neighbour and stops at the ends", () => {
+		expect(stepSessionId(order, "t1", 1)).toBe("t2");
+		expect(stepSessionId(order, "t1", -1)).toBe("s1");
+		expect(stepSessionId(order, "e1", 1)).toBeNull();
+		expect(stepSessionId(order, "s1", -1)).toBeNull();
+	});
+
+	it("enters the list from the near end when nothing attached is shown", () => {
+		expect(stepSessionId(order, null, 1)).toBe("s1");
+		expect(stepSessionId(order, null, -1)).toBe("e1");
+		expect(stepSessionId(order, "not-shown", 1)).toBe("s1");
+		expect(stepSessionId([], null, 1)).toBeNull();
+	});
+
+	it("names a slot from the top, and nothing past the end", () => {
+		expect(sessionIdAtSlot(order, 1)).toBe("s1");
+		expect(sessionIdAtSlot(order, 4)).toBe("e1");
+		expect(sessionIdAtSlot(order, 5)).toBeNull();
+		expect(sessionIdAtSlot(order, 0)).toBeNull();
+		expect(sessionIdAtSlot(order, 1.5)).toBeNull();
 	});
 });

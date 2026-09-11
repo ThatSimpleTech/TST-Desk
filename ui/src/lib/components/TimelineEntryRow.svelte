@@ -1,10 +1,12 @@
 <script lang="ts">
-	// Presentational timeline row: a collapsed one-liner (tone marker, kind
+	// Presentational timeline row: a collapsed one-liner (kind glyph, kind
 	// label, title, preview) that expands to full details — arguments, output,
 	// a syntax-highlighted diff for file writes, and the live shell stream.
 	// All visual decisions come from entry-view.ts (AC #6); this stays a view.
+	import Icon from './Icon.svelte';
+	import DiffPreview from './DiffPreview.svelte';
 	import type { TimelineEntry } from '../timeline';
-	import { KIND_LABELS, entryTone, classifyDiffLine, diffLines } from '../entry-view';
+	import { KIND_LABELS, entryIcon, entryTone, isScalarDetail } from '../entry-view';
 
 	interface Props {
 		entry: TimelineEntry;
@@ -15,23 +17,38 @@
 	let { entry, expanded, ontoggle }: Props = $props();
 
 	let tone = $derived(entryTone(entry));
+	let icon = $derived(entryIcon(entry));
 	let kindLabel = $derived(KIND_LABELS[entry.kind]);
 
 	let diff = $derived(typeof entry.details.diff === 'string' ? (entry.details.diff as string) : null);
+
+	// Output, diff and name have their own places in the row; the rest is a
+	// key/value grid — scalars inline, structures in a code block.
+	let fields = $derived(
+		Object.entries(entry.details).filter(
+			([key]) => key !== 'output' && key !== 'diff' && key !== 'name'
+		)
+	);
 
 	function pretty(value: unknown): string {
 		if (typeof value === 'string') return value;
 		return JSON.stringify(value, null, 2);
 	}
+
+	function inline(value: string | number | boolean | null): string {
+		return value === null ? '—' : String(value);
+	}
 </script>
 
 <div class="row row--{tone}" class:expanded>
 	<button class="row-main" type="button" onclick={ontoggle} aria-expanded={expanded}>
-		<span class="marker" aria-hidden="true"></span>
+		<span class="glyph" aria-hidden="true"><Icon name={icon} size={14} /></span>
 		<span class="kind">{kindLabel}</span>
 		<span class="title">{entry.title}</span>
 		<span class="preview">{entry.preview}</span>
-		<span class="chevron" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+		<span class="chevron" class:chevron--open={expanded} aria-hidden="true">
+			<Icon name="chevron-right" size={14} />
+		</span>
 	</button>
 
 	{#if expanded}
@@ -54,20 +71,22 @@
 			{#if diff}
 				<section class="section">
 					<h4 class="section-title">Diff</h4>
-					<pre class="code diff">{#each diffLines(diff) as line}<span class="diff-line diff-line--{classifyDiffLine(line)}">{line}</span>{'\n'}{/each}</pre>
+					<DiffPreview {diff} />
 				</section>
 			{/if}
 
-			<dl class="fields">
-				{#each Object.entries(entry.details) as [key, value]}
-					{#if key !== 'output' && key !== 'diff' && key !== 'name'}
-						<div class="field">
-							<dt class="field-key">{key}</dt>
+			{#if fields.length > 0}
+				<dl class="fields">
+					{#each fields as [key, value] (key)}
+						<dt class="field-key">{key}</dt>
+						{#if isScalarDetail(value)}
+							<dd class="field-value field-value--inline">{inline(value)}</dd>
+						{:else}
 							<dd class="field-value"><pre class="code">{pretty(value)}</pre></dd>
-						</div>
-					{/if}
-				{/each}
-			</dl>
+						{/if}
+					{/each}
+				</dl>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -77,8 +96,8 @@
 		/* Collapsed height must equal ActivityTimeline's ROW_HEIGHT (32px).
 		   border-box (global) includes the border, so the total stays exact. */
 		height: 32px;
-		border-bottom: var(--border-width) solid var(--color-border);
-		background: var(--color-bg);
+		border-bottom: var(--border-width) solid var(--color-hairline);
+		background: var(--color-ground);
 	}
 
 	.row.expanded {
@@ -94,33 +113,36 @@
 		padding: 0 var(--space-3);
 		border: none;
 		background: transparent;
-		color: var(--color-text);
+		color: var(--color-ink);
 		font-size: var(--text-xs);
 		cursor: pointer;
 		text-align: left;
 	}
 
 	.row-main:hover {
-		background: var(--color-bg-subtle);
+		background: var(--color-sunken);
 	}
 
-	/* Distinct colored marker per entry type (AC #6). */
-	.marker {
-		width: var(--space-2);
-		height: var(--space-2);
-		border-radius: var(--radius-full);
+	/* Keep the ring inside the 32px row; the virtual list clips outside it. */
+	.row-main:focus-visible {
+		outline-offset: -2px;
+	}
+
+	/* One glyph per entry kind, coloured by outcome (AC #6): the shape says
+	   what happened, the colour says how it went. */
+	.glyph {
+		display: inline-flex;
 		flex-shrink: 0;
-		background: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
-	.row--neutral .marker { background: var(--color-text-muted); }
-	.row--info .marker { background: var(--color-info); }
-	.row--success .marker { background: var(--color-success); }
-	.row--warning .marker { background: var(--color-warning); }
-	.row--danger .marker { background: var(--color-danger); }
+	.row--info .glyph { color: var(--color-accent); }
+	.row--success .glyph { color: var(--color-ok); }
+	.row--warning .glyph { color: var(--color-warn); }
+	.row--danger .glyph { color: var(--color-err); }
 
 	.kind {
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		font-weight: var(--weight-semibold);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
@@ -138,7 +160,7 @@
 	}
 
 	.preview {
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -146,8 +168,14 @@
 	}
 
 	.chevron {
-		color: var(--color-text-muted);
+		display: inline-flex;
+		color: var(--color-ink-muted);
 		flex-shrink: 0;
+		transition: transform var(--dur-exit) var(--ease-out);
+	}
+
+	.chevron--open {
+		transform: rotate(90deg);
 	}
 
 	.details {
@@ -155,7 +183,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
-		background: var(--color-bg-subtle);
+		background: var(--color-sunken);
+		animation: rise var(--dur-enter) var(--ease-out);
 	}
 
 	.section {
@@ -167,15 +196,15 @@
 	.section-title {
 		font-size: var(--text-xs);
 		font-weight: var(--weight-semibold);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		margin: 0;
 	}
 
 	.code {
 		margin: 0;
 		padding: var(--space-2) var(--space-3);
-		background: var(--color-bg);
-		border: var(--border-width) solid var(--color-border);
+		background: var(--color-ground);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-sm);
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
@@ -186,41 +215,38 @@
 	}
 
 	.code--stderr {
-		color: var(--color-danger);
+		color: var(--color-err);
 	}
 
-	/* Syntax-highlighted diff (AC #3). */
-	.diff {
-		white-space: pre;
-	}
+	/* The diff itself is DiffPreview, shared with the Files and Work panes
+	   (AC #3) so one write looks the same wherever it is opened. */
 
-	.diff-line { display: inline; }
-	.diff-line--add { color: var(--color-success); }
-	.diff-line--del { color: var(--color-danger); }
-	.diff-line--hunk { color: var(--color-info); }
-	.diff-line--meta { color: var(--color-text-muted); font-weight: var(--weight-semibold); }
-	.diff-line--context { color: var(--color-text-secondary); }
-
+	/* Key/value grid: keys in their own column so a dozen fields read as a
+	   table, not a stack of labelled boxes. */
 	.fields {
 		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-	}
-
-	.field {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-1);
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		gap: var(--space-1) var(--space-3);
+		align-items: baseline;
 	}
 
 	.field-key {
 		font-size: var(--text-xs);
 		font-weight: var(--weight-semibold);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.field-value {
 		margin: 0;
+		min-width: 0;
+	}
+
+	.field-value--inline {
+		font-family: var(--font-mono);
+		font-size: var(--text-xs);
+		color: var(--color-ink);
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 </style>

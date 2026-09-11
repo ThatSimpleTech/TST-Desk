@@ -46,14 +46,28 @@ uv run tst-cu-mcp
 ### macOS — grant permissions (required)
 
 macOS gates screen capture and input synthesis behind two permissions, and it
-grants them to **the app that launches the server** — Kiro, Claude Desktop,
-Goose, or your terminal — **not** to the server itself.
+grants them to **the app that launches the server** — TST Desk, Kiro, Claude
+Desktop, Goose, or your terminal — **not** to the server itself.
 
 1. **Screen Recording** — System Settings > Privacy & Security > Screen Recording
 2. **Accessibility** — System Settings > Privacy & Security > Accessibility
 
-Enable your **host app** in both, then **fully quit and reopen it**. macOS caches
-the grant per-binary, so reconnecting the server alone will not pick it up.
+Enable your **host app** in both, then **fully quit and reopen it** (Cmd+Q, not
+just closing the window). macOS pins each grant to the host's code signature,
+so reconnecting the server or clicking Allow on the in-app prompt again will
+not pick it up. `check_permissions` with `request=true` raises each prompt at
+most once.
+
+**Settings shows the host ON but capture or input still fails?** The grant
+belongs to an older build of the host (an ad-hoc signature changes on every
+rebuild). `check_permissions` reports this as `stale_grant_suspected`; no
+amount of `request=true` repairs it. Reset the rows and allow again:
+
+- In TST Desk: Settings → Computer use → **Reset grants & re-request**, then
+  relaunch. TST Desk signs its builds with a stable identity
+  (`shell/scripts/install-macos.sh`), so grants survive later rebuilds.
+- Any other host: `tccutil reset ScreenCapture <host bundle id>` and
+  `tccutil reset Accessibility <host bundle id>`, then relaunch the host.
 
 ### Windows — no permission gate, two real limits
 
@@ -144,15 +158,27 @@ needs nothing on the host app's `PATH`.
 | `screenshot` | Capture a display (or a `region` of it) as PNG + coordinate metadata. |
 | `wait` | Sleep (max 30s) to let the UI settle. |
 | `wait_for_window` | Poll until a named window is in front, or time out. |
+| `list_apps` | Running user-facing apps (name, pid, bundle id). Denied apps omitted. |
+| `ui_snapshot` | Accessibility tree for an app. Does not take the pointer or raise the app. |
+| `ui_action` | `press` / `set_value` / `focus` / `raise` / `show_menu` on an element id from `ui_snapshot`. |
+| `launch_app` | Open an app by name or bundle id without Spotlight. |
+| `hide_other_apps` | Full control: hide other regular apps so only the target stays visible. |
+| `unhide_apps` | Restore apps hidden by `hide_other_apps`. |
 | `move_mouse` | Move the cursor to a point. |
 | `click` | Click; `button` = left/right, `count` >= 2 for double/triple. |
 | `type_text` | Type a Unicode string at the current focus (never logged). |
 | `press_keys` | Press a combo like `cmd+c`, `ctrl+shift+t`, `return`, `escape`. |
 | `scroll` | Scroll by lines, optionally over a target point. |
 
+Prefer **background** tools (`list_apps` → `ui_snapshot` → `ui_action`) so the
+agent drives an allowed app through its accessibility tree while you keep using
+the computer. Screenshot / click / type take **full control** of the pointer and
+keyboard; use them when the tree cannot reach the control.
+
 The reads — `health`, `check_permissions`, `get_screen_info`,
-`get_foreground_window`, `get_cursor_position`, `screenshot` — keep working while
-the kill-switch is engaged. Stopping the hands should not blind the eyes.
+`get_foreground_window`, `get_cursor_position`, `screenshot`, `list_apps`,
+`ui_snapshot` — keep working while the kill-switch is engaged. Stopping the hands
+should not blind the eyes.
 
 ### Aiming safely: `expect_window`
 
@@ -254,6 +280,8 @@ with the stop-file instead. For Kiro, in `~/.kiro/settings/mcp.json`:
 "autoApprove": [
   "health", "check_permissions", "get_screen_info", "get_foreground_window",
   "get_cursor_position", "screenshot", "wait", "wait_for_window",
+  "list_apps", "ui_snapshot", "ui_action", "launch_app",
+  "hide_other_apps", "unhide_apps",
   "move_mouse", "scroll", "click", "type_text", "press_keys"
 ]
 ```

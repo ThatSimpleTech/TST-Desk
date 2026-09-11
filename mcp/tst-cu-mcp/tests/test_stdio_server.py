@@ -13,12 +13,15 @@ EOF.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from typing import Any
 
 import pytest
 from mcp_types.version import LATEST_HANDSHAKE_VERSION
+
+from tst_cu_mcp.server import INTERNAL_ENV
 
 TOOL_NAMES = {
     "health",
@@ -34,7 +37,12 @@ TOOL_NAMES = {
     "get_cursor_position",
     "wait",
     "wait_for_window",
-    "overlay_session",
+    "list_apps",
+    "ui_snapshot",
+    "ui_action",
+    "launch_app",
+    "hide_other_apps",
+    "unhide_apps",
     "hit_test",
 }
 
@@ -50,8 +58,39 @@ def rpc(request_id: int | None, method: str, params: dict[str, Any] | None = Non
     return json.dumps(message)
 
 
-def run_session(requests: list[str]) -> dict[str, Any]:
+def child_env(*, internal: bool = False) -> dict[str, str]:
+    """The child's environment, with the internal flag set explicitly.
+
+    Inheriting it would mean a developer who happens to export
+    ``TST_CU_MCP_INTERNAL`` sees a different tool list than CI does.
+    """
+    env = dict(os.environ)
+    env.pop(INTERNAL_ENV, None)
+    if internal:
+        env[INTERNAL_ENV] = "1"
+    return env
+
+
+def handshake_requests() -> list[str]:
+    """Initialize, confirm, list tools — the shortest session that has a surface."""
+    return [
+        rpc(
+            1,
+            "initialize",
+            {
+                "protocolVersion": LATEST_HANDSHAKE_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "tst-cu-mcp-tests", "version": "0"},
+            },
+        ),
+        rpc(None, "notifications/initialized"),
+        rpc(2, "tools/list"),
+    ]
+
+
+def run_session(requests: list[str], *, internal: bool = False) -> dict[str, Any]:
     """Write every request up front, close stdin, and return the parsed session."""
+    env = child_env(internal=internal)
     completed = subprocess.run(
         [sys.executable, "-m", "tst_cu_mcp"],
         input="\n".join(requests) + "\n",
@@ -59,6 +98,7 @@ def run_session(requests: list[str]) -> dict[str, Any]:
         text=True,
         timeout=TIMEOUT_SECONDS,
         check=False,
+        env=env,
     )
     responses: dict[Any, dict[str, Any]] = {}
     for line in completed.stdout.splitlines():
@@ -79,21 +119,7 @@ def run_session(requests: list[str]) -> dict[str, Any]:
 @pytest.fixture(scope="module")
 def session() -> dict[str, Any]:
     """Run one stdio session and return its parsed responses keyed by request id."""
-    requests = "\n".join(
-        [
-            rpc(
-                1,
-                "initialize",
-                {
-                    "protocolVersion": LATEST_HANDSHAKE_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": "tst-cu-mcp-tests", "version": "0"},
-                },
-            ),
-            rpc(None, "notifications/initialized"),
-            rpc(2, "tools/list"),
-        ]
-    )
+    requests = "\n".join(handshake_requests())
 
     completed = subprocess.run(
         [sys.executable, "-m", "tst_cu_mcp"],
@@ -102,6 +128,7 @@ def session() -> dict[str, Any]:
         text=True,
         timeout=TIMEOUT_SECONDS,
         check=False,
+        env=child_env(),
     )
 
     responses: dict[int, Any] = {}
@@ -165,6 +192,23 @@ class TestToolListing:
     def test_no_unexpected_tools(self, session: dict[str, Any]) -> None:
         listed = {tool["name"] for tool in session["responses"][2]["result"]["tools"]}
         assert listed == TOOL_NAMES
+
+    def test_the_episode_bracket_is_not_on_the_model_facing_surface(
+        self, session: dict[str, Any]
+    ) -> None:
+        """``overlay_session`` opens and closes the real-display ring. A model
+        that can see it will call it, and a ring left lit by a model says a
+        computer-use episode is running when none is."""
+        listed = {tool["name"] for tool in session["responses"][2]["result"]["tools"]}
+        assert "overlay_session" not in listed
+
+    def test_the_daemons_own_child_still_gets_the_episode_bracket(self) -> None:
+        """The other half: gating it off the model must not take it away from
+        the driver that actually paints the ring."""
+        result = run_session(handshake_requests(), internal=True)
+        listed = {tool["name"] for tool in result["responses"][2]["result"]["tools"]}
+        assert "overlay_session" in listed
+        assert listed == TOOL_NAMES | {"overlay_session"}
 
     def test_every_tool_has_a_description(self, session: dict[str, Any]) -> None:
         for tool in session["responses"][2]["result"]["tools"]:

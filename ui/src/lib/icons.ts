@@ -43,6 +43,8 @@ export const ICONS = {
 	'chevron-down': '<path d="m6 9 6 6 6-6"/>',
 	/** Back to the project list (TD-2801). */
 	'chevron-left': '<path d="m15 18-6-6 6-6"/>',
+	/** Collapsed disclosure (timeline rows); rotates to open. */
+	'chevron-right': '<path d="m9 18 6-6-6-6"/>',
 	/** Copy (message actions). */
 	copy:
 		'<rect x="9" y="9" width="13" height="13" rx="2"/>' +
@@ -54,6 +56,11 @@ export const ICONS = {
 	/** Sidebar / session rail toggle (TD-1701). */
 	'panel-left':
 		'<rect x="3" y="3" width="18" height="18" rx="2"/>' + '<path d="M9 3v18"/>',
+	/** Inspector toggle on a narrow viewport (TD-3701). */
+	'panel-right':
+		'<rect x="3" y="3" width="18" height="18" rx="2"/>' + '<path d="M15 3v18"/>',
+	/** A tool call (activity timeline). */
+	terminal: '<path d="m4 17 6-6-6-6"/>' + '<path d="M12 19h8"/>',
 	/** New session (session rail, TD-1701). */
 	plus: '<path d="M5 12h14"/>' + '<path d="M12 5v14"/>',
 	/** Filter field affordance (session rail, TD-1701). */
@@ -99,6 +106,8 @@ export const ICONS = {
 		'<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>' +
 		'<path d="M10 11v6"/><path d="M14 11v6"/>',
 	/** Row action menu affordance (rail rows, TD-1715). */
+	/** Hold-to-talk dictation (composer, TD-4701). */
+	mic: '<path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/>',
 	/** Attach a text file (composer, TD-1709). */
 	paperclip:
 		'<path d="M21.4 11.05 12.25 20.2a6 6 0 0 1-8.49-8.49l9.2-9.19a4 4 0 0 1 5.65 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.83l8.48-8.49"/>',

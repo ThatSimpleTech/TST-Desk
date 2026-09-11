@@ -12,7 +12,9 @@
  *                                    the activity pane's quiet tint
  *   Text       --color-ink           warm near-black
  *              --color-ink-secondary warm taupe for supporting text
- *              --color-ink-muted     quietest text (placeholders, hints)
+ *              --color-ink-muted     quietest text (placeholders, hints) —
+ *                                    still ≥4.5:1 on every surface; the
+ *                                    contrast test in tokens.test.ts holds it
  *   Lines      --color-hairline      1px warm borders carry the separation —
  *                                    shadows stay near-invisible (≤6% alpha)
  *   Chat       --color-user-bubble   warm tan user-message bubble (TD-1603)
@@ -22,8 +24,10 @@
  *   Status     --color-ok / --color-warn / --color-err
  *              earthy, legible on both grounds
  *
- * Legacy aliases below keep TD-1001–TD-1404 components working untouched;
- * use the canonical names in new code.
+ * These are the only colour names in the tree. The TD-1001–TD-1404 alias
+ * names were retired in the September 2026 design rounds, and the
+ * vocabulary test in tokens.test.ts fails if a component reaches for one
+ * of them, or for any name no stylesheet declares.
  */
 
 :root {
@@ -33,7 +37,7 @@
 	--color-sunken:         #f1eee6;
 	--color-ink:            #191817;
 	--color-ink-secondary:  #5c574d;
-	--color-ink-muted:      #8a8579;
+	--color-ink-muted:      #706b5b;
 	--color-hairline:       #e4e0d8;
 	--color-user-bubble:    #e9e3d6;
 	--color-accent:         #b4532a;
@@ -45,26 +49,11 @@
 
 	/* ---- Syntax highlighting (TD-1609) ----
 	   Warm code palette consumed by hljs-theme.css; dark lifts each hue. */
-	--syn-comment:          #8a8579;
+	--syn-comment:          #706b5b;
 	--syn-keyword:          #b4532a;
 	--syn-string:           #3e7a4e;
 	--syn-number:           #9a6a1b;
 	--syn-title:            #7e3a5e;
-
-	/* ---- Legacy aliases (light) ---- */
-	--color-bg:             var(--color-ground);
-	--color-bg-subtle:      var(--color-sunken);
-	--color-bg-raised:      var(--color-lifted);
-	--color-border:         var(--color-hairline);
-	--color-text:           var(--color-ink);
-	--color-text-secondary: var(--color-ink-secondary);
-	--color-text-muted:     var(--color-ink-muted);
-	--color-accent-text:    var(--color-on-accent);
-	--color-success:        var(--color-ok);
-	--color-warning:        var(--color-warn);
-	--color-danger:         var(--color-err);
-	/* Info states (working dot, active tab) read as accent, not a cool hue. */
-	--color-info:           var(--color-accent);
 
 	/* ---- Spacing scale (4px base) ---- */
 	--space-0:   0px;
@@ -92,8 +81,6 @@
 	--font-sans:           -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 	--font-mono:           ui-monospace, 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
 	--tracking-display:    -0.02em;
-	/* Legacy alias — use --font-sans in new code. */
-	--font-family:         var(--font-sans);
 
 	--text-xs:   0.75rem;   /* 12px */
 	--text-sm:   0.875rem;  /* 14px */
@@ -131,6 +118,13 @@
 	--transition-fast: 150ms ease;
 	--transition-base: 200ms ease;
 	--transition-slow: 300ms ease;
+
+	/* ---- Motion ----
+	   Everything that appears shares one curve and one duration; whatever
+	   leaves goes faster than it came. Keyframes live in app.css. */
+	--ease-out:   cubic-bezier(0.2, 0.7, 0.2, 1);
+	--dur-enter:  220ms;
+	--dur-exit:   140ms;
 }
 
 /* ---- Dark theme ---- 
@@ -141,14 +135,14 @@
    `tokens.test.ts` fails if the two ever drift apart. */
 @media (prefers-color-scheme: dark) {
 	:root:not([data-theme="light"]) {
-		--color-ground:         #232320;
-		--color-lifted:         #2c2c28;
-		--color-sunken:         #2a2a26;
+		--color-ground:         #1f1f1c;
+		--color-lifted:         #2e2e2a;
+		--color-sunken:         #262622;
 		--color-ink:            #edeae3;
 		--color-ink-secondary:  #a39e93;
-		--color-ink-muted:      #6e6a61;
-		--color-hairline:       #3d3d37;
-		--color-user-bubble:    #3a382f;
+		--color-ink-muted:      #9a9588;
+		--color-hairline:       #42423b;
+		--color-user-bubble:    #3b392f;
 		--color-accent:         #d0794f;
 		--color-accent-hover:   #dc8a64;
 		--color-on-accent:      #ffffff;
@@ -157,28 +151,30 @@
 		--color-warn:           #d2a45c;
 		--color-err:            #d98a75;
 
-		--syn-comment:          #6e6a61;
+		--syn-comment:          #9a9588;
 		--syn-keyword:          #d0794f;
 		--syn-string:           #7fb08c;
 		--syn-number:           #d2a45c;
 		--syn-title:            #b87a9e;
 
-		/* Shadows go near-silent on dark; the hairline carries separation. */
+		/* Hairlines still carry in-page separation; only floating surfaces
+	   (popovers, toasts, the palette) get a real shadow, since a lifted
+	   surface on charcoal is otherwise indistinguishable from the page. */
 		--shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
-		--shadow-md: 0 4px 8px rgb(0 0 0 / 0.05);
-		--shadow-lg: 0 12px 24px rgb(0 0 0 / 0.06);
+		--shadow-md: 0 4px 8px rgb(0 0 0 / 0.12);
+		--shadow-lg: 0 12px 24px rgb(0 0 0 / 0.3);
 	}
 }
 
 :root[data-theme="dark"] {
-	--color-ground:         #232320;
-	--color-lifted:         #2c2c28;
-	--color-sunken:         #2a2a26;
+	--color-ground:         #1f1f1c;
+	--color-lifted:         #2e2e2a;
+	--color-sunken:         #262622;
 	--color-ink:            #edeae3;
 	--color-ink-secondary:  #a39e93;
-	--color-ink-muted:      #6e6a61;
-	--color-hairline:       #3d3d37;
-	--color-user-bubble:    #3a382f;
+	--color-ink-muted:      #9a9588;
+	--color-hairline:       #42423b;
+	--color-user-bubble:    #3b392f;
 	--color-accent:         #d0794f;
 	--color-accent-hover:   #dc8a64;
 	--color-on-accent:      #ffffff;
@@ -187,14 +183,16 @@
 	--color-warn:           #d2a45c;
 	--color-err:            #d98a75;
 
-	--syn-comment:          #6e6a61;
+	--syn-comment:          #9a9588;
 	--syn-keyword:          #d0794f;
 	--syn-string:           #7fb08c;
 	--syn-number:           #d2a45c;
 	--syn-title:            #b87a9e;
 
-	/* Shadows go near-silent on dark; the hairline carries separation. */
+	/* Hairlines still carry in-page separation; only floating surfaces
+	   (popovers, toasts, the palette) get a real shadow, since a lifted
+	   surface on charcoal is otherwise indistinguishable from the page. */
 	--shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
-	--shadow-md: 0 4px 8px rgb(0 0 0 / 0.05);
-	--shadow-lg: 0 12px 24px rgb(0 0 0 / 0.06);
+	--shadow-md: 0 4px 8px rgb(0 0 0 / 0.12);
+	--shadow-lg: 0 12px 24px rgb(0 0 0 / 0.3);
 }

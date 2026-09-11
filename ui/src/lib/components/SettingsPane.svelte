@@ -11,6 +11,7 @@
 		setSection,
 		setTheme,
 		setCoworker,
+		setVoice,
 		setRemoteAttach,
 		loadRules,
 		SETTINGS_SECTIONS,
@@ -20,15 +21,18 @@
 	import { session } from '../session-status.svelte.js';
 	import PolicyRuleList from './PolicyRuleList.svelte';
 	import SettingsKeys from './SettingsKeys.svelte';
+	import SettingsEngine from './SettingsEngine.svelte';
 	import SettingsMcp from './SettingsMcp.svelte';
 	import SettingsModels from './SettingsModels.svelte';
 	import SettingsAbout from './SettingsAbout.svelte';
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
-	import CuPermissionsPane from './CuPermissionsPane.svelte';
+	import CuPolicyPane from './CuPolicyPane.svelte';
 	import Icon from './Icon.svelte';
 
 	const SECTION_LABEL: Record<SettingsSection, string> = {
 		appearance: 'Appearance',
+		computer: 'Computer use',
+		engine: 'Engine',
 		model: 'Model',
 		policy: 'Policy',
 		mcp: 'MCP servers',
@@ -113,6 +117,23 @@
 					</div>
 					<p class="hint">Off restores close = shutdown. Quit always shuts down.</p>
 					<div class="keep-running">
+						<p class="keep-title">Hold-to-talk dictation</p>
+						<button
+							class="choice"
+							class:choice--active={settings.voiceEnabled}
+							type="button"
+							role="switch"
+							aria-checked={settings.voiceEnabled}
+							onclick={() => setVoice(!settings.voiceEnabled)}
+							>{settings.voiceEnabled ? 'On' : 'Off'}</button
+						>
+					</div>
+					<p class="hint">
+						Off by default. No always-on mic. Hold the mic in the composer — OS dictation
+						when the system has it, or your configured voice.base_url endpoint. Works
+						with either engine; it only fills the draft.
+					</p>
+					<div class="keep-running">
 						<p class="keep-title">Allow remote attach</p>
 						<button
 							class="choice"
@@ -134,7 +155,10 @@
 						{/if}
 					</p>
 					<CuIndicatorToggles />
-					<CuPermissionsPane variant="settings" />
+				{:else if settings.section === 'computer'}
+					<CuPolicyPane />
+				{:else if settings.section === 'engine'}
+					<SettingsEngine />
 				{:else if settings.section === 'model'}
 					<SettingsModels />
 				{:else if settings.section === 'policy'}
@@ -216,7 +240,7 @@
 	}
 
 	.title {
-		font-size: var(--text-md);
+		font-size: var(--text-lg);
 		font-weight: var(--weight-semibold);
 		color: var(--color-ink);
 		margin: 0;

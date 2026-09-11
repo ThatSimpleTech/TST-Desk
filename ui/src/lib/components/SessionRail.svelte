@@ -18,9 +18,18 @@
 	import Icon from './Icon.svelte';
 	import RailFunctions from './RailFunctions.svelte';
 	import RailAccount from './RailAccount.svelte';
+	import EmptyState from './EmptyState.svelte';
 	import RailSessionRow from './RailSessionRow.svelte';
 	import { chat } from '../chat-store.svelte.js';
-	import { archivedToggle, emptyRowsCopy, railSections, starredToggle } from '../rail';
+	import {
+		archivedToggle,
+		attentionCount,
+		attentionHint,
+		emptyRowsCopy,
+		groupRowsByRecency,
+		railSections,
+		starredToggle
+	} from '../rail';
 	import { toggleArchivedView, toggleStarredOnly } from '../session-actions.svelte.js';
 	import {
 		sessions,
@@ -40,10 +49,10 @@
 	import { DIVIDER_HIT_MIN_PX, attachDragListeners } from '../splitpane';
 	import {
 		DEFAULT_RAIL_PX,
-		MAX_RAIL_PX,
 		MIN_RAIL_PX,
 		RAIL_KEYBOARD_STEP_PX,
 		clampRailPx,
+		railMaxPx,
 		readPersistedRailPx,
 		writePersistedRailPx
 	} from '../rail-width';
@@ -60,6 +69,11 @@
 	let railRoot: HTMLElement | undefined = $state();
 	let detachDrag: (() => void) | null = null;
 
+	function layoutMax(): number {
+		if (typeof window === 'undefined') return MIN_RAIL_PX;
+		return railMaxPx(window.innerWidth);
+	}
+
 	function persist() {
 		writePersistedRailPx(window.localStorage, railPx);
 	}
@@ -73,7 +87,10 @@
 
 	function onDividerMove(e: PointerEvent) {
 		if (!dragging) return;
-		const next = clampRailPx(e.clientX - (railRoot?.getBoundingClientRect().left ?? 0));
+		const next = clampRailPx(
+			e.clientX - (railRoot?.getBoundingClientRect().left ?? 0),
+			layoutMax()
+		);
 		railPx = next;
 	}
 
@@ -88,9 +105,9 @@
 
 	function onDividerKeydown(e: KeyboardEvent) {
 		if (e.key === 'ArrowLeft') {
-			railPx = clampRailPx(railPx - RAIL_KEYBOARD_STEP_PX);
+			railPx = clampRailPx(railPx - RAIL_KEYBOARD_STEP_PX, layoutMax());
 		} else if (e.key === 'ArrowRight') {
-			railPx = clampRailPx(railPx + RAIL_KEYBOARD_STEP_PX);
+			railPx = clampRailPx(railPx + RAIL_KEYBOARD_STEP_PX, layoutMax());
 		} else {
 			return;
 		}
@@ -101,7 +118,7 @@
 	// Restore the persisted width on mount; a drag still in flight when the
 	// rail unmounts must not leave window listeners behind.
 	$effect(() => {
-		railPx = readPersistedRailPx(window.localStorage);
+		railPx = clampRailPx(readPersistedRailPx(window.localStorage), layoutMax());
 	});
 	$effect(() => {
 		return () => {
@@ -116,6 +133,9 @@
 	}
 
 	let rows = $derived(visibleRows());
+	// Rows fall under Today / Yesterday / This week / Earlier (starred first):
+	// a list of sessions is read by when, and the grouping is pure (rail.ts).
+	let groups = $derived(groupRowsByRecency(rows));
 	// The history section badges what it actually lists, so the count can
 	// never disagree with the rows under it — and its heading names the shelf
 	// you are on, which is the only thing distinguishing the two.
@@ -130,6 +150,25 @@
 			sessions.showStarredOnly
 		)
 	);
+	// Sessions parked on an approval, archived ones aside: the one state that
+	// needs the user, counted across the workspace so a wait in a session you
+	// are not looking at shows from any other — and from the collapsed strip.
+	let attention = $derived(attentionCount(sessions.rows));
+
+	// ↑ / ↓ inside the list walk the rows (RailSessionRow marks each attach
+	// button with data-rail-row), wrapping at the ends. Enter and Space stay
+	// the button's own click; Tab still leaves the list. The rename field
+	// is not a row, so its arrows keep moving the caret.
+	function onListKeydown(e: KeyboardEvent): void {
+		if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+		const list = e.currentTarget as HTMLElement;
+		const buttons = Array.from(list.querySelectorAll<HTMLButtonElement>('[data-rail-row]'));
+		const at = buttons.indexOf(e.target as HTMLButtonElement);
+		if (at < 0) return;
+		e.preventDefault();
+		const step = e.key === 'ArrowDown' ? 1 : -1;
+		buttons[(at + step + buttons.length) % buttons.length]?.focus();
+	}
 </script>
 
 <aside
@@ -158,6 +197,9 @@
 			onclick={() => newSession()}><Icon name="plus" size={16} /></button
 		>
 		<RailFunctions compact />
+		{#if attention > 0}
+			<span class="mini-attention" role="status" title={attentionHint(attention)}>{attention}</span>
+		{/if}
 		<div class="mini-list">
 			{#each rows as row (row.sessionId)}
 				<button
@@ -212,6 +254,11 @@
 			{#if history.badge !== null}
 				<span class="badge">{history.badge}</span>
 			{/if}
+			{#if attention > 0}
+				<span class="badge badge--attention" role="status" title={attentionHint(attention)}>
+					{attention} waiting
+				</span>
+			{/if}
 			<div class="shelf-group">
 				<button
 					class="shelf"
@@ -237,15 +284,21 @@
 				</button>
 			</div>
 		</div>
-		<div class="list" role="list" aria-label={history.label}>
-			{#each rows as row (row.sessionId)}
-				<RailSessionRow
-					{row}
-					active={row.sessionId === chat.sessionId}
-					onselect={() => selectRow(row.sessionId)}
-				/>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="list" onkeydown={onListKeydown}>
+			{#each groups as group (group.id)}
+				<div class="group" role="group" aria-label={group.label}>
+					<span class="group-label">{group.label}</span>
+					{#each group.rows as row (row.sessionId)}
+						<RailSessionRow
+							{row}
+							active={row.sessionId === chat.sessionId}
+							onselect={() => selectRow(row.sessionId)}
+						/>
+					{/each}
+				</div>
 			{:else}
-				<p class="empty">{emptyCopy}</p>
+				<EmptyState compact body={emptyCopy} />
 			{/each}
 		</div>
 		<RailAccount />
@@ -261,7 +314,7 @@
 			aria-label="Session rail width"
 			aria-valuenow={railPx}
 			aria-valuemin={MIN_RAIL_PX}
-			aria-valuemax={MAX_RAIL_PX}
+			aria-valuemax={layoutMax()}
 			style={`--divider-hit: ${DIVIDER_HIT_MIN_PX}px;`}
 			onpointerdown={onDividerDown}
 			onkeydown={onDividerKeydown}
@@ -358,6 +411,16 @@
 		line-height: var(--leading-relaxed);
 	}
 
+	/* How many sessions are waiting on you. Amber like the state dot, but a
+	   tint with a rule rather than a fill, so it reads as a count and not a
+	   button — and ink on it, which holds up in both themes. */
+	.badge--attention {
+		color: var(--color-ink);
+		background: color-mix(in srgb, var(--color-warn) 22%, var(--color-lifted));
+		border-color: var(--color-warn);
+		white-space: nowrap;
+	}
+
 	/* Shelf toggle (TD-1715): the heading says where you are, this says where
 	   the click goes. Pushed right so it never crowds the count. */
 	.shelf-group {
@@ -410,8 +473,9 @@
 		color: var(--color-ink-muted);
 	}
 
+	/* The input drops its own ring (below); the field's border carries focus. */
 	.filter:focus-within {
-		border-color: var(--color-ink-muted);
+		border-color: var(--color-accent);
 	}
 
 	.filter input {
@@ -467,19 +531,49 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
-		padding: var(--space-1) var(--space-2) var(--space-2);
+		padding: 0 var(--space-2) var(--space-2);
 		display: flex;
 		flex-direction: column;
 	}
 
-	.empty {
-		margin: var(--space-4) var(--space-2);
+	.group {
+		display: flex;
+		flex-direction: column;
+	}
+
+	/* Day headings sit in sentence case, one step quieter than the section
+	   heading above them: they divide the list, they don't name it. */
+	.group-label {
+		font-family: var(--font-sans);
 		font-size: var(--text-xs);
 		color: var(--color-ink-muted);
-		text-align: center;
+		padding: var(--space-3) var(--space-2) var(--space-1);
+	}
+
+	.group:first-child .group-label {
+		padding-top: var(--space-1);
 	}
 
 	/* ── Icon strip (collapsed) ────────────────────────────────────── */
+
+	/* The strip's one number: sessions waiting on you, same tint as the
+	   badge in the expanded rail. */
+	.mini-attention {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.25rem;
+		height: 1.25rem;
+		padding: 0 var(--space-1);
+		border: var(--border-width) solid var(--color-warn);
+		border-radius: var(--radius-full);
+		background: color-mix(in srgb, var(--color-warn) 22%, var(--color-lifted));
+		color: var(--color-ink);
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		font-weight: var(--weight-semibold);
+		font-variant-numeric: tabular-nums;
+	}
 
 	.mini-list {
 		display: flex;
@@ -556,6 +650,25 @@
 	@media (prefers-reduced-motion: reduce) {
 		.dot-live {
 			animation: none;
+		}
+	}
+
+	/* A waiting session's dot breathes. The strip has no words, so the
+	   motion is what says "this one needs you"; without motion the amber
+	   and the count above carry it. */
+	@media (prefers-reduced-motion: no-preference) {
+		.dot--attention {
+			animation: attention-pulse 1.8s var(--ease-out) infinite;
+		}
+	}
+
+	@keyframes attention-pulse {
+		0%,
+		100% {
+			box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-warn) 45%, transparent);
+		}
+		60% {
+			box-shadow: 0 0 0 5px transparent;
 		}
 	}
 </style>

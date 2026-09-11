@@ -1,4 +1,4 @@
-"""macOS backend: CoreGraphics for geometry and input, ``screencapture`` for pixels.
+"""macOS backend: CoreGraphics for geometry, input, and capture.
 
 This is the original implementation, moved behind :class:`~tst_cu_mcp.backends.base.Backend`
 without behavioural change. Coordinates are global **logical points** with a
@@ -13,16 +13,79 @@ from either host.
 
 from __future__ import annotations
 
+import json
 import os
+import socket
 import subprocess
+import sys
 import tempfile
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
 from tst_cu_mcp.backends.base import Rect
 from tst_cu_mcp.displays import DisplayInfo
 from tst_cu_mcp.focus import WindowInfo
-from tst_cu_mcp.permissions import build_report
+from tst_cu_mcp.permissions import ACCESSIBILITY, NO_HOST_FIX, SCREEN_RECORDING, build_report
+
+# Each TCC prompt is raised at most once. Grok (and other clients) pass
+# request=true on every check_permissions call; CGRequestScreenCaptureAccess
+# then re-shows the dialog even after the user granted the *host* app, because
+# this interpreter is not that binary. The stamp survives process restarts.
+PROMPT_STAMP_DIR = Path.home() / ".tst-cu-mcp" / "macos-tcc-prompted"
+_prompted_this_process: set[str] = set()
+SOCK_ENV = "TST_CU_AGENT_SOCK"
+_TEXT_TIMEOUT = 3.0
+_CAPTURE_TIMEOUT = 8.0
+
+# Window levels at or above the Dock's are never what a click or a keystroke is
+# aimed at: the Dock (20), the menu bar (24) and the status items (25) sit in
+# front of every application window — the status items are literally first in
+# the on-screen list. Below that line are normal windows (0) and floating,
+# modal and utility panels (3, 8, 19), which do take input. The session ring
+# runs at the screen-saver level, so this bound also keeps our own overlay out
+# of the answer.
+DOCK_WINDOW_LEVEL = 20
+
+
+def frontmost_entry(listing: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The first window in *listing* that could receive input, or ``None``.
+
+    ``CGWindowListCopyWindowInfo`` returns on-screen windows front to back, so
+    the first entry that qualifies is the frontmost one. Kept pure — like
+    :func:`~tst_cu_mcp.focus.window_matches` — so the policy is testable
+    without a desktop.
+    """
+    for entry in listing:
+        if not 0 <= int(entry.get("kCGWindowLayer") or 0) < DOCK_WINDOW_LEVEL:
+            continue
+        alpha = entry.get("kCGWindowAlpha")
+        if alpha is not None and float(alpha) <= 0.0:
+            continue
+        bounds = entry.get("kCGWindowBounds") or {}
+        # Some apps park a 1x1 window on screen to hold state. Nothing can be
+        # aimed at it, and reporting it would hide the window behind it.
+        if float(bounds.get("Width") or 0) <= 1 or float(bounds.get("Height") or 0) <= 1:
+            continue
+        return entry
+    return None
+
+
+def window_from_entry(entry: Mapping[str, Any] | None) -> WindowInfo:
+    """Read one window-list entry into a :class:`WindowInfo`; ``None`` is empty."""
+    if entry is None:
+        return WindowInfo(title="", process="", pid=0, x=0, y=0, width=0, height=0)
+    bounds = entry.get("kCGWindowBounds") or {}
+    return WindowInfo(
+        title=str(entry.get("kCGWindowName") or ""),
+        process=str(entry.get("kCGWindowOwnerName") or ""),
+        pid=int(entry.get("kCGWindowOwnerPID") or 0),
+        x=round(float(bounds.get("X") or 0)),
+        y=round(float(bounds.get("Y") or 0)),
+        width=round(float(bounds.get("Width") or 0)),
+        height=round(float(bounds.get("Height") or 0)),
+    )
+
 
 MAX_DISPLAYS = 16
 
@@ -191,11 +254,36 @@ class DarwinBackend:
         return displays
 
     def capture_png(self, rect: Rect) -> bytes:
-        """Capture via ``screencapture -x`` into a temp file that is unlinked.
+        """Capture a global-point rectangle as PNG bytes.
 
-        The file is removed in a ``finally``, so a screenshot never outlives the
-        call even if reading it raises.
+        Capture APIs prompt as the *host app* when this interpreter is not
+        that binary. Checkout Python must never call them. The packaged
+        TST Desk host (``tst-desk``) owns capture over ``cu-agent.sock``.
         """
+        if not _is_host_identity():
+            raw = _capture_via_agent(rect)
+            if raw:
+                return raw
+        elif _cg_preflight() or _is_host_identity():
+            raw = _cg_capture_png(rect)
+            if raw:
+                return raw
+            if _cg_preflight():
+                return self._capture_via_screencapture(rect)
+        raise RuntimeError(
+            "Screen Recording is not available to the TST Desk host. Enable TST Desk "
+            "in System Settings > Privacy & Security > Screen Recording, then fully "
+            "Quit (Cmd+Q) and reopen it. If System Settings already shows TST Desk "
+            "ON, the grant belongs to an older build of the app: ask the user to "
+            "click Reset grants in TST Desk → Settings → Computer use (or run "
+            "`tccutil reset ScreenCapture com.thatsimpletech.tstdesk`), relaunch, "
+            "and allow again. Do not click Allow on a re-raised prompt expecting it "
+            "to stick, and do not retry this action until check_permissions reports "
+            "it granted."
+        )
+
+    def _capture_via_screencapture(self, rect: Rect) -> bytes:
+        """CLI fallback. Only called when this process already holds TCC."""
         fd, tmp_name = tempfile.mkstemp(suffix=".png", prefix="tstcu-")
         os.close(fd)
         tmp = Path(tmp_name)
@@ -229,6 +317,10 @@ class DarwinBackend:
     # --- hands --------------------------------------------------------------
 
     def move_mouse(self, x: float, y: float) -> None:
+        if not _is_host_identity():
+            _require_ok(_cu_transact(f"move {x} {y}"), "move")
+            return
+        _require_accessibility("move")
         import Quartz
 
         event = Quartz.CGEventCreateMouseEvent(
@@ -237,6 +329,10 @@ class DarwinBackend:
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
 
     def click(self, x: float, y: float, button: str, count: int) -> None:
+        if not _is_host_identity():
+            _require_ok(_cu_transact(f"click {x} {y} {button} {count}"), "click")
+            return
+        _require_accessibility("click")
         import Quartz
 
         if button == "left":
@@ -260,6 +356,13 @@ class DarwinBackend:
                 Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
 
     def type_text(self, text: str) -> None:
+        if not _is_host_identity():
+            import base64
+
+            token = base64.b64encode(text.encode("utf-8")).decode("ascii")
+            _require_ok(_cu_transact(f"type {token}"), "type")
+            return
+        _require_accessibility("type")
         import Quartz
 
         # Local import: no cycle — input_control pulls in this package for
@@ -283,6 +386,10 @@ class DarwinBackend:
         return parse_key_combo(combo)
 
     def press_keys(self, combo: str) -> None:
+        if not _is_host_identity():
+            _require_ok(_cu_transact(f"key {combo}"), "key")
+            return
+        _require_accessibility("key")
         import Quartz
 
         flags, keycode = parse_key_combo(combo)
@@ -293,6 +400,10 @@ class DarwinBackend:
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
 
     def scroll(self, dx: int, dy: int) -> None:
+        if not _is_host_identity():
+            _require_ok(_cu_transact(f"scroll {dx} {dy}"), "scroll")
+            return
+        _require_accessibility("scroll")
         import Quartz
 
         # wheelCount=2: wheel1 is vertical (dy), wheel2 is horizontal (dx).
@@ -315,70 +426,88 @@ class DarwinBackend:
         return (round(point.x), round(point.y))
 
     def foreground_window(self) -> WindowInfo:
-        """The frontmost application's window, best-effort.
+        """The window in front, read from the window server's own z-order.
 
-        macOS splits this: the frontmost *application* is public API, but window
-        *titles* live behind Accessibility. So the process name is always
-        available and the title is filled in from the on-screen window list when
-        macOS is willing, empty when it is not — which
-        :func:`~tst_cu_mcp.focus.window_matches` handles, since it matches either
-        field.
+        This asks ``CGWindowListCopyWindowInfo`` rather than
+        ``NSWorkspace.frontmostApplication()``. The workspace query answers
+        which application is active *for the caller's activation context*, and
+        a sidecar spawned by the host app does not reliably share the user's:
+        in a live session it named the host app seven times out of seven while
+        Spotlight, then Finder, then a remote-desktop window actually had the
+        screen, and every ``expect_window`` guard built on it was dead. The
+        window list has no caller context to get wrong. It also describes the
+        window that is really in front rather than the active application's
+        frontmost window, which are not always the same one.
+
+        ``process`` and the bounds are always readable. ``title`` needs Screen
+        Recording — without it ``kCGWindowName`` is empty for every window —
+        which :func:`~tst_cu_mcp.focus.window_matches` absorbs by matching
+        either field.
         """
         import Quartz
-        from AppKit import NSWorkspace
 
-        app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        if app is None:  # pragma: no cover - no active app is possible at login
-            return WindowInfo(title="", process="", pid=0, x=0, y=0, width=0, height=0)
-
-        pid = int(app.processIdentifier())
-        process = str(app.localizedName() or "")
-
-        title = ""
-        x = y = width = height = 0
         listing = Quartz.CGWindowListCopyWindowInfo(
             Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
             Quartz.kCGNullWindowID,
         )
-        for entry in listing or []:
-            if int(entry.get("kCGWindowOwnerPID", -1)) != pid:
-                continue
-            # The list is front-to-back, so the owner's first entry is its
-            # frontmost window.
-            title = str(entry.get("kCGWindowName") or "")
-            bounds = entry.get("kCGWindowBounds") or {}
-            x = round(float(bounds.get("X", 0)))
-            y = round(float(bounds.get("Y", 0)))
-            width = round(float(bounds.get("Width", 0)))
-            height = round(float(bounds.get("Height", 0)))
-            break
-
-        return WindowInfo(
-            title=title,
-            process=process,
-            pid=pid,
-            x=x,
-            y=y,
-            width=width,
-            height=height,
-        )
+        return window_from_entry(frontmost_entry(listing or []))
 
     # --- environment --------------------------------------------------------
 
     def check_permissions(self, *, request: bool = False) -> dict[str, Any]:
-        """Probe Screen Recording and Accessibility, optionally prompting first."""
+        """Probe Screen Recording and Accessibility, optionally prompting first.
+
+        Outside the host identity this is a socket client: the TST Desk host
+        answers with its own diagnosis (``stale_grant_suspected``, ``fix``,
+        ``identity``), returned verbatim (TD-4823). ``request=true`` raises
+        each OS prompt at most once (stamp + process memory) and only from
+        the host identity — a checkout interpreter's CGRequest is attributed
+        to TST Desk but never attaches to this process, so it loops forever.
+        """
+        if not _is_host_identity():
+            host_report = _permissions_via_agent(request=request)
+            if host_report is not None:
+                return host_report
+
         screen_recording = _screen_recording_granted()
         accessibility = _accessibility_granted()
 
-        if request:
-            if not screen_recording:
+        if request and _is_host_identity():
+            if not screen_recording and not _already_prompted(SCREEN_RECORDING):
                 _request_screen_recording()
+                _mark_prompted(SCREEN_RECORDING)
                 screen_recording = _screen_recording_granted()
-            if not accessibility:
+            if not accessibility and not _already_prompted(ACCESSIBILITY):
                 _request_accessibility()
+                _mark_prompted(ACCESSIBILITY)
                 accessibility = _accessibility_granted()
 
-        return build_report(screen_recording=screen_recording, accessibility=accessibility)
+        report = build_report(screen_recording=screen_recording, accessibility=accessibility)
+        if not _is_host_identity():
+            # No host socket: nothing here can capture or click as TST Desk.
+            # The prompt stamps stay untouched — they are meaningless for a
+            # socket client and would block a future legitimate prompt.
+            report["actuation_path"] = "none"
+            report["fix"] = {**report.get("fix", {}), "host": NO_HOST_FIX}
+        return report
+
+
+def _already_prompted(kind: str) -> bool:
+    if kind in _prompted_this_process:
+        return True
+    try:
+        return (PROMPT_STAMP_DIR / kind).is_file()
+    except OSError:
+        return False
+
+
+def _mark_prompted(kind: str) -> None:
+    _prompted_this_process.add(kind)
+    try:
+        PROMPT_STAMP_DIR.mkdir(parents=True, exist_ok=True)
+        (PROMPT_STAMP_DIR / kind).write_text("1\n", encoding="utf-8")
+    except OSError:
+        return
 
     def hit_test(self, x: float, y: float) -> dict[str, Any]:
         """AX element at a global point. Never moves the pointer."""
@@ -386,10 +515,19 @@ class DarwinBackend:
 
 
 def _screen_recording_granted() -> bool:
-    """True if the host process holds Screen Recording permission.
+    """True if capture is allowed for this process *or* its host app.
 
-    Fails closed (returns ``False``) if the API is unavailable.
+    ``CGPreflightScreenCaptureAccess`` is this interpreter's own TCC row.
+    After the user grants TST Desk (or Terminal, Claude Desktop, ...), that
+    preflight stays false here, but window titles become readable because
+    macOS attributes Screen Recording to the responsible host. Treat either
+    as granted so we stop re-prompting.
     """
+    return _cg_preflight() or _window_titles_visible()
+
+
+def _cg_preflight() -> bool:
+    """True if this process itself holds Screen Recording. Fails closed."""
     try:
         from Quartz import CGPreflightScreenCaptureAccess
     except (ImportError, AttributeError):
@@ -397,13 +535,277 @@ def _screen_recording_granted() -> bool:
     return bool(CGPreflightScreenCaptureAccess())
 
 
+def _is_host_identity() -> bool:
+    """True when this process is the app sidecar, not a checkout helper."""
+    if os.environ.get("TST_CU_MCP_HOST", "").strip() == "1":
+        return True
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).name.startswith("tstd")
+    return False
+
+
+def _host_tstd() -> Path | None:
+    """The TST Desk sidecar binary, which holds the host TCC identity."""
+    names = ("TST Desk.app/Contents/MacOS/tstd",)
+    candidates: list[Path] = []
+    env = os.environ.get("TST_CU_HOST", "").strip()
+    if env:
+        candidates.append(Path(env).expanduser())
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable))
+    candidates.append(Path("/Applications") / names[0])
+    candidates.append(Path.home() / "Applications" / names[0])
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_file() and os.access(resolved, os.X_OK):
+            return resolved
+    return None
+
+
+def _sock_path() -> Path | None:
+    env = os.environ.get(SOCK_ENV, "").strip()
+    candidates: list[Path] = []
+    if env:
+        candidates.append(Path(env))
+    candidates.append(
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "com.thatsimpletech.tstdesk"
+        / "cu-agent.sock"
+    )
+    for path in candidates:
+        try:
+            if path.exists():
+                return path
+        except OSError:
+            continue
+    return None
+
+
+def _cu_transact(line: str, *, binary: bool = False, timeout: float | None = None) -> bytes:
+    path = _sock_path()
+    if path is None:
+        return b""
+    wait = _CAPTURE_TIMEOUT if binary else _TEXT_TIMEOUT
+    if timeout is not None:
+        wait = timeout
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(wait)
+    try:
+        sock.connect(str(path))
+        sock.sendall(line.encode("utf-8") + b"\n")
+        buf = b""
+        while b"\n" not in buf:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        if b"\n" not in buf:
+            return buf
+        header, rest = buf.split(b"\n", 1)
+        if binary and header.startswith(b"png "):
+            n = int(header.split()[1])
+            data = rest
+            while len(data) < n:
+                chunk = sock.recv(n - len(data))
+                if not chunk:
+                    break
+                data += chunk
+            return data[:n]
+        return header + b"\n"
+    except (OSError, ValueError, TimeoutError):
+        return b""
+    finally:
+        sock.close()
+
+
+def _refusal(op: str) -> RuntimeError:
+    return RuntimeError(
+        f"computer-use {op} failed in the TST Desk host. Enable TST Desk in "
+        "System Settings > Privacy & Security > Accessibility, then Quit (Cmd+Q) "
+        "and reopen it. If System Settings already shows TST Desk ON, the grant "
+        "belongs to an older build of the app: ask the user to click Reset grants "
+        "in TST Desk → Settings → Computer use (or run `tccutil reset "
+        "Accessibility com.thatsimpletech.tstdesk`), relaunch, and allow again. "
+        "Do not retry this action until check_permissions reports it granted."
+    )
+
+
+def _require_ok(raw: bytes, op: str) -> None:
+    if raw.strip() != b"ok":
+        raise _refusal(op)
+
+
+def _require_accessibility(op: str) -> None:
+    """Refuse before posting: macOS drops CGEventPost from a process without
+    Accessibility and says nothing, so the model would hear "ok" for a click
+    that never landed (the host socket path already refuses this way)."""
+    if not _accessibility_granted():
+        raise _refusal(op)
+
+
+def _capture_via_agent(rect: Rect) -> bytes | None:
+    x, y, w, h = rect
+    raw = _cu_transact(f"capture {x} {y} {w} {h}", binary=True)
+    if raw.startswith(b"\x89PNG"):
+        return raw
+    return None
+
+
+def _permissions_via_agent(*, request: bool = False) -> dict[str, Any] | None:
+    raw = _cu_transact("permissions request" if request else "permissions")
+    try:
+        parsed: Any = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if isinstance(parsed, dict) and "screen_recording" in parsed:
+        return parsed
+    return None
+
+
+def _cg_capture_png(rect: Rect) -> bytes | None:
+    """Grab ``rect`` via CoreGraphics. Returns None on failure. Never prompts."""
+    x, y, w, h = rect
+    if w <= 0 or h <= 0:
+        return None
+    try:
+        from Quartz import (
+            CGImageGetHeight,
+            CGImageGetWidth,
+            CGRectMake,
+            CGWindowListCreateImage,
+            kCGNullWindowID,
+            kCGWindowImageDefault,
+            kCGWindowListOptionOnScreenOnly,
+        )
+    except (ImportError, AttributeError):
+        return None
+    try:
+        image = CGWindowListCreateImage(
+            CGRectMake(float(x), float(y), float(w), float(h)),
+            kCGWindowListOptionOnScreenOnly,
+            kCGNullWindowID,
+            kCGWindowImageDefault,
+        )
+    except Exception:
+        return None
+    if image is None:
+        return None
+    try:
+        if int(CGImageGetWidth(image)) < 1 or int(CGImageGetHeight(image)) < 1:
+            return None
+    except Exception:
+        return None
+    return _png_from_cgimage(image)
+
+
+def _png_from_cgimage(image: Any) -> bytes | None:
+    """Encode a ``CGImage`` as PNG bytes. Fails closed."""
+    try:
+        from AppKit import NSBitmapImageFileTypePNG, NSBitmapImageRep
+    except (ImportError, AttributeError):
+        return None
+    try:
+        rep = NSBitmapImageRep.alloc().initWithCGImage_(image)
+        if rep is None:
+            return None
+        data = rep.representationUsingType_properties_(NSBitmapImageFileTypePNG, None)
+    except Exception:
+        return None
+    if data is None:
+        return None
+    raw = bytes(data)
+    if not raw.startswith(b"\x89PNG"):
+        return None
+    return raw
+
+
+def _window_titles_visible() -> bool:
+    """True when on-screen window titles are not blanked by TCC.
+
+    macOS strips ``kCGWindowName`` without Screen Recording. A child of a
+    granted host can often read titles even when CGPreflight is false.
+    """
+    try:
+        from Quartz import (
+            CGWindowListCopyWindowInfo,
+            kCGNullWindowID,
+            kCGWindowListExcludeDesktopElements,
+            kCGWindowListOptionOnScreenOnly,
+        )
+    except (ImportError, AttributeError):
+        return False
+    try:
+        listing = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+            kCGNullWindowID,
+        )
+    except Exception:
+        return False
+    for entry in listing or []:
+        getter = getattr(entry, "get", None)
+        if getter is None:
+            continue
+        try:
+            name = getter("kCGWindowName")
+        except Exception:
+            continue
+        if isinstance(name, str) and name.strip():
+            return True
+    return False
+
+
 def _accessibility_granted() -> bool:
-    """True if the host process is a trusted Accessibility client."""
+    """True if this process, or a child of a trusted host, can use AX APIs."""
+    return _ax_process_trusted() or _ax_api_usable()
+
+
+def _ax_process_trusted() -> bool:
+    """True if this process is a trusted Accessibility client."""
     try:
         from ApplicationServices import AXIsProcessTrusted
     except (ImportError, AttributeError):
         return False
     return bool(AXIsProcessTrusted())
+
+
+def _ax_api_usable() -> bool:
+    """True when a harmless AX read succeeds.
+
+    Granting the host app does not always flip ``AXIsProcessTrusted`` in a
+    spawned interpreter. If we can still read the frontmost app's role, input
+    synthesis is going to work too.
+    """
+    try:
+        from AppKit import NSWorkspace
+        from ApplicationServices import (
+            AXUIElementCopyAttributeValue,
+            AXUIElementCreateApplication,
+        )
+    except (ImportError, AttributeError):
+        return False
+    try:
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is None:
+            return False
+        element = AXUIElementCreateApplication(int(app.processIdentifier()))
+        result = AXUIElementCopyAttributeValue(element, "AXRole", None)
+    except Exception:
+        return False
+    if result is None:
+        return False
+    if isinstance(result, tuple):
+        err = result[0]
+        return err in (0, None)
+    return True
 
 
 def _request_screen_recording() -> bool:

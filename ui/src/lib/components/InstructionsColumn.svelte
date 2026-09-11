@@ -5,6 +5,7 @@
 	// file in the system editor. + creates a new rule file or opens the
 	// existing root file. Writes go through the human-path protocol, never
 	// the agent tools. Saving in the editor is what TD-509 reloads.
+	import EmptyState from './EmptyState.svelte';
 	import Icon from './Icon.svelte';
 	import { openInEditor } from '../open-file';
 	import {
@@ -80,7 +81,7 @@
 		{/if}
 	{/if}
 	{#if empty && !instructions.naming}
-		<p class="empty">{instructionEmptyCopy()}</p>
+		<EmptyState align="start" body={instructionEmptyCopy()} />
 	{:else}
 		<ul class="list">
 			{#if root !== null}
@@ -182,12 +183,6 @@
 		margin: var(--space-2) 0 0;
 		font-size: var(--text-xs);
 		color: var(--color-err);
-	}
-
-	.empty {
-		margin: var(--space-3) 0 0;
-		font-size: var(--text-sm);
-		color: var(--color-ink-muted);
 	}
 
 	.list {

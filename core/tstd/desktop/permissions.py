@@ -238,13 +238,55 @@ def windows_report(*, elevated: bool) -> dict[str, Any]:
     }
 
 
+_ACTUATION_PATHS = ("host", "daemon", "mock", "none")
+_SIGNINGS = ("identity", "adhoc", "unsigned")
+
+
+def host_diagnosis(raw: dict[str, Any]) -> dict[str, Any]:
+    """The TD-4823 fields of a host / sidecar macOS report, as event kwargs.
+
+    Only the host (``cu-agent.sock``) fills these in; a mock or an older
+    sidecar report leaves every one at its default, so the event is
+    unchanged for them. Unknown values normalize to the empty default —
+    the event's ``Literal`` fields must never reject a live report.
+    """
+    identity = raw.get("identity")
+    ident = identity if isinstance(identity, dict) else {}
+    stale = raw.get("stale_grant_suspected")
+    stale_map = stale if isinstance(stale, dict) else {}
+    fix = raw.get("fix")
+    fix_map = fix if isinstance(fix, dict) else {}
+    path = raw.get("actuation_path")
+    signing = ident.get("signing")
+
+    def _text(value: Any) -> str:
+        return value if isinstance(value, str) else ""
+
+    return {
+        "actuation_path": path if path in _ACTUATION_PATHS else "",
+        "signing": signing if signing in _SIGNINGS else "",
+        "bundle_path": _text(ident.get("bundle_path")),
+        "stale_screen_recording": stale_map.get("screen_recording") is True,
+        "stale_accessibility": stale_map.get("accessibility") is True,
+        "unbundled_dev_binary": raw.get("unbundled_dev_binary") is True,
+        "fix_screen_recording": _text(fix_map.get("screen_recording")),
+        "fix_accessibility": _text(fix_map.get("accessibility")),
+        "reset_supported": raw.get("reset_supported") is True,
+        "reset_error": _text(raw.get("reset_error")),
+    }
+
+
 def build_cu_permissions(
     *,
     screen_recording: bool,
     accessibility: bool,
     first_run: bool,
+    **host: Any,
 ) -> CuPermissions:
-    """Connection-scoped macOS report. Used on darwin and the default mock."""
+    """Connection-scoped macOS report. Used on darwin and the default mock.
+
+    ``host`` is :func:`host_diagnosis` output; omitted for the mock.
+    """
     return CuPermissions(
         granted=screen_recording and accessibility,
         screen_recording=screen_recording,
@@ -253,6 +295,7 @@ def build_cu_permissions(
         accessibility_url=ACCESSIBILITY_URL,
         first_run=first_run,
         platform="macos",
+        **host,
     )
 
 
@@ -305,6 +348,7 @@ def cu_permissions_from_report(raw: dict[str, Any], *, first_run: bool) -> CuPer
         screen_recording=screen,
         accessibility=access,
         first_run=first_run,
+        **host_diagnosis(raw),
     )
 
 

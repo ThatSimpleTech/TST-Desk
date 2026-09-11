@@ -68,16 +68,18 @@
 		align-items: flex-start;
 		gap: var(--space-3);
 		padding: var(--space-3) var(--space-6);
-		background: var(--color-bg-subtle);
-		border-bottom: var(--border-width) solid var(--color-border);
-		border-left: var(--border-width-emphasis, 3px) solid var(--color-danger);
+		background: var(--color-sunken);
+		border-bottom: var(--border-width) solid var(--color-hairline);
+		/* The stripe was written against a token nothing declares and lived on
+		   its fallback; the vocabulary test in tokens.test.ts now says so. */
+		border-left: 3px solid var(--color-err);
 	}
 
 	.dot {
 		width: var(--space-2);
 		height: var(--space-2);
 		border-radius: var(--radius-full);
-		background: var(--color-danger);
+		background: var(--color-err);
 		margin-top: var(--space-1);
 		flex-shrink: 0;
 	}
@@ -93,12 +95,12 @@
 	.nb-title {
 		font-size: var(--text-sm);
 		font-weight: var(--weight-semibold);
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.nb-body {
 		font-size: var(--text-sm);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 		line-height: 1.4;
 		overflow-wrap: break-word;
 	}
@@ -123,7 +125,7 @@
 
 	.nb-action:hover {
 		background: var(--color-accent);
-		color: var(--color-accent-text);
+		color: var(--color-on-accent);
 	}
 
 	.nb-close {
@@ -131,11 +133,11 @@
 		border: 0;
 		font-size: var(--text-lg);
 		line-height: 1;
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 		cursor: pointer;
 	}
 
 	.nb-close:hover {
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 </style>

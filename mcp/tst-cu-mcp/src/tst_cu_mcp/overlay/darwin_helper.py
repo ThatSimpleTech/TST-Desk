@@ -249,6 +249,7 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
                 NSPanel,
                 NSWindowCollectionBehaviorCanJoinAllSpaces,
                 NSWindowCollectionBehaviorFullScreenAuxiliary,
+                NSWindowSharingNone,
                 NSWindowStyleMaskBorderless,
                 NSWindowStyleMaskNonactivatingPanel,
             )
@@ -267,6 +268,11 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
             )
             panel.setLevel_(SCREEN_SAVER_WINDOW_LEVEL)
             panel.setIgnoresMouseEvents_(True)
+            # Invisible to screen capture: CGWindowList and ScreenCaptureKit
+            # skip non-shareable windows, so a grab from any process — not
+            # only this one — never contains the ring. grab_begin/grab_end
+            # stays as the belt for the same-process path.
+            panel.setSharingType_(NSWindowSharingNone)
             panel.setOpaque_(False)
             panel.setBackgroundColor_(NSColor.clearColor())
             panel.setHasShadow_(False)
