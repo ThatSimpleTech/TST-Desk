@@ -500,9 +500,10 @@ async def grok_loop(
 
     try:
         while not session.cancel_requested:
-            user_content = await session.wait_for_user_message()
-            if user_content is None:
+            queued = await session.wait_for_user_message()
+            if queued is None:
                 break
+            user_content = queued.display
             turn_id = str(uuid.uuid4())
             turn_start = time.time()
             session.conversation.append(ChatMessage(role="user", content=user_content))
