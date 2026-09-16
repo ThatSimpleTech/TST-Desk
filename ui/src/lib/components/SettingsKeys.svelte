@@ -5,6 +5,7 @@
 		settings,
 		storeNamedKey,
 		renameCredential,
+		saveCredentialHost,
 		deleteNamedKey,
 		validateNamedKey,
 	} from "../settings.svelte.js";
@@ -12,13 +13,16 @@
 
 	let newName = $state("");
 	let newKey = $state("");
+	let newHost = $state("");
 	let drafts = $state<Record<string, string>>({});
+	let hostDrafts = $state<Record<string, string>>({});
 
 	function addKey(): void {
 		if (newName.trim() === "" || newKey.trim() === "") return;
-		storeNamedKey(newName, newKey);
+		storeNamedKey(newName, newKey, undefined, newHost);
 		newName = "";
 		newKey = "";
+		newHost = "";
 	}
 
 	function commitName(id: string): void {
@@ -26,6 +30,17 @@
 		const current = settings.credentials.find((c) => c.id === id)?.name;
 		if (next === "" || next === current) return;
 		renameCredential(id, next);
+	}
+
+	function hostValue(id: string, stored: string | null | undefined): string {
+		return hostDrafts[id] ?? stored ?? "";
+	}
+
+	function commitHost(id: string, name: string): void {
+		const current = (settings.credentials.find((c) => c.id === id)?.base_url ?? "").trim();
+		const next = (hostDrafts[id] ?? current).trim();
+		if (next === current) return;
+		saveCredentialHost(id, name, next);
 	}
 </script>
 
@@ -48,6 +63,17 @@
 				onblur={() => commitName(cred.id)}
 			/>
 		</label>
+		<label class="field">
+			<span class="field-name">Host</span>
+			<input
+				class="input"
+				type="text"
+				value={hostValue(cred.id, cred.base_url)}
+				placeholder="preset URL"
+				oninput={(e) => (hostDrafts[cred.id] = e.currentTarget.value)}
+				onblur={() => commitHost(cred.id, drafts[cred.id] ?? cred.name)}
+			/>
+		</label>
 		<p class="status">{cred.stored ? "Stored in the OS keychain." : "No key stored."}</p>
 		<div class="actions">
 			<button
@@ -63,10 +89,13 @@
 	</div>
 {/each}
 
-<p class="hint">Add another key — the name is what Model settings will show.</p>
+<p class="hint">
+	Add another key — the name is what Model settings will show. Host is the OpenAI-compatible
+	<code>/v1</code> URL this key talks to; leave it blank to keep the preset's endpoint.
+</p>
 <label class="field">
 	<span class="field-name">Name</span>
-	<input class="input" type="text" bind:value={newName} placeholder="OpenRouter, Local, …" />
+	<input class="input" type="text" bind:value={newName} placeholder="OpenRouter, EZER, …" />
 </label>
 <label class="field">
 	<span class="field-name">Key</span>
@@ -76,6 +105,15 @@
 		autocomplete="off"
 		bind:value={newKey}
 		placeholder="sk-…"
+	/>
+</label>
+<label class="field">
+	<span class="field-name">Host</span>
+	<input
+		class="input"
+		type="text"
+		bind:value={newHost}
+		placeholder="http://127.0.0.1:8000/v1"
 	/>
 </label>
 <div class="actions">

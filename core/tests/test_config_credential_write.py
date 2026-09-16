@@ -94,6 +94,17 @@ class TestSaveTierCredential:
         assert cfg.credentials["openrouter-2"].name == "OPENROUTER"
         assert cfg.credentials["openrouter-2"].base_url == host
 
+    def test_empty_host_clears_the_line(self, tmp_path: Path) -> None:
+        path = _seed(tmp_path)
+        host = "http://ezer.example.ts.net:4000/v1"
+        save_credential("ezer", "EZER", path, base_url=host)
+        assert load_config(path).credentials["ezer"].base_url == host
+        save_credential("ezer", "EZER", path, base_url="")
+        cfg = load_config(path)
+        assert cfg.credentials["ezer"].base_url is None
+        dumped = yaml.safe_load(path.read_text())
+        assert "base_url" not in dumped["credentials"]["ezer"]
+
     def test_secret_never_lands_in_yaml(self, tmp_path: Path) -> None:
         path = _seed(tmp_path)
         save_credential("local", "Local", path)

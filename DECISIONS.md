@@ -9937,3 +9937,27 @@ The denylist starts empty.
 `~/.tst-cu-mcp/config.yaml`. Per-app "allow for this session" prompts
 and category tiers (view-only browsers, click-only IDEs) are not in
 this story.
+
+---
+
+## 2026-09-16 — TD-1722: Settings writes the key's host (Class B)
+
+**Decision:** `set_credential` and `set_api_key` gain an additive optional
+`base_url`. Settings → API keys is the surface that writes
+`credentials.<id>.base_url` (TD-1718). Empty string clears the host so
+the preset URL stays in charge (a keyed local server). Omitted leaves
+an existing host, and a new openrouter-family id still inherits the
+shipped OpenRouter URL. No `PROTOCOL_VERSION` bump. The host is not a
+secret; the key still never appears in YAML, `setup_state`, or logs.
+
+**Rationale:** TD-1718 made the key own the host, then showed it on
+Settings → Model as a hint. There was no field to set it, so an EZER
+box on Tailscale (`http://ezer…:4000/v1`) had to be pasted into
+`config.yaml`. The catalog already stored the URL; the missing piece
+was the settings row.
+
+**Alternative rejected:** A new `set_credential_host` verb — two
+messages to edit one catalog row. Also rejected: putting the host on
+the preset from this screen (that is Settings → Model's job, and it
+would steal OpenRouter traffic if applied to the OPENROUTER key).
+Also rejected: inferring the host from the key name.

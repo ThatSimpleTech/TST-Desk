@@ -78,14 +78,16 @@ no effect.
 Named API keys (TD-1717). Each entry is an id (the keychain account suffix) and a
 `name` the Settings screen shows. Optional `base_url` is the host that key talks
 to (TD-1718): selecting the key uses that host even when the active preset is
-local. Omit it for a keyed local server so the tier URL stays in charge. Add as
+local. Omit it for a keyed local server so the tier URL stays in charge.
+Settings → API keys has a Host field that writes this key (TD-1722); blank
+keeps the preset URL. Add as
 many as you need — OpenRouter, a keyed local server, a second remote. A tier's
 `credential` field picks which one that model sends.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `name` | string, 1–40 chars | *required* | The local given name. Shown in Settings → Model. Never a secret. |
-| `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. |
+| `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. Settings → API keys Host writes this; empty removes it. |
 
 Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook`,
 `ntfy-topic`, `discord-webhook`, and `telegram-bot` are reserved for
