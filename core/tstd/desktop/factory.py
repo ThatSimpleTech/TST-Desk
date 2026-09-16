@@ -1,12 +1,15 @@
 """Resolve the desktop driver from config (TD-3301).
 
-Empty ``computer_use.command`` is mock-only. A non-empty command is the
-stdio argv for ``mcp/tst-cu-mcp``. The daemon owns the child.
+Empty ``computer_use.command`` is mock-only in checkout/CI. A packaged
+(frozen) sidecar with an empty command serves ``tstd --cu-mcp`` so the
+AppImage includes a real computer-use MCP (TD-1725). A non-empty command
+is the stdio argv for ``mcp/tst-cu-mcp``. The daemon owns the child.
 """
 
 from __future__ import annotations
 
 import shlex
+import sys
 from typing import TYPE_CHECKING
 
 from .mcp_driver import McpDesktopDriver
@@ -39,10 +42,19 @@ def argv_from_command(command: str | list[str]) -> list[str]:
     return [str(part) for part in command]
 
 
+def packaged_cu_argv() -> list[str]:
+    """``tstd --cu-mcp`` when this process is the packaged sidecar (TD-1725)."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--cu-mcp"]
+    return []
+
+
 def driver_for_command(
     command: str | list[str], env: dict[str, str] | None = None
 ) -> DesktopDriver:
     argv = argv_from_command(command)
+    if not argv:
+        argv = packaged_cu_argv()
     if not argv:
         return MockDesktopDriver()
     return McpDesktopDriver(argv, env=env)
@@ -51,11 +63,14 @@ def driver_for_command(
 def desktop_driver_from_config(
     config: ModelConfig, cu_prefs: CuIndicatorPrefs | None = None
 ) -> DesktopDriver:
+    command: str | list[str] = config.computer_use.command
+    argv = argv_from_command(command) or packaged_cu_argv()
     env: dict[str, str] | None = None
-    if argv_from_command(config.computer_use.command):
+    if argv:
         # This child is ours: it gets the internal tools whether or not the
         # user wants the ring painted.
         env = {INTERNAL_ENV: "1"}
         if cu_prefs is not None:
             env[OVERLAY_ENV] = "1" if cu_prefs.show_on_real_display else "0"
-    return driver_for_command(config.computer_use.command, env=env)
+        command = argv
+    return driver_for_command(command, env=env)
