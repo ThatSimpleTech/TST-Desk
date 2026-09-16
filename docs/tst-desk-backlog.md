@@ -4141,6 +4141,26 @@ already default to auto are unchanged.
 
 ---
 
+### TD-1725 — Packaged AppImage serves real computer-use MCP
+**Size:** 3 · **Depends on:** TD-3301
+
+Empty `computer_use.command` is mock-only. The AppImage sidecar can
+run `tstd --cu-mcp` but the freeze did not include `tst-cu-mcp` / `mcp`
+/ Pillow, so computer-use stayed a tiny PNG. After a desktop tool,
+`local_worker_preset: vllm` remapped the worker to `stealth/ox-alpha`
+on the EZER host (credential `base_url` wins).
+
+**Acceptance criteria:**
+- [x] Frozen tstd with empty command drives `tstd --cu-mcp`, not the mock
+- [x] Checkout/CI with empty command is still the mock
+- [x] Sidecar freeze collects `tst_cu_mcp`, `mcp`, and Pillow
+- [x] No provider URL is hardcoded
+
+**Notes:** Class B: sidecar extra deps. User `local_worker_preset` is
+config, not this story.
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 

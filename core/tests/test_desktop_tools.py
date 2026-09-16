@@ -442,6 +442,32 @@ def _config_with_cu_command(command: str) -> ModelConfig:
     )
 
 
+class TestPackagedCuDefault:
+    """Empty command is mock in checkout; frozen tstd serves --cu-mcp (TD-1725)."""
+
+    def test_empty_command_is_still_mock_when_not_frozen(self) -> None:
+        from tstd.desktop.factory import desktop_driver_from_config
+        from tstd.desktop.mock import MockDesktopDriver
+
+        driver = desktop_driver_from_config(_config_with_cu_command(""))
+        assert isinstance(driver, MockDesktopDriver)
+
+    def test_frozen_empty_command_is_sidecar_cu_mcp(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        from tstd.desktop.factory import desktop_driver_from_config
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", "/app/tstd")
+        driver = desktop_driver_from_config(_config_with_cu_command(""))
+        assert isinstance(driver, McpDesktopDriver)
+        assert driver._command == ["/app/tstd", "--cu-mcp"]
+        assert driver._client._env is not None
+        assert driver._client._env["TST_CU_MCP_INTERNAL"] == "1"
+
+
 class TestOverlayEnvPlumbing:
     """The daemon's show_on_real_display pref reaches the sidecar as env."""
 
