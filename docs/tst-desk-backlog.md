@@ -4211,6 +4211,22 @@ in the nested walk; Linux in-process screenshots cap at 768px.
 
 ---
 
+### TD-1729 — Screenshots are vision parts, not 50k of base64 text
+**Size:** 2 · **Depends on:** TD-1728
+
+Measured: after a successful `desktop_screenshot`, the next provider
+call failed at 32769 tokens. `max_result_chars` stuffed 50_000 chars of
+PNG base64 into the tool message. Compaction cannot drop the in-flight
+screenshot. Peel the pixels out of `output` and send them as
+`image_url`.
+
+**Acceptance criteria:**
+- [x] Dispatch `output` for screenshots has no `png_base64` and is < 2000 chars
+- [x] PNG bytes ride `ToolResult.image_png` into a vision part
+- [x] Screen frame persistence is unchanged
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 

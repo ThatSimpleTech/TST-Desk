@@ -10048,3 +10048,16 @@ the frame has to be small enough to sit beside the system prompt.
 **Rationale:** First CU turn on ezer-forge (32768) failed with
 ContextWindowExceededError: system prompt included cytoscape's
 AGENTS.md from `ui/node_modules`, plus a full-size PNG as base64.
+
+---
+
+## 2026-09-16 — TD-1729: screenshot pixels are a vision part (Class B)
+
+**Decision:** `desktop_screenshot` / `browser_screenshot` tool messages
+carry compact JSON (`path`, `width`, `height`) plus an `image_url`
+part. Base64 is not duplicated into the text field. Measured: 50k
+chars of truncated PNG text plus AGENTS.md plus tool schemas is what
+hit 32769 on ezer-forge after a successful capture.
+
+**Alternative rejected:** Lowering `max_result_chars` — that still
+sends tens of thousands of tokens of truncated (invalid) PNG.

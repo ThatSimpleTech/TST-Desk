@@ -155,6 +155,33 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
     )
 
 
+def peel_screenshot_png(raw: str) -> tuple[str, bytes | None]:
+    """Split a driver screenshot into compact JSON plus PNG bytes (TD-1729).
+
+    50k chars of base64 in a tool message blows a 32k local window
+    (ezer-forge). The pixels go to the model as a vision part; ``output``
+    keeps path/size only.
+    """
+    png = _png_from_driver_json(raw)
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw, png
+    if not isinstance(body, dict) or "png_base64" not in body:
+        return raw, png
+    compact = {key: value for key, value in body.items() if key != "png_base64"}
+    if png is not None:
+        from ..screen.frames import png_size
+
+        width, height = png_size(png)
+        if width and "width" not in compact:
+            compact["width"] = width
+        if height and "height" not in compact:
+            compact["height"] = height
+        compact.setdefault("mime", "image/png")
+    return json.dumps(compact, sort_keys=True), png
+
+
 def _png_from_driver_json(raw: str) -> bytes | None:
     """Pull PNG bytes from a successful driver screenshot payload."""
     try:
