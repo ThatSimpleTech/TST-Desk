@@ -9978,3 +9978,23 @@ orchestrator already sends `auto`.
 **Alternative rejected:** Parsing JSON-in-content as a tool call.
 That would paper over a missing field every OpenAI-compatible
 caller is supposed to send. Also rejected: a per-preset flag.
+
+---
+
+## 2026-09-16 — TD-1725: packaged tstd serves computer-use MCP (Class B)
+
+**Decision:** When `computer_use.command` is empty and this process is
+a PyInstaller sidecar (`sys.frozen`), the desktop driver is
+`[sys.executable, "--cu-mcp"]`, not the in-process mock. The sidecar
+freeze collects `tst_cu_mcp` plus `mcp` and Pillow (`uv` group
+`sidecar`) so AppImage computer-use does not need a git checkout.
+Checkout and CI stay mock on empty command.
+
+**Rationale:** `tstd --cu-mcp` was the packaged identity (2026-09-02)
+but the freeze never included the MCP package, so every AppImage
+session was mock screenshots. The user asked for the real CU MCP.
+
+**Alternative rejected:** Defaulting shipped `config.yaml` to
+`tstd --cu-mcp` — CI and `uv run tstd` would spawn a missing binary.
+Also rejected: requiring `~/TST-Desk/mcp/tst-cu-mcp` next to an
+installed AppImage.

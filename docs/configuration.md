@@ -401,6 +401,7 @@ discovery (TD-601). Interactive and autonomy sessions both load them.
 A dead or refused server is a doctor row (`mcp:<id>` after `steering`),
 not a dead daemon. Builtins stay registered. The computer-use sidecar
 (`computer_use.command` → `mcp/tst-cu-mcp`) is a different product.
+A packaged sidecar with empty `command` serves `tstd --cu-mcp` (TD-1725).
 
 Tool names are prefixed `{server_id}__{remote_name}` so an MCP tool
 named `fs_read` cannot replace the builtin. Registry provenance is
