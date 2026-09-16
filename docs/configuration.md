@@ -188,6 +188,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
 | `local_worker_preset` | string | `vllm` | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
+| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest screenshots are dropped first. `1` matches ezer-forge (`--limit-mm-per-prompt image:1`). |
 
 #### `computer_use.grounding`
 
@@ -484,6 +485,7 @@ computer_use:
     base_url: ""
     timeout_seconds: 8
   local_worker_preset: vllm
+  max_prompt_images: 1
 remote:
   bind: ""
 notify:

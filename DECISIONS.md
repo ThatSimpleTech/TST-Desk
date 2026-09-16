@@ -10061,3 +10061,17 @@ hit 32769 on ezer-forge after a successful capture.
 
 **Alternative rejected:** Lowering `max_result_chars` — that still
 sends tens of thousands of tokens of truncated (invalid) PNG.
+
+---
+
+## 2026-09-16 — TD-1730: one image per prompt (Class B)
+
+**Decision:** Before each completion, drop oldest `image_url` parts so
+at most `computer_use.max_prompt_images` remain (default 1). Text of
+those tool results stays. Measured: second `desktop_screenshot` on
+ezer-forge failed with "At most 1 image(s) may be provided in one
+prompt."
+
+**Alternative rejected:** Hardcoding the forge limit in Python. The
+cap is config. Also rejected: keeping every screenshot — the host
+cannot.

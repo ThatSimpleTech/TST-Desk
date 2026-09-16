@@ -4227,6 +4227,21 @@ screenshot. Peel the pixels out of `output` and send them as
 
 ---
 
+### TD-1730 — At most one image on a local VLM prompt
+**Size:** 1 · **Depends on:** TD-1729
+
+ezer-forge is `--limit-mm-per-prompt image:1`. A second
+`desktop_screenshot` sent two `image_url` parts and the host returned
+400. Cap outbound messages at `computer_use.max_prompt_images` (default
+1), keeping the newest.
+
+**Acceptance criteria:**
+- [x] Two screenshot tool messages → only the last still has `image_url`
+- [x] `max_prompt_images: 0` strips every image
+- [x] Documented on `computer_use`
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 
