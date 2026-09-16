@@ -1,9 +1,9 @@
 """Resolve the desktop driver from config (TD-3301).
 
-Empty ``computer_use.command`` is mock-only in checkout/CI. A packaged
-(frozen) sidecar with an empty command serves ``tstd --cu-mcp`` so the
-AppImage includes a real computer-use MCP (TD-1725). A non-empty command
-is the stdio argv for ``mcp/tst-cu-mcp``. The daemon owns the child.
+Empty ``computer_use.command`` is mock-only in checkout/CI. Packaged
+Linux runs the X11/Wayland backends in-process (TD-1727). Packaged
+macOS/Windows still spawn ``tstd --cu-mcp``. A non-empty command is
+stdio argv for ``mcp/tst-cu-mcp``.
 """
 
 from __future__ import annotations
@@ -64,7 +64,13 @@ def desktop_driver_from_config(
     config: ModelConfig, cu_prefs: CuIndicatorPrefs | None = None
 ) -> DesktopDriver:
     command: str | list[str] = config.computer_use.command
-    argv = argv_from_command(command) or packaged_cu_argv()
+    argv = argv_from_command(command)
+    if not argv and _linux_inprocess():
+        from .inprocess import InProcessDesktopDriver
+
+        return InProcessDesktopDriver()
+    if not argv:
+        argv = packaged_cu_argv()
     env: dict[str, str] | None = None
     if argv:
         # This child is ours: it gets the internal tools whether or not the
@@ -74,3 +80,8 @@ def desktop_driver_from_config(
             env[OVERLAY_ENV] = "1" if cu_prefs.show_on_real_display else "0"
         command = argv
     return driver_for_command(command, env=env)
+
+
+def _linux_inprocess() -> bool:
+    """Packaged Linux: run X11/Wayland backends here, do not spawn tstd."""
+    return bool(getattr(sys, "frozen", False)) and sys.platform.startswith("linux")
