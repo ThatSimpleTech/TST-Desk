@@ -4121,6 +4121,26 @@ Existing rows said "No key stored" with no field to paste one.
 
 ---
 
+### TD-1724 — Send `tool_choice: auto` when tools are present
+**Size:** 1 · **Depends on:** TD-303
+
+EZER LiteLLM's guided_json hook treats `tools` without `tool_choice` as
+"constrain the whole completion to JSON". The model then writes
+`{"name":"desktop_click","arguments":{...}}` into assistant *content*
+and `message.tool_calls` stays empty, so TST Desk never dispatches.
+OpenAI's default when tools are present is `tool_choice: "auto"`; the
+orchestrator already sends it. We omitted it.
+
+**Acceptance criteria:**
+- [x] A ChatCompletionRequest with tools serializes `tool_choice: "auto"`
+- [x] A request without tools still omits `tool_choice`
+- [x] No provider URL or model slug is hardcoded
+
+**Notes:** Class B: explicit default, not a new protocol. Gateways that
+already default to auto are unchanged.
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 
