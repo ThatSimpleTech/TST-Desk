@@ -4084,18 +4084,40 @@ so a Tailscale EZER (or any off-box OpenAI `/v1`) host had to be typed
 into YAML.
 
 **Acceptance criteria:**
-- [ ] Settings → API keys shows a Host field per named key and on add
-- [ ] Saving Host writes `credentials.<id>.base_url`; blank clears it
+- [x] Settings → API keys shows a Host field per named key and on add
+- [x] Saving Host writes `credentials.<id>.base_url`; blank clears it
       so the preset URL stays in charge
-- [ ] Adding a key with a Host stores both the secret and the host
-- [ ] An invalid host is a typed `bad_request`, not a YAML write
-- [ ] Secrets never appear in `config.yaml`, `setup_state`, or logs
-- [ ] No provider URL is hardcoded in Python
+- [x] Adding a key with a Host stores both the secret and the host
+- [x] An invalid host is a typed `bad_request`, not a YAML write
+- [x] Secrets never appear in `config.yaml`, `setup_state`, or logs
+- [x] No provider URL is hardcoded in Python
 
 **Notes:** Additive protocol: optional `base_url` on `set_credential`
 and `set_api_key`. Empty string clears; omitted leaves or inherits
 (openrouter-family still inherit the shipped OpenRouter URL). No
 `PROTOCOL_VERSION` bump.
+
+**Done (2026-09-16).** Merged as PR #30.
+
+---
+
+### TD-1723 — Settings pane scrolls; add a source without a key
+**Size:** 2 · **Depends on:** TD-1722
+
+The settings dialog clipped at 80vh with `overflow: hidden` and a grid
+row sized to content, so API keys (and Computer use, MCP, Appearance)
+could not scroll. The add form — Host and Save — sat below the fold.
+Existing rows said "No key stored" with no field to paste one.
+
+**Acceptance criteria:**
+- [x] The settings body scrolls when content is taller than the dialog
+- [x] Every settings section uses that scroller (not only API keys)
+- [x] Add source is enabled with a name; key is optional
+- [x] A row with no stored key has a Key field that saves onto that id
+- [x] Secrets stay in component drafts, never the settings store
+
+**Notes:** Layout Class A: flex column, `min-height: 0`, overflow-y on
+`.content`. Add-without-key reuses `set_credential` (TD-1717).
 
 ---
 
