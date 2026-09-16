@@ -19,6 +19,7 @@ added in E7 (autonomy hooks) and E8 (approvals).
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import time
 import uuid
@@ -424,6 +425,23 @@ async def _build_assistant_tool_call(
     return provider_tool_calls
 
 
+def _tool_message_content(result: Any) -> Any:
+    """Tool output for the provider. Screenshots are a vision part, not text."""
+    text = result.output
+    png = getattr(result, "image_png", None)
+    if not png:
+        return text
+    return [
+        {"type": "text", "text": text},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+            },
+        },
+    ]
+
+
 async def _dispatch_and_append_results(
     dispatcher: ToolDispatcher,
     session: Session,
@@ -498,7 +516,7 @@ async def _dispatch_and_append_results(
         messages.append(
             ChatMessage(
                 role="tool",
-                content=r.output,
+                content=_tool_message_content(r),
                 tool_call_id=r.tool_call_id,
             )
         )
