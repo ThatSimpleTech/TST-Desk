@@ -31,6 +31,7 @@ CORE = Path(__file__).resolve().parent.parent
 REPO = CORE.parent
 ENTRY = CORE / "scripts" / "tstd_sidecar_entry.py"
 BINARIES = REPO / "shell" / "binaries"
+CU_SRC = REPO / "mcp" / "tst-cu-mcp" / "src"
 STARTUP_BUDGET_S = 5.0
 
 # Data files importlib.resources must find inside the frozen bundle.
@@ -58,6 +59,8 @@ def build(triple: str) -> Path:
         cmd = [
             "uv",
             "run",
+            "--group",
+            "sidecar",
             "pyinstaller",
             "--onefile",
             "--name",
@@ -70,6 +73,16 @@ def build(triple: str) -> Path:
             str(Path(work) / "spec"),
             "--paths",
             str(CORE),
+            "--paths",
+            str(CU_SRC),
+            "--hidden-import",
+            "tst_cu_mcp",
+            "--collect-submodules",
+            "tst_cu_mcp",
+            "--collect-all",
+            "mcp",
+            "--collect-all",
+            "PIL",
             "--clean",
             "--noconfirm",
         ]
