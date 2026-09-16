@@ -67,6 +67,7 @@ from .local_worker import (
 from .logging import get_logger
 from .memory_commit import MemoryCommitter
 from .policy import load_approved_imports, save_approved_imports
+from .prompt_images import cap_prompt_images
 from .protocol import (
     AssistantDelta,
     AssistantReasoning,
@@ -1105,6 +1106,21 @@ async def agent_loop(
                             "tokens_before": compaction.tokens_before,
                             "tokens_after": compaction.tokens_after,
                             "counter_method": compaction.counter_method,
+                        }
+                    },
+                )
+
+            dropped_images = cap_prompt_images(
+                messages, config.computer_use.max_prompt_images
+            )
+            if dropped_images:
+                log.info(
+                    "capped prompt images",
+                    extra={
+                        "extra_fields": {
+                            "session_id": session.id,
+                            "dropped": dropped_images,
+                            "max_prompt_images": config.computer_use.max_prompt_images,
                         }
                     },
                 )
