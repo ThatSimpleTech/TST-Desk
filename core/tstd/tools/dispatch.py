@@ -31,6 +31,7 @@ from ..memory_commit import MemoryCommitter
 from ..policy import ApprovalOutcome, PolicyConfig, format_summary, resolve_explained
 from ..protocol import DecisionLogged as DecisionLoggedEvent
 from .boundary import PathGuard, RefusalError
+from .desktop import peel_screenshot_png
 from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry
 from .results import HandlerRefusal, ToolResult, ValidationError, truncate_output
@@ -532,6 +533,11 @@ class ToolDispatcher:
             if sections:
                 diff_text, _ = truncate_output("\n\n".join(sections), self.max_result_chars)
 
+        # 4. Screenshots: pixels are a vision part, not 50k of base64 text.
+        image_png: bytes | None = None
+        if name in {"desktop_screenshot", "browser_screenshot"} and isinstance(output, str):
+            output, image_png = peel_screenshot_png(output)
+
         # 4. Truncate
         truncated_output, truncated = truncate_output(output, self.max_result_chars)
 
@@ -598,6 +604,7 @@ class ToolDispatcher:
             checkpoint_notice=checkpoint_notice,
             memory_notice=memory_notice,
             diff=diff_text,
+            image_png=image_png,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────
