@@ -4180,6 +4180,22 @@ is a different protocol (TD-4901).
 
 ---
 
+### TD-1727 — Packaged Linux CU runs in-process
+**Size:** 2 · **Depends on:** TD-1726
+
+`PYINSTALLER_RESET_ENVIRONMENT` was not enough: the AppImage child
+still died with Connection lost and no stderr. Frozen Linux now uses
+the X11/Wayland backends inside the daemon. macOS still spawns the
+sidecar (TCC). Windows still uses stdio MCP.
+
+**Acceptance criteria:**
+- [x] Frozen Linux + empty command is `InProcessDesktopDriver`
+- [x] Frozen Darwin still spawns `tstd --cu-mcp`
+- [x] Checkout empty command is still the mock
+- [x] Linux X11 vs Wayland backends are unchanged (separate protocols)
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 
