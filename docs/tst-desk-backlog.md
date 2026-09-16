@@ -4075,6 +4075,30 @@ stays the default for new sessions.
 
 ---
 
+### TD-1722 — Settings → API keys can set the host
+**Size:** 2 · **Depends on:** TD-1718
+
+TD-1718 put `credentials.<id>.base_url` in config and showed it under
+the Model key picker. Settings → API keys still had only Name and Key,
+so a Tailscale EZER (or any off-box OpenAI `/v1`) host had to be typed
+into YAML.
+
+**Acceptance criteria:**
+- [ ] Settings → API keys shows a Host field per named key and on add
+- [ ] Saving Host writes `credentials.<id>.base_url`; blank clears it
+      so the preset URL stays in charge
+- [ ] Adding a key with a Host stores both the secret and the host
+- [ ] An invalid host is a typed `bad_request`, not a YAML write
+- [ ] Secrets never appear in `config.yaml`, `setup_state`, or logs
+- [ ] No provider URL is hardcoded in Python
+
+**Notes:** Additive protocol: optional `base_url` on `set_credential`
+and `set_api_key`. Empty string clears; omitted leaves or inherits
+(openrouter-family still inherit the shipped OpenRouter URL). No
+`PROTOCOL_VERSION` bump.
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 

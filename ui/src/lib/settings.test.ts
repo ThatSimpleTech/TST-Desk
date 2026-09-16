@@ -59,6 +59,7 @@ import {
 	storeNamedKey,
 	deleteNamedKey,
 	renameCredential,
+	saveCredentialHost,
 	saveTierCredential,
 	selectedCredential,
 	credentialHost,
@@ -577,6 +578,35 @@ describe("key section", () => {
 		storeNamedKey("Local", "  sk-lab-1  ");
 		expect(mocks.sent).toEqual([
 			{ type: "set_api_key", api_key: "sk-lab-1", name: "Local", credential: null },
+		]);
+	});
+
+	it("storeNamedKey includes a host only when one is typed (TD-1722)", () => {
+		startSettings();
+		storeNamedKey("EZER", "sk-lab-1", undefined, " http://ezer.example.ts.net:4000/v1 ");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_api_key",
+				api_key: "sk-lab-1",
+				name: "EZER",
+				credential: null,
+				base_url: "http://ezer.example.ts.net:4000/v1",
+			},
+		]);
+	});
+
+	it("saveCredentialHost writes empty to clear the host (TD-1722)", () => {
+		startSettings();
+		saveCredentialHost("ezer", "EZER", "http://ezer.example.ts.net:4000/v1");
+		saveCredentialHost("ezer", "EZER", "  ");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_credential",
+				credential: "ezer",
+				name: "EZER",
+				base_url: "http://ezer.example.ts.net:4000/v1",
+			},
+			{ type: "set_credential", credential: "ezer", name: "EZER", base_url: "" },
 		]);
 	});
 

@@ -345,7 +345,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `move_session` | yes | Reassign a session to another workspace, keeping its id and log. |
 | `rename_session` | yes | Set a session's display title, or restore the auto-title when empty. Metadata only. |
 | `get_setup_state` | — | Ask for the onboarding state: key presence, presets, active preset. |
-| `set_api_key` | — | Store an API key in the OS keychain. |
+| `set_api_key` | — | Store an API key in the OS keychain. Optional `base_url` is the host that key talks to (TD-1722). |
 | `validate_api_key` | — | Probe a key with one cheap live call. |
 | `delete_api_key` | — | Remove an API key from the OS keychain. |
 | `set_preset` | — | Choose the active model preset. |
@@ -357,7 +357,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `approve_grok_plan` | yes | Tell Grok to approve the current plan and implement. |
 | `list_grok_extensions` | — | List MCP / skills / plugins discovered in `~/.grok` (no secrets). |
 | `set_tier_slug` | — | Set the model slug for one tier of one preset. |
-| `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). |
+| `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). Optional `base_url` sets or clears the host that key talks to (TD-1722). |
 | `delete_credential` | — | Remove a named key, its secret, and tier bindings (TD-1717). |
 | `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). That key's `base_url` is the host the tier calls when set (TD-1718). |
 | `set_mcp_server` | — | Create or replace one listed MCP server (id, transport, command argv and/or url, enabled). No `env` field. Acked with `setup_state` (TD-4403). |
@@ -371,6 +371,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `check_cu_permissions` | — | Re-probe computer-use OS permissions / integrity without raising a TCC prompt (TD-3302, TD-3303, TD-2001). Acked with `cu_permissions`. |
 | `reset_cu_permissions` | — | Reset this app's macOS TCC grants (Screen Recording, Accessibility) with `tccutil reset`, forget the prompt stamps, and raise both prompts again (TD-4823). A window action only, never a tool; off macOS it is just a re-probe. Acked with `cu_permissions`. |
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
+| `set_cu_policy` | — | Write computer-use Settings (enable, mode, denylist, unhide) to `~/.tst-cu-mcp/config.yaml`. Acked with `setup_state` (TD-4830). |
 | `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener. Acked with `setup_state` (TD-3603). |
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
 | `save_job` | — | Create or replace a scheduled job from draft fields. Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
