@@ -4161,6 +4161,25 @@ config, not this story.
 
 ---
 
+### TD-1726 — Frozen CU child must reset the onefile extract dir
+**Size:** 2 · **Depends on:** TD-1725
+
+Packaged `tstd` spawned `tstd --cu-mcp` (same onefile binary). The
+child collided with the daemon's `_MEIPASS` and died; every
+`desktop_screenshot` / `desktop_move` was `Connection lost`. This is
+the Linux AppImage spawn. macOS keeps the in-daemon CU socket (TCC
+identity). Windows keeps its own backend. Linux capture/input stay
+X11 (`libX11`/`libXrandr`/`libXtst`) — distro-agnostic; native Wayland
+is a different protocol (TD-4901).
+
+**Acceptance criteria:**
+- [x] Frozen MCP child env includes `PYINSTALLER_RESET_ENVIRONMENT=1`
+- [x] Checkout spawn does not set that variable
+- [x] CU stderr is visible at warning, not only debug
+- [x] No macOS/Windows backend or protocol is changed
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 
