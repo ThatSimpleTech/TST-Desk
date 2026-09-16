@@ -4196,6 +4196,21 @@ sidecar (TCC). Windows still uses stdio MCP.
 
 ---
 
+### TD-1728 — Keep 32k local CU inside the window
+**Size:** 2 · **Depends on:** TD-1727, TD-405
+
+ezer-forge is 32768 tokens. Nested `node_modules/**/AGENTS.md` plus a
+1568px screenshot as base64 overflowed on the first CU turn.
+Compaction cannot drop the in-flight screenshot. Skip dependency trees
+in the nested walk; Linux in-process screenshots cap at 768px.
+
+**Acceptance criteria:**
+- [x] Nested walk skips `node_modules`, `.venv`, `dist`, `build`, `target`
+- [x] In-process Linux screenshot uses max_long_edge 768
+- [x] Steering guide lists every skipped directory
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 
