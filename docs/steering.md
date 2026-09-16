@@ -126,7 +126,8 @@ comment is the very next line.
 - **Rules load in byte order of their filename**, which puts capitals first: `Mid.md`,
   `alpha.md`, `zebra.md`. If the order matters, prefix with numbers — `00-`, `10-`, `20-`.
 - **Nested files load shallowest first**, so a deeper file overrides a shallower one.
-- **The nested walk skips `.git`, `.tst`, `.tstdesk`, `.claude` and `__pycache__`,** and does
+- **The nested walk skips `.git`, `.tst`, `.tstdesk`, `.claude`, `__pycache__`,
+  `node_modules`, `.venv`, `dist`, `build` and `target`,** and does
   not follow directory symlinks. A steering file inside any of those is not found.
 - **Rules come before nested files.** A `src/api/AGENTS.md` therefore outranks every rule in
   `.tst/rules/`, scoped or not.
