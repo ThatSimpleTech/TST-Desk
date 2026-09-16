@@ -17,6 +17,9 @@ from typing import Any
 from .protocol import DesktopError
 
 _STOP_ENV = "TST_CU_MCP_STOP"
+# 32k local VLMs (ezer-forge) cannot eat a 1568px PNG as text. 768 keeps
+# the frame usable for click targeting without blowing the window (TD-1728).
+_SCREENSHOT_MAX_EDGE = 768
 
 
 def _map_error(exc: BaseException) -> DesktopError:
@@ -63,7 +66,9 @@ class InProcessDesktopDriver:
         from tst_cu_mcp.capture import capture
 
         try:
-            result = await asyncio.to_thread(capture, display_index=display)
+            result = await asyncio.to_thread(
+                capture, display_index=display, max_long_edge=_SCREENSHOT_MAX_EDGE
+            )
         except Exception as exc:
             raise _map_error(exc) from exc
         return json.dumps(

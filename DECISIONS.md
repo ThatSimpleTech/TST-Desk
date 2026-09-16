@@ -10035,3 +10035,16 @@ the same identity as the host.
 
 **Alternative rejected:** `--onedir` sidecar — a packaging change for
 every OS. Also rejected: one input protocol for macOS/Windows/Linux.
+
+---
+
+## 2026-09-16 — TD-1728: 32k CU must not ingest node_modules (Class A)
+
+**Decision:** Nested steering skips `node_modules`, `.venv`, `dist`,
+`build`, and `target`. Packaged Linux screenshots downscale to 768px
+on the long edge. Compaction still cannot drop an in-flight screenshot;
+the frame has to be small enough to sit beside the system prompt.
+
+**Rationale:** First CU turn on ezer-forge (32768) failed with
+ContextWindowExceededError: system prompt included cytoscape's
+AGENTS.md from `ui/node_modules`, plus a full-size PNG as base64.
