@@ -9961,3 +9961,20 @@ messages to edit one catalog row. Also rejected: putting the host on
 the preset from this screen (that is Settings → Model's job, and it
 would steal OpenRouter traffic if applied to the OPENROUTER key).
 Also rejected: inferring the host from the key name.
+
+---
+
+## 2026-09-16 — TD-1724: send `tool_choice: auto` with tools (Class B)
+
+**Decision:** `ChatCompletionRequest.to_dict()` writes `tool_choice:
+"auto"` whenever `tools` is present. OpenAI's default; we now say it.
+
+**Rationale:** EZER LiteLLM's guided_json hook treats omitted
+`tool_choice` as "JSON in `content`" (`{"name","arguments"}`) and
+leaves `message.tool_calls` empty. TST Desk only dispatches
+`tool_calls`, so `desktop_click` appeared as chat text. The family
+orchestrator already sends `auto`.
+
+**Alternative rejected:** Parsing JSON-in-content as a tool call.
+That would paper over a missing field every OpenAI-compatible
+caller is supposed to send. Also rejected: a per-preset flag.
