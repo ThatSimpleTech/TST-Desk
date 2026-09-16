@@ -9998,3 +9998,24 @@ session was mock screenshots. The user asked for the real CU MCP.
 `tstd --cu-mcp` — CI and `uv run tstd` would spawn a missing binary.
 Also rejected: requiring `~/TST-Desk/mcp/tst-cu-mcp` next to an
 installed AppImage.
+
+---
+
+## 2026-09-16 — TD-1726: frozen CU child resets onefile extract (Class B)
+
+**Decision:** When the daemon is a PyInstaller onefile binary, the MCP
+child env includes `PYINSTALLER_RESET_ENVIRONMENT=1`. Checkout spawn
+is unchanged. CU stderr is a warning. This is the spawn, not the
+desktop protocol.
+
+OS protocols stay separate inside `tst-cu-mcp`:
+- macOS: Accessibility / CoreGraphics, in-daemon socket (TCC identity)
+- Windows: ctypes user32
+- Linux X11: libX11 / libXrandr / libXtst (any distro with those libs)
+- Linux Wayland: a different protocol (TD-4901), not this spawn
+
+**Rationale:** AppImage `desktop_screenshot` died with Connection lost
+because the child `tstd --cu-mcp` shared the parent's `_MEIPASS`.
+
+**Alternative rejected:** In-process Linux backend in the daemon —
+would skip MCP isolation. Also rejected: one protocol for all OSes.

@@ -466,6 +466,31 @@ class TestPackagedCuDefault:
         assert driver._command == ["/app/tstd", "--cu-mcp"]
         assert driver._client._env is not None
         assert driver._client._env["TST_CU_MCP_INTERNAL"] == "1"
+        assert driver._client._env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+
+class TestFrozenCuChildEnv:
+    """Onefile tstd must reset extract dir when spawning itself (TD-1726)."""
+
+    def test_checkout_spawn_does_not_set_reset(self) -> None:
+        from tstd.desktop.stdio_mcp import spawn_env
+
+        assert spawn_env(None) is None
+        extra = {"TST_CU_MCP_INTERNAL": "1"}
+        assert spawn_env(extra) == extra
+        assert "PYINSTALLER_RESET_ENVIRONMENT" not in extra
+
+    def test_frozen_spawn_sets_reset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sys
+
+        from tstd.desktop.stdio_mcp import spawn_env
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        env = spawn_env({"TST_CU_MCP_INTERNAL": "1"})
+        assert env is not None
+        assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+        assert env["TST_CU_MCP_INTERNAL"] == "1"
+        assert "PATH" in env
 
 
 class TestOverlayEnvPlumbing:
