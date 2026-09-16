@@ -10019,3 +10019,19 @@ because the child `tstd --cu-mcp` shared the parent's `_MEIPASS`.
 
 **Alternative rejected:** In-process Linux backend in the daemon —
 would skip MCP isolation. Also rejected: one protocol for all OSes.
+
+---
+
+## 2026-09-16 — TD-1727: packaged Linux CU is in-process (Class B)
+
+**Decision:** Frozen Linux with empty `computer_use.command` uses
+`InProcessDesktopDriver` (tst-cu-mcp X11/Wayland backends in the
+daemon). No second `tstd --cu-mcp`. macOS still spawns the sidecar
+for TCC identity. Windows still uses stdio MCP.
+
+**Rationale:** RESET_ENVIRONMENT did not stop Connection lost on the
+AppImage. The child never logged. Linux has no TCC, so in-process is
+the same identity as the host.
+
+**Alternative rejected:** `--onedir` sidecar — a packaging change for
+every OS. Also rejected: one input protocol for macOS/Windows/Linux.
