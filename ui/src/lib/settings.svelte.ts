@@ -350,6 +350,18 @@ export function saveCredentialHost(credential: string, name: string, baseUrl: st
 	});
 }
 
+/** Add a catalog row without a secret (TD-1723). Host is optional. */
+export function createNamedSource(name: string, baseUrl?: string): void {
+	const trimmedName = name.trim();
+	if (trimmedName === "") return;
+	const host = (baseUrl ?? "").trim();
+	sendToDaemon({
+		type: "set_credential",
+		name: trimmedName,
+		...(host !== "" ? { base_url: host } : {}),
+	});
+}
+
 export function deleteNamedKey(credential: string): void {
 	if (credential.trim() === "") return;
 	sendToDaemon({ type: "delete_credential", credential });
