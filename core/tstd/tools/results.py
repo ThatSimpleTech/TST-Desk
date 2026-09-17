@@ -35,6 +35,8 @@ class ToolResult:
             commit (non-git workspace, TD-2104).
         diff: Unified diff of what the write changed (TD-604), for
             display; ``None`` for reads and non-diffable writes.
+        image_png: Screenshot bytes for the model as a vision part
+            (TD-1729). Never duplicated into ``output`` as base64 text.
         verification: Actuation verification status (TD-709, dev) —
             ``verified`` / ``refuted`` / ``unavailable``; ``None`` when
             no verifier is wired or the tool does not actuate.
@@ -52,6 +54,7 @@ class ToolResult:
     checkpoint_notice: Notice | None = None
     memory_notice: Notice | None = None
     diff: str | None = None
+    image_png: bytes | None = None
     verification: str | None = None
 
 

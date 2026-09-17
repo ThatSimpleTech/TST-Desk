@@ -380,3 +380,23 @@ def test_unclosed_fence_swallows_directives_to_eof(tmp_path: Path) -> None:
     assert "@never.md" in assembled.block  # passed through literally
     assert "NEVER-RESOLVED" not in assembled.block
     assert not any("never.md" in i for i in assembled.import_issues)
+
+
+def test_nested_walk_skips_dependency_trees(tmp_path: Path) -> None:
+    """node_modules / .venv AGENTS.md must not enter the 32k window (TD-1728)."""
+    ws = tmp_path / "workspace"
+    home = tmp_path / "home"
+    _write(ws / "AGENTS.md", "root\n")
+    _write(ws / "src" / "AGENTS.md", "src-ok\n")
+    _write(ws / "node_modules" / "pkg" / "AGENTS.md", "LEAK-NPM\n")
+    _write(ws / ".venv" / "lib" / "AGENTS.md", "LEAK-VENV\n")
+    sources = SteeringFileResolver(home_dir=home).resolve(ws)
+    subtrees = {s.subtree for s in sources if s.subtree}
+    assert "src" in subtrees
+    assert not any(
+        s.subtree and ("node_modules" in s.subtree or ".venv" in s.subtree) for s in sources
+    )
+    block = ContextAssembler(resolver=SteeringFileResolver(home_dir=home)).assemble_sync(ws).block
+    assert "LEAK-NPM" not in block
+    assert "LEAK-VENV" not in block
+    assert "src-ok" in block

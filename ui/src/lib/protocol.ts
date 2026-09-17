@@ -415,6 +415,9 @@ export interface SetApiKey extends ClientMessage {
   // TD-1717: catalog id (default openrouter) and optional display name.
   credential?: string | null;
   name?: string | null;
+  // TD-1722: OpenAI-compatible host this key talks to. Omitted leaves
+  // or inherits; empty clears so the preset URL stays in charge.
+  base_url?: string | null;
 }
 
 // TD-1102: key removable from settings. Acked with a fresh setup_state
@@ -439,6 +442,9 @@ export interface SetCredential extends ClientMessage {
   type: "set_credential";
   name: string;
   credential?: string | null;
+  // TD-1722: host this key talks to. Omitted leaves an existing host;
+  // empty clears it so the preset URL stays in charge.
+  base_url?: string | null;
 }
 
 export interface DeleteCredential extends ClientMessage {

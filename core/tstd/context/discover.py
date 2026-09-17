@@ -35,7 +35,18 @@ from pathlib import Path
 # per-workspace runtime state, and known tool convention directories.
 # Everything else is fair game — steering files can legitimately live
 # anywhere in a repo tree.
-_SKIP_DIRS = {".git", ".tst", ".tstdesk", ".claude", "__pycache__"}
+_SKIP_DIRS = {
+    ".git",
+    ".tst",
+    ".tstdesk",
+    ".claude",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "dist",
+    "build",
+    "target",
+}
 
 
 class Precedence(IntEnum):

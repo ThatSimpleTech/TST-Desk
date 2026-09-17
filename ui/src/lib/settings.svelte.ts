@@ -329,15 +329,22 @@ export function selectedCredential(tier: string): string {
 	return "openrouter";
 }
 
-export function storeNamedKey(name: string, apiKey: string, credential?: string): void {
+export function storeNamedKey(
+	name: string,
+	apiKey: string,
+	credential?: string,
+	baseUrl?: string,
+): void {
 	const trimmedName = name.trim();
 	const trimmedKey = apiKey.trim();
 	if (trimmedName === "" || trimmedKey === "") return;
+	const host = (baseUrl ?? "").trim();
 	sendToDaemon({
 		type: "set_api_key",
 		api_key: trimmedKey,
 		name: trimmedName,
 		credential: credential ?? null,
+		...(host !== "" ? { base_url: host } : {}),
 	});
 }
 
@@ -345,6 +352,30 @@ export function renameCredential(credential: string, name: string): void {
 	const trimmed = name.trim();
 	if (trimmed === "") return;
 	sendToDaemon({ type: "set_credential", credential, name: trimmed });
+}
+
+/** Persist the host a named key talks to (TD-1722). Empty clears it. */
+export function saveCredentialHost(credential: string, name: string, baseUrl: string): void {
+	const trimmedName = name.trim();
+	if (credential.trim() === "" || trimmedName === "") return;
+	sendToDaemon({
+		type: "set_credential",
+		credential,
+		name: trimmedName,
+		base_url: baseUrl.trim(),
+	});
+}
+
+/** Add a catalog row without a secret (TD-1723). Host is optional. */
+export function createNamedSource(name: string, baseUrl?: string): void {
+	const trimmedName = name.trim();
+	if (trimmedName === "") return;
+	const host = (baseUrl ?? "").trim();
+	sendToDaemon({
+		type: "set_credential",
+		name: trimmedName,
+		...(host !== "" ? { base_url: host } : {}),
+	});
 }
 
 export function deleteNamedKey(credential: string): void {

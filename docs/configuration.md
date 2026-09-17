@@ -78,14 +78,16 @@ no effect.
 Named API keys (TD-1717). Each entry is an id (the keychain account suffix) and a
 `name` the Settings screen shows. Optional `base_url` is the host that key talks
 to (TD-1718): selecting the key uses that host even when the active preset is
-local. Omit it for a keyed local server so the tier URL stays in charge. Add as
+local. Omit it for a keyed local server so the tier URL stays in charge.
+Settings → API keys has a Host field that writes this key (TD-1722); blank
+keeps the preset URL. Add as
 many as you need — OpenRouter, a keyed local server, a second remote. A tier's
 `credential` field picks which one that model sends.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `name` | string, 1–40 chars | *required* | The local given name. Shown in Settings → Model. Never a secret. |
-| `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. |
+| `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. Settings → API keys Host writes this; empty removes it. |
 
 Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook`,
 `ntfy-topic`, `discord-webhook`, and `telegram-bot` are reserved for
@@ -186,6 +188,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
 | `local_worker_preset` | string | `vllm` | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
+| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest screenshots are dropped first. `1` matches ezer-forge (`--limit-mm-per-prompt image:1`). |
 
 #### `computer_use.grounding`
 
@@ -418,6 +421,7 @@ discovery (TD-601). Interactive and autonomy sessions both load them.
 A dead or refused server is a doctor row (`mcp:<id>` after `steering`),
 not a dead daemon. Builtins stay registered. The computer-use sidecar
 (`computer_use.command` → `mcp/tst-cu-mcp`) is a different product.
+A packaged sidecar with empty `command` serves `tstd --cu-mcp` (TD-1725).
 
 Tool names are prefixed `{server_id}__{remote_name}` so an MCP tool
 named `fs_read` cannot replace the builtin. Registry provenance is
@@ -500,6 +504,7 @@ computer_use:
     base_url: ""
     timeout_seconds: 8
   local_worker_preset: vllm
+  max_prompt_images: 1
 remote:
   bind: ""
 notify:
