@@ -663,7 +663,17 @@ def _ctypes_capture_png(x: int, y: int, w: int, h: int) -> bytes | None:
 
 
 def _prepare_cu_imports() -> bool:
-    """Put checkout ``tst-cu-mcp`` (src + venv) on ``sys.path``."""
+    """Put checkout ``tst-cu-mcp`` (src + venv) on ``sys.path``.
+
+    A packaged sidecar already has the package in the freeze (TD-1725);
+    try that first so AppImage computer-use does not need a git checkout.
+    """
+    try:
+        import tst_cu_mcp
+
+        return True
+    except ImportError:
+        pass
     src = _checkout_cu_src()
     if src is None:
         return False

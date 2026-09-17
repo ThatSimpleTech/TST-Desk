@@ -4,7 +4,9 @@
 	import {
 		settings,
 		storeNamedKey,
+		createNamedSource,
 		renameCredential,
+		saveCredentialHost,
 		deleteNamedKey,
 		validateNamedKey,
 	} from "../settings.svelte.js";
@@ -12,13 +14,28 @@
 
 	let newName = $state("");
 	let newKey = $state("");
+	let newHost = $state("");
 	let drafts = $state<Record<string, string>>({});
+	let hostDrafts = $state<Record<string, string>>({});
+	let keyDrafts = $state<Record<string, string>>({});
 
-	function addKey(): void {
-		if (newName.trim() === "" || newKey.trim() === "") return;
-		storeNamedKey(newName, newKey);
+	function addSource(): void {
+		if (newName.trim() === "") return;
+		if (newKey.trim() !== "") {
+			storeNamedKey(newName, newKey, undefined, newHost);
+		} else {
+			createNamedSource(newName, newHost);
+		}
 		newName = "";
 		newKey = "";
+		newHost = "";
+	}
+
+	function saveRowKey(id: string, name: string): void {
+		const key = (keyDrafts[id] ?? "").trim();
+		if (key === "") return;
+		storeNamedKey(name, key, id);
+		keyDrafts[id] = "";
 	}
 
 	function commitName(id: string): void {
@@ -26,6 +43,17 @@
 		const current = settings.credentials.find((c) => c.id === id)?.name;
 		if (next === "" || next === current) return;
 		renameCredential(id, next);
+	}
+
+	function hostValue(id: string, stored: string | null | undefined): string {
+		return hostDrafts[id] ?? stored ?? "";
+	}
+
+	function commitHost(id: string, name: string): void {
+		const current = (settings.credentials.find((c) => c.id === id)?.base_url ?? "").trim();
+		const next = (hostDrafts[id] ?? current).trim();
+		if (next === current) return;
+		saveCredentialHost(id, name, next);
 	}
 </script>
 
@@ -48,8 +76,40 @@
 				onblur={() => commitName(cred.id)}
 			/>
 		</label>
+		<label class="field">
+			<span class="field-name">Host</span>
+			<input
+				class="input"
+				type="text"
+				value={hostValue(cred.id, cred.base_url)}
+				placeholder="preset URL"
+				oninput={(e) => (hostDrafts[cred.id] = e.currentTarget.value)}
+				onblur={() => commitHost(cred.id, drafts[cred.id] ?? cred.name)}
+			/>
+		</label>
+		{#if !cred.stored}
+			<label class="field">
+				<span class="field-name">Key</span>
+				<input
+					class="input"
+					type="password"
+					autocomplete="off"
+					value={keyDrafts[cred.id] ?? ""}
+					placeholder="sk-…"
+					oninput={(e) => (keyDrafts[cred.id] = e.currentTarget.value)}
+				/>
+			</label>
+		{/if}
 		<p class="status">{cred.stored ? "Stored in the OS keychain." : "No key stored."}</p>
 		<div class="actions">
+			{#if !cred.stored}
+				<button
+					class="btn"
+					type="button"
+					disabled={(keyDrafts[cred.id] ?? "").trim() === ""}
+					onclick={() => saveRowKey(cred.id, drafts[cred.id] ?? cred.name)}>Save key</button
+				>
+			{/if}
 			<button
 				class="btn"
 				type="button"
@@ -63,10 +123,15 @@
 	</div>
 {/each}
 
-<p class="hint">Add another key — the name is what Model settings will show.</p>
+<div class="add">
+<p class="hint">
+	Add a source — the name is what Model settings will show. Host is the OpenAI-compatible
+	<code>/v1</code> URL this key talks to; leave it blank to keep the preset's endpoint. Key can
+	wait.
+</p>
 <label class="field">
 	<span class="field-name">Name</span>
-	<input class="input" type="text" bind:value={newName} placeholder="OpenRouter, Local, …" />
+	<input class="input" type="text" bind:value={newName} placeholder="OpenRouter, EZER, …" />
 </label>
 <label class="field">
 	<span class="field-name">Key</span>
@@ -78,17 +143,27 @@
 		placeholder="sk-…"
 	/>
 </label>
+<label class="field">
+	<span class="field-name">Host</span>
+	<input
+		class="input"
+		type="text"
+		bind:value={newHost}
+		placeholder="http://127.0.0.1:8000/v1"
+	/>
+</label>
 <div class="actions">
 	<button
 		class="btn"
 		type="button"
-		disabled={newName.trim() === "" || newKey.trim() === ""}
-		onclick={addKey}>Save key</button
+		disabled={newName.trim() === ""}
+		onclick={addSource}>Add source</button
 	>
 </div>
 {#if onboarding.validation}
 	<p class="hint" aria-live="polite">{onboarding.validation.detail}</p>
 {/if}
+</div>
 
 <style>
 	.hint {
@@ -106,6 +181,17 @@
 	.row:first-of-type {
 		border-top: 0;
 		padding-top: 0;
+	}
+
+	.add {
+		position: sticky;
+		bottom: 0;
+		z-index: 1;
+		margin-top: var(--space-4);
+		padding-top: var(--space-3);
+		padding-bottom: var(--space-1);
+		background: var(--color-lifted);
+		border-top: 1px solid var(--color-hairline);
 	}
 
 	.status {
