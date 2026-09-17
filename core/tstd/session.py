@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
 from .autonomy.charter import Charter
 from .autonomy.classifier import DecisionClass
+from .autonomy.judgment import JudgmentBackend
 from .boundary_config import BoundaryConfig
 from .logging import get_logger, redact_structure
 from .policy import ApprovalOutcome, PolicyConfig, propose_always_allow
@@ -347,6 +348,11 @@ class Session:
         self.last_tool_fingerprint: tuple[tuple[str, str], ...] | None = None
         self.tool_loop_streak: int = 0
         self._breaker_seen_turn: int | None = None
+        # TD-710 (dev): semantic no-progress streak, plus the session's
+        # judgment backend — None unless a judgments feature is enabled,
+        # which leaves the semantic breaker inert.
+        self.semantic_no_progress_streak: int = 0
+        self.judgment_backend: JudgmentBackend | None = None
         # TD-4201 / TD-4202: validator drift check, last good checkpoint,
         # and consecutive-drift streak. Interactive sessions never set these.
         self.autonomy_check_every = 5

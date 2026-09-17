@@ -9964,3 +9964,109 @@ the mirror from the parts so the shared references survive.
 reported case but still misorders text→tool→text turns. Also rejected:
 splitting one turn into multiple assistant rows — breaks per-turn copy
 and turn-seal logic for no gain over parts.
+
+## 2026-09-17 — Decider-model posture: BYOM default, hosted judgments API opt-in (Class B)
+
+**Decision:** The A/B/C decision classifier keeps the TD-703 worker-tier chat
+completion as its only built-in backend. An external typed-judgment API
+(TypeSafe's "Jev" was the evaluated example) is drafted as an opt-in,
+config-selected alternative — proposed story TD-708, not scheduled. The
+TypeSafe skill is vendored at `.tst/skills/typesafe-ai/` (gitignored;
+frontmatter adapted to TD-4502's `description`/`whenToUse`-only rule) as a
+dev-time reference. The vendor's install scripts (`npx skills add …`,
+`claude plugin …`) were evaluated and rejected as the install path.
+
+**Rationale:** The classifier fires on every ambiguous tool call, so a hosted
+backend would continuously export tool-call metadata (paths, command strings,
+hosts) — a posture change for a local/BYOK product that must be an explicit
+opt-in and must defer to charter `network: deny` / `allowed_hosts`. TD-703's
+`AmbiguousClassifier(static, call_worker)` already isolates the change to one
+callable, so the option costs nothing to defer. The vendor installers execute
+remote code and target other agents' skill trees; TST Desk's native path is
+the human-installed `.tst/skills/` tree, and the product's own classifier
+treats any `SKILL.md` write as Class C steering — skills are human-installed
+by design.
+
+**Alternative rejected:** Wiring TypeSafe in now as a second built-in provider —
+violates scope discipline (§3: no scheduled story) and prime §2.3 without an
+opt-in design. Also rejected: running the vendor's install scripts (remote
+code execution, wrong skill tree, agent self-installing steering).
+
+## 2026-09-17 — Judgments are infrastructure, TypeSafe is a connector (Class B)
+
+**Decision:** All proposed judgment features (TD-708 classifier seam, TD-709
+action-effect verification, TD-710 semantic breaker, TD-711 candidate
+selection) are designed provider-neutral: a `JudgmentBackend` protocol whose
+default connector is the existing BYOM worker tier. TypeSafe is only an
+optional connector behind configuration — never a dependency of the core,
+never required, never named in core modules. Every judgment feature must run
+flawlessly with no TypeSafe presence. This refines the same-day decider
+posture entry.
+
+**Rationale:** User steer, 2026-09-17: "TypeSafe should only be a connector,
+not the infrastructure." Keeps the local/BYOK posture intact, makes the
+vendor swappable, and means the features ship value on the default connector;
+a typed-judgment API is an accuracy/latency upgrade only where it earns it on
+the fixture evals (TD-3304 culture: measured, or it does not ship).
+
+**Alternative rejected:** Building the features against TypeSafe's API
+directly — couples core loops to one vendor, breaks the "runs flawlessly
+without it" requirement, and would make the hosted-API posture change
+(prime §2.3) mandatory rather than opt-in.
+
+## 2026-09-17 — TD-708 dev build: seam shape and dev-scope calls (Class B)
+
+Decisions made building the dev version of TD-708/709/710/711 on
+`td/708-judgment-seam`.
+
+### 1. The seam is a protocol over callables, not a provider
+
+**Decision:** `JudgmentBackend` is a two-method protocol (`name`,
+`judge(question)`) over `JudgmentQuestion`/`Judgment` dataclasses. The
+default connector, `WorkerChatJudgmentBackend`, wraps the same
+`async prompt -> text` callable TD-703 used, with a renderer override so
+the classifier's prompt bytes are unchanged (`_legacy_renderer`;
+`build_classifier_prompt` now delegates to it so they cannot drift).
+
+**Rationale:** "Connector, not infrastructure" (the same-day entry). The
+existing `call_worker` callable *was* the seam; formalizing it as a
+protocol keeps every existing callsite and test working while giving
+TD-709/710/711 one typed shape to build against.
+
+### 2. Verification annotates; it does not yet retry
+
+**Decision:** A refuted actuation appends a `[verification: refuted …]`
+note to the tool output and sets `ToolResult.verification`; the loop
+itself decides to re-check or retry. The drafted story's "one retry with
+re-grounding" is deferred — re-grounding lives inside the handlers, and
+a dispatcher-level retry would double-actuate without it.
+
+**Rationale:** The dev build's goal is measurement: whether the judgment
+is right and what it costs. Annotation surfaces refutations to the model
+(the honest escalation path in an agent loop) without a half-built retry
+that could click twice. Retry-with-reground stays in TD-709's hardening
+scope.
+
+### 3. State probes are best-effort driver reads
+
+**Decision:** `DriverStateProbe` reads only driver-exposed attributes
+(mock scripted state today). A driver that cannot describe its state
+yields `None` and verification is `unavailable` for that call.
+
+**Rationale:** A real AX/DOM summarizer is its own story-sized piece.
+The dev build proves the judgment path end-to-end on drivers that can
+describe state and fails open on those that cannot — which is the
+shipped contract anyway.
+
+### 4. Eval methodology: scripted fixtures, ideal backend as ceiling
+
+**Decision:** `tests/test_judgment_eval.py` compares baseline vs default
+connector vs an "ideal" backend (a perfect typed model) on scripted
+fixtures, printing accuracy/call-count tables. No live model, no
+network, no spend.
+
+**Rationale:** §7's mock-provider rule applied to judgments. The ideal
+backend shows the ceiling the seam allows; the worker connector shows
+the real default path (prompt render + strict parse). Live accuracy and
+latency against real connectors is the stories' fixture-corpus work,
+not a dev-build claim.

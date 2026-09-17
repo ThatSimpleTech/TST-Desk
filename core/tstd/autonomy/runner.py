@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from ..config import ModelConfig
 from ..logging import get_logger
-from .breakers import maybe_trip
+from .breakers import maybe_trip, maybe_trip_semantic
 from .charter import Charter
 from .revert import apply_drift_result
 from .supervisor import maybe_check_drift
@@ -105,6 +105,17 @@ async def advance_autonomy(session: Session) -> bool:
                 session.autonomy_stop_reason = DOD_MET
         if session.autonomy_stop_reason is None:
             reason = maybe_trip(session)
+            if reason:
+                session.autonomy_stop_reason = reason
+        # TD-710 (dev): the semantic no-progress breaker runs after the
+        # syntactic four, only when a judgment backend is attached, and
+        # is inert on any failure — a raised judgment never stops a run.
+        if session.autonomy_stop_reason is None and session.judgment_backend is not None:
+            try:
+                reason = await maybe_trip_semantic(session, session.judgment_backend)
+            except Exception:
+                log.exception("semantic breaker raised; continuing unattended run")
+                reason = None
             if reason:
                 session.autonomy_stop_reason = reason
         if session.autonomy_stop_reason is None:
