@@ -59,22 +59,21 @@
 
 <div class="row">
 	<div>
-		<p class="title">Pick browser elements by judgment <span class="badge">Not yet connected</span></p>
+		<p class="title">Pick browser elements by judgment</p>
 		<p class="hint">
-			Code extracts candidate elements as a fixed schema (index, role, name, box) and the
-			judgment picks one — no page text, HTML, cookies, or URL crosses the boundary. The
-			library exists; it is not wired into the browser loop yet, so this switch is inert.
+			Adds a browser_pick tool: code extracts candidate elements as a fixed schema
+			(index, role, name, box) and the judgment picks one — no page text, HTML, cookies,
+			or URL crosses the boundary. No confident match falls back to coordinate clicking.
 		</p>
 	</div>
 	<button
 		class="choice"
+		class:choice--active={settings.judgmentsCandidateSelection}
 		type="button"
 		role="switch"
 		aria-checked={settings.judgmentsCandidateSelection}
-		aria-disabled="true"
-		disabled
-		title="Not wired into the browser loop yet"
-		>Off</button
+		onclick={() => setJudgments({ candidateSelection: !settings.judgmentsCandidateSelection })}
+		>{settings.judgmentsCandidateSelection ? 'On' : 'Off'}</button
 	>
 </div>
 

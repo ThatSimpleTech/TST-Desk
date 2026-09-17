@@ -12,6 +12,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from ..browser import BrowserDriver, BrowserError
+from ..browser.candidates import candidate_from_node, select_candidate
 from ..cu_indicators import hide_real_display_for_screenshot
 from ..screen.frames import persist_screen_frame
 from .registry import Tool, ToolRegistry
@@ -21,8 +22,12 @@ if TYPE_CHECKING:
     from .dispatch import ToolDispatcher
 
 
-def register_browser_tools(registry: ToolRegistry) -> None:
-    """Add the six browser tools. Call from ``create_registry``."""
+def register_browser_tools(registry: ToolRegistry, *, candidate_selection: bool = False) -> None:
+    """Add the six browser tools. Call from ``create_registry``.
+
+    ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
+    ``browser_pick``: act-by-description through the judgment seam.
+    """
     registry.register(
         Tool(
             name="browser_screenshot",
@@ -143,6 +148,33 @@ def register_browser_tools(registry: ToolRegistry) -> None:
             actuates=True,
         )
     )
+    if candidate_selection:
+        registry.register(
+            Tool(
+                name="browser_pick",
+                description=(
+                    "Find an element by description and click it (TD-711). Code "
+                    "extracts candidate elements as a fixed schema; a judgment "
+                    "picks the match. Refuses with fallback guidance when nothing "
+                    "matches confidently — use browser_screenshot + browser_click "
+                    "then. Prefer this over coordinate guessing on text-rich pages."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "What to click, e.g. 'the sign-in button'",
+                        },
+                    },
+                    "required": ["target"],
+                },
+                side_effect_class="ask",
+                parallel_safe=False,
+                mutates=True,
+                actuates=True,
+            )
+        )
 
 
 def _refuse(exc: BrowserError) -> HandlerRefusal:
@@ -247,11 +279,70 @@ async def browser_wait(
     return json.dumps(result)
 
 
+async def browser_pick(
+    session: object,
+    target: str,
+    driver: BrowserDriver,
+    tool_call_id: str = "",
+) -> str:
+    """Act-by-description (TD-711): extract candidates, judge, click the box.
+
+    Every non-assertion — no backend, no candidates, no confident pick —
+    refuses with fallback guidance, so the model recovers with
+    screenshot + coordinate click. Never a hard block.
+    """
+    backend = getattr(session, "judgment_backend", None)
+    if backend is None:
+        raise HandlerRefusal(
+            "no_backend",
+            "browser_pick needs judgments.candidate_selection on; "
+            "use browser_screenshot + browser_click",
+        )
+    try:
+        nodes = await driver.extract_candidates()
+    except BrowserError as exc:
+        raise _refuse(exc) from exc
+    candidates = [
+        candidate
+        for index, node in enumerate(nodes)
+        if (candidate := candidate_from_node(node, index)) is not None
+    ]
+    if not candidates:
+        raise HandlerRefusal(
+            "no_candidates",
+            "no interactive elements on the page; use browser_screenshot + browser_click",
+        )
+    threshold = getattr(session, "judgment_threshold", 0.6)
+    picked = await select_candidate(backend, target, candidates, threshold=threshold)
+    if picked is None:
+        raise HandlerRefusal(
+            "no_match",
+            f"no confident match for {target!r}; use browser_screenshot + browser_click",
+        )
+    chosen = {c.index: c for c in candidates}[picked]
+    cx = chosen.box[0] + chosen.box[2] / 2
+    cy = chosen.box[1] + chosen.box[3] / 2
+    try:
+        result = await driver.click(x=cx, y=cy)
+    except BrowserError as exc:
+        raise _refuse(exc) from exc
+    await _refresh_frame(session, driver, tool_call_id)
+    return json.dumps(
+        {
+            "picked": {"index": picked, "name": chosen.name, "role": chosen.role},
+            "clicked": {"x": cx, "y": cy},
+            "sidecar": result,
+        }
+    )
+
+
 def register_browser_handlers(dispatcher: ToolDispatcher, driver: BrowserDriver) -> None:
-    """Bind the six browser tools to *driver*."""
+    """Bind the six browser tools to *driver* (plus browser_pick when registered)."""
     dispatcher.register_handler("browser_screenshot", partial(browser_screenshot, driver=driver))
     dispatcher.register_handler("browser_navigate", partial(browser_navigate, driver=driver))
     dispatcher.register_handler("browser_click", partial(browser_click, driver=driver))
     dispatcher.register_handler("browser_type", partial(browser_type, driver=driver))
     dispatcher.register_handler("browser_scroll", partial(browser_scroll, driver=driver))
     dispatcher.register_handler("browser_wait", partial(browser_wait, driver=driver))
+    if dispatcher.registry.get("browser_pick") is not None:
+        dispatcher.register_handler("browser_pick", partial(browser_pick, driver=driver))

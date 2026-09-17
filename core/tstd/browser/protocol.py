@@ -57,6 +57,14 @@ class BrowserDriver(Protocol):
     async def hit_test(self, x: float, y: float) -> dict[str, Any]:
         """Observe the node at a CSS-pixel point. Never actuates."""
 
+    async def extract_candidates(self) -> list[dict[str, Any]]:
+        """Visible interactive elements as ``normalize_hit``-shaped nodes.
+
+        The candidate source for judgment-based selection (TD-711): code
+        owns the extraction; the fixed schema — tag, role, name, box — is
+        the isolation boundary, so no page text, HTML, or URL crosses it.
+        """
+
     async def aclose(self) -> None:
         """Release a live browser if this driver owns one."""
 

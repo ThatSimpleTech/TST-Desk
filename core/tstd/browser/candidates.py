@@ -51,14 +51,19 @@ class Candidate:
 def candidate_from_node(node: Mapping[str, Any], index: int) -> Candidate | None:
     """Build a :class:`Candidate` from a ``normalize_hit``-shaped node.
 
-    ``None`` when the node carries neither a role nor any name — there
-    is nothing a judgment could match a phrase against.
+    A top-level ``name`` (the extractor's best accessible-name computation)
+    wins; otherwise the attribute preference order applies.  ``None`` when
+    the node carries neither a role nor any name — there is nothing a
+    judgment could match a phrase against.
     """
     role = node.get("role")
     role = role if isinstance(role, str) else ""
-    attributes = node.get("attributes")
     name = ""
-    if isinstance(attributes, Mapping):
+    direct = node.get("name")
+    if isinstance(direct, str) and direct.strip():
+        name = direct.strip()
+    attributes = node.get("attributes")
+    if not name and isinstance(attributes, Mapping):
         for key in _NAME_KEYS:
             value = attributes.get(key)
             if isinstance(value, str) and value.strip():

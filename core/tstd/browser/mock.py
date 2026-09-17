@@ -9,6 +9,25 @@ from typing import Any
 
 from .protocol import TINY_PNG, BrowserError, scripted_hit_node
 
+# TD-711: the mock's default interactive elements — a cancel/confirm pair
+# so selection tests have a right answer and a distractor.
+_DEFAULT_CANDIDATES: list[dict[str, Any]] = [
+    {
+        "tag": "button",
+        "role": "button",
+        "name": "Cancel",
+        "attributes": {},
+        "box": {"x": 100.0, "y": 100.0, "width": 80.0, "height": 24.0},
+    },
+    {
+        "tag": "button",
+        "role": "button",
+        "name": "Sign in",
+        "attributes": {},
+        "box": {"x": 200.0, "y": 100.0, "width": 90.0, "height": 24.0},
+    },
+]
+
 
 class MockBrowserDriver:
     """The TD-102 mock path: observe, never start a real browser."""
@@ -17,10 +36,15 @@ class MockBrowserDriver:
         self,
         *,
         pages: dict[str, str] | None = None,
+        candidates: list[dict[str, Any]] | None = None,
         crash: bool = False,
         stall: bool = False,
     ) -> None:
         self.pages = dict(pages) if pages is not None else {"about:blank": "Blank"}
+        # TD-711: scripted interactive elements for candidate selection.
+        self.candidates = (
+            list(candidates) if candidates is not None else _DEFAULT_CANDIDATES
+        )
         self.url = "about:blank"
         self.crash = crash
         self.stall = stall
@@ -78,6 +102,12 @@ class MockBrowserDriver:
             raise BrowserError("driver_crash", "browser driver crashed")
         self._record("hit_test", False, x=x, y=y)
         return scripted_hit_node(x, y)
+
+    async def extract_candidates(self) -> list[dict[str, Any]]:
+        if self.crash:
+            raise BrowserError("driver_crash", "browser driver crashed")
+        self._record("extract_candidates", False)
+        return list(self.candidates)
 
     async def aclose(self) -> None:
         return None

@@ -1237,10 +1237,11 @@ behavior.
 
 ### TD-711 — Judgment-based candidate selection in the browser loop
 **Size:** 5 · **Depends on:** TD-708, TD-1710
-**Status:** Dev build shipped on main 2026-09-17 (30fec39) as a library only — no
-production caller; the Settings toggle is disabled and labelled "Not yet connected".
-Open: DOM candidate extraction in the Playwright driver, wiring into the browser loop,
-and the labeled-pages fixture eval.
+**Status:** Complete 2026-09-17 — wired as the `browser_pick` tool, gated by
+`judgments.candidate_selection` (off by default). DOM extraction lives in the
+Playwright driver; the mock carries scripted candidates. Refusals fall back to
+coordinate clicking. The labeled-pages live fixture eval remains the
+enable-by-default gate.
 
 **Acceptance criteria:**
 - [ ] Code extracts candidate elements; the configured `JudgmentBackend` picks the
@@ -7895,3 +7896,40 @@ zero errors/warnings. Existing pytest cleanup and Vite notices are documented.
 `No module named 'Quartz'` while actuation worked through the host path. Pre-existing
 on main: `DarwinBackend.hit_test` missing (3 mcp tests red) belongs to the in-flight
 hit-test work, not this fix.
+
+### TD-4835 — Deterministic resource lifecycle cleanup
+**Size:** 2 · **Depends on:** TD-4833
+**Status:** Approved 2026-09-17
+
+**Why:** The TD-4833 investigation reproduced two distinct resource defects. Neither
+may be closed by suppressing warnings or adding sleeps.
+
+1. `core/tstd/config.py::ensure_user_config` opens the bundled config reader and the
+   destination writer directly as `shutil.copyfileobj` arguments; neither handle is
+   explicitly closed. Reproduced as two ResourceWarnings with allocation traces.
+2. A subprocess transport is finalized after its event loop has closed
+   (`BaseSubprocessTransport.__del__` → `RuntimeError: Event loop is closed`),
+   reported during `test_class_c_stops_and_notifies` and
+   `TestLaunch.test_launch_marks_the_session_and_seeds_the_prompt`. The allocation
+   source is unconfirmed; the reported test is not necessarily the origin.
+
+**Acceptance criteria:**
+- [ ] `ensure_user_config` context-manages both streams; closure holds on copy success
+      and on an I/O failure mid-copy; an existing user config is still preserved.
+- [ ] Subprocess-owning components close deterministically on cancellation and
+      shutdown: no transport is finalized after loop close. Candidates named by the
+      investigation (checkpoint `_git` on cancellation, `run_shell`'s cancelled
+      spawn branch, `AcpClient.close` task awaiting) must each be inspected; a
+      component is only changed where a defect is identified, and the fix targets
+      the established source.
+- [ ] Regression tests fail before the fix and pass after, using deterministic
+      hooks — no sleeps, no warning-filter suppression, no best-effort teardown.
+- [ ] The full core suite passes with `pytest.PytestUnraisableExceptionWarning`
+      and `ResourceWarning` escalated to errors, and stays green on a repeat run
+      (the original warning is intermittent).
+- [ ] `DECISIONS.md` records any structural choice (e.g. a shared async-subprocess
+      helper) with rationale; fixes stay within TD-4833's residual-warning scope.
+- [ ] Ruff lint/format and strict mypy remain clean.
+
+**Non-goals:** Frontend bundle optimization and live/soak testing are separate,
+unapproved follow-ups (see `reports/td-4833/warning-investigation.md`).

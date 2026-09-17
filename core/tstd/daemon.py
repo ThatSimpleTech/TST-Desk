@@ -2655,7 +2655,9 @@ class Daemon:
             target = tier_cfg if tier_cfg is not None else cfg.tier("brain")
             return await self._client_for(target)
 
-        tool_registry = create_registry()
+        tool_registry = create_registry(
+            candidate_selection=self.config.judgments.candidate_selection
+        )
         tool_dispatcher = ToolDispatcher(tool_registry)
         tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals
         tool_dispatcher.autonomy_fn = lambda: sess.autonomy

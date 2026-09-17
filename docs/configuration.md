@@ -227,7 +227,7 @@ answer falls back to the unjudged behavior, never to a block.
 |---|---|---|---|
 | `verification` | bool | `false` | After an actuating desktop/browser tool succeeds, judge whether it had its intended effect from a bounded text before/after state (TD-709). A refuted actuation is annotated on the tool result so the loop can re-check or retry. Never a screenshot; never raw page content. |
 | `semantic_breaker` | bool | `false` | Unattended runs gain a fifth circuit breaker (TD-710): N consecutive no-progress judgments trip `breaker:no_semantic_progress` as a fault report. Inert on any judgment failure. |
-| `candidate_selection` | bool | `false` | Browser candidate picking via a fixed-schema choice judgment (TD-711): code extracts `{index, tag, role, accessible_name, bounding_box}` per candidate; no page text, HTML, cookies, or URL crosses the boundary. |
+| `candidate_selection` | bool | `false` | Adds the `browser_pick` tool (TD-711): act-by-description — code extracts `{index, tag, role, accessible_name, bounding_box}` per candidate, the configured judgment backend picks one, and the click lands on its box. No page text, HTML, cookies, or URL crosses the boundary; no confident match refuses with fallback guidance. |
 | `confidence_threshold` | float 0–1 | `0.6` | Minimum confidence to assert a judgment. Below it the feature treats the answer as unavailable. |
 | `max_state_chars` | int | `2000` | Per-field cap on the state text sent to the backend. |
 
