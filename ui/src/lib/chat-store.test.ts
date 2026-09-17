@@ -1286,6 +1286,59 @@ describe("tool folds (TD-1902)", () => {
     store.applyEvent(toolResult("s2", "tc-1", "error"));
     expect(state.messages[0].tools![0].status).toBeUndefined();
   });
+
+  it("orders text and tools by arrival: text, then the tool that ran after it", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(delta("s1", "Digging in."));
+    store.applyEvent(toolCall("s1", "tc-1", "shell"));
+    const parts = state.messages[0].parts!;
+    expect(parts.map((p) => p.kind)).toEqual(["text", "tool"]);
+    expect(parts[0]).toMatchObject({ kind: "text", text: "Digging in." });
+    expect(parts[1]).toMatchObject({ kind: "tool" });
+  });
+
+  it("opens a new text segment after a tool instead of merging across it", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(delta("s1", "Before."));
+    store.applyEvent(toolCall("s1", "tc-1", "shell"));
+    store.applyEvent(toolResult("s1", "tc-1"));
+    store.applyEvent(delta("s1", "After."));
+    const parts = state.messages[0].parts!;
+    expect(parts.map((p) => p.kind)).toEqual(["text", "tool", "text"]);
+    expect(parts[0]).toMatchObject({ text: "Before." });
+    expect(parts[2]).toMatchObject({ text: "After." });
+    // The flat text stays the concatenation for copy and existing readers.
+    expect(state.messages[0].text).toBe("Before.After.");
+  });
+
+  it("keeps consecutive deltas in one segment and consecutive tools in order", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(delta("s1", "A"));
+    store.applyEvent(delta("s1", "B"));
+    store.applyEvent(toolCall("s1", "tc-1", "shell"));
+    store.applyEvent(toolCall("s1", "tc-2", "shell"));
+    const parts = state.messages[0].parts!;
+    expect(parts.map((p) => p.kind)).toEqual(["text", "tool", "tool"]);
+    expect(parts[0]).toMatchObject({ text: "AB" });
+  });
+
+  it("shares the tool object between the flat list and the ordered parts", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(delta("s1", "Hi."));
+    store.applyEvent(toolCall("s1", "tc-1", "shell"));
+    store.applyEvent(toolResult("s1", "tc-1"));
+    expect(state.messages[0].tools![0].status).toBe("success");
+    const part = state.messages[0].parts![1];
+    expect(part.kind).toBe("tool");
+    if (part.kind === "tool") expect(part.tool.status).toBe("success");
+  });
+
+  it("does not add a second part for a replayed tool_call", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(toolCall("s1", "tc-1"));
+    store.applyEvent(toolCall("s1", "tc-1"));
+    expect(state.messages[0].parts).toHaveLength(1);
+  });
 });
 
 describe("fork (TD-1708)", () => {

@@ -33,9 +33,33 @@ function currentAssistant(ctx: ChatEventContext): ChatMessage {
     text: "",
     complete: false,
     at: Date.now(),
+    parts: [],
   };
   ctx.state.messages.push(row);
   return row;
+}
+
+/** Append a content delta to the row's text and to its ordered parts: the
+ *  trailing text segment grows, or a new one opens after a tool. */
+function appendText(row: ChatMessage, delta: string): void {
+  row.text += delta;
+  const parts = (row.parts ??= []);
+  const last = parts[parts.length - 1];
+  if (last !== undefined && last.kind === "text") {
+    last.text += delta;
+  } else {
+    parts.push({ kind: "text", text: delta });
+  }
+}
+
+/** Append a tool call to the row's flat list and to its ordered parts. The
+ *  same block object lands in both, so a later result update is visible
+ *  wherever the row is read from. */
+function appendTool(row: ChatMessage, block: ToolBlock): void {
+  const tools = (row.tools ??= []);
+  tools.push(block);
+  const parts = (row.parts ??= []);
+  parts.push({ kind: "tool", tool: block });
 }
 
 function findTool(state: ChatState, toolCallId: string): ToolBlock | null {
@@ -116,6 +140,7 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
           reasoningStartedAt: Date.now(),
           complete: false,
           at: Date.now(),
+          parts: [],
         });
       }
       return;
@@ -132,7 +157,7 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       if (last !== undefined && last.role === "assistant" && !last.complete) {
         // Append in place: the message object keeps its identity so the
         // keyed list never re-mounts the row while streaming.
-        last.text += event.delta;
+        appendText(last, event.delta);
         // The first content token seals the thinking phase: stamp the
         // elapsed once, so the disclosure can stop counting (TD-1902).
         if (last.reasoningStartedAt !== undefined && last.reasoningMs === undefined) {
@@ -145,6 +170,7 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
           text: event.delta,
           complete: false,
           at: Date.now(),
+          parts: [{ kind: "text", text: event.delta }],
         });
       }
       return;
@@ -220,9 +246,8 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       state.turnState = "running";
       wait.end();
       const row = currentAssistant(ctx);
-      const tools = row.tools ?? (row.tools = []);
-      if (tools.some((t) => t.toolCallId === event.tool_call_id)) return;
-      tools.push({
+      if (row.tools?.some((t) => t.toolCallId === event.tool_call_id)) return;
+      appendTool(row, {
         toolCallId: event.tool_call_id,
         name: event.name,
         arguments: event.arguments,

@@ -25,10 +25,19 @@ export interface BranchSnaps {
 }
 
 function cloneMessages(messages: readonly ChatMessage[]): ChatMessage[] {
-  return messages.map((m) => ({
-    ...m,
-    tools: m.tools?.map((t) => ({ ...t })),
-  }));
+  return messages.map((m) => {
+    // Parts are the order; tools mirror the tool entries with the same
+    // objects. Clone parts first, then rebuild the mirror from the clones
+    // so the sharing survives the snapshot.
+    if (m.parts === undefined) {
+      return { ...m, tools: m.tools?.map((t) => ({ ...t })) };
+    }
+    const parts = m.parts.map((p) =>
+      p.kind === "text" ? { ...p } : { kind: "tool" as const, tool: { ...p.tool } },
+    );
+    const tools = parts.flatMap((p) => (p.kind === "tool" ? [p.tool] : []));
+    return { ...m, parts, tools: tools.length > 0 ? tools : undefined };
+  });
 }
 
 export function createBranchSnaps(): BranchSnaps {
