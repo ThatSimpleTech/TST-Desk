@@ -15,6 +15,37 @@ from .protocol import BrowserError, normalize_hit
 
 _DEFAULT_TIMEOUT_MS = 30_000
 
+# TD-711: visible interactive elements, reduced to the isolation schema
+# (tag, role, best name, box). No page text, HTML, or URL leaves the page.
+# Capped so the judgment payload stays bounded on link-heavy pages.
+_CANDIDATES_JS = """() => {
+  const SELECTOR = 'a[href], button, input, select, textarea, summary, '
+    + '[role="button"], [role="link"], [role="textbox"], [role="checkbox"], '
+    + '[role="menuitem"], [onclick], [tabindex]:not([tabindex="-1"])';
+  const out = [];
+  for (const el of document.querySelectorAll(SELECTOR)) {
+    if (out.length >= 50) break;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) continue;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+    const name = (el.getAttribute('aria-label')
+      || (el.innerText || '').trim()
+      || el.getAttribute('title')
+      || el.getAttribute('placeholder')
+      || el.id
+      || '').trim().slice(0, 120);
+    out.push({
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role') || '',
+      name,
+      attributes: {},
+      box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    });
+  }
+  return out;
+}"""
+
 # Observe-only: elementFromPoint plus a short xpath. Never clicks.
 _HIT_TEST_JS = """([x, y]) => {
   const el = document.elementFromPoint(x, y);
@@ -192,6 +223,16 @@ class PlaywrightBrowserDriver:
         except Exception as exc:
             raise self._map_error(exc) from exc
         return normalize_hit(raw, x, y)
+
+    async def extract_candidates(self) -> list[dict[str, Any]]:
+        page = await self._ensure_page()
+        try:
+            raw = await page.evaluate(_CANDIDATES_JS)
+        except BrowserError:
+            raise
+        except Exception as exc:
+            raise self._map_error(exc) from exc
+        return list(raw) if isinstance(raw, list) else []
 
     async def aclose(self) -> None:
         context, playwright = self._context, self._playwright

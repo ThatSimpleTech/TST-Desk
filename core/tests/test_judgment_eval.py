@@ -207,3 +207,42 @@ class TestBreakerEval:
             record_tool_round(session, [("fs_write", {"path": f"file_{round_n}.py"})])
             assert await maybe_trip_semantic(session, backend) is None
         assert session.semantic_no_progress_streak == 0
+
+
+class TestCandidateSelectionEval:
+    """TD-711: the schema payload vs the raw node dump, and pick accuracy."""
+
+    async def test_schema_payload_is_much_smaller_and_picks_right(self) -> None:
+        import json as _json
+
+        from tstd.browser import MockBrowserDriver, candidate_from_node, render_candidates
+        from tstd.browser.candidates import select_candidate
+
+        driver = MockBrowserDriver()
+        nodes = await driver.extract_candidates()
+        candidates = [
+            c
+            for i, n in enumerate(nodes)
+            if (c := candidate_from_node(n, i)) is not None
+        ]
+
+        # Baseline: the brain reads the raw node dump (what a DOM snapshot
+        # costs the context window). Judgment path: the schema render.
+        raw_dump = _json.dumps(nodes)
+        schema_payload = render_candidates(candidates, 2000)
+
+        backend = ScriptedJudgmentBackend([ideal_judgment("1")])
+        picked = await select_candidate(backend, "the sign-in button", candidates)
+
+        print("\nCandidate selection eval:")
+        print("| path | payload chars | model calls | picked |")
+        print("| --- | --- | --- | --- |")
+        print(f"| raw node dump to the brain | {len(raw_dump)} | 1 brain turn | (reasoned) |")
+        print(
+            f"| schema + judgment | {len(schema_payload)} | 1 judgment | "
+            f"{candidates[picked].name if picked is not None else None!r} |"
+        )
+
+        assert picked == 1
+        assert candidates[picked].name == "Sign in"
+        assert len(schema_payload) < len(raw_dump)

@@ -677,7 +677,8 @@ async def agent_loop(
         # feature gates individually in config and defaults off, so an
         # unconfigured run is byte-identical to the pre-seam product.
         judgments_cfg = config.judgments
-        if judgments_cfg.semantic_breaker and session.judgment_backend is None:
+        needs_backend = judgments_cfg.semantic_breaker or judgments_cfg.candidate_selection
+        if needs_backend and session.judgment_backend is None:
             session.judgment_backend = WorkerChatJudgmentBackend(_worker_completion)
             session.judgment_threshold = judgments_cfg.confidence_threshold
         if judgments_cfg.verification and tool_dispatcher.verifier is None:
