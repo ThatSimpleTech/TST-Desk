@@ -32,6 +32,23 @@ class WindowFocusError(RuntimeError):
     """
 
 
+# System surfaces that float above apps and never take foreground focus —
+# the window server cannot confirm them, so the foreground check cannot
+# apply (TD-4836). Exact match after case-folding, never substring:
+# "docker" is not the Dock.
+SYSTEM_SURFACES = frozenset(
+    {
+        "dock",
+        "menu bar",
+        "control center",
+        "notification center",
+        "mission control",
+        "launchpad",
+        "spotlight",
+    }
+)
+
+
 @dataclass(frozen=True)
 class WindowInfo:
     """The foreground window, as the OS reports it.
@@ -100,8 +117,15 @@ def assert_foreground(expected: str | None) -> WindowInfo | None:
 
     Returns the observed window on success so callers can report what they acted
     on. Raises :class:`WindowFocusError` on mismatch, naming both sides.
+
+    A named system surface (TD-4836: the Dock, menu bar, Launchpad, and
+    friends) skips the check entirely — those float above apps and never
+    become the foreground window, so the guard could only ever refuse
+    legitimate clicks on them.
     """
     if expected is None:
+        return None
+    if expected.strip().casefold() in SYSTEM_SURFACES:
         return None
 
     window = foreground_window()

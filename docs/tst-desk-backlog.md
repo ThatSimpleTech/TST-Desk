@@ -7898,6 +7898,27 @@ zero errors/warnings. Existing pytest cleanup and Vite notices are documented.
 on main: `DarwinBackend.hit_test` missing (3 mcp tests red) belongs to the in-flight
 hit-test work, not this fix.
 
+---
+
+### TD-4836 — The focus guard exempts system surfaces
+**Size:** 1 · **Depends on:** TD-3301
+**Status:** Complete 2026-09-17
+
+**Acceptance criteria:**
+- [x] `expect_window` naming the Dock, menu bar, Control Center, Notification Center,
+      Mission Control, Launchpad, or Spotlight no longer refuses — those surfaces float
+      above apps and never become the foreground window, so the guard could only misfire
+- [x] The exemption is an exact case-folded match, never a substring — "docker" still
+      gets the guard
+- [x] Blank expectations still match nothing; ordinary mismatches still refuse
+- [x] Same policy in the sidecar (`tst_cu_mcp.focus`) and the tstd mock driver; tests
+      on both sides
+
+**Notes:** Found by dogfooding — a click on the Dock was refused with
+`expect_window: "Dock"` and the agent had to drop the guard to proceed. The guard's
+purpose is catching wrong-app actuation; system overlays can't be frontmost, so the
+check had no signal to give.
+
 ### TD-4835 — Deterministic resource lifecycle cleanup
 **Size:** 2 · **Depends on:** TD-4833
 **Status:** Approved 2026-09-17
