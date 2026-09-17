@@ -353,6 +353,9 @@ class Session:
         # which leaves the semantic breaker inert.
         self.semantic_no_progress_streak: int = 0
         self.judgment_backend: JudgmentBackend | None = None
+        # The configured confidence threshold, set when the backend is
+        # wired so the breaker uses the user's value, not the default.
+        self.judgment_threshold: float = 0.6
         # TD-4201 / TD-4202: validator drift check, last good checkpoint,
         # and consecutive-drift streak. Interactive sessions never set these.
         self.autonomy_check_every = 5

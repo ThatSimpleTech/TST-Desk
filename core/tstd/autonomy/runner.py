@@ -112,7 +112,9 @@ async def advance_autonomy(session: Session) -> bool:
         # is inert on any failure — a raised judgment never stops a run.
         if session.autonomy_stop_reason is None and session.judgment_backend is not None:
             try:
-                reason = await maybe_trip_semantic(session, session.judgment_backend)
+                reason = await maybe_trip_semantic(
+                    session, session.judgment_backend, threshold=session.judgment_threshold
+                )
             except Exception:
                 log.exception("semantic breaker raised; continuing unattended run")
                 reason = None

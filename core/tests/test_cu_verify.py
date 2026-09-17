@@ -163,6 +163,25 @@ class TestActuationVerifier:
         for _key, value in question.state:
             assert len(value) <= 20
 
+    async def test_sensitive_arguments_are_redacted(self) -> None:
+        """Typed text and URL credentials never reach the judgment payload."""
+        backend = ScriptedJudgmentBackend([ideal_judgment("yes")])
+        verifier = ActuationVerifier(backend)
+        await verifier.verify(
+            "desktop_type",
+            {"text": "hunter2", "url": "https://user:pass@example.com/path?token=x", "x": 1},
+            "before",
+            "after",
+            "ok",
+        )
+        question = backend.questions[0]
+        arguments = dict(question.state)["Arguments"]
+        assert "hunter2" not in arguments
+        assert "[7 chars]" in arguments
+        assert "example.com" in arguments
+        assert "user:pass" not in arguments
+        assert "token=x" not in arguments
+
 
 class TestDriverStateProbe:
     async def test_desktop_mock_state(self) -> None:

@@ -20,6 +20,7 @@ import json
 import time
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
 
 from .autonomy.judgment import Judgment, JudgmentBackend, JudgmentKind, JudgmentQuestion
 from .logging import get_logger
@@ -100,6 +101,24 @@ def _cap(text: str, max_chars: int) -> str:
     return text[: max_chars - 1] + "…"
 
 
+# Argument keys whose values can carry user content or credentials.  The
+# judgment needs the action's *shape* — "typed 42 chars", "navigated to
+# host" — never the payload.  Size caps are not redaction (review, TD-709).
+_REDACT_VALUE_KEYS = frozenset({"text"})
+_HOST_ONLY_KEYS = frozenset({"url"})
+
+
+def _redact(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Replace sensitive argument values before anything serializes them."""
+    out = dict(arguments)
+    for key, value in arguments.items():
+        if key in _REDACT_VALUE_KEYS and isinstance(value, str):
+            out[key] = f"[{len(value)} chars]"
+        elif key in _HOST_ONLY_KEYS and isinstance(value, str):
+            out[key] = urlsplit(value).hostname or "[redacted]"
+    return out
+
+
 class ActuationVerifier:
     """Judges whether an actuating tool call had its intended effect.
 
@@ -138,7 +157,7 @@ class ActuationVerifier:
             instructions=_VERIFICATION_INSTRUCTION,
             state=(
                 ("Action", tool_name),
-                ("Arguments", _cap(_canonical(arguments), cap)),
+                ("Arguments", _cap(_canonical(_redact(arguments)), cap)),
                 ("State before", _cap(before or "(unknown)", cap)),
                 ("State after", _cap(after or "(unknown)", cap)),
                 ("Output", _cap(output, cap)),
