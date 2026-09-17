@@ -252,6 +252,25 @@ class SetLoadGlobalMemory(ClientMessage):
     enabled: bool
 
 
+class SetJudgments(ClientMessage):
+    """Judgment-seam feature toggles (TD-708/709/710/711, dev build).
+
+    Machine-wide, no session. Persists the ``judgments:`` block of the
+    user config; the daemon answers with ``setup_state``. All features
+    default off, and every judgment fails closed — an unavailable or
+    low-confidence answer is the unjudged behavior, never a block.
+    Running sessions keep the wiring they started with; the toggles
+    take effect on the next session.
+    """
+
+    type: Literal["set_judgments"] = "set_judgments"
+    verification: bool
+    semantic_breaker: bool
+    candidate_selection: bool
+    confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    max_state_chars: int = Field(default=2000, ge=100, le=50_000)
+
+
 class SetCoworker(ClientMessage):
     """Turn coworker mode on or off (TD-2905).
 
@@ -1781,6 +1800,14 @@ class SetupState(DaemonEvent):
     cu_mode: Literal["background", "full_control"] = "background"
     cu_unhide_on_finish: bool = True
     cu_denied_apps: list[str] = Field(default_factory=list)
+    # TD-708/709/710/711 (dev): judgment-seam toggles. Additive; the
+    # defaults match the shipped config (everything off), so an older
+    # client that ignores them reads the product as unchanged.
+    judgments_verification: bool = False
+    judgments_semantic_breaker: bool = False
+    judgments_candidate_selection: bool = False
+    judgments_confidence_threshold: float = 0.6
+    judgments_max_state_chars: int = 2000
     # TD-4403: listed MCP servers. Additive, default empty. Never a secret;
     # there is no env map. An older client ignores the field.
     mcp_servers: list[McpServerSummary] = Field(default_factory=list)
@@ -2261,6 +2288,7 @@ ClientMessageT = Annotated[
     | SetVoice
     | SetCuIndicators
     | SetCuPolicy
+    | SetJudgments
     | SetWorkspacePin
     | Resume
     | Cancel
@@ -2410,6 +2438,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_branch",
         "set_skip_all_approvals",
         "set_load_global_memory",
+        "set_judgments",
         "set_coworker",
         "set_voice",
         "set_cu_indicators",

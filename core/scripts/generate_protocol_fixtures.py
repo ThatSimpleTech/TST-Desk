@@ -136,10 +136,10 @@ from tstd.protocol import (
     SetCoworker,
     SetCredential,
     SetCuIndicators,
-    SetCuPolicy,
     SetCuKill,
     SetEngine,
     SetGrokMode,
+    SetJudgments,
     SetLoadGlobalMemory,
     SetMcpServer,
     SetPlan,
@@ -205,11 +205,12 @@ FIXTURES = {
     "set_voice": SetVoice(enabled=True),
     "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
-    "set_cu_policy": SetCuPolicy(
-        enabled=True,
-        mode="background",
-        unhide_on_finish=True,
-        denied_apps=["1Password"],
+    "set_judgments": SetJudgments(
+        verification=True,
+        semantic_breaker=True,
+        candidate_selection=False,
+        confidence_threshold=0.6,
+        max_state_chars=2000,
     ),
     "set_workspace_pin": SetWorkspacePin(path="/home/user/project", pinned=True),
     "resume": Resume(session_id="sess-1"),
@@ -331,9 +332,7 @@ FIXTURES = {
     "set_remote_attach": SetRemoteAttach(enabled=True),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
-    "session_state": SessionState(
-        session_id="sess-1", state="running", engine="native", seq=2
-    ),
+    "session_state": SessionState(session_id="sess-1", state="running", engine="native", seq=2),
     "conversation_reset": ConversationReset(
         session_id="sess-1",
         user_index=0,
@@ -898,7 +897,6 @@ FIXTURES = {
     ),
     "delete_job": DeleteJob(job_id="job-1"),
     "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
-    "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
     "job_list": JobList(
         jobs=[
             JobEntry(

@@ -103,6 +103,12 @@ export const settings = $state({
 	cuMode: "background" as CuMode,
 	cuUnhideOnFinish: true,
 	cuDeniedApps: [] as string[],
+	/** TD-708 dev: judgment-seam toggles. All default off; from setup_state. */
+	judgmentsVerification: false,
+	judgmentsSemanticBreaker: false,
+	judgmentsCandidateSelection: false,
+	judgmentsConfidenceThreshold: 0.6,
+	judgmentsMaxStateChars: 2000,
 	/** Listed MCP servers (TD-4403). From setup_state, never inferred. */
 	mcpServers: [] as McpServerRow[],
 	/** Hold-to-talk (TD-4701). From setup_state; the URL never arrives. */
@@ -160,6 +166,11 @@ export function resetSettings(): void {
 	settings.cuMode = "background";
 	settings.cuUnhideOnFinish = true;
 	settings.cuDeniedApps = [];
+	settings.judgmentsVerification = false;
+	settings.judgmentsSemanticBreaker = false;
+	settings.judgmentsCandidateSelection = false;
+	settings.judgmentsConfidenceThreshold = 0.6;
+	settings.judgmentsMaxStateChars = 2000;
 	settings.mcpServers = [];
 	settings.speechEnabled = false;
 	settings.speechReady = false;
@@ -199,6 +210,11 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuMode = event.cu_mode === "full_control" ? "full_control" : "background";
 		settings.cuUnhideOnFinish = event.cu_unhide_on_finish ?? true;
 		settings.cuDeniedApps = event.cu_denied_apps ?? [];
+		settings.judgmentsVerification = event.judgments_verification ?? false;
+		settings.judgmentsSemanticBreaker = event.judgments_semantic_breaker ?? false;
+		settings.judgmentsCandidateSelection = event.judgments_candidate_selection ?? false;
+		settings.judgmentsConfidenceThreshold = event.judgments_confidence_threshold ?? 0.6;
+		settings.judgmentsMaxStateChars = event.judgments_max_state_chars ?? 2000;
 		settings.mcpServers = (event.mcp_servers ?? []).map((row) => ({
 			id: row.id,
 			transport: row.transport,
@@ -422,6 +438,24 @@ export function setCuPolicy(next: {
 		mode: next.mode ?? settings.cuMode,
 		unhide_on_finish: next.unhideOnFinish ?? settings.cuUnhideOnFinish,
 		denied_apps: next.deniedApps ?? settings.cuDeniedApps,
+	});
+}
+
+/** Persist judgment-seam toggles (TD-708 dev). Acked with setup_state. */
+export function setJudgments(next: {
+	verification?: boolean;
+	semanticBreaker?: boolean;
+	candidateSelection?: boolean;
+	confidenceThreshold?: number;
+	maxStateChars?: number;
+}): void {
+	sendToDaemon({
+		type: "set_judgments",
+		verification: next.verification ?? settings.judgmentsVerification,
+		semantic_breaker: next.semanticBreaker ?? settings.judgmentsSemanticBreaker,
+		candidate_selection: next.candidateSelection ?? settings.judgmentsCandidateSelection,
+		confidence_threshold: next.confidenceThreshold ?? settings.judgmentsConfidenceThreshold,
+		max_state_chars: next.maxStateChars ?? settings.judgmentsMaxStateChars,
 	});
 }
 

@@ -100,14 +100,13 @@
     "agent_cursor": true,
     "show_on_real_display": false
   },
-  "set_cu_policy": {
-    "type": "set_cu_policy",
-    "enabled": true,
-    "mode": "background",
-    "unhide_on_finish": true,
-    "denied_apps": [
-      "1Password"
-    ]
+  "set_judgments": {
+    "type": "set_judgments",
+    "verification": true,
+    "semantic_breaker": true,
+    "candidate_selection": false,
+    "confidence_threshold": 0.6,
+    "max_state_chars": 2000
   },
   "set_workspace_pin": {
     "type": "set_workspace_pin",
@@ -1038,6 +1037,11 @@
     "cu_mode": "background",
     "cu_unhide_on_finish": true,
     "cu_denied_apps": [],
+    "judgments_verification": false,
+    "judgments_semantic_breaker": false,
+    "judgments_candidate_selection": false,
+    "judgments_confidence_threshold": 0.6,
+    "judgments_max_state_chars": 2000,
     "mcp_servers": [
       {
         "id": "example",

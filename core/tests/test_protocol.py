@@ -60,6 +60,7 @@ from tstd.protocol import (
     SetCuIndicators,
     SetCuKill,
     SetCuPolicy,
+    SetJudgments,
     SetLoadGlobalMemory,
     SetPlan,
     SetRemoteAttach,
@@ -190,6 +191,30 @@ class TestClientMessages:
         assert back.mode == "full_control"
         assert back.denied_apps == ["Bank"]
         assert "session_id" not in SetCuPolicy.model_fields
+
+    def test_set_judgments(self) -> None:
+        msg = SetJudgments(
+            verification=True,
+            semantic_breaker=False,
+            candidate_selection=True,
+            confidence_threshold=0.7,
+            max_state_chars=1500,
+        )
+        back = _roundtrip(msg)
+        assert isinstance(back, SetJudgments)
+        assert back.verification is True
+        assert back.confidence_threshold == 0.7
+        assert "session_id" not in SetJudgments.model_fields
+
+    def test_set_judgments_threshold_bounds(self) -> None:
+        with pytest.raises(ValidationError):
+            SetJudgments(
+                verification=True,
+                semantic_breaker=False,
+                candidate_selection=False,
+                confidence_threshold=1.5,
+                max_state_chars=2000,
+            )
 
     def test_set_workspace_pin(self) -> None:
         msg = SetWorkspacePin(path="/ws", pinned=True)

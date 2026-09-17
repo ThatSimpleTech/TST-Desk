@@ -29,6 +29,7 @@ from .config import (
     RESERVED_CREDENTIAL_IDS,
     TIER_NAMES,
     ConfigError,
+    JudgmentsConfig,
     McpServerConfig,
     ensure_user_config,
     is_loopback_url,
@@ -379,6 +380,42 @@ def save_tier_credential(
         else:
             lines.insert(tier_at + 1, new_line)
 
+    _atomic_write(config_path, "\n".join(lines))
+    return config_path
+
+
+def save_judgments(
+    judgments: JudgmentsConfig,
+    path: Path | None = None,
+) -> Path:
+    """Persist the ``judgments:`` block in the user config (TD-708 dev).
+
+    Surgical like every writer here: the block's five lines are replaced
+    in place when the header exists, appended when it does not, and the
+    rest of the file — teaching comments included — is byte-identical.
+
+    Returns the path written.
+    """
+    if not isinstance(judgments, JudgmentsConfig):
+        raise ConfigError(f"save_judgments expects a JudgmentsConfig, got {type(judgments)!r}")
+    config_path = ensure_user_config(path)
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    block = [
+        "judgments:",
+        f"  verification: {'true' if judgments.verification else 'false'}",
+        f"  semantic_breaker: {'true' if judgments.semantic_breaker else 'false'}",
+        f"  candidate_selection: {'true' if judgments.candidate_selection else 'false'}",
+        f"  confidence_threshold: {judgments.confidence_threshold}",
+        f"  max_state_chars: {judgments.max_state_chars}",
+    ]
+    at = _find_key(lines, 0, len(lines), "judgments", 0)
+    if at < 0:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(block)
+    else:
+        end = _block_bounds(lines, at, 0)
+        lines[at:end] = block
     _atomic_write(config_path, "\n".join(lines))
     return config_path
 
