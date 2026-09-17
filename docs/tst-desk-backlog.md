@@ -7828,3 +7828,49 @@ mypy reports 11 errors in five files. Clippy and Svelte checks retain warnings.
 This is an automated regression review, not exhaustive live/soak coverage.
 The protocol fixture inadvertently removed during review was restored; Python
 format/import-only cleanup was also applied. No remaining type errors were hidden.
+
+---
+
+### TD-4832 — Return to TST Desk after computer use
+**Size:** 3 · **Depends on:** TD-3407, TD-4703
+**Status:** Complete 2026-09-17 — implemented from the in-app agent's approved plan
+
+**Acceptance criteria:**
+- [x] After a local computer-use turn completes, TST Desk becomes visible and foregrounded
+      — a live `focus_window` broadcast when a `cu_session` closes and no other session
+      still actuates; the host shows, unminimizes, and focuses the window
+- [x] Failure, cancellation, and kill-switch paths restore focus — they all close the
+      episode through the same idempotent `close_cu_session`
+- [x] Ordinary turns, intermediate tool results, duplicate stops, and history replay do
+      not steal focus — the event is never written to a session log, so replay cannot
+      carry it; the close is idempotent; no episode means no event
+- [x] Native and Grok paths behave consistently — both already share the `cu_session`
+      tags (TD-3407), which is the signal this rides
+- [x] A remote (browser) viewer no-ops — no Tauri window API exists there
+- [x] Window-activation failures never fail the turn — the client swallows them
+
+**Notes:** The eligibility decision (live, local, last episode) is daemon-side per §6;
+the UI only executes the window action. DECISIONS.md 2026-09-17 records why the signal
+is a log-free connection event rather than a field on `cu_session`.
+
+---
+
+### TD-4833 — Review cleanup: strict types and compiler warnings
+**Size:** 3 · **Depends on:** TD-4831, TD-4703, TD-4705
+**Status:** Complete — automated gates verified; live/soak coverage remains separate
+
+**Acceptance criteria:**
+- [x] Core strict mypy passes; optional computer-use import typing limitations are documented, not represented as verified backend types
+- [x] ACP accepts large stdout lines through the public asyncio API; assistant text updates preserve multimodal content and message metadata
+- [x] Session engine persistence and image-capability fallback tests pass
+- [x] Composer compiles without accessibility or unused-CSS warnings; slash-command tests pass
+- [x] Only the active tray initializer remains; Rust tests and clippy with warnings denied pass
+- [x] Full core and UI suites, Ruff lint/format, TypeScript and production build pass; residual review limitations are recorded
+
+**Scope:** Fix the reported Python typing issues and Svelte/Rust warnings only.
+No new provider integration, desktop actuation, tray redesign, dependency or live/soak testing.
+Spec §8 ownership and TD-4703's active Show / New window / Quit behavior remain unchanged.
+
+**Verification:** `reports/td-4833/README.md`: core 3348 passed, UI 1343 passed,
+Rust 63 passed; strict mypy, Ruff, TypeScript and clippy pass. Svelte reports
+zero errors/warnings. Existing pytest cleanup and Vite notices are documented.

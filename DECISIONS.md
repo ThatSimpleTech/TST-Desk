@@ -10104,6 +10104,27 @@ reported case but still misorders text→tool→text turns. Also rejected:
 splitting one turn into multiple assistant rows — breaks per-turn copy
 and turn-seal logic for no gain over parts.
 
+## 2026-09-17 — TD-4832: focus signal is a live-only, connection-scoped event (Class B)
+
+**Decision:** "Return to TST Desk after computer use" rides a new
+`focus_window` daemon event, broadcast when a `cu_session` closes and no
+other session still actuates. The event is deliberately **not** written to
+any session log (connection-scoped, seq 1), so attach replay can never
+re-fire it; the UI executes show/unminimize/setFocus through the Tauri
+host and no-ops in a browser. Default on; no new setting.
+
+**Rationale:** The eligibility question — live, local, last-episode —
+is daemon knowledge (the session registry), and §6 forbids the UI
+deriving it from replayable history. A log-free event makes the replay
+hazard impossible by construction rather than by a flag clients must
+remember to check. Both engines already share the `cu_session` tags
+(TD-3407), so one hook covers native and Grok.
+
+**Alternative rejected:** A `focus: true` field on `cu_session` — the
+event is logged, so every attach replay would steal focus. Also rejected:
+a UI-side rule over `cu_session` closes — the UI cannot see other
+sessions' actuation, and §6 forbids deriving it.
+
 ## 2026-09-17 — Decider-model posture: BYOM default, hosted judgments API opt-in (Class B)
 
 **Decision:** The A/B/C decision classifier keeps the TD-703 worker-tier chat
@@ -10247,3 +10268,19 @@ allowlist all of them to clear Class C.
 (captcha-walled, verified with curl and httpx); DDG-lite as fallback
 (same blocked network, helps nobody here); keyed APIs (Brave/Google —
 signup and secret plumbing, out of scope for a resilience fix).
+
+## TD-4833 — Optional computer-use typing boundary (Class B)
+
+The existing mypy missing-import override for `tst_cu_mcp` now includes its
+submodules. This sibling checkout is discovered at runtime, not installed as a
+core dependency; CI cannot resolve its capture/input/overlay/backend imports.
+The exemption is limited to that package, not global, and does not verify its
+external signatures. Core strict checking remains enabled; runtime mock-driver
+coverage still runs. Adding a dependency or inventing inaccurate local stubs
+would change the integration contract merely to silence a diagnostic.
+
+ACP uses asyncio's public subprocess `limit` argument instead of mutating the
+stdout reader's private `_limit`. This preserves the 16 MiB stdout allowance
+and also applies it to stderr, as the public API configures both pipe readers.
+Assistant continuation preserves existing message metadata and multimodal parts;
+only the text projection is used for visible-delta comparison.
