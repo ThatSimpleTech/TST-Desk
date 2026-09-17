@@ -665,19 +665,22 @@ class GetSetupState(ClientMessage):
 
 
 class SetApiKey(ClientMessage):
-    """Store an API key in the OS keychain (TD-1101, TD-1717).
+    """Store an API key in the OS keychain (TD-1101, TD-1717, TD-1722).
 
     The key never appears in any event, log, or audit record — the ack is a
     refreshed ``setup_state`` event whose ``has_api_key`` flips true.
     ``credential`` is the catalog id (default ``openrouter``). ``name``
     creates or updates the display name; omitted keeps the existing name
-    or titles the id.
+    or titles the id. ``base_url`` is the OpenAI-compatible host this key
+    talks to (TD-1722). Omitted leaves or inherits; empty clears so the
+    preset URL stays in charge.
     """
 
     type: Literal["set_api_key"] = "set_api_key"
     api_key: str = Field(min_length=1)
     credential: str | None = None
     name: str | None = None
+    base_url: str | None = None
 
 
 class ValidateApiKey(ClientMessage):
@@ -789,12 +792,15 @@ class SetCredential(ClientMessage):
     """Create or rename a named API key without touching the secret (TD-1717).
 
     ``credential`` omitted slugifies ``name`` into a new id. Present, it
-    renames that catalog row. Acked with ``setup_state``.
+    renames that catalog row. ``base_url`` sets the host that key talks to
+    (TD-1722): omitted leaves an existing host, empty clears it so the
+    preset URL stays in charge. Acked with ``setup_state``.
     """
 
     type: Literal["set_credential"] = "set_credential"
     name: str = Field(min_length=1, max_length=40)
     credential: str | None = None
+    base_url: str | None = None
 
 
 class DeleteCredential(ClientMessage):

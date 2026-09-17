@@ -19,6 +19,7 @@ added in E7 (autonomy hooks) and E8 (approvals).
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import time
 import uuid
@@ -68,6 +69,7 @@ from .local_worker import (
 from .logging import get_logger
 from .memory_commit import MemoryCommitter
 from .policy import load_approved_imports, save_approved_imports
+from .prompt_images import cap_prompt_images
 from .protocol import (
     AssistantDelta,
     AssistantReasoning,
@@ -426,6 +428,23 @@ async def _build_assistant_tool_call(
     return provider_tool_calls
 
 
+def _tool_message_content(result: Any) -> Any:
+    """Tool output for the provider. Screenshots are a vision part, not text."""
+    text = result.output
+    png = getattr(result, "image_png", None)
+    if not png:
+        return text
+    return [
+        {"type": "text", "text": text},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+            },
+        },
+    ]
+
+
 async def _dispatch_and_append_results(
     dispatcher: ToolDispatcher,
     session: Session,
@@ -500,7 +519,7 @@ async def _dispatch_and_append_results(
         messages.append(
             ChatMessage(
                 role="tool",
-                content=r.output,
+                content=_tool_message_content(r),
                 tool_call_id=r.tool_call_id,
             )
         )
@@ -1103,6 +1122,21 @@ async def agent_loop(
                             "tokens_before": compaction.tokens_before,
                             "tokens_after": compaction.tokens_after,
                             "counter_method": compaction.counter_method,
+                        }
+                    },
+                )
+
+            dropped_images = cap_prompt_images(
+                messages, config.computer_use.max_prompt_images
+            )
+            if dropped_images:
+                log.info(
+                    "capped prompt images",
+                    extra={
+                        "extra_fields": {
+                            "session_id": session.id,
+                            "dropped": dropped_images,
+                            "max_prompt_images": config.computer_use.max_prompt_images,
                         }
                     },
                 )

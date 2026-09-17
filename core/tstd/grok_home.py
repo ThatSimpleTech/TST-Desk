@@ -239,9 +239,14 @@ def computer_use_mcp(
     # the real-display ring from cu_session tags; this child must not.
     configured = bool(argv)
     if not argv:
+        from .desktop.factory import packaged_cu_argv
+
+        packaged = packaged_cu_argv()
         override = os.environ.get("TST_CU_MCP", "").strip()
         which = override or shutil.which("tst-cu-mcp")
-        if which:
+        if packaged:
+            argv = packaged
+        elif which:
             argv = [which]
         else:
             found = _checkout_cu_mcp(search_from)

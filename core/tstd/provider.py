@@ -141,6 +141,10 @@ class ChatCompletionRequest:
                 }
                 for t in self.tools
             ]
+            # OpenAI's default when tools are present. Some gateways (EZER
+            # LiteLLM guided_json) treat an omitted tool_choice as "JSON in
+            # content" and never fill message.tool_calls (TD-1724).
+            d["tool_choice"] = "auto"
         if self.stream:
             d["stream"] = True
             d["stream_options"] = {"include_usage": True}

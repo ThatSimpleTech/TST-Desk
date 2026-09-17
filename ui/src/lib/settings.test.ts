@@ -58,8 +58,10 @@ import {
 	setCuPolicy,
 	setJudgments,
 	storeNamedKey,
+	createNamedSource,
 	deleteNamedKey,
 	renameCredential,
+	saveCredentialHost,
 	saveTierCredential,
 	selectedCredential,
 	credentialHost,
@@ -616,6 +618,63 @@ describe("key section", () => {
 		storeNamedKey("Local", "  sk-lab-1  ");
 		expect(mocks.sent).toEqual([
 			{ type: "set_api_key", api_key: "sk-lab-1", name: "Local", credential: null },
+		]);
+	});
+
+	it("storeNamedKey includes a host only when one is typed (TD-1722)", () => {
+		startSettings();
+		storeNamedKey("EZER", "sk-lab-1", undefined, " http://ezer.example.ts.net:4000/v1 ");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_api_key",
+				api_key: "sk-lab-1",
+				name: "EZER",
+				credential: null,
+				base_url: "http://ezer.example.ts.net:4000/v1",
+			},
+		]);
+	});
+
+	it("createNamedSource adds a catalog row without a secret (TD-1723)", () => {
+		startSettings();
+		createNamedSource("EZER", " http://ezer.example.ts.net:4000/v1 ");
+		createNamedSource("Local");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_credential",
+				name: "EZER",
+				base_url: "http://ezer.example.ts.net:4000/v1",
+			},
+			{ type: "set_credential", name: "Local" },
+		]);
+		expect(JSON.stringify(mocks.sent)).not.toMatch(/sk-/);
+	});
+
+	it("storeNamedKey can target an existing catalog id (TD-1723)", () => {
+		startSettings();
+		storeNamedKey("OPENROUTER", "  sk-lab-1  ", "openrouter-2");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_api_key",
+				api_key: "sk-lab-1",
+				name: "OPENROUTER",
+				credential: "openrouter-2",
+			},
+		]);
+	});
+
+	it("saveCredentialHost writes empty to clear the host (TD-1722)", () => {
+		startSettings();
+		saveCredentialHost("ezer", "EZER", "http://ezer.example.ts.net:4000/v1");
+		saveCredentialHost("ezer", "EZER", "  ");
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_credential",
+				credential: "ezer",
+				name: "EZER",
+				base_url: "http://ezer.example.ts.net:4000/v1",
+			},
+			{ type: "set_credential", credential: "ezer", name: "EZER", base_url: "" },
 		]);
 	});
 

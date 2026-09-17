@@ -4209,6 +4209,173 @@ stays the default for new sessions.
 
 ---
 
+### TD-1722 — Settings → API keys can set the host
+**Size:** 2 · **Depends on:** TD-1718
+
+TD-1718 put `credentials.<id>.base_url` in config and showed it under
+the Model key picker. Settings → API keys still had only Name and Key,
+so a Tailscale EZER (or any off-box OpenAI `/v1`) host had to be typed
+into YAML.
+
+**Acceptance criteria:**
+- [x] Settings → API keys shows a Host field per named key and on add
+- [x] Saving Host writes `credentials.<id>.base_url`; blank clears it
+      so the preset URL stays in charge
+- [x] Adding a key with a Host stores both the secret and the host
+- [x] An invalid host is a typed `bad_request`, not a YAML write
+- [x] Secrets never appear in `config.yaml`, `setup_state`, or logs
+- [x] No provider URL is hardcoded in Python
+
+**Notes:** Additive protocol: optional `base_url` on `set_credential`
+and `set_api_key`. Empty string clears; omitted leaves or inherits
+(openrouter-family still inherit the shipped OpenRouter URL). No
+`PROTOCOL_VERSION` bump.
+
+**Done (2026-09-16).** Merged as PR #30.
+
+---
+
+### TD-1723 — Settings pane scrolls; add a source without a key
+**Size:** 2 · **Depends on:** TD-1722
+
+The settings dialog clipped at 80vh with `overflow: hidden` and a grid
+row sized to content, so API keys (and Computer use, MCP, Appearance)
+could not scroll. The add form — Host and Save — sat below the fold.
+Existing rows said "No key stored" with no field to paste one.
+
+**Acceptance criteria:**
+- [x] The settings body scrolls when content is taller than the dialog
+- [x] Every settings section uses that scroller (not only API keys)
+- [x] Add source is enabled with a name; key is optional
+- [x] A row with no stored key has a Key field that saves onto that id
+- [x] Secrets stay in component drafts, never the settings store
+
+**Notes:** Layout Class A: flex column, `min-height: 0`, overflow-y on
+`.content`. Add-without-key reuses `set_credential` (TD-1717).
+
+---
+
+### TD-1724 — Send `tool_choice: auto` when tools are present
+**Size:** 1 · **Depends on:** TD-303
+
+EZER LiteLLM's guided_json hook treats `tools` without `tool_choice` as
+"constrain the whole completion to JSON". The model then writes
+`{"name":"desktop_click","arguments":{...}}` into assistant *content*
+and `message.tool_calls` stays empty, so TST Desk never dispatches.
+OpenAI's default when tools are present is `tool_choice: "auto"`; the
+orchestrator already sends it. We omitted it.
+
+**Acceptance criteria:**
+- [x] A ChatCompletionRequest with tools serializes `tool_choice: "auto"`
+- [x] A request without tools still omits `tool_choice`
+- [x] No provider URL or model slug is hardcoded
+
+**Notes:** Class B: explicit default, not a new protocol. Gateways that
+already default to auto are unchanged.
+
+---
+
+### TD-1725 — Packaged AppImage serves real computer-use MCP
+**Size:** 3 · **Depends on:** TD-3301
+
+Empty `computer_use.command` is mock-only. The AppImage sidecar can
+run `tstd --cu-mcp` but the freeze did not include `tst-cu-mcp` / `mcp`
+/ Pillow, so computer-use stayed a tiny PNG. After a desktop tool,
+`local_worker_preset: vllm` remapped the worker to `stealth/ox-alpha`
+on the EZER host (credential `base_url` wins).
+
+**Acceptance criteria:**
+- [x] Frozen tstd with empty command drives `tstd --cu-mcp`, not the mock
+- [x] Checkout/CI with empty command is still the mock
+- [x] Sidecar freeze collects `tst_cu_mcp`, `mcp`, and Pillow
+- [x] No provider URL is hardcoded
+
+**Notes:** Class B: sidecar extra deps. User `local_worker_preset` is
+config, not this story.
+
+---
+
+### TD-1726 — Frozen CU child must reset the onefile extract dir
+**Size:** 2 · **Depends on:** TD-1725
+
+Packaged `tstd` spawned `tstd --cu-mcp` (same onefile binary). The
+child collided with the daemon's `_MEIPASS` and died; every
+`desktop_screenshot` / `desktop_move` was `Connection lost`. This is
+the Linux AppImage spawn. macOS keeps the in-daemon CU socket (TCC
+identity). Windows keeps its own backend. Linux capture/input stay
+X11 (`libX11`/`libXrandr`/`libXtst`) — distro-agnostic; native Wayland
+is a different protocol (TD-4901).
+
+**Acceptance criteria:**
+- [x] Frozen MCP child env includes `PYINSTALLER_RESET_ENVIRONMENT=1`
+- [x] Checkout spawn does not set that variable
+- [x] CU stderr is visible at warning, not only debug
+- [x] No macOS/Windows backend or protocol is changed
+
+---
+
+### TD-1727 — Packaged Linux CU runs in-process
+**Size:** 2 · **Depends on:** TD-1726
+
+`PYINSTALLER_RESET_ENVIRONMENT` was not enough: the AppImage child
+still died with Connection lost and no stderr. Frozen Linux now uses
+the X11/Wayland backends inside the daemon. macOS still spawns the
+sidecar (TCC). Windows still uses stdio MCP.
+
+**Acceptance criteria:**
+- [x] Frozen Linux + empty command is `InProcessDesktopDriver`
+- [x] Frozen Darwin still spawns `tstd --cu-mcp`
+- [x] Checkout empty command is still the mock
+- [x] Linux X11 vs Wayland backends are unchanged (separate protocols)
+
+---
+
+### TD-1728 — Keep 32k local CU inside the window
+**Size:** 2 · **Depends on:** TD-1727, TD-405
+
+ezer-forge is 32768 tokens. Nested `node_modules/**/AGENTS.md` plus a
+1568px screenshot as base64 overflowed on the first CU turn.
+Compaction cannot drop the in-flight screenshot. Skip dependency trees
+in the nested walk; Linux in-process screenshots cap at 768px.
+
+**Acceptance criteria:**
+- [x] Nested walk skips `node_modules`, `.venv`, `dist`, `build`, `target`
+- [x] In-process Linux screenshot uses max_long_edge 768
+- [x] Steering guide lists every skipped directory
+
+---
+
+### TD-1729 — Screenshots are vision parts, not 50k of base64 text
+**Size:** 2 · **Depends on:** TD-1728
+
+Measured: after a successful `desktop_screenshot`, the next provider
+call failed at 32769 tokens. `max_result_chars` stuffed 50_000 chars of
+PNG base64 into the tool message. Compaction cannot drop the in-flight
+screenshot. Peel the pixels out of `output` and send them as
+`image_url`.
+
+**Acceptance criteria:**
+- [x] Dispatch `output` for screenshots has no `png_base64` and is < 2000 chars
+- [x] PNG bytes ride `ToolResult.image_png` into a vision part
+- [x] Screen frame persistence is unchanged
+
+---
+
+### TD-1730 — At most one image on a local VLM prompt
+**Size:** 1 · **Depends on:** TD-1729
+
+ezer-forge is `--limit-mm-per-prompt image:1`. A second
+`desktop_screenshot` sent two `image_url` parts and the host returned
+400. Cap outbound messages at `computer_use.max_prompt_images` (default
+1), keeping the newest.
+
+**Acceptance criteria:**
+- [x] Two screenshot tool messages → only the last still has `image_url`
+- [x] `max_prompt_images: 0` strips every image
+- [x] Documented on `computer_use`
+
+---
+
 ### TD-1812 — Split the workspace picker and cost meter out of `TitleBar`
 **Size:** 2 · **Depends on:** TD-1006
 
