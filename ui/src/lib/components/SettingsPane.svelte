@@ -190,6 +190,9 @@
 	.pane {
 		display: grid;
 		grid-template-columns: 10rem 1fr;
+		/* minmax(0, …) lets the row shrink below content height; without it
+		   tall sections blow the 80vh cap and clip instead of scrolling. */
+		grid-template-rows: minmax(0, 1fr);
 		width: min(46rem, 92vw);
 		max-height: 80vh;
 		background: var(--color-lifted);
@@ -206,6 +209,8 @@
 		padding: var(--space-3);
 		background: var(--color-sunken);
 		border-right: 1px solid var(--color-hairline);
+		min-height: 0;
+		overflow-y: auto;
 	}
 
 	.nav-item {
@@ -231,6 +236,9 @@
 
 	.body {
 		padding: var(--space-4);
+		/* Grid items default to min-height:auto, which defeats
+		   overflow-y:auto — the row grows past the pane instead. */
+		min-height: 0;
 		overflow-y: auto;
 	}
 
