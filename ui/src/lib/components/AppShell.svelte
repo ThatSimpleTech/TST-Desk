@@ -63,6 +63,7 @@
 	import { startDesign, toggleDesign } from '../design.svelte.js';
 	import { screenTabVisible } from '../screen';
 	import { startOsNotify, createTauriOsNotifyBridge } from '../os-notify.svelte.js';
+	import { startCuFocus } from '../cu-focus.svelte.js';
 	import { startCloseHint } from '../close-hint';
 	import { startQuickEntryPermission } from '../quick-entry-permission';
 	import { startCoworkerIndicator } from '../coworker-indicator.svelte.js';
@@ -179,6 +180,7 @@
 		// dropped and the pane stays on "No instruction stack yet."
 		const offStack = startStack();
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
+		const offCuFocus = startCuFocus();
 		const offArtifacts = startArtifacts();
 		const offScheduled = startScheduled();
 		const offScreen = startScreen();
@@ -216,6 +218,7 @@
 			offUsage();
 			offStack();
 			offOsNotify();
+			offCuFocus();
 			offArtifacts();
 			offScheduled();
 			offScreen();

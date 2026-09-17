@@ -66,6 +66,7 @@ from tstd.protocol import (
     EndSession,
     Error,
     ExportUsage,
+    FocusWindow,
     ForkFrom,
     GetCharter,
     GetInstructionStack,
@@ -866,6 +867,7 @@ FIXTURES = {
     "cu_kill_state": CuKillState(killed=True),
     # TD-3407: episode open/close. Session-scoped; it lives in the session log.
     "cu_session": CuSession(session_id="sess-1", active=True, seq=24),
+    "focus_window": FocusWindow(reason="cu_session_closed"),
     "design_hit": DesignHit(
         session_id="sess-1",
         x=12.0,

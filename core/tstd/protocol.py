@@ -2132,6 +2132,22 @@ class CuSession(DaemonEvent):
     active: bool
 
 
+class FocusWindow(DaemonEvent):
+    """Bring the local window forward after a computer-use turn (TD-4832).
+
+    Emitted live when a ``cu_session`` closes and no other session still
+    has an open episode — never between tool calls, and never written to
+    a session log, so attach replay cannot re-trigger it. Connection-
+    scoped; a remote (browser) viewer receives it and no-ops, because
+    only the Tauri host can raise the window. Window activation failures
+    are swallowed client-side: they must not fail the turn.
+    """
+
+    type: Literal["focus_window"] = "focus_window"
+    seq: int = 1
+    reason: str = "cu_session_closed"
+
+
 class DesignHitBox(BaseModel):
     """Computed box of a Design-mode hit, in frame CSS pixels."""
 
@@ -2412,6 +2428,7 @@ DaemonEventT = Annotated[
     | ScreenFrame
     | CuKillState
     | CuSession
+    | FocusWindow
     | DesignHit
     | CuPermissions
     | JobList
@@ -2566,6 +2583,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "screen_frame",
         "cu_kill_state",
         "cu_session",
+        "focus_window",
         "design_hit",
         "cu_permissions",
         "job_list",
