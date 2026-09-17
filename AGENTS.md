@@ -250,3 +250,58 @@ tst-desk/
 │   └── src/
 └── .tst/                  ← per-workspace runtime (gitignored except rules/ and memory/)
 ```
+
+---
+
+## Cursor Cloud specific instructions
+
+Standard setup/run/test commands live in the README "Development" section — use those.
+Dependency install is handled by the environment update script (`uv sync --frozen` in
+`core/`, `npm ci` in `ui/`). The notes below are the non-obvious, durable caveats for
+this cloud environment; they are not a substitute for the README.
+
+### Toolchain gotchas
+- **Node:** the product needs Node 24, but the VM's default `node` on `PATH`
+  (`/exec-daemon/node`) is v22. A login shell (`bash -l`) picks up Node 24 via `~/.bashrc`
+  (nvm default is set to 24). Non-interactive shells may still see v22 — prefer
+  `$HOME/.nvm/versions/node/v24.19.0/bin` explicitly if `node --version` is wrong.
+- **uv** lives in `$HOME/.local/bin` (on `PATH` for login shells via `~/.bashrc`).
+- **Rust:** the rustup default is set to `stable` (≥1.98). Do not switch back to the older
+  pinned 1.83 toolchain — a transitive Cargo dependency requires `edition2024`, which 1.83
+  cannot parse.
+
+### Running the full Python suite (keychain)
+The daemon reads the OS keychain (Linux Secret Service via `secret-tool`) during
+`get_setup_state`, so ~18 tests fail with a bare `pytest` (`FileNotFoundError: secret-tool`).
+Run pytest inside a D-Bus session with an unlocked gnome-keyring:
+
+```bash
+cd core
+dbus-run-session -- bash -c '
+  echo "tstpw" | gnome-keyring-daemon --unlock --components=secrets >/dev/null 2>&1
+  eval $(echo "tstpw" | gnome-keyring-daemon --start --components=secrets 2>/dev/null)
+  export GNOME_KEYRING_CONTROL SSH_AUTH_SOCK
+  uv run pytest -q
+'
+```
+
+The scripted end-to-end harness (`uv run python scripts/e2e_headless.py`) needs the same
+D-Bus/keyring wrapper. Lint/type gates (`uv run ruff check .`, `uv run ruff format --check .`,
+`uv run mypy tstd`) and the UI checks (`npx tsc --noEmit`, `npm run test`, `npm run build`)
+need no keyring.
+
+### Running the product headlessly
+`uv run tst run --workspace <dir> --message "..."` spawns `tstd` and needs a reachable
+OpenAI-compatible model endpoint. The active preset and model config are read from
+`${XDG_DATA_HOME:-~/.local/share}/tst-desk/config.yaml` — **not** the daemon's `--data-dir`.
+To run without network/keys, set `XDG_DATA_HOME` to a scratch dir, drop a copy of
+`core/tstd/config.yaml` there with `active_preset: local` prepended, and point a local
+OpenAI-compatible server at `127.0.0.1:11434` (the `local` preset is keyless on loopback).
+
+### What cannot run here
+- The Tauri desktop app (`npm run tauri:dev` / the `shell/` host) needs a display + WebKit
+  GTK and cannot run in this headless VM. Rust unit tests (`cargo test`) build and pass;
+  two pre-existing, environment/platform-specific failures are expected and unrelated to
+  setup: `cargo clippy -- -D warnings` flags `show_main_window` as dead code on Linux (its
+  only caller is `#[cfg(target_os = "macos")]`), and the `daemon_supervision` grandchild-reap
+  integration test fails under the sandbox's process-group semantics.
