@@ -27,6 +27,7 @@
 	import SettingsAbout from './SettingsAbout.svelte';
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
 	import CuPolicyPane from './CuPolicyPane.svelte';
+	import SettingsJudgments from './SettingsJudgments.svelte';
 	import Icon from './Icon.svelte';
 
 	const SECTION_LABEL: Record<SettingsSection, string> = {
@@ -157,6 +158,7 @@
 					<CuIndicatorToggles />
 				{:else if settings.section === 'computer'}
 					<CuPolicyPane />
+					<SettingsJudgments />
 				{:else if settings.section === 'engine'}
 					<SettingsEngine />
 				{:else if settings.section === 'model'}

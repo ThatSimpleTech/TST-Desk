@@ -47,6 +47,7 @@ from .browser import BrowserDriver, BrowserError, browser_driver_from_config, no
 from .config import (
     DEFAULT_CREDENTIAL_ID,
     ConfigError,
+    JudgmentsConfig,
     McpServerConfig,
     ModelConfig,
     ModelDiscoveryError,
@@ -67,6 +68,7 @@ from .config_write import (
     save_active_preset,
     save_credential,
     save_engine_kind,
+    save_judgments,
     save_mcp_server,
     save_tier_credential,
     save_tier_slug,
@@ -263,6 +265,7 @@ from .protocol import (
     SetCuPolicy,
     SetEngine,
     SetGrokMode,
+    SetJudgments,
     SetLoadGlobalMemory,
     SetMcpServer,
     SetPlan,
@@ -817,6 +820,11 @@ class Daemon:
             cu_mode=self.cu_policy.mode,
             cu_unhide_on_finish=self.cu_policy.unhide_on_finish,
             cu_denied_apps=list(self.cu_policy.denied_apps),
+            judgments_verification=self.config.judgments.verification,
+            judgments_semantic_breaker=self.config.judgments.semantic_breaker,
+            judgments_candidate_selection=self.config.judgments.candidate_selection,
+            judgments_confidence_threshold=self.config.judgments.confidence_threshold,
+            judgments_max_state_chars=self.config.judgments.max_state_chars,
             mcp_servers=[
                 McpServerSummary(
                     id=sid,
@@ -2033,6 +2041,19 @@ class Daemon:
                 allowed_apps=self.cu_policy.allowed_apps,
             )
             save_cu_policy(self.cu_policy)
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetJudgments):
+            # TD-708 (dev): persist the judgments block; running sessions
+            # keep the wiring they started with, new sessions pick it up.
+            self.config.judgments = JudgmentsConfig(
+                verification=msg.verification,
+                semantic_breaker=msg.semantic_breaker,
+                candidate_selection=msg.candidate_selection,
+                confidence_threshold=msg.confidence_threshold,
+                max_state_chars=msg.max_state_chars,
+            )
+            await asyncio.to_thread(save_judgments, self.config.judgments)
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetWorkspacePin):

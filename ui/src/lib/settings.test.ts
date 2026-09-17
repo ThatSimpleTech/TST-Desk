@@ -56,6 +56,7 @@ import {
 	setEngine,
 	setCuIndicators,
 	setCuPolicy,
+	setJudgments,
 	storeNamedKey,
 	deleteNamedKey,
 	renameCredential,
@@ -515,6 +516,44 @@ describe("computer-use indicators", () => {
 		emit(setupState({ cu_mode: "full_control", cu_denied_apps: ["Bank"] }));
 		expect(settings.cuMode).toBe("full_control");
 		expect(settings.cuDeniedApps).toEqual(["Bank"]);
+	});
+
+	it("sends set_judgments and reads the ack (TD-708 dev)", () => {
+		startSettings();
+		emit(setupState({ judgments_verification: false, judgments_confidence_threshold: 0.6 }));
+		expect(settings.judgmentsVerification).toBe(false);
+		setJudgments({ verification: true, confidenceThreshold: 0.7 });
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_judgments",
+				verification: true,
+				semantic_breaker: false,
+				candidate_selection: false,
+				confidence_threshold: 0.7,
+				max_state_chars: 2000,
+			},
+		]);
+		emit(
+			setupState({
+				judgments_verification: true,
+				judgments_semantic_breaker: true,
+				judgments_confidence_threshold: 0.7,
+			}),
+		);
+		expect(settings.judgmentsVerification).toBe(true);
+		expect(settings.judgmentsSemanticBreaker).toBe(true);
+		expect(settings.judgmentsConfidenceThreshold).toBe(0.7);
+		// A daemon too old to send the fields reads as all-off, never invented.
+		emit(setupState({ judgments_verification: undefined }));
+	});
+
+	it("resets judgment toggles to all-off defaults", () => {
+		startSettings();
+		emit(setupState({ judgments_verification: true, judgments_semantic_breaker: true }));
+		resetSettings();
+		expect(settings.judgmentsVerification).toBe(false);
+		expect(settings.judgmentsSemanticBreaker).toBe(false);
+		expect(settings.judgmentsCandidateSelection).toBe(false);
 	});
 });
 
