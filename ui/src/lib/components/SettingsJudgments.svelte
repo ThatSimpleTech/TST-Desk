@@ -11,9 +11,9 @@
 		<span class="badge">Dev</span>
 	</div>
 	<p class="hint">
-		Small typed decisions on the worker model you already run — no external service. Every
-		judgment fails closed: an unavailable or unsure answer is the same as no judgment. Applies
-		to new sessions.
+		Small typed decisions on the worker model you already run — no additional service; they
+		use your configured worker provider. Every judgment fails closed: an unavailable or
+		unsure answer is the same as no judgment. Applies to new sessions.
 	</p>
 </div>
 
@@ -23,7 +23,8 @@
 		<p class="hint">
 			After a computer-use action, check it had its intended effect from a compact text
 			before/after state — never a screenshot. A refuted action is flagged so the agent can
-			re-check or retry.
+			re-check or retry. On drivers that cannot describe their state, the judgment reports
+			unavailable and the action proceeds unverified.
 		</p>
 	</div>
 	<button
@@ -58,20 +59,22 @@
 
 <div class="row">
 	<div>
-		<p class="title">Pick browser elements by judgment</p>
+		<p class="title">Pick browser elements by judgment <span class="badge">Not yet connected</span></p>
 		<p class="hint">
 			Code extracts candidate elements as a fixed schema (index, role, name, box) and the
-			judgment picks one — no page text, HTML, cookies, or URL leaves the boundary.
+			judgment picks one — no page text, HTML, cookies, or URL crosses the boundary. The
+			library exists; it is not wired into the browser loop yet, so this switch is inert.
 		</p>
 	</div>
 	<button
 		class="choice"
-		class:choice--active={settings.judgmentsCandidateSelection}
 		type="button"
 		role="switch"
 		aria-checked={settings.judgmentsCandidateSelection}
-		onclick={() => setJudgments({ candidateSelection: !settings.judgmentsCandidateSelection })}
-		>{settings.judgmentsCandidateSelection ? 'On' : 'Off'}</button
+		aria-disabled="true"
+		disabled
+		title="Not wired into the browser loop yet"
+		>Off</button
 	>
 </div>
 
@@ -157,6 +160,11 @@
 		color: var(--color-on-accent);
 		background: var(--color-accent);
 		border-color: var(--color-accent);
+	}
+
+	.choice:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.field {

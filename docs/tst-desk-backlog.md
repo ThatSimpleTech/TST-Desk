@@ -1123,7 +1123,10 @@ what makes aggressive Class A behavior safe.
 
 ### TD-708 — Judgment seam for the decision classifier (provider-neutral)
 **Size:** 5 · **Depends on:** TD-703, TD-302, TD-706
-**Status:** Proposed 2026-09-17 — not scheduled into a milestone
+**Status:** Dev build shipped on main 2026-09-17 (30fec39, 1af204f). Open for hardening:
+per-judgment audit-trail records (payload, answer, confidence, latency, cost in the SQLite
+audit log — today it is structured logs + `ToolResult.verification`), and a real connector
+behind the seam.
 
 **Acceptance criteria:**
 - [ ] A `JudgmentBackend` protocol (question + bounded state → typed answer + confidence)
@@ -1167,7 +1170,10 @@ dev-time API reference for building that connector.
 
 ### TD-709 — Action-effect verification for computer-use actuation
 **Size:** 5 · **Depends on:** TD-708, TD-3301, TD-1710
-**Status:** Proposed 2026-09-17 — not scheduled into a milestone
+**Status:** Dev build shipped on main 2026-09-17 (30fec39). Open for hardening: real-driver
+state extraction (AX/DOM summarizer — the probe reads mock attributes, so real drivers
+report `unavailable`), retry-with-re-grounding on refutation, and the recorded-fixture
+accuracy/latency corpus against a live connector.
 
 **Acceptance criteria:**
 - [ ] After any `actuates=True` desktop/browser tool runs, a verification judgment on the
@@ -1200,7 +1206,9 @@ TD-710. Judgments may add refusals, never remove them: the static `actuates → 
 
 ### TD-710 — Semantic no-progress breaker for unattended runs
 **Size:** 3 · **Depends on:** TD-709, TD-4203
-**Status:** Proposed 2026-09-17 — not scheduled into a milestone
+**Status:** Dev build shipped on main 2026-09-17 (30fec39). Open for hardening: richer
+per-round state (TD-709's extractor, once real), and the stuck-vs-progressing fixture eval
+with measured trip accuracy.
 
 **Acceptance criteria:**
 - [ ] A fifth breaker beside the syntactic four (TD-4203): a judgment on the configured
@@ -1229,7 +1237,10 @@ behavior.
 
 ### TD-711 — Judgment-based candidate selection in the browser loop
 **Size:** 5 · **Depends on:** TD-708, TD-1710
-**Status:** Proposed 2026-09-17 — not scheduled into a milestone
+**Status:** Dev build shipped on main 2026-09-17 (30fec39) as a library only — no
+production caller; the Settings toggle is disabled and labelled "Not yet connected".
+Open: DOM candidate extraction in the Playwright driver, wiring into the browser loop,
+and the labeled-pages fixture eval.
 
 **Acceptance criteria:**
 - [ ] Code extracts candidate elements; the configured `JudgmentBackend` picks the

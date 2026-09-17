@@ -101,6 +101,23 @@ class TestRunnerIntegration:
         assert await advance_autonomy(session) is False
         assert session.autonomy_stop_reason == SEMANTIC_NO_PROGRESS
 
+    async def test_runner_uses_the_configured_threshold(self, tmp_path: Path) -> None:
+        """The breaker reads session.judgment_threshold, not the 0.6 default."""
+        repo = make_repo(tmp_path)
+        session = Session(str(repo))
+        _wire_autonomy(session, make_charter(max_iterations=8))
+        session.judgment_threshold = 0.9
+        session.judgment_backend = ScriptedJudgmentBackend(  # type: ignore[arg-type]
+            [_no(0.7), _no(0.7), _no(0.7)]
+        )
+        # 0.7 confidence is below the configured 0.9: three "no" answers
+        # are all inert, and the run continues to the next turn.
+        assert await advance_autonomy(session) is True
+        assert await advance_autonomy(session) is True
+        assert await advance_autonomy(session) is True
+        assert session.autonomy_stop_reason is None
+        assert session.semantic_no_progress_streak == 0
+
     async def test_runner_without_backend_never_judges(self, tmp_path: Path) -> None:
         repo = make_repo(tmp_path)
         session = Session(str(repo))

@@ -679,6 +679,7 @@ async def agent_loop(
         judgments_cfg = config.judgments
         if judgments_cfg.semantic_breaker and session.judgment_backend is None:
             session.judgment_backend = WorkerChatJudgmentBackend(_worker_completion)
+            session.judgment_threshold = judgments_cfg.confidence_threshold
         if judgments_cfg.verification and tool_dispatcher.verifier is None:
             tool_dispatcher.verifier = ActuationVerifier(
                 WorkerChatJudgmentBackend(_worker_completion),
