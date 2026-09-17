@@ -144,6 +144,7 @@ export interface SetJudgments extends ClientMessage {
   candidate_selection: boolean;
   confidence_threshold: number;
   max_state_chars: number;
+  backend: "worker" | "typesafe";
 }
 
 /** Turn Tailscale remote attach on or off (TD-3603). Machine-wide, no session. */
@@ -1194,6 +1195,10 @@ export interface SetupState extends DaemonEvent {
   judgments_candidate_selection?: boolean;
   judgments_confidence_threshold?: number;
   judgments_max_state_chars?: number;
+  /** The connector, its keychain credential id, and key presence. */
+  judgments_backend?: "worker" | "typesafe";
+  judgments_typesafe_credential?: string;
+  judgments_typesafe_key_stored?: boolean;
   // TD-4403: listed MCP servers. Additive, default empty. Never a secret.
   mcp_servers?: McpServerSummary[];
   // TD-4701: hold-to-talk. Additive, default off. The URL never arrives.

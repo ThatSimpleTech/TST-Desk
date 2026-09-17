@@ -729,9 +729,10 @@ class JudgmentsConfig(BaseModel):
     Everything defaults off: with all flags false the dispatch and
     autonomy paths are byte-identical to the pre-seam product.  The
     decision classifier's own fallback (TD-703) is not gated here — it
-    is the seam's default connector and is always on.  A future typed
-    judgments API is a connector selected by its own config, never a
-    requirement.
+    is the seam's default connector and is always on.  ``backend``
+    selects the connector: ``worker`` (the configured worker tier) or
+    ``typesafe`` (a hosted typed-judgment API, opt-in; the key lives in
+    the OS keychain under ``typesafe_credential``, never here).
     """
 
     verification: bool = False
@@ -739,6 +740,14 @@ class JudgmentsConfig(BaseModel):
     candidate_selection: bool = False
     confidence_threshold: float = 0.6
     max_state_chars: int = 2000
+    backend: Literal["worker", "typesafe"] = "worker"
+    # Empty means "not configured": the typesafe connector cannot run
+    # without a URL and the wiring falls back to the worker tier.  The
+    # real default URL ships in config.yaml — destinations live in config
+    # (data), never as source literals (§2.3).
+    typesafe_base_url: str = ""
+    typesafe_model: str = "jev-latest"
+    typesafe_credential: str = "typesafe"
 
 
 class ModelConfig(BaseModel):

@@ -533,6 +533,7 @@ describe("computer-use indicators", () => {
 				candidate_selection: false,
 				confidence_threshold: 0.7,
 				max_state_chars: 2000,
+				backend: "worker",
 			},
 		]);
 		emit(
@@ -547,6 +548,33 @@ describe("computer-use indicators", () => {
 		expect(settings.judgmentsConfidenceThreshold).toBe(0.7);
 		// A daemon too old to send the fields reads as all-off, never invented.
 		emit(setupState({ judgments_verification: undefined }));
+	});
+
+	it("switches the judgment backend and reads key presence", () => {
+		startSettings();
+		emit(
+			setupState({
+				judgments_backend: "worker",
+				judgments_typesafe_credential: "typesafe",
+				judgments_typesafe_key_stored: true,
+			}),
+		);
+		expect(settings.judgmentsBackend).toBe("worker");
+		expect(settings.judgmentsTypesafeKeyStored).toBe(true);
+		setJudgments({ backend: "typesafe" });
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_judgments",
+				verification: false,
+				semantic_breaker: false,
+				candidate_selection: false,
+				confidence_threshold: 0.6,
+				max_state_chars: 2000,
+				backend: "typesafe",
+			},
+		]);
+		emit(setupState({ judgments_backend: "typesafe" }));
+		expect(settings.judgmentsBackend).toBe("typesafe");
 	});
 
 	it("resets judgment toggles to all-off defaults", () => {

@@ -828,6 +828,11 @@ class Daemon:
             judgments_candidate_selection=self.config.judgments.candidate_selection,
             judgments_confidence_threshold=self.config.judgments.confidence_threshold,
             judgments_max_state_chars=self.config.judgments.max_state_chars,
+            judgments_backend=self.config.judgments.backend,
+            judgments_typesafe_credential=self.config.judgments.typesafe_credential,
+            judgments_typesafe_key_stored=await self._credential_is_stored(
+                self.config.judgments.typesafe_credential
+            ),
             mcp_servers=[
                 McpServerSummary(
                     id=sid,
@@ -2096,6 +2101,10 @@ class Daemon:
                 candidate_selection=msg.candidate_selection,
                 confidence_threshold=msg.confidence_threshold,
                 max_state_chars=msg.max_state_chars,
+                backend=msg.backend,
+                typesafe_base_url=self.config.judgments.typesafe_base_url,
+                typesafe_model=self.config.judgments.typesafe_model,
+                typesafe_credential=self.config.judgments.typesafe_credential,
             )
             await asyncio.to_thread(save_judgments, self.config.judgments)
             return (await self._setup_state_event()).model_dump_json()

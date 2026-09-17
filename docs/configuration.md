@@ -230,6 +230,10 @@ answer falls back to the unjudged behavior, never to a block.
 | `candidate_selection` | bool | `false` | Adds the `browser_pick` tool (TD-711): act-by-description — code extracts `{index, tag, role, accessible_name, bounding_box}` per candidate, the configured judgment backend picks one, and the click lands on its box. No page text, HTML, cookies, or URL crosses the boundary; no confident match refuses with fallback guidance. |
 | `confidence_threshold` | float 0–1 | `0.6` | Minimum confidence to assert a judgment. Below it the feature treats the answer as unavailable. |
 | `max_state_chars` | int | `2000` | Per-field cap on the state text sent to the backend. |
+| `backend` | `worker` or `typesafe` | `worker` | The connector. `worker` uses the configured worker tier. `typesafe` uses the hosted typed-judgment API — opt-in, and it falls back to `worker` when its key is not stored. |
+| `typesafe_base_url` | string | *empty in code; the shipped config sets `https://api.typesafe.ai`* | The TypeSafe API base URL. Empty means unconfigured — the `typesafe` backend falls back to `worker`. Destinations live here, never in source (§2.3). |
+| `typesafe_model` | string | `jev-latest` | The TypeSafe model alias for judgments. |
+| `typesafe_credential` | string | `typesafe` | The keychain credential id the TypeSafe connector reads. The key itself lives only in the OS keychain (prime §2.2) — add it under Settings → API keys with that name. |
 
 ### `notify`
 

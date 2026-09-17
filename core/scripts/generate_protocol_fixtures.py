@@ -219,6 +219,7 @@ FIXTURES = {
         candidate_selection=False,
         confidence_threshold=0.6,
         max_state_chars=2000,
+        backend="typesafe",
     ),
     "set_workspace_pin": SetWorkspacePin(path="/home/user/project", pinned=True),
     "resume": Resume(session_id="sess-1"),
