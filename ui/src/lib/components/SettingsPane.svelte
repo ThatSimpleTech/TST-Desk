@@ -74,7 +74,7 @@
 				{/each}
 			</nav>
 
-			<div class="body">
+			<div class="main">
 				<div class="head">
 					<h1 class="title">{SECTION_LABEL[settings.section]}</h1>
 					<button class="close" type="button" aria-label="Close" onclick={closeSettings}>
@@ -82,6 +82,7 @@
 					</button>
 				</div>
 
+				<div class="content">
 				{#if settings.section === 'appearance'}
 					<div class="group" role="radiogroup" aria-label="Theme">
 						{#each THEMES as option (option)}
@@ -172,6 +173,7 @@
 				{:else}
 					<SettingsKeys />
 				{/if}
+				</div>
 			</div>
 		</div>
 	</div>
@@ -188,11 +190,9 @@
 	}
 
 	.pane {
-		display: grid;
-		grid-template-columns: 10rem 1fr;
-		/* minmax(0, …) lets the row shrink below content height; without it
-		   tall sections blow the 80vh cap and clip instead of scrolling. */
-		grid-template-rows: minmax(0, 1fr);
+		display: flex;
+		flex-direction: row;
+		align-items: stretch;
 		width: min(46rem, 92vw);
 		max-height: 80vh;
 		background: var(--color-lifted);
@@ -205,6 +205,7 @@
 	.nav {
 		display: flex;
 		flex-direction: column;
+		flex: 0 0 10rem;
 		gap: 2px;
 		padding: var(--space-3);
 		background: var(--color-sunken);
@@ -234,16 +235,25 @@
 		font-weight: var(--weight-medium);
 	}
 
-	.body {
+	.main {
+		flex: 1 1 auto;
+		min-width: 0;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
 		padding: var(--space-4);
-		/* Grid items default to min-height:auto, which defeats
-		   overflow-y:auto — the row grows past the pane instead. */
+	}
+
+	.content {
+		flex: 1 1 auto;
 		min-height: 0;
 		overflow-y: auto;
+		overscroll-behavior: contain;
 	}
 
 	.head {
 		display: flex;
+		flex: 0 0 auto;
 		align-items: center;
 		justify-content: space-between;
 		margin-bottom: var(--space-3);

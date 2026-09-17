@@ -104,6 +104,88 @@ class TestCatalog:
         assert ("local", "Local") in writes
         assert _TAG not in json.dumps(reply)
 
+    async def test_set_api_key_with_a_host_writes_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        daemon = _daemon(monkeypatch, tmp_path)
+        monkeypatch.setattr("tstd.daemon.load_config", lambda: _config())
+        writes: list[tuple[str, str, object]] = []
+
+        def _save(
+            credential_id: str, name: str, path: Path | None = None, **kwargs: object
+        ) -> Path:
+            writes.append((credential_id, name, kwargs.get("base_url")))
+            return Path("/unused")
+
+        monkeypatch.setattr("tstd.daemon.save_credential", _save)
+        host = "http://ezer.example.ts.net:4000/v1"
+        reply = await _send(
+            daemon,
+            {"type": "set_api_key", "api_key": _TAG, "name": "EZER", "base_url": host},
+        )
+        assert fake_keychain.stored["ezer"] == _TAG
+        assert ("ezer", "EZER", host) in writes
+        assert _TAG not in json.dumps(reply)
+
+    async def test_set_credential_writes_and_clears_a_host(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        daemon = _daemon(monkeypatch, tmp_path)
+        monkeypatch.setattr("tstd.daemon.load_config", lambda: _config())
+        writes: list[object] = []
+
+        def _save(
+            credential_id: str, name: str, path: Path | None = None, **kwargs: object
+        ) -> Path:
+            writes.append(kwargs.get("base_url"))
+            return Path("/unused")
+
+        monkeypatch.setattr("tstd.daemon.save_credential", _save)
+        host = "http://ezer.example.ts.net:4000/v1"
+        reply = await _send(
+            daemon,
+            {
+                "type": "set_credential",
+                "credential": "openrouter",
+                "name": "OpenRouter",
+                "base_url": host,
+            },
+        )
+        assert reply["type"] == "setup_state"
+        assert writes[-1] == host
+        await _send(
+            daemon,
+            {
+                "type": "set_credential",
+                "credential": "openrouter",
+                "name": "OpenRouter",
+                "base_url": "",
+            },
+        )
+        assert writes[-1] == ""
+        await _send(
+            daemon,
+            {"type": "set_credential", "credential": "openrouter", "name": "OpenRouter"},
+        )
+        assert writes[-1] is None
+
+    async def test_invalid_host_is_a_typed_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
+    ) -> None:
+        daemon = _daemon(monkeypatch, tmp_path)
+        reply = await _send(
+            daemon,
+            {
+                "type": "set_credential",
+                "credential": "openrouter",
+                "name": "OpenRouter",
+                "base_url": "not-a-url",
+            },
+        )
+        assert reply["type"] == "error"
+        assert reply["code"] == "bad_request"
+        assert "http" in reply["message"].lower()
+
     async def test_bound_loopback_reads_that_key(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_keychain: FakeKeychain
     ) -> None:
@@ -190,6 +272,12 @@ class TestParse:
     def test_new_messages_parse(self) -> None:
         cred = parse_client_message('{"type": "set_credential", "name": "Local"}')
         assert cred.type == "set_credential"
+        assert cred.base_url is None
+        with_host = parse_client_message(
+            '{"type": "set_credential", "name": "EZER", '
+            '"base_url": "http://ezer.example.ts.net:4000/v1"}'
+        )
+        assert with_host.base_url == "http://ezer.example.ts.net:4000/v1"
         gone = parse_client_message('{"type": "delete_credential", "credential": "local"}')
         assert gone.type == "delete_credential"
         bind = parse_client_message(

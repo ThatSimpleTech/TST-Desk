@@ -155,6 +155,39 @@ def _dispatcher(
     return dispatcher, guard
 
 
+class TestPeelScreenshot:
+    def test_strips_base64_and_keeps_pixels(self) -> None:
+        from tstd.desktop.protocol import TINY_PNG
+        from tstd.tools.desktop import peel_screenshot_png
+
+        raw = json.dumps({"png_base64": base64.b64encode(TINY_PNG).decode("ascii"), "width": 1})
+        compact, png = peel_screenshot_png(raw)
+        body = json.loads(compact)
+        assert "png_base64" not in body
+        assert body["width"] == 1
+        assert png == TINY_PNG
+        assert len(compact) < 200
+
+    def test_model_content_is_vision_part_not_50k_text(self) -> None:
+        from tstd.desktop.protocol import TINY_PNG
+        from tstd.loop import _tool_message_content
+        from tstd.tools.results import ToolResult
+
+        result = ToolResult(
+            tool_call_id="c1",
+            name="desktop_screenshot",
+            status="success",
+            output='{"width": 768, "height": 421}',
+            image_png=TINY_PNG,
+        )
+        content = _tool_message_content(result)
+        assert isinstance(content, list)
+        assert content[0]["type"] == "text"
+        assert "png_base64" not in content[0]["text"]
+        assert content[1]["type"] == "image_url"
+        assert len(content[0]["text"]) < 200
+
+
 class TestScreenFrame:
     async def test_screenshot_emits_screen_frame_path(self, tmp_path: Path) -> None:
         driver = MockDesktopDriver()
@@ -164,7 +197,9 @@ class TestScreenFrame:
         result = await dispatcher.dispatch("c1", "desktop_screenshot", {}, session=session)
         assert result.status == "success"
         body = json.loads(result.output)
-        assert body["png_base64"]
+        assert "png_base64" not in body
+        assert result.image_png is not None and result.image_png.startswith(b"\x89PNG")
+        assert len(result.output) < 2_000
         frames = [e for e in session.event_log.events if isinstance(e, ScreenFrame)]
         assert len(frames) == 1
         assert frames[0].path.startswith("screens/")
@@ -205,9 +240,9 @@ class TestScreenshotClassA:
         assert result.decision_class is DecisionClass.A
         assert worker == []
         body = json.loads(result.output)
-        assert body["png_base64"]
-        raw = base64.b64decode(body["png_base64"])
-        assert raw.startswith(b"\x89PNG")
+        assert "png_base64" not in body
+        assert result.image_png is not None
+        assert result.image_png.startswith(b"\x89PNG")
         assert driver.actuations == []
 
 
@@ -440,6 +475,70 @@ def _config_with_cu_command(command: str) -> ModelConfig:
         active_preset="test",
         computer_use=ComputerUseConfig(command=command),
     )
+
+
+class TestPackagedCuDefault:
+    """Empty command is mock in checkout; frozen tstd serves --cu-mcp (TD-1725)."""
+
+    def test_empty_command_is_still_mock_when_not_frozen(self) -> None:
+        from tstd.desktop.factory import desktop_driver_from_config
+        from tstd.desktop.mock import MockDesktopDriver
+
+        driver = desktop_driver_from_config(_config_with_cu_command(""))
+        assert isinstance(driver, MockDesktopDriver)
+
+    def test_frozen_linux_uses_inprocess_driver(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        from tstd.desktop.factory import desktop_driver_from_config
+        from tstd.desktop.inprocess import InProcessDesktopDriver
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "platform", "linux")
+        driver = desktop_driver_from_config(_config_with_cu_command(""))
+        assert isinstance(driver, InProcessDesktopDriver)
+
+    def test_frozen_darwin_still_spawns_sidecar(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        from tstd.desktop.factory import desktop_driver_from_config
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setattr(sys, "executable", "/app/tstd")
+        driver = desktop_driver_from_config(_config_with_cu_command(""))
+        assert isinstance(driver, McpDesktopDriver)
+        assert driver._command == ["/app/tstd", "--cu-mcp"]
+        assert driver._client._env is not None
+        assert driver._client._env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+
+class TestFrozenCuChildEnv:
+    """Onefile tstd must reset extract dir when spawning itself (TD-1726)."""
+
+    def test_checkout_spawn_does_not_set_reset(self) -> None:
+        from tstd.desktop.stdio_mcp import spawn_env
+
+        assert spawn_env(None) is None
+        extra = {"TST_CU_MCP_INTERNAL": "1"}
+        assert spawn_env(extra) == extra
+        assert "PYINSTALLER_RESET_ENVIRONMENT" not in extra
+
+    def test_frozen_spawn_sets_reset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sys
+
+        from tstd.desktop.stdio_mcp import spawn_env
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        env = spawn_env({"TST_CU_MCP_INTERNAL": "1"})
+        assert env is not None
+        assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+        assert env["TST_CU_MCP_INTERNAL"] == "1"
+        assert "PATH" in env
 
 
 class TestOverlayEnvPlumbing:

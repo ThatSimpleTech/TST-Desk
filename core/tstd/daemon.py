@@ -47,6 +47,7 @@ from .browser import BrowserDriver, BrowserError, browser_driver_from_config, no
 from .config import (
     DEFAULT_CREDENTIAL_ID,
     ConfigError,
+    CredentialConfig,
     JudgmentsConfig,
     McpServerConfig,
     ModelConfig,
@@ -869,11 +870,40 @@ class Daemon:
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._clients.clear()
 
-    async def _store_named_key(self, api_key: str, credential: str | None, name: str | None) -> str:
+    def _host_to_persist(
+        self, cred_id: str, catalog_name: str, requested: str | None
+    ) -> str | None:
+        """Value for ``save_credential(..., base_url=)``.
+
+        ``None`` leaves an existing host, and inherits the shipped OpenRouter
+        URL for a new openrouter-family id. A string, including empty,
+        replaces it (TD-1722).
+        """
+        if requested is not None:
+            try:
+                CredentialConfig(name=catalog_name, base_url=requested or None)
+            except ValidationError as e:
+                detail = e.errors()[0]["msg"] if e.errors() else "invalid credential base_url"
+                raise ConfigError(str(detail)) from e
+            return requested.strip()
+        if cred_id not in self.config.credentials and is_openrouter_family(cred_id):
+            default = self.config.credentials.get(DEFAULT_CREDENTIAL_ID)
+            if default is not None:
+                return default.base_url
+        return None
+
+    async def _store_named_key(
+        self,
+        api_key: str,
+        credential: str | None,
+        name: str | None,
+        base_url: str | None = None,
+    ) -> str:
         """Store a secret and ensure its catalog row (TD-1717).
 
         Wizard path: both optional → ``openrouter`` / "OpenRouter".
         A new name with no id slugifies; a collision gets a numeric suffix.
+        ``base_url`` is the host this key talks to (TD-1722).
         """
         existing = set(self.config.credentials)
         display = (name or "").strip()
@@ -891,26 +921,20 @@ class Daemon:
             catalog_name = "OpenRouter"
         else:
             catalog_name = cred_id
-        host = None
-        if cred_id not in self.config.credentials and is_openrouter_family(cred_id):
-            default = self.config.credentials.get(DEFAULT_CREDENTIAL_ID)
-            if default is not None:
-                host = default.base_url
+        host = self._host_to_persist(cred_id, catalog_name, base_url)
         save_credential(cred_id, catalog_name, base_url=host)
         await store_api_key(api_key, cred_id)
         self._reload_user_config()
         return cred_id
 
-    def _upsert_credential_name(self, credential: str | None, name: str) -> str:
+    def _upsert_credential_name(
+        self, credential: str | None, name: str, base_url: str | None = None
+    ) -> str:
         """Create or rename a catalog row without touching the secret."""
         cleaned = name.strip()
         existing = set(self.config.credentials)
         cred_id = credential.strip() if credential else allocate_credential_id(cleaned, existing)
-        host = None
-        if cred_id not in self.config.credentials and is_openrouter_family(cred_id):
-            default = self.config.credentials.get(DEFAULT_CREDENTIAL_ID)
-            if default is not None:
-                host = default.base_url
+        host = self._host_to_persist(cred_id, cleaned, base_url)
         save_credential(cred_id, cleaned, base_url=host)
         self._reload_user_config()
         return cred_id
@@ -2193,7 +2217,9 @@ class Daemon:
 
         if isinstance(msg, SetApiKey):
             try:
-                cred_id = await self._store_named_key(msg.api_key, msg.credential, msg.name)
+                cred_id = await self._store_named_key(
+                    msg.api_key, msg.credential, msg.name, msg.base_url
+                )
             except KeychainLockedError as e:
                 # TD-1105: unlock guidance, not raw `security` stderr.
                 return build_error("keychain_locked", str(e))
@@ -2229,7 +2255,7 @@ class Daemon:
 
         if isinstance(msg, SetCredential):
             try:
-                self._upsert_credential_name(msg.credential, msg.name)
+                self._upsert_credential_name(msg.credential, msg.name, msg.base_url)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
             return (await self._setup_state_event()).model_dump_json()

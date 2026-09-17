@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from typing import Any
 
 from ..logging import get_logger
@@ -27,6 +28,27 @@ _PROTOCOL_VERSION = "2024-11-05"
 _STREAM_LIMIT = 16 * 1024 * 1024
 _CALL_TIMEOUT = 30.0
 
+#: PyInstaller onefile: a frozen parent that execs itself must tell the
+#: child to unpack into a fresh _MEIPASS. Without this the child dies on
+#: stdin and desktop tools report "Connection lost" (TD-1726).
+_RESET_ENV = "PYINSTALLER_RESET_ENVIRONMENT"
+
+
+def spawn_env(extra: dict[str, str] | None) -> dict[str, str] | None:
+    """Environment for the MCP child.
+
+    Checkout/CI: ``extra`` as given (``None`` inherits the parent).
+    Frozen: always a copy of the parent env plus ``PYINSTALLER_RESET_ENVIRONMENT=1``
+    so a second ``tstd --cu-mcp`` does not collide with the daemon's extract dir.
+    macOS/Windows/Linux all use this spawn; OS protocol differences live in
+    ``tst-cu-mcp`` backends, not here.
+    """
+    if not getattr(sys, "frozen", False):
+        return extra
+    env = {**os.environ, **(extra or {})}
+    env[_RESET_ENV] = "1"
+    return env
+
 
 class StdioMcpClient:
     """One JSON-RPC session over a child process's stdio."""
@@ -36,7 +58,8 @@ class StdioMcpClient:
             raise ValueError("MCP sidecar command must be a non-empty argv")
         self._command = command
         # Extra environment merged over the inherited one; None inherits all.
-        self._env = {**os.environ, **env} if env else None
+        merged = {**os.environ, **env} if env else None
+        self._env = spawn_env(merged)
         self._proc: asyncio.subprocess.Process | None = None
         self._next_id = 1
         self._lock = asyncio.Lock()
@@ -148,7 +171,7 @@ class StdioMcpClient:
                 line = await proc.stderr.readline()
                 if not line:
                     return
-                log.debug("cu-mcp stderr: %s", line.decode("utf-8", errors="replace").rstrip())
+                log.warning("cu-mcp stderr: %s", line.decode("utf-8", errors="replace").rstrip())
         except asyncio.CancelledError:
             return
 

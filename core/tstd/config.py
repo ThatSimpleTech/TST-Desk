@@ -564,6 +564,8 @@ class ComputerUseConfig(BaseModel):
     browser: Literal["mock", "playwright"] = "mock"
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
     local_worker_preset: str = "vllm"
+    # Hosted vLLM forge is --limit-mm-per-prompt image:1 (TD-1730).
+    max_prompt_images: int = Field(default=1, ge=0)
 
     @field_validator("local_worker_preset", mode="before")
     @classmethod

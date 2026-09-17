@@ -171,6 +171,17 @@ class TestProviderFormat:
         )
         body = request.to_dict()
         assert body["tools"][0]["function"]["name"] == "fs_read"
+        assert body["tool_choice"] == "auto"
+
+    def test_no_tools_omits_tool_choice(self) -> None:
+        from tstd.provider import ChatCompletionRequest, ChatMessage
+
+        body = ChatCompletionRequest(
+            model="mock",
+            messages=[ChatMessage(role="user", content="hi")],
+        ).to_dict()
+        assert "tools" not in body
+        assert "tool_choice" not in body
 
 
 # ── Unknown tool error ──────────────────────────────────────────────────

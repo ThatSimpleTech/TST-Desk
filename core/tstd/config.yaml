@@ -263,6 +263,8 @@ provider_retry:
 # or browser_ tool, the worker *client* uses that named preset's worker
 # tier (loopback URL + optional slug). Brain is unchanged. Empty = never
 # remap. The name is a preset key, not a model slug.
+# max_prompt_images (TD-1730): how many image_url parts a completion may
+# keep. 1 matches ezer-forge / many local VLMs. 0 strips all images.
 computer_use:
   command: ""
   browser: mock
@@ -270,6 +272,7 @@ computer_use:
     base_url: ""
     timeout_seconds: 8
   local_worker_preset: vllm
+  max_prompt_images: 1
 
 # Opt-in Tailscale bind (TD-3601). Empty is off: 127.0.0.1 only.
 # Settings → Allow remote attach (TD-3603) turns this on. The documented

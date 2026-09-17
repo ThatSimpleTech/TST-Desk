@@ -9940,6 +9940,145 @@ this story.
 
 ---
 
+## 2026-09-16 — TD-1722: Settings writes the key's host (Class B)
+
+**Decision:** `set_credential` and `set_api_key` gain an additive optional
+`base_url`. Settings → API keys is the surface that writes
+`credentials.<id>.base_url` (TD-1718). Empty string clears the host so
+the preset URL stays in charge (a keyed local server). Omitted leaves
+an existing host, and a new openrouter-family id still inherits the
+shipped OpenRouter URL. No `PROTOCOL_VERSION` bump. The host is not a
+secret; the key still never appears in YAML, `setup_state`, or logs.
+
+**Rationale:** TD-1718 made the key own the host, then showed it on
+Settings → Model as a hint. There was no field to set it, so an EZER
+box on Tailscale (`http://ezer…:4000/v1`) had to be pasted into
+`config.yaml`. The catalog already stored the URL; the missing piece
+was the settings row.
+
+**Alternative rejected:** A new `set_credential_host` verb — two
+messages to edit one catalog row. Also rejected: putting the host on
+the preset from this screen (that is Settings → Model's job, and it
+would steal OpenRouter traffic if applied to the OPENROUTER key).
+Also rejected: inferring the host from the key name.
+
+---
+
+## 2026-09-16 — TD-1724: send `tool_choice: auto` with tools (Class B)
+
+**Decision:** `ChatCompletionRequest.to_dict()` writes `tool_choice:
+"auto"` whenever `tools` is present. OpenAI's default; we now say it.
+
+**Rationale:** EZER LiteLLM's guided_json hook treats omitted
+`tool_choice` as "JSON in `content`" (`{"name","arguments"}`) and
+leaves `message.tool_calls` empty. TST Desk only dispatches
+`tool_calls`, so `desktop_click` appeared as chat text. The family
+orchestrator already sends `auto`.
+
+**Alternative rejected:** Parsing JSON-in-content as a tool call.
+That would paper over a missing field every OpenAI-compatible
+caller is supposed to send. Also rejected: a per-preset flag.
+
+---
+
+## 2026-09-16 — TD-1725: packaged tstd serves computer-use MCP (Class B)
+
+**Decision:** When `computer_use.command` is empty and this process is
+a PyInstaller sidecar (`sys.frozen`), the desktop driver is
+`[sys.executable, "--cu-mcp"]`, not the in-process mock. The sidecar
+freeze collects `tst_cu_mcp` plus `mcp` and Pillow (`uv` group
+`sidecar`) so AppImage computer-use does not need a git checkout.
+Checkout and CI stay mock on empty command.
+
+**Rationale:** `tstd --cu-mcp` was the packaged identity (2026-09-02)
+but the freeze never included the MCP package, so every AppImage
+session was mock screenshots. The user asked for the real CU MCP.
+
+**Alternative rejected:** Defaulting shipped `config.yaml` to
+`tstd --cu-mcp` — CI and `uv run tstd` would spawn a missing binary.
+Also rejected: requiring `~/TST-Desk/mcp/tst-cu-mcp` next to an
+installed AppImage.
+
+---
+
+## 2026-09-16 — TD-1726: frozen CU child resets onefile extract (Class B)
+
+**Decision:** When the daemon is a PyInstaller onefile binary, the MCP
+child env includes `PYINSTALLER_RESET_ENVIRONMENT=1`. Checkout spawn
+is unchanged. CU stderr is a warning. This is the spawn, not the
+desktop protocol.
+
+OS protocols stay separate inside `tst-cu-mcp`:
+- macOS: Accessibility / CoreGraphics, in-daemon socket (TCC identity)
+- Windows: ctypes user32
+- Linux X11: libX11 / libXrandr / libXtst (any distro with those libs)
+- Linux Wayland: a different protocol (TD-4901), not this spawn
+
+**Rationale:** AppImage `desktop_screenshot` died with Connection lost
+because the child `tstd --cu-mcp` shared the parent's `_MEIPASS`.
+
+**Alternative rejected:** In-process Linux backend in the daemon —
+would skip MCP isolation. Also rejected: one protocol for all OSes.
+
+---
+
+## 2026-09-16 — TD-1727: packaged Linux CU is in-process (Class B)
+
+**Decision:** Frozen Linux with empty `computer_use.command` uses
+`InProcessDesktopDriver` (tst-cu-mcp X11/Wayland backends in the
+daemon). No second `tstd --cu-mcp`. macOS still spawns the sidecar
+for TCC identity. Windows still uses stdio MCP.
+
+**Rationale:** RESET_ENVIRONMENT did not stop Connection lost on the
+AppImage. The child never logged. Linux has no TCC, so in-process is
+the same identity as the host.
+
+**Alternative rejected:** `--onedir` sidecar — a packaging change for
+every OS. Also rejected: one input protocol for macOS/Windows/Linux.
+
+---
+
+## 2026-09-16 — TD-1728: 32k CU must not ingest node_modules (Class A)
+
+**Decision:** Nested steering skips `node_modules`, `.venv`, `dist`,
+`build`, and `target`. Packaged Linux screenshots downscale to 768px
+on the long edge. Compaction still cannot drop an in-flight screenshot;
+the frame has to be small enough to sit beside the system prompt.
+
+**Rationale:** First CU turn on ezer-forge (32768) failed with
+ContextWindowExceededError: system prompt included cytoscape's
+AGENTS.md from `ui/node_modules`, plus a full-size PNG as base64.
+
+---
+
+## 2026-09-16 — TD-1729: screenshot pixels are a vision part (Class B)
+
+**Decision:** `desktop_screenshot` / `browser_screenshot` tool messages
+carry compact JSON (`path`, `width`, `height`) plus an `image_url`
+part. Base64 is not duplicated into the text field. Measured: 50k
+chars of truncated PNG text plus AGENTS.md plus tool schemas is what
+hit 32769 on ezer-forge after a successful capture.
+
+**Alternative rejected:** Lowering `max_result_chars` — that still
+sends tens of thousands of tokens of truncated (invalid) PNG.
+
+---
+
+## 2026-09-16 — TD-1730: one image per prompt (Class B)
+
+**Decision:** Before each completion, drop oldest `image_url` parts so
+at most `computer_use.max_prompt_images` remain (default 1). Text of
+those tool results stays. Measured: second `desktop_screenshot` on
+ezer-forge failed with "At most 1 image(s) may be provided in one
+prompt."
+
+**Alternative rejected:** Hardcoding the forge limit in Python. The
+cap is config. Also rejected: keeping every screenshot — the host
+cannot.
+
+
+---
+
 ## 2026-09-17 — Chat transcript orders text and tools by arrival (Class B)
 
 **Decision:** Assistant rows gain ordered `parts` (`{kind:"text"} |
