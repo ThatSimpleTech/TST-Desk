@@ -573,7 +573,9 @@ def test_web_search_host_comes_from_config(ws: Path, monkeypatch: pytest.MonkeyP
         web_search_mod,
         "cached_config",
         lambda: SimpleNamespace(
-            search=SimpleNamespace(base_url="https://searx.example.com/search")
+            search=SimpleNamespace(
+                base_url="https://searx.example.com/search", fallback_base_urls=[]
+            )
         ),
     )
     denied = _classify_tool_call(ws, "web_search", {"query": "anything"})
@@ -597,7 +599,7 @@ def test_web_search_unconfigured_reaches_no_host(ws: Path, monkeypatch: pytest.M
     monkeypatch.setattr(
         web_search_mod,
         "cached_config",
-        lambda: SimpleNamespace(search=SimpleNamespace(base_url="")),
+        lambda: SimpleNamespace(search=SimpleNamespace(base_url="", fallback_base_urls=[])),
     )
     decision = _classify_tool_call(ws, "web_search", {"query": "anything"})
     assert decision.decision_class is DecisionClass.B

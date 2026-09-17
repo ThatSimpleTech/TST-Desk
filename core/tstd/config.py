@@ -275,14 +275,48 @@ class CredentialConfig(BaseModel):
         return self
 
 
+@lru_cache(maxsize=1)
+def _shipped_search_fallbacks() -> tuple[str, ...]:
+    """Fallback search endpoints from the shipped config, not from source.
+
+    The fallback URLs live in the shipped ``config.yaml`` (prime directive
+    §2.7: destinations come from configuration, never from a literal — the
+    outbound-hosts test enforces it). Reading them here, as the field's
+    default, heals existing user copies too: the loader only fills missing
+    top-level sections, so a user ``search:`` section from before this key
+    existed would otherwise pin an empty list forever. An explicit empty
+    list still disables fallback.
+    """
+    try:
+        data = yaml.safe_load(default_config_yaml())
+    except (OSError, yaml.YAMLError):
+        return ()
+    if not isinstance(data, dict):
+        return ()
+    search = data.get("search")
+    if not isinstance(search, dict):
+        return ()
+    urls = search.get("fallback_base_urls")
+    if not isinstance(urls, list):
+        return ()
+    return tuple(u.strip() for u in urls if isinstance(u, str) and u.strip())
+
+
 class SearchConfig(BaseModel):
     """Web search and page fetch (TD-609, TD-610).
 
-    ``base_url`` is the only host ``web_search`` may reach. ``web_fetch``
-    takes a URL the user approved. Empty ``base_url`` disables search only.
+    ``base_url`` is the first host ``web_search`` tries; each entry of
+    ``fallback_base_urls`` is tried in order when the ones before it fail
+    or return nothing parseable. ``web_fetch`` takes a URL the user
+    approved. Empty ``base_url`` disables the primary only — fallbacks
+    still run; all empty disables search.
     """
 
     base_url: str = ""
+    fallback_base_urls: list[str] = Field(
+        default_factory=lambda: list(_shipped_search_fallbacks()),
+        description="Search endpoints tried in order after base_url fails",
+    )
     timeout_seconds: float = Field(default=15.0, gt=0)
     max_results: int = Field(default=8, ge=1, le=20)
     fetch_max_bytes: int = Field(default=200_000, ge=1)

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -28,6 +30,7 @@ async def test_empty_query_is_refused() -> None:
 
 async def test_blank_endpoint_is_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(search_mod, "_endpoint", lambda: ("", 5.0, 5, 200_000))
+    monkeypatch.setattr(search_mod, "_search_urls", lambda: [])
     out = await search_mod.web_search(None, "anything")
     assert "not configured" in out
     assert "search.base_url" in out
@@ -59,6 +62,7 @@ async def test_json_results_follow_config_url(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(
         search_mod, "_endpoint", lambda: ("http://127.0.0.1:9/search", 5.0, 8, 200_000)
     )
+    monkeypatch.setattr(search_mod, "_search_urls", lambda: ["http://127.0.0.1:9/search"])
     monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
     out = await search_mod.web_search(None, "tst desk", max_results=2)
     assert "q=tst+desk" in seen[0] or "q=tst%20desk" in seen[0]
@@ -80,6 +84,7 @@ async def test_html_results_skip_the_search_host(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(
         search_mod, "_endpoint", lambda: ("http://127.0.0.1:9/search", 5.0, 8, 200_000)
     )
+    monkeypatch.setattr(search_mod, "_search_urls", lambda: ["http://127.0.0.1:9/search"])
     monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
     out = await search_mod.web_search(None, "topic")
     assert "The Article" in out
@@ -94,6 +99,7 @@ async def test_http_error_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         search_mod, "_endpoint", lambda: ("http://127.0.0.1:9/search", 5.0, 8, 200_000)
     )
+    monkeypatch.setattr(search_mod, "_search_urls", lambda: ["http://127.0.0.1:9/search"])
     monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
     out = await search_mod.web_search(None, "topic")
     assert out.startswith("Error: search request failed")
@@ -243,3 +249,165 @@ async def test_private_answer_at_connect_time_is_refused(monkeypatch: pytest.Mon
         assert hits[0] == 0, "a private answer must not become a socket"
     finally:
         server.shutdown()
+
+
+# --- Fallback chain ------------------------------------------------------
+#
+# The primary endpoint is tried first, then each fallback in order. A URL
+# that fails the request — or answers with nothing parseable, the way a
+# captcha page does — yields to the next one.
+
+_PRIMARY = "http://127.0.0.1:9/search"
+_FALLBACK = "http://127.0.0.1:10/search"
+_CAPTCHA_HTML = "<html><title>Captcha</title></html>"
+
+
+def _chain(monkeypatch: pytest.MonkeyPatch, urls: list[str]) -> None:
+    monkeypatch.setattr(search_mod, "_endpoint", lambda: ("", 5.0, 8, 200_000))
+    monkeypatch.setattr(search_mod, "_search_urls", lambda: list(urls))
+
+
+def _results_json(*titles: str) -> dict[str, object]:
+    return {
+        "results": [
+            {
+                "title": title,
+                "url": f"http://127.0.0.1/{title.lower()}",
+                "content": f"about {title}",
+            }
+            for title in titles
+        ]
+    }
+
+
+async def test_fallback_answers_when_primary_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if "127.0.0.1:9" in str(request.url):
+            return httpx.Response(502, text="nope")
+        return httpx.Response(200, json=_results_json("Fallback"))
+
+    _chain(monkeypatch, [_PRIMARY, _FALLBACK])
+    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    out = await search_mod.web_search(None, "topic")
+    assert "1. Fallback" in out
+    assert len(seen) == 2
+
+
+async def test_primary_success_never_touches_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=_results_json("Primary"))
+
+    _chain(monkeypatch, [_PRIMARY, _FALLBACK])
+    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    out = await search_mod.web_search(None, "topic")
+    assert "1. Primary" in out
+    assert len(seen) == 1
+
+
+async def test_unparseable_primary_falls_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 200 with zero rows (captcha/bot page) is a failure, not an answer."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "127.0.0.1:9" in str(request.url):
+            return httpx.Response(200, text=_CAPTCHA_HTML, headers={"content-type": "text/html"})
+        return httpx.Response(200, json=_results_json("Fallback"))
+
+    _chain(monkeypatch, [_PRIMARY, _FALLBACK])
+    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    out = await search_mod.web_search(None, "topic")
+    assert "1. Fallback" in out
+
+
+async def test_all_endpoints_failing_names_each(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "127.0.0.1:9" in str(request.url):
+            raise httpx.ConnectError("")
+        return httpx.Response(502, text="nope")
+
+    _chain(monkeypatch, [_PRIMARY, _FALLBACK])
+    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    out = await search_mod.web_search(None, "topic")
+    assert out.startswith("Error: search failed on 2 endpoint(s): ")
+    assert _PRIMARY in out
+    assert _FALLBACK in out
+    # The bare ConnectError carries no message — the type is the diagnosis.
+    assert "ConnectError" in out
+
+
+async def test_bare_transport_error_names_the_exception_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a reset connection used to surface as `failed ()`."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("")
+
+    _chain(monkeypatch, [_PRIMARY])
+    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    out = await search_mod.web_search(None, "topic")
+    assert out == "Error: search request failed (ConnectError)"
+
+
+async def test_every_backend_empty_is_no_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_CAPTCHA_HTML, headers={"content-type": "text/html"})
+
+    _chain(monkeypatch, [_PRIMARY, _FALLBACK])
+    monkeypatch.setattr(search_mod.httpx, "AsyncClient", _client_factory(handler))
+    assert (await search_mod.web_search(None, "topic")) == "No search results."
+
+
+def _redirect_html(target: str) -> str:
+    """A same-host redirect wrapper in the shape backends serve (Bing /ck/a)."""
+    token = "a1" + base64.urlsafe_b64encode(target.encode()).decode()
+    return f'<a href="http://127.0.0.1:9/ck/a?u={token}&ntb=1">The Article</a>'
+
+
+def test_redirect_wrapper_links_unwrap_to_the_target() -> None:
+    rows = search_mod._from_html(
+        _redirect_html("http://127.0.0.1/article"), "http://127.0.0.1:9/search", 8
+    )
+    assert rows == [("The Article", "http://127.0.0.1/article", "")]
+
+
+def test_unwrappable_same_host_links_stay_skipped() -> None:
+    html = '<a href="http://127.0.0.1:9/more?q=x">More</a>'
+    assert search_mod._from_html(html, "http://127.0.0.1:9/search", 8) == []
+
+
+def test_unwrap_rejects_non_url_decodings() -> None:
+    token = base64.urlsafe_b64encode(b"not a url").decode()
+    assert search_mod._unwrap_redirect(f"http://127.0.0.1:9/ck/a?u={token}") is None
+    assert search_mod._unwrap_redirect("http://127.0.0.1:9/ck/a") is None
+
+
+def _fake_config(monkeypatch: pytest.MonkeyPatch, base: str, fallbacks: list[str]) -> None:
+    search = SimpleNamespace(base_url=base, fallback_base_urls=fallbacks)
+    monkeypatch.setattr(search_mod, "cached_config", lambda: SimpleNamespace(search=search))
+
+
+def test_search_hosts_lists_the_whole_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_config(
+        monkeypatch,
+        "https://primary.example/s",
+        ["https://backup.example/s", "", "https://primary.example/other"],
+    )
+    assert search_mod.search_hosts() == ("primary.example", "backup.example")
+
+
+def test_search_hosts_empty_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_config(monkeypatch, "", [])
+    assert search_mod.search_hosts() == ()
+
+
+def test_search_urls_drops_blanks(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_config(monkeypatch, "", ["", "https://backup.example/s"])
+    assert search_mod._search_urls() == ["https://backup.example/s"]

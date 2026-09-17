@@ -10070,3 +10070,41 @@ backend shows the ceiling the seam allows; the worker connector shows
 the real default path (prompt render + strict parse). Live accuracy and
 latency against real connectors is the stories' fixture-corpus work,
 not a dev-build claim.
+
+---
+
+## 2026-09-17 — Search fallback chain with Bing shipped second (Class B)
+
+**Decision:** `web_search` tries `search.base_url`, then each
+`search.fallback_base_urls` entry in order. A URL yields on request
+failure *or* on zero parseable rows — a captcha page is a 200 with no
+results in it, and treating that as success is how "No search results"
+lies. First URL with rows wins; when none do, transport failures
+aggregate per endpoint (`search failed on N endpoint(s): url: reason`)
+while all-empty stays "No search results." The shipped fallback is
+Bing HTML. Transport errors report the exception type when the message
+is empty, so a reset reads `ConnectError` instead of `failed ()`.
+
+**Rationale:** DuckDuckGo's endpoints are unreachable from some
+networks (TLS reset observed 2026-09-17; general egress fine), which
+left search dead with an empty error and no recourse but hand-editing
+config. Of the keyless backends probed, Mojeek captcha-walls
+non-browser TLS fingerprints, Marginalia and Startpage are blocked or
+walled, and only Bing serves parseable results — behind same-host
+`/ck/a` redirect wrappers, hence the generic base64-param unwrap in
+`_from_html` (accepts only http(s) decodings; result URLs are
+displayed, never fetched, so the wall is unaffected).
+
+**Why a default_factory, not the loader fill:** the loader only fills
+missing top-level sections, so existing user copies with a `search:`
+block would pin an empty list forever. The field default reads the
+shipped `config.yaml` at runtime — the URL lives in configuration,
+never in source (prime directive §2.7; the outbound-hosts scan
+enforces it) — while an explicit `[]` still disables fallback. The
+classifier sees every host in the chain, so a workspace must
+allowlist all of them to clear Class C.
+
+**Alternatives rejected:** Mojeek as the shipped fallback
+(captcha-walled, verified with curl and httpx); DDG-lite as fallback
+(same blocked network, helps nobody here); keyed APIs (Brave/Google —
+signup and secret plumbing, out of scope for a resilience fix).
