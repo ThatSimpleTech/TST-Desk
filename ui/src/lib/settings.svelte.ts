@@ -491,6 +491,7 @@ export function setJudgments(next: {
 	confidenceThreshold?: number;
 	maxStateChars?: number;
 	backend?: "worker" | "typesafe";
+	typesafeCredential?: string;
 }): void {
 	sendToDaemon({
 		type: "set_judgments",
@@ -500,6 +501,7 @@ export function setJudgments(next: {
 		confidence_threshold: next.confidenceThreshold ?? settings.judgmentsConfidenceThreshold,
 		max_state_chars: next.maxStateChars ?? settings.judgmentsMaxStateChars,
 		backend: next.backend ?? settings.judgmentsBackend,
+		typesafe_credential: next.typesafeCredential ?? null,
 	});
 }
 

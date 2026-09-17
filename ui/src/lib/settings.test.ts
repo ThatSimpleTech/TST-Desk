@@ -534,6 +534,7 @@ describe("computer-use indicators", () => {
 				confidence_threshold: 0.7,
 				max_state_chars: 2000,
 				backend: "worker",
+				typesafe_credential: null,
 			},
 		]);
 		emit(
@@ -571,10 +572,29 @@ describe("computer-use indicators", () => {
 				confidence_threshold: 0.6,
 				max_state_chars: 2000,
 				backend: "typesafe",
+				typesafe_credential: null,
 			},
 		]);
 		emit(setupState({ judgments_backend: "typesafe" }));
 		expect(settings.judgmentsBackend).toBe("typesafe");
+	});
+
+	it("sends the chosen TypeSafe credential", () => {
+		startSettings();
+		emit(setupState({ judgments_typesafe_credential: "typesafe" }));
+		setJudgments({ typesafeCredential: "openrouter-2" });
+		expect(mocks.sent).toEqual([
+			{
+				type: "set_judgments",
+				verification: false,
+				semantic_breaker: false,
+				candidate_selection: false,
+				confidence_threshold: 0.6,
+				max_state_chars: 2000,
+				backend: "worker",
+				typesafe_credential: "openrouter-2",
+			},
+		]);
 	});
 
 	it("resets judgment toggles to all-off defaults", () => {

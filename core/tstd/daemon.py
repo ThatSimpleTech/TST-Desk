@@ -2109,6 +2109,16 @@ class Daemon:
         if isinstance(msg, SetJudgments):
             # TD-708 (dev): persist the judgments block; running sessions
             # keep the wiring they started with, new sessions pick it up.
+            credential = self.config.judgments.typesafe_credential
+            if msg.typesafe_credential is not None:
+                cleaned = msg.typesafe_credential.strip()
+                known = set(self.config.credentials) | {DEFAULT_CREDENTIAL_ID}
+                if cleaned not in known:
+                    return build_error(
+                        "bad_request",
+                        f"Unknown credential {cleaned!r}; declared: {', '.join(sorted(known))}",
+                    )
+                credential = cleaned
             self.config.judgments = JudgmentsConfig(
                 verification=msg.verification,
                 semantic_breaker=msg.semantic_breaker,
@@ -2118,7 +2128,7 @@ class Daemon:
                 backend=msg.backend,
                 typesafe_base_url=self.config.judgments.typesafe_base_url,
                 typesafe_model=self.config.judgments.typesafe_model,
-                typesafe_credential=self.config.judgments.typesafe_credential,
+                typesafe_credential=credential,
             )
             await asyncio.to_thread(save_judgments, self.config.judgments)
             return (await self._setup_state_event()).model_dump_json()

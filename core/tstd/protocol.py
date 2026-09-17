@@ -272,6 +272,9 @@ class SetJudgments(ClientMessage):
     # TD-708: the connector. ``typesafe`` needs its keychain key; the
     # daemon falls back to ``worker`` when no key is stored.
     backend: Literal["worker", "typesafe"] = "worker"
+    # Which stored credential feeds the TypeSafe connector. ``None``
+    # keeps the current binding.
+    typesafe_credential: str | None = None
 
 
 class SetCoworker(ClientMessage):
