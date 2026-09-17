@@ -698,6 +698,8 @@ class Daemon:
             interfaces=interfaces,
         )
         self._cu_server: Any = None
+        # TD-4835: keychain presence cache — see _credential_is_stored.
+        self._stored_probe_cache: dict[str, bool] = {}
         # Shared across sessions so the kill-switch is process-wide.
         # Empty computer_use.command is the mock; a command is stdio MCP.
         self.desktop_driver: DesktopDriver = desktop_driver_from_config(
@@ -848,11 +850,23 @@ class Daemon:
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
+        # Keychain reads can prompt when an item's ACL predates this build's
+        # signature, so probing on every setup_state storms the user with
+        # dialogs (TD-4835).  Presence is cached and invalidated by the key
+        # mutation handlers (set/delete api key, set/delete credential).
+        cached = self._stored_probe_cache.get(credential_id)
+        if cached is not None:
+            return cached
         try:
             await get_api_key(credential_id)
-            return True
+            stored = True
         except (KeychainError, FileNotFoundError):
-            return False
+            stored = False
+        self._stored_probe_cache[credential_id] = stored
+        return stored
+
+    def _invalidate_stored_probe(self) -> None:
+        self._stored_probe_cache.clear()
 
     async def _credential_summaries(self) -> list[CredentialSummary]:
         """Catalog rows plus the implicit openrouter slot, never secrets."""
@@ -2257,6 +2271,7 @@ class Daemon:
             except ConfigError as e:
                 return build_error("bad_request", str(e))
             # Never log the key; the ack is a refreshed setup_state.
+            self._invalidate_stored_probe()
             log.info(
                 "api key stored in keychain",
                 extra={"extra_fields": {"credential": cred_id}},
@@ -2276,6 +2291,7 @@ class Daemon:
             except (KeychainError, NotImplementedError) as e:
                 return build_error("key_delete_failed", f"Could not remove the API key: {e}")
             self._clients.clear()
+            self._invalidate_stored_probe()
             log.info(
                 "api key removed from keychain",
                 extra={"extra_fields": {"credential": msg.provider}},
@@ -2287,6 +2303,7 @@ class Daemon:
                 self._upsert_credential_name(msg.credential, msg.name, msg.base_url)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
+            self._invalidate_stored_probe()
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, DeleteCredential):
@@ -2298,6 +2315,7 @@ class Daemon:
                 return build_error("key_delete_failed", f"Could not remove the API key: {e}")
             except ConfigError as e:
                 return build_error("bad_request", str(e))
+            self._invalidate_stored_probe()
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetTierCredential):
