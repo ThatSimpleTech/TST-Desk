@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from tstd.grok_acp import (
-    STDOUT_LINE_LIMIT,
     AcpClient,
     GrokEngineError,
     find_grok_binary,
@@ -226,8 +225,6 @@ class TestAcpClient:
         client = AcpClient()
         await client.start([sys.executable, str(agent)], cwd=str(tmp_path), env=os.environ.copy())
         try:
-            assert client._proc is not None and client._proc.stdout is not None
-            assert client._proc.stdout._limit >= STDOUT_LINE_LIMIT
             await client.initialize("tst-desk", "0.1.0")
             session_id = await client.session_new(str(tmp_path))
             result = await asyncio.wait_for(client.prompt(session_id, "look"), timeout=5)

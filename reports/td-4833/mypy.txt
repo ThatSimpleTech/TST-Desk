@@ -1,0 +1,2 @@
+Success: no issues found in 150 source files
+EXIT_CODE=0

@@ -59,7 +59,7 @@ python_version = "3.11"
 # ``tst-cu-mcp`` is a sibling checkout put on ``sys.path`` at run time
 # (``cu_host._prepare_cu_imports``); it is not a dependency of this package.
 [[tool.mypy.overrides]]
-module = "tst_cu_mcp"
+module = ["tst_cu_mcp", "tst_cu_mcp.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

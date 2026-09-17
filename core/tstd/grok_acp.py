@@ -33,12 +33,6 @@ UpdateHandler = Callable[[dict[str, Any]], Awaitable[None]]
 # ``agent_exited`` the moment the user attached a photo.
 STDOUT_LINE_LIMIT = 16 * 1024 * 1024
 
-# asyncio.StreamReader.readline defaults to 64KiB. Grok echoes an image
-# prompt as one NDJSON ``user_message_chunk`` whose base64 payload is
-# larger than that, which used to kill the reader and surface as
-# ``agent_exited`` the moment the user attached a photo.
-STDOUT_LINE_LIMIT = 16 * 1024 * 1024
-
 
 class GrokEngineError(Exception):
     """The Grok CLI could not be found, started, or spoken to."""
@@ -161,9 +155,8 @@ class AcpClient:
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
             env=env,
+            limit=STDOUT_LINE_LIMIT,
         )
-        if self._proc.stdout is not None:
-            self._proc.stdout._limit = STDOUT_LINE_LIMIT
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._drain_stderr())
 
