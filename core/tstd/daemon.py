@@ -187,6 +187,7 @@ from .protocol import (
     CredentialSummary,
     CuKillState,
     CuPermissions,
+    CuSession,
     DaemonEvent,
     DeleteApiKey,
     DeleteCredential,
@@ -203,6 +204,7 @@ from .protocol import (
     DiagnosticsReport,
     EndSession,
     ExportUsage,
+    FocusWindow,
     ForkFrom,
     GetCharter,
     GetInstructionStack,
@@ -1612,6 +1614,24 @@ class Daemon:
         task = schedule_telegram_notify(self.config, event)
         if task is not None:
             self._tasks.append(task)
+        # TD-4832: a closing CU episode may be the last actuation — bring
+        # the window forward. Live-only: this hook is the event log's
+        # subscription, and replay reads from persist storage instead.
+        if isinstance(event, CuSession) and not event.active:
+            await self._maybe_broadcast_cu_focus(event.session_id)
+
+    async def _maybe_broadcast_cu_focus(self, closed_session_id: str) -> None:
+        """Broadcast ``focus_window`` when no session still actuates (TD-4832).
+
+        Never raises: window focus is a courtesy, not turn machinery.
+        """
+        try:
+            for sess in await self.session_registry.list_sessions():
+                if sess.id != closed_session_id and sess.cu_session_active:
+                    return
+            await self.ws_server.broadcast(FocusWindow().model_dump_json())
+        except Exception:
+            log.exception("failed to broadcast focus_window after cu_session close")
 
     @staticmethod
     def _version() -> str:

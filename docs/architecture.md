@@ -434,6 +434,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `screen_frame` | session | A computer-use screenshot (browser or desktop) was written to the session dir (TD-1710, TD-3401). Path, not bytes. |
 | `cu_kill_state` | connection | Process-wide computer-use kill-switch. Seq is fixed at 1 and it is not written to a session log (TD-3404). `killed=true` clears Screen-pane glow and cursor (TD-3402). |
 | `cu_session` | session | Computer-use episode open/close (TD-3407). `active=true` on the first `desktop_*` / `browser_*` tool of a turn; `false` on turn end, cancel, or kill-switch. The real-display ring and Screen-pane glow follow this tag. |
+| `focus_window` | connection | A `cu_session` closed and no other session still actuates — bring the local window forward (TD-4832). Live-only: never written to a session log, so attach replay cannot re-trigger it. The host shows, unminimizes, and focuses the window; a browser viewer no-ops; activation failures never fail the turn. |
 | `design_hit` | connection | Reply to `design_hit_test`: xpath, role, attributes, box, styles (TD-3403 / TD-3406). Not in the session log. |
 | `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), Windows UIPI / secure-desktop integrity (TD-3303), or Linux X11 no-gate / Wayland session limits (TD-2001). |
 | `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` asked for (TD-3805). |

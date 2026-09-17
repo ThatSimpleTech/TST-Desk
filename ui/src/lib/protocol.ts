@@ -1352,6 +1352,14 @@ export interface CuSession extends DaemonEvent {
   active: boolean;
 }
 
+/** Bring the window forward after a local CU episode ends (TD-4832).
+ *  Live-only (never logged, so replay cannot re-trigger it); the host
+ *  no-ops outside Tauri. Connection-scoped; seq is 1. */
+export interface FocusWindow extends DaemonEvent {
+  type: "focus_window";
+  reason?: string;
+}
+
 /** Reply to design_hit_test (TD-3403 / TD-3406). Connection-scoped; seq is 1. */
 export interface DesignHitBox {
   x: number;
@@ -1578,6 +1586,7 @@ export type DaemonEventUnion =
   | ScreenFrame
   | CuKillState
   | CuSession
+  | FocusWindow
   | DesignHit
   | CuPermissions
   | JobList
