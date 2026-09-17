@@ -92,3 +92,18 @@ class TestSetJudgmentsCredential:
         )
         assert reply is not None and "Unknown credential" in reply
         assert daemon.config.judgments.typesafe_credential == "typesafe"
+
+    async def test_typesafe_backend_backfills_an_empty_base_url(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Configs written before the shipped judgments section pin an empty
+        URL; picking the typesafe backend backfills the package default."""
+        daemon = self._daemon(tmp_path, monkeypatch)
+        assert daemon.config.judgments.typesafe_base_url == ""  # code default
+        reply = await daemon._handle_message(
+            '{"type": "set_judgments", "verification": false, "semantic_breaker": false,'
+            ' "candidate_selection": false, "backend": "typesafe"}',
+            None,
+        )
+        assert reply is not None and "error" not in reply[:40]
+        assert daemon.config.judgments.typesafe_base_url == "https://api.typesafe.ai"
