@@ -7874,3 +7874,24 @@ Spec §8 ownership and TD-4703's active Show / New window / Quit behavior remain
 **Verification:** `reports/td-4833/README.md`: core 3348 passed, UI 1343 passed,
 Rust 63 passed; strict mypy, Ruff, TypeScript and clippy pass. Svelte reports
 zero errors/warnings. Existing pytest cleanup and Vite notices are documented.
+
+---
+
+### TD-4834 — Packaged macOS computer use has eyes and hands (pyobjc in the sidecar)
+**Size:** 2 · **Depends on:** TD-1301, TD-1725
+**Status:** Complete 2026-09-17
+
+**Acceptance criteria:**
+- [x] The frozen sidecar's `screenshot` returns real pixels — PyInstaller collects
+      Quartz / ApplicationServices / Cocoa (function-local imports are invisible to
+      static analysis); verified by an MCP `tools/call` probe against the built binary
+- [x] The overlay ring works frozen — the helper re-execs as `tstd --cu-overlay`
+      instead of `python -m` (a onefile binary has no `-m`)
+- [x] pyobjc lives in core's `sidecar` build group at tst_cu_mcp's pins; `uv.lock`
+      carries it
+- [x] Tests: frozen vs checkout spawn argv; sidecar smoke still passes startup budget
+
+**Notes:** Found by dogfooding — the installed app's `desktop_screenshot` failed with
+`No module named 'Quartz'` while actuation worked through the host path. Pre-existing
+on main: `DarwinBackend.hit_test` missing (3 mcp tests red) belongs to the in-flight
+hit-test work, not this fix.

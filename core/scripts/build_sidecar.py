@@ -87,6 +87,15 @@ def build(triple: str) -> Path:
             "mcp.cli",
             "--collect-all",
             "PIL",
+            # pyobjc: the macOS CU backend imports these function-locally
+            # (TD-4834), so static analysis never sees them. collect-all
+            # pulls the C extensions and framework bundles.
+            "--collect-all",
+            "Quartz",
+            "--collect-all",
+            "ApplicationServices",
+            "--collect-all",
+            "Cocoa",
             "--clean",
             "--noconfirm",
         ]

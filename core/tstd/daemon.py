@@ -3528,6 +3528,13 @@ def main() -> None:
         from .cu_host import run_cu_agent
 
         raise SystemExit(run_cu_agent())
+    if "--cu-overlay" in sys.argv:
+        # Frozen re-exec for the macOS overlay helper (TD-4834): a onefile
+        # binary has no ``python -m``, so the ring's helper is this flag.
+        from tst_cu_mcp.overlay.darwin_helper import main as overlay_main
+
+        overlay_main()
+        return
 
     parser = argparse.ArgumentParser(description="TST Desk daemon")
     parser.add_argument(

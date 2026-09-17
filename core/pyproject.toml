@@ -32,9 +32,15 @@ dev = [
     "types-pyyaml>=6.0.12.20260724",
 ]
 # Frozen into the tstd sidecar so ``tstd --cu-mcp`` works without a checkout.
+# The pyobjc frameworks are macOS-only and match tst_cu_mcp's pins: the CU
+# backend imports them function-locally, so PyInstaller must be told to
+# collect them (TD-4834 — a frozen build without them has no eyes or hands).
 sidecar = [
     "mcp==2.0.0",
     "pillow==12.3.0",
+    "pyobjc-framework-applicationservices==12.2.2; sys_platform == 'darwin'",
+    "pyobjc-framework-cocoa==12.2.2; sys_platform == 'darwin'",
+    "pyobjc-framework-quartz==12.2.2; sys_platform == 'darwin'",
 ]
 
 [build-system]

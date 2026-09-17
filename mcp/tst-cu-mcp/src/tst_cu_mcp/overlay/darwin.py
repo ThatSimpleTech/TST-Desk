@@ -98,9 +98,18 @@ class PipeTransport:
 
 
 def default_spawn() -> Transport:
-    """Start the helper: same interpreter, so the same pyobjc-carrying venv."""
+    """Start the helper: same interpreter, so the same pyobjc-carrying venv.
+
+    Frozen (TD-4834): ``sys.executable`` is the ``tstd`` onefile, which has
+    no ``-m`` — re-exec it with ``--cu-overlay`` instead (the flag branch
+    lives in ``tstd.daemon.main``).
+    """
+    if getattr(sys, "frozen", False):
+        argv = [sys.executable, "--cu-overlay"]
+    else:
+        argv = [sys.executable, "-m", "tst_cu_mcp.overlay.darwin_helper"]
     proc = subprocess.Popen(
-        [sys.executable, "-m", "tst_cu_mcp.overlay.darwin_helper"],
+        argv,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
