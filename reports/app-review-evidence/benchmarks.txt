@@ -1,0 +1,11 @@
+cu socket unavailable
+cu socket unavailable
+cu socket unavailable
+cu socket unavailable
+cu socket unavailable
+cu socket unavailable
+metric                      median
+daemon_cold_start                 11 ms
+session_start_large_repo          15 ms
+steering_resolution                1 ms
+first_token_latency               41 ms

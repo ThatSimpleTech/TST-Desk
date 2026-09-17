@@ -529,9 +529,7 @@ async def grok_loop(
                 # agent can Read the file instead of crashing the NDJSON
                 # reader on the echoed base64 line.
                 if images and not image_ok:
-                    saved = persist_prompt_images(
-                        session.workspace_path, session.id, images
-                    )
+                    saved = persist_prompt_images(session.workspace_path, session.id, images)
                     notes = "\n".join(
                         f"--- attached image: {name} ({media}) at {rel} ---"
                         for name, rel, media, _uri in saved

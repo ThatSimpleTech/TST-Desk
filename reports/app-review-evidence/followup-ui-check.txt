@@ -1,0 +1,25 @@
+Loading svelte-check in workspace: /Users/513801/Documents/TST-Desk/ui
+Getting Svelte diagnostics...
+
+/Users/513801/Documents/TST-Desk/ui/src/lib/icons.test.ts:12:17
+Error: Argument of type 'URL' is not assignable to parameter of type 'string'.
+			"icons.ts",
+			readFileSync(new URL("./icons.ts", import.meta.url), "utf8"),
+			ts.ScriptTarget.Latest,
+
+/Users/513801/Documents/TST-Desk/ui/src/lib/components/chat/Composer.svelte:301:5
+Warn: The attribute 'aria-expanded' is not supported by the role 'textbox'. This role is implicit on the element `<textarea>`
+https://svelte.dev/e/a11y_role_supports_aria_props_implicit (svelte)
+				aria-label="Message composer"
+				aria-expanded={paletteOpen}
+				aria-controls={paletteOpen ? "slash-list" : undefined}
+
+/Users/513801/Documents/TST-Desk/ui/src/lib/components/chat/Composer.svelte:471:2
+Warn: Unused CSS selector ".attach.listening"
+https://svelte.dev/e/css_unused_selector (svelte)
+
+	.attach.listening {
+		color: var(--color-accent);
+
+====================================
+svelte-check found 1 error and 2 warnings in 2 files

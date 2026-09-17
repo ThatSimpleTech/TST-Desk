@@ -240,15 +240,11 @@ class TestPromptImages:
     def test_image_capability_reads_initialize_result(self) -> None:
         assert prompt_image_supported({}) is False
         assert (
-            prompt_image_supported(
-                {"agentCapabilities": {"promptCapabilities": {"image": False}}}
-            )
+            prompt_image_supported({"agentCapabilities": {"promptCapabilities": {"image": False}}})
             is False
         )
         assert (
-            prompt_image_supported(
-                {"agentCapabilities": {"promptCapabilities": {"image": True}}}
-            )
+            prompt_image_supported({"agentCapabilities": {"promptCapabilities": {"image": True}}})
             is True
         )
 

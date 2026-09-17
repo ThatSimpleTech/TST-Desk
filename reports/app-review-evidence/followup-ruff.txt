@@ -1,0 +1,5 @@
+scripts/generate_protocol_fixtures.py:16:1: I001 [*] Import block is un-sorted or un-formatted
+scripts/generate_protocol_fixtures.py:901:5: F601 Dictionary key literal `"transcribe"` repeated
+tests/test_keychain.py:6:1: I001 [*] Import block is un-sorted or un-formatted
+Found 3 errors.
+[*] 2 fixable with the `--fix` option (1 hidden fix can be enabled with the `--unsafe-fixes` option).

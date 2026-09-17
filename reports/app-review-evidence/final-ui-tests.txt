@@ -1,0 +1,11 @@
+12:52:31 PM [vite-plugin-svelte] no Svelte config found at /Users/513801/Documents/TST-Desk/ui - using default configuration.
+
+ RUN  v4.1.10 /Users/513801/Documents/TST-Desk/ui
+
+
+ Test Files  82 passed (82)
+      Tests  1338 passed (1338)
+   Start at  12:52:31
+   Duration  8.67s (transform 30.46s, setup 0ms, import 51.20s, tests 4.53s, environment 26.92s)
+
+EXIT_CODE=0

@@ -1,0 +1,103 @@
+warning: function `setup` is never used
+ --> src/tray.rs:9:8
+  |
+9 | pub fn setup(app: &tauri::App) -> tauri::Result<()> {
+  |        ^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tst-desk` (lib) generated 1 warning
+warning: `tst-desk` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.72s
+     Running unittests src/lib.rs (target/debug/deps/tst_desk_lib-a1fdbda0b9eba371)
+
+running 53 tests
+test cu_identity::tests::service_names_match_tccutil_and_settings ... ok
+test cu_identity::tests::stale_grant_truth_table ... ok
+test cu_identity::tests::fix_copy_names_the_repair ... ok
+test daemon::coworker::tests::close_hides_when_coworker_on ... ok
+test cu_agent::tests::sock_path_joins_data_dir ... ok
+test daemon::close_hint::tests::copy_names_quit ... ok
+test daemon::coworker::tests::close_shuts_down_when_coworker_off ... ok
+test cu_identity::tests::bundle_of_finds_the_app ... ok
+test cu_agent::tests::parse_quit_and_permissions ... ok
+test daemon::coworker::tests::extra_window_destroys_without_quitting ... ok
+test daemon::coworker::tests::indicator_title_and_count_follow_the_label ... ok
+test cu_identity::tests::identity_serializes_every_field ... ok
+test cu_agent::tests::parse_input_commands ... ok
+test daemon::coworker::tests::live_port_pid_does_not_spawn ... ok
+test daemon::coworker::tests::parent_pid_always_passed ... ok
+test daemon::coworker::tests::quit_always_shuts_down ... ok
+test daemon::daemon_pid::tests::cycle_refuses ... ok
+test daemon::daemon_pid::tests::exact_pid_matches ... ok
+test daemon::daemon_pid::tests::direct_child_matches ... ok
+test daemon::daemon_pid::tests::grandchild_matches ... ok
+test daemon::daemon_pid::tests::missing_parent_refuses ... ok
+test daemon::daemon_pid::tests::unrelated_pid_does_not_match ... ok
+test daemon::daemon_pid::tests::zero_never_matches ... ok
+test daemon::embeddings::tests::backoff_is_independent_scale ... ok
+test daemon::embeddings::tests::missing_file_is_attach_only ... ok
+test daemon::embeddings::tests::missing_embeddings_is_attach_only ... ok
+test daemon::embeddings::tests::empty_command_string_is_attach_only ... ok
+test daemon::embeddings::tests::list_command_keeps_args_and_stringifies_ports ... ok
+test daemon::embeddings::tests::string_command_splits_on_whitespace ... ok
+test daemon::tests::backoff_scales_linearly ... ok
+test daemon::tests::bundled_sidecar_wins_over_path_in_release ... ok
+test daemon::coworker::tests::absent_or_junk_yaml_is_on ... ok
+test daemon::embeddings::tests::base_url_alone_does_not_spawn ... ok
+test daemon::tests::debug_fallback_resolves_something_when_neither_resolvable ... ok
+test daemon::tests::dev_prefers_source_environment_over_sidecar ... ok
+test daemon::tests::parses_port_file_with_pid ... ok
+test daemon::tests::port_file_pid_defaults_to_zero_when_absent ... ok
+test daemon::tests::release_build_falls_back_to_path_without_sidecar ... ok
+test daemon::tests::release_build_refuses_tstd_path ... ok
+test daemon::tests::tstd_path_env_wins_dev_resolution ... ok
+test quick_entry::tests::parse_last_workspace_yaml_reads_path ... ok
+test updater::tests::compare_versions_orders ... ok
+test updater::tests::detects_newer_release ... ok
+test updater::tests::ignores_non_app_tags ... ok
+test daemon::close_hint::tests::first_hide_is_once ... ok
+test daemon::coworker::tests::load_and_ensure_round_trip ... ok
+test cu_identity::tests::stamps_round_trip_and_clear ... ok
+test daemon::tests::data_dir_leaf_matches_python ... ok
+test quick_entry::tests::save_rejects_blank_path ... ok
+test quick_entry::tests::save_and_load_last_workspace_round_trip ... ok
+test daemon::tests::live_port_file_ignores_dead_or_zero_pid ... ok
+test daemon::tests::live_port_file_attaches_when_pid_is_this_process ... ok
+test daemon::daemon_pid::tests::live_self_is_descendant_of_its_parent ... ok
+
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src/main.rs (target/debug/deps/tst_desk-5f6fb2a149786fad)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/daemon_supervision.rs (target/debug/deps/daemon_supervision-d72810d2577a1c3c)
+
+running 3 tests
+test spawns_daemon_connects_via_port_file_and_shuts_down_cleanly ... ok
+test attaches_to_live_port_file_without_second_spawn ... ok
+test onefile_shape_attaches_and_group_kill_reaps_grandchild ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+     Running tests/embeddings_supervision.rs (target/debug/deps/embeddings_supervision-d3aeb776ee020a2e)
+
+running 7 tests
+test missing_config_never_resolves_a_command ... ok
+test packaged_shape_is_attach_only ... ok
+test empty_command_never_spawns_a_child ... ok
+test spawn_helper_reaps_via_process_group ... ok
+test quit_reaps_wrapper_and_grandchild ... ok
+test configured_command_spawns_and_quit_reaps ... ok
+test dead_sidecar_leaves_daemon_running ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+   Doc-tests tst_desk_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

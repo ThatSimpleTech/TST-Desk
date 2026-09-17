@@ -71,7 +71,7 @@
 		margin: 0 0 var(--space-3);
 	}
 	.hint {
-		color: var(--text-muted);
+		color: var(--color-ink-muted);
 		font-size: var(--text-sm);
 		line-height: 1.5;
 		margin: 0 0 var(--space-4);
@@ -82,10 +82,10 @@
 		line-height: 1.5;
 	}
 	.status--ok {
-		color: var(--text-muted);
+		color: var(--color-ink-muted);
 	}
 	.status--error {
-		color: var(--danger);
+		color: var(--color-err);
 	}
 	.latest {
 		display: block;

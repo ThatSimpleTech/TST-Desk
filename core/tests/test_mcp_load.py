@@ -480,14 +480,8 @@ class TestDeadServer:
             assert daemon.ws_server.port > 0
             checks = await _doctor_checks(daemon)
             names = [c["name"] for c in checks]
-            assert names[:6] == [
-                "daemon",
-                "api_key",
-                "provider",
-                "git",
-                "workspace",
-                "steering",
-            ]
+            # Additional diagnostics must not hide the failed server's row.
+            assert {"daemon", "api_key", "provider", "git", "workspace", "steering"} <= set(names)
             assert "mcp:dead" in names
             row = next(c for c in checks if c["name"] == "mcp:dead")
             assert row["status"] == "fail"

@@ -16,13 +16,13 @@ import tstd.keychain_macos as keychain_macos  # must import off-macOS
 import tstd.keychain_windows as keychain_windows  # must import off-Windows
 from tstd.keychain import (
     DISCORD_WEBHOOK_ACCOUNT,
+    NTFY_TOPIC_ACCOUNT,
+    SLACK_WEBHOOK_ACCOUNT,
+    TELEGRAM_BOT_ACCOUNT,
     KeychainBackend,
     KeychainError,
     KeychainLockedError,
     MacOSKeychain,
-    NTFY_TOPIC_ACCOUNT,
-    SLACK_WEBHOOK_ACCOUNT,
-    TELEGRAM_BOT_ACCOUNT,
     _classify_cli_failure,
     delete_api_key,
     get_api_key,

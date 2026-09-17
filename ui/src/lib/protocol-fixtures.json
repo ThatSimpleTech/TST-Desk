@@ -100,6 +100,15 @@
     "agent_cursor": true,
     "show_on_real_display": false
   },
+  "set_cu_policy": {
+    "type": "set_cu_policy",
+    "enabled": true,
+    "mode": "background",
+    "unhide_on_finish": true,
+    "denied_apps": [
+      "1Password"
+    ]
+  },
   "set_judgments": {
     "type": "set_judgments",
     "verification": true,

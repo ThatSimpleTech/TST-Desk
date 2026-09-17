@@ -1,0 +1,18 @@
+tstd/session_store.py:121: error: Incompatible types in assignment (expression has type "str | None", variable has type "str")  [assignment]
+tstd/grok_acp.py:166: error: "StreamReader" has no attribute "_limit"  [attr-defined]
+tstd/cu_host.py:324: error: Cannot find implementation or library stub for module named "tst_cu_mcp.backends"  [import-not-found]
+tstd/desktop/inprocess.py:55: error: Cannot find implementation or library stub for module named "tst_cu_mcp.overlay"  [import-not-found]
+tstd/desktop/inprocess.py:55: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+tstd/desktop/inprocess.py:66: error: Cannot find implementation or library stub for module named "tst_cu_mcp.capture"  [import-not-found]
+tstd/desktop/inprocess.py:83: error: Cannot find implementation or library stub for module named "tst_cu_mcp.input_control"  [import-not-found]
+tstd/desktop/inprocess.py:135: error: Cannot find implementation or library stub for module named "tst_cu_mcp.permissions"  [import-not-found]
+tstd/desktop/inprocess.py:143: error: Cannot find implementation or library stub for module named "tst_cu_mcp.backends"  [import-not-found]
+tstd/grok_loop.py:361: error: Incompatible types in assignment (expression has type "str | list[dict[str, Any]]", variable has type "str")  [assignment]
+tstd/grok_loop.py:539: error: Incompatible types in assignment (expression has type "None", variable has type "list[tuple[str, bytes, str]]")  [assignment]
+tstd/grok_loop.py:694: error: No overload variant of "__add__" of "list" matches argument type "str"  [operator]
+tstd/grok_loop.py:694: note: Possible overload variants:
+tstd/grok_loop.py:694: note:     def __add__(self, list[dict[str, Any]], /) -> list[dict[str, Any]]
+tstd/grok_loop.py:694: note:     def [_S] __add__(self, list[_S], /) -> list[_S | dict[str, Any]]
+tstd/grok_loop.py:694: note: Left operand is of type "str | list[dict[str, Any]]"
+Found 11 errors in 5 files (checked 150 source files)
+EXIT_CODE=1

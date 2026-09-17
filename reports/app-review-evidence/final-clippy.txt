@@ -1,0 +1,12 @@
+   Compiling tst-desk v0.1.0 (/Users/513801/Documents/TST-Desk/shell)
+warning: function `setup` is never used
+ --> src/tray.rs:9:8
+  |
+9 | pub fn setup(app: &tauri::App) -> tauri::Result<()> {
+  |        ^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tst-desk` (lib test) generated 1 warning
+warning: `tst-desk` (lib) generated 1 warning (1 duplicate)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.34s
