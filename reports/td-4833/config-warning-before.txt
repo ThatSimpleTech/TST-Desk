@@ -1,0 +1,72 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ TestLaunch.test_launch_marks_the_session_and_seeds_the_prompt _________
+  + Exception Group Traceback (most recent call last):
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/_pytest/runner.py", line 361, in from_call
+  |     result: TResult | None = func()
+  |                              ^^^^^^
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/_pytest/runner.py", line 250, in <lambda>
+  |     lambda: runtest_hook(item=item, **kwds),
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/pluggy/_hooks.py", line 512, in __call__
+  |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/pluggy/_manager.py", line 120, in _hookexec
+  |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 167, in _multicall
+  |     raise exception
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/_pytest/logging.py", line 865, in pytest_runtest_call
+  |     yield
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/_pytest/capture.py", line 900, in pytest_runtest_call
+  |     return (yield)
+  |             ^^^^^
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/_pytest/skipping.py", line 268, in pytest_runtest_call
+  |     return (yield)
+  |             ^^^^^
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/pluggy/_callers.py", line 121, in _multicall
+  |     res = hook_impl.function(*args)
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py", line 183, in pytest_runtest_call
+  |     collect_unraisable(item.config)
+  |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py", line 81, in collect_unraisable
+  |     raise ExceptionGroup("multiple unraisable exception warnings", errors)
+  | ExceptionGroup: multiple unraisable exception warnings (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879, in ensure_user_config
+    |     shutil.copyfileobj(
+    | ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-197/home0/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py", line 67, in collect_unraisable
+    |     warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+    | pytest.PytestUnraisableExceptionWarning: Exception ignored in: <_io.FileIO name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-197/home0/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml' mode='wb' closefd=True>
+    | Enable tracemalloc to get traceback where the object was allocated.
+    | See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    +---------------- 2 ----------------
+    | Traceback (most recent call last):
+    |   File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879, in ensure_user_config
+    |     shutil.copyfileobj(
+    | ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "/Users/513801/Documents/TST-Desk/core/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py", line 67, in collect_unraisable
+    |     warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+    | pytest.PytestUnraisableExceptionWarning: Exception ignored in: <_io.FileIO name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml' mode='rb' closefd=True>
+    | Enable tracemalloc to get traceback where the object was allocated.
+    | See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    +------------------------------------
+=========================== short test summary info ============================
+FAILED tests/test_autonomy_loop.py::TestLaunch::test_launch_marks_the_session_and_seeds_the_prompt
+1 failed in 0.40s

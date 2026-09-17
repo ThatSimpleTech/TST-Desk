@@ -1,0 +1,389 @@
+....................................................                     [100%]
+=============================== warnings summary ===============================
+tests/test_autonomy_loop.py::TestLaunch::test_launch_marks_the_session_and_seeds_the_prompt
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_autonomy_loop.py", line 342
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_autonomy_loop.py::TestLaunch::test_launch_marks_the_session_and_seeds_the_prompt
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home19/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_autonomy_loop.py", line 342
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_approval_flow.py::TestDisconnectResume::test_disconnect_leaves_session_parked_and_resumable
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_approval_flow.py", line 253
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_approval_flow.py::TestDisconnectResume::test_disconnect_leaves_session_parked_and_resumable
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home26/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_approval_flow.py", line 253
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_approval_flow.py::TestSkipAll::test_turning_on_releases_parked_b_and_c
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_approval_flow.py", line 410
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_approval_flow.py::TestSkipAll::test_turning_on_releases_parked_b_and_c
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home31/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_approval_flow.py", line 410
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_approval_flow.py::TestAlwaysAllow::test_always_allow_writes_narrow_rule_and_approves
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_approval_flow.py", line 524
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_approval_flow.py::TestAlwaysAllow::test_always_allow_writes_narrow_rule_and_approves
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home32/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_approval_flow.py", line 524
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_approval_flow.py::TestAlwaysAllow::test_always_allow_rejects_class_c
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_approval_flow.py", line 575
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_approval_flow.py::TestAlwaysAllow::test_always_allow_rejects_class_c
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home33/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_approval_flow.py", line 575
+      daemon = Daemon(data_dir=tmp_path / "data")
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_attach_replays_events_from_seq
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 48
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_attach_replays_events_from_seq
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home45/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 48
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_attach_after_restart_replays_from_disk
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 104
+      first = Daemon(data_dir=data_dir)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_attach_after_restart_replays_from_disk
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home46/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 104
+      first = Daemon(data_dir=data_dir)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_attach_streams_live_events
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 152
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_attach_streams_live_events
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home47/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 152
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_no_gaps_no_duplicates_under_concurrent_write
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 190
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_no_gaps_no_duplicates_under_concurrent_write
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home48/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 190
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_detach_stops_streaming
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 242
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_detach_stops_streaming
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home49/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 242
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_attach_unknown_session_returns_error
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 287
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_attach_unknown_session_returns_error
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home50/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 287
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_two_clients_receive_all_events
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedReader name='/Users/513801/Documents/TST-Desk/core/tstd/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 313
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+tests/test_attach_detach.py::TestAttachDetachIntegration::test_two_clients_receive_all_events
+  /Users/513801/Documents/TST-Desk/core/tstd/config.py:879: ResourceWarning: unclosed file <_io.BufferedWriter name='/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-199/home51/Library/Application Support/com.thatsimpletech.tstdesk/config.yaml'>
+    shutil.copyfileobj(
+  
+  Object allocated at:
+    File "/Users/513801/Documents/TST-Desk/core/tests/test_attach_detach.py", line 313
+      daemon = Daemon(data_dir=Path(tmp))
+    File "/Users/513801/Documents/TST-Desk/core/tstd/daemon.py", line 645
+      self.config = cached_config()
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 957
+      return load_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 900
+      config_path = ensure_user_config(path)
+    File "/Users/513801/Documents/TST-Desk/core/tstd/config.py", line 879
+      shutil.copyfileobj(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+52 passed, 24 warnings in 17.89s
+EXIT_CODE=0
