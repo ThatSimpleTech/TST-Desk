@@ -298,7 +298,6 @@
 				{disabled}
 				placeholder={disabled ? "Waiting for a session…" : "Message the agent…"}
 				aria-label="Message composer"
-				aria-expanded={paletteOpen}
 				aria-controls={paletteOpen ? "slash-list" : undefined}
 				aria-autocomplete="list"
 				onkeydown={handleKeydown}
@@ -465,11 +464,6 @@
 
 	.attach:hover:not(:disabled) {
 		color: var(--color-ink);
-		background: var(--color-sunken);
-	}
-
-	.attach.listening {
-		color: var(--color-accent);
 		background: var(--color-sunken);
 	}
 

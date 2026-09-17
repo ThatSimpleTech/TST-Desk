@@ -1,0 +1,5 @@
+Loading svelte-check in workspace: /Users/513801/Documents/TST-Desk/ui
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+EXIT_CODE=0

@@ -115,6 +115,7 @@ class SessionStore:
             chosen_preset = existing.preset
         else:
             chosen_preset = ""
+        chosen_engine: str | None
         if engine is not None:
             chosen_engine = engine
         elif existing is not None:

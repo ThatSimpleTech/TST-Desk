@@ -48,7 +48,7 @@ from .protocol import (
     TurnComplete,
     UserTurn,
 )
-from .provider import ChatMessage
+from .provider import ChatMessage, content_as_text
 from .session import Session
 
 log = get_logger("tstd.grok_loop")
@@ -358,7 +358,7 @@ async def grok_loop(
             raw = _update_text(update)
             previous = ""
             if session.conversation and session.conversation[-1].role == "assistant":
-                previous = session.conversation[-1].content or ""
+                previous = content_as_text(session.conversation[-1].content)
             text = _visible_delta(previous, raw, after_tool=after_tool)
             after_tool = False
             if text:
@@ -522,7 +522,7 @@ async def grok_loop(
                 images = list(session.pending_images)
                 session.pending_images = []
                 prompt_text = user_content
-                prompt_images = images
+                prompt_images: list[tuple[str, bytes, str]] | None = images
                 files: list[tuple[str, str, str]] | None = None
                 # Grok 1.0.13 drops ACP image blocks (image: false). Write
                 # them into the workspace and pass a resource_link so the
@@ -690,9 +690,11 @@ async def _maybe_preview_paths(session: Session, paths: list[str]) -> None:
 def _append_assistant(session: Session, text: str) -> None:
     if session.conversation and session.conversation[-1].role == "assistant":
         last = session.conversation[-1]
-        session.conversation[-1] = ChatMessage(
-            role="assistant", content=(last.content or "") + text
-        )
+        # Resumed multimodal messages retain their non-text parts and metadata.
+        if isinstance(last.content, list):
+            last.content = [*last.content, {"type": "text", "text": text}]
+        else:
+            last.content = (last.content or "") + text
     else:
         session.conversation.append(ChatMessage(role="assistant", content=text))
 
