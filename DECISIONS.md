@@ -10125,6 +10125,30 @@ event is logged, so every attach replay would steal focus. Also rejected:
 a UI-side rule over `cu_session` closes — the UI cannot see other
 sessions' actuation, and §6 forbids deriving it.
 
+## 2026-09-17 — TD-708: the TypeSafe connector and its Noul confidence mapping (Class B)
+
+**Decision:** The seam's second connector is `TypeSafeJudgmentBackend`
+(`autonomy/typesafe.py`), selected by `judgments.backend: typesafe` with the
+key read from the OS keychain under `judgments.typesafe_credential`
+(default `typesafe`) — never config. Choice questions map one-to-one
+(options become criteria keys; the answer carries the pick and a real
+distribution-derived confidence). A Noul answer is a probability, not a
+verdict: the label is `yes` at p ≥ 0.5 and confidence is `abs(p − 0.5) · 2`
+— TypeSafe's own guidance is that 0.5 means undecided, so distance from it
+is the usable certainty signal. A configured-but-keyless connector falls
+back to the worker tier with a log line.
+
+**Rationale:** The review's sharpest finding was that the worker chat
+connector's confidence is vacuous (1.0 on any clean parse). The TypeSafe
+connector is where real confidence enters; the threshold setting becomes
+meaningful only there. Falling back to the worker tier keeps a misconfigured
+setup working — fail toward working, never a block.
+
+**Alternative rejected:** Treating the Noul probability itself as
+confidence — a 0.51 "yes" would report near-total certainty while being
+nearly undecided. Also rejected: refusing to start when the key is missing
+— a settings mistake should not break the loop.
+
 ## 2026-09-17 — Decider-model posture: BYOM default, hosted judgments API opt-in (Class B)
 
 **Decision:** The A/B/C decision classifier keeps the TD-703 worker-tier chat

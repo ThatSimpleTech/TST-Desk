@@ -115,7 +115,8 @@
     "semantic_breaker": true,
     "candidate_selection": false,
     "confidence_threshold": 0.6,
-    "max_state_chars": 2000
+    "max_state_chars": 2000,
+    "backend": "typesafe"
   },
   "set_workspace_pin": {
     "type": "set_workspace_pin",
@@ -1053,6 +1054,9 @@
     "judgments_candidate_selection": false,
     "judgments_confidence_threshold": 0.6,
     "judgments_max_state_chars": 2000,
+    "judgments_backend": "worker",
+    "judgments_typesafe_credential": "typesafe",
+    "judgments_typesafe_key_stored": false,
     "mcp_servers": [
       {
         "id": "example",

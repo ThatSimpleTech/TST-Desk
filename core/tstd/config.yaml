@@ -352,3 +352,18 @@ speech:
   model: ""
   timeout_seconds: 30
   credential: ""
+
+# Judgment-seam features (TD-708/709/710/711, dev). All off by default.
+# The default backend is the worker tier you already run. `typesafe` is an
+# opt-in hosted connector: its key lives in the OS keychain under the
+# `typesafe` credential (Settings → API keys), never in this file.
+judgments:
+  verification: false
+  semantic_breaker: false
+  candidate_selection: false
+  confidence_threshold: 0.6
+  max_state_chars: 2000
+  backend: worker
+  typesafe_base_url: "https://api.typesafe.ai"
+  typesafe_model: "jev-latest"
+  typesafe_credential: "typesafe"

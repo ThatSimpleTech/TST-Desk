@@ -79,6 +79,42 @@
 
 <div class="row">
 	<div>
+		<p class="title">Judgment backend</p>
+		<p class="hint">
+			Worker model uses your configured worker tier — nothing else to set up. TypeSafe Jev
+			is a hosted typed-judgment API: real confidence values, one round trip per judgment.
+			{#if !settings.judgmentsTypesafeKeyStored}
+				To enable it, add a key named “{settings.judgmentsTypesafeCredential}” under API
+				keys.
+			{/if}
+		</p>
+	</div>
+	<div class="seg" role="radiogroup" aria-label="Judgment backend">
+		<button
+			class="choice"
+			class:choice--active={settings.judgmentsBackend === 'worker'}
+			type="button"
+			role="radio"
+			aria-checked={settings.judgmentsBackend === 'worker'}
+			onclick={() => setJudgments({ backend: 'worker' })}>Worker model</button
+		>
+		<button
+			class="choice"
+			class:choice--active={settings.judgmentsBackend === 'typesafe'}
+			type="button"
+			role="radio"
+			aria-checked={settings.judgmentsBackend === 'typesafe'}
+			disabled={!settings.judgmentsTypesafeKeyStored}
+			title={settings.judgmentsTypesafeKeyStored
+				? 'Use the TypeSafe Jev API for judgments'
+				: `Add a “${settings.judgmentsTypesafeCredential}” key under API keys first`}
+			onclick={() => setJudgments({ backend: 'typesafe' })}>TypeSafe Jev</button
+		>
+	</div>
+</div>
+
+<div class="row">
+	<div>
 		<p class="title">Confidence threshold</p>
 		<p class="hint">
 			Below this, a judgment counts as unavailable and nothing changes hands. 0.6 is the
@@ -164,6 +200,12 @@
 	.choice:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+
+	.seg {
+		display: flex;
+		gap: var(--space-2);
+		flex-shrink: 0;
 	}
 
 	.field {

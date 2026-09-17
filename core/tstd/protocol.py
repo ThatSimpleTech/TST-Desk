@@ -269,6 +269,9 @@ class SetJudgments(ClientMessage):
     candidate_selection: bool
     confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     max_state_chars: int = Field(default=2000, ge=100, le=50_000)
+    # TD-708: the connector. ``typesafe`` needs its keychain key; the
+    # daemon falls back to ``worker`` when no key is stored.
+    backend: Literal["worker", "typesafe"] = "worker"
 
 
 class SetCoworker(ClientMessage):
@@ -1814,6 +1817,11 @@ class SetupState(DaemonEvent):
     judgments_candidate_selection: bool = False
     judgments_confidence_threshold: float = 0.6
     judgments_max_state_chars: int = 2000
+    # The configured connector, its keychain credential id, and whether
+    # that key is actually stored — a presence probe, never the secret.
+    judgments_backend: Literal["worker", "typesafe"] = "worker"
+    judgments_typesafe_credential: str = "typesafe"
+    judgments_typesafe_key_stored: bool = False
     # TD-4403: listed MCP servers. Additive, default empty. Never a secret;
     # there is no env map. An older client ignores the field.
     mcp_servers: list[McpServerSummary] = Field(default_factory=list)

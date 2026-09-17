@@ -55,6 +55,18 @@
 		if (next === current) return;
 		saveCredentialHost(id, name, next);
 	}
+
+	/** What a stored key is for: bound tiers, plus the judgments connector. */
+	function usesFor(id: string): string {
+		const tiers = Object.entries(settings.tierCredentials)
+			.filter(([, cred]) => cred === id)
+			.map(([tier]) => tier);
+		const uses = [...tiers];
+		if (settings.judgmentsBackend === "typesafe" && settings.judgmentsTypesafeCredential === id) {
+			uses.push("judgments");
+		}
+		return uses.length === 0 ? "Not in use" : `Used for: ${uses.join(", ")}`;
+	}
 </script>
 
 {#if !settings.keyRequired}
@@ -101,6 +113,7 @@
 			</label>
 		{/if}
 		<p class="status">{cred.stored ? "Stored in the OS keychain." : "No key stored."}</p>
+		<p class="uses">{usesFor(cred.id)}</p>
 		<div class="actions">
 			{#if !cred.stored}
 				<button
@@ -198,6 +211,12 @@
 		font-size: var(--text-sm);
 		color: var(--color-ink-secondary);
 		margin: var(--space-2) 0 0;
+	}
+
+	.uses {
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
+		margin: var(--space-1) 0 0;
 	}
 
 	.field {

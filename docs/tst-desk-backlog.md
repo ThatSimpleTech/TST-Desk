@@ -1125,8 +1125,9 @@ what makes aggressive Class A behavior safe.
 **Size:** 5 · **Depends on:** TD-703, TD-302, TD-706
 **Status:** Dev build shipped on main 2026-09-17 (30fec39, 1af204f). Open for hardening:
 per-judgment audit-trail records (payload, answer, confidence, latency, cost in the SQLite
-audit log — today it is structured logs + `ToolResult.verification`), and a real connector
-behind the seam.
+audit log — today it is structured logs + `ToolResult.verification`). The TypeSafe
+connector exists (`autonomy/typesafe.py`, opt-in via `judgments.backend`) with real
+confidence; a recorded-fixture accuracy eval against it remains open.
 
 **Acceptance criteria:**
 - [ ] A `JudgmentBackend` protocol (question + bounded state → typed answer + confidence)

@@ -40,8 +40,10 @@ from .autonomy import (
 from .autonomy.breakers import record_autonomy_round
 from .autonomy.checkpoint import auto_branch
 from .autonomy.dod import make_dod_poller
+from .autonomy.judgment import JudgmentBackend
 from .autonomy.runner import advance_autonomy
 from .autonomy.supervisor import attach_drift_check
+from .autonomy.typesafe import TypeSafeJudgmentBackend
 from .autonomy.verify import (
     clear_turn_writes,
     maybe_verify_after_turn,
@@ -49,7 +51,7 @@ from .autonomy.verify import (
 )
 from .autonomy.wakeup import deliver_wakeup
 from .compaction import maybe_compact
-from .config import ConfigError, ModelConfig, ModelDiscoveryError, TierConfig
+from .config import ConfigError, JudgmentsConfig, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
 from .context.skills import apply_slash_skill, list_workspace_skills
@@ -58,7 +60,7 @@ from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
 from .discovery import discover_model, resolve_tier_slugs
-from .keychain import KeychainError
+from .keychain import KeychainError, get_api_key
 from .local_worker import (
     effective_tier,
     mark_cu_tool,
@@ -153,6 +155,37 @@ def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
     if cls is None:
         return None
     return cls.value
+
+
+async def judgment_backend_for(
+    cfg: JudgmentsConfig,
+    worker_completion: Callable[[str], Awaitable[str]],
+) -> JudgmentBackend:
+    """The configured connector, or the worker tier when it cannot serve.
+
+    TypeSafe needs its keychain key (prime §2.2); a missing key logs and
+    falls back to the worker connector — fail toward working, never a block.
+    """
+    if cfg.backend == "typesafe":
+        if not cfg.typesafe_base_url.strip():
+            log.warning(
+                "judgments.backend is typesafe but no base_url is set; using the worker tier"
+            )
+        else:
+            try:
+                key = await get_api_key(cfg.typesafe_credential)
+            except KeychainError:
+                log.warning(
+                    "judgments.backend is typesafe but no %r key is stored; using the worker tier",
+                    cfg.typesafe_credential,
+                )
+            else:
+                return TypeSafeJudgmentBackend(
+                    base_url=cfg.typesafe_base_url,
+                    api_key=key,
+                    model=cfg.typesafe_model,
+                )
+    return WorkerChatJudgmentBackend(worker_completion)
 
 
 def _cap_violation(
@@ -654,6 +687,9 @@ async def agent_loop(
             await session.event_log.add(tracker.emit_cost_update(session.id))
         return content_as_text(resp.message.content)
 
+    async def _judgment_backend_for(cfg: JudgmentsConfig) -> JudgmentBackend:
+        return await judgment_backend_for(cfg, _worker_completion)
+
     # Decision classifier chokepoint (TD-702/703, prime §2.6).  Every tool
     # call routes through it: the static rule table first; ambiguous cases
     # go to a worker-tier call (TD-703) that defaults to B, never A.  The
@@ -676,14 +712,22 @@ async def agent_loop(
         # wraps the same worker completion the classifier uses; each
         # feature gates individually in config and defaults off, so an
         # unconfigured run is byte-identical to the pre-seam product.
+        # A configured ``typesafe`` backend without its keychain key falls
+        # back to the worker connector — fail toward working, never a block.
         judgments_cfg = config.judgments
-        needs_backend = judgments_cfg.semantic_breaker or judgments_cfg.candidate_selection
+        needs_backend = (
+            judgments_cfg.semantic_breaker
+            or judgments_cfg.candidate_selection
+            or judgments_cfg.verification
+        )
         if needs_backend and session.judgment_backend is None:
-            session.judgment_backend = WorkerChatJudgmentBackend(_worker_completion)
+            session.judgment_backend = await _judgment_backend_for(judgments_cfg)
             session.judgment_threshold = judgments_cfg.confidence_threshold
         if judgments_cfg.verification and tool_dispatcher.verifier is None:
             tool_dispatcher.verifier = ActuationVerifier(
-                WorkerChatJudgmentBackend(_worker_completion),
+                session.judgment_backend
+                if session.judgment_backend is not None
+                else WorkerChatJudgmentBackend(_worker_completion),
                 threshold=judgments_cfg.confidence_threshold,
                 max_state_chars=judgments_cfg.max_state_chars,
             )

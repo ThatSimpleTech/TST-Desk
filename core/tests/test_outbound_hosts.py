@@ -268,6 +268,10 @@ _OUTBOUND_CAPABLE = {
     "e2e_m10.py": "the M10 exit harness, a protocol client of our own loopback daemon",
     "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
     "tools/web_search.py": "web_search; destinations are search.base_url + fallbacks from config",
+    "autonomy/typesafe.py": (
+        "the optional TypeSafe judgments connector (judgments.backend); destination is "
+        "judgments.typesafe_base_url from config, and the key comes from the keychain"
+    ),
     "context/embeddings.py": "embeddings; destination is embeddings.base_url from config",
     "desktop/grounding_client.py": (
         "UI-TARS grounding; destination is computer_use.grounding.base_url "

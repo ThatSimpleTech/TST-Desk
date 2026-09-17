@@ -407,6 +407,10 @@ def save_judgments(
         f"  candidate_selection: {'true' if judgments.candidate_selection else 'false'}",
         f"  confidence_threshold: {judgments.confidence_threshold}",
         f"  max_state_chars: {judgments.max_state_chars}",
+        f"  backend: {judgments.backend}",
+        f"  typesafe_base_url: {json.dumps(judgments.typesafe_base_url)}",
+        f"  typesafe_model: {json.dumps(judgments.typesafe_model)}",
+        f"  typesafe_credential: {json.dumps(judgments.typesafe_credential)}",
     ]
     at = _find_key(lines, 0, len(lines), "judgments", 0)
     if at < 0:

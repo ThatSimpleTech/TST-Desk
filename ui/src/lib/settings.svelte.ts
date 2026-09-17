@@ -109,6 +109,10 @@ export const settings = $state({
 	judgmentsCandidateSelection: false,
 	judgmentsConfidenceThreshold: 0.6,
 	judgmentsMaxStateChars: 2000,
+	/** The connector, the TypeSafe key's credential id, and key presence. */
+	judgmentsBackend: "worker" as "worker" | "typesafe",
+	judgmentsTypesafeCredential: "typesafe",
+	judgmentsTypesafeKeyStored: false,
 	/** Listed MCP servers (TD-4403). From setup_state, never inferred. */
 	mcpServers: [] as McpServerRow[],
 	/** Hold-to-talk (TD-4701). From setup_state; the URL never arrives. */
@@ -171,6 +175,9 @@ export function resetSettings(): void {
 	settings.judgmentsCandidateSelection = false;
 	settings.judgmentsConfidenceThreshold = 0.6;
 	settings.judgmentsMaxStateChars = 2000;
+	settings.judgmentsBackend = "worker";
+	settings.judgmentsTypesafeCredential = "typesafe";
+	settings.judgmentsTypesafeKeyStored = false;
 	settings.mcpServers = [];
 	settings.speechEnabled = false;
 	settings.speechReady = false;
@@ -215,6 +222,10 @@ function reduce(event: DaemonEventUnion): void {
 		settings.judgmentsCandidateSelection = event.judgments_candidate_selection ?? false;
 		settings.judgmentsConfidenceThreshold = event.judgments_confidence_threshold ?? 0.6;
 		settings.judgmentsMaxStateChars = event.judgments_max_state_chars ?? 2000;
+		settings.judgmentsBackend = event.judgments_backend === "typesafe" ? "typesafe" : "worker";
+		settings.judgmentsTypesafeCredential =
+			event.judgments_typesafe_credential ?? "typesafe";
+		settings.judgmentsTypesafeKeyStored = event.judgments_typesafe_key_stored ?? false;
 		settings.mcpServers = (event.mcp_servers ?? []).map((row) => ({
 			id: row.id,
 			transport: row.transport,
@@ -479,6 +490,7 @@ export function setJudgments(next: {
 	candidateSelection?: boolean;
 	confidenceThreshold?: number;
 	maxStateChars?: number;
+	backend?: "worker" | "typesafe";
 }): void {
 	sendToDaemon({
 		type: "set_judgments",
@@ -487,6 +499,7 @@ export function setJudgments(next: {
 		candidate_selection: next.candidateSelection ?? settings.judgmentsCandidateSelection,
 		confidence_threshold: next.confidenceThreshold ?? settings.judgmentsConfidenceThreshold,
 		max_state_chars: next.maxStateChars ?? settings.judgmentsMaxStateChars,
+		backend: next.backend ?? settings.judgmentsBackend,
 	});
 }
 
