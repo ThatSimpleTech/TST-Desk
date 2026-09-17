@@ -56,11 +56,15 @@
 		saveCredentialHost(id, name, next);
 	}
 
-	/** What a stored key is for: bound tiers, plus the judgments connector. */
+	/** What a stored key is for: bound tiers, plus the judgments connector.
+	 *  Unbound remote tiers implicitly send the default ("openrouter") key —
+	 *  mirror selectedCredential's rule so the implicit use is visible. */
 	function usesFor(id: string): string {
-		const tiers = Object.entries(settings.tierCredentials)
-			.filter(([, cred]) => cred === id)
-			.map(([tier]) => tier);
+		const tiers = ["brain", "worker", "validator"].filter((tier) => {
+			const bound = settings.tierCredentials[tier];
+			if (bound != null) return bound === id;
+			return id === "openrouter" && !settings.tierLoopback[tier];
+		});
 		const uses = [...tiers];
 		if (settings.judgmentsBackend === "typesafe" && settings.judgmentsTypesafeCredential === id) {
 			uses.push("judgments");
