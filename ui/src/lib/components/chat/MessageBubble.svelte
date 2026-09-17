@@ -76,6 +76,26 @@
 		const mm = String(d.getMinutes()).padStart(2, "0");
 		return `${hh}:${mm}`;
 	}
+
+	// Ordered parts: only the trailing text segment is still streaming, so
+	// only it renders live — earlier segments are sealed and hydrate. The
+	// caret belongs to the trailing segment, and only when the row itself
+	// ends in text: a row ending in a running tool already shows life in
+	// the fold's shimmer.
+	const parts = $derived(message.parts);
+	const lastTextIndex = $derived.by(() => {
+		if (parts === undefined) return -1;
+		for (let i = parts.length - 1; i >= 0; i--) {
+			const part = parts[i];
+			if (part.kind === "text" && part.text !== "") return i;
+		}
+		return -1;
+	});
+	const endsInText = $derived(
+		parts !== undefined &&
+			lastTextIndex >= 0 &&
+			lastTextIndex === parts.length - 1,
+	);
 </script>
 
 <div
@@ -87,19 +107,41 @@
 		<div class="assistant-msg">
 			<!-- TD-1902: thinking above the answer, folded. -->
 			{#if hasReasoning(message)}<ReasoningBlock {message} />{/if}
-			{#if message.tools}
-				{#each message.tools as block (block.toolCallId)}
-					<ToolFold messageId={message.id} {block} />
+			{#if parts !== undefined && parts.length > 0}
+				<!-- Chronological: text segments and tool folds in arrival
+				     order, so a tool that ran after the last text renders
+				     after it instead of above the whole answer. -->
+				{#each parts as part, i (i)}
+					{#if part.kind === "tool"}
+						<ToolFold messageId={message.id} block={part.tool} />
+					{:else if part.text !== ""}
+						<Markdown text={part.text} live={!message.complete && i === lastTextIndex} />
+						<!-- The caret marks the answer being written. Over an
+						     empty body during a reasoning phase it would be a
+						     lie: that text streams into the block above, not
+						     into `text` (TD-1901). Likewise a row ending in a
+						     running tool shows life in the fold, not here. -->
+						{#if !message.complete && i === lastTextIndex && endsInText}<span
+								class="cursor"
+								aria-hidden="true">▍</span
+							>{/if}
+					{/if}
 				{/each}
+			{:else}
+				{#if message.tools}
+					{#each message.tools as block (block.toolCallId)}
+						<ToolFold messageId={message.id} {block} />
+					{/each}
+				{/if}
+				<Markdown text={message.text} live={!message.complete} />
+				<!-- The caret marks the answer being written. Over an empty body during
+				     a reasoning phase it would be a lie: that text streams into the
+				     block above, not into `text` (TD-1901). -->
+				{#if !message.complete && message.text !== ""}<span
+						class="cursor"
+						aria-hidden="true">▍</span
+					>{/if}
 			{/if}
-			<Markdown text={message.text} live={!message.complete} />
-			<!-- The caret marks the answer being written. Over an empty body during
-			     a reasoning phase it would be a lie: that text streams into the
-			     block above, not into `text` (TD-1901). -->
-			{#if !message.complete && message.text !== ""}<span
-					class="cursor"
-					aria-hidden="true">▍</span
-				>{/if}
 			{#if message.complete}
 				<div class="actions">
 					<button

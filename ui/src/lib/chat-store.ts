@@ -54,8 +54,17 @@ export interface ChatMessage {
   attachments?: AttachmentChip[];
   /** Tool calls that ran during this assistant turn (TD-1902). Folded
    *  like reasoning so a tool-heavy turn does not grow the transcript
-   *  without bound. Absent when the turn used no tools. */
+   *  without bound. Absent when the turn used no tools. Flat mirror of the
+   *  tool entries in `parts` — same object references, so a result update
+   *  lands in both. Kept for lookup and tests; rendering follows `parts`. */
   tools?: ToolBlock[];
+  /** Ordered content of an assistant row: text segments and tool calls in
+   *  arrival order, so a tool that ran after the last text renders after it
+   *  instead of above the whole answer. Text deltas append to the trailing
+   *  text part, or open a new one after a tool. `text` stays the
+   *  concatenation of the text parts for copy and tests. Absent on user
+   *  rows and on assistant rows that never streamed content or tools. */
+  parts?: ChatPart[];
   /** 0-based index among user turns (TD-1708). Only on user rows. */
   userIndex?: number;
   siblingIndex?: number;
@@ -64,6 +73,12 @@ export interface ChatMessage {
    *  of `user_turn` does not duplicate the row. */
   turnId?: string;
 }
+
+/** One ordered entry on an assistant row: a text segment or a tool call.
+ *  Text splits only at tool boundaries — one part holds everything said
+ *  before the tool, the next everything after — so markdown within a
+ *  segment renders intact. */
+export type ChatPart = { kind: "text"; text: string } | { kind: "tool"; tool: ToolBlock };
 
 /** One tool call on an assistant row (TD-1902). `status` is unset while
  *  the call is still running — that is what keeps the disclosure open. */

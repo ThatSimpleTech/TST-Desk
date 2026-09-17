@@ -9937,3 +9937,30 @@ The denylist starts empty.
 `~/.tst-cu-mcp/config.yaml`. Per-app "allow for this session" prompts
 and category tiers (view-only browsers, click-only IDEs) are not in
 this story.
+
+---
+
+## 2026-09-17 — Chat transcript orders text and tools by arrival (Class B)
+
+**Decision:** Assistant rows gain ordered `parts` (`{kind:"text"} |
+{kind:"tool"}`) alongside the existing `text` and `tools` fields. Text
+deltas append to the trailing text part or open a new one after a tool;
+tool calls append a tool part holding the same block object as the flat
+`tools` list. Rendering follows `parts` in order; `text` stays the
+concatenation for copy and existing readers. Only the trailing text
+segment renders live and only a row ending in text shows the caret —
+a row ending in a running tool already signals life in the fold.
+
+**Rationale:** TD-1902 rendered every tool fold above the whole answer,
+so a shell call that ran after the last text appeared above it. The
+daemon emits text1, tool, text2 across loop rounds; collapsing that to
+one string plus one list discarded the boundary. Splitting text only at
+tool boundaries keeps markdown intact within a segment while restoring
+chronology. The flat fields are kept (not replaced) so fork snapshots,
+copy, autoscroll, and existing tests keep working; the clone rebuilds
+the mirror from the parts so the shared references survive.
+
+**Alternative rejected:** Rendering tools below all text. Fixes the
+reported case but still misorders text→tool→text turns. Also rejected:
+splitting one turn into multiple assistant rows — breaks per-turn copy
+and turn-seal logic for no gain over parts.
