@@ -116,7 +116,8 @@
     "candidate_selection": false,
     "confidence_threshold": 0.6,
     "max_state_chars": 2000,
-    "backend": "typesafe"
+    "backend": "typesafe",
+    "typesafe_credential": null
   },
   "set_workspace_pin": {
     "type": "set_workspace_pin",

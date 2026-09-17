@@ -145,6 +145,8 @@ export interface SetJudgments extends ClientMessage {
   confidence_threshold: number;
   max_state_chars: number;
   backend: "worker" | "typesafe";
+  /** Which stored credential feeds the TypeSafe connector. Null keeps it. */
+  typesafe_credential?: string | null;
 }
 
 /** Turn Tailscale remote attach on or off (TD-3603). Machine-wide, no session. */

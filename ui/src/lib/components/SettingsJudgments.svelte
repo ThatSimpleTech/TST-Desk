@@ -3,6 +3,9 @@
 	// defaults off and fails closed; the backend is the worker tier the
 	// user already runs — no external judgments API is required.
 	import { settings, setJudgments } from '../settings.svelte.js';
+
+	/** Stored keys the TypeSafe connector could send. Presence only. */
+	let storedCredentials = $derived(settings.credentials.filter((c) => c.stored));
 </script>
 
 <div class="block">
@@ -83,9 +86,8 @@
 		<p class="hint">
 			Worker model uses your configured worker tier — nothing else to set up. TypeSafe Jev
 			is a hosted typed-judgment API: real confidence values, one round trip per judgment.
-			{#if !settings.judgmentsTypesafeKeyStored}
-				To enable it, add a key named “{settings.judgmentsTypesafeCredential}” under API
-				keys.
+			{#if storedCredentials.length === 0}
+				To enable it, add a key under API keys first.
 			{/if}
 		</p>
 	</div>
@@ -104,14 +106,33 @@
 			type="button"
 			role="radio"
 			aria-checked={settings.judgmentsBackend === 'typesafe'}
-			disabled={!settings.judgmentsTypesafeKeyStored}
-			title={settings.judgmentsTypesafeKeyStored
-				? 'Use the TypeSafe Jev API for judgments'
-				: `Add a “${settings.judgmentsTypesafeCredential}” key under API keys first`}
+			disabled={storedCredentials.length === 0}
+			title={storedCredentials.length === 0
+				? 'Add a key under API keys first'
+				: 'Use the TypeSafe Jev API for judgments'}
 			onclick={() => setJudgments({ backend: 'typesafe' })}>TypeSafe Jev</button
 		>
 	</div>
 </div>
+
+{#if settings.judgmentsBackend === 'typesafe'}
+	<div class="row">
+		<div>
+			<p class="title">TypeSafe key</p>
+			<p class="hint">Which stored key the judgments connector sends. Never shown.</p>
+		</div>
+		<select
+			class="field"
+			aria-label="TypeSafe key"
+			value={settings.judgmentsTypesafeCredential}
+			onchange={(event) => setJudgments({ typesafeCredential: event.currentTarget.value })}
+		>
+			{#each storedCredentials as cred (cred.id)}
+				<option value={cred.id}>{cred.name}</option>
+			{/each}
+		</select>
+	</div>
+{/if}
 
 <div class="row">
 	<div>
@@ -217,5 +238,10 @@
 		border: 1px solid var(--color-hairline);
 		border-radius: var(--radius-sm);
 		padding: var(--space-1) var(--space-2);
+	}
+
+	select.field {
+		width: auto;
+		min-width: 9rem;
 	}
 </style>
