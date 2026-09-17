@@ -4,7 +4,14 @@ from .factory import argv_from_command, desktop_driver_from_config, driver_for_c
 from .mcp_driver import LIVE_PLATFORMS, MCP_TOOLS, McpDesktopDriver
 from .mock import MockDesktopDriver
 from .permissions import ACCESSIBILITY_URL, SCREEN_RECORDING_URL
-from .protocol import TINY_PNG, DesktopDriver, DesktopError, scripted_ax_hit_node, window_matches
+from .protocol import (
+    TINY_PNG,
+    DesktopDriver,
+    DesktopError,
+    is_system_surface,
+    scripted_ax_hit_node,
+    window_matches,
+)
 
 __all__ = [
     "ACCESSIBILITY_URL",
@@ -19,6 +26,7 @@ __all__ = [
     "argv_from_command",
     "desktop_driver_from_config",
     "driver_for_command",
+    "is_system_surface",
     "scripted_ax_hit_node",
     "window_matches",
 ]

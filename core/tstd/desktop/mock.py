@@ -13,7 +13,13 @@ from typing import Any
 
 from .permissions import normalize_cu_platform, windows_report
 from .permissions_linux import linux_report
-from .protocol import TINY_PNG, DesktopError, scripted_ax_hit_node, window_matches
+from .protocol import (
+    TINY_PNG,
+    DesktopError,
+    is_system_surface,
+    scripted_ax_hit_node,
+    window_matches,
+)
 
 
 class MockDesktopDriver:
@@ -113,6 +119,10 @@ class MockDesktopDriver:
         self._refuse_if_denied()
         if actuating and self.killed:
             raise DesktopError("cu_killed", "computer-use kill-switch is engaged")
+        # TD-4836: system surfaces float above apps and never take
+        # foreground focus, so the guard cannot apply to them.
+        if expect_window is not None and is_system_surface(expect_window):
+            return
         if expect_window is not None and not window_matches(
             expect_window, self.foreground_title, self.foreground_app
         ):

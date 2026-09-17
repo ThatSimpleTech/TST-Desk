@@ -298,6 +298,37 @@ class TestFocusGuard:
         assert not window_matches("Chrome", "Terminal", "zsh")
         assert not window_matches("  ", "Chrome", "chrome")
 
+    async def test_system_surface_expectation_never_refuses(self, tmp_path: Path) -> None:
+        """TD-4836: the Dock never takes foreground focus, so the guard
+        cannot apply — a click naming it goes through on the mock."""
+        driver = MockDesktopDriver(foreground_title="Document", foreground_app="TextEdit")
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        session = _Session(tmp_path / "sess")
+        session.persist_dir.mkdir(parents=True, exist_ok=True)
+        result = await dispatcher.dispatch(
+            "c1",
+            "desktop_click",
+            {"x": 240, "y": 976, "expect_window": "Dock"},
+            session=session,
+        )
+        assert result.status == "success"
+        assert driver.actuations == ["click"]
+
+    async def test_docker_is_not_the_dock(self, tmp_path: Path) -> None:
+        """The exemption is an exact match — 'docker' still gets the guard."""
+        driver = MockDesktopDriver(foreground_title="Document", foreground_app="TextEdit")
+        dispatcher, _ = _dispatcher(tmp_path, driver)
+        session = _Session(tmp_path / "sess")
+        session.persist_dir.mkdir(parents=True, exist_ok=True)
+        result = await dispatcher.dispatch(
+            "c1",
+            "desktop_click",
+            {"x": 240, "y": 976, "expect_window": "docker"},
+            session=session,
+        )
+        assert result.error_code == "focus_mismatch"
+        assert driver.actuations == []
+
 
 class TestKillSwitch:
     async def test_blocks_click_not_screenshot(self, tmp_path: Path) -> None:

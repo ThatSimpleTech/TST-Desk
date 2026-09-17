@@ -103,8 +103,37 @@ class TestAssertForeground:
 
     def test_mismatch_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("tst_cu_mcp.focus.foreground_window", lambda: CHROME)
+        with pytest.raises(WindowFocusError, match="expected the foreground window"):
+            assert_foreground("notepad")
+
+
+class TestSystemSurfaces:
+    """TD-4836: the Dock and friends never take foreground focus, so the
+    guard cannot apply — naming one skips the OS call entirely."""
+
+    @pytest.mark.parametrize("surface", ["Dock", " dock ", "DOCK", "Launchpad", "Spotlight"])
+    def test_system_surfaces_skip_the_check(self, monkeypatch: pytest.MonkeyPatch, surface: str) -> None:
+        called = False
+
+        def spy() -> WindowInfo:
+            nonlocal called
+            called = True
+            return CHROME
+
+        monkeypatch.setattr("tst_cu_mcp.focus.foreground_window", spy)
+        assert assert_foreground(surface) is None
+        assert called is False
+
+    def test_substring_is_not_exempt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # "docker" contains "dock" but is not the Dock — exact match only.
+        monkeypatch.setattr("tst_cu_mcp.focus.foreground_window", lambda: CHROME)
         with pytest.raises(WindowFocusError):
-            assert_foreground("Notepad")
+            assert_foreground("docker")
+
+    def test_blank_is_not_exempt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("tst_cu_mcp.focus.foreground_window", lambda: CHROME)
+        with pytest.raises(WindowFocusError):
+            assert_foreground("   ")
 
     def test_mismatch_names_both_sides(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A model that gets this back needs to know what it is looking at, not

@@ -52,6 +52,27 @@ def window_matches(expected: str, title: str, app: str) -> bool:
     return needle in title.casefold() or needle in app.casefold()
 
 
+# Mirrors tst_cu_mcp.focus.SYSTEM_SURFACES (TD-4836): surfaces that float
+# above apps and never take foreground focus, so the guard cannot apply.
+# Exact match after case-folding, never substring — "docker" is not the Dock.
+SYSTEM_SURFACES = frozenset(
+    {
+        "dock",
+        "menu bar",
+        "control center",
+        "notification center",
+        "mission control",
+        "launchpad",
+        "spotlight",
+    }
+)
+
+
+def is_system_surface(expected: str) -> bool:
+    """True when *expected* names a system surface the focus guard skips."""
+    return expected.strip().casefold() in SYSTEM_SURFACES
+
+
 class DesktopDriver(Protocol):
     """Capture and actuation. Implementations must not bind a socket."""
 
