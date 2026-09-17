@@ -487,9 +487,7 @@ class TestPackagedCuDefault:
         driver = desktop_driver_from_config(_config_with_cu_command(""))
         assert isinstance(driver, MockDesktopDriver)
 
-    def test_frozen_linux_uses_inprocess_driver(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_frozen_linux_uses_inprocess_driver(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import sys
 
         from tstd.desktop.factory import desktop_driver_from_config
@@ -500,9 +498,7 @@ class TestPackagedCuDefault:
         driver = desktop_driver_from_config(_config_with_cu_command(""))
         assert isinstance(driver, InProcessDesktopDriver)
 
-    def test_frozen_darwin_still_spawns_sidecar(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_frozen_darwin_still_spawns_sidecar(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import sys
 
         from tstd.desktop.factory import desktop_driver_from_config

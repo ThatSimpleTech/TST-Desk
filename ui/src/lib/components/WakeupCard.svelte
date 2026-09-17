@@ -72,9 +72,9 @@
 	.wakeup {
 		margin: 0 var(--space-4) var(--space-3);
 		padding: var(--space-4);
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-md);
-		background: var(--color-bg-raised);
+		background: var(--color-lifted);
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
@@ -90,13 +90,13 @@
 		margin: 0;
 		font-size: var(--text-sm);
 		font-weight: var(--weight-semibold);
-		color: var(--color-text);
+		color: var(--color-ink);
 	}
 
 	.reason {
 		margin: 0;
 		font-size: var(--text-sm);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.facts {
@@ -115,12 +115,12 @@
 
 	dt {
 		margin: 0;
-		color: var(--color-text-muted);
+		color: var(--color-ink-muted);
 	}
 
 	dd {
 		margin: 0;
-		color: var(--color-text);
+		color: var(--color-ink);
 		min-width: 0;
 	}
 
@@ -140,21 +140,21 @@
 		white-space: pre-wrap;
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--color-text-secondary);
+		color: var(--color-ink-secondary);
 	}
 
 	.open {
 		align-self: flex-start;
 		padding: var(--space-2) var(--space-3);
 		font-size: var(--text-sm);
-		color: var(--color-text);
+		color: var(--color-ink);
 		background: transparent;
-		border: var(--border-width) solid var(--color-border);
+		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-sm);
 		cursor: pointer;
 	}
 
 	.open:hover {
-		border-color: var(--color-text-muted);
+		border-color: var(--color-ink-muted);
 	}
 </style>

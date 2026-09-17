@@ -1,0 +1,139 @@
+........................................................................ [  2%]
+........................................................................ [  4%]
+..................................................ssss.................. [  6%]
+...............................s........................................ [  8%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+........................................................................ [ 17%]
+........................................................................ [ 19%]
+........................................................................ [ 22%]
+........................................................................ [ 24%]
+........................................................................ [ 26%]
+........................................................................ [ 28%]
+........................................................................ [ 31%]
+......................................F................................. [ 33%]
+.............................................................sss........ [ 35%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 44%]
+............................................................F........... [ 46%]
+........................................................................ [ 48%]
+........................................................................ [ 50%]
+........................................................................ [ 53%]
+........................................................................ [ 55%]
+........................................................................ [ 57%]
+........................................................................ [ 59%]
+........................................................................ [ 62%]
+........................................................................ [ 64%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 70%]
+........................................................................ [ 73%]
+........................................................................ [ 75%]
+........................................................................ [ 77%]
+........................................................................ [ 79%]
+........................................................................ [ 82%]
+........................................................................ [ 84%]
+........................................................................ [ 86%]
+........................................................................ [ 88%]
+........................................................................ [ 90%]
+........................................................................ [ 93%]
+........................................................................ [ 95%]
+........................................................................ [ 97%]
+........................................................................ [ 99%]
+........                                                                 [100%]
+=================================== FAILURES ===================================
+___________________ test_every_client_message_is_documented ____________________
+
+    def test_every_client_message_is_documented() -> None:
+        """Criterion: the protocol is documented, and stays documented.
+
+        Compared both ways.  Adding a message to ``ClientMessageT`` without a
+        table row fails here, which is the only way a protocol reference
+        stays complete without somebody auditing it by hand.
+        """
+        documented = set(_rows("client-messages"))
+>       assert documented == set(CLIENT_MESSAGES), (
+            f"undocumented client messages: {sorted(set(CLIENT_MESSAGES) - documented)}; "
+            f"documented but not in ClientMessageT: {sorted(documented - set(CLIENT_MESSAGES))}"
+        )
+E       AssertionError: undocumented client messages: ['set_cu_policy']; documented but not in ClientMessageT: []
+E       assert {'add_pin', '...'attach', ...} == {'add_pin', '...'attach', ...}
+E
+E         Extra items in the right set:
+E         'set_cu_policy'
+E         Use -v to get more diff
+
+tests/test_docs_architecture_guide.py:197: AssertionError
+______________ TestDeadServer.test_daemon_starts_and_doctor_fails ______________
+
+self = <tests.test_mcp_load.TestDeadServer object at 0x10acac350>
+isolated_home = PosixPath('/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-138/test_daemon_starts_and_doctor_0')
+tmp_path = PosixPath('/private/var/folders/pz/rsjq2cs116n7d1v2c1f0yf28vz366w/T/pytest-of-513801/pytest-138/test_daemon_starts_and_doctor_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ba91510>
+
+    @pytest.mark.asyncio
+    async def test_daemon_starts_and_doctor_fails(
+        self, isolated_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fk = FakeKeychain()
+        fk.stored["openrouter"] = "sk-ok"
+
+        async def _get(provider_name: str = "openrouter") -> str:
+            return await fk.get(provider_name)
+
+        monkeypatch.setattr("tstd.daemon.get_api_key", _get)
+        monkeypatch.setattr("tstd.daemon.ProviderClient", FakeProviderClient)
+        _write_user_config(
+            "mcp:\n"
+            "  servers:\n"
+            "    dead:\n"
+            "      transport: stdio\n"
+            f"      command: [{json.dumps(sys.executable)}, '-c', 'raise SystemExit(1)']\n"
+        )
+        daemon, task = await _start_daemon(tmp_path / "data")
+        try:
+            assert daemon.ws_server.port > 0
+            checks = await _doctor_checks(daemon)
+            names = [c["name"] for c in checks]
+>           assert names[:6] == [
+                "daemon",
+                "api_key",
+                "provider",
+                "git",
+                "workspace",
+                "steering",
+            ]
+E           AssertionError: assert ['daemon', 'a..., 'workspace'] == ['daemon', 'a...', 'steering']
+E
+E             At index 4 diff: 'grok_cli' != 'workspace'
+E             Use -v to get more diff
+
+tests/test_mcp_load.py:483: AssertionError
+------------------------------ Captured log setup ------------------------------
+DEBUG    asyncio:selector_events.py:54 Using selector: KqueueSelector
+------------------------------ Captured log call -------------------------------
+INFO     tstd.daemon:daemon.py:1314 starting
+INFO     websockets.server:server.py:454 server listening on 127.0.0.1:49214
+INFO     tstd.ws:ws.py:105 port file written
+INFO     tstd.ws:ws.py:276 ws server started
+WARNING  tstd.cu_host:cu_host.py:189 cu socket unavailable
+INFO     websockets.server:server.py:570 connection open
+INFO     tstd.ws:ws.py:409 client connected
+INFO     tstd.ws:ws.py:425 handshake ok
+WARNING  tstd.mcp:loader.py:215 mcp stdio server failed
+INFO     websockets.server:protocol.py:664 connection closed
+INFO     tstd.ws:ws.py:457 client disconnected
+INFO     tstd.daemon:daemon.py:1373 shutting down
+INFO     tstd.ws:ws.py:364 ws server stopping
+INFO     websockets.server:server.py:334 server closing
+INFO     websockets.server:server.py:362 server closed
+INFO     tstd.ws:ws.py:392 ws server stopped
+INFO     tstd.daemon:daemon.py:1416 shutdown complete
+INFO     tstd.daemon:daemon.py:1353 stopped
+=========================== short test summary info ============================
+FAILED tests/test_docs_architecture_guide.py::test_every_client_message_is_documented
+FAILED tests/test_mcp_load.py::TestDeadServer::test_daemon_starts_and_doctor_fails
+2 failed, 3238 passed, 8 skipped, 3 deselected in 133.04s (0:02:13)

@@ -7799,14 +7799,21 @@ background tools already honor.
 
 ### TD-4831 — Review follow-up: diagnostics, protocol docs and UI regressions
 **Size:** 3 · **Depends on:** TD-4401, TD-4830, TD-1601, TD-4701
-**Status:** In progress — user-approved review follow-up, 2026-09-17
+**Status:** Blocked — local criteria verified; repository DoD still fails strict typing
 
 **Acceptance criteria:**
-- [ ] Dead MCP server coverage still asserts a failed diagnostic with remediation and a running daemon, without rejecting additional doctor checks
-- [ ] Architecture client-message table documents `set_cu_policy` and passes protocol completeness and scoping tests
-- [ ] WakeupCard and SettingsAbout reference declared canonical color tokens; token tests pass
-- [ ] The shared icon map declares `mic` once; UI type checking has no errors
-- [ ] Full core, UI and Rust suites rerun; remaining unrelated gate failures and review limitations recorded without claiming a green DoD
+- [x] Dead MCP server coverage still asserts a failed diagnostic with remediation and a running daemon, without rejecting additional doctor checks
+- [x] Architecture client-message table documents `set_cu_policy` and passes protocol completeness and scoping tests
+- [x] WakeupCard and SettingsAbout reference declared canonical color tokens; token tests pass
+- [x] The shared icon map declares `mic` once; UI type checking has no errors
+- [x] Full core, UI and Rust suites rerun; remaining unrelated gate failures and review limitations recorded without claiming a green DoD
 
 **Scope:** Four fixes approved after the 2026-09-17 review. Python lint/type
 cleanup, Composer warnings, tray lifecycle and live/soak testing remain separate.
+
+**Verification:** See `reports/app-review-evidence/2026-09-17-stress-test.md`.
+Core 3335 passed; UI 1338 passed; Rust 63 passed. Ruff lint/format and tsc pass;
+mypy reports 11 errors in five files. Clippy and Svelte checks retain warnings.
+This is an automated regression review, not exhaustive live/soak coverage.
+The protocol fixture inadvertently removed during review was restored; Python
+format/import-only cleanup was also applied. No remaining type errors were hidden.

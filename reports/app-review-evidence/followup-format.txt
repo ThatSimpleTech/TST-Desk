@@ -1,0 +1,52 @@
+unformatted: File would be reformatted
+   --> scripts/generate_protocol_fixtures.py:334:35
+    |
+333 |     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
+    -     "session_state": SessionState(
+    -         session_id="sess-1", state="running", engine="native", seq=2
+    -     ),
+334 +     "session_state": SessionState(session_id="sess-1", state="running", engine="native", seq=2),
+335 |     "conversation_reset": ConversationReset(
+    |
+
+unformatted: File would be reformatted
+   --> tests/test_grok_acp.py:243:36
+    |
+242 |         assert (
+    -             prompt_image_supported(
+    -                 {"agentCapabilities": {"promptCapabilities": {"image": False}}}
+    -             )
+243 +             prompt_image_supported({"agentCapabilities": {"promptCapabilities": {"image": False}}})
+244 |             is False
+245 |         )
+246 |         assert (
+    -             prompt_image_supported(
+    -                 {"agentCapabilities": {"promptCapabilities": {"image": True}}}
+    -             )
+247 +             prompt_image_supported({"agentCapabilities": {"promptCapabilities": {"image": True}}})
+248 |             is True
+    |
+
+unformatted: File would be reformatted
+   --> tests/test_mcp_load.py:484:93
+    |
+483 |             # Additional diagnostics must not hide the failed server's row.
+    -             assert {"daemon", "api_key", "provider", "git", "workspace", "steering"} <= set(
+    -                 names
+    -             )
+484 +             assert {"daemon", "api_key", "provider", "git", "workspace", "steering"} <= set(names)
+485 |             assert "mcp:dead" in names
+    |
+
+unformatted: File would be reformatted
+   --> tstd/grok_loop.py:532:51
+    |
+531 |                 if images and not image_ok:
+    -                     saved = persist_prompt_images(
+    -                         session.workspace_path, session.id, images
+    -                     )
+532 +                     saved = persist_prompt_images(session.workspace_path, session.id, images)
+533 |                     notes = "\n".join(
+    |
+
+4 files would be reformatted, 348 files already formatted

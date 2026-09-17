@@ -1,0 +1,12 @@
+tstd/session_store.py:121: error: Incompatible types in assignment (expression has type "str | None", variable has type "str")  [assignment]
+tstd/grok_acp.py:166: error: "StreamReader" has no attribute "_limit"  [attr-defined]
+tstd/cu_host.py:324: error: Cannot find implementation or library stub for module named "tst_cu_mcp.backends"  [import-not-found]
+tstd/cu_host.py:324: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+tstd/grok_loop.py:361: error: Incompatible types in assignment (expression has type "str | list[dict[str, Any]]", variable has type "str")  [assignment]
+tstd/grok_loop.py:541: error: Incompatible types in assignment (expression has type "None", variable has type "list[tuple[str, bytes, str]]")  [assignment]
+tstd/grok_loop.py:696: error: No overload variant of "__add__" of "list" matches argument type "str"  [operator]
+tstd/grok_loop.py:696: note: Possible overload variants:
+tstd/grok_loop.py:696: note:     def __add__(self, list[dict[str, Any]], /) -> list[dict[str, Any]]
+tstd/grok_loop.py:696: note:     def [_S] __add__(self, list[_S], /) -> list[_S | dict[str, Any]]
+tstd/grok_loop.py:696: note: Left operand is of type "str | list[dict[str, Any]]"
+Found 6 errors in 4 files (checked 145 source files)

@@ -438,9 +438,7 @@ def _tool_message_content(result: Any) -> Any:
         {"type": "text", "text": text},
         {
             "type": "image_url",
-            "image_url": {
-                "url": "data:image/png;base64," + base64.b64encode(png).decode("ascii")
-            },
+            "image_url": {"url": "data:image/png;base64," + base64.b64encode(png).decode("ascii")},
         },
     ]
 
@@ -1126,9 +1124,7 @@ async def agent_loop(
                     },
                 )
 
-            dropped_images = cap_prompt_images(
-                messages, config.computer_use.max_prompt_images
-            )
+            dropped_images = cap_prompt_images(messages, config.computer_use.max_prompt_images)
             if dropped_images:
                 log.info(
                     "capped prompt images",

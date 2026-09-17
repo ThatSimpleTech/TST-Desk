@@ -137,6 +137,7 @@ from tstd.protocol import (
     SetCredential,
     SetCuIndicators,
     SetCuKill,
+    SetCuPolicy,
     SetEngine,
     SetGrokMode,
     SetJudgments,
@@ -205,6 +206,12 @@ FIXTURES = {
     "set_voice": SetVoice(enabled=True),
     "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
+    "set_cu_policy": SetCuPolicy(
+        enabled=True,
+        mode="background",
+        unhide_on_finish=True,
+        denied_apps=["1Password"],
+    ),
     "set_judgments": SetJudgments(
         verification=True,
         semantic_breaker=True,
