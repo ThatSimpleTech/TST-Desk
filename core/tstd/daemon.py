@@ -482,6 +482,23 @@ def _check_git() -> DiagnosticCheck:
     return DiagnosticCheck(name="git", status="ok", detail=f"{version} ({path})")
 
 
+def _shipped_typesafe_base_url() -> str:
+    """The TypeSafe API URL from the shipped default config (package data).
+
+    §2.3: remote destinations live in config, never as source literals —
+    and the shipped config.yaml is data.  Used to backfill configs written
+    before the judgments section existed (TD-708).
+    """
+    import yaml
+
+    from .config import default_config_yaml
+
+    data = yaml.safe_load(default_config_yaml())
+    judgments = data.get("judgments") if isinstance(data, dict) else None
+    url = judgments.get("typesafe_base_url") if isinstance(judgments, dict) else None
+    return url.strip() if isinstance(url, str) else ""
+
+
 def _probe_grok(configured: str) -> tuple[Path | None, bool]:
     """PATH / configured binary probe. Never a credential."""
     try:
@@ -2119,6 +2136,11 @@ class Daemon:
                         f"Unknown credential {cleaned!r}; declared: {', '.join(sorted(known))}",
                     )
                 credential = cleaned
+            base_url = self.config.judgments.typesafe_base_url
+            if msg.backend == "typesafe" and not base_url.strip():
+                # Configs written before the shipped judgments section pin an
+                # empty URL; backfill from the package default (data, §2.3).
+                base_url = _shipped_typesafe_base_url()
             self.config.judgments = JudgmentsConfig(
                 verification=msg.verification,
                 semantic_breaker=msg.semantic_breaker,
@@ -2126,7 +2148,7 @@ class Daemon:
                 confidence_threshold=msg.confidence_threshold,
                 max_state_chars=msg.max_state_chars,
                 backend=msg.backend,
-                typesafe_base_url=self.config.judgments.typesafe_base_url,
+                typesafe_base_url=base_url,
                 typesafe_model=self.config.judgments.typesafe_model,
                 typesafe_credential=credential,
             )
