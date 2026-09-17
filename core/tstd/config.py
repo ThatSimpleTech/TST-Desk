@@ -687,6 +687,24 @@ class McpConfig(BaseModel):
         return value
 
 
+class JudgmentsConfig(BaseModel):
+    """Provider-neutral judgment features (TD-708/709/710/711, dev build).
+
+    Everything defaults off: with all flags false the dispatch and
+    autonomy paths are byte-identical to the pre-seam product.  The
+    decision classifier's own fallback (TD-703) is not gated here — it
+    is the seam's default connector and is always on.  A future typed
+    judgments API is a connector selected by its own config, never a
+    requirement.
+    """
+
+    verification: bool = False
+    semantic_breaker: bool = False
+    candidate_selection: bool = False
+    confidence_threshold: float = 0.6
+    max_state_chars: int = 2000
+
+
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
@@ -699,6 +717,7 @@ class ModelConfig(BaseModel):
     session: SessionConfig = Field(default_factory=SessionConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
+    judgments: JudgmentsConfig = Field(default_factory=JudgmentsConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)

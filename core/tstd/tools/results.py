@@ -35,6 +35,9 @@ class ToolResult:
             commit (non-git workspace, TD-2104).
         diff: Unified diff of what the write changed (TD-604), for
             display; ``None`` for reads and non-diffable writes.
+        verification: Actuation verification status (TD-709, dev) —
+            ``verified`` / ``refuted`` / ``unavailable``; ``None`` when
+            no verifier is wired or the tool does not actuate.
     """
 
     tool_call_id: str
@@ -49,6 +52,7 @@ class ToolResult:
     checkpoint_notice: Notice | None = None
     memory_notice: Notice | None = None
     diff: str | None = None
+    verification: str | None = None
 
 
 class HandlerRefusal(Exception):

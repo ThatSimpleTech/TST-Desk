@@ -25,6 +25,7 @@ from ..autonomy import (
     DecisionRequest,
     LedgerEntry,
 )
+from ..cu_verify import ActuationVerifier, StateProbe, Verification
 from ..desktop.protocol import DesktopError
 from ..logging import get_logger
 from ..memory_commit import MemoryCommitter
@@ -199,6 +200,11 @@ class ToolDispatcher:
         # marks the run to stop after this call.
         self.autonomy_fn: Callable[[], bool] | None = None
         self.on_class_c: Callable[[str], None] | None = None
+        # TD-709 (dev): actuation verification.  Both None in tests and
+        # whenever judgments.verification is off — the dispatch path is
+        # then byte-identical to today.
+        self.verifier: ActuationVerifier | None = None
+        self.state_probe: StateProbe | None = None
         self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
 
     def _record_class_c(self, reason: str) -> None:
@@ -427,6 +433,19 @@ class ToolDispatcher:
                 field: snapshot_text(canonical) for field, canonical in canonical_writes.items()
             }
 
+        # 3.26 Actuation verification (TD-709, dev): capture the before-state
+        #      so a successful actuation can be judged against the after-state.
+        #      Best-effort — a probe failure means no verification, never a block.
+        verify_before: str | None = None
+        if tool.actuates and self.verifier is not None and self.state_probe is not None:
+            try:
+                verify_before = await self.state_probe.snapshot(name)
+            except Exception:
+                log.warning(
+                    "state probe failed before actuation; verification skipped",
+                    extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
+                )
+
         try:
             output = await handler(session=session, tool_call_id=tool_call_id, **arguments)
         except (HandlerRefusal, DesktopError) as e:
@@ -479,6 +498,28 @@ class ToolDispatcher:
                     arguments[f] for f in tool.path_fields if isinstance(arguments.get(f), str)
                 ]
                 record(touched)
+
+        # 3.2.2 Actuation verification (TD-709, dev).  A refuted actuation
+        #      is annotated so the loop sees it and can re-check or retry;
+        #      verified and unavailable stay silent.  Never raises.
+        verification: Verification | None = None
+        if tool.actuates and self.verifier is not None and self.state_probe is not None:
+            try:
+                verify_after = await self.state_probe.snapshot(name)
+                verification = await self.verifier.verify(
+                    name, arguments, verify_before, verify_after, output
+                )
+            except Exception:
+                log.exception(
+                    "actuation verification raised; continuing without it",
+                    extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
+                )
+                verification = None
+            if verification is not None and verification.status == "refuted":
+                output += (
+                    "\n\n[verification: refuted — the action may not have had its "
+                    "intended effect; re-check the current state before continuing]"
+                )
 
         # 3.3 Checkpoint commit (TD-705).  Successful path-bearing
         # mutations are committed to the session branch so every write is
@@ -598,6 +639,7 @@ class ToolDispatcher:
             checkpoint_notice=checkpoint_notice,
             memory_notice=memory_notice,
             diff=diff_text,
+            verification=verification.status if verification is not None else None,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────

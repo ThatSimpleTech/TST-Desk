@@ -15,7 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..logging import get_logger
+from .judgment import JudgmentBackend, JudgmentKind, JudgmentQuestion
 from .verify import WRITE_TOOLS
+
+log = get_logger("tstd.breakers")
 
 if TYPE_CHECKING:
     from ..session import Session
@@ -24,11 +28,13 @@ TESTS_RED = "breaker:tests_red"
 FILE_THRASH = "breaker:file_thrash"
 NO_DOD_PROGRESS = "breaker:no_dod_progress"
 TOOL_LOOP = "breaker:tool_loop"
+SEMANTIC_NO_PROGRESS = "breaker:no_semantic_progress"
 
 DEFAULT_TESTS_RED_N = 3
 DEFAULT_FILE_THRASH_N = 5
 DEFAULT_NO_DOD_PROGRESS_N = 3
 DEFAULT_TOOL_LOOP_N = 3
+DEFAULT_SEMANTIC_NO_PROGRESS_N = 3
 
 _TESTS_RED_RE = re.compile(r"tests\s+red\s+for\s+(\d+)", re.IGNORECASE)
 _FILE_THRASH_RE = re.compile(r"same\s+file\s+(?:modified|thrashed)\s+(\d+)", re.IGNORECASE)
@@ -170,6 +176,80 @@ def _ingest_dod_poll(session: Session) -> None:
 def _green_count(poll: object) -> int:
     results = getattr(poll, "results", ())
     return sum(1 for item in results if getattr(item, "green", False))
+
+
+# ── Semantic no-progress breaker (TD-710, dev build) ───────────────────
+#
+# The syntactic four cannot see a run that keeps *changing* things —
+# clicking, scrolling, navigating — without approaching the objective.
+# This breaker asks the judgment seam, once per autonomy turn, whether
+# the recent activity made measurable progress.  It is inert without a
+# backend, on a failed or low-confidence judgment, and for interactive
+# sessions: the fallback is exactly today's syntactic-only behavior.
+
+_SEMANTIC_INSTRUCTION = (
+    "An unattended agent run is in progress. Judge whether the recent activity "
+    "made measurable progress toward the objective. Answer no when the run is "
+    "spinning — acting repeatedly without approaching the objective."
+)
+
+
+async def maybe_trip_semantic(
+    session: Session,
+    backend: JudgmentBackend | None,
+    *,
+    threshold: float = 0.6,
+    limit: int = DEFAULT_SEMANTIC_NO_PROGRESS_N,
+) -> str | None:
+    """Trip ``breaker:no_semantic_progress`` after *limit* no-progress rounds.
+
+    Returns ``None`` to continue.  Never trips on an error — a judgment
+    that cannot be made leaves the syntactic breakers to do their job.
+    """
+    if not session.autonomy or backend is None:
+        return None
+    charter = session.charter
+    if charter is None:
+        return None
+    question = JudgmentQuestion(
+        kind=JudgmentKind.NOUL,
+        instructions=_SEMANTIC_INSTRUCTION,
+        state=(
+            ("Objective", charter.objective),
+            ("Recent activity", _recent_activity(session)),
+            ("Finished turns", str(session.autonomy_turns)),
+        ),
+        question_id="semantic-progress",
+    )
+    try:
+        judgment = await backend.judge(question)
+    except Exception:  # connectors should not raise; inert if one does
+        log.exception("semantic breaker judgment raised; breaker stays inert")
+        return None
+    if not judgment.ok or judgment.confidence < threshold:
+        return None
+    if judgment.label == "no":
+        session.semantic_no_progress_streak += 1
+    else:
+        session.semantic_no_progress_streak = 0
+    if session.semantic_no_progress_streak >= limit:
+        return SEMANTIC_NO_PROGRESS
+    return None
+
+
+def _recent_activity(session: Session) -> str:
+    """A compact text summary of the run's recent motion, for the judgment."""
+    parts: list[str] = []
+    if session.last_tool_fingerprint:
+        names = ", ".join(name for name, _ in session.last_tool_fingerprint)
+        parts.append(f"last tool batch: {names} (repeated {session.tool_loop_streak}x)")
+    if session.file_write_counts:
+        top = sorted(session.file_write_counts.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        parts.append("files written: " + ", ".join(f"{path} ({n}x)" for path, n in top))
+    poll = session.last_dod_poll
+    if poll is not None:
+        parts.append(f"definition-of-done greens: {_green_count(poll)}")
+    return "; ".join(parts) if parts else "(no tool activity yet)"
 
 
 def _canonical_args(args: Mapping[str, Any]) -> str:

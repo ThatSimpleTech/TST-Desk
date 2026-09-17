@@ -1121,6 +1121,140 @@ what makes aggressive Class A behavior safe.
 
 ---
 
+### TD-708 — Judgment seam for the decision classifier (provider-neutral)
+**Size:** 5 · **Depends on:** TD-703, TD-302, TD-706
+**Status:** Proposed 2026-09-17 — not scheduled into a milestone
+
+**Acceptance criteria:**
+- [ ] A `JudgmentBackend` protocol (question + bounded state → typed answer + confidence)
+      becomes the single seam behind TD-703's `call_worker`; the existing worker-tier
+      chat completion is formalized as the default connector and behavior is unchanged
+      without explicit opt-in
+- [ ] The product runs flawlessly with only the default connector — no external
+      judgments API configured, present, or required
+- [ ] Additional connectors (a typed-judgment API such as TypeSafe/Jev is the evaluated
+      example) live in their own modules behind configuration; core modules carry no
+      vendor-specific names, imports, or URLs (prime §2.7)
+- [ ] A connector credential lives in the OS keychain via `keychain.py` — never in
+      config, logs, or the audit database (prime §2.2)
+- [ ] The static rule table (TD-701) always runs first; only unclassified requests reach
+      the judgment seam — asserted by a test that no rule-matched request ever hits it
+- [ ] The judgment request carries classifier signals only (tool name, workspace-relative
+      paths, hosts, mutation intent, `side_effect_class`, provenance) — never absolute
+      paths, file contents, or conversation text; asserted by test
+- [ ] Every connector fails toward B: unknown labels, timeouts, errors, low confidence,
+      and (on chat connectors) unparseable replies classify as **B** — the TD-703
+      fail-toward-asking invariant holds per connector
+- [ ] A charter/boundary with `network: "deny"`, or a connector host missing from
+      `allowed_hosts`, disables a remote connector for that run; ambiguous cases classify
+      as B with no network call attempted
+- [ ] Judgment cost is recorded via `CostTracker.record_classifier()` per connector and
+      stays visible separately in the cost breakdown
+- [ ] The session cache on (tool, canonical arguments) applies unchanged across
+      connectors
+- [ ] All connector tests run against mocks; no live network in tests
+- [ ] `docs/configuration.md` documents every new key
+
+**Notes:** Spec §12.2 designed this seam: "a cheap classifier call on the worker tier …
+plus a static rule table." TD-703's `AmbiguousClassifier(static, call_worker)` is the
+integration point — this story formalizes `call_worker` as a provider-neutral protocol;
+the loop, the chokepoint, and the static table do not change. Connector-not-infrastructure
+per the 2026-09-17 DECISIONS entries: TypeSafe is an optional connector, never a core
+dependency; its skill stays vendored at `.tst/skills/typesafe-ai/` (gitignored) as the
+dev-time API reference for building that connector.
+
+---
+
+### TD-709 — Action-effect verification for computer-use actuation
+**Size:** 5 · **Depends on:** TD-708, TD-3301, TD-1710
+**Status:** Proposed 2026-09-17 — not scheduled into a milestone
+
+**Acceptance criteria:**
+- [ ] After any `actuates=True` desktop/browser tool runs, a verification judgment on the
+      configured `JudgmentBackend` (default: the worker tier) answers a per-action
+      question ("did the intended effect occur?") from a compact text before/after
+      state — AX tree / DOM summary / foreground-window changes. Never a screenshot;
+      never raw page content
+- [ ] Runs end-to-end on the default worker-tier connector with no external judgments
+      API configured, present, or required
+- [ ] The state extractor produces a bounded, size-capped text summary; the exact payload
+      sent is recorded in the audit log with the question, answer, confidence, latency,
+      and cost — what left the machine is inspectable per judgment
+- [ ] Outcomes: verified → continue; refuted → one retry with re-grounding, then escalate
+      (interactive) or fault-report (autonomy); judgment unavailable, unparseable, or
+      low-confidence → today's behavior with no verification — never a new block
+- [ ] Config-gated, off by default; the disabled path is byte-identical to today
+- [ ] Accuracy and latency measured on a recorded fixture corpus of labeled before/after
+      pairs, reported in DECISIONS.md — ships only if it beats the no-verification
+      baseline on the fixture suite (TD-3304 eval culture). Tests use mock backends;
+      no live network
+- [ ] Cost recorded separately (`record_classifier`-style), visible in the cost breakdown
+- [ ] `docs/configuration.md` documents every new key
+
+**Notes:** Replaces the crudest check in the CU stack — `expect_window` substring
+matching (TD-3301) — with a semantic one. The state extractor built here is reused by
+TD-710. Judgments may add refusals, never remove them: the static `actuates → B` gate
+(TD-3301) and `cu_policy` allow/denylists are unchanged.
+
+---
+
+### TD-710 — Semantic no-progress breaker for unattended runs
+**Size:** 3 · **Depends on:** TD-709, TD-4203
+**Status:** Proposed 2026-09-17 — not scheduled into a milestone
+
+**Acceptance criteria:**
+- [ ] A fifth breaker beside the syntactic four (TD-4203): a judgment on the configured
+      `JudgmentBackend` (default: the worker tier) over the charter goal plus the
+      per-round state summaries (TD-709's extractor) answers "did this round make
+      measurable progress toward the goal?"
+- [ ] Runs on the default worker-tier connector with no external judgments API
+      configured, present, or required
+- [ ] Streak semantics mirror the existing breakers: N consecutive no-progress judgments
+      trip `breaker:no_semantic_progress` as a fault report, not a permission request;
+      any verified progress resets the streak
+- [ ] Judgment unavailable → the breaker is inert and syntactic breakers run alone;
+      an error never trips it
+- [ ] Every judgment payload, answer, and confidence is audit-logged
+- [ ] Config-gated, off by default; interactive sessions never judge (mirrors TD-4203)
+- [ ] Fixture eval on recorded stuck-vs-progressing runs with measured trip accuracy in
+      DECISIONS.md; mock backends only in tests
+- [ ] Cost separately accounted
+
+**Notes:** Catches the failure mode the syntactic breakers cannot: a CU loop that keeps
+*changing* things — clicking, scrolling, navigating — without approaching the goal. No
+fingerprint repeats, no thrash, spend burns. Fail-closed fallback is literally today's
+behavior.
+
+---
+
+### TD-711 — Judgment-based candidate selection in the browser loop
+**Size:** 5 · **Depends on:** TD-708, TD-1710
+**Status:** Proposed 2026-09-17 — not scheduled into a milestone
+
+**Acceptance criteria:**
+- [ ] Code extracts candidate elements; the configured `JudgmentBackend` picks the
+      intended one. The payload is a fixed Pydantic schema — `{index, tag, role,
+      accessible_name, bounding_box}` per candidate plus the target phrase. No page
+      text, HTML, cookies, or URL crosses the extraction boundary; the schema is the
+      isolation boundary, readable in one glance
+- [ ] Runs on the default worker-tier connector with no external judgments API
+      configured, present, or required
+- [ ] Every judgment's exact payload, answer, confidence, latency, and cost is recorded
+      in the audit log — what left the machine is inspectable per judgment
+- [ ] Config-gated, off by default; the disabled path is byte-identical to today (the
+      brain reads page state). Backend down or low confidence → the same fallback,
+      never a block
+- [ ] Accuracy and latency measured on recorded pages with labeled correct candidates,
+      reported in DECISIONS.md — ships only if it beats the brain-driven baseline on
+      the fixture suite; mock backends only in tests
+- [ ] Cost separately accounted; `docs/configuration.md` documents every new key
+
+**Notes:** Select-instead-of-generate: cuts brain-tier tokens on large pages and turns
+a prompt-and-parse step into a typed decision. Isolation is mechanical (a schema), not
+a promise — the user can diff any judgment's payload against the page after the fact.
+
+---
+
 ## Epic E8 — Approvals and policy
 
 ---
@@ -7493,3 +7627,19 @@ Windows/Linux list apps best-effort; AX snapshot/action is macOS-only.
 **Completed (2026-09-09):** Settings → Computer use writes the same document
 background tools already honor.
 
+
+---
+
+### TD-4831 — Review follow-up: diagnostics, protocol docs and UI regressions
+**Size:** 3 · **Depends on:** TD-4401, TD-4830, TD-1601, TD-4701
+**Status:** In progress — user-approved review follow-up, 2026-09-17
+
+**Acceptance criteria:**
+- [ ] Dead MCP server coverage still asserts a failed diagnostic with remediation and a running daemon, without rejecting additional doctor checks
+- [ ] Architecture client-message table documents `set_cu_policy` and passes protocol completeness and scoping tests
+- [ ] WakeupCard and SettingsAbout reference declared canonical color tokens; token tests pass
+- [ ] The shared icon map declares `mic` once; UI type checking has no errors
+- [ ] Full core, UI and Rust suites rerun; remaining unrelated gate failures and review limitations recorded without claiming a green DoD
+
+**Scope:** Four fixes approved after the 2026-09-17 review. Python lint/type
+cleanup, Composer warnings, tray lifecycle and live/soak testing remain separate.

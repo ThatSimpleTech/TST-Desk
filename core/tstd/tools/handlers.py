@@ -25,6 +25,7 @@ from pathlib import Path
 from ..browser import BrowserDriver, MockBrowserDriver
 from ..context.manifest import _FALLBACK_IGNORE
 from ..context.skills import register_skill_handlers
+from ..cu_verify import DriverStateProbe
 from ..desktop import DesktopDriver, MockDesktopDriver
 from ..desktop.grounding_client import GroundingLocator
 from .browser import register_browser_handlers
@@ -182,6 +183,12 @@ def register_builtin_handlers(
     )
     register_browser_handlers(
         dispatcher, browser_driver if browser_driver is not None else MockBrowserDriver()
+    )
+    # TD-709 (dev): the state probe lets an attached verifier snapshot
+    # before/after actuation.  Inert until a verifier is wired (config-gated).
+    dispatcher.state_probe = DriverStateProbe(
+        desktop_driver if desktop_driver is not None else MockDesktopDriver(),
+        browser_driver if browser_driver is not None else MockBrowserDriver(),
     )
     register_skill_handlers(dispatcher)
     register_delegate_handlers(dispatcher)

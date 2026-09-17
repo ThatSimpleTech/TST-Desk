@@ -34,6 +34,7 @@ from .autonomy import (
     DecisionClass,
     DecisionClassifier,
     DecisionLedger,
+    WorkerChatJudgmentBackend,
 )
 from .autonomy.breakers import record_autonomy_round
 from .autonomy.checkpoint import auto_branch
@@ -54,6 +55,7 @@ from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
 from .cost import CallRecord, CostTracker
+from .cu_verify import ActuationVerifier
 from .discovery import discover_model, resolve_tier_slugs
 from .keychain import KeychainError
 from .local_worker import (
@@ -651,6 +653,20 @@ async def agent_loop(
             tool_dispatcher.classifier = AmbiguousClassifier(
                 static=DecisionClassifier(boundary),
                 call_worker=_worker_completion,
+            )
+
+        # TD-708/709/710 (dev): the judgment seam.  The default connector
+        # wraps the same worker completion the classifier uses; each
+        # feature gates individually in config and defaults off, so an
+        # unconfigured run is byte-identical to the pre-seam product.
+        judgments_cfg = config.judgments
+        if judgments_cfg.semantic_breaker and session.judgment_backend is None:
+            session.judgment_backend = WorkerChatJudgmentBackend(_worker_completion)
+        if judgments_cfg.verification and tool_dispatcher.verifier is None:
+            tool_dispatcher.verifier = ActuationVerifier(
+                WorkerChatJudgmentBackend(_worker_completion),
+                threshold=judgments_cfg.confidence_threshold,
+                max_state_chars=judgments_cfg.max_state_chars,
             )
 
         # Path boundary enforcement (TD-602): the same workspace boundary

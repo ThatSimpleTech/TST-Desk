@@ -58,6 +58,7 @@ from tstd.config import (
     EmbeddingsConfig,
     EngineConfig,
     GroundingConfig,
+    JudgmentsConfig,
     McpConfig,
     McpServerConfig,
     ModelConfig,
@@ -216,6 +217,7 @@ _PROJECT_CONTEXT_FIELDS = frozenset(ProjectContextConfig.model_fields)
 _SESSION_FIELDS = frozenset(SessionConfig.model_fields)
 _COMPUTER_USE_FIELDS = frozenset(ComputerUseConfig.model_fields)
 _GROUNDING_FIELDS = frozenset(GroundingConfig.model_fields)
+_JUDGMENTS_FIELDS = frozenset(JudgmentsConfig.model_fields)
 _REMOTE_FIELDS = frozenset(RemoteConfig.model_fields)
 _NOTIFY_FIELDS = frozenset(NotifyConfig.model_fields)
 _AUTONOMY_FIELDS = frozenset(AutonomyConfig.model_fields)
@@ -298,6 +300,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                     _GROUNDING_FIELDS,
                     f"{where} computer_use.grounding",
                 )
+        if "judgments" in data:
+            _check_keys(data["judgments"], _JUDGMENTS_FIELDS, f"{where} judgments")
         if "remote" in data:
             _check_keys(data["remote"], _REMOTE_FIELDS, f"{where} remote")
         if "notify" in data:
@@ -352,6 +356,7 @@ def test_every_config_key_is_documented() -> None:
         | _SESSION_FIELDS
         | _COMPUTER_USE_FIELDS
         | _GROUNDING_FIELDS
+        | _JUDGMENTS_FIELDS
         | _REMOTE_FIELDS
         | _NOTIFY_FIELDS
         | _AUTONOMY_FIELDS

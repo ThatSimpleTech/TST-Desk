@@ -206,6 +206,25 @@ when omitted, same as a loopback tier (TD-1805).
 | `slug` | string or omitted | *omitted* | Model id. Omitted discovers the single model the endpoint serves. Required only if the server lists several. |
 | `timeout_seconds` | float > 0 | `8` | How long a locate request may run before the intended point is used. |
 
+### `judgments`
+
+Provider-neutral judgment features (TD-708/709/710/711, dev build). A
+*judgment* is a typed answer to a narrow question over bounded text
+state, asked on the configured backend — the default connector is the
+worker tier you already have, so nothing here requires an external
+judgments API. Every flag defaults off, and off means the dispatch and
+autonomy paths are byte-identical to the pre-seam product. Every
+judgment fails closed: an unavailable, unparseable, or low-confidence
+answer falls back to the unjudged behavior, never to a block.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `verification` | bool | `false` | After an actuating desktop/browser tool succeeds, judge whether it had its intended effect from a bounded text before/after state (TD-709). A refuted actuation is annotated on the tool result so the loop can re-check or retry. Never a screenshot; never raw page content. |
+| `semantic_breaker` | bool | `false` | Unattended runs gain a fifth circuit breaker (TD-710): N consecutive no-progress judgments trip `breaker:no_semantic_progress` as a fault report. Inert on any judgment failure. |
+| `candidate_selection` | bool | `false` | Browser candidate picking via a fixed-schema choice judgment (TD-711): code extracts `{index, tag, role, accessible_name, bounding_box}` per candidate; no page text, HTML, cookies, or URL crosses the boundary. |
+| `confidence_threshold` | float 0–1 | `0.6` | Minimum confidence to assert a judgment. Below it the feature treats the answer as unavailable. |
+| `max_state_chars` | int | `2000` | Per-field cap on the state text sent to the backend. |
+
 ### `notify`
 
 Outbound notification channels (TD-3801, TD-3802, TD-4707). Each channel is a
