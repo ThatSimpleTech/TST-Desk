@@ -24,6 +24,7 @@ from tstd.config import (
     ModelConfig,
     NtfyNotifyConfig,
     RemoteConfig,
+    SearchConfig,
     SlackNotifyConfig,
     SpeechConfig,
     TierConfig,
@@ -605,3 +606,29 @@ class TestNoSlugsInSource:
         for price in self._FORBIDDEN_PRICES:
             found = self._grep_for(price, src)
             assert found is None, f"Price '{price}' found in Python source (.py files):\n{found}"
+
+
+class TestSearchFallbacks:
+    """Fallback endpoints ship in config and heal old user copies."""
+
+    def test_missing_key_inherits_the_shipped_fallback(self) -> None:
+        """A search section from before this key existed still gets one.
+
+        The loader only fills missing top-level sections, so without this
+        the default would pin an empty list on every existing user copy.
+        """
+        assert SearchConfig().fallback_base_urls == ["https://www.bing.com/search"]
+
+    def test_explicit_empty_disables_fallback(self) -> None:
+        assert SearchConfig(fallback_base_urls=[]).fallback_base_urls == []
+
+    def test_shipped_config_declares_the_fallback(self, tmp_path: Path) -> None:
+        config = _load_shipped(tmp_path)
+        assert config.search.fallback_base_urls == ["https://www.bing.com/search"]
+
+    def test_old_user_copy_without_the_key_still_gets_it(self, tmp_path: Path) -> None:
+        """An existing user search section gains the fallback on load."""
+        data = yaml.safe_load(default_config_yaml())
+        del data["search"]["fallback_base_urls"]
+        config = load_config(_write_config(tmp_path, yaml.safe_dump(data)))
+        assert config.search.fallback_base_urls == ["https://www.bing.com/search"]

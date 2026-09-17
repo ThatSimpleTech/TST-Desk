@@ -129,14 +129,17 @@ credentials:
 
 ### `search`
 
-The agent's `web_search` tool. The query is sent to `base_url` as `?q=...`. The
-host is configuration, never a literal in Python (the no-telemetry test
-enumerates those). An empty `base_url` disables the tool with copy that names
-this key.
+The agent's `web_search` tool. The query is sent to `base_url` as `?q=...`,
+then to each `fallback_base_urls` entry in order when the URLs before it fail
+or return nothing parseable (a captcha page is a 200 with zero rows). The
+first URL with rows wins. Hosts are configuration, never literals in Python
+(the no-telemetry test enumerates those). An empty `base_url` disables the
+primary only; all empty disables the tool with copy that names this key.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `base_url` | string | *shipped* | The search endpoint. Empty string disables `web_search`. |
+| `base_url` | string | *shipped* | The first search endpoint. Empty string skips it. |
+| `fallback_base_urls` | list of strings | *shipped* | Endpoints tried in order after `base_url` fails. Empty list disables fallback. Every host in the chain must be on the workspace `network` allowlist or the call stays Class C. |
 | `timeout_seconds` | float > 0 | `15` | How long a search or fetch request may run. |
 | `max_results` | int 1–20 | `8` | Default hit count when the tool call omits `max_results`. |
 | `fetch_max_bytes` | int ≥ 1 | `200000` | Cap on a `web_fetch` body. |
@@ -978,8 +981,9 @@ delivers. Both are reported as defects; neither is fixed here.
   answers for it.
 - **`network` gates the web tools, not the shell.** Since TD-4808 the allowlist is enforced
   where a host is visible to the classifier: `web_fetch` reduces its `url` argument to a bare
-  host, and `web_search` answers for the configured `search.base_url`. A host outside the list
-  is Class C (refused); an allowlisted host still asks (Class B). But `deny` does not stop
+  host, and `web_search` answers for every host in its chain (`search.base_url` plus
+  each fallback). A host outside the list is Class C (refused); an allowlisted host still
+  asks (Class B). But `deny` does not stop
   `curl` — the classifier cannot see inside a command string, so shell egress is governed by
   `allowed_commands` and the approval gate alone.
 

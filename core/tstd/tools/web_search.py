@@ -1,9 +1,10 @@
 """Web search and page fetch (TD-609, TD-610).
 
-``web_search`` hits only ``search.base_url`` from config. ``web_fetch``
-takes a URL the model chose (a search hit); that call is Class B so the
-user sees the address. Loopback, link-local, and metadata addresses are
-refused in the handler — that is the wall, not an internet allowlist.
+``web_search`` tries ``search.base_url``, then each fallback in order —
+all from config. ``web_fetch`` takes a URL the model chose (a search hit);
+that call is Class B so the user sees the address. Loopback, link-local,
+and metadata addresses are refused in the handler — that is the wall, not
+an internet allowlist.
 
 The wall is checked twice by design (TD-4814): once on the handler's own
 resolution for a fast, friendly refusal, and again at connect time, where
@@ -16,13 +17,15 @@ second resolution to poison.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import ipaddress
 import json
 import socket
 from collections.abc import Awaitable, Callable
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 import httpcore
 import httpx
@@ -44,19 +47,22 @@ _BLOCKED_NAMES = frozenset(
 
 
 def search_hosts() -> tuple[str, ...]:
-    """The hosts ``web_search`` reaches, from config — for the classifier.
+    """The hosts ``web_search`` may reach, from config — for the classifier.
 
-    The search endpoint is ``search.base_url``, not a tool argument, so
-    the dispatcher cannot read it out of the call.  Registered as the
-    tool's ``host_resolver`` (TD-4808): ``network: deny`` and the host
-    allowlist classify the call before it runs.  Empty when search is
-    not configured or the URL has no host.
+    The search endpoints are ``search.base_url`` plus each fallback, not a
+    tool argument, so the dispatcher cannot read them out of the call.
+    Registered as the tool's ``host_resolver`` (TD-4808): ``network: deny``
+    and the host allowlist classify the call before it runs.  Every host
+    in the chain is listed — the call may reach any of them, so a
+    workspace must allowlist all of them to clear Class C.  Empty when
+    search is not configured or no URL has a host.
     """
-    base_url = cached_config().search.base_url.strip()
-    if not base_url:
-        return ()
-    host = urlsplit(base_url).hostname
-    return (host.lower(),) if host else ()
+    hosts: list[str] = []
+    for url in _search_urls():
+        host = urlsplit(url).hostname
+        if host and host.lower() not in hosts:
+            hosts.append(host.lower())
+    return tuple(hosts)
 
 
 class _AnchorCollector(HTMLParser):
@@ -123,6 +129,31 @@ class _TextExtractor(HTMLParser):
 def _endpoint() -> tuple[str, float, int, int]:
     cfg = cached_config().search
     return cfg.base_url.strip(), cfg.timeout_seconds, cfg.max_results, cfg.fetch_max_bytes
+
+
+def _search_urls() -> list[str]:
+    """The search chain: primary plus fallbacks, blanks dropped.
+
+    Separate from :func:`_endpoint` so the scalars keep their seam and
+    the chain keeps its own.  Empty only when search is unconfigured.
+    """
+    cfg = cached_config().search
+    urls = [cfg.base_url.strip(), *(u.strip() for u in cfg.fallback_base_urls)]
+    return [u for u in urls if u]
+
+
+def _describe_error(exc: BaseException) -> str:
+    """Human form of a transport failure.
+
+    Some httpx errors stringify to nothing — a bare ``ConnectError`` from
+    a reset connection is ``str() == ""`` — which used to surface as the
+    useless ``search request failed ()``.  Report the exception type then,
+    so a reset, a timeout, and a refused lookup read differently.
+    """
+    message = str(exc).strip()
+    if message:
+        return message
+    return type(exc).__name__
 
 
 def _addr_refusal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
@@ -300,6 +331,31 @@ def _from_json(payload: Any, limit: int) -> list[tuple[str, str, str]]:
     return out
 
 
+def _unwrap_redirect(url: str) -> str | None:
+    """Unwrap a same-host redirect link whose target rides in a query param.
+
+    Some backends point result anchors at a same-host redirect with the
+    real destination base64-encoded in a parameter (Bing's ``/ck/a`` links
+    carry it in ``u``, behind a 2-char version prefix).  Decode every
+    parameter value — whole, then minus a 2-char prefix — and take the
+    first one that yields an http(s) URL.  ``None`` when nothing unwraps,
+    so the link stays skipped.  Only ever returns http(s) targets.
+    """
+    query = urlsplit(url).query
+    if not query:
+        return None
+    for _key, value in parse_qsl(query):
+        for candidate in (value, value[2:]):
+            padded = candidate + "=" * (-len(candidate) % 4)
+            try:
+                decoded = base64.urlsafe_b64decode(padded).decode("utf-8")
+            except (ValueError, binascii.Error, UnicodeDecodeError):
+                continue
+            if decoded.startswith(_SCHEMES):
+                return decoded
+    return None
+
+
 def _from_html(html: str, base: str, limit: int) -> list[tuple[str, str, str]]:
     parser = _AnchorCollector()
     parser.feed(html)
@@ -309,8 +365,13 @@ def _from_html(html: str, base: str, limit: int) -> list[tuple[str, str, str]]:
     for title, href in parser.links:
         url = urljoin(base, href)
         host = urlsplit(url).netloc
-        if not host or host == own or url in seen:
+        if not host or url in seen:
             continue
+        if host == own:
+            unwrapped = _unwrap_redirect(url)
+            if unwrapped is None or urlsplit(unwrapped).netloc == own or unwrapped in seen:
+                continue
+            url = unwrapped
         seen.add(url)
         out.append((title, url, ""))
         if len(out) >= limit:
@@ -335,36 +396,56 @@ async def web_search(
     max_results: int = 0,
     tool_call_id: str = "",
 ) -> str:
-    """Search the public web. Destination is config, not the query."""
+    """Search the public web. Destinations are config, not the query.
+
+    Tries the primary endpoint, then each fallback in order.  A URL that
+    fails the request — or answers with nothing parseable (a captcha or
+    bot page is a 200 with zero rows) — yields to the next one.  The
+    first URL with rows wins; every failure is named in the error when
+    none do.
+    """
     text = query.strip()
     if text == "":
         return "Error: query is empty"
-    base, timeout, default_limit, _cap = _endpoint()
-    if base == "":
+    urls = _search_urls()
+    if not urls:
         return (
             "Error: web search is not configured. Set search.base_url in "
             "config.yaml (user data dir) to a search endpoint, then restart."
         )
+    _base, timeout, default_limit, _cap = _endpoint()
     limit = max_results if max_results and max_results > 0 else default_limit
     limit = max(1, min(limit, 20))
-    try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(base, params={"q": text})
-            response.raise_for_status()
-            body = response.text[:_MAX_BODY]
-            ctype = response.headers.get("content-type", "")
-    except httpx.HTTPError as exc:
-        return f"Error: search request failed ({exc})"
-
-    rows: list[tuple[str, str, str]] = []
-    if "json" in ctype or body.lstrip().startswith(("{", "[")):
-        try:
-            rows = _from_json(json.loads(body), limit)
-        except json.JSONDecodeError:
-            rows = []
-    if not rows:
-        rows = _from_html(body, str(response.url), limit)
-    return _render(rows)
+    failures: list[tuple[str, str]] = []
+    transport_failed = False
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        for url in urls:
+            try:
+                response = await client.get(url, params={"q": text})
+                response.raise_for_status()
+                body = response.text[:_MAX_BODY]
+                ctype = response.headers.get("content-type", "")
+            except httpx.HTTPError as exc:
+                transport_failed = True
+                failures.append((url, _describe_error(exc)))
+                continue
+            rows: list[tuple[str, str, str]] = []
+            if "json" in ctype or body.lstrip().startswith(("{", "[")):
+                try:
+                    rows = _from_json(json.loads(body), limit)
+                except json.JSONDecodeError:
+                    rows = []
+            if not rows:
+                rows = _from_html(body, str(response.url), limit)
+            if rows:
+                return _render(rows)
+            failures.append((url, "returned no parseable results"))
+    if not transport_failed:
+        return "No search results."
+    if len(urls) == 1:
+        return f"Error: search request failed ({failures[0][1]})"
+    joined = "; ".join(f"{url}: {note}" for url, note in failures)
+    return f"Error: search failed on {len(urls)} endpoint(s): {joined}"
 
 
 async def web_fetch(
@@ -406,7 +487,7 @@ async def web_fetch(
             ctype = response.headers.get("content-type", "")
             final = str(response.url)
     except httpx.HTTPError as exc:
-        return f"Error: fetch failed ({exc})"
+        return f"Error: fetch failed ({_describe_error(exc)})"
 
     blocked = _blocked_reason(final)
     if blocked is not None:
