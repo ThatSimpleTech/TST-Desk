@@ -7207,6 +7207,45 @@ files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
 
 ---
 
+### TD-4846 — Keep the strict warning gate green and on by default; one code for a rejected key
+**Size:** 1 · **Depends on:** TD-4835, TD-4840, TD-4844
+
+Three review findings from integrating TD-4835 through TD-4845. The
+stuck-provider shutdown test left its listening socket, and the
+connection it accepts and never answers, for the garbage collector.
+`ResourceWarning` failed that test once those warnings were errors.
+A key that changed and was rejected on the one retry logged the host
+sentence, but the event the window received was still `auth_failed`,
+so the banner was the generic "Authentication failed…" copy.
+
+**Acceptance criteria:**
+- [x] `test_stuck_provider_read_does_not_burn_the_shutdown_budget`
+      closes every socket it opens. The hung handler waits on an event
+      the test sets during teardown, then `server_close()` runs. No
+      sleep and no warning filter. Production shutdown is unchanged
+- [x] `error::ResourceWarning` and
+      `error::pytest.PytestUnraisableExceptionWarning` are the default
+      pytest filters, beside the filters that were already there. The
+      full suite passes twice under them
+- [x] When a changed key is retried once and rejected again, the turn
+      the window receives is `api_key_rejected` with the same host
+      sentence as an unchanged key. Both paths assert that code and
+      that message
+
+Done (2026-09-29): the shutdown test wakes its hung handler and closes
+the server, including the listening socket. Those two warnings are
+errors in `core/pyproject.toml`. A second rejection after a rotated
+key is `api_key_rejected` with the credential and host sentence, on
+both the completion and the stream, so the window does not show the
+generic 401 banner. Class B entry in DECISIONS.md.
+
+Suite: 3724 passed / 8 skipped, twice, with `ResourceWarning` and
+`PytestUnraisableExceptionWarning` as errors. ruff + `mypy --strict`
+clean over 163 files, vitest 1412, svelte-check 709 files 0 errors
+0 warnings.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
