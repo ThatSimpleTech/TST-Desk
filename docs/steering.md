@@ -169,11 +169,20 @@ to say so.
 
 ## 3. `CLAUDE.md` compatibility
 
-At every path in the hierarchy, the rule is the same: **`AGENTS.md` if it exists, otherwise
-`CLAUDE.md`.** The global level checks `~/.tstdesk/AGENTS.md` first and falls back to
-`~/.claude/CLAUDE.md`.
+Inside a workspace, at every path in the hierarchy, the rule is the same: **`AGENTS.md` if it
+exists, otherwise `CLAUDE.md`.** A repo that already has `CLAUDE.md` and no `AGENTS.md` is
+read on the first run.
 
-A workspace with no `AGENTS.md` anywhere resolves completely:
+The user-global level is TST Desk's own file, `~/.tstdesk/AGENTS.md`. `~/.claude/CLAUDE.md`
+is Claude Code's global file and is not read unless `steering.claude_global_fallback` is
+`true` in `config.yaml` (default `false`). When the key is false and that file exists with
+no `~/.tstdesk/AGENTS.md`, Doctor's steering row says
+`not loaded — enable steering.claude_global_fallback to use it`. Turning the key on loads
+the file as the user-global fallback. An import from it that leaves the workspace still
+asks for approval.
+
+A workspace with no `AGENTS.md` anywhere, and a Claude Code global file on disk, resolves
+the project files only:
 
 <!-- verify: example claude-only -->
 <!-- verify: file ~/.claude/CLAUDE.md -->
@@ -193,13 +202,13 @@ No new abstractions in `src/` without a second caller.
 
 <!-- verify: stack -->
 ```
-~/.claude/CLAUDE.md    (user global) [claude-fallback]
 CLAUDE.md              (workspace)   [claude-fallback]
 src/CLAUDE.md          (nested: src) [claude-fallback]
 ```
 
-Every entry is flagged as a fallback in the instruction inspector, so you can always see which
-file a rule actually came from.
+The global file is on disk in this example and is absent from the stack. That is the default.
+Workspace and nested entries are flagged as fallbacks in the instruction inspector, so you can
+always see which file a rule actually came from.
 
 When both files exist at one path, `AGENTS.md` wins and the `CLAUDE.md` is recorded as
 shadowed — the inspector shows you the file that was skipped rather than pretending it is not
@@ -859,20 +868,21 @@ first run.
 |---|---|
 | `CLAUDE.md` at the repo root | Read as the workspace steering file. Nothing to rename |
 | `CLAUDE.md` in subdirectories | Read as nested steering for that subtree |
-| `~/.claude/CLAUDE.md` | Read as your user-global file |
+| `~/.claude/CLAUDE.md` | Not read unless `steering.claude_global_fallback` is true. Prefer `~/.tstdesk/AGENTS.md` |
 | `@path` imports in any of them | Resolved the same way, max depth 4 |
-| Both `AGENTS.md` and `CLAUDE.md` | `AGENTS.md` wins; the other is shown as shadowed |
+| Both `AGENTS.md` and `CLAUDE.md` | `AGENTS.md` wins; inside the workspace the other is shown as shadowed |
 
-The §3 example above is exactly this case, run for real: a workspace with no `AGENTS.md`
-anywhere still resolves a full three-level stack.
+The §3 example above is this case, run for real: a workspace with no `AGENTS.md` resolves its
+`CLAUDE.md` files, and `~/.claude/CLAUDE.md` stays out of the stack unless you enable the key.
 
 What does **not** carry over, and what to do about it:
 
 - **`.cursor/rules/`, `.github/copilot-instructions.md`, and similar tool-specific
   directories** are not read. Copy the content into `.tst/rules/` — and if the originals had
   path scoping, this is where you get it back, with `appliesTo`.
-- **A `.claude/` directory inside the workspace** is skipped by the nested walk. Only
-  `~/.claude/CLAUDE.md` at your home directory is read. Move anything you need out of it.
+- **A `.claude/` directory inside the workspace** is skipped by the nested walk.
+  `~/.claude/CLAUDE.md` is not read unless `steering.claude_global_fallback` is true.
+  Move anything you need into `~/.tstdesk/AGENTS.md`.
 - **MCP server definitions, hooks, and subagent files** are configuration for
   another product, not steering. They are ignored.
 - **Slash commands** live in `.tst/commands/*.md` (and `~/.tstdesk/commands/*.md`).

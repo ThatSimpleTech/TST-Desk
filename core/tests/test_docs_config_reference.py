@@ -71,6 +71,7 @@ from tstd.config import (
     SessionConfig,
     SlackNotifyConfig,
     SpeechConfig,
+    SteeringConfig,
     TelegramNotifyConfig,
     TierConfig,
     VoiceConfig,
@@ -214,6 +215,7 @@ _MODEL_FIELDS = frozenset(ModelConfig.model_fields)
 _SEARCH_FIELDS = frozenset(SearchConfig.model_fields)
 _EMBEDDINGS_FIELDS = frozenset(EmbeddingsConfig.model_fields)
 _PROJECT_CONTEXT_FIELDS = frozenset(ProjectContextConfig.model_fields)
+_STEERING_FIELDS = frozenset(SteeringConfig.model_fields)
 _SESSION_FIELDS = frozenset(SessionConfig.model_fields)
 _COMPUTER_USE_FIELDS = frozenset(ComputerUseConfig.model_fields)
 _GROUNDING_FIELDS = frozenset(GroundingConfig.model_fields)
@@ -286,6 +288,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             _check_keys(
                 data["project_context"], _PROJECT_CONTEXT_FIELDS, f"{where} project_context"
             )
+        if "steering" in data:
+            _check_keys(data["steering"], _STEERING_FIELDS, f"{where} steering")
         if "session" in data:
             _check_keys(data["session"], _SESSION_FIELDS, f"{where} session")
         if "engine" in data:
@@ -353,6 +357,7 @@ def test_every_config_key_is_documented() -> None:
         | _SEARCH_FIELDS
         | _EMBEDDINGS_FIELDS
         | _PROJECT_CONTEXT_FIELDS
+        | _STEERING_FIELDS
         | _SESSION_FIELDS
         | _COMPUTER_USE_FIELDS
         | _GROUNDING_FIELDS
@@ -399,6 +404,7 @@ def test_documented_defaults_match_the_code() -> None:
         "max_count": str(DEFAULT_MAX_COUNT),
         "rules": "[]",
         "class_c_default": str(PolicyConfig.model_fields["class_c_default"].default),
+        "claude_global_fallback": "false",
     }
     for key, value in expected.items():
         rows = [line for line in text.split("\n") if line.startswith(f"| `{key}`")]

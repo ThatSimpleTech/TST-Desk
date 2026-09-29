@@ -77,6 +77,7 @@ from .config_write import (
 )
 from .context.assembler import ContextAssembler
 from .context.commands import list_workspace_commands_async
+from .context.discover import SteeringFileResolver, append_steering_notice
 from .context.instructions import (
     InstructionNameError,
     create_rule_file,
@@ -1450,9 +1451,11 @@ class Daemon:
     async def _check_steering(self, workspace: Path) -> DiagnosticCheck:
         """Steering stack parses: resolution runs and imports land."""
         try:
-            assembled = await ContextAssembler().assemble(
-                workspace, approved_imports=_approved_import_allowlist(workspace)
-            )
+            assembled = await ContextAssembler(
+                resolver=SteeringFileResolver(
+                    claude_global_fallback=self.config.steering.claude_global_fallback,
+                )
+            ).assemble(workspace, approved_imports=_approved_import_allowlist(workspace))
         except Exception as e:  # resolution is designed not to raise; report if it does
             return DiagnosticCheck(
                 name="steering",
@@ -1466,13 +1469,19 @@ class Daemon:
             return DiagnosticCheck(
                 name="steering",
                 status="fail",
-                detail=_relativize_paths(f"{issues[0]}{more}", workspace),
+                detail=append_steering_notice(
+                    _relativize_paths(f"{issues[0]}{more}", workspace),
+                    assembled.notices,
+                ),
                 fix="Fix or remove the broken @import in the named file.",
             )
         return DiagnosticCheck(
             name="steering",
             status="ok",
-            detail=f"{len(assembled.sources)} steering source(s) parsed",
+            detail=append_steering_notice(
+                f"{len(assembled.sources)} steering source(s) parsed",
+                assembled.notices,
+            ),
         )
 
     async def run(self) -> None:
@@ -3226,7 +3235,10 @@ class Daemon:
                 f"Session {msg.session_id!r} not found",
             )
         tier = found.router.active_tier if found.router is not None else "brain"
-        assembled = await PromptAssembler(found.workspace_path).assemble(
+        assembled = await PromptAssembler(
+            found.workspace_path,
+            claude_global_fallback=self.config.steering.claude_global_fallback,
+        ).assemble(
             tier,
             matched_paths=set(found.touched_paths),
             approved_imports=_approved_import_allowlist(found.workspace_path),
