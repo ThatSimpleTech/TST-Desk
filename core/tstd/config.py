@@ -328,6 +328,19 @@ class ProjectContextConfig(BaseModel):
     token_budget: int = Field(default=2000, ge=1)
 
 
+class SteeringConfig(BaseModel):
+    """Which extra steering files discovery may read (TD-4845).
+
+    ``claude_global_fallback`` gates only ``~/.claude/CLAUDE.md``.
+    Workspace and nested ``CLAUDE.md`` files are project files and stay
+    on the TD-502 fallback. Default false: TST Desk's global file is
+    ``~/.tstdesk/AGENTS.md``, and Claude Code's rules are not spent in
+    the prompt or followed into an outside import.
+    """
+
+    claude_global_fallback: bool = False
+
+
 DEFAULT_LOG_MAX_EVENTS = 10000
 
 
@@ -759,6 +772,7 @@ class ModelConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
+    steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
@@ -926,6 +940,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "search",
         "embeddings",
         "project_context",
+        "steering",
         "session",
         "computer_use",
         "remote",

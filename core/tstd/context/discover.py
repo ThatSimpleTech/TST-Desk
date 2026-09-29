@@ -9,10 +9,16 @@ Spec §4.1: loaded at session start, lowest → highest precedence:
     | Rules dir    | ``<workspace>/.tst/rules/*.md`` |
     | Directory    | ``<workspace>/**/AGENTS.md``  |
 
-**CLAUDE.md fallback (TD-502).** At any path, if ``AGENTS.md`` is absent
-and ``CLAUDE.md`` is present, ``CLAUDE.md`` is used.  If both are present,
-``AGENTS.md`` wins and the shadowing is recorded in ``shadowed_path``.
-The global level also checks ``~/.claude/CLAUDE.md`` as the last resort.
+**CLAUDE.md fallback (TD-502, TD-4845).** Inside the workspace, if
+``AGENTS.md`` is absent and ``CLAUDE.md`` is present, ``CLAUDE.md`` is
+used.  If both are present, ``AGENTS.md`` wins and the shadowing is
+recorded in ``shadowed_path``.  The user-global level reads
+``~/.tstdesk/AGENTS.md`` only, unless ``claude_global_fallback`` is
+true, in which case ``~/.claude/CLAUDE.md`` is the last resort.  When
+the flag is false and that Claude file exists with no
+``~/.tstdesk/AGENTS.md``, :meth:`SteeringFileResolver.claude_global_notice`
+names it for Doctor.  The file is not opened, and neither is anything
+it imports.
 
 The resolver returns *existing* files only, so missing files are not
 errors — they simply never appear.  Nested steering files carry their
@@ -70,6 +76,20 @@ _LABELS: dict[Precedence, str] = {
     Precedence.NESTED: "nested",
 }
 
+# Doctor quotes this when Claude Code's global file is present and the
+# opt-in is off.  The path is the tilde form so the row never carries
+# an absolute home directory (TD-1104).
+CLAUDE_GLOBAL_NOT_LOADED = (
+    "~/.claude/CLAUDE.md not loaded — enable steering.claude_global_fallback to use it"
+)
+
+
+def append_steering_notice(detail: str, notices: tuple[str, ...]) -> str:
+    """Attach discovery notes to one doctor detail, once."""
+    if not notices:
+        return detail
+    return f"{detail}; {'; '.join(notices)}"
+
 
 @dataclass(frozen=True)
 class SteeringSource:
@@ -103,14 +123,25 @@ class SteeringFileResolver:
     concatenate with later files overriding earlier ones.
     """
 
-    def __init__(self, home_dir: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        home_dir: str | Path | None = None,
+        *,
+        claude_global_fallback: bool = False,
+    ) -> None:
         """Create a resolver.
 
         Args:
             home_dir: Override the user home directory (test seam).
                 Defaults to the real user home.
+            claude_global_fallback: When true, ``~/.claude/CLAUDE.md``
+                is the user-global file if ``~/.tstdesk/AGENTS.md`` is
+                absent (TD-502).  When false (the default, TD-4845),
+                that file is never opened.  Workspace ``CLAUDE.md``
+                fallback is not affected.
         """
         self._home = Path(home_dir).expanduser() if home_dir is not None else Path.home()
+        self._claude_global_fallback = claude_global_fallback
 
     @property
     def home_dir(self) -> Path:
@@ -134,26 +165,10 @@ class SteeringFileResolver:
         sources: list[SteeringSource] = []
 
         # 1. User global — personal preferences across all workspaces.
-        #    Falls back to ~/.claude/CLAUDE.md (the Claude Code convention).
-        global_agents = self._home / ".tstdesk" / "AGENTS.md"
-        global_claude = self._home / ".claude" / "CLAUDE.md"
-        if global_agents.exists():
-            shadowed = global_claude if global_claude.exists() else None
-            sources.append(
-                SteeringSource(
-                    path=global_agents,
-                    precedence=Precedence.USER_GLOBAL,
-                    shadowed_path=shadowed,
-                )
-            )
-        elif global_claude.exists():
-            sources.append(
-                SteeringSource(
-                    path=global_claude,
-                    precedence=Precedence.USER_GLOBAL,
-                    is_fallback=True,
-                )
-            )
+        #    ~/.claude/CLAUDE.md is opt-in (TD-4845); see _user_global.
+        global_source = self._user_global()
+        if global_source is not None:
+            sources.append(global_source)
 
         # 2. Workspace root — team conventions, git-tracked.
         root_result = self._agents_or_claude(workspace)
@@ -181,6 +196,52 @@ class SteeringFileResolver:
         sources.extend(self._nested_sources(workspace))
 
         return sources
+
+    def claude_global_notice(self) -> str | None:
+        """The Doctor note when Claude Code's global file is left unread.
+
+        Stats the path only when ``~/.tstdesk/AGENTS.md`` is absent and
+        the fallback is off.  Does not open the file.  ``None`` when
+        the file is loaded, shadowed by our own global file, or absent.
+        """
+        if self._claude_global_fallback:
+            return None
+        if (self._home / ".tstdesk" / "AGENTS.md").exists():
+            return None
+        if not (self._home / ".claude" / "CLAUDE.md").exists():
+            return None
+        return CLAUDE_GLOBAL_NOT_LOADED
+
+    def _user_global(self) -> SteeringSource | None:
+        """The user-global steering file, or ``None`` when there is none.
+
+        ``~/.tstdesk/AGENTS.md`` always wins.  ``~/.claude/CLAUDE.md``
+        is consulted only when ``claude_global_fallback`` is true: as
+        the file itself when ours is absent, or as ``shadowed_path``
+        when both exist.  With the flag off that path is not a
+        candidate, so it is not statted and not recorded as shadowed.
+        """
+        agents = self._home / ".tstdesk" / "AGENTS.md"
+        if agents.exists():
+            shadowed: Path | None = None
+            if self._claude_global_fallback:
+                claude = self._home / ".claude" / "CLAUDE.md"
+                shadowed = claude if claude.exists() else None
+            return SteeringSource(
+                path=agents,
+                precedence=Precedence.USER_GLOBAL,
+                shadowed_path=shadowed,
+            )
+        if not self._claude_global_fallback:
+            return None
+        claude = self._home / ".claude" / "CLAUDE.md"
+        if not claude.exists():
+            return None
+        return SteeringSource(
+            path=claude,
+            precedence=Precedence.USER_GLOBAL,
+            is_fallback=True,
+        )
 
     @staticmethod
     def _agents_or_claude(

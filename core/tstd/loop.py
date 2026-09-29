@@ -620,7 +620,10 @@ async def agent_loop(
             persistence.  The sink only enqueues — it never blocks.
     """
     # ── Conversation state ──────────────────────────────────────────
-    assembler = prompt_assembler or PromptAssembler(session.workspace_path)
+    assembler = prompt_assembler or PromptAssembler(
+        session.workspace_path,
+        claude_global_fallback=config.steering.claude_global_fallback,
+    )
     embeddings_client = EmbeddingsClient.from_config(config)
 
     # External-import approvals (TD-505): approved paths are durable per

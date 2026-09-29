@@ -72,6 +72,7 @@ no effect.
 | `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
 | `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. No `env` map — tokens stay in the keychain. |
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
+| `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 
 ### `credentials`
 
@@ -342,6 +343,24 @@ speech:
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
 
+### `steering`
+
+User-global steering (TD-4845). Discovery always reads `~/.tstdesk/AGENTS.md`
+when that file exists. `~/.claude/CLAUDE.md` is Claude Code's global file.
+It is not read, and nothing it imports is read, unless
+`claude_global_fallback` is true. Workspace-root and nested `CLAUDE.md`
+files are project files and are not gated by this key.
+
+When the key is false, `~/.claude/CLAUDE.md` exists, and
+`~/.tstdesk/AGENTS.md` does not, Doctor's steering row says the file was
+not loaded and names this key. Turning the key on restores the previous
+fallback, including the approval prompt for an import that leaves the
+workspace.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `claude_global_fallback` | bool | `false` | When true, `~/.claude/CLAUDE.md` is the user-global file if `~/.tstdesk/AGENTS.md` is absent. When false, that file is never read. |
+
 ### `session`
 
 The durable event log each session writes under the data dir (TD-2901).
@@ -501,6 +520,8 @@ embeddings:
   token_budget: 2000
 project_context:
   token_budget: 2000
+steering:
+  claude_global_fallback: false
 session:
   log_max_events: 10000
 provider_retry:
