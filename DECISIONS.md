@@ -10468,3 +10468,41 @@ exists" in that case. An open disclosure asks again when a later
 Rejected: stuffing the log onto `job_list` (that push already happens
 on every fire and every pause), storing the file in the workspace, and
 a dedicated verb to open the session.
+
+## TD-4839 — Fit in-flight tool results to the tier window (Class B)
+
+2026-09-29.
+
+**Decision:** The per-result cap is
+`min(50_000, max(4_000, ((context_window − max_output_tokens − prefix_tokens) // 4) × 4))`,
+using the same 4-characters-per-token ratio as the heuristic counter.
+`prefix_tokens` is the estimate of the prompt the results are about to
+join, not only the cache prefix. 128k and 1M tiers still cap at 50,000.
+`fs_read` truncation tells the model to continue with offset/limit. Other
+tools keep the historical marker.
+
+**Decision:** When tool results in the in-flight turn still exceed the
+TD-405 budget, their middles are elided (head, tail, and a re-read note)
+before the provider call. The loop reuses `ContextCompacted`.
+`dropped_messages` counts results whose middle was removed. No message
+is deleted, so an assistant `tool_calls` message stays next to its
+`tool` results, and the user message stays. No protocol bump. A provider
+context overflow retries once with that budget halved, then fails.
+
+**Decision:** An HTTP 400 whose body matches `maximum context length`,
+`context_length_exceeded`, `ContextWindowExceededError`, or
+`prompt is too long` (case-insensitive) is `context_overflow`. HTTP 413
+stays `context_length_exceeded`. The upstream body is
+`ProviderError.detail` and is logged at WARNING after redaction. The
+turn fails with a short message that names the configured slug and
+`context_window`. Assistant text never receives raw upstream JSON.
+
+**Rationale:** Compaction cuts only at user-message boundaries and keeps
+the in-flight turn, so a first-turn parallel read never reaches it. A
+global cut of the 50,000-character ceiling would punish 128k and 1M
+tiers; that was already rejected for screenshots (TD-1729). A new
+protocol event would force a version bump for a timeline row the
+existing event already renders.
+
+**Alternative rejected:** Hardcoding 32768, and retrying inside the
+provider client (that would resend the same oversized prompt).

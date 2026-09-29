@@ -306,6 +306,8 @@ class ProviderError:
     retryable: bool = False
     retry_after: float | None = None
     """Seconds to wait before retrying, from a ``Retry-After`` header."""
+    detail: str = ""
+    """Upstream body, for logs only. Never copy this into assistant text."""
 
 
 # ── Retry configuration ────────────────────────────────────────────────
@@ -501,6 +503,31 @@ def auth_failure_message() -> str:
         "matches the key's provider, "
         "3) verify the key has not expired or been revoked."
     )
+
+
+# HTTP 400 bodies that mean "the prompt does not fit". Matched
+# case-insensitively. 413 stays context_length_exceeded — that path
+# already has its own copy, and a 5xx that quotes the same phrase is
+# an outage, not a window problem.
+_OVERFLOW_PHRASES: tuple[str, ...] = (
+    "maximum context length",
+    "context_length_exceeded",
+    "contextwindowexceedederror",
+    "prompt is too long",
+)
+
+
+def is_context_overflow(status: int, body: str) -> bool:
+    """True when an HTTP 400 body is a context-window refusal.
+
+    OpenAI, vLLM, and LiteLLM do not share a code. They do share one of
+    these phrases. Status is part of the match so a 413 keeps its own
+    code and a 500 that echoes the phrase stays a server error.
+    """
+    if status != 400 or not body:
+        return False
+    folded = body.casefold()
+    return any(phrase in folded for phrase in _OVERFLOW_PHRASES)
 
 
 def context_length_message(provider_detail: str = "") -> str:
@@ -993,6 +1020,13 @@ class ProviderClient:
         if not code or code.startswith("http_") or code.lstrip("-").isdigit():
             code = _STATUS_CODE_MAP.get(status, f"http_{status}")
 
+        # A 400 whose body is a window refusal is its own code, checked
+        # before the 413 override. Gateways label the same refusal
+        # context_length_exceeded on HTTP 400; that must not pick up the
+        # 413 copy, which appends the raw provider text.
+        if is_context_overflow(status, body_text) or is_context_overflow(status, provider_msg):
+            code = "context_overflow"
+
         # Override for known status codes that carry specific semantics
         if status == 401:
             code = "auth_failed"
@@ -1002,8 +1036,11 @@ class ProviderClient:
         retryable = status in (429, 500, 502, 503, 504)
         retry_after = _parse_retry_after(response.headers.get("retry-after"))
 
-        # Build actionable messages for known error types
-        if status == 401 or code == "auth_failed":
+        # Build actionable messages for known error types. Overflow copy
+        # is one sentence — the raw body stays on ``detail`` for the log.
+        if code == "context_overflow":
+            message = "The request exceeded the model's context window."
+        elif status == 401 or code == "auth_failed":
             message = auth_failure_message()
         elif status == 413 or code == "context_length_exceeded":
             message = context_length_message(provider_msg)
@@ -1019,6 +1056,7 @@ class ProviderClient:
             status_code=status,
             retryable=retryable,
             retry_after=retry_after,
+            detail=body_text,
         )
 
     def _parse_stream_chunk(self, raw: str) -> StreamChunk | None:

@@ -96,6 +96,15 @@ describe("error copy", () => {
     expect(spec?.body).toMatch(/credit/i);
   });
 
+  it("context overflow is a banner that names the window, not the provider body", () => {
+    const spec = turnFailureCopy("context_overflow");
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.title).toBe("Context window exceeded");
+    expect(spec?.body).toMatch(/context window/i);
+    expect(spec?.body).toMatch(/config\.yaml/);
+    expect(spec?.body).not.toMatch(/ContextWindowExceeded|litellm|maximum context length/i);
+  });
+
   it("a bare numeric code never reaches the copy table", () => {
     // Regression guard for the shadowing bug: the daemon classifies 429 as
     // rate_limited, so "429" arriving here at all means the mapping broke

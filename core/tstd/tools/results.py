@@ -86,15 +86,32 @@ class ValidationError:
 
 # ── Truncation ──────────────────────────────────────────────────────────
 
+# Historical ceiling. A large window still uses it unchanged (TD-4839);
+# the loop lowers ``ToolDispatcher.max_result_chars`` per call when the
+# tier's remaining window is smaller. Shared with the cap so the two
+# cannot drift.
+DEFAULT_MAX_RESULT_CHARS = 50_000
+
 _TRUNCATION_MARKER = "\n\n┈─[truncated — results exceed output cap]─┈"
+# fs_read already pages with offset/limit. The generic marker tells the
+# model the cap was hit and nothing about how to continue, which is how
+# a truncated read got re-requested in full.
+_READ_TRUNCATION_MARKER = "\n\n[truncated — read with offset/limit to get the rest]"
 
 
-def truncate_output(output: str, max_chars: int) -> tuple[str, bool]:
+def truncate_output(
+    output: str, max_chars: int, *, tool_name: str | None = None
+) -> tuple[str, bool]:
     """Truncate *output* to *max_chars* with a visible truncation marker.
 
     Returns the (possibly truncated) text and a ``truncated`` flag.
+    ``tool_name`` is keyword-only so existing positional callers keep
+    the generic marker. Only ``fs_read`` gets the offset/limit hint.
     """
     if not max_chars or len(output) <= max_chars:
         return output, False
-    truncated = output[: max_chars - len(_TRUNCATION_MARKER)]
-    return truncated + _TRUNCATION_MARKER, True
+    marker = _READ_TRUNCATION_MARKER if tool_name == "fs_read" else _TRUNCATION_MARKER
+    keep = max(0, max_chars - len(marker))
+    if keep <= 0:
+        return marker[:max_chars], True
+    return output[:keep] + marker, True
