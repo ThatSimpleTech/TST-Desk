@@ -10358,3 +10358,32 @@ case-insensitively; zero or several matches fall through to the "must be a
 full folder path" error rather than guess. A missing folder is refused on
 create only; the model validator stays lenient because it also loads old rows,
 and a job whose folder moved must still be pausable or deletable.
+
+## TD-3809 — Run now (Class B)
+
+**`run_job { job_id }`.** The pane could not fire a job; trying an
+instruction meant waiting for the next slot. The verb claims the job,
+replies at once with `job_list`, and runs the turn on its own task. The
+tick awaits `run_due_jobs` inline, so waiting inside the handler would
+stall every other job and the socket read. When the turn finishes the
+daemon pushes `job_list` again. Unknown id is `job_not_found`. No
+protocol version bump: `JobEntry.running` defaults to false, so an older
+client that ignores the field still parses the list.
+
+**`running` is not stored.** It mirrors an in-memory set of job ids
+(`InFlight` in `scheduler/runner.py`) shared by the tick and Run now.
+Persisting it would survive a crash as a turn that is no longer
+happening and would leave Run now disabled until someone edited
+`jobs.json`. A second Run now, or Run now while the tick holds the id,
+is `job_running`. The tick does not wait on an id already in the set and
+does not advance it, so the slot stays due for the next tick.
+
+**A manual run does not call `advance_job`.** The receipt
+(`last_run`, `last_status`, `last_summary`, `last_session_id`) and the
+delivery are the same as a scheduled fire. `next_run` and `paused` are
+not touched, including a one-shot's slot and a job that was already
+paused — Run now is an explicit request, not a resume. The row is
+re-read after the turn so a pause or an edit made while it ran is what
+receives the receipt, and a job deleted in that window is not written
+back. Rejected: clearing `next_run` on a manual one-shot (that is what
+makes the 7:45 slot disappear) and unpausing as a side effect of the run.

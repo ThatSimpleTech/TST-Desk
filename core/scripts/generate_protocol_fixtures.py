@@ -125,6 +125,7 @@ from tstd.protocol import (
     RuleActivated,
     RunDiagnostics,
     RunGrokCommand,
+    RunJob,
     RunVerify,
     SaveCharter,
     SaveJob,
@@ -907,6 +908,7 @@ FIXTURES = {
     ),
     "delete_job": DeleteJob(job_id="job-1"),
     "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
+    "run_job": RunJob(job_id="job-1"),
     "job_list": JobList(
         jobs=[
             JobEntry(
@@ -922,6 +924,7 @@ FIXTURES = {
                 last_status="ok",
                 last_summary="3 threads need a reply",
                 last_session_id="sess-1",
+                running=False,
             )
         ],
     ),

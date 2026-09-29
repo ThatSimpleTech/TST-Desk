@@ -22,7 +22,7 @@ from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
 from .models import DeliverTo, Job
 from .schedule import advance_job, arm_cadence_job, as_utc, due_jobs, record_run
-from .store import list_jobs, save_job
+from .store import get_job, list_jobs, save_job
 
 log = get_logger("tstd.scheduler.runner")
 
@@ -45,6 +45,32 @@ class TurnResult:
 TurnFn = Callable[[Path, str], Awaitable["str | TurnResult"]]
 SendFn = Callable[[DeliverTo, str], Awaitable[None]]
 WindowFn = Callable[[str], Awaitable[None]]
+
+
+class InFlight:
+    """Job ids with a turn underway. The tick and Run now share one.
+
+    Both callers sit on the daemon's loop, and the turn is the await that
+    lets the other in. The check and the insert have to be the same
+    synchronous call: a gap would let two runs of one job overlap, and
+    waiting out the overlap would stall the tick, which is inline.
+    """
+
+    def __init__(self) -> None:
+        self._ids: set[str] = set()
+
+    def __contains__(self, job_id: object) -> bool:
+        return job_id in self._ids
+
+    def claim(self, job_id: str) -> bool:
+        """Own ``job_id``. False when a turn for it is already underway."""
+        if job_id in self._ids:
+            return False
+        self._ids.add(job_id)
+        return True
+
+    def release(self, job_id: str) -> None:
+        self._ids.discard(job_id)
 
 
 class Deliver(Protocol):
@@ -118,8 +144,14 @@ async def run_due_jobs(
     *,
     run_turn: TurnFn,
     deliver: Deliver,
+    in_flight: InFlight | None = None,
 ) -> list[str]:
-    """Fire each due job once, deliver once, then advance. Sequential."""
+    """Fire each due job once, deliver once, then advance. Sequential.
+
+    ``in_flight`` is the guard Run now claims too. A due id already in it
+    is left due: the tick must not wait, or one manual turn would hold
+    every other job (and shutdown) until it returned.
+    """
     now_utc = as_utc(now)
     jobs = await asyncio.to_thread(list_jobs, data_dir)
     for job in jobs:
@@ -129,9 +161,60 @@ async def run_due_jobs(
     jobs = await asyncio.to_thread(list_jobs, data_dir)
     ran: list[str] = []
     for job in due_jobs(jobs, now_utc):
-        await _run_one(data_dir, job, now_utc, run_turn, deliver)
+        if in_flight is not None and not in_flight.claim(job.id):
+            continue
+        try:
+            await _run_one(data_dir, job, now_utc, run_turn, deliver)
+        finally:
+            if in_flight is not None:
+                in_flight.release(job.id)
         ran.append(job.id)
     return ran
+
+
+async def begin_manual_run(data_dir: Path, job_id: str, in_flight: InFlight) -> Job | str:
+    """Claim ``job_id`` for Run now, or an error code the handler can send.
+
+    The claim is synchronous and happens before the caller schedules the
+    turn, so the ``job_list`` it replies with already shows the row running.
+    """
+    job = await asyncio.to_thread(get_job, data_dir, job_id)
+    if job is None:
+        return "job_not_found"
+    if not in_flight.claim(job.id):
+        return "job_running"
+    return job
+
+
+async def run_manual_job(
+    data_dir: Path,
+    job: Job,
+    now: datetime,
+    *,
+    run_turn: TurnFn,
+    deliver: Deliver,
+) -> None:
+    """One explicit fire. Receipt and delivery, without touching the schedule.
+
+    ``advance_job`` is what spends a one-shot and moves the 7:45 slot.
+    Run now is not that: the row is re-read after the turn so a pause or
+    an edit made while it ran is what receives the receipt, and a job
+    deleted in that window is not written back into existence.
+    """
+    result = await _turn_result(job, run_turn)
+    fresh = await asyncio.to_thread(get_job, data_dir, job.id)
+    channel = job.deliver_to
+    if fresh is not None:
+        channel = fresh.deliver_to
+        stamped = record_run(
+            fresh,
+            now,
+            status="ok" if result.ok else "failed",
+            summary=result.summary,
+            session_id=result.session_id,
+        )
+        await asyncio.to_thread(save_job, data_dir, stamped)
+    await deliver(channel, result.summary)
 
 
 async def _run_one(
@@ -141,15 +224,7 @@ async def _run_one(
     run_turn: TurnFn,
     deliver: Deliver,
 ) -> None:
-    try:
-        outcome = await run_turn(Path(job.workspace), job.instruction)
-        result = outcome if isinstance(outcome, TurnResult) else TurnResult(summary=outcome)
-    except Exception as exc:
-        log.exception(
-            "scheduled turn failed",
-            extra={"extra_fields": {"job_id": job.id, "error": str(exc)}},
-        )
-        result = TurnResult(summary=f"scheduled run failed: {exc}", ok=False)
+    result = await _turn_result(job, run_turn)
     # Stamp the next slot (and the run receipt) before notify. Deliver-first
     # left an overdue ``next_run`` on disk if the test (or a crash) observed
     # the record before ``save_job`` finished — a second tick would fire again.
@@ -162,6 +237,20 @@ async def _run_one(
     )
     await asyncio.to_thread(save_job, data_dir, stamped)
     await deliver(job.deliver_to, result.summary)
+
+
+async def _turn_result(job: Job, run_turn: TurnFn) -> TurnResult:
+    try:
+        outcome = await run_turn(Path(job.workspace), job.instruction)
+    except Exception as exc:
+        log.exception(
+            "scheduled turn failed",
+            extra={"extra_fields": {"job_id": job.id, "error": str(exc)}},
+        )
+        return TurnResult(summary=f"scheduled run failed: {exc}", ok=False)
+    if isinstance(outcome, TurnResult):
+        return outcome
+    return TurnResult(summary=outcome)
 
 
 async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -> TurnResult:

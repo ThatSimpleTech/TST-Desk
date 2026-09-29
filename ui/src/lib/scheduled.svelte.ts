@@ -1,7 +1,8 @@
 // Scheduled rail store (TD-3805).
 //
-// Data-dir jobs from `job_list`. Create / pause / delete send protocol
-// verbs; the daemon talks to the store. This pane never starts a turn.
+// Data-dir jobs from `job_list`. Create / pause / delete / run send
+// protocol verbs; the daemon talks to the store. Run now starts a turn.
+// The tick still owns the schedule.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import type { DaemonEventUnion, JobEntry } from "./protocol";
@@ -107,6 +108,15 @@ export function deleteScheduledJob(jobId: string): boolean {
 	return sendToDaemon({ type: "delete_job", job_id: jobId });
 }
 
+/** Ask the daemon to fire one job now. The schedule stays where it is. */
+export function runJob(jobId: string): boolean {
+	if (!scheduled.items.some((row) => row.id === jobId)) return false;
+	ensureStarted();
+	scheduled.loading = true;
+	scheduled.error = null;
+	return sendToDaemon({ type: "run_job", job_id: jobId });
+}
+
 function reduce(event: DaemonEventUnion): void {
 	if (event.type === "job_list") {
 		scheduled.items = event.jobs;
@@ -136,7 +146,10 @@ function reduce(event: DaemonEventUnion): void {
 		};
 		return;
 	}
-	if (event.type === "error" && (event.code === "job_invalid" || event.code === "job_not_found")) {
+	if (
+		event.type === "error" &&
+		(event.code === "job_invalid" || event.code === "job_not_found" || event.code === "job_running")
+	) {
 		createPending = false;
 		scheduled.loading = false;
 		scheduled.error = event.message;

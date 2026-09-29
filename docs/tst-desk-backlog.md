@@ -5986,6 +5986,34 @@ files, vitest 1371, svelte-check 703 files 0 errors 0 warnings.
 
 ---
 
+### TD-3809 — Run now
+**Size:** 2 · **Depends on:** TD-3808
+
+**Acceptance criteria:**
+- [x] `run_job { job_id }` replies at once with `job_list` and finishes
+      the turn in the background; a second `job_list` is pushed when it
+      lands
+- [x] The receipt matches a scheduled run, and `next_run` / `paused`
+      are left alone, including a paused job and a one-shot's slot
+- [x] A job already in flight is `job_running`; the tick skips it and
+      leaves it due for the next tick
+- [x] An unknown id is `job_not_found`
+- [x] Each row has Run now; while `running` the row says "Running…" and
+      the button is disabled
+
+Done (2026-09-29): the pane could not fire a job, so trying an
+instruction meant waiting for the next slot. `run_job` claims the id
+in `InFlight` (shared with the tick), replies with `job_list`
+(`JobEntry.running`), and runs the turn on its own task. `record_run`
+stamps the receipt and delivers to the job's channel without
+`advance_job`. Errors use the existing `scheduled.error` path. Class B
+entry in DECISIONS.md.
+
+Suite: 3454 passed / 8 skipped, ruff + `mypy --strict` clean over 153
+files, vitest 1374, svelte-check 703 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone

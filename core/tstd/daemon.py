@@ -253,6 +253,7 @@ from .protocol import (
     RevokePolicyRule,
     RunDiagnostics,
     RunGrokCommand,
+    RunJob,
     RunVerify,
     SaveCharter,
     SaveJob,
@@ -335,10 +336,13 @@ from .scheduler.models import (
     validate_draft,
 )
 from .scheduler.runner import (
+    InFlight,
     RecordingDeliver,
     TurnResult,
+    begin_manual_run,
     channel_notify,
     run_due_jobs,
+    run_manual_job,
     run_turn_on_daemon,
 )
 from .scheduler.runner import SendFn as NotifySendFn
@@ -627,8 +631,8 @@ def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
     )
 
 
-def _job_entry(job: Job) -> JobEntry:
-    """Wire shape for a persisted job. The rail lists these; it does not run them."""
+def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
+    """Wire shape for a persisted job. ``running`` is the in-flight guard, not disk."""
     return JobEntry(
         id=job.id,
         workspace=job.workspace,
@@ -642,6 +646,7 @@ def _job_entry(job: Job) -> JobEntry:
         last_status=job.last_status,
         last_summary=job.last_summary,
         last_session_id=job.last_session_id,
+        running=running,
     )
 
 
@@ -748,6 +753,9 @@ class Daemon:
             send=self._notify_send,
             on_window=self._deliver_to_window,
         )
+        # Process memory, not jobs.json. A crash has no turn left in flight,
+        # and a stale true on disk would disable Run now until edited by hand.
+        self._in_flight = InFlight()
 
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
@@ -1567,6 +1575,7 @@ class Daemon:
             when,
             run_turn=self._scheduled_run_turn,
             deliver=self._scheduler_deliver,
+            in_flight=self._in_flight,
         )
         if ran:
             # Both halves of the row moved: next_run advanced and the run
@@ -2291,6 +2300,9 @@ class Daemon:
 
         if isinstance(msg, ParseJob):
             return await self._handle_parse_job(msg)
+
+        if isinstance(msg, RunJob):
+            return await self._handle_run_job(msg)
 
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
@@ -3293,9 +3305,48 @@ class Daemon:
             return build_error("job_not_found", f"Job {msg.job_id!r} not found")
         return await self._job_list_event()
 
+    async def _handle_run_job(self, msg: RunJob) -> str:
+        """Start one job and answer before the turn does (TD-3809).
+
+        The tick awaits ``run_due_jobs`` on this loop. Awaiting the turn
+        here would stall that tick and the socket read, so the turn is its
+        own task. The claim happens first: this reply's ``job_list`` is
+        what tells the pane the row is running.
+        """
+        started = await begin_manual_run(self.data_dir, msg.job_id, self._in_flight)
+        if isinstance(started, str):
+            detail = (
+                f"Job {msg.job_id!r} is already running"
+                if started == "job_running"
+                else f"Job {msg.job_id!r} not found"
+            )
+            return build_error(started, detail)
+        self._tasks.append(asyncio.create_task(self._finish_manual_run(started)))
+        return await self._job_list_event()
+
+    async def _finish_manual_run(self, job: Job) -> None:
+        try:
+            await run_manual_job(
+                self.data_dir,
+                job,
+                datetime.now(UTC),
+                run_turn=self._scheduled_run_turn,
+                deliver=self._scheduler_deliver,
+            )
+        except Exception:
+            log.exception(
+                "manual run failed",
+                extra={"extra_fields": {"job_id": job.id}},
+            )
+        finally:
+            self._in_flight.release(job.id)
+            await self._push_job_list()
+
     async def _job_list_event(self) -> str:
         jobs = await asyncio.to_thread(list_jobs, self.data_dir)
-        return JobList(jobs=[_job_entry(job) for job in jobs]).model_dump_json()
+        return JobList(
+            jobs=[_job_entry(job, running=job.id in self._in_flight) for job in jobs]
+        ).model_dump_json()
 
     def _save_job_record(self, msg: SaveJob) -> Job:
         """Persist a draft or an update. Does not run the job."""

@@ -1,18 +1,20 @@
 <script lang="ts">
 	// Scheduled rail surface (TD-3805).
 	//
-	// Lists persisted jobs and creates / pauses / deletes them through
-	// protocol verbs. Draft fields, not NL. The pane never runs a job.
+	// Lists persisted jobs and creates / pauses / deletes / runs them through
+	// protocol verbs. Draft fields, not NL. Run now fires one job; the tick
+	// still owns the schedule.
 	import {
 		createJob,
 		deleteScheduledJob,
 		parseJobRequest,
 		pauseJob,
+		runJob,
 		scheduled,
 		setDraftField,
 		setParseText,
 	} from '../scheduled.svelte.js';
-	import { jobFailed, jobLastRun, jobMeta, jobsEmptyCopy, workspaceSuggestions } from '../scheduled';
+	import { jobActivity, jobFailed, jobMeta, jobsEmptyCopy, workspaceSuggestions } from '../scheduled';
 	import { visibleRecents, workspaces } from '../workspaces.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
@@ -36,7 +38,7 @@
 <div class="pane">
 	<section class="list-col" aria-label="Scheduled">
 		<h1 class="title">Scheduled</h1>
-		<p class="lede">Jobs the daemon will run. This pane does not fire them.</p>
+		<p class="lede">Jobs the daemon runs on a schedule. Run now fires one without moving its next slot.</p>
 		{#if scheduled.items.length === 0}
 			<EmptyState align="start" body={empty} />
 		{:else}
@@ -47,11 +49,19 @@
 							<span class="card-name">{row.instruction}</span>
 							<span class="card-meta">{jobMeta(row)}</span>
 							<span class="card-path">{row.workspace}</span>
-							<span class="card-run" class:run-failed={jobFailed(row)}>{jobLastRun(row)}</span>
+							<span class="card-run" class:run-failed={jobFailed(row) && !row.running}>{jobActivity(row)}</span>
 							{#if row.last_summary}
 								<p class="card-summary">{row.last_summary}</p>
 							{/if}
 							<div class="actions">
+								<button
+									class="action"
+									type="button"
+									disabled={row.running}
+									onclick={() => runJob(row.id)}
+								>
+									Run now
+								</button>
 								<button class="action" type="button" onclick={() => pauseJob(row.id)}>
 									{row.paused ? 'Resume' : 'Pause'}
 								</button>
@@ -302,8 +312,13 @@
 		cursor: pointer;
 	}
 
-	.action:hover {
+	.action:hover:not(:disabled) {
 		background: var(--color-sunken);
+	}
+
+	.action:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 
 	.action-danger {

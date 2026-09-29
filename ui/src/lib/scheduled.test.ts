@@ -4,6 +4,7 @@ import {
 	emptyDraft,
 	formatLocal,
 	humanizeCadence,
+	jobActivity,
 	jobFailed,
 	jobMeta,
 	jobLastRun,
@@ -39,6 +40,7 @@ import {
 	parseJobRequest,
 	pauseJob,
 	refreshJobs,
+	runJob,
 	resetScheduled,
 	scheduled,
 	setDraftField,
@@ -58,6 +60,7 @@ function job(over: Partial<JobEntry> & Pick<JobEntry, "id">): JobEntry {
 		next_run: null,
 		deliver_to: "window",
 		paused: false,
+		running: false,
 		last_run: null,
 		last_status: null,
 		last_summary: null,
@@ -143,6 +146,12 @@ describe("copy and draft", () => {
 		const bad = job({ id: "j1", last_run: "2026-08-21T18:00:00+00:00", last_status: "failed" });
 		expect(jobLastRun(bad, "UTC")).toMatch(/^Failed /);
 		expect(jobFailed(bad)).toBe(true);
+	});
+
+	it("says Running while a turn is in flight", () => {
+		const row = job({ id: "j1", last_run: "2026-08-21T18:00:00+00:00", last_status: "ok", running: true });
+		expect(jobActivity(row)).toBe("Running…");
+		expect(jobActivity(job({ id: "j1" }))).toBe("Never run");
 	});
 });
 
@@ -273,7 +282,24 @@ describe("scheduled store", () => {
 	it("does not invent a pause for an unknown id", () => {
 		expect(pauseJob("missing")).toBe(false);
 		expect(deleteScheduledJob("missing")).toBe(false);
+		expect(runJob("missing")).toBe(false);
 		expect(mocks.sent).toEqual([]);
+	});
+
+	it("sends run_job and renders a running row", () => {
+		emit({ type: "job_list", seq: 1, jobs: [job({ id: "j1" })] });
+		setDraftField("instruction", "half-typed");
+		expect(runJob("j1")).toBe(true);
+		expect(mocks.sent.at(-1)).toEqual({ type: "run_job", job_id: "j1" });
+		emit({ type: "job_list", seq: 1, jobs: [job({ id: "j1", running: true })] });
+		const row = scheduled.items[0];
+		if (row === undefined) throw new Error("missing row");
+		expect(row.running).toBe(true);
+		expect(jobActivity(row)).toBe("Running…");
+		expect(scheduled.loading).toBe(false);
+		expect(scheduled.error).toBeNull();
+		// A list pushed because a run started is not a create ack.
+		expect(scheduled.draft.instruction).toBe("half-typed");
 	});
 
 	it("surfaces a typed job error", () => {
@@ -285,6 +311,14 @@ describe("scheduled store", () => {
 		});
 		expect(scheduled.error).toBe("missing instruction");
 		expect(scheduled.loading).toBe(false);
+	});
+
+	it("surfaces run-now refusals on the same path", () => {
+		for (const code of ["job_running", "job_not_found"]) {
+			emit({ type: "error", seq: 1, code, message: code });
+			expect(scheduled.error).toBe(code);
+			expect(scheduled.loading).toBe(false);
+		}
 	});
 
 	it("prefills an empty workspace hint once", () => {

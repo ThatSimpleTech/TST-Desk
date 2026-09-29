@@ -124,6 +124,7 @@ import type {
   SaveJob,
   DeleteJob,
   ParseJob,
+  RunJob,
   JobList,
   JobDraftReply,
   Transcribe,
@@ -971,6 +972,7 @@ describe("All fixtures have required shape", () => {
       "set_remote_attach",
       "list_jobs", "save_job", "delete_job",
       "parse_job",
+      "run_job",
       "transcribe",
     ];
     for (const key of clientTypes) {
@@ -1323,7 +1325,12 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(jobs.type).toBe("job_list");
     expect(isNumber(jobs.seq)).toBe(true);
     expect(isString(jobs.jobs[0]?.id)).toBe(true);
+    expect(jobs.jobs[0]?.running).toBe(false);
     expect("session_id" in jobs).toBe(false);
+    const run = fixtures.run_job as RunJob;
+    expect(run.type).toBe("run_job");
+    expect(run.job_id).toBe("job-1");
+    expect("session_id" in run).toBe(false);
   });
 
   it("transcribe / transcript (TD-4701)", () => {
