@@ -7375,14 +7375,14 @@ clean over 163 files, vitest 1412, svelte-check 709 files 0 errors
 | **Total v0.1** | **19** | **171** | **483** |
 | M4 Memory (v0.2) | E21–E28 | 32 | 90 |
 | **Total v0.1 + v0.2** | **27** | **203** | **573** |
-| M5 Cowork (v0.3) | E29–E32, E48 | 49 | 127 |
+| M5 Cowork (v0.3) | E29–E32, E48 | 50 | 130 |
 | M6 Computer use (v0.4) | E20, E33–E34 | 13 | 68 |
 | M7 Remote (v0.5) | E36–E38 | 19 | 67 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
 | Later | E47, E49 | 19 | 77 |
-| **Total planned** | **48** | **330** | **1042** |
+| **Total planned** | **48** | **331** | **1045** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
