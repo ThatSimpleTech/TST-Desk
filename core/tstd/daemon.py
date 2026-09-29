@@ -659,6 +659,9 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         preset=job.preset,
         engine=job.engine,
         grace=job.grace,
+        retries=job.retries,
+        retry_delay=job.retry_delay,
+        attempt=job.attempt,
         last_run=job.last_run,
         last_status=job.last_status,
         last_summary=job.last_summary,
@@ -679,6 +682,8 @@ def _job_runs_event(job_id: str, runs: list[JobRun]) -> str:
                 status=run.status,
                 summary=run.summary,
                 session_id=run.session_id,
+                attempt=run.attempt,
+                attempts=run.attempts,
             )
             for run in runs
         ],
@@ -3525,6 +3530,8 @@ class Daemon:
                     engine=msg.engine,
                     known_presets=self.config.presets,
                     grace=msg.grace,
+                    retries=msg.retries,
+                    retry_delay=msg.retry_delay,
                 ),
             )
         job = validate_draft(
@@ -3540,6 +3547,8 @@ class Daemon:
                 preset=msg.preset,
                 engine=msg.engine,
                 grace=msg.grace,
+                retries=msg.retries,
+                retry_delay=msg.retry_delay,
             )
         )
         # Create only: an existing job whose folder moved must stay editable

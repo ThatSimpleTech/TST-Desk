@@ -10972,3 +10972,114 @@ is the slot in the job's zone, UTC when the job has none. Lateness is
 ceiled to the minute so the line never claims a shorter delay. A grace
 longer than 366 days is refused at save time so a typo cannot overflow
 the clock arithmetic.
+
+## TD-3814 — A failed scheduled slot can try again (Class B)
+
+2026-09-29.
+
+**Decision:** `retries` is how many extra tries follow the first
+scheduled fire. 0 is one try, the old behaviour. 1 is two attempts.
+History says "attempt n of m" with m = retries + 1 and n the try that
+just finished. A job with retries 0, and every Run now, leaves
+`attempt` and `attempts` null so an ordinary receipt stays the sentence
+it always was. The row receipt is prefixed only when the numbers are
+shown. The history line keeps the raw summary.
+
+**Rationale:** "Retries: 1" reads as one more chance, not one try
+total. Putting the numbers on the history line and the receipt, and
+not into the stored summary, keeps a failed fire's text exact for a
+job that does not retry.
+
+**Alternative rejected:** Counting the first fire as retry 0, which
+makes "1" mean a single try. Prefixing the history summary, which
+would change the log a job that does not retry writes.
+
+**Decision:** `retry_delay` is stored as seconds, the same phrases
+grace already accepts. Blank while retries is at least 1 becomes 600
+seconds. retries 0 stores no delay. `parse_retry_delay` itself returns
+None for a blank; the job validator applies the default, because the
+delay field does not know the count. `model_copy` does not re-run that
+validator, so a settle that moves `next_run` does not invent a delay.
+
+**Rationale:** "10 minutes" and 600 are one gap. A phrase on disk
+would be parsed on every tick, and a bad string would fail the tick
+instead of the save.
+
+**Alternative rejected:** A second duration parser. Storing the phrase.
+Defaulting inside the field parser, which cannot see `retries`.
+
+**Decision:** The job persists `attempt` (tries already used this slot,
+0 when idle) and `resume_at` (the regular slot to restore, null for a
+one-shot). The first transient failure sets `resume_at` from
+`advance_job` at the failure instant, not from the retry clock: an
+interval cadence is now plus the interval, so advancing at 18:10 would
+walk 18:00 to 19:10. Later tries keep that `resume_at`. `next_run`
+becomes now plus the delay. On success or the last failure the counters
+clear. A recurring job resumes `resume_at`. A one-shot is spent
+(paused, `next_run` cleared) only when the slot is finished. A retry
+still waiting is not paused, or it would never fire.
+
+**Rationale:** The remembered slot is the one the user scheduled. The
+retry is a stand-in for that slot, not a new cadence.
+
+**Alternative rejected:** Recomputing the next regular slot when the
+retry finishes. Pausing a one-shot as soon as the first try fails.
+
+**Decision:** Grace applies only when `attempt` is 0. A retry fires
+even if it is hours late. A skip is not a failure: it does not retry,
+and it clears `attempt` and `resume_at`.
+
+**Alternative rejected:** Applying grace to the retry instant, which
+would drop the try the user asked for when the laptop slept through
+the ten-minute gap.
+
+**Decision:** Run now does not call `settle_scheduled`. It does not
+change `next_run`, `attempt`, `resume_at`, or `retries`. It always
+delivers, and its history line is trigger `manual` with null attempt
+numbers.
+
+**Decision:** Slack and ntfy are called once per slot, after the final
+outcome. An intermediate try still stamps `last_*` and pushes
+`job_list` so the receipt shows the latest attempt. `JobEntry.attempt`
+is on the wire for that reason. The window notice treats `attempt` > 0
+as not yet delivered; `attempt` 0 or absent still notifies. `resume_at`
+stays off the wire. No protocol version bump. A jobs.json from before
+this field loads with retries 0, delay null, attempt 0, resume_at null.
+
+**Alternative rejected:** Notifying on every try. Hiding the
+intermediate receipt until the slot finishes.
+
+**Decision:** Whether a failure is transient is one table in
+`scheduler/retry.py`. The turn's error code wins over the sentence.
+Transient: connection errors, timeouts, HTTP 429, HTTP 5xx. Not
+transient: `context_overflow`, `context_length_exceeded`, `auth_failed`,
+`api_key_rejected`, `missing_api_key`, a missing workspace, a missing
+preset, an unavailable engine. Anything the table does not match is
+not transient. A bool is not a retry count.
+
+**Rationale:** An unknown failure should wait for the next regular
+slot rather than hammer it. The code has to win because a context
+overflow's sentence can mention a timeout.
+
+**Alternative rejected:** Matching the word "retry" in the prose.
+Treating an unknown code as transient.
+
+**Decision:** `attempt` and `resume_at` are not on `SaveJob`. Pause
+omits retries and the delay and keeps a retry that is already armed,
+including when it sends the armed `next_run` back unchanged. Changing
+the cadence, the zone, or `next_run`, or setting retries to 0 while a
+retry is armed, clears the counters. Turning retries off with the
+schedule otherwise unchanged restores `next_run` to `resume_at`. A
+one-shot in that state is spent, and that spend is not "Cadence or
+next run is required".
+
+**Alternative rejected:** Treating every save that echoes `next_run` as
+a schedule change, which would drop the retry a Pause is supposed to
+keep. Refusing to spend the one-shot because both schedule fields are
+empty.
+
+**Decision (Class A):** The form's Retries select is None / 1 / 2 / 3,
+and a count always sends the delay phrase "10 minutes". Save therefore
+replaces a hand-set custom delay. Pause omits the field, so the daemon
+keeps one. Create omits both when the select is None. An unknown stored
+count stays on the select so an edit does not wipe it.

@@ -27,6 +27,12 @@ from ..logging import redact_secrets
 from .grace import GraceError, parse_grace
 from .phrases import expand_alias, phrase_to_cron
 from .pin import normalize_engine, normalize_preset
+from .retry import (
+    DEFAULT_RETRY_DELAY_SECONDS,
+    RetryError,
+    parse_retries,
+    parse_retry_delay,
+)
 
 DeliverTo = Literal["window", "slack", "ntfy"]
 RunStatus = Literal["ok", "failed", "missed"]
@@ -62,6 +68,8 @@ _FIELD_LABELS = {
     "preset": "Preset",
     "engine": "Engine",
     "grace": "If late",
+    "retries": "Retries",
+    "retry_delay": "Retry delay",
 }
 _UNITS = {
     "minute": "minute",
@@ -99,6 +107,11 @@ class JobDraft(BaseModel):
     engine: str | None = None
     # Phrase ("2 hours") or seconds. Blank is no grace. ``Job`` stores seconds.
     grace: str | int | None = None
+    # Extra tries after a transient scheduled failure (TD-3814). Blank is
+    # none. ``retry_delay`` is a phrase or seconds; blank becomes the
+    # 10-minute default once retries is at least 1.
+    retries: int | None = None
+    retry_delay: str | int | None = None
 
 
 class Job(BaseModel):
@@ -132,6 +145,17 @@ class Job(BaseModel):
     # missed slot once, however old it is. The phrase is not stored:
     # "2 hours" and 7200 are one window, and the tick subtracts it.
     grace: int | None = None
+    # Extra tries after the first scheduled fire (TD-3814). 0 is the old
+    # behaviour: a failure waits for the next regular slot. The delay is
+    # seconds. None only while retries is 0; a positive count with no
+    # delay becomes 10 minutes in the model validator.
+    retries: int = 0
+    retry_delay: int | None = None
+    # Tries already used for the slot in progress. 0 means the next fire
+    # is the regular slot (grace applies). Above 0, ``next_run`` is the
+    # retry instant and ``resume_at`` is the regular slot to restore.
+    attempt: int = 0
+    resume_at: str | None = None
 
     # ── Last run (TD-3807) ────────────────────────────────────────────
     # Optional so a jobs.json written before this landed still loads.
@@ -203,6 +227,40 @@ class Job(BaseModel):
         except GraceError as exc:
             raise ValueError(str(exc)) from None
 
+    @field_validator("retries", mode="before")
+    @classmethod
+    def _retries_count(cls, value: object) -> int:
+        try:
+            return parse_retries(value)
+        except RetryError as exc:
+            raise ValueError(str(exc)) from None
+
+    @field_validator("retry_delay", mode="before")
+    @classmethod
+    def _retry_delay_seconds(cls, value: object) -> int | None:
+        try:
+            return parse_retry_delay(value)
+        except RetryError as exc:
+            raise ValueError(str(exc)) from None
+
+    @field_validator("attempt", mode="before")
+    @classmethod
+    def _attempt_count(cls, value: object) -> int:
+        # Null is the same as absent: a jobs.json from before retries
+        # has no counter, and a hand edit that writes null must still load.
+        if value is None:
+            return 0
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("must be a whole number")
+        return value
+
+    @field_validator("resume_at")
+    @classmethod
+    def _resume_at_iso(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return normalize_next_run(value)
+
     @field_validator("next_run")
     @classmethod
     def _next_run_iso(cls, value: str | None) -> str | None:
@@ -235,6 +293,16 @@ class Job(BaseModel):
         """
         if self.cadence is None and self.next_run is None and self.last_run is None:
             raise ValueError("cadence or next_run is required")
+        # The default delay depends on the count, so it cannot live on the
+        # delay field alone. A count of 0 stores no delay: the number would
+        # not be used, and a later edit that turns retries on names its own.
+        delay = self.retry_delay
+        if self.retries > 0 and delay is None:
+            delay = DEFAULT_RETRY_DELAY_SECONDS
+        elif self.retries == 0:
+            delay = None
+        if delay != self.retry_delay:
+            self.retry_delay = delay
         return self
 
 
@@ -403,6 +471,8 @@ def validate_draft(draft: JobDraft) -> Job:
             # Same as engine: the annotation is seconds, the validator
             # accepts the phrase and a blank.
             grace=cast(int | None, draft.grace),
+            retries=0 if draft.retries is None else draft.retries,
+            retry_delay=cast(int | None, draft.retry_delay),
         )
     except ValidationError as exc:
         raise JobValidationError(describe_validation_error(exc)) from exc

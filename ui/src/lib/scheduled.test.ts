@@ -7,6 +7,7 @@ import {
 	jobActivity,
 	draftFromJob,
 	graceDraftValue,
+	retriesDraftValue,
 	jobFailed,
 	jobMeta,
 	jobMissed,
@@ -536,5 +537,43 @@ describe("grace (TD-3813)", () => {
 		expect(saveFromJob(row, true)).not.toHaveProperty("grace");
 		expect(saveFromDraft({ ...emptyDraft("/ws"), grace: "2 hours" }, "UTC").grace).toBe("2 hours");
 		expect(saveFromDraft(emptyDraft("/ws"), "UTC")).not.toHaveProperty("grace");
+	});
+});
+
+describe("retries (TD-3814)", () => {
+	it("maps a stored count and sends None as omit or clear", () => {
+		expect(retriesDraftValue(null)).toBe("");
+		expect(retriesDraftValue(undefined)).toBe("");
+		expect(retriesDraftValue(0)).toBe("");
+		expect(retriesDraftValue(2)).toBe("2");
+		expect(retriesDraftValue(4)).toBe("4");
+
+		const row = job({ id: "j1", retries: 2, retry_delay: 600, cadence: "every 1 hour" });
+		expect(draftFromJob(row).retries).toBe("2");
+		const kept = saveFromEdit(draftFromJob(row), row, "UTC");
+		expect(kept.retries).toBe(2);
+		expect(kept.retry_delay).toBe("10 minutes");
+		const cleared = saveFromEdit({ ...draftFromJob(row), retries: "" }, row, "UTC");
+		expect(cleared.retries).toBe(0);
+		expect(cleared.retry_delay).toBe("");
+		expect(saveFromJob(row, true)).not.toHaveProperty("retries");
+		expect(saveFromJob(row, true)).not.toHaveProperty("retry_delay");
+
+		const created = saveFromDraft({ ...emptyDraft("/ws"), retries: "1" }, "UTC");
+		expect(created.retries).toBe(1);
+		expect(created.retry_delay).toBe("10 minutes");
+		expect(saveFromDraft(emptyDraft("/ws"), "UTC")).not.toHaveProperty("retries");
+	});
+
+	it("names the try on a scheduled history row and not on Run now", () => {
+		const labeled = jobRunLabel(run({ attempt: 2, attempts: 3 }), "UTC");
+		expect(labeled).toContain("attempt 2 of 3");
+		expect(labeled.toLowerCase()).not.toContain("manual");
+		const manual = jobRunLabel(
+			run({ trigger: "manual", status: "failed", scheduled_for: null }),
+			"UTC",
+		);
+		expect(manual.endsWith(" · manual")).toBe(true);
+		expect(manual.toLowerCase()).not.toContain("attempt");
 	});
 });

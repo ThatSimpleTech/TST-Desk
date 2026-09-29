@@ -48,6 +48,11 @@ class JobRun(BaseModel):
     status: RunStatus
     summary: str | None = None
     session_id: str | None = None
+    # 1-based try and the budget for this slot (TD-3814). Null when the
+    # job does not retry, and on every Run now: a manual fire is not an
+    # attempt of the slot.
+    attempt: int | None = None
+    attempts: int | None = None
 
     @field_validator("started_at")
     @classmethod
@@ -76,6 +81,15 @@ class JobRun(BaseModel):
             return None
         text = value.strip()
         return text or None
+
+    @field_validator("attempt", "attempts")
+    @classmethod
+    def _attempt_number(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("must be a whole number")
+        return value
 
 
 def history_path(data_dir: str | Path, job_id: str) -> Path:
@@ -108,6 +122,8 @@ def append_run(
     status: RunStatus,
     summary: str | None,
     session_id: str | None,
+    attempt: int | None = None,
+    attempts: int | None = None,
 ) -> JobRun:
     """Append one run and drop the oldest past the cap.
 
@@ -124,6 +140,8 @@ def append_run(
         status=status,
         summary=summary,
         session_id=session_id,
+        attempt=attempt,
+        attempts=attempts,
     )
     runs = _read_runs(path)
     runs.append(record)

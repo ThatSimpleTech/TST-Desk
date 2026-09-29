@@ -637,6 +637,14 @@ export interface SaveJob extends ClientMessage {
    *  "30 minutes") or a number of seconds. On an edit, omitted keeps the
    *  stored grace and `""` clears it. Omitted on create means always run. */
   grace?: string | number | null;
+  /** Extra tries after a transient scheduled failure (TD-3814). 0–3.
+   *  On an edit, omitted keeps the stored count. Omitted on create means
+   *  never retry. `0` clears. Run now ignores this. */
+  retries?: number | null;
+  /** Gap between those tries. A phrase ("10 minutes") or seconds. On an
+   *  edit, omitted keeps the stored delay and `""` means the 10-minute
+   *  default when `retries` is at least 1. Ignored when retries is 0. */
+  retry_delay?: string | number | null;
 }
 
 /** Remove a scheduled job by id (TD-3805). */
@@ -1492,6 +1500,13 @@ export interface JobEntry {
   engine?: "native" | "grok" | null;
   /** Seconds a slot may be late and still run. Absent or null means always run (TD-3813). */
   grace?: number | null;
+  /** Extra tries after the first scheduled fire (TD-3814). Absent or 0 means never retry. */
+  retries?: number | null;
+  /** Seconds between those tries. Absent or null when retries is 0. */
+  retry_delay?: number | null;
+  /** Tries already used for the slot in progress. Above 0, a retry is waiting
+   *  and the window does not notify until the slot finishes. */
+  attempt?: number | null;
   /** The last fire's receipt (TD-3807). Null until the job has run once.
    *  `missed` is a slot skipped for lateness, not a failed turn (TD-3813). */
   last_run: string | null;
@@ -1517,6 +1532,10 @@ export interface JobRunEntry {
   status: "ok" | "failed" | "missed";
   summary: string | null;
   session_id: string | null;
+  /** 1-based try when the job retries (TD-3814). Null on Run now and when retries is 0. */
+  attempt?: number | null;
+  /** Budget for the slot, `retries + 1`. Null alongside `attempt`. */
+  attempts?: number | null;
 }
 
 /** Response to list_job_runs (TD-3811). Connection-scoped. Newest first. */

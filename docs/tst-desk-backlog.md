@@ -6215,6 +6215,47 @@ files, vitest 1420, svelte-check 711 files 0 errors 0 warnings.
 
 ---
 
+### TD-3814 — Retry a scheduled run that failed for a transient reason
+**Size:** 3 · **Depends on:** TD-3813
+
+**Acceptance criteria:**
+- [x] A job may set `retries` from 0 to 3 (default 0) and `retry_delay`
+      as a plain-English duration. The delay is stored as seconds. When
+      retries is at least 1 and the delay is omitted, it is 10 minutes.
+      retries 0 stores no delay
+- [x] After a failed scheduled run, when the failure is transient and
+      attempts remain, the next attempt is now plus `retry_delay` and
+      the regular slot is remembered. The attempt count is persisted
+      and resets after success or when that regular slot resumes. Run
+      now does not retry and does not move the schedule
+- [x] Transient is a provider connection error, a timeout, HTTP 5xx,
+      or HTTP 429. `context_overflow`, `auth_failed`,
+      `api_key_rejected`, and a missing workspace or preset are not.
+      One table classifies them. Anything it does not name is not
+      transient
+- [x] Each attempt appends a history line naming attempt n of m. The
+      receipt shows the latest attempt. Delivery happens once per slot,
+      after success or the last failure, not after an intermediate try
+- [x] Grace applies to a regular slot only. A retry attempt is not
+      skipped for being late
+- [x] The job form has Retries (None / 1 / 2 / 3), and a count means a
+      10-minute delay. History shows the attempt numbers
+
+Done (2026-09-29): a provider that was down at the slot failed the run
+and waited until the next regular time. A job can now ask for up to
+three extra tries. A connection error, a timeout, HTTP 5xx, or a 429
+arms the next try and remembers the regular slot, including an hourly
+interval that would otherwise drift. A rejected key, a full context,
+and a missing workspace or preset fail once. Run now does not retry.
+Grace still skips only a late regular slot. The channel hears the slot
+once, when it succeeds or the tries run out. The receipt and the
+history name the attempt. Class B entry in DECISIONS.md.
+
+Suite: 3856 passed / 8 skipped, ruff + `mypy --strict` clean over 166
+files, vitest 1428, svelte-check 713 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
@@ -7308,12 +7349,12 @@ clean over 163 files, vitest 1412, svelte-check 709 files 0 errors
 | **Total v0.1 + v0.2** | **27** | **203** | **573** |
 | M5 Cowork (v0.3) | E29–E32, E48 | 49 | 127 |
 | M6 Computer use (v0.4) | E20, E33–E34 | 13 | 68 |
-| M7 Remote (v0.5) | E36–E38 | 17 | 61 |
+| M7 Remote (v0.5) | E36–E38 | 19 | 67 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
 | Later | E47, E49 | 19 | 77 |
-| **Total planned** | **48** | **328** | **1036** |
+| **Total planned** | **48** | **330** | **1042** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

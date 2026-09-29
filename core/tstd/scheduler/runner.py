@@ -29,7 +29,8 @@ from .pin import (
     reset_scheduled_pin,
     scheduled_run_block,
 )
-from .schedule import advance_job, arm_cadence_job, as_utc, due_jobs, record_run
+from .retry import failure_reason, settle_scheduled
+from .schedule import arm_cadence_job, as_utc, due_jobs, record_run
 from .store import get_job, list_jobs, save_job
 
 log = get_logger("tstd.scheduler.runner")
@@ -48,6 +49,10 @@ class TurnResult:
     summary: str
     ok: bool = True
     session_id: str | None = None
+    # Typed cause when ``ok`` is false (``connection_error``, ``auth_failed``).
+    # The summary is for the receipt; the code is what a retry decision reads,
+    # because the prose does not say ``context_overflow``.
+    error_code: str | None = None
 
 
 TurnFn = Callable[[Path, str], Awaitable["str | TurnResult"]]
@@ -250,23 +255,32 @@ async def _run_one(
     run_turn: TurnFn,
     deliver: Deliver,
 ) -> None:
-    # A slot past grace is spent like a run — next slot, receipt, history,
-    # one line on the channel — but the session does not start. Run now
-    # never enters this function, so asking for a run cannot skip it.
-    if await skip_if_late(data_dir, job, now, deliver):
+    # Grace is the regular slot only. A retry is already that slot's
+    # second chance; skipping it would drop the try the user asked for.
+    # Run now never enters this function, so asking for a run cannot skip.
+    if job.attempt == 0 and await skip_if_late(data_dir, job, now, deliver):
         return
     result = await _turn_result(job, run_turn)
-    # The slot that fired. advance_job replaces it, so the log has to
-    # capture it first — a manual run passes None instead.
+    # The instant that just came due. A retry's next_run is that instant,
+    # not the morning slot it is standing in for.
     fired = job.next_run
+    settled = settle_scheduled(
+        job,
+        now,
+        ok=result.ok,
+        reason=failure_reason(ok=result.ok, error_code=result.error_code, summary=result.summary),
+        summary=result.summary,
+    )
     # Stamp the next slot (and the run receipt) before notify. Deliver-first
     # left an overdue ``next_run`` on disk if the test (or a crash) observed
     # the record before ``save_job`` finished — a second tick would fire again.
+    # An intermediate failure still stamps the receipt, and does not deliver:
+    # the channel hears the slot once, when it succeeds or the tries run out.
     stamped = record_run(
-        advance_job(job, now),
+        job.model_copy(update=settled.updates),
         now,
         status="ok" if result.ok else "failed",
-        summary=result.summary,
+        summary=settled.receipt,
         session_id=result.session_id,
     )
     await asyncio.to_thread(save_job, data_dir, stamped)
@@ -277,8 +291,16 @@ async def _run_one(
         result,
         trigger="schedule",
         scheduled_for=fired,
+        attempt=settled.attempt,
+        attempts=settled.attempts,
     )
-    await deliver(job.deliver_to, result.summary)
+    if not settled.deliver:
+        log.info(
+            "scheduled run will retry",
+            extra={"extra_fields": {"job_id": job.id, "attempt": settled.attempt}},
+        )
+        return
+    await deliver(job.deliver_to, settled.receipt)
 
 
 async def _remember_run(
@@ -289,6 +311,8 @@ async def _remember_run(
     *,
     trigger: Literal["schedule", "manual"],
     scheduled_for: str | None,
+    attempt: int | None = None,
+    attempts: int | None = None,
 ) -> None:
     """Append the fire off the event loop. ``last_*`` stays the row summary."""
     status: Literal["ok", "failed"] = "ok" if result.ok else "failed"
@@ -302,6 +326,8 @@ async def _remember_run(
         status=status,
         summary=result.summary,
         session_id=result.session_id,
+        attempt=attempt,
+        attempts=attempts,
     )
 
 
@@ -313,6 +339,18 @@ async def _turn_result(job: Job, run_turn: TurnFn) -> TurnResult:
     try:
         try:
             outcome = await run_turn(Path(job.workspace), job.instruction)
+        except TimeoutError as exc:
+            # The wait for turn_complete, not a provider status. It is the
+            # same kind of blip as a read timeout: try the slot again.
+            log.exception(
+                "scheduled turn timed out",
+                extra={"extra_fields": {"job_id": job.id}},
+            )
+            return TurnResult(
+                summary=f"scheduled run failed: {exc}",
+                ok=False,
+                error_code="timeout",
+            )
         except Exception as exc:
             log.exception(
                 "scheduled turn failed",
@@ -336,9 +374,13 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
     """
     blocked = await scheduled_run_block(host.config.presets, grok_binary=host.config.engine.binary)
     if blocked is not None:
-        return TurnResult(blocked, ok=False)
+        return TurnResult(blocked, ok=False, error_code=_pin_block_code(blocked))
     if not await asyncio.to_thread(workspace.is_dir):
-        return TurnResult(f"workspace is not a directory: {workspace}", ok=False)
+        return TurnResult(
+            f"workspace is not a directory: {workspace}",
+            ok=False,
+            error_code="workspace_missing",
+        )
     pin = current_scheduled_pin()
     raw = await host._start_session(str(workspace), preset=pin.preset, engine=pin.engine)
     if raw is None:
@@ -357,8 +399,8 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
         )
     await session.add_user_message(message)
     await _wait_turn_complete(session)
-    summary, failed = turn_outcome(session)
-    return TurnResult(summary, ok=not failed, session_id=session_id)
+    summary, failed, code = turn_outcome(session)
+    return TurnResult(summary, ok=not failed, session_id=session_id, error_code=code)
 
 
 async def _wait_turn_complete(session: Session) -> None:
@@ -383,12 +425,14 @@ def turn_summary(session: Session) -> str:
     return turn_outcome(session)[0]
 
 
-def turn_outcome(session: Session) -> tuple[str, bool]:
-    """``(summary, failed)`` for the turn just finished.
+def turn_outcome(session: Session) -> tuple[str, bool, str | None]:
+    """``(summary, failed, error_code)`` for the turn just finished.
 
     A turn that ends with ``turn_complete.failed`` is a failure even though
     it produced a summary, and a turn that produced no text at all is one
     too — "it ran and said nothing" is not something to report as success.
+    The code is separate from the summary so a retry can tell a down
+    provider from a rejected key without reading the sentence.
     """
     failed_code: str | None = None
     for event in reversed(session.event_log.all_events):
@@ -400,7 +444,14 @@ def turn_outcome(session: Session) -> tuple[str, bool]:
     ]
     text = "".join(parts).strip()
     if text:
-        return text, failed_code is not None
+        return text, failed_code is not None, failed_code
     if failed_code is not None:
-        return failed_code, True
-    return "the scheduled turn produced no output", True
+        return failed_code, True, failed_code
+    return "the scheduled turn produced no output", True, None
+
+
+def _pin_block_code(summary: str) -> str:
+    """Stable code for a pin that cannot start. The summary stays the receipt."""
+    if summary == "grok engine is unavailable":
+        return "engine_unavailable"
+    return "preset_missing"
