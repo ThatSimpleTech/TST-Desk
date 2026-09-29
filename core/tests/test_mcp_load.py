@@ -466,7 +466,7 @@ class TestDeadServer:
         async def _get(provider_name: str = "openrouter") -> str:
             return await fk.get(provider_name)
 
-        monkeypatch.setattr("tstd.daemon.get_api_key", _get)
+        monkeypatch.setattr("tstd.daemon.get_api_key", _get, raising=False)
         monkeypatch.setattr("tstd.daemon.ProviderClient", FakeProviderClient)
         _write_user_config(
             "mcp:\n"

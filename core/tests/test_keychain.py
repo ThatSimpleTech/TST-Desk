@@ -24,6 +24,7 @@ from tstd.keychain import (
     KeychainLockedError,
     MacOSKeychain,
     _classify_cli_failure,
+    api_key_is_stored,
     delete_api_key,
     get_api_key,
     get_discord_webhook_url,
@@ -143,6 +144,11 @@ class TestKeychainCRUD:
         await store_api_key("sk-new-key")
         assert await get_api_key() == "sk-new-key"
 
+    async def test_presence_follows_the_stored_item(self) -> None:
+        assert await api_key_is_stored() is False
+        await store_api_key("sk-test-key-12345")
+        assert await api_key_is_stored() is True
+
 
 class TestKeychainDetection:
     """Test backend detection."""
@@ -248,91 +254,6 @@ class TestWindowsBackend:
         assert captured == ["com.thatsimpletech.tstdesk:tst-openrouter"]
 
 
-class TestMacOSWriteBindings:
-    """macOS writes must never put the secret where `ps` can read it (TD-4813).
-
-    `security add-generic-password -w <secret>` exposes the key in argv for
-    the lifetime of the call; the write now goes through SecItemAdd via
-    ctypes instead. These tests run the real MacOSKeychain.set_secret flow
-    with only the process spawns and the framework call faked.
-    """
-
-    @pytest.fixture
-    def darwin_host(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
-        monkeypatch.setattr(sys, "platform", "darwin")
-        monkeypatch.setattr(kc_mod, "_backend", None)
-        # The autouse mock would swallow store_api_key before it reaches
-        # MacOSKeychain; these tests need the real macOS flow. Every CLI
-        # spawn is faked to succeed and recorded — tests must never touch
-        # the developer's actual keychain.
-        monkeypatch.setattr(kc_mod, "_get_backend", lambda: kc_mod.MacOSKeychain())
-        spawned: list[tuple[str, ...]] = []
-
-        class FakeProc:
-            returncode = 0
-
-            async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
-                return b"", b""
-
-        async def fake_exec(*argv: str, **_kwargs: Any) -> FakeProc:
-            spawned.append(argv)
-            return FakeProc()
-
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        return spawned
-
-    async def test_store_routes_through_the_framework_seam(
-        self, darwin_host: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        captured: list[tuple[str, str, str]] = []
-
-        def _write(service: str, account: str, secret: str) -> None:
-            captured.append((service, account, secret))
-
-        monkeypatch.setattr(keychain_macos, "_sec_add", _write)
-        await store_api_key("sk-test-key", provider_name="openrouter")
-        assert captured == [("com.thatsimpletech.tstdesk", "tst-openrouter", "sk-test-key")]
-
-    async def test_no_spawned_argv_carries_the_secret(
-        self, darwin_host: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The acceptance check in-process. Every process this flow spawns has
-        # its argv recorded by the darwin_host fixture; none may contain the
-        # API key. Reverting to the CLI add fails this: `-w <secret>` lands in
-        # recorded argv exactly where `ps` would have read it.
-        monkeypatch.setattr(keychain_macos, "_sec_add", lambda *_args: None)
-        await store_api_key("sk-test-guard-key", provider_name="openrouter")
-        # Sanity: the pre-clean delete really did pass through here, so this
-        # test guards a live path rather than an empty spawn list.
-        assert darwin_host, "expected the CLI delete to be intercepted"
-        assert "sk-test-guard-key" not in repr(darwin_host)
-
-    def test_locked_keychain_maps_to_locked_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            keychain_macos,
-            "_sec_item_add",
-            lambda *_args: keychain_macos._ERR_SEC_INTERACTION_NOT_ALLOWED,
-        )
-        with pytest.raises(KeychainLockedError, match="login keychain is locked"):
-            keychain_macos._sec_add("svc", "acct", "sec")
-
-    def test_duplicate_after_unclean_delete_names_the_blocker(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            keychain_macos,
-            "_sec_item_add",
-            lambda *_args: keychain_macos._ERR_SEC_DUPLICATE_ITEM,
-        )
-        with pytest.raises(KeychainError, match="could not be replaced"):
-            keychain_macos._sec_add("svc", "acct", "sec")
-
-    def test_unknown_status_keeps_the_code_visible(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(keychain_macos, "_sec_item_add", lambda *_args: -34018)
-        with pytest.raises(KeychainError, match="OSStatus -34018"):
-            keychain_macos._sec_add("svc", "acct", "sec")
-
-
 class TestBackendDispatch:
     """_detect_backend picks the platform backend (TD-1102 adds win32)."""
 
@@ -381,25 +302,31 @@ class TestLockedClassification:
         assert "weird backend exploded" in str(err)
 
     async def test_macos_store_raises_locked_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The write goes through SecItemAdd since TD-4813, so a locked
-        # keychain surfaces as OSStatus -25308 from the framework rather than
-        # CLI stderr; only the pre-clean delete still rides the CLI.
+        # The add is `security -i`. A locked keychain is CLI stderr on that
+        # command, after the in-process delete (faked) and the CLI delete.
+        calls = 0
+
         class _Proc:
-            returncode = 0
+            def __init__(self, returncode: int, stderr: bytes) -> None:
+                self.returncode = returncode
+                self._stderr = stderr
 
             async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
-                return b"", b""
+                return b"", self._stderr
 
-        async def _fake_exec(*args: Any, **kwargs: Any) -> _Proc:
-            return _Proc()
+        async def _fake_exec(*_args: Any, **_kwargs: Any) -> _Proc:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return _Proc(0, b"")
+            return _Proc(
+                1,
+                b"security: The user name or passphrase you entered is not correct.",
+            )
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
-        monkeypatch.setattr(
-            keychain_macos,
-            "_sec_item_add",
-            lambda *_args: keychain_macos._ERR_SEC_INTERACTION_NOT_ALLOWED,
-        )
-        with pytest.raises(KeychainLockedError):
+        monkeypatch.setattr(keychain_macos, "_sec_item_delete", lambda *_args: -25300)
+        with pytest.raises(KeychainLockedError, match="login keychain is locked"):
             await MacOSKeychain().set_secret("tst-openrouter", "sk-x")
 
 

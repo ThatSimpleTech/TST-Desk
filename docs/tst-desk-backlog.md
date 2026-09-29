@@ -8085,3 +8085,49 @@ may be closed by suppressing warnings or adding sleeps.
 
 **Non-goals:** Frontend bundle optimization and live/soak testing are separate,
 unapproved follow-ups (see `reports/td-4833/warning-investigation.md`).
+
+---
+
+### TD-4838 — macOS keychain items are readable by the security CLI
+**Size:** 3 · **Depends on:** TD-4813, TD-4835
+
+**Acceptance criteria:**
+- [x] A macOS write spawns argv exactly `security -i` and sends one
+      `add-generic-password -U -a … -s … -l … -w <secret>` line on stdin.
+      Spaces, both quotes, backslashes, `$`, and non-ASCII round-trip. A
+      newline or NUL is refused, and the error does not contain the value.
+      A failed sub-command is an error even when `security -i` exits 0.
+      A hung CLI is still a locked keychain (TD-1105)
+- [x] Before that add, `SecItemDelete` with the authentication UI forced
+      off runs, then the CLI delete. A missing item is not an error.
+      Re-saving replaces a TD-4813 item with one `/usr/bin/security` can
+      read. `-U` is not what repairs the ACL
+- [x] Reads stay on `security find-generic-password -w`. If that fails
+      and the item exists, `SecItemCopyMatching` runs with
+      `kSecReturnData` and `kSecUseAuthenticationUIFail`. If that also
+      fails, the error says to re-save the key in Settings → API keys
+      and contains no secret. A real lock stays a locked-keychain error.
+      Not-found does not fall back
+- [x] Presence (`api_key_is_stored`, setup state, the TD-4835 cache) is
+      `find-generic-password` without `-w` and does not call
+      `get_api_key`. The pane shows the key as stored and enables Test
+      when the item exists. Cache invalidation on key mutations is
+      unchanged
+- [x] Settings → API keys placeholders say "Paste API key". A failed
+      Test shows the daemon's reason
+- [x] Linux and Windows backends are unchanged. Tests fake subprocess
+      and ctypes and do not touch the host keychain
+
+Done (2026-09-29): TD-4813 wrote the item from inside `tstd`, so the ACL
+trusted only that binary. This app is ad-hoc signed, and reads still go
+through `/usr/bin/security`, which was denied. The presence probe was a
+full secret read, so Settings said "No key stored" for a key that was
+saved. The write is now `security -i` with the add command on stdin, so
+the trusted application is `/usr/bin/security` and the secret stays off
+argv. A re-save deletes the old item in-process, then via the CLI, then
+adds it again. If the CLI read fails for an item that exists, this
+binary tries `SecItemCopyMatching` with the UI forced off; otherwise
+the user is told to re-save. Class B entry in DECISIONS.md.
+
+Suite: 3508 passed / 8 skipped, ruff + `mypy --strict` clean over 155
+files, vitest 1404, svelte-check 707 files 0 errors 0 warnings.

@@ -105,10 +105,11 @@ def _redirect_windows_user_data(
 
 
 # Seams that would otherwise call the developer's live keychain. setup_state
-# probes every named credential via get_api_key; a locked Secret Service
-# waits on a prompt and the suite hangs (TD-1105). test_keychain opts out
-# because it is the module that owns the real backends.
+# probes every named credential; a locked Secret Service waits on a prompt
+# and the suite hangs (TD-1105). test_keychain* opts out because those
+# modules own the backends and fake every spawn themselves.
 _KEYCHAIN_SEAMS = (
+    "tstd.keychain.api_key_is_stored",
     "tstd.keychain.get_api_key",
     "tstd.keychain.store_api_key",
     "tstd.keychain.delete_api_key",
@@ -124,7 +125,7 @@ _KEYCHAIN_SEAMS = (
     "tstd.keychain.get_telegram_bot_url",
     "tstd.keychain.store_telegram_bot_url",
     "tstd.keychain.delete_telegram_bot_url",
-    "tstd.daemon.get_api_key",
+    "tstd.daemon.api_key_is_stored",
     "tstd.notify.slack.get_slack_webhook_url",
     "tstd.notify.ntfy.get_ntfy_topic_url",
     "tstd.notify.discord.get_discord_webhook_url",
@@ -139,7 +140,8 @@ async def _isolated_keychain(*_args: object, **_kwargs: object) -> Any:
 @pytest.fixture(autouse=True)
 def _isolate_live_keychain(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the suite off the host Secret Service / Keychain / CredMan."""
-    if request.module.__name__.endswith("test_keychain"):
+    module_name = request.module.__name__.rsplit(".", 1)[-1]
+    if module_name == "test_keychain" or module_name.startswith("test_keychain_"):
         return
     isolated: Callable[..., Awaitable[Any]] = _isolated_keychain
     for seam in _KEYCHAIN_SEAMS:

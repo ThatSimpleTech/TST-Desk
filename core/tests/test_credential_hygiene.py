@@ -76,7 +76,7 @@ def fake_keychain(monkeypatch: pytest.MonkeyPatch) -> FakeKeychain:
     async def _delete(provider_name: str = "openrouter") -> None:
         await fk.delete(provider_name)
 
-    monkeypatch.setattr("tstd.daemon.get_api_key", _get)
+    monkeypatch.setattr("tstd.daemon.get_api_key", _get, raising=False)
     monkeypatch.setattr("tstd.daemon.store_api_key", _store)
     monkeypatch.setattr("tstd.daemon.delete_api_key", _delete)
     cached_config.cache_clear()
