@@ -19,6 +19,7 @@ from typing import Literal
 from .autonomy.checkpoint import Notice
 from .logging import get_logger
 from .memory_store import path_is_memory_file
+from .proc_lifecycle import finish_subprocess
 
 log = get_logger("tstd.memory_commit")
 
@@ -158,11 +159,6 @@ class MemoryCommitter:
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        try:
-            out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise
+        out_b, err_b = await finish_subprocess(proc, timeout=_GIT_TIMEOUT)
         rc = proc.returncode if proc.returncode is not None else -1
         return rc, out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace")

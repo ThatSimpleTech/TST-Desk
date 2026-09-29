@@ -10575,3 +10575,83 @@ existing event already renders.
 
 **Alternative rejected:** Hardcoding 32768, and retrying inside the
 provider client (that would resend the same oversized prompt).
+
+## TD-4835 — Deterministic resource lifecycle cleanup (Class B)
+
+2026-09-29.
+
+**Decision:** One helper, `tstd.proc_lifecycle`, owns `communicate` with a
+timeout and the cancel/timeout reap. Checkpoint, charter, revert,
+supervisor, memory commit, sandbox, and keychain call `finish_subprocess`.
+The shell's task-cancel path calls `reap_subprocess` after `killpg`.
+`asyncio.timeout` wraps `proc.wait` on the caller's task. `asyncio.wait_for`
+would put `wait` on a child task, so cancelling the shell task would not be
+the waiter that closes the transport.
+
+**Decision:** The reap is bounded. The default grace is 5 seconds, the
+shell tool's existing post-kill bound. Keychain passes 1.0 second, so a
+CLI that ignores SIGKILL stays a locked keychain on the TD-1105 bound and
+the suite's hung-CLI stand-in does not adopt the longer grace. A cancel
+absorbed to finish `wait` is re-raised after the transport is closed. A
+timeout must not swallow a real cancel.
+
+**Decision:** A refused process-group kill does not fall through into
+`proc.kill()`. Killing only the leader orphans the grandchildren that
+still hold the pipes, and the transport is then finalized in `__del__`.
+If the leader is already dead and the grace elapses with a pipe still
+open, the transport is closed on the live loop. `close()` is not called
+while the leader is still running, because that SIGKILLs it.
+
+**Decision:** No new dependency and no protocol change. MCP and desktop
+stdio `aclose` were not changed. The escalated suite did not show an
+unclosed transport from them.
+
+**Rationale:** A cancelled `communicate()` leaves the child running. The
+child watcher holds the transport until that child exits. If the loop is
+already closed, `BaseSubprocessTransport.__del__` calls `call_soon` and
+raises `RuntimeError: Event loop is closed`. The warning is collected by
+whichever test next garbage-collects the object, which is why it surfaced
+in `test_class_c_stops_and_notifies` rather than at the `git` call inside
+autonomy advance.
+
+**Rejected:** Suppressing `ResourceWarning`, sleeping in the regression
+tests, and reaping a leader the OS refused to kill.
+
+## TD-3812 — Pin the preset and the engine on a scheduled job (Class B)
+
+2026-09-29.
+
+**Decision:** A job stores a catalog preset name and an engine kind
+(`native` or `grok`), nothing else. Slugs, URLs, and keys stay in config
+and the keychain. `None` means the fire uses whatever the window is using.
+Save checks a name the client just sent against `config.presets`. A stored
+name is not re-checked when the save omits the field, so Pause can still
+flip a job whose preset has left the catalog. Resending a stale name fails
+the save. At fire time a missing name is `preset '<name>' no longer exists`,
+and a pinned Grok engine whose CLI cannot be found is `grok engine is
+unavailable`. The preset failure wins when both are true. Neither message
+includes a path. The receipt is a `TurnResult`, so the runner does not
+prefix it with `scheduled run failed:`.
+
+**Decision:** The turn callback stays `(workspace, instruction)`. The pin
+is bound on the task for that call and reset in `finally`, so the next job
+on the same task does not inherit it. `run_turn_on_daemon` reads it and
+passes `preset` and `engine` into `_start_session`. Those arguments name
+that session only: `_start_session` does not call `save_active_preset` or
+`save_engine_kind`, and it does not change `config.active_preset` or
+`config.engine.kind`. The loop already reads `session.config` (TD-1721),
+so the pinned preset's slug is what the turn sends. A pin that cannot
+start is refused before the session opens, so the workspace is not
+scaffolded and `_resolved_preset` cannot fall back to the window's preset.
+
+**Decision:** Edit matches TD-3810. Omitted keeps, `""` clears. On create,
+`""` is the same as omitted. `SaveJob.engine` is a string so `""` parses;
+`Job` normalizes it to `native`, `grok`, or none. No protocol version bump.
+The form's Create omits a blank pin. Save always sends the fields. Pause
+omits them. A natural-language parse does not name a model, so it leaves
+the pin already on the form.
+
+**Rejected:** Swapping `daemon.config` for the fire (it races the window
+and can be persisted), widening `TurnFn` (every scheduler fake would have
+to grow a parameter), letting `_resolved_preset` fall back when the pin is
+gone, and storing the slug or the base URL on the job.

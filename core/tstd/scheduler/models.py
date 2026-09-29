@@ -11,7 +11,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 from zoneinfo import ZoneInfo
 
 from pydantic import (
@@ -25,6 +25,7 @@ from pydantic import (
 
 from ..logging import redact_secrets
 from .phrases import expand_alias, phrase_to_cron
+from .pin import normalize_engine, normalize_preset
 
 DeliverTo = Literal["window", "slack", "ntfy"]
 RunStatus = Literal["ok", "failed"]
@@ -57,6 +58,8 @@ _FIELD_LABELS = {
     "next_run": "Next run",
     "deliver_to": "Deliver to",
     "timezone": "Time zone",
+    "preset": "Preset",
+    "engine": "Engine",
 }
 _UNITS = {
     "minute": "minute",
@@ -89,6 +92,9 @@ class JobDraft(BaseModel):
     deliver_to: DeliverTo | None = None
     paused: bool = False
     timezone: str | None = None
+    # Catalog name and engine kind (TD-3812). Blank becomes None in ``Job``.
+    preset: str | None = None
+    engine: str | None = None
 
 
 class Job(BaseModel):
@@ -111,6 +117,13 @@ class Job(BaseModel):
     # IANA name the cron cadence is read in. None is UTC, which is what every
     # job saved before this field existed already means.
     timezone: str | None = None
+    # Catalog preset name and engine kind for this job's runs (TD-3812).
+    # None means "whatever the window is using when the job fires". The
+    # catalog is not checked here: a name that later leaves the catalog
+    # must still load, so the run can fail with a receipt and pause still
+    # works. Slugs, URLs, and keys are not stored.
+    preset: str | None = None
+    engine: Literal["native", "grok"] | None = None
 
     # ── Last run (TD-3807) ────────────────────────────────────────────
     # Optional so a jobs.json written before this landed still loads.
@@ -153,6 +166,24 @@ class Job(BaseModel):
     @classmethod
     def _timezone_known(cls, value: str | None) -> str | None:
         return normalize_timezone(value)
+
+    @field_validator("preset", mode="before")
+    @classmethod
+    def _preset_name(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("must be a catalog name")
+        return normalize_preset(value)
+
+    @field_validator("engine", mode="before")
+    @classmethod
+    def _engine_kind(cls, value: object) -> Literal["native", "grok"] | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("must be native or grok")
+        return normalize_engine(value)
 
     @field_validator("next_run")
     @classmethod
@@ -347,6 +378,10 @@ def validate_draft(draft: JobDraft) -> Job:
             deliver_to=draft.deliver_to or "window",
             paused=draft.paused,
             timezone=draft.timezone,
+            preset=draft.preset,
+            # The field is the stored kind. The validator still accepts "",
+            # "Native", and a bad string, and turns the last into the error.
+            engine=cast(Literal["native", "grok"] | None, draft.engine),
         )
     except ValidationError as exc:
         raise JobValidationError(describe_validation_error(exc)) from exc

@@ -880,15 +880,17 @@ def default_config_yaml() -> str:
 def ensure_user_config(path: Path | None = None) -> Path:
     """Copy the shipped default config to the user data dir if missing.
 
-    Returns the path to the user config file.
+    Returns the path to the user config file. Both streams are closed
+    before return, including when the copy raises: an unclosed handle
+    is reported later as ``ResourceWarning`` when it is collected
+    (TD-4835).
     """
     config_path = path or (user_data_dir() / "config.yaml")
     if not config_path.exists():
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfileobj(
-            resources.files("tstd").joinpath(_DEFAULT_CONFIG_RESOURCE).open("rb"),
-            config_path.open("wb"),
-        )
+        source = resources.files("tstd").joinpath(_DEFAULT_CONFIG_RESOURCE)
+        with source.open("rb") as src, config_path.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
     return config_path
 
 

@@ -908,6 +908,10 @@ FIXTURES = {
         instruction="summarize the inbox",
         cadence="every 1 hour",
         deliver_to="window",
+        # TD-3812: a real pin, not nulls — an all-null sample would not
+        # prove the TypeScript side accepts the values.
+        preset="vllm",
+        engine="native",
     ),
     "delete_job": DeleteJob(job_id="job-1"),
     "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
@@ -922,6 +926,8 @@ FIXTURES = {
                 cadence="every 1 hour",
                 deliver_to="window",
                 paused=False,
+                preset="vllm",
+                engine="native",
                 # TD-3807: a real receipt, not nulls — an all-null sample
                 # would not prove the TypeScript side accepts the values.
                 last_run="2026-08-21T15:00:00+00:00",

@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from ..proc_lifecycle import kill_left_leader_running, reap_subprocess
 from ..protocol import ShellOutput
 from ..session import Session
 
@@ -480,8 +481,12 @@ async def run_shell(
             kill_note = _kill_process_group(proc)
             if kill_note:
                 _log.warning("cancelled mid-spawn: %s (pid %s)", kill_note, proc.pid)
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(proc.wait(), timeout=_KILL_GRACE_SECS)
+            # ``reap_subprocess`` retries when a second cancel drops the
+            # exit waiter. Suppressing that cancel here used to return
+            # before ``wait`` finished (TD-4835). A refused group kill
+            # must not fall through into ``proc.kill()``.
+            if not kill_left_leader_running(proc, kill_note):
+                await reap_subprocess(proc, timeout=_KILL_GRACE_SECS)
         raise
     except OSError as e:
         raise ValueError(f"could not start shell: {e}") from e
@@ -534,10 +539,17 @@ async def run_shell(
                     await asyncio.wait_for(proc.wait(), timeout=_KILL_GRACE_SECS)
     except asyncio.CancelledError:
         # SessionRunner.cancel() cancels the loop task; the group must
-        # die with it.
+        # die with it. The ``finally`` below cancels the work task, and
+        # that cancels its ``proc.wait()`` — so the transport would stay
+        # open until ``__del__`` ran against a closed loop (TD-4835).
+        # Reap on this task first, while the loop can still take the exit.
         kill_note = _kill_process_group(proc)
         if kill_note:
             _log.warning("cancelled: %s (pid %s)", kill_note, proc.pid)
+        # Same refusal rule as the mid-spawn path: do not SIGKILL a leader
+        # the OS refused to kill, or the pipes stay open for ``__del__``.
+        if not kill_left_leader_running(proc, kill_note):
+            await reap_subprocess(proc, timeout=_KILL_GRACE_SECS)
         raise
     finally:
         for task in (work_task, cancel_task):

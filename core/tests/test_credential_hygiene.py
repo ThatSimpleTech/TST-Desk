@@ -183,6 +183,11 @@ class TestFrameLoggingCap:
             assert root.level == logging.DEBUG
             assert logging.getLogger("websockets").level == logging.INFO
         finally:
+            # setup_logging opened tstd.log. Dropping the handler without
+            # close leaves that file for ResourceWarning (TD-4835).
+            for handler in list(root.handlers):
+                if handler not in old_handlers:
+                    handler.close()
             root.handlers.clear()
             root.handlers.extend(old_handlers)
             root.setLevel(old_level)
