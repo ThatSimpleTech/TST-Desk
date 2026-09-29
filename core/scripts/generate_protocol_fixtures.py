@@ -912,6 +912,11 @@ FIXTURES = {
         # prove the TypeScript side accepts the values.
         preset="vllm",
         engine="native",
+        # TD-3813: a phrase, not null — the job stores the seconds.
+        grace="2 hours",
+        # TD-3814: a count and a phrase, not nulls.
+        retries=2,
+        retry_delay="10 minutes",
     ),
     "delete_job": DeleteJob(job_id="job-1"),
     "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
@@ -928,6 +933,10 @@ FIXTURES = {
                 paused=False,
                 preset="vllm",
                 engine="native",
+                grace=7200,
+                retries=2,
+                retry_delay=600,
+                attempt=0,
                 # TD-3807: a real receipt, not nulls — an all-null sample
                 # would not prove the TypeScript side accepts the values.
                 last_run="2026-08-21T15:00:00+00:00",
@@ -948,7 +957,17 @@ FIXTURES = {
                 status="ok",
                 summary="3 threads need a reply",
                 session_id="sess-1",
-            )
+                attempt=2,
+                attempts=3,
+            ),
+            JobRunEntry(
+                started_at="2026-08-21T22:45:00+00:00",
+                scheduled_for="2026-08-21T12:45:00+00:00",
+                trigger="schedule",
+                status="missed",
+                summary="Skipped the 7:45 AM run — 10 h late",
+                session_id=None,
+            ),
         ],
     ),
     "job_draft": JobDraftReply(

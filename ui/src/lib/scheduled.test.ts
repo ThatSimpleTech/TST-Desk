@@ -5,13 +5,18 @@ import {
 	formatLocal,
 	humanizeCadence,
 	jobActivity,
+	draftFromJob,
+	graceDraftValue,
+	retriesDraftValue,
 	jobFailed,
 	jobMeta,
+	jobMissed,
 	jobLastRun,
 	jobRunLabel,
 	jobWhen,
 	jobsEmptyCopy,
 	saveFromDraft,
+	saveFromEdit,
 	saveFromJob,
 	sessionMissingCopy,
 	viewerTimeZone,
@@ -235,6 +240,7 @@ describe("scheduled store", () => {
 	});
 
 	it("parses NL into the draft without saving", () => {
+		setDraftField("grace", "6 hours");
 		setParseText("every 2 hours in /ws/proj summarize the inbox deliver to slack");
 		expect(parseJobRequest()).toBe(true);
 		expect(mocks.sent.at(-1)).toEqual({
@@ -255,6 +261,7 @@ describe("scheduled store", () => {
 		expect(scheduled.draft.instruction).toBe("summarize the inbox");
 		expect(scheduled.draft.cadence).toBe("every 2 hours");
 		expect(scheduled.draft.deliver_to).toBe("slack");
+		expect(scheduled.draft.grace).toBe("6 hours");
 		expect(scheduled.items).toEqual([]);
 	});
 
@@ -493,5 +500,80 @@ describe("run history (TD-3811)", () => {
 		expect(scheduled.historyOpen).toEqual({});
 		expect(scheduled.historySeen).toEqual({});
 		expect(scheduled.runs).toEqual({});
+	});
+});
+
+describe("grace (TD-3813)", () => {
+	it("names a missed slot without calling it a failure", () => {
+		const missed = job({
+			id: "j1",
+			last_run: "2026-08-21T18:00:00+00:00",
+			last_status: "missed",
+		});
+		expect(jobLastRun(missed, "UTC")).toMatch(/^Missed /);
+		expect(jobFailed(missed)).toBe(false);
+		expect(jobMissed(missed)).toBe(true);
+		expect(jobMissed(job({ id: "j1", last_status: "failed" }))).toBe(false);
+		const label = jobRunLabel(run({ status: "missed" }), "UTC");
+		expect(label).toMatch(/^Missed /);
+		expect(label).not.toMatch(/Failed/);
+		expect(label.toLowerCase()).not.toContain("manual");
+	});
+
+	it("maps stored seconds to the phrase the form sends", () => {
+		expect(graceDraftValue(null)).toBe("");
+		expect(graceDraftValue(undefined)).toBe("");
+		expect(graceDraftValue(7200)).toBe("2 hours");
+		expect(graceDraftValue(3600)).toBe("1 hour");
+		expect(graceDraftValue(5400)).toBe("90 minutes");
+		expect(graceDraftValue(86400)).toBe("1 day");
+		expect(graceDraftValue(172800)).toBe("2 days");
+		expect(graceDraftValue(90)).toBe("90");
+
+		const row = job({ id: "j1", grace: 7200, cadence: "every 1 hour" });
+		expect(draftFromJob(row).grace).toBe("2 hours");
+		expect(saveFromEdit(draftFromJob(row), row, "UTC").grace).toBe("2 hours");
+		expect(saveFromEdit({ ...draftFromJob(row), grace: "" }, row, "UTC").grace).toBe("");
+		expect(saveFromJob(row, true)).not.toHaveProperty("grace");
+		expect(saveFromDraft({ ...emptyDraft("/ws"), grace: "2 hours" }, "UTC").grace).toBe("2 hours");
+		expect(saveFromDraft(emptyDraft("/ws"), "UTC")).not.toHaveProperty("grace");
+	});
+});
+
+describe("retries (TD-3814)", () => {
+	it("maps a stored count and sends None as omit or clear", () => {
+		expect(retriesDraftValue(null)).toBe("");
+		expect(retriesDraftValue(undefined)).toBe("");
+		expect(retriesDraftValue(0)).toBe("");
+		expect(retriesDraftValue(2)).toBe("2");
+		expect(retriesDraftValue(4)).toBe("4");
+
+		const row = job({ id: "j1", retries: 2, retry_delay: 600, cadence: "every 1 hour" });
+		expect(draftFromJob(row).retries).toBe("2");
+		const kept = saveFromEdit(draftFromJob(row), row, "UTC");
+		expect(kept.retries).toBe(2);
+		expect(kept.retry_delay).toBe("10 minutes");
+		const cleared = saveFromEdit({ ...draftFromJob(row), retries: "" }, row, "UTC");
+		expect(cleared.retries).toBe(0);
+		expect(cleared.retry_delay).toBe("");
+		expect(saveFromJob(row, true)).not.toHaveProperty("retries");
+		expect(saveFromJob(row, true)).not.toHaveProperty("retry_delay");
+
+		const created = saveFromDraft({ ...emptyDraft("/ws"), retries: "1" }, "UTC");
+		expect(created.retries).toBe(1);
+		expect(created.retry_delay).toBe("10 minutes");
+		expect(saveFromDraft(emptyDraft("/ws"), "UTC")).not.toHaveProperty("retries");
+	});
+
+	it("names the try on a scheduled history row and not on Run now", () => {
+		const labeled = jobRunLabel(run({ attempt: 2, attempts: 3 }), "UTC");
+		expect(labeled).toContain("attempt 2 of 3");
+		expect(labeled.toLowerCase()).not.toContain("manual");
+		const manual = jobRunLabel(
+			run({ trigger: "manual", status: "failed", scheduled_for: null }),
+			"UTC",
+		);
+		expect(manual.endsWith(" · manual")).toBe(true);
+		expect(manual.toLowerCase()).not.toContain("attempt");
 	});
 });

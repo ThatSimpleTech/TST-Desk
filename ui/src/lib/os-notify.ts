@@ -84,16 +84,25 @@ export function scheduledNotices(
 	const notices: OsNotice[] = [];
 	for (const job of jobs) {
 		if (job.deliver_to !== "window" || !job.last_run) continue;
+		// A retry still in progress updates the receipt so the pane can
+		// show the latest try. That is not delivery: the slot notifies
+		// once, when it succeeds or the tries run out (attempt back to 0).
+		if ((job.attempt ?? 0) > 0) continue;
 		const seen = before.get(job.id);
 		if (seen === undefined || seen === job.last_run) continue;
-		const failed = job.last_status === "failed";
 		notices.push({
-			title: failed ? "Scheduled job failed" : "Scheduled job ran",
+			title: scheduledTitle(job.last_status),
 			body: banner(job.last_summary ?? job.instruction),
 			kind: "scheduled",
 		});
 	}
 	return notices;
+}
+
+function scheduledTitle(status: JobEntry["last_status"]): string {
+	if (status === "failed") return "Scheduled job failed";
+	if (status === "missed") return "Scheduled job missed";
+	return "Scheduled job ran";
 }
 
 /** OS notifications fire only when the window is not the front one.

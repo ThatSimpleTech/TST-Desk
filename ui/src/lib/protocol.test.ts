@@ -1324,6 +1324,9 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(save.deliver_to).toBe("window");
     expect(save.preset).toBe("vllm");
     expect(save.engine).toBe("native");
+    expect(save.grace).toBe("2 hours");
+    expect(save.retries).toBe(2);
+    expect(save.retry_delay).toBe("10 minutes");
     const del = fixtures.delete_job as DeleteJob;
     expect(del.type).toBe("delete_job");
     expect(isString(del.job_id)).toBe(true);
@@ -1334,6 +1337,10 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(jobs.jobs[0]?.running).toBe(false);
     expect(jobs.jobs[0]?.preset).toBe("vllm");
     expect(jobs.jobs[0]?.engine).toBe("native");
+    expect(jobs.jobs[0]?.grace).toBe(7200);
+    expect(jobs.jobs[0]?.retries).toBe(2);
+    expect(jobs.jobs[0]?.retry_delay).toBe(600);
+    expect(jobs.jobs[0]?.attempt).toBe(0);
     expect("session_id" in jobs).toBe(false);
     const run = fixtures.run_job as RunJob;
     expect(run.type).toBe("run_job");
@@ -1353,6 +1360,14 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(runs.runs[0]?.trigger).toBe("schedule");
     expect(runs.runs[0]?.status).toBe("ok");
     expect(runs.runs[0]?.session_id).toBe("sess-1");
+    expect(runs.runs[0]?.attempt).toBe(2);
+    expect(runs.runs[0]?.attempts).toBe(3);
+    expect(runs.runs[1]?.attempt ?? null).toBeNull();
+    expect(runs.runs[1]?.attempts ?? null).toBeNull();
+    expect(runs.runs[1]?.status).toBe("missed");
+    expect(runs.runs[1]?.trigger).toBe("schedule");
+    expect(runs.runs[1]?.summary).toBe("Skipped the 7:45 AM run — 10 h late");
+    expect(runs.runs[1]?.session_id ?? null).toBeNull();
     expect("session_id" in runs).toBe(false);
   });
 
