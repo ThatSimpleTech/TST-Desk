@@ -221,11 +221,14 @@ from .protocol import (
     JobDraftReply,
     JobEntry,
     JobList,
+    JobRunEntry,
+    JobRuns,
     ListArtifacts,
     ListCommands,
     ListGrokExtensions,
     ListGrokSessions,
     ListInstructions,
+    ListJobRuns,
     ListJobs,
     ListMemory,
     ListPins,
@@ -328,6 +331,7 @@ from .remote_attach import (
 )
 from .router import TIER_NAMES, TierRouter
 from .scheduler.edit import apply_job_edit
+from .scheduler.history import JobRun, list_runs
 from .scheduler.models import (
     DeliverTo,
     Job,
@@ -648,6 +652,24 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         last_session_id=job.last_session_id,
         running=running,
     )
+
+
+def _job_runs_event(job_id: str, runs: list[JobRun]) -> str:
+    """Wire shape for one job's history, newest first as ``list_runs`` returns it."""
+    return JobRuns(
+        job_id=job_id,
+        runs=[
+            JobRunEntry(
+                started_at=run.started_at,
+                scheduled_for=run.scheduled_for,
+                trigger=run.trigger,
+                status=run.status,
+                summary=run.summary,
+                session_id=run.session_id,
+            )
+            for run in runs
+        ],
+    ).model_dump_json()
 
 
 class Daemon:
@@ -2304,6 +2326,9 @@ class Daemon:
         if isinstance(msg, RunJob):
             return await self._handle_run_job(msg)
 
+        if isinstance(msg, ListJobRuns):
+            return await self._handle_list_job_runs(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -3304,6 +3329,14 @@ class Daemon:
         if not removed:
             return build_error("job_not_found", f"Job {msg.job_id!r} not found")
         return await self._job_list_event()
+
+    async def _handle_list_job_runs(self, msg: ListJobRuns) -> str:
+        """One job's history, newest first. Unknown id is ``job_not_found``."""
+        job = await asyncio.to_thread(get_job, self.data_dir, msg.job_id)
+        if job is None:
+            return build_error("job_not_found", f"Job {msg.job_id!r} not found")
+        runs = await asyncio.to_thread(list_runs, self.data_dir, job.id)
+        return _job_runs_event(job.id, runs)
 
     async def _handle_run_job(self, msg: RunJob) -> str:
         """Start one job and answer before the turn does (TD-3809).

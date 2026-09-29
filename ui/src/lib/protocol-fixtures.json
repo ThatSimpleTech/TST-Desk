@@ -1324,6 +1324,10 @@
     "type": "run_job",
     "job_id": "job-1"
   },
+  "list_job_runs": {
+    "type": "list_job_runs",
+    "job_id": "job-1"
+  },
   "job_list": {
     "type": "job_list",
     "seq": 1,
@@ -1341,6 +1345,21 @@
         "last_summary": "3 threads need a reply",
         "last_session_id": "sess-1",
         "running": false
+      }
+    ]
+  },
+  "job_runs": {
+    "type": "job_runs",
+    "seq": 1,
+    "job_id": "job-1",
+    "runs": [
+      {
+        "started_at": "2026-08-21T15:00:00+00:00",
+        "scheduled_for": "2026-08-21T12:00:00+00:00",
+        "trigger": "schedule",
+        "status": "ok",
+        "summary": "3 threads need a reply",
+        "session_id": "sess-1"
       }
     ]
   },

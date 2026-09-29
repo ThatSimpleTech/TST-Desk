@@ -16,6 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from ..logging import get_logger
+from .history import delete_history
 from .models import Job, JobDraft, JobValidationError, validate_draft
 
 log = get_logger("tstd.scheduler.store")
@@ -81,12 +82,14 @@ def save_job(data_dir: str | Path, job: Job | JobDraft) -> Job:
 
 
 def delete_job(data_dir: str | Path, job_id: str) -> bool:
-    """Remove a job by id. Returns False when it was not present."""
+    """Remove a job by id, and its run history. False when it was not present."""
     jobs = list_jobs(data_dir)
     kept = [item for item in jobs if item.id != job_id]
     if len(kept) == len(jobs):
         return False
     _write_jobs(Path(data_dir), kept)
+    # The id came from a row that validated, so it is a single path segment.
+    delete_history(data_dir, job_id)
     return True
 
 

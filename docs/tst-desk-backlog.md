@@ -6053,6 +6053,39 @@ files, vitest 1391, svelte-check 704 files 0 errors 0 warnings.
 
 ---
 
+### TD-3811 — Run history, and open the session
+**Size:** 3 · **Depends on:** TD-3810
+
+**Acceptance criteria:**
+- [x] Each scheduled fire and each Run now appends one record to
+      `{data_dir}/scheduler/history/<job_id>.jsonl`: `started_at`,
+      `scheduled_for` (the slot that fired, or null for Run now),
+      `trigger`, `status`, a redacted and capped `summary`, and
+      `session_id`. The log keeps 50 records, oldest dropped. A corrupt
+      line is skipped and is never fatal. The file stays in the user
+      data dir
+- [x] `delete_job` removes that job's history file
+- [x] `list_job_runs { job_id }` replies with `job_runs`, newest first.
+      An unknown id is `job_not_found`
+- [x] Each card has a History disclosure. Opening it lists the runs in
+      local time: Ran or Failed, "manual" only for Run now, and the
+      clamped summary. Open session uses the rail's existing attach. A
+      session that is no longer listed says so. An open disclosure
+      refreshes when that job's `last_run` changes
+- [x] `last_*` stays the row receipt
+
+Done (2026-09-29): the row kept one receipt, so an earlier run and the
+session it happened in were gone. Each fire now appends a line under
+the user data dir. The pane asks for that log when History is opened,
+and again when the row's `last_run` moves. Open session is `selectRow`
+plus the return to chat a project recent already uses. Class B entry
+in DECISIONS.md.
+
+Suite: 3483 passed / 8 skipped, ruff + `mypy --strict` clean over 155
+files, vitest 1402, svelte-check 706 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone

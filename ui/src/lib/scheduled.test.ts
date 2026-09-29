@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ClientMessageUnion, DaemonEventUnion, JobEntry } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion, JobEntry, JobRunEntry } from "./protocol";
 import {
 	emptyDraft,
 	formatLocal,
@@ -8,10 +8,12 @@ import {
 	jobFailed,
 	jobMeta,
 	jobLastRun,
+	jobRunLabel,
 	jobWhen,
 	jobsEmptyCopy,
 	saveFromDraft,
 	saveFromJob,
+	sessionMissingCopy,
 	viewerTimeZone,
 	workspaceSuggestions,
 } from "./scheduled";
@@ -46,6 +48,7 @@ import {
 	setDraftField,
 	setParseText,
 	startScheduled,
+	toggleJobHistory,
 } from "./scheduled.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -360,5 +363,135 @@ describe("scheduled store", () => {
 		refreshJobs();
 		emit({ type: "job_list", seq: 1, jobs: [] });
 		expect(scheduled.draft.instruction).toBe("half-typed");
+	});
+});
+
+function run(over: Partial<JobRunEntry> = {}): JobRunEntry {
+	return {
+		started_at: "2026-08-21T15:00:00+00:00",
+		scheduled_for: "2026-08-21T12:00:00+00:00",
+		trigger: "schedule",
+		status: "ok",
+		summary: "digest",
+		session_id: "sess-1",
+		...over,
+	};
+}
+
+describe("run history (TD-3811)", () => {
+	it("names Ran or Failed, and says manual only for Run now", () => {
+		const scheduledRun = jobRunLabel(run(), "UTC");
+		expect(scheduledRun).toMatch(/^Ran /);
+		expect(scheduledRun.toLowerCase()).not.toContain("manual");
+		expect(scheduledRun.toLowerCase()).not.toContain("schedule");
+		const manual = jobRunLabel(
+			run({ trigger: "manual", status: "failed", scheduled_for: null }),
+			"UTC",
+		);
+		expect(manual).toMatch(/^Failed /);
+		expect(manual.endsWith(" · manual")).toBe(true);
+		expect(sessionMissingCopy()).toBe("Session no longer exists");
+	});
+
+	it("asks for the log when history opens and stores the reply", () => {
+		emit({
+			type: "job_list",
+			seq: 1,
+			jobs: [job({ id: "j1", last_run: "2026-08-21T15:00:00+00:00" })],
+		});
+		toggleJobHistory("j1");
+		expect(mocks.sent.at(-1)).toEqual({ type: "list_job_runs", job_id: "j1" });
+		expect(scheduled.historyOpen.j1).toBe(true);
+		expect(scheduled.historySeen.j1).toBe("2026-08-21T15:00:00+00:00");
+		expect(scheduled.runs.j1).toBeUndefined();
+		expect(scheduled.loading).toBe(false);
+
+		const rows = [
+			run({ started_at: "2026-08-21T16:00:00+00:00", trigger: "manual", scheduled_for: null }),
+			run(),
+		];
+		emit({ type: "job_runs", seq: 1, job_id: "j1", runs: rows });
+		expect(scheduled.runs.j1).toEqual(rows);
+
+		const before = mocks.sent.length;
+		toggleJobHistory("j1");
+		expect(scheduled.historyOpen.j1).toBe(false);
+		expect(mocks.sent).toHaveLength(before);
+	});
+
+	it("asks again when an open job's last run moves, including off never-run", () => {
+		emit({ type: "job_list", seq: 1, jobs: [job({ id: "j1", last_run: null })] });
+		toggleJobHistory("j1");
+		expect(scheduled.historySeen.j1).toBeNull();
+		mocks.sent.length = 0;
+
+		emit({ type: "job_list", seq: 1, jobs: [job({ id: "j1", last_run: null })] });
+		expect(mocks.sent).toEqual([]);
+
+		emit({
+			type: "job_list",
+			seq: 1,
+			jobs: [job({ id: "j1", last_run: "2026-08-21T16:00:00+00:00" })],
+		});
+		expect(mocks.sent).toEqual([{ type: "list_job_runs", job_id: "j1" }]);
+		expect(scheduled.historySeen.j1).toBe("2026-08-21T16:00:00+00:00");
+		expect(scheduled.historyOpen.j1).toBe(true);
+	});
+
+	it("does not ask again for a disclosure that is closed", () => {
+		emit({ type: "job_list", seq: 1, jobs: [job({ id: "j1", last_run: null })] });
+		emit({
+			type: "job_list",
+			seq: 1,
+			jobs: [job({ id: "j1", last_run: "2026-08-21T16:00:00+00:00" })],
+		});
+		expect(mocks.sent.filter((msg) => msg.type === "list_job_runs")).toEqual([]);
+	});
+
+	it("drops history for a job that left the list and ignores a late reply", () => {
+		emit({
+			type: "job_list",
+			seq: 1,
+			jobs: [job({ id: "j1" }), job({ id: "j2" })],
+		});
+		toggleJobHistory("j1");
+		emit({ type: "job_runs", seq: 1, job_id: "j1", runs: [run()] });
+		emit({ type: "job_list", seq: 1, jobs: [job({ id: "j2" })] });
+		expect(scheduled.historyOpen.j1).toBeUndefined();
+		expect(scheduled.runs.j1).toBeUndefined();
+		expect(scheduled.historyOpen.j2).toBeUndefined();
+		emit({ type: "job_runs", seq: 1, job_id: "j1", runs: [run()] });
+		expect(scheduled.runs.j1).toBeUndefined();
+	});
+
+	it("keeps an open history across a save ack, and refetches if the receipt moved", () => {
+		emit({
+			type: "job_list",
+			seq: 1,
+			jobs: [job({ id: "j1", last_run: "2026-08-21T15:00:00+00:00" })],
+		});
+		toggleJobHistory("j1");
+		setDraftField("workspace", "/ws/proj");
+		setDraftField("instruction", "summarize the inbox");
+		expect(createJob()).toBe(true);
+		mocks.sent.length = 0;
+		emit({
+			type: "job_list",
+			seq: 1,
+			jobs: [job({ id: "j1", last_run: "2026-08-21T17:00:00+00:00" })],
+		});
+		expect(mocks.sent).toEqual([{ type: "list_job_runs", job_id: "j1" }]);
+		expect(scheduled.historyOpen.j1).toBe(true);
+		expect(scheduled.draft.instruction).toBe("");
+	});
+
+	it("clears history when the store resets", () => {
+		emit({ type: "job_list", seq: 1, jobs: [job({ id: "j1" })] });
+		toggleJobHistory("j1");
+		emit({ type: "job_runs", seq: 1, job_id: "j1", runs: [run()] });
+		resetScheduled();
+		expect(scheduled.historyOpen).toEqual({});
+		expect(scheduled.historySeen).toEqual({});
+		expect(scheduled.runs).toEqual({});
 	});
 });

@@ -89,11 +89,14 @@ from tstd.protocol import (
     JobDraftReply,
     JobEntry,
     JobList,
+    JobRunEntry,
+    JobRuns,
     ListArtifacts,
     ListCommands,
     ListGrokExtensions,
     ListGrokSessions,
     ListInstructions,
+    ListJobRuns,
     ListJobs,
     ListMemory,
     ListPins,
@@ -909,6 +912,7 @@ FIXTURES = {
     "delete_job": DeleteJob(job_id="job-1"),
     "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
     "run_job": RunJob(job_id="job-1"),
+    "list_job_runs": ListJobRuns(job_id="job-1"),
     "job_list": JobList(
         jobs=[
             JobEntry(
@@ -925,6 +929,19 @@ FIXTURES = {
                 last_summary="3 threads need a reply",
                 last_session_id="sess-1",
                 running=False,
+            )
+        ],
+    ),
+    "job_runs": JobRuns(
+        job_id="job-1",
+        runs=[
+            JobRunEntry(
+                started_at="2026-08-21T15:00:00+00:00",
+                scheduled_for="2026-08-21T12:00:00+00:00",
+                trigger="schedule",
+                status="ok",
+                summary="3 threads need a reply",
+                session_id="sess-1",
             )
         ],
     ),

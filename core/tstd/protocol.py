@@ -1039,8 +1039,8 @@ class SaveJob(ClientMessage):
 class DeleteJob(ClientMessage):
     """Remove a scheduled job by id (TD-3805).
 
-    Acked with ``job_list``. Unknown id is a typed error. Does not run
-    anything.
+    Also removes that job's run history (TD-3811). Acked with ``job_list``.
+    Unknown id is a typed error. Does not run anything.
     """
 
     type: Literal["delete_job"] = "delete_job"
@@ -1071,6 +1071,19 @@ class RunJob(ClientMessage):
     """
 
     type: Literal["run_job"] = "run_job"
+    job_id: str = Field(min_length=1)
+
+
+class ListJobRuns(ClientMessage):
+    """List one job's run history (TD-3811).
+
+    Connection-scoped. The daemon answers with ``job_runs``, newest first.
+    Unknown id is ``job_not_found``. Does not run the job. History is not
+    part of ``job_list``: that push already happens on every fire, and a
+    capped log does not belong on every pause.
+    """
+
+    type: Literal["list_job_runs"] = "list_job_runs"
     job_id: str = Field(min_length=1)
 
 
@@ -2299,6 +2312,35 @@ class JobList(DaemonEvent):
     jobs: list[JobEntry] = Field(default_factory=list)
 
 
+class JobRunEntry(BaseModel):
+    """One fire on ``job_runs`` (TD-3811).
+
+    ``scheduled_for`` is the slot that fired, or null for Run now.
+    ``summary`` is already redacted and capped the same way as
+    ``JobEntry.last_summary``.
+    """
+
+    started_at: str
+    scheduled_for: str | None = None
+    trigger: Literal["schedule", "manual"]
+    status: Literal["ok", "failed"]
+    summary: str | None = None
+    session_id: str | None = None
+
+
+class JobRuns(DaemonEvent):
+    """Response to ``list_job_runs`` (TD-3811).
+
+    Connection-scoped. Seq is fixed at 1 so it cannot rewind attach.
+    ``runs`` is newest first.
+    """
+
+    type: Literal["job_runs"] = "job_runs"
+    seq: int = 1
+    job_id: str
+    runs: list[JobRunEntry] = Field(default_factory=list)
+
+
 class JobDraftReply(DaemonEvent):
     """Response to ``parse_job`` (TD-3803). Connection-scoped. Not saved."""
 
@@ -2416,6 +2458,7 @@ ClientMessageT = Annotated[
     | DeleteJob
     | ParseJob
     | RunJob
+    | ListJobRuns
     | Transcribe,
     Field(discriminator="type"),
 ]
@@ -2471,6 +2514,7 @@ DaemonEventT = Annotated[
     | DesignHit
     | CuPermissions
     | JobList
+    | JobRuns
     | JobDraftReply
     | GrokCommands
     | GrokPlan
@@ -2572,6 +2616,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "delete_job",
         "parse_job",
         "run_job",
+        "list_job_runs",
         "transcribe",
     }
 )
@@ -2627,6 +2672,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "design_hit",
         "cu_permissions",
         "job_list",
+        "job_runs",
         "job_draft",
         "grok_commands",
         "grok_plan",
