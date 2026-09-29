@@ -624,6 +624,15 @@ call is spent doing it. So:
 - `max_output_tokens` does **not** cap generation. It only reserves room for the answer inside
   the budget. Your provider's own default output limit is what actually applies.
 
+A single tool result is capped at the smaller of 50,000 characters and a quarter of
+(`context_window` − `max_output_tokens` − tokens already in the prompt), counted at 4 characters
+per token, and never below 4,000 characters. On a 32,768-token tier one result cannot fill the
+window by itself. At 128,000 tokens or larger the cap stays 50,000. If the in-flight turn's tool
+results still exceed the compaction budget, their middles are replaced with a note to re-read
+with offset and limit before the next model call. A provider that still reports a context
+overflow is retried once at a tighter budget. If it overflows again, the turn fails with a short
+message that names the configured window. The raw provider error stays in the log.
+
 ---
 
 ## 3. Swapping models

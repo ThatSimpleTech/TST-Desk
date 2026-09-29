@@ -9,7 +9,9 @@ deterministic extractive summary; no model call is spent to save tokens
 
 Cuts happen only at user-message boundaries: an assistant ``tool_calls``
 message and its ``tool`` results can never be split, and the in-flight
-turn's user message is always kept.
+turn's user message is always kept. In-flight tool results that still
+overflow the budget are fit separately (see :mod:`tstd.context_fit`);
+compaction will not drop them.
 """
 
 from __future__ import annotations
