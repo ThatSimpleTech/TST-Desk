@@ -1314,7 +1314,9 @@
     "timezone": null,
     "preset": "vllm",
     "engine": "native",
-    "grace": "2 hours"
+    "grace": "2 hours",
+    "retries": 2,
+    "retry_delay": "10 minutes"
   },
   "delete_job": {
     "type": "delete_job",
@@ -1348,6 +1350,9 @@
         "preset": "vllm",
         "engine": "native",
         "grace": 7200,
+        "retries": 2,
+        "retry_delay": 600,
+        "attempt": 0,
         "last_run": "2026-08-21T15:00:00+00:00",
         "last_status": "ok",
         "last_summary": "3 threads need a reply",
@@ -1367,7 +1372,9 @@
         "trigger": "schedule",
         "status": "ok",
         "summary": "3 threads need a reply",
-        "session_id": "sess-1"
+        "session_id": "sess-1",
+        "attempt": 2,
+        "attempts": 3
       },
       {
         "started_at": "2026-08-21T22:45:00+00:00",
@@ -1375,7 +1382,9 @@
         "trigger": "schedule",
         "status": "missed",
         "summary": "Skipped the 7:45 AM run \u2014 10 h late",
-        "session_id": null
+        "session_id": null,
+        "attempt": null,
+        "attempts": null
       }
     ]
   },

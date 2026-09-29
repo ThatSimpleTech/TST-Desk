@@ -247,6 +247,30 @@ describe("scheduledNotices", () => {
 		});
 	});
 
+	it("holds a window notice while a retry is still armed", () => {
+		const before = runStamps([jobRow({ id: "j1" })]);
+		const mid = {
+			...RAN_ONCE,
+			last_status: "failed",
+			last_summary: "attempt 1 of 2: provider down",
+			attempt: 1,
+		} as JobEntry;
+		expect(scheduledNotices(before, [mid])).toEqual([]);
+		const done = {
+			...RAN_ONCE,
+			last_run: "2026-08-21T18:10:00+00:00",
+			last_summary: "attempt 2 of 2: digest ready",
+			attempt: 0,
+		} as JobEntry;
+		expect(scheduledNotices(runStamps([mid]), [done])).toEqual([
+			{
+				title: "Scheduled job ran",
+				body: "attempt 2 of 2: digest ready",
+				kind: "scheduled",
+			},
+		]);
+	});
+
 	it("marks a skipped slot as missed, not as a run or a failure", () => {
 		const before = runStamps([jobRow({ id: "j1" })]);
 		const missed = {

@@ -43,8 +43,10 @@ async def skip_if_late(
     if not past_grace(slot, job.grace, now):
         return False
     line = skip_line(slot, job.timezone, now)
+    # A skip is the regular slot ending. A leftover retry counter would
+    # make the next fire look like a retry and skip grace the other way.
     stamped = record_run(
-        advance_job(job, now),
+        advance_job(job, now).model_copy(update={"attempt": 0, "resume_at": None}),
         now,
         status="missed",
         summary=line,

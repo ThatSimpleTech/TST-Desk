@@ -1,4 +1,4 @@
-// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812, TD-3813).
+// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814).
 //
 // Draft fields the pane sends on `save_job` — not a natural-language
 // parse. Pause is the same verb with `paused` flipped. Edit is the same
@@ -22,6 +22,8 @@ export interface JobDraftFields {
 	engine: "" | "native" | "grok";
 	/** Phrase sent as `grace`, or `""` for always run. */
 	grace: string;
+	/** `""` is no retries. `"1"` `"2"` `"3"` are extra tries after the first. */
+	retries: string;
 }
 
 /** If late. `seconds` is what the daemon stores; the wire value is the phrase. */
@@ -32,6 +34,22 @@ export const GRACE_CHOICES: readonly { value: string; label: string; seconds: nu
 	{ value: "2 hours", label: "Skip if more than 2 h late", seconds: 2 * 60 * 60 },
 	{ value: "6 hours", label: "Skip if more than 6 h late", seconds: 6 * 60 * 60 },
 ];
+
+/** Extra tries. The delay is always 10 minutes; the daemon stores the seconds. */
+export const RETRY_CHOICES: readonly { value: string; label: string }[] = [
+	{ value: "", label: "None" },
+	{ value: "1", label: "1" },
+	{ value: "2", label: "2" },
+	{ value: "3", label: "3" },
+];
+
+export const RETRY_DELAY = "10 minutes";
+
+/** Draft value for a stored retry count. An unknown count still round-trips. */
+export function retriesDraftValue(count: number | null | undefined): string {
+	if (count == null || count <= 0) return "";
+	return String(count);
+}
 
 const _MINUTE = 60;
 const _HOUR = 3600;
@@ -76,6 +94,7 @@ export function emptyDraft(workspace: string | null): JobDraftFields {
 		preset: "",
 		engine: "",
 		grace: "",
+		retries: "",
 	};
 }
 
@@ -233,8 +252,15 @@ function outcomeWord(status: "ok" | "failed" | "missed" | null): string {
 export function jobRunLabel(run: JobRunEntry, timeZone?: string): string {
 	const when = formatLocal(run.started_at, timeZone);
 	const outcome = outcomeWord(run.status);
-	if (run.trigger === "manual") return `${outcome} ${when} · manual`;
-	return `${outcome} ${when}`;
+	const attempt = attemptSuffix(run);
+	if (run.trigger === "manual") return `${outcome} ${when} · manual${attempt}`;
+	return `${outcome} ${when}${attempt}`;
+}
+
+/** History names the try only when the job retries. Run now has no number. */
+function attemptSuffix(run: JobRunEntry): string {
+	if (run.attempt == null || run.attempts == null) return "";
+	return ` · attempt ${run.attempt} of ${run.attempts}`;
 }
 
 /** The rail no longer lists the session a run recorded. */
@@ -270,7 +296,20 @@ export function saveFromDraft(
 	// Blank is "always run", the same as omitting the field on create.
 	const grace = draft.grace.trim();
 	if (grace !== "") payload.grace = grace;
+	const retries = retryCount(draft.retries);
+	if (retries !== undefined) {
+		payload.retries = retries;
+		payload.retry_delay = RETRY_DELAY;
+	}
 	return payload;
+}
+
+function retryCount(raw: string): number | undefined {
+	const text = raw.trim();
+	if (text === "") return undefined;
+	const count = Number(text);
+	if (!Number.isInteger(count) || count < 1) return undefined;
+	return count;
 }
 
 /**
@@ -328,6 +367,7 @@ export function draftFromJob(job: JobEntry): JobDraftFields {
 		preset: job.preset ?? "",
 		engine: job.engine ?? "",
 		grace: graceDraftValue(job.grace),
+		retries: retriesDraftValue(job.retries),
 	};
 }
 
@@ -377,5 +417,16 @@ export function saveFromEdit(
 	// Always sent. `""` clears a grace back to always run; omitting it
 	// would keep the stored one, which is Pause, not Save.
 	payload.grace = draft.grace.trim();
+	// Always sent. `0` and a blank delay clear retries. A count sends the
+	// 10-minute gap the select means; omitting both would keep the stored
+	// policy, which is Pause, not Save.
+	const retries = retryCount(draft.retries);
+	if (retries === undefined) {
+		payload.retries = 0;
+		payload.retry_delay = "";
+	} else {
+		payload.retries = retries;
+		payload.retry_delay = RETRY_DELAY;
+	}
 	return payload;
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Scheduled rail surface (TD-3805, TD-3810, TD-3811, TD-3813).
+	// Scheduled rail surface (TD-3805, TD-3810, TD-3811, TD-3813, TD-3814).
 	//
 	// Lists persisted jobs and creates, edits, pauses, deletes, and runs them
 	// through protocol verbs. Draft fields, not NL. Run now fires one job; the
@@ -34,6 +34,7 @@
 	import EmptyState from './EmptyState.svelte';
 	import ScheduledGraceField from './ScheduledGraceField.svelte';
 	import ScheduledHistory from './ScheduledHistory.svelte';
+	import ScheduledRetriesField from './ScheduledRetriesField.svelte';
 	import ScheduledPinFields from './ScheduledPinFields.svelte';
 
 	let empty = $derived(jobsEmptyCopy());
@@ -171,6 +172,7 @@
 			</select>
 		</label>
 		<ScheduledGraceField />
+		<ScheduledRetriesField />
 		<ScheduledPinFields />
 		{#if scheduled.error !== null}
 			<p class="error" role="alert">{scheduled.error}</p>

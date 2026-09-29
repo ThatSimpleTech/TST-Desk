@@ -84,6 +84,10 @@ export function scheduledNotices(
 	const notices: OsNotice[] = [];
 	for (const job of jobs) {
 		if (job.deliver_to !== "window" || !job.last_run) continue;
+		// A retry still in progress updates the receipt so the pane can
+		// show the latest try. That is not delivery: the slot notifies
+		// once, when it succeeds or the tries run out (attempt back to 0).
+		if ((job.attempt ?? 0) > 0) continue;
 		const seen = before.get(job.id);
 		if (seen === undefined || seen === job.last_run) continue;
 		notices.push({
