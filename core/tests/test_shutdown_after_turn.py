@@ -239,7 +239,10 @@ def test_stuck_provider_read_does_not_burn_the_shutdown_budget(tmp_path: Path) -
                 self.end_headers()
                 self.wfile.write(data)
                 return
-            hold.wait(30)
+            # Distill gets no body. Teardown sets this event so the handler
+            # can return and the server can close the accepted socket.
+            # Waiting out a timeout would leave that socket for the collector.
+            hold.wait()
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     port = server.server_address[1]
@@ -263,9 +266,13 @@ def test_stuck_provider_read_does_not_burn_the_shutdown_budget(tmp_path: Path) -
         assert "distill skipped; provider call still in flight" in text
         assert "shutdown exceeded" not in text
     finally:
+        # Wake the hung handler before joining it. shutdown() leaves the
+        # listening socket open; server_close() closes it and waits until
+        # the handler has dropped the accepted connection.
         hold.set()
-        server.shutdown()
         _stop(proc)
+        server.shutdown()
+        server.server_close()
 
 
 def _child() -> None:

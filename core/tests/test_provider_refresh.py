@@ -267,7 +267,10 @@ class TestHandleRefresh:
         assert second.calls == 0
         await handle.close()
 
-    async def test_second_rejection_is_the_providers_error(self) -> None:
+    async def test_second_rejection_uses_the_rejected_key_sentence(self) -> None:
+        # TD-4840 returned the provider's own ``auth_failed`` after the
+        # retry. The window keys its banner off that code, so the host
+        # sentence never appeared. The retry now matches an unchanged key.
         first = _Box(OLD, _auth(401, "auth_failed"))
         second = _Box(NEW, _auth(401, "auth_failed"))
         spare = _Box(NEW, _ok_response())
@@ -275,12 +278,32 @@ class TestHandleRefresh:
 
         result = await handle.chat_completion(_request())
 
-        assert result is second.outcome
         assert isinstance(result, ProviderError)
-        assert result.code == "auth_failed"
+        assert result is not second.outcome
+        assert result.code == API_KEY_REJECTED
+        assert result.message == EXACT_401
+        assert result.detail == ""
+        assert result.retryable is False
         assert spare.calls == 0
         assert first.closed is True
         assert second.calls == 1
+        await handle.close()
+
+    async def test_second_stream_rejection_uses_the_rejected_key_sentence(self) -> None:
+        first = _Box(OLD, _auth(403, "forbidden"))
+        second = _Box(NEW, _auth(403, "forbidden"))
+        handle = _handle(first, [second])
+
+        items = [item async for item in handle.chat_completion_stream(_request())]
+
+        assert len(items) == 1
+        result = items[0]
+        assert isinstance(result, ProviderError)
+        assert result.code == API_KEY_REJECTED
+        assert result.message == EXACT_403
+        assert result.detail == ""
+        assert second.calls == 1
+        assert first.closed is True
         await handle.close()
 
     async def test_server_error_does_not_rebuild(self) -> None:
@@ -461,9 +484,13 @@ class TestHttpxClose:
         try:
             assert seen == [f"Bearer {OLD}", f"Bearer {NEW}"]
             assert isinstance(result, ProviderError)
-            assert result.code == "auth_failed"
+            assert result.code == API_KEY_REJECTED
+            assert result.message == EXACT_401
+            assert result.detail == ""
+            assert "Authentication failed" not in result.message
             assert len(clients) == 2
             assert clients[0].is_closed is True
+            assert clients[1].is_closed is False
             assert OLD not in result.message
             assert NEW not in result.message
         finally:
@@ -693,6 +720,16 @@ def _assistant(session: Session) -> str:
     )
 
 
+def _assert_window_rejection(session: Session, complete: TurnComplete, sentence: str) -> None:
+    """The code and the chat text the window actually renders for this turn."""
+    assert complete.failed is True
+    assert complete.error_code == API_KEY_REJECTED
+    deltas = [
+        event.delta for event in session.event_log.all_events if isinstance(event, AssistantDelta)
+    ]
+    assert deltas[-1] == f"I encountered an error: {sentence}"
+
+
 class TestDaemonCache:
     async def test_missing_or_empty_key_is_not_cached(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -860,10 +897,10 @@ class TestLoop:
             assert opened.failed is False
             reject[OLD] = status
             failed = await harness.turn()
-            assert failed.failed is True
-            assert failed.error_code == API_KEY_REJECTED
+            _assert_window_rejection(harness.session, failed, sentence)
             shown = _assistant(harness.session)
             assert sentence in shown
+            assert sentence in _log_blob(caplog)
             assert "http://" not in shown
             assert "/v1" not in shown
             assert "EZER (" in shown
@@ -893,8 +930,9 @@ class TestLoop:
             reject[OLD] = 401
             reject[NEW] = 401
             failed = await harness.turn()
-            assert failed.failed is True
-            assert failed.error_code == "auth_failed"
+            _assert_window_rejection(harness.session, failed, EXACT_401)
+            assert EXACT_401 in _log_blob(caplog)
+            assert "Authentication failed" not in _assistant(harness.session)
             assert len(harness.built) == 2
             assert harness.built[0].stream_calls == 2
             assert harness.built[1].stream_calls == 1

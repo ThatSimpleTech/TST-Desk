@@ -8,9 +8,12 @@ restarted, so later turns kept sending the stale bearer.
 
 An authentication failure closes that HTTP client and builds a new one
 from the keychain. The call is repeated once, and only when a digest of
-the key changed. The same key would be rejected again. The digest is
-compared in memory and never logged: it is still an oracle for a
-low-entropy secret.
+the key changed. The same key would be rejected again. A second
+rejection, after the key did change, is the same ``api_key_rejected``
+sentence as an unchanged key: the provider's own ``auth_failed`` would
+put the generic 401 banner in the window. There is no third try. The
+digest is compared in memory and never logged: it is still an oracle
+for a low-entropy secret.
 """
 
 from __future__ import annotations
@@ -130,6 +133,18 @@ def _rejected(credential_name: str, base_url: str, error: ProviderError) -> Prov
     )
 
 
+def _or_rejected(credential_name: str, base_url: str, error: ProviderError) -> ProviderError:
+    """Auth failures share one window code. Anything else is passed through.
+
+    ``auth_failed`` is the generic 401 copy. The window picks its banner
+    from the code, so a retry that is also rejected has to carry
+    ``api_key_rejected`` or the host sentence never reaches the user.
+    """
+    if is_auth_failure(error):
+        return _rejected(credential_name, base_url, error)
+    return error
+
+
 async def _aclose(stream: object) -> None:
     close = getattr(stream, "aclose", None)
     if close is None:
@@ -203,7 +218,10 @@ class RefreshingProvider:
         outcome = await self._after_auth(digest, result)
         if isinstance(outcome, ProviderError):
             return outcome
-        return await outcome.chat_completion(request)
+        retried = await outcome.chat_completion(request)
+        if isinstance(retried, ProviderError):
+            return _or_rejected(self._credential_name, self._base_url, retried)
+        return retried
 
     async def chat_completion_stream(
         self, request: ChatCompletionRequest
@@ -231,11 +249,15 @@ class RefreshingProvider:
         if isinstance(outcome, ProviderError):
             yield outcome
             return
-        # One retry. A second rejection is returned as the provider sent it.
+        # One retry. A second rejection uses the same typed failure as an
+        # unchanged key, so the window does not fall back to generic 401 copy.
         retry = outcome.chat_completion_stream(request)
         try:
             async for item in retry:
-                yield item
+                if isinstance(item, ProviderError):
+                    yield _or_rejected(self._credential_name, self._base_url, item)
+                else:
+                    yield item
         finally:
             await _aclose(retry)
 
