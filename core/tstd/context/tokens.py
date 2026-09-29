@@ -25,7 +25,11 @@ import math
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-APPROX_METHOD = "approximation (4 chars/token)"
+# Shared with the tool-result cap (TD-4839). The cap turns a token
+# budget back into characters with this ratio; a second copy would size
+# results for a different estimator than the one that decides they fit.
+CHARS_PER_TOKEN = 4
+APPROX_METHOD = f"approximation ({CHARS_PER_TOKEN} chars/token)"
 
 
 @dataclass(frozen=True)
@@ -57,7 +61,10 @@ def heuristic_count(text: str) -> TokenCount:
     accurate for code-heavy or non-English content — the approximation
     method is stated on the count so consumers can discount it.
     """
-    return TokenCount(count=max(1, math.ceil(len(text) / 4)), method=APPROX_METHOD)
+    return TokenCount(
+        count=max(1, math.ceil(len(text) / CHARS_PER_TOKEN)),
+        method=APPROX_METHOD,
+    )
 
 
 class HeuristicTokenCounter:

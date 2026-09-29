@@ -545,6 +545,39 @@ difference between $2.80/M and $0.30/M on the brain tier.
 
 ---
 
+### TD-4839 — Fit in-flight tool results to the tier window
+**Size:** 5 · **Depends on:** TD-405
+
+A fixed 50,000-character tool cap, plus compaction that only cuts at user
+boundaries, let one turn of parallel reads exceed a 32,768-token tier. The
+provider's raw context error was shown as assistant prose.
+
+**Acceptance criteria:**
+- [x] Per-result cap is the smaller of 50,000 characters and a quarter of
+      the tier's remaining window (`context_window` − `max_output_tokens` −
+      current prompt tokens, at 4 characters per token), and never below
+      4,000. A 128k or 1M tier stays at 50,000
+- [x] Before each model call, in-flight tool results are elided (head, tail,
+      and a re-read note) until the prompt fits the compaction budget.
+      `tool_calls` stay paired with their results. The user message stays.
+      The activity timeline gets `ContextCompacted`
+- [x] HTTP 400 context-window refusals are `context_overflow`, distinct from
+      HTTP 413 `context_length_exceeded`. The loop retries once at half the
+      budget, then fails the turn with `error_code="context_overflow"` and a
+      short message naming the configured model and window. The raw provider
+      text is logged, not shown
+- [x] Other provider errors do not put raw upstream JSON in assistant text
+
+Done (2026-09-29): the cap scales with the tier, in-flight tool results are
+elided before each provider call, and a context-window HTTP 400 is retried
+once then failed with a short message from config. Class B entry in
+DECISIONS.md.
+
+Suite: 3518 passed / 8 skipped, ruff + `mypy --strict` clean over 156
+files, vitest 1403, svelte-check 706 files 0 errors 0 warnings.
+
+---
+
 ## Epic E5 — Context assembler (steering)
 
 **Goal:** correct, inspectable, affordable instruction loading. Spec §4. **Highest test
