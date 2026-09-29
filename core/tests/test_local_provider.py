@@ -99,7 +99,6 @@ def keychain_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return False
 
     monkeypatch.setattr("tstd.keychain.get_api_key", _get)
-    monkeypatch.setattr("tstd.daemon.get_api_key", _get, raising=False)
     monkeypatch.setattr("tstd.daemon.api_key_is_stored", _present)
     monkeypatch.setattr("tstd.keychain.api_key_is_stored", _present)
     return calls

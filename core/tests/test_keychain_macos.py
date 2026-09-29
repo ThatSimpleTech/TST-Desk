@@ -184,11 +184,9 @@ class TestInteractiveWrite:
             "both ' and \"",
             "back\\slash",
             "cost $5",
-            "héllo",
-            "密钥",
-            "",
-            "mix ' \" \\ $ spáce",
-            "a\rb",
+            "tick`tick",
+            "k" * 48,
+            "mix ' \" \\ $ `",
         ],
     )
     def test_quote_round_trip(self, secret: str) -> None:
@@ -203,6 +201,28 @@ class TestInteractiveWrite:
         assert "-U" in args
         assert "-A" not in args
         assert "-T" not in args
+
+    @pytest.mark.parametrize(
+        "secret",
+        ["héllo", "密钥", "a€b", "a\rb", "spáce", "pre€post-sentinel"],
+    )
+    async def test_non_ascii_is_refused(self, secret: str) -> None:
+        """``security -w`` prints these as hex. Do not store them."""
+        with pytest.raises(KeychainError, match="printable ASCII") as exc:
+            keychain_macos.interactive_add_payload("tst-ezer", secret, _SERVICE)
+        assert str(exc.value) == "API keys must be printable ASCII"
+        with pytest.raises(KeychainError, match="printable ASCII") as exc:
+            await MacOSKeychain().set_secret("tst-ezer", secret)
+        assert secret not in str(exc.value)
+
+    @pytest.mark.parametrize("secret", ["", " ", "   ", "\t", " \t "])
+    async def test_blank_secret_is_refused(self, secret: str) -> None:
+        with pytest.raises(KeychainError) as payload_exc:
+            keychain_macos.interactive_add_payload("tst-ezer", secret, _SERVICE)
+        assert str(payload_exc.value) == "API key is empty"
+        with pytest.raises(KeychainError) as store_exc:
+            await MacOSKeychain().set_secret("tst-ezer", secret)
+        assert str(store_exc.value) == "API key is empty"
 
     @pytest.mark.parametrize("secret", ["line\nsecret-sentinel", "nul\x00secret-sentinel"])
     async def test_newline_and_nul_are_refused(
@@ -305,6 +325,42 @@ class TestReadFallback:
         assert "kSecUseAuthenticationUIAllow" not in _COPY_SRC
         assert "_AUTH_UI" in _DELETE_SRC
         assert "kSecUseAuthenticationUIAllow" not in _DELETE_SRC
+
+    async def test_hex_password_is_returned_verbatim(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A real key can be all hex. ``-w``'s hex form of non-ASCII is not decoded."""
+        _Script([(0, b"61e282ac62\n", b"")]).install(monkeypatch)
+        assert await MacOSKeychain().get_secret("tst-ezer") == "61e282ac62"
+
+    @pytest.mark.parametrize("stdout", [b"\n", b"   \n", b"\t\n", b" \t \n"])
+    async def test_blank_cli_password_is_missing(
+        self, stdout: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = _Script([(0, stdout, b"")]).install(monkeypatch)
+        with pytest.raises(KeychainError, match="is empty") as exc:
+            await MacOSKeychain().get_secret("tst-ezer")
+        assert str(exc.value) == (
+            "the stored API key for 'tst-ezer' is empty — re-save it in Settings → API keys"
+        )
+        assert len(script.argv) == 1
+
+    async def test_empty_framework_copy_is_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(keychain_macos, "_sec_item_copy", lambda *_a: b"")
+        stderr = b"security: User interaction is not allowed.\n"
+        _Script([(1, b"", stderr), (0, b"attributes\n", b"")]).install(monkeypatch)
+        with pytest.raises(KeychainError, match="is empty") as exc:
+            await MacOSKeychain().get_secret("tst-ezer")
+        assert "tst-ezer" in str(exc.value)
+        assert "not readable" not in str(exc.value)
+
+    async def test_whitespace_framework_copy_is_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(keychain_macos, "_sec_item_copy", lambda *_a: b" \t ")
+        stderr = b"security: User interaction is not allowed.\n"
+        _Script([(1, b"", stderr), (0, b"attributes\n", b"")]).install(monkeypatch)
+        with pytest.raises(KeychainError, match="is empty") as exc:
+            await MacOSKeychain().get_secret("tst-ezer")
+        assert "\t" not in str(exc.value)
 
     async def test_cli_success_does_not_copy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         script = _Script([(0, b"from-cli\n", b"")]).install(monkeypatch)

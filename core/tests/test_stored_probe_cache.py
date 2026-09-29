@@ -25,11 +25,7 @@ class TestStoredProbeCache:
             calls += 1
             return True
 
-        async def explode(_credential: str = "openrouter") -> str:
-            raise AssertionError("presence read the secret")
-
         monkeypatch.setattr("tstd.daemon.api_key_is_stored", probe)
-        monkeypatch.setattr("tstd.daemon.get_api_key", explode, raising=False)
         daemon = Daemon(data_dir=tmp_path / "data")
         assert await daemon._credential_is_stored("typesafe") is True
         assert await daemon._credential_is_stored("typesafe") is True
@@ -45,11 +41,7 @@ class TestStoredProbeCache:
             calls += 1
             return False
 
-        async def explode(_credential: str = "openrouter") -> str:
-            raise AssertionError("presence read the secret")
-
         monkeypatch.setattr("tstd.daemon.api_key_is_stored", probe)
-        monkeypatch.setattr("tstd.daemon.get_api_key", explode, raising=False)
         daemon = Daemon(data_dir=tmp_path / "data")
         assert await daemon._credential_is_stored("typesafe") is False
         daemon._invalidate_stored_probe()

@@ -51,7 +51,6 @@ def fake_keychain(monkeypatch: pytest.MonkeyPatch) -> FakeKeychain:
     async def _present(provider_name: str = "openrouter") -> bool:
         return provider_name in fk.stored
 
-    monkeypatch.setattr("tstd.daemon.get_api_key", _get, raising=False)
     monkeypatch.setattr("tstd.daemon.api_key_is_stored", _present)
     monkeypatch.setattr("tstd.daemon.store_api_key", _store)
     monkeypatch.setattr("tstd.daemon.delete_api_key", _delete)

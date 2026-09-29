@@ -149,6 +149,57 @@ class TestKeychainCRUD:
         await store_api_key("sk-test-key-12345")
         assert await api_key_is_stored() is True
 
+    async def test_printable_ascii_round_trips(self) -> None:
+        secret = "k" * 48
+        await store_api_key("tick`tick $")
+        assert await get_api_key() == "tick`tick $"
+        await store_api_key(secret)
+        assert await get_api_key() == secret
+
+    @pytest.mark.parametrize(
+        "secret",
+        ["a€b-sentinel", "héllo-sentinel", "密钥", "a\rb-sentinel", "\x7f-sentinel"],
+    )
+    async def test_non_ascii_is_refused_before_store(
+        self, secret: str, _patch_keychain: MockKeychain
+    ) -> None:
+        with pytest.raises(KeychainError, match="printable ASCII") as exc:
+            await store_api_key(secret)
+        assert str(exc.value) == "API keys must be printable ASCII"
+        assert _patch_keychain._secrets == {}
+
+    @pytest.mark.parametrize("secret", ["", " ", "   ", "\t", " \t "])
+    async def test_blank_is_refused_before_store(
+        self, secret: str, _patch_keychain: MockKeychain
+    ) -> None:
+        with pytest.raises(KeychainError) as exc:
+            await store_api_key(secret)
+        assert str(exc.value) == "API key is empty"
+        assert _patch_keychain._secrets == {}
+
+    async def test_newline_is_refused_before_store(self, _patch_keychain: MockKeychain) -> None:
+        with pytest.raises(KeychainError, match="newline or NUL") as exc:
+            await store_api_key("line\nsecret-sentinel")
+        assert "secret-sentinel" not in str(exc.value)
+        assert _patch_keychain._secrets == {}
+
+    async def test_empty_stored_value_is_missing(self, _patch_keychain: MockKeychain) -> None:
+        _patch_keychain._secrets["com.thatsimpletech.tstdesk:tst-openrouter"] = ""
+        with pytest.raises(KeychainError, match="is empty") as exc:
+            await get_api_key()
+        assert str(exc.value) == (
+            "the stored API key for 'openrouter' is empty — re-save it in Settings → API keys"
+        )
+
+    async def test_whitespace_stored_value_is_missing(self, _patch_keychain: MockKeychain) -> None:
+        _patch_keychain._secrets["com.thatsimpletech.tstdesk:tst-openai"] = " \t "
+        with pytest.raises(KeychainError, match="is empty") as exc:
+            await get_api_key("openai")
+        assert str(exc.value) == (
+            "the stored API key for 'openai' is empty — re-save it in Settings → API keys"
+        )
+        assert "\t" not in str(exc.value)
+
 
 class TestKeychainDetection:
     """Test backend detection."""
@@ -195,6 +246,14 @@ class TestProviderKeychainIntegration:
     async def test_from_keychain_missing_key(self, _patch_keychain: MockKeychain) -> None:
         """from_keychain should raise KeychainError when no key is stored."""
         with pytest.raises(KeychainError, match="not found"):
+            await ProviderClient.from_keychain(base_url="http://test.local/v1")
+
+    async def test_empty_stored_key_does_not_build_a_client(
+        self, _patch_keychain: MockKeychain
+    ) -> None:
+        """An empty item must not become ``Authorization: Bearer ``."""
+        _patch_keychain._secrets["com.thatsimpletech.tstdesk:tst-openrouter"] = "   "
+        with pytest.raises(KeychainError, match="is empty"):
             await ProviderClient.from_keychain(base_url="http://test.local/v1")
 
 
