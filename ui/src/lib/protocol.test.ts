@@ -1322,6 +1322,8 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isString(save.workspace)).toBe(true);
     expect(isString(save.instruction)).toBe(true);
     expect(save.deliver_to).toBe("window");
+    expect(save.preset).toBe("vllm");
+    expect(save.engine).toBe("native");
     const del = fixtures.delete_job as DeleteJob;
     expect(del.type).toBe("delete_job");
     expect(isString(del.job_id)).toBe(true);
@@ -1330,6 +1332,8 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isNumber(jobs.seq)).toBe(true);
     expect(isString(jobs.jobs[0]?.id)).toBe(true);
     expect(jobs.jobs[0]?.running).toBe(false);
+    expect(jobs.jobs[0]?.preset).toBe("vllm");
+    expect(jobs.jobs[0]?.engine).toBe("native");
     expect("session_id" in jobs).toBe(false);
     const run = fixtures.run_job as RunJob;
     expect(run.type).toBe("run_job");

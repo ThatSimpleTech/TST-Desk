@@ -1,15 +1,17 @@
-"""Merge a ``save_job`` onto an existing scheduled job (TD-3810).
+"""Merge a ``save_job`` onto an existing scheduled job (TD-3810, TD-3812).
 
 Create validates a whole draft. An edit is a patch: fields the client left
 out stay as stored, because Pause is a save that only flips ``paused`` and
-must not wipe the run receipt or the armed slot. A blank cadence or next
-run is the one explicit "remove this" — without it a recurring job could
-never become a one-shot, and a one-shot could never become recurring.
+must not wipe the run receipt or the armed slot. A blank cadence, next
+run, preset, or engine is the explicit "remove this" — without it a
+recurring job could never become a one-shot, and a pinned model could
+never go back to whatever the window is using.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Literal, cast
 
 from pydantic import ValidationError
 
@@ -20,6 +22,7 @@ from .models import (
     describe_validation_error,
     normalize_workspace,
 )
+from .pin import require_known_preset
 from .workspace import require_folder, resolve_workspace_name
 
 #: What an edit reports when it removes the last schedule. A spent one-shot
@@ -39,12 +42,17 @@ def apply_job_edit(
     paused: bool,
     timezone: str | None,
     known_workspaces: Iterable[str],
+    preset: str | None,
+    engine: str | None,
+    known_presets: Mapping[str, object],
 ) -> Job:
     """Return the job to persist. Raises ``JobValidationError``; does not write."""
     new_workspace = _workspace_for_edit(existing, workspace, known_workspaces)
     new_cadence = _merge_cleared(cadence, existing.cadence)
     new_timezone = existing.timezone if timezone is None else timezone
     new_next = _merge_cleared(next_run, existing.next_run)
+    new_preset = _merge_cleared(preset, existing.preset)
+    new_engine = _merge_cleared(engine, existing.engine)
     # The stored slot was computed from the old cadence and zone. When either
     # changes and the client did not send a replacement time, drop it so the
     # runner re-arms instead of firing the stale instant.
@@ -53,7 +61,7 @@ def apply_job_edit(
     if new_cadence is None and new_next is None and _had_schedule(existing):
         raise JobValidationError(_SCHEDULE_REQUIRED)
     try:
-        return Job(
+        job = Job(
             id=existing.id,
             workspace=new_workspace,
             instruction=instruction or existing.instruction,
@@ -62,6 +70,9 @@ def apply_job_edit(
             deliver_to=deliver_to or existing.deliver_to,
             paused=paused,
             timezone=new_timezone,
+            preset=new_preset,
+            # Same as validate_draft: the annotation is the stored kind.
+            engine=cast(Literal["native", "grok"] | None, new_engine),
             # The receipt belongs to the run, not to this edit.
             last_run=existing.last_run,
             last_status=existing.last_status,
@@ -70,6 +81,11 @@ def apply_job_edit(
         )
     except ValidationError as exc:
         raise JobValidationError(describe_validation_error(exc)) from exc
+    # Only a name the client just sent. Resending a stale name fails here;
+    # omitting it (Pause) keeps a pin whose preset has left the catalog.
+    if preset is not None and preset.strip():
+        require_known_preset(job.preset, known_presets)
+    return job
 
 
 def _had_schedule(job: Job) -> bool:

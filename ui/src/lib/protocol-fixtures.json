@@ -1310,7 +1310,10 @@
     "cadence": "every 1 hour",
     "next_run": null,
     "deliver_to": "window",
-    "paused": false
+    "paused": false,
+    "timezone": null,
+    "preset": "vllm",
+    "engine": "native"
   },
   "delete_job": {
     "type": "delete_job",
@@ -1340,6 +1343,9 @@
         "next_run": null,
         "deliver_to": "window",
         "paused": false,
+        "timezone": null,
+        "preset": "vllm",
+        "engine": "native",
         "last_run": "2026-08-21T15:00:00+00:00",
         "last_status": "ok",
         "last_summary": "3 threads need a reply",

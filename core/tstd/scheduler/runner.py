@@ -22,6 +22,12 @@ from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
 from .history import append_run
 from .models import DeliverTo, Job
+from .pin import (
+    bind_scheduled_pin,
+    current_scheduled_pin,
+    reset_scheduled_pin,
+    scheduled_run_block,
+)
 from .schedule import advance_job, arm_cadence_job, as_utc, due_jobs, record_run
 from .store import get_job, list_jobs, save_job
 
@@ -83,7 +89,15 @@ class Deliver(Protocol):
 class SessionHost(Protocol):
     """The in-process surface ``tst run`` uses: open workspace, enqueue."""
 
-    async def _start_session(self, workspace_path: str) -> str | None: ...
+    config: ModelConfig
+
+    async def _start_session(
+        self,
+        workspace_path: str,
+        *,
+        preset: str | None = None,
+        engine: Literal["native", "grok"] | None = None,
+    ) -> str | None: ...
 
     @property
     def session_registry(self) -> object: ...
@@ -286,28 +300,41 @@ async def _remember_run(
 
 
 async def _turn_result(job: Job, run_turn: TurnFn) -> TurnResult:
+    # The callback stays (workspace, instruction). The pin is task-local so
+    # the session opens on the job's model, and the next job on this task
+    # does not inherit it. Widening TurnFn would break every test fake.
+    token = bind_scheduled_pin(job)
     try:
-        outcome = await run_turn(Path(job.workspace), job.instruction)
-    except Exception as exc:
-        log.exception(
-            "scheduled turn failed",
-            extra={"extra_fields": {"job_id": job.id, "error": str(exc)}},
-        )
-        return TurnResult(summary=f"scheduled run failed: {exc}", ok=False)
-    if isinstance(outcome, TurnResult):
-        return outcome
-    return TurnResult(summary=outcome)
+        try:
+            outcome = await run_turn(Path(job.workspace), job.instruction)
+        except Exception as exc:
+            log.exception(
+                "scheduled turn failed",
+                extra={"extra_fields": {"job_id": job.id, "error": str(exc)}},
+            )
+            return TurnResult(summary=f"scheduled run failed: {exc}", ok=False)
+        if isinstance(outcome, TurnResult):
+            return outcome
+        return TurnResult(summary=outcome)
+    finally:
+        reset_scheduled_pin(token)
 
 
 async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -> TurnResult:
     """In-process ``tst run``: start a session, one user message, wait.
 
     Every early return is a failure the user needs to see on the job row —
-    a workspace that has been moved or deleted is the common one.
+    a workspace that has been moved or deleted is the common one. A pinned
+    preset that has left the catalog is the same kind of failure: a receipt,
+    not a silent switch to the window's model.
     """
+    blocked = await scheduled_run_block(host.config.presets, grok_binary=host.config.engine.binary)
+    if blocked is not None:
+        return TurnResult(blocked, ok=False)
     if not await asyncio.to_thread(workspace.is_dir):
         return TurnResult(f"workspace is not a directory: {workspace}", ok=False)
-    raw = await host._start_session(str(workspace))
+    pin = current_scheduled_pin()
+    raw = await host._start_session(str(workspace), preset=pin.preset, engine=pin.engine)
     if raw is None:
         return TurnResult("open_workspace did not return a session", ok=False)
     opened = json.loads(raw)

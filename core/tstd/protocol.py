@@ -1034,6 +1034,13 @@ class SaveJob(ClientMessage):
     # edit keeps the job's current zone; None on create means UTC. The pane
     # sends one on edit only for a legacy job whose cadence text changed.
     timezone: str | None = None
+    # Catalog preset name and engine kind (TD-3812). None on create uses
+    # whatever the window is using. On an edit, None keeps the stored pin
+    # and "" clears it back to that. The name only — never a slug, URL, or
+    # key. ``engine`` is ``native`` or ``grok``; "" clears and is not a kind,
+    # so the field stays a string until the job normalizes it.
+    preset: str | None = None
+    engine: str | None = None
 
 
 class DeleteJob(ClientMessage):
@@ -2292,6 +2299,9 @@ class JobEntry(BaseModel):
     deliver_to: Literal["window", "slack", "ntfy"]
     paused: bool = False
     timezone: str | None = None
+    # None means the run uses the window's current preset and engine.
+    preset: str | None = None
+    engine: Literal["native", "grok"] | None = None
     last_run: str | None = None
     last_status: Literal["ok", "failed"] | None = None
     last_summary: str | None = None

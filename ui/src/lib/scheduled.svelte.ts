@@ -246,6 +246,9 @@ function reduce(event: DaemonEventUnion): void {
 			next_run: event.next_run ?? scheduled.draft.next_run,
 			deliver_to: event.deliver_to ?? scheduled.draft.deliver_to,
 			paused: event.paused ?? scheduled.draft.paused,
+			// A sentence does not name a model. Keep the pin already on the form.
+			preset: scheduled.draft.preset,
+			engine: scheduled.draft.engine,
 		};
 		return;
 	}

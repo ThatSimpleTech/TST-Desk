@@ -627,6 +627,12 @@ export interface SaveJob extends ClientMessage {
   /** IANA zone the cadence is evaluated in, e.g. `America/Chicago`.
    *  Omitted on an edit keeps the job's zone. Absent or null on create is legacy UTC. */
   timezone?: string | null;
+  /** Catalog preset name (TD-3812). On create, omitted uses the window's current
+   *  preset. On an edit, omitted keeps the stored pin and `""` clears it.
+   *  The name only — never a slug, URL, or key. */
+  preset?: string | null;
+  /** `native` or `grok`. Same omit / `""` rules as `preset`. `""` clears; it is not a kind. */
+  engine?: "" | "native" | "grok" | null;
 }
 
 /** Remove a scheduled job by id (TD-3805). */
@@ -1476,6 +1482,10 @@ export interface JobEntry {
   paused: boolean;
   /** IANA zone the cadence is evaluated in. Absent or null is legacy UTC. */
   timezone?: string | null;
+  /** Catalog preset name. Absent or null means use the window's current preset. */
+  preset?: string | null;
+  /** Engine kind. Absent or null means use the window's current engine. */
+  engine?: "native" | "grok" | null;
   /** The last fire's receipt (TD-3807). Null until the job has run once. */
   last_run: string | null;
   last_status: "ok" | "failed" | null;
