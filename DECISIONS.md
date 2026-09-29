@@ -10616,3 +10616,36 @@ protocol field so the banner can name the host. Mutating
 `ProviderClient.api_key` in place without closing the HTTP client.
 Refreshing inside `retry_call`. An epoch counter so an in-app edit is
 noticed before the next 401.
+
+## TD-4841 — Reviving a session must not fail its audit write (Class B)
+
+2026-09-29.
+
+**Decision:** `append_session` returns without writing when the same
+session id, workspace, and start time are already stored. The same id
+with a different workspace or start time raises `sqlite3.IntegrityError`.
+The stored row is not updated and not deleted. A failed insert rolls
+back the deferred transaction it opened so the next write is not left
+inside it. The rejected statement never committed, so the rollback
+removes nothing from the log.
+
+**Decision:** `AuditWriter.attach_session` enqueues
+`record_session_attach`. The first attach inserts, using the clock at
+drain time. A later attach for the same id and workspace — revive —
+does not insert and does not pass a new `started_at` into
+`append_session`. A different workspace is a conflict and is reported
+on the existing audit-failure path. Open and revive both call
+`attach_session`. The store tells a first insert from a re-attach,
+including when the original insert never landed: the row is absent, so
+the attach inserts one and later turns still satisfy the foreign key.
+
+**Rationale:** Revive was inserting the session row again with a fresh
+`started_at`. That is not the original start, and the primary key
+rejected it once per revived session on every daemon start. `INSERT OR
+IGNORE` would also swallow a real workspace conflict. Rewriting
+`started_at` would break the append-only log.
+
+**Alternative rejected:** A revive flag that skips the insert. A session
+whose first audit write was lost would then have no `sessions` row, and
+every later turn would fail the foreign key. Also rejected: treating a
+new `started_at` as the same row inside `append_session`.
