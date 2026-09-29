@@ -376,9 +376,10 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener. Acked with `setup_state` (TD-3603). |
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
 | `save_job` | — | Create or replace a scheduled job from draft fields. An existing `id` edits that job and keeps its run receipt; on that edit an omitted cadence or next run keeps the stored value and an empty string clears it (TD-3810). Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
-| `delete_job` | — | Remove a scheduled job by id. Acked with `job_list`. Unknown id is a typed error (TD-3805). |
+| `delete_job` | — | Remove a scheduled job by id, and its run history. Acked with `job_list`. Unknown id is a typed error (TD-3805, TD-3811). |
 | `parse_job` | — | Turn natural language into a job draft. Does not persist. Acked with `job_draft`. Save is a second call (TD-3803). |
 | `run_job` | — | Fire one job now. Acked at once with `job_list` (`running` set); a second `job_list` is pushed when the turn finishes. Does not move `next_run` or `paused`. Unknown id is `job_not_found`; a job already in flight is `job_running` (TD-3809). |
+| `list_job_runs` | — | List one job's run history, newest first. Acked with `job_runs`. Unknown id is `job_not_found`. Does not run the job (TD-3811). |
 
 ### Daemon → client
 
@@ -440,6 +441,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), Windows UIPI / secure-desktop integrity (TD-3303), or Linux X11 no-gate / Wayland session limits (TD-2001). |
 | `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` / `run_job` asked for, and a push when a run finishes. `running` is true while a turn is in flight (TD-3805, TD-3809). |
 | `job_draft` | connection | Reply to `parse_job`: draft fields or a typed refusal. Not saved (TD-3803). |
+| `job_runs` | connection | Reply to `list_job_runs`: that job's runs, newest first. `scheduled_for` is null for Run now (TD-3811). |
 | `grok_commands` | session | Slash commands the Grok ACP agent advertised. |
 | `grok_plan` | session | Plan-mode markdown and entries from ACP `plan` updates. |
 | `grok_mode` | session | Current Grok ACP mode, the advertised set, and optional `model` the CLI is using. |

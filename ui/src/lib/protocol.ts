@@ -650,6 +650,12 @@ export interface RunJob extends ClientMessage {
   job_id: string;
 }
 
+/** List one job's run history (TD-3811). Connection-scoped. Newest first. */
+export interface ListJobRuns extends ClientMessage {
+  type: "list_job_runs";
+  job_id: string;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -736,6 +742,7 @@ export type ClientMessageUnion =
   | DeleteJob
   | ParseJob
   | RunJob
+  | ListJobRuns
   | Transcribe;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
@@ -1484,6 +1491,23 @@ export interface JobList extends DaemonEvent {
   jobs: JobEntry[];
 }
 
+/** One fire on job_runs (TD-3811). `scheduled_for` is null for Run now. */
+export interface JobRunEntry {
+  started_at: string;
+  scheduled_for: string | null;
+  trigger: "schedule" | "manual";
+  status: "ok" | "failed";
+  summary: string | null;
+  session_id: string | null;
+}
+
+/** Response to list_job_runs (TD-3811). Connection-scoped. Newest first. */
+export interface JobRuns extends DaemonEvent {
+  type: "job_runs";
+  job_id: string;
+  runs: JobRunEntry[];
+}
+
 export interface GrokCommand {
   name: string;
   description?: string;
@@ -1620,6 +1644,7 @@ export type DaemonEventUnion =
   | DesignHit
   | CuPermissions
   | JobList
+  | JobRuns
   | JobDraftReply
   | GrokCommands
   | GrokPlan

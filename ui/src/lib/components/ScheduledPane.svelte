@@ -1,10 +1,11 @@
 <script lang="ts">
-	// Scheduled rail surface (TD-3805, TD-3810).
+	// Scheduled rail surface (TD-3805, TD-3810, TD-3811).
 	//
 	// Lists persisted jobs and creates, edits, pauses, deletes, and runs them
 	// through protocol verbs. Draft fields, not NL. Run now fires one job; the
 	// tick still owns the schedule. Edit loads the row; a cadence job's armed
-	// slot stays off the form so Save does not send it back.
+	// slot stays off the form so Save does not send it back. History on a card
+	// is that job's run log, not the single receipt on the row.
 	import {
 		cancelEdit,
 		createJob,
@@ -29,6 +30,7 @@
 	import { visibleRecents, workspaces } from '../workspaces.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
+	import ScheduledHistory from './ScheduledHistory.svelte';
 
 	let empty = $derived(jobsEmptyCopy());
 	let editing = $derived(scheduled.editingId !== null);
@@ -66,6 +68,7 @@
 							{#if row.last_summary}
 								<p class="card-summary">{row.last_summary}</p>
 							{/if}
+							<ScheduledHistory jobId={row.id} />
 							<div class="actions">
 								<button class="action" type="button" onclick={() => editJob(row.id)}>Edit</button>
 								<button

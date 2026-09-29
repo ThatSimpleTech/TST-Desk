@@ -125,7 +125,9 @@ import type {
   DeleteJob,
   ParseJob,
   RunJob,
+  ListJobRuns,
   JobList,
+  JobRuns,
   JobDraftReply,
   Transcribe,
   Transcript,
@@ -973,6 +975,7 @@ describe("All fixtures have required shape", () => {
       "list_jobs", "save_job", "delete_job",
       "parse_job",
       "run_job",
+      "list_job_runs",
       "transcribe",
     ];
     for (const key of clientTypes) {
@@ -998,6 +1001,7 @@ describe("All fixtures have required shape", () => {
       "design_hit",
       "cu_permissions",
       "job_list",
+      "job_runs",
       "job_draft",
       "grok_commands",
       "grok_plan",
@@ -1331,6 +1335,21 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(run.type).toBe("run_job");
     expect(run.job_id).toBe("job-1");
     expect("session_id" in run).toBe(false);
+  });
+
+  it("list_job_runs / job_runs (TD-3811)", () => {
+    const req = fixtures.list_job_runs as ListJobRuns;
+    expect(req.type).toBe("list_job_runs");
+    expect(req.job_id).toBe("job-1");
+    expect("session_id" in req).toBe(false);
+    const runs = fixtures.job_runs as JobRuns;
+    expect(runs.type).toBe("job_runs");
+    expect(isNumber(runs.seq)).toBe(true);
+    expect(runs.job_id).toBe("job-1");
+    expect(runs.runs[0]?.trigger).toBe("schedule");
+    expect(runs.runs[0]?.status).toBe("ok");
+    expect(runs.runs[0]?.session_id).toBe("sess-1");
+    expect("session_id" in runs).toBe(false);
   });
 
   it("transcribe / transcript (TD-4701)", () => {

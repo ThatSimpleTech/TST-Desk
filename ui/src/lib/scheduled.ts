@@ -1,11 +1,11 @@
-// Scheduled rail helpers (TD-3805, TD-3810).
+// Scheduled rail helpers (TD-3805, TD-3810, TD-3811).
 //
 // Draft fields the pane sends on `save_job` — not a natural-language
 // parse. Pause is the same verb with `paused` flipped. Edit is the same
 // verb with the job's id. Run now is `run_job`; the tick still owns the
 // schedule.
 
-import type { JobEntry, SaveJob } from "./protocol";
+import type { JobEntry, JobRunEntry, SaveJob } from "./protocol";
 
 export type DeliverTo = JobEntry["deliver_to"];
 
@@ -164,6 +164,22 @@ export function jobActivity(job: JobEntry, timeZone?: string): string {
 /** True when the last fire failed, so the row can mark itself. */
 export function jobFailed(job: JobEntry): boolean {
 	return job.last_status === "failed";
+}
+
+/**
+ * One history row: local time, Ran or Failed, and "manual" only when the
+ * fire was Run now. A scheduled fire is the default, so naming it adds nothing.
+ */
+export function jobRunLabel(run: JobRunEntry, timeZone?: string): string {
+	const when = formatLocal(run.started_at, timeZone);
+	const outcome = run.status === "failed" ? "Failed" : "Ran";
+	if (run.trigger === "manual") return `${outcome} ${when} · manual`;
+	return `${outcome} ${when}`;
+}
+
+/** The rail no longer lists the session a run recorded. */
+export function sessionMissingCopy(): string {
+	return "Session no longer exists";
 }
 
 function blankToNull(value: string): string | undefined {

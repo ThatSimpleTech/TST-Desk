@@ -1,12 +1,14 @@
-// Scheduled rail store (TD-3805, TD-3810).
+// Scheduled rail store (TD-3805, TD-3810, TD-3811).
 //
 // Data-dir jobs from `job_list`. Create / edit / pause / delete / run send
 // protocol verbs; the daemon talks to the store. Run now starts a turn.
 // The tick still owns the schedule. Edit loads a row into the draft; the
 // daemon keeps the run receipt because the save carries the existing id.
+// History is a separate log: opening a disclosure asks for `list_job_runs`,
+// and an open one is asked again when that job's `last_run` moves.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
-import type { DaemonEventUnion, JobEntry } from "./protocol";
+import type { DaemonEventUnion, JobEntry, JobRunEntry } from "./protocol";
 import {
 	draftFromJob,
 	emptyDraft,
@@ -23,6 +25,12 @@ export const scheduled = $state({
 	draft: emptyDraft(null),
 	parseText: "",
 	editingId: null as string | null,
+	/** Job ids whose History disclosure is open. */
+	historyOpen: {} as Record<string, boolean>,
+	/** `last_run` the open disclosure was last fetched against. Null is "never run". */
+	historySeen: {} as Record<string, string | null>,
+	/** Runs by job id, newest first. Absent until `job_runs` arrives. */
+	runs: {} as Record<string, JobRunEntry[]>,
 });
 
 let started = false;
@@ -58,6 +66,9 @@ export function resetScheduled(): void {
 	scheduled.draft = emptyDraft(null);
 	scheduled.parseText = "";
 	scheduled.editingId = null;
+	scheduled.historyOpen = {};
+	scheduled.historySeen = {};
+	scheduled.runs = {};
 }
 
 function freshDraft(): JobDraftFields {
@@ -168,6 +179,22 @@ export function deleteScheduledJob(jobId: string): boolean {
 	return sendToDaemon({ type: "delete_job", job_id: jobId });
 }
 
+/** Open or close one job's history. Opening asks for the log. */
+export function toggleJobHistory(jobId: string): void {
+	ensureStarted();
+	const open = scheduled.historyOpen[jobId] !== true;
+	scheduled.historyOpen = { ...scheduled.historyOpen, [jobId]: open };
+	if (!open) return;
+	const job = scheduled.items.find((row) => row.id === jobId);
+	// Record the receipt we are fetching against before the reply, so a
+	// job_list that still shows this last_run does not ask a second time.
+	scheduled.historySeen = {
+		...scheduled.historySeen,
+		[jobId]: job?.last_run ?? null,
+	};
+	sendToDaemon({ type: "list_job_runs", job_id: jobId });
+}
+
 /** Ask the daemon to fire one job now. The schedule stays where it is. */
 export function runJob(jobId: string): boolean {
 	if (!scheduled.items.some((row) => row.id === jobId)) return false;
@@ -182,6 +209,7 @@ function reduce(event: DaemonEventUnion): void {
 		scheduled.items = event.jobs;
 		scheduled.loading = false;
 		scheduled.error = null;
+		syncOpenHistory(event.jobs);
 		if (savePending) {
 			savePending = false;
 			scheduled.editingId = null;
@@ -197,6 +225,11 @@ function reduce(event: DaemonEventUnion): void {
 			scheduled.editingId = null;
 			scheduled.draft = freshDraft();
 		}
+		return;
+	}
+	if (event.type === "job_runs") {
+		if (!scheduled.items.some((row) => row.id === event.job_id)) return;
+		scheduled.runs = { ...scheduled.runs, [event.job_id]: event.runs };
 		return;
 	}
 	if (event.type === "job_draft") {
@@ -224,4 +257,28 @@ function reduce(event: DaemonEventUnion): void {
 		scheduled.loading = false;
 		scheduled.error = event.message;
 	}
+}
+
+/** Keep open disclosures, and ask again when that job's receipt moved. */
+function syncOpenHistory(jobs: JobEntry[]): void {
+	const live = new Set(jobs.map((job) => job.id));
+	const open: Record<string, boolean> = {};
+	const seen: Record<string, string | null> = {};
+	const runs: Record<string, JobRunEntry[]> = {};
+	for (const [id, rows] of Object.entries(scheduled.runs)) {
+		if (live.has(id)) runs[id] = rows;
+	}
+	for (const job of jobs) {
+		if (scheduled.historyOpen[job.id] !== true) continue;
+		open[job.id] = true;
+		const current = job.last_run ?? null;
+		const had = Object.prototype.hasOwnProperty.call(scheduled.historySeen, job.id);
+		if (had && (scheduled.historySeen[job.id] ?? null) !== current) {
+			sendToDaemon({ type: "list_job_runs", job_id: job.id });
+		}
+		seen[job.id] = current;
+	}
+	scheduled.historyOpen = open;
+	scheduled.historySeen = seen;
+	scheduled.runs = runs;
 }

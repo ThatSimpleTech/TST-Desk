@@ -10426,3 +10426,45 @@ runner re-arms. A cadence job's stored `next_run` is that slot, not user
 input: the form leaves it blank and omits it. Rejected: a separate
 `update_job` verb, and treating a blank next run on a cadence job as
 "clear the slot".
+
+## TD-3811 — Run history, and open the session (Class B)
+
+**One JSONL file per job, under the user data dir.** Each fire used to
+overwrite `last_*`, so the pane could not show an earlier run or the
+session it happened in. The log is
+`{data_dir}/scheduler/history/<job_id>.jsonl`: `started_at`,
+`scheduled_for` (the `next_run` captured before `advance_job`, or null
+for Run now), `trigger` (`schedule` or `manual`), `status`, `summary`,
+`session_id`. Cap 50, oldest dropped. The file is rewritten in one
+atomic replace, the same way `jobs.json` is: a seek-append can tear a
+line, and the cap has to drop from the front anyway. A line that does
+not parse is skipped and left out of the next rewrite. The line itself
+is not written to the warning — a secret that failed to parse must not
+land in the log. `normalize_summary` runs on the way in and again on
+the way out, so a hand-edited line is redacted when it is read. The
+module is synchronous, like the job store. The runner and
+`list_job_runs` call it with `asyncio.to_thread`. `delete_job` removes
+the file after the row is gone. A Run now that finds the job deleted
+during the turn does not write the line back; delete already removed
+it. `last_*` stays the row receipt. The log is not in the workspace:
+that tree is git-tracked and moves independently of the daemon.
+
+**`list_job_runs` / `job_runs`.** Connection-scoped. `seq` is fixed at 1
+so the reply cannot rewind attach. `runs` is newest first. Unknown id
+is `job_not_found`. The handler looks the job up before it touches the
+filesystem, so an id that is not a single path segment is the same
+error and never joins a path. A known job with no file is an empty
+list. `JobRunEntry` is the wire shape; the on-disk model stays in
+`scheduler/history.py`. No protocol version bump: an older client
+ignores the verb and the event.
+
+**Open session is the rail's attach.** The disclosure calls `selectRow`
+and `showHome`, the same pair a project recent uses. There is no new
+protocol message. `selectRow` returns without a word when the id is
+absent from the session list, so the disclosure says "Session no longer
+exists" in that case. An open disclosure asks again when a later
+`job_list` shows a different `last_run` for that job.
+
+Rejected: stuffing the log onto `job_list` (that push already happens
+on every fire and every pause), storing the file in the workspace, and
+a dedicated verb to open the session.

@@ -14,12 +14,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from ..config import ModelConfig
 from ..logging import get_logger
 from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
+from .history import append_run
 from .models import DeliverTo, Job
 from .schedule import advance_job, arm_cadence_job, as_utc, due_jobs, record_run
 from .store import get_job, list_jobs, save_job
@@ -214,6 +215,16 @@ async def run_manual_job(
             session_id=result.session_id,
         )
         await asyncio.to_thread(save_job, data_dir, stamped)
+        # A job deleted during the turn is not written back, and neither is
+        # a history line for it — delete already removed the file.
+        await _remember_run(
+            data_dir,
+            fresh.id,
+            now,
+            result,
+            trigger="manual",
+            scheduled_for=None,
+        )
     await deliver(channel, result.summary)
 
 
@@ -225,6 +236,9 @@ async def _run_one(
     deliver: Deliver,
 ) -> None:
     result = await _turn_result(job, run_turn)
+    # The slot that fired. advance_job replaces it, so the log has to
+    # capture it first — a manual run passes None instead.
+    fired = job.next_run
     # Stamp the next slot (and the run receipt) before notify. Deliver-first
     # left an overdue ``next_run`` on disk if the test (or a crash) observed
     # the record before ``save_job`` finished — a second tick would fire again.
@@ -236,7 +250,39 @@ async def _run_one(
         session_id=result.session_id,
     )
     await asyncio.to_thread(save_job, data_dir, stamped)
+    await _remember_run(
+        data_dir,
+        job.id,
+        now,
+        result,
+        trigger="schedule",
+        scheduled_for=fired,
+    )
     await deliver(job.deliver_to, result.summary)
+
+
+async def _remember_run(
+    data_dir: Path,
+    job_id: str,
+    now: datetime,
+    result: TurnResult,
+    *,
+    trigger: Literal["schedule", "manual"],
+    scheduled_for: str | None,
+) -> None:
+    """Append the fire off the event loop. ``last_*`` stays the row summary."""
+    status: Literal["ok", "failed"] = "ok" if result.ok else "failed"
+    await asyncio.to_thread(
+        append_run,
+        data_dir,
+        job_id,
+        started_at=now,
+        scheduled_for=scheduled_for,
+        trigger=trigger,
+        status=status,
+        summary=result.summary,
+        session_id=result.session_id,
+    )
 
 
 async def _turn_result(job: Job, run_turn: TurnFn) -> TurnResult:
