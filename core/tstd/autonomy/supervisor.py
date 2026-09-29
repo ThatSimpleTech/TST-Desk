@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..logging import get_logger
+from ..proc_lifecycle import finish_subprocess
 from ..provider import ChatCompletionRequest, ChatMessage, ProviderError
 from .checkpoint import auto_branch
 from .ledger import DecisionLedger, format_entry
@@ -376,10 +377,8 @@ async def _git(workspace: Path, *args: str) -> tuple[int, str]:
     except OSError:
         return 1, ""
     try:
-        out_b, _err = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT)
+        out_b, _err = await finish_subprocess(proc, timeout=_GIT_TIMEOUT)
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
         return 1, ""
     rc = proc.returncode if proc.returncode is not None else 1
     return rc, out_b.decode("utf-8", errors="replace")

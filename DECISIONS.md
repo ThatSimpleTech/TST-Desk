@@ -10575,3 +10575,44 @@ existing event already renders.
 
 **Alternative rejected:** Hardcoding 32768, and retrying inside the
 provider client (that would resend the same oversized prompt).
+
+## TD-4835 — Deterministic resource lifecycle cleanup (Class B)
+
+2026-09-29.
+
+**Decision:** One helper, `tstd.proc_lifecycle`, owns `communicate` with a
+timeout and the cancel/timeout reap. Checkpoint, charter, revert,
+supervisor, memory commit, sandbox, and keychain call `finish_subprocess`.
+The shell's task-cancel path calls `reap_subprocess` after `killpg`.
+`asyncio.timeout` wraps `proc.wait` on the caller's task. `asyncio.wait_for`
+would put `wait` on a child task, so cancelling the shell task would not be
+the waiter that closes the transport.
+
+**Decision:** The reap is bounded. The default grace is 5 seconds, the
+shell tool's existing post-kill bound. Keychain passes 1.0 second, so a
+CLI that ignores SIGKILL stays a locked keychain on the TD-1105 bound and
+the suite's hung-CLI stand-in does not adopt the longer grace. A cancel
+absorbed to finish `wait` is re-raised after the transport is closed. A
+timeout must not swallow a real cancel.
+
+**Decision:** A refused process-group kill does not fall through into
+`proc.kill()`. Killing only the leader orphans the grandchildren that
+still hold the pipes, and the transport is then finalized in `__del__`.
+If the leader is already dead and the grace elapses with a pipe still
+open, the transport is closed on the live loop. `close()` is not called
+while the leader is still running, because that SIGKILLs it.
+
+**Decision:** No new dependency and no protocol change. MCP and desktop
+stdio `aclose` were not changed. The escalated suite did not show an
+unclosed transport from them.
+
+**Rationale:** A cancelled `communicate()` leaves the child running. The
+child watcher holds the transport until that child exits. If the loop is
+already closed, `BaseSubprocessTransport.__del__` calls `call_soon` and
+raises `RuntimeError: Event loop is closed`. The warning is collected by
+whichever test next garbage-collects the object, which is why it surfaced
+in `test_class_c_stops_and_notifies` rather than at the `git` call inside
+autonomy advance.
+
+**Rejected:** Suppressing `ResourceWarning`, sleeping in the regression
+tests, and reaping a leader the OS refused to kill.

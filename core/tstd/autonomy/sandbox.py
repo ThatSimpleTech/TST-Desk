@@ -21,6 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from ..config import AutonomyConfig, ModelConfig
+from ..proc_lifecycle import finish_subprocess
 
 WORKSPACE_DEST = "/workspace"
 _INFO_TIMEOUT_SECONDS = 8.0
@@ -111,10 +112,8 @@ async def inspect_runtime(binary: str) -> RuntimeState:
     except OSError:
         return RuntimeState.DOWN
     try:
-        out, _err = await asyncio.wait_for(proc.communicate(), timeout=_INFO_TIMEOUT_SECONDS)
+        out, _err = await finish_subprocess(proc, timeout=_INFO_TIMEOUT_SECONDS)
     except TimeoutError:
-        proc.kill()
-        await proc.communicate()
         return RuntimeState.DOWN
     if proc.returncode != 0:
         return RuntimeState.DOWN
@@ -298,11 +297,8 @@ async def sandbox_exec(
     except OSError as exc:
         raise SandboxError(f"failed to exec sandbox runtime: {exc}") from exc
     try:
-        async with asyncio.timeout(_EXEC_TIMEOUT_SECONDS):
-            out, err_b = await proc.communicate()
+        out, err_b = await finish_subprocess(proc, timeout=_EXEC_TIMEOUT_SECONDS)
     except TimeoutError:
-        proc.kill()
-        await proc.communicate()
         raise SandboxError("sandbox exec timed out") from None
     return SandboxExec(
         argv=argv,
