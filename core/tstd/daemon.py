@@ -339,6 +339,7 @@ from .scheduler.models import (
     JobValidationError,
     validate_draft,
 )
+from .scheduler.pin import require_known_preset
 from .scheduler.runner import (
     InFlight,
     RecordingDeliver,
@@ -646,6 +647,8 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         deliver_to=job.deliver_to,
         paused=job.paused,
         timezone=job.timezone,
+        preset=job.preset,
+        engine=job.engine,
         last_run=job.last_run,
         last_status=job.last_status,
         last_summary=job.last_summary,
@@ -2858,7 +2861,13 @@ class Daemon:
         assert sess.router is not None
         await sess.event_log.add(_tier_state_event(sess, _session_model_config(sess, self.config)))
 
-    async def _start_session(self, workspace_path: str) -> str | None:
+    async def _start_session(
+        self,
+        workspace_path: str,
+        *,
+        preset: str | None = None,
+        engine: Literal["native", "grok"] | None = None,
+    ) -> str | None:
         """Create, wire, and start a session in ``workspace_path``.
 
         Shared by ``open_workspace`` and ``new_session`` (TD-1701): both grow
@@ -2867,14 +2876,20 @@ class Daemon:
         on an existing live session).  Returns the session's first event
         (``session_state``, running) as the wire reply, mirroring
         ``open_workspace``'s response.
+
+        ``preset`` and ``engine`` name this session only (TD-3812). Omitted,
+        the session uses the window's current choice. Neither is written to
+        Settings.
         """
         # Memory templates (TD-2101): plant .tst/memory/ on every session
         # start so an already-opened workspace still gets the files. Never
         # overwrites; config scaffold stays OpenWorkspace-only.
         await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
         sess = await self.session_registry.create(workspace_path)
-        sess.engine = self.config.engine.kind
-        self._bind_session_preset(sess, self.config.active_preset)
+        # A scheduled pin names the loop for this session only. The window's
+        # active preset and engine stay where Settings left them.
+        sess.engine = self.config.engine.kind if engine is None else engine
+        self._bind_session_preset(sess, self.config.active_preset if preset is None else preset)
         await self._session_store.upsert(
             sess.id, workspace_path, sess.state, engine=sess.engine, preset=sess.preset
         )
@@ -3396,6 +3411,9 @@ class Daemon:
                     paused=msg.paused,
                     timezone=msg.timezone,
                     known_workspaces=self._known_workspaces(),
+                    preset=msg.preset,
+                    engine=msg.engine,
+                    known_presets=self.config.presets,
                 ),
             )
         job = validate_draft(
@@ -3408,11 +3426,15 @@ class Daemon:
                 deliver_to=msg.deliver_to,
                 paused=msg.paused,
                 timezone=msg.timezone,
+                preset=msg.preset,
+                engine=msg.engine,
             )
         )
         # Create only: an existing job whose folder moved must stay editable
         # so it can still be paused or deleted. Edits re-check in apply_job_edit
-        # when the workspace text itself changed.
+        # when the workspace text itself changed. The catalog check is first
+        # so a bad preset is the sentence the user sees.
+        require_known_preset(job.preset, self.config.presets)
         require_folder(job.workspace)
         return save_job(self.data_dir, job)
 

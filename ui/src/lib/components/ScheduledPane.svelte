@@ -5,7 +5,8 @@
 	// through protocol verbs. Draft fields, not NL. Run now fires one job; the
 	// tick still owns the schedule. Edit loads the row; a cadence job's armed
 	// slot stays off the form so Save does not send it back. History on a card
-	// is that job's run log, not the single receipt on the row.
+	// is that job's run log, not the single receipt on the row. A job can pin
+	// a preset and an engine so it does not follow the window.
 	import {
 		cancelEdit,
 		createJob,
@@ -31,6 +32,7 @@
 	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
 	import ScheduledHistory from './ScheduledHistory.svelte';
+	import ScheduledPinFields from './ScheduledPinFields.svelte';
 
 	let empty = $derived(jobsEmptyCopy());
 	let editing = $derived(scheduled.editingId !== null);
@@ -162,6 +164,7 @@
 				<option value="ntfy">ntfy</option>
 			</select>
 		</label>
+		<ScheduledPinFields />
 		{#if scheduled.error !== null}
 			<p class="error" role="alert">{scheduled.error}</p>
 		{/if}

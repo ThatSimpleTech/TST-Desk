@@ -226,6 +226,7 @@ async def test_double_flip_dns_never_reaches_loopback(monkeypatch: pytest.Monkey
         assert flip.calls == 1, "the guarded backend must be the only resolver"
     finally:
         server.shutdown()
+        server.server_close()
 
 
 async def test_private_answer_at_connect_time_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -249,6 +250,7 @@ async def test_private_answer_at_connect_time_is_refused(monkeypatch: pytest.Mon
         assert hits[0] == 0, "a private answer must not become a socket"
     finally:
         server.shutdown()
+        server.server_close()
 
 
 # --- Fallback chain ------------------------------------------------------

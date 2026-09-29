@@ -1,4 +1,4 @@
-// Scheduled rail helpers (TD-3805, TD-3810, TD-3811).
+// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812).
 //
 // Draft fields the pane sends on `save_job` — not a natural-language
 // parse. Pause is the same verb with `paused` flipped. Edit is the same
@@ -16,6 +16,10 @@ export interface JobDraftFields {
 	next_run: string;
 	deliver_to: DeliverTo;
 	paused: boolean;
+	/** Catalog preset name. `""` means use whatever the window is using. */
+	preset: string;
+	/** `""` means use the window's engine. */
+	engine: "" | "native" | "grok";
 }
 
 export function jobsEmptyCopy(): string {
@@ -30,6 +34,8 @@ export function emptyDraft(workspace: string | null): JobDraftFields {
 		next_run: "",
 		deliver_to: "window",
 		paused: false,
+		preset: "",
+		engine: "",
 	};
 }
 
@@ -133,6 +139,8 @@ export function jobMeta(job: JobEntry, timeZone?: string): string {
 	const parts = words !== null && when === job.cadence ? [words] : [when];
 	if (words !== null && when !== job.cadence) parts.push(words);
 	parts.push(job.deliver_to);
+	if (job.preset) parts.push(job.preset);
+	if (job.engine) parts.push(job.engine);
 	return parts.join(" · ");
 }
 
@@ -187,12 +195,12 @@ function blankToNull(value: string): string | undefined {
 	return text === "" ? undefined : text;
 }
 
-/** Wire payload for a new job. Empty cadence / next_run are omitted. */
+/** Wire payload for a new job. Empty cadence / next_run / pin are omitted. */
 export function saveFromDraft(
 	draft: JobDraftFields,
 	timezone: string | undefined = viewerTimeZone(),
 ): SaveJob {
-	return {
+	const payload: SaveJob = {
 		type: "save_job",
 		workspace: blankToNull(draft.workspace),
 		instruction: blankToNull(draft.instruction),
@@ -204,9 +212,19 @@ export function saveFromDraft(
 		// would read "7:45" as UTC.
 		timezone,
 	};
+	const preset = blankToNull(draft.preset);
+	if (preset !== undefined) payload.preset = preset;
+	if (draft.engine === "native" || draft.engine === "grok") payload.engine = draft.engine;
+	return payload;
 }
 
-/** Wire payload to replace a listed job, including pause. */
+/**
+ * Wire payload to replace a listed job, including pause.
+ *
+ * Preset and engine are omitted on purpose. Pause must not resend them:
+ * a catalog name that has since been removed would fail the save, and
+ * the job could not be paused.
+ */
 export function saveFromJob(job: JobEntry, paused: boolean): SaveJob {
 	return {
 		type: "save_job",
@@ -252,6 +270,8 @@ export function draftFromJob(job: JobEntry): JobDraftFields {
 		next_run: recurring ? "" : (job.next_run ?? ""),
 		deliver_to: job.deliver_to,
 		paused: job.paused,
+		preset: job.preset ?? "",
+		engine: job.engine ?? "",
 	};
 }
 
@@ -294,5 +314,9 @@ export function saveFromEdit(
 	if (legacy && cadenceChanged && timezone !== undefined && timezone !== "") {
 		payload.timezone = timezone;
 	}
+	// Always sent. `""` clears a pin back to "use current"; omitting it
+	// would keep the stored one, which is Pause, not Save.
+	payload.preset = draft.preset.trim();
+	payload.engine = draft.engine;
 	return payload;
 }

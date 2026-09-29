@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from ..boundary_config import BoundarySection, CapsSection
 from ..config import ConfigError
+from ..proc_lifecycle import finish_subprocess
 
 _GIT_TIMEOUT = 30.0
 
@@ -287,12 +288,7 @@ async def _git(
         stderr=asyncio.subprocess.PIPE,
         env=env,
     )
-    try:
-        out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT)
-    except TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise
+    out_b, err_b = await finish_subprocess(proc, timeout=_GIT_TIMEOUT)
     rc = proc.returncode if proc.returncode is not None else -1
     return rc, out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace")
 
