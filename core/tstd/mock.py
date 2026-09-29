@@ -62,6 +62,9 @@ class Script:
             it — the shape Ollama actually sends for a reasoning model
             (TD-1901).  Empty by default, so every existing script is a
             non-reasoning provider and stays byte-identical.
+        tool_batch: Parallel tool calls for the ``tool_call`` kind, as
+            ``(name, arguments JSON)`` pairs. Empty keeps the single
+            ``tool_name`` / ``tool_arguments`` call, id ``call_mock_1``.
     """
 
     kind: Literal[
@@ -79,6 +82,7 @@ class Script:
     prompt_tokens: int = DEFAULT_PROMPT_TOKENS
     completion_tokens: int = DEFAULT_COMPLETION_TOKENS
     cached_tokens: int | None = DEFAULT_CACHED_TOKENS
+    tool_batch: tuple[tuple[str, str], ...] = ()
 
     @property
     def usage(self) -> Usage:
@@ -235,13 +239,11 @@ class MockProvider:
                 content=None,
                 tool_calls=[
                     ToolCall(
-                        id="call_mock_1",
+                        id=call_id,
                         type="function",
-                        function=FunctionCall(
-                            name=script.tool_name or "mock_tool",
-                            arguments=script.tool_arguments or "{}",
-                        ),
+                        function=FunctionCall(name=name, arguments=arguments),
                     )
+                    for call_id, name, arguments in self._scripted_tools(script)
                 ],
             )
             finish_reason = "tool_calls"
@@ -318,38 +320,61 @@ class MockProvider:
             return
 
         if script.kind == "tool_call":
-            # Emit role chunk, then arguments, then finish chunk with usage.
-            await _maybe_delay()
-            yield StreamChunk(
-                id=chunk_id,
-                delta=Delta(
-                    content=None,
-                    tool_calls=[
-                        self._tool_delta(
-                            index=0,
-                            id="call_mock_1",
-                            name=script.tool_name or "mock_tool",
-                            arguments="",
-                        )
-                    ],
-                ),
-                finish_reason=None,
-            )
-            await _maybe_delay()
-            yield StreamChunk(
-                id=chunk_id,
-                delta=Delta(
-                    content=None,
-                    tool_calls=[
-                        self._tool_delta(
-                            index=0,
-                            name=None,
-                            arguments=script.tool_arguments or "{}",
-                        )
-                    ],
-                ),
-                finish_reason=None,
-            )
+            if script.tool_batch:
+                # One chunk per call, id + name + arguments together, so a
+                # parallel batch round-trips without a second delta.
+                for index, (call_id, name, arguments) in enumerate(self._scripted_tools(script)):
+                    await _maybe_delay()
+                    yield StreamChunk(
+                        id=chunk_id,
+                        delta=Delta(
+                            content=None,
+                            tool_calls=[
+                                self._tool_delta(
+                                    index=index,
+                                    id=call_id,
+                                    name=name,
+                                    arguments=arguments,
+                                )
+                            ],
+                        ),
+                        finish_reason=None,
+                    )
+            else:
+                # Emit role chunk, then arguments, then finish chunk with usage.
+                # A single scripted call stays on this path so existing
+                # streams keep the id-then-arguments shape.
+                await _maybe_delay()
+                yield StreamChunk(
+                    id=chunk_id,
+                    delta=Delta(
+                        content=None,
+                        tool_calls=[
+                            self._tool_delta(
+                                index=0,
+                                id="call_mock_1",
+                                name=script.tool_name or "mock_tool",
+                                arguments="",
+                            )
+                        ],
+                    ),
+                    finish_reason=None,
+                )
+                await _maybe_delay()
+                yield StreamChunk(
+                    id=chunk_id,
+                    delta=Delta(
+                        content=None,
+                        tool_calls=[
+                            self._tool_delta(
+                                index=0,
+                                name=None,
+                                arguments=script.tool_arguments or "{}",
+                            )
+                        ],
+                    ),
+                    finish_reason=None,
+                )
             await _maybe_delay()
             yield StreamChunk(
                 id=chunk_id,
@@ -399,6 +424,27 @@ class MockProvider:
             finish_reason="stop",
             usage=script.usage,
         )
+
+    @staticmethod
+    def _scripted_tools(script: Script) -> list[tuple[str, str, str]]:
+        """(id, name, arguments) for a tool_call script.
+
+        A batch numbers ids from ``call_mock_1`` so the first call stays
+        compatible with single-call scripts. An empty batch is the one
+        ``tool_name`` call.
+        """
+        if script.tool_batch:
+            return [
+                (f"call_mock_{index + 1}", name, arguments)
+                for index, (name, arguments) in enumerate(script.tool_batch)
+            ]
+        return [
+            (
+                "call_mock_1",
+                script.tool_name or "mock_tool",
+                script.tool_arguments or "{}",
+            )
+        ]
 
     @staticmethod
     def _tool_delta(

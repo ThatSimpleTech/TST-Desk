@@ -29,6 +29,7 @@ from tstd.provider import (
     ToolCall,
     ToolDefinition,
     Usage,
+    is_context_overflow,
 )
 
 # ── Mock ASGI server ───────────────────────────────────────────────────
@@ -94,6 +95,51 @@ async def _mock_chat_app(scope: dict[str, Any], receive: Any, send: Any) -> None
             }
         }
         await _send_response(send, status, data)
+        return
+
+    # Context-window refusals on HTTP 400. Prefix is "ovf-" so it is not
+    # parsed as "err-{status}" (that path does int(model.split("-")[1])).
+    if model.startswith("ovf-"):
+        kind = model.split("-", 1)[1]
+        bodies = {
+            "openai": {
+                "error": {
+                    "message": (
+                        "This model's maximum context length is 8192 tokens. "
+                        "However, you requested 9000 tokens."
+                    ),
+                    "code": "context_length_exceeded",
+                }
+            },
+            "vllm": {
+                "error": {
+                    "message": "This model's maximum context length is 8192 tokens.",
+                    "code": 400,
+                }
+            },
+            "litellm": {
+                "error": {
+                    "message": (
+                        "litellm.ContextWindowExceededError: "
+                        "prompt contains at least 9000 input tokens"
+                    ),
+                    "code": 400,
+                }
+            },
+            "long": {
+                "error": {
+                    "message": "prompt is too long: 9000 tokens > 8192 maximum",
+                    "code": 400,
+                }
+            },
+            "plain": {
+                "error": {
+                    "message": "temperature must be between 0 and 2",
+                    "code": 400,
+                }
+            },
+        }
+        await _send_response(send, 400, bodies[kind])
         return
 
     # Error simulation: model name "err-{status_code}"
@@ -687,6 +733,66 @@ class TestErrorHandling:
         assert isinstance(result, ProviderError)
         assert result.code == "server_error"
         assert result.retryable
+
+    async def test_context_overflow_bodies(self, client: ProviderClient) -> None:
+        """400 window refusals are context_overflow; a plain 400 is not.
+
+        The message stays a sentence. The phrase that identified the
+        refusal is on ``detail``, which is what the log records.
+        """
+        cases = (
+            ("ovf-openai", "context_overflow", "maximum context length"),
+            ("ovf-vllm", "context_overflow", "maximum context length"),
+            ("ovf-litellm", "context_overflow", "ContextWindowExceededError"),
+            ("ovf-long", "context_overflow", "prompt is too long"),
+            ("ovf-plain", "bad_request", ""),
+        )
+        for model, code, phrase in cases:
+            request = ChatCompletionRequest(
+                model=model, messages=[ChatMessage(role="user", content="Hi")]
+            )
+            result = await client.chat_completion(request)
+            assert isinstance(result, ProviderError)
+            assert result.code == code, model
+            assert result.retryable is False
+            if phrase:
+                assert phrase.lower() not in result.message.lower()
+                assert phrase in result.detail
+            else:
+                assert result.code != "context_overflow"
+                assert "temperature" in result.message
+
+    async def test_context_overflow_on_the_stream_path(self, client: ProviderClient) -> None:
+        """The bug was reported on the streaming route. Same classification."""
+        request = ChatCompletionRequest(
+            model="ovf-litellm",
+            messages=[ChatMessage(role="user", content="Hi")],
+            stream=True,
+        )
+        items = [item async for item in client.chat_completion_stream(request)]
+        errors = [item for item in items if isinstance(item, ProviderError)]
+        assert len(errors) == 1
+        assert errors[0].code == "context_overflow"
+        assert "ContextWindowExceededError" not in errors[0].message
+        assert "ContextWindowExceededError" in errors[0].detail
+
+    @pytest.mark.parametrize(
+        ("status", "body", "expected"),
+        [
+            (400, "maximum context length is 8192", True),
+            (400, "This model's MAXIMUM CONTEXT LENGTH is 8192", True),
+            (400, "code: context_length_exceeded", True),
+            (400, "litellm.ContextWindowExceededError: boom", True),
+            (400, "prompt is too long: 9000 > 8192", True),
+            (400, "PROMPT IS TOO LONG", True),
+            (400, "temperature must be between 0 and 2", False),
+            (413, "maximum context length", False),
+            (500, "ContextWindowExceededError", False),
+            (400, "", False),
+        ],
+    )
+    def test_is_context_overflow(self, status: int, body: str, expected: bool) -> None:
+        assert is_context_overflow(status, body) is expected
 
     async def test_context_length_error(self, client: ProviderClient) -> None:
         """Test that 413 context length exceeded is not retryable."""
