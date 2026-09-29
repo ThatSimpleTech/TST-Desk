@@ -10765,3 +10765,85 @@ and the port file is still there. The timer is not the loop, and
 handler. `asyncio.wait_for` alone around `_shutdown`. Arming the same
 budget for the websocket shutdown message, which would change Windows.
 Moving `config.yaml` with `--data-dir`.
+
+## TD-4843 — Daemon files follow --data-dir (Class B)
+
+2026-09-29.
+
+**Decision:** The config a daemon loads, reloads, and writes is
+`<data-dir>/config.yaml`. `main` already resolves the data directory
+once. With no `--data-dir` that directory is `user_data_dir()`, so the
+file stays where it is today. `tst` reads the same file for its turn
+timeout and already passes `--data-dir` when it spawns `tstd`. The
+credentials catalog is that file; secrets stay in the OS keychain.
+
+**Decision:** `cached_config()` with no path remains the library cache
+for callers that have no daemon. A daemon does not call that form. It
+passes its path into the existing loader. The cache holds one entry, so
+a daemon and a library caller in one process do not share an object.
+`AuditStore.open_default`, `load_config()` / `ensure_user_config()`
+with no path, and `setup_logging()` with no `log_dir` stay on the
+library default for the same reason.
+
+**Decision:** These are not under `--data-dir`. The OS keychain is the
+OS keychain. `~/.tst-cu-mcp/config.yaml` (or `TST_CU_MCP_CONFIG`) is
+shared with `tst-cu-mcp`. `~/.grok` (or `GROK_HOME`) is the Grok CLI
+home. `CHARTER.md` is `.tst/autonomy/` in the workspace.
+`last-workspace.yaml` and `close-is-not-quit.yaml` are host files; the
+host already joins them to the data directory it passes as
+`--data-dir`. The Python daemon does not read them.
+
+**Rationale:** `tstd --data-dir <scratch>` loaded and wrote the real
+user `config.yaml`, so a test or a second daemon used that user's
+presets, credentials, and settings. TD-4842 moved the log only and
+rejected moving `config.yaml`. That left the same hole. The host
+already reads `<data-dir>/config.yaml` for the embeddings sidecar, so
+the daemon now uses the file the host is looking at.
+
+Voice, approvals, session stars, workspace pins, coworker, memory,
+remote attach, the remote token, computer-use indicator prefs, the
+per-platform permission flags, scheduler jobs and history, `port.json`,
+the session store and transcripts, `audit.db`, logs, exports, the
+browser profile, and `cu-agent.sock` already took a data directory.
+Search endpoints for a session come from that session's config, not
+from the library cache.
+
+**Alternative rejected:** Changing what `cached_config()` with no
+arguments returns while a daemon is alive. Library callers and the
+existing tests depend on that being the default file. Also rejected:
+copying the library config into an explicit data dir on startup, which
+would put the user's file back in the scratch daemon. Also rejected:
+moving the keychain, the cu-mcp policy, or the Grok home.
+
+## TD-4844 — Quit distill does not hold the shutdown budget (Class B)
+
+2026-09-29.
+
+**Decision:** Graceful shutdown still starts distill for every live
+session that had a completed turn. The call runs beside the rest of
+the close. If it has returned when the sockets, session tasks, and
+audit writer have finished, the proposal is kept. If the provider
+call is still in flight, shutdown cancels it, logs that distill was
+skipped, closes the provider clients, and goes on. End session is
+unchanged and still waits on the provider.
+
+**Decision:** A shutdown step that is still running after one second
+is logged at INFO, on `tstd.shutdown`, with the step's name and how
+long it has been running. When the close finishes, the same line names
+the longest finished step if that step exceeded one second.
+
+**Rationale:** After one finished turn, SIGTERM sat in distill's
+non-streaming completion. That read is allowed to take 120 seconds,
+so the 5 second budget called `os._exit(1)` before the websocket
+server stopped. An idle daemon, and a daemon whose provider answered,
+left in a fraction of a second. TD-2302 already says a provider that
+cannot complete distill is logged and skipped, and quit still reaps.
+A proposal emitted after the client has gone is not written and is
+not restored. The log line is what was missing when the budget fired:
+the process died without naming the step.
+
+**Alternative rejected:** Raising the shutdown budget or the provider
+read timeout. Wrapping distill in `wait_for` and discarding the
+timeout. Skipping distill even when the provider has already
+answered. Closing the HTTP client before the call, which fails every
+quit distill including a fast one.

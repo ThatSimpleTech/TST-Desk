@@ -127,9 +127,10 @@ async def mock_plan(workspace: Path) -> HarnessPlan:
 
     Frozen behaviour — the live leg (TD-1803) was added alongside it, never
     on top of it.  Async only because the model tag may have to be read from
-    the endpoint before the scripts can be keyed on it (TD-1805): resolving
-    here is the call the daemon is about to make anyway, on the same shared
-    config object, so the pass pays one round-trip rather than two.  No
+    the endpoint before the scripts can be keyed on it (TD-1805).  This
+    resolves the library config the caller installed.  The daemon resolves
+    ``<data-dir>/config.yaml`` on its own (TD-4843), so a pass that is not
+    on the shipped preset copies that file into the data dir first.  No
     model call is made here and the provider is still the offline mock.
     """
     config = cached_config()

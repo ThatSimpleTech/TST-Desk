@@ -13,7 +13,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from ..config import SearchConfig
 
 from ..provider import FunctionDefinition, ToolDefinition
 
@@ -220,7 +223,7 @@ class ToolRegistry:
 # ── Built-in tools ──────────────────────────────────────────────────────
 
 
-def _register_builtins(registry: ToolRegistry) -> None:
+def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = None) -> None:
     """Register the built-in tools that ship with TST Desk.
 
     These are the filesystem and shell tools that the agent loop needs
@@ -229,6 +232,11 @@ def _register_builtins(registry: ToolRegistry) -> None:
     # Local import: the web module pulls in httpx, and the registry is
     # imported by code that never searches (TD-4808).
     from .web_search import search_hosts
+
+    def _search_hosts() -> tuple[str, ...]:
+        # Closed over at registry build so a daemon session does not
+        # classify against the no-arg library cache (TD-4843).
+        return search_hosts(search)
 
     registry.register(
         Tool(
@@ -330,7 +338,7 @@ def _register_builtins(registry: ToolRegistry) -> None:
             side_effect_class="ask",
             parallel_safe=True,
             # The host comes from config, not the arguments (TD-4808).
-            host_resolver=search_hosts,
+            host_resolver=_search_hosts,
         )
     )
 
@@ -451,7 +459,9 @@ def _register_builtins(registry: ToolRegistry) -> None:
     )
 
 
-def create_registry(*, candidate_selection: bool = False) -> ToolRegistry:
+def create_registry(
+    *, candidate_selection: bool = False, search: SearchConfig | None = None
+) -> ToolRegistry:
     """Create a registry with builtins, skills, delegate, then plugins.
 
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
@@ -464,7 +474,7 @@ def create_registry(*, candidate_selection: bool = False) -> ToolRegistry:
     from .plugins import load_plugins
 
     registry = ToolRegistry()
-    _register_builtins(registry)
+    _register_builtins(registry, search=search)
     register_desktop_tools(registry)
     register_browser_tools(registry, candidate_selection=candidate_selection)
     register_skill_tools(registry)

@@ -42,10 +42,11 @@ The Linux leaf is `tst-desk`, not the Tauri identifier
 path. If only the reverse-DNS leftover exists, it is renamed once; if
 both exist, `tst-desk` wins and the leftover is left alone.
 
-There is no dedicated environment variable for this path and no CLI flag for it. On Linux and
+There is no dedicated environment variable for this path. On Linux and
 Windows it moves with the platform's own data-directory variable, as the table shows; on macOS
-the path is fixed. The daemon's `--data-dir` moves the session store, the audit
-database, and the log files (`logs/tstd.log`). It does **not** move this file.
+the path is fixed. `tstd --data-dir <dir>` and `tst --data-dir <dir>` read and write
+`<dir>/config.yaml` along with the rest of that daemon's files. With no flag, this file
+stays in the platform directory above. The OS keychain does not move.
 
 **Unknown keys are ignored, in both files.** A misspelled key is not an error — it is dropped,
 and the default applies. `writeable_paths` (with the extra `e`) leaves you with the default
@@ -571,7 +572,7 @@ The Grok CLI itself is unchanged: `grok`, `grok -p`, `grok agent stdio`, SSH, an
 
 ### `voice`
 
-Hold-to-talk dictation (TD-4701). The Settings toggle is off by default and lives in `{user_data_dir}/voice.yaml`, not this file. This block only names a transcription endpoint. Empty `base_url` means the composer uses OS dictation (no network from `tstd`). Works with whichever engine the session is running — it fills the composer, it does not talk to the agent loop.
+Hold-to-talk dictation (TD-4701). The Settings toggle is off by default and lives in `voice.yaml` in the daemon's data directory (the platform directory above when `--data-dir` is omitted), not this file. This block only names a transcription endpoint. Empty `base_url` means the composer uses OS dictation (no network from `tstd`). Works with whichever engine the session is running — it fills the composer, it does not talk to the agent loop.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

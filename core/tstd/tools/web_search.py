@@ -30,8 +30,9 @@ from urllib.parse import parse_qsl, urljoin, urlsplit
 import httpcore
 import httpx
 
-from ..config import cached_config
+from ..config import SearchConfig, cached_config
 from ..logging import redact_secrets
+from .search_bind import bind_search, current_search, reset_search
 
 _MAX_BODY = 512_000
 _SCHEMES = ("http://", "https://")
@@ -46,7 +47,20 @@ _BLOCKED_NAMES = frozenset(
 )
 
 
-def search_hosts() -> tuple[str, ...]:
+def _library_search() -> SearchConfig:
+    return cached_config().search
+
+
+def _session_search(session: object | None) -> SearchConfig | None:
+    """The search block the session opened with, if it has one."""
+    config = getattr(session, "config", None)
+    block = getattr(config, "search", None)
+    if isinstance(block, SearchConfig):
+        return block
+    return None
+
+
+def search_hosts(search: SearchConfig | None = None) -> tuple[str, ...]:
     """The hosts ``web_search`` may reach, from config — for the classifier.
 
     The search endpoints are ``search.base_url`` plus each fallback, not a
@@ -56,13 +70,20 @@ def search_hosts() -> tuple[str, ...]:
     in the chain is listed — the call may reach any of them, so a
     workspace must allowlist all of them to clear Class C.  Empty when
     search is not configured or no URL has a host.
+
+    *search* is the daemon session's block. Omitted, the library cache
+    is used — callers that have no daemon, and tests that patch it.
     """
-    hosts: list[str] = []
-    for url in _search_urls():
-        host = urlsplit(url).hostname
-        if host and host.lower() not in hosts:
-            hosts.append(host.lower())
-    return tuple(hosts)
+    token = bind_search(search)
+    try:
+        hosts: list[str] = []
+        for url in _search_urls():
+            host = urlsplit(url).hostname
+            if host and host.lower() not in hosts:
+                hosts.append(host.lower())
+        return tuple(hosts)
+    finally:
+        reset_search(token)
 
 
 class _AnchorCollector(HTMLParser):
@@ -127,7 +148,7 @@ class _TextExtractor(HTMLParser):
 
 
 def _endpoint() -> tuple[str, float, int, int]:
-    cfg = cached_config().search
+    cfg = current_search(_library_search)
     return cfg.base_url.strip(), cfg.timeout_seconds, cfg.max_results, cfg.fetch_max_bytes
 
 
@@ -136,8 +157,9 @@ def _search_urls() -> list[str]:
 
     Separate from :func:`_endpoint` so the scalars keep their seam and
     the chain keeps its own.  Empty only when search is unconfigured.
+    A bound session block wins over the library cache (TD-4843).
     """
-    cfg = cached_config().search
+    cfg = current_search(_library_search)
     urls = [cfg.base_url.strip(), *(u.strip() for u in cfg.fallback_base_urls)]
     return [u for u in urls if u]
 
@@ -407,13 +429,17 @@ async def web_search(
     text = query.strip()
     if text == "":
         return "Error: query is empty"
-    urls = _search_urls()
+    token = bind_search(_session_search(session))
+    try:
+        urls = _search_urls()
+        _base, timeout, default_limit, _cap = _endpoint()
+    finally:
+        reset_search(token)
     if not urls:
         return (
             "Error: web search is not configured. Set search.base_url in "
-            "config.yaml (user data dir) to a search endpoint, then restart."
+            "config.yaml to a search endpoint, then restart."
         )
-    _base, timeout, default_limit, _cap = _endpoint()
     limit = max_results if max_results and max_results > 0 else default_limit
     limit = max(1, min(limit, 20))
     failures: list[tuple[str, str]] = []
@@ -460,7 +486,11 @@ async def web_fetch(
     blocked = _blocked_reason(target)
     if blocked is not None:
         return f"Error: {blocked}"
-    _base, timeout, _limit, cap = _endpoint()
+    token = bind_search(_session_search(session))
+    try:
+        _base, timeout, _limit, cap = _endpoint()
+    finally:
+        reset_search(token)
     current = target
     try:
         async with httpx.AsyncClient(

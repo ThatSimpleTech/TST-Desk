@@ -58,7 +58,8 @@ class TestSetJudgmentsCredential:
 
         daemon = Daemon(data_dir=tmp_path / "data")
         daemon.config = make_config()
-        monkeypatch.setattr("tstd.daemon.save_judgments", lambda cfg: None)
+        # The handler now passes the daemon config path (TD-4843).
+        monkeypatch.setattr("tstd.daemon.save_judgments", lambda cfg, path=None: None)
 
         async def fake_state() -> SetupState:
             return SetupState(has_api_key=True, active_preset="demo")
