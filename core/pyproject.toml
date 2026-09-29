@@ -78,3 +78,11 @@ asyncio_mode = "auto"
 # ordinary suite stays offline; opt in with `uv run pytest -m live`.
 addopts = ["-m", "not live"]
 markers = ["live: needs a reachable local OpenAI-compatible model endpoint"]
+# Leaked sockets and exceptions raised from ``__del__`` fail the run.
+# TD-4835 showed the suite can stay clean under these. TD-4846 makes
+# that the default so a later change cannot drop the gate by forgetting
+# the command-line flags.
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
