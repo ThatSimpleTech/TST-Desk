@@ -133,7 +133,11 @@ def fakes(monkeypatch: pytest.MonkeyPatch) -> FakeKeychain:
     async def _store(api_key: str, provider_name: str = "openrouter") -> None:
         await fk.store(api_key, provider_name)
 
-    monkeypatch.setattr("tstd.daemon.get_api_key", _get)
+    async def _present(provider_name: str = "openrouter") -> bool:
+        return provider_name in fk.stored
+
+    monkeypatch.setattr("tstd.daemon.get_api_key", _get, raising=False)
+    monkeypatch.setattr("tstd.daemon.api_key_is_stored", _present)
     monkeypatch.setattr("tstd.daemon.store_api_key", _store)
     monkeypatch.setattr("tstd.daemon.ProviderClient", FakeProviderClient)
     FakeProviderClient.reset()

@@ -118,8 +118,8 @@ from .grok_loop import grok_loop
 from .keychain import (
     KeychainError,
     KeychainLockedError,
+    api_key_is_stored,
     delete_api_key,
-    get_api_key,
     store_api_key,
 )
 from .local_worker import (
@@ -906,16 +906,15 @@ class Daemon:
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
-        # Keychain reads can prompt when an item's ACL predates this build's
-        # signature, so probing on every setup_state storms the user with
-        # dialogs (TD-4835).  Presence is cached and invalidated by the key
-        # mutation handlers (set/delete api key, set/delete credential).
+        # Presence is an attributes-only lookup (TD-4838). A full secret
+        # read prompts when the item's ACL trusts only an older tstd
+        # binary, so the pane reported "No key stored" for a key that was
+        # saved. The result stays cached until a key mutation (TD-4835).
         cached = self._stored_probe_cache.get(credential_id)
         if cached is not None:
             return cached
         try:
-            await get_api_key(credential_id)
-            stored = True
+            stored = await api_key_is_stored(credential_id)
         except (KeychainError, FileNotFoundError):
             stored = False
         self._stored_probe_cache[credential_id] = stored

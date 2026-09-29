@@ -10468,3 +10468,58 @@ exists" in that case. An open disclosure asks again when a later
 Rejected: stuffing the log onto `job_list` (that push already happens
 on every fire and every pause), storing the file in the workspace, and
 a dedicated verb to open the session.
+
+## TD-4838 — macOS keychain items must be readable by `security` (Class B)
+
+**Write through `security -i`, not SecItemAdd.** TD-4813 kept the secret
+out of argv by calling `SecItemAdd` inside `tstd`. The item's ACL then
+trusted only that binary. This app is ad-hoc signed (`tst-desk-dev`, no
+Team ID), so a partition tied to `tstd` is not stable across rebuilds,
+and every read still uses `/usr/bin/security`, which was not trusted.
+The Settings pane's presence probe was a full secret read, so a saved
+key looked missing and Test stayed disabled.
+
+The write argv is exactly `security` and `-i`. One stdin line is
+`add-generic-password -U -a … -s … -l 'TST Desk <account>' -w <secret>`,
+newline-terminated, and nothing else. The creating binary is
+`/usr/bin/security` (the apple-tool partition), which the CLI can read
+after a rebuild. Quoting follows SecurityTool `split_line`: backslash
+is an escape inside both quote styles, `$` is not expanded, and
+whitespace splits only outside quotes. A newline or NUL cannot be one
+argument and is refused without echoing the value. A missing trailing
+newline makes readline drop the command and exit 0; a blank line after
+a failure resets the process status to 0. Any non-zero exit or any
+stderr is a failure, and the secret and the stdin line are stripped
+before that text becomes an exception. `security -i`'s readline buffer
+is 4096 bytes including the NUL, so a command longer than 4095 bytes is
+refused rather than stored truncated. The TD-1105 timeout still maps a
+hung CLI to a locked keychain.
+
+**Delete, then add. Do not repair the ACL with `-U`.** Apple's update
+path changes the password and leaves the ACL unless access is named
+explicitly. `-A` or an empty `-T` would widen or drop the default
+trust. Before the add, `SecItemDelete` with
+`kSecUseAuthenticationUIFail` removes a TD-4813 item (`tstd` is the
+trusted app, and the call must not prompt). The CLI delete then runs.
+"could not be found" is success; a lock still raises, so a locked
+keychain is not mistaken for a stored key. Re-saving in Settings
+replaces the broken item with one `security` can read.
+
+**Reads stay on the CLI.** If `find-generic-password -w` fails and an
+attributes-only lookup (no `-w`, so it does not prompt) shows the item
+exists, `SecItemCopyMatching` with `kSecReturnData`,
+`kSecMatchLimitOne`, and `kSecUseAuthenticationUIFail` tries this
+binary. That recovers a TD-4813 item while this build is still trusted.
+If it fails, the error tells the user to re-save the key in Settings →
+API keys and contains no secret. A real lock (the attributes probe
+fails the same way) stays `KeychainLockedError`. Not-found does not
+fall back.
+
+**Presence does not read the secret.** `api_key_is_stored` is that
+attributes-only lookup on macOS. The TD-4835 cache and its invalidation
+on key mutations are unchanged. Linux and Windows backends are
+unchanged; their default `has_secret` may still read the secret.
+
+Rejected: keeping SecItemAdd and adding `/usr/bin/security` to the ACL
+(the partition is still the ad-hoc `tstd` signature), passing `-A`, and
+putting the secret back on argv.

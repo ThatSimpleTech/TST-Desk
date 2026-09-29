@@ -1,8 +1,8 @@
-"""Keychain presence-probe cache (TD-4835).
+"""Keychain presence-probe cache (TD-4835, TD-4838).
 
-A keychain read can prompt when an item's ACL predates this build's
-signature, so probing on every setup_state storms the user with dialogs.
-Presence is cached and invalidated by the key-mutation handlers.
+Presence is an attributes-only lookup, cached so setup_state does not
+probe on every push, and invalidated by the key-mutation handlers.
+The probe must not read the secret.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from tstd.daemon import Daemon
-from tstd.keychain import KeychainError
 
 
 class TestStoredProbeCache:
@@ -21,12 +20,16 @@ class TestStoredProbeCache:
     ) -> None:
         calls = 0
 
-        async def probe(_credential: str) -> str:
+        async def probe(_credential: str) -> bool:
             nonlocal calls
             calls += 1
-            return "sk-x"
+            return True
 
-        monkeypatch.setattr("tstd.daemon.get_api_key", probe)
+        async def explode(_credential: str = "openrouter") -> str:
+            raise AssertionError("presence read the secret")
+
+        monkeypatch.setattr("tstd.daemon.api_key_is_stored", probe)
+        monkeypatch.setattr("tstd.daemon.get_api_key", explode, raising=False)
         daemon = Daemon(data_dir=tmp_path / "data")
         assert await daemon._credential_is_stored("typesafe") is True
         assert await daemon._credential_is_stored("typesafe") is True
@@ -37,12 +40,16 @@ class TestStoredProbeCache:
     ) -> None:
         calls = 0
 
-        async def probe(_credential: str) -> str:
+        async def probe(_credential: str) -> bool:
             nonlocal calls
             calls += 1
-            raise KeychainError("not found")
+            return False
 
-        monkeypatch.setattr("tstd.daemon.get_api_key", probe)
+        async def explode(_credential: str = "openrouter") -> str:
+            raise AssertionError("presence read the secret")
+
+        monkeypatch.setattr("tstd.daemon.api_key_is_stored", probe)
+        monkeypatch.setattr("tstd.daemon.get_api_key", explode, raising=False)
         daemon = Daemon(data_dir=tmp_path / "data")
         assert await daemon._credential_is_stored("typesafe") is False
         daemon._invalidate_stored_probe()

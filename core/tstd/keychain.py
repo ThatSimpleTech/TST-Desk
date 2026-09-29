@@ -5,9 +5,9 @@ API keys live in the OS keychain, never in config files or environment variables
 reading and writing secrets.
 
 Supported platforms:
-- macOS: `security` CLI to the system keychain; writes go through the
-  Security framework instead (keychain_macos, TD-4813) so the secret never
-  rides in a process's argument list
+- macOS: `security` CLI. Writes go through `security -i` with the add
+  command on stdin (keychain_macos, TD-4838) so the secret never rides in
+  argv and `/usr/bin/security` stays the trusted reader
 - Linux: `secret-tool` CLI (libsecret); the secret travels over stdin
 - Windows: Credential Manager via ctypes (keychain_windows, TD-1102)
 
@@ -156,46 +156,38 @@ class KeychainBackend(ABC):
         """
         ...
 
+    async def has_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> bool:
+        """Whether an item exists. The default reads the secret (Linux/Windows).
+
+        macOS overrides this with an attributes-only lookup so presence never
+        reads the password or raises an ACL prompt (TD-4838).
+        """
+        try:
+            await self.get_secret(account, service)
+        except KeychainError:
+            return False
+        return True
+
 
 class MacOSKeychain(KeychainBackend):
-    """macOS keychain via the `security` CLI."""
+    """macOS keychain via the `security` CLI, with trust `security` can read."""
 
     async def get_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> str:
-        proc = await _spawn_cli(
-            "security",
-            "find-generic-password",
-            "-a",
-            account,
-            "-s",
-            service,
-            "-w",
-        )
-        stdout, stderr = await _await_cli(proc)
-        if proc.returncode != 0:
-            stderr_text = stderr.decode().strip()
-            if "could not be found" in stderr_text or "The specified item" in stderr_text:
-                raise KeychainError(
-                    f"API key not found in keychain. "
-                    f"Run: security add-generic-password -a '{account}' -s '{service}' -w"
-                )
-            raise _classify_cli_failure(stderr_text, "Failed to read keychain")
-        return stdout.decode().strip()
+        from . import keychain_macos
+
+        return await keychain_macos.read_secret(account, service)
 
     async def set_secret(
         self, account: str, secret: str, service: str = "com.thatsimpletech.tstdesk"
     ) -> None:
-        # First try to delete any existing entry
-        with contextlib.suppress(KeychainError):
-            await self.delete_secret(account, service)
-
-        # TD-4813: the write goes through the Security framework, not the CLI.
-        # `add-generic-password -w <secret>` puts the key in argv, where any
-        # same-user process can read it with ps for the lifetime of the call;
-        # SecItemAdd passes it as in-memory CFData instead. Reads and deletes
-        # stay on the CLI — their argv carries only names, not secrets.
         from . import keychain_macos
 
-        await asyncio.to_thread(keychain_macos._sec_add, service, account, secret)
+        await keychain_macos.write_secret(account, secret, service)
+
+    async def has_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> bool:
+        from . import keychain_macos
+
+        return await keychain_macos.secret_exists(account, service)
 
     async def delete_secret(
         self, account: str, service: str = "com.thatsimpletech.tstdesk"
@@ -310,6 +302,17 @@ def _get_backend() -> KeychainBackend:
 
 
 # ── Public API ─────────────────────────────────────────────────────────
+
+
+async def api_key_is_stored(provider_name: str = "openrouter") -> bool:
+    """Whether ``tst-{provider_name}`` exists, without reading the secret.
+
+    A full read prompts when the item's ACL trusts only an older ``tstd``
+    binary, which made a saved key look missing (TD-4838). Callers that
+    need the value still use :func:`get_api_key`.
+    """
+    backend = _get_backend()
+    return await backend.has_secret(f"tst-{provider_name}")
 
 
 async def get_api_key(provider_name: str = "openrouter") -> str:

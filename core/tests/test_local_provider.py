@@ -83,11 +83,11 @@ def _completion_body(model: str) -> dict[str, Any]:
 
 @pytest.fixture
 def keychain_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """An empty keychain that records every read.
+    """An empty keychain that records every secret read.
 
-    Both the daemon's presence probe and the provider's deferred import are
-    patched, so a keychain read cannot escape to the developer's real login
-    keychain during the suite.
+    Presence is a separate attributes-only probe and must not show up in
+    ``calls``. Both seams are patched so a lookup cannot escape to the
+    developer's real login keychain.
     """
     calls: list[str] = []
 
@@ -95,8 +95,13 @@ def keychain_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         calls.append(provider_name)
         raise KeychainError(_MISSING_KEY)
 
+    async def _present(_provider_name: str = "openrouter") -> bool:
+        return False
+
     monkeypatch.setattr("tstd.keychain.get_api_key", _get)
-    monkeypatch.setattr("tstd.daemon.get_api_key", _get)
+    monkeypatch.setattr("tstd.daemon.get_api_key", _get, raising=False)
+    monkeypatch.setattr("tstd.daemon.api_key_is_stored", _present)
+    monkeypatch.setattr("tstd.keychain.api_key_is_stored", _present)
     return calls
 
 

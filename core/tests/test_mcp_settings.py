@@ -174,7 +174,7 @@ class TestDaemonAck:
         async def _missing(_provider_name: str = "openrouter") -> str:
             raise KeychainError("API key not found in keychain.")
 
-        monkeypatch.setattr("tstd.daemon.get_api_key", _missing)
+        monkeypatch.setattr("tstd.daemon.get_api_key", _missing, raising=False)
         cached_config.cache_clear()
 
     async def test_set_disable_delete_appear_on_setup_state(
