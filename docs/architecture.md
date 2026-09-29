@@ -375,7 +375,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
 | `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener. Acked with `setup_state` (TD-3603). |
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
-| `save_job` | — | Create or replace a scheduled job from draft fields. An existing `id` edits that job and keeps its run receipt; on that edit an omitted cadence or next run keeps the stored value and an empty string clears it (TD-3810). Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
+| `save_job` | — | Create or replace a scheduled job from draft fields. Optional `preset` (a catalog name) and `engine` (`native` or `grok`) pin that job's model; omitted uses the window's current choice. On an edit, omitted keeps the stored pin and `""` clears it (TD-3812). An existing `id` edits that job and keeps its run receipt; on that edit an omitted cadence or next run keeps the stored value and an empty string clears it (TD-3810). Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
 | `delete_job` | — | Remove a scheduled job by id, and its run history. Acked with `job_list`. Unknown id is a typed error (TD-3805, TD-3811). |
 | `parse_job` | — | Turn natural language into a job draft. Does not persist. Acked with `job_draft`. Save is a second call (TD-3803). |
 | `run_job` | — | Fire one job now. Acked at once with `job_list` (`running` set); a second `job_list` is pushed when the turn finishes. Does not move `next_run` or `paused`. Unknown id is `job_not_found`; a job already in flight is `job_running` (TD-3809). |
@@ -439,7 +439,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `focus_window` | connection | A `cu_session` closed and no other session still actuates — bring the local window forward (TD-4832). Live-only: never written to a session log, so attach replay cannot re-trigger it. The host shows, unminimizes, and focuses the window; a browser viewer no-ops; activation failures never fail the turn. |
 | `design_hit` | connection | Reply to `design_hit_test`: xpath, role, attributes, box, styles (TD-3403 / TD-3406). Not in the session log. |
 | `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), Windows UIPI / secure-desktop integrity (TD-3303), or Linux X11 no-gate / Wayland session limits (TD-2001). |
-| `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` / `run_job` asked for, and a push when a run finishes. `running` is true while a turn is in flight (TD-3805, TD-3809). |
+| `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` / `run_job` asked for, and a push when a run finishes. Each job may name a pinned `preset` and `engine`. `running` is true while a turn is in flight (TD-3805, TD-3809, TD-3812). |
 | `job_draft` | connection | Reply to `parse_job`: draft fields or a typed refusal. Not saved (TD-3803). |
 | `job_runs` | connection | Reply to `list_job_runs`: that job's runs, newest first. `scheduled_for` is null for Run now (TD-3811). |
 | `grok_commands` | session | Slash commands the Grok ACP agent advertised. |

@@ -6119,6 +6119,44 @@ files, vitest 1402, svelte-check 706 files 0 errors 0 warnings.
 
 ---
 
+### TD-3812 — Pin the preset and the engine on a scheduled job
+**Size:** 5 · **Depends on:** TD-3808, TD-3809, TD-3810, TD-3811
+
+**Acceptance criteria:**
+- [x] `Job`, `JobDraft`, `SaveJob`, and `JobEntry` carry optional `preset`
+      (a catalog name) and `engine` (`native` or `grok`). Omitted means
+      the run uses the window's current preset and engine. The job stores
+      only the name and the kind
+- [x] Save validates the preset name against the config catalog. A name
+      that is not in the catalog is `job_invalid` and nothing is written
+- [x] A scheduled run, from the tick and from Run now, starts its session
+      on the job's preset and engine. It does not change the window's
+      active preset or engine, and it does not call `save_active_preset`
+      or `save_engine_kind`
+- [x] A preset that no longer exists, or a pinned Grok engine that is
+      unavailable, records a failed receipt and a history line
+      (`preset 'x' no longer exists`, `grok engine is unavailable`) and
+      delivers that summary like any other failure
+- [x] On edit, an omitted preset or engine keeps the stored value and an
+      empty string clears it back to use current. Pause omits both, so a
+      job whose preset has left the catalog can still be paused
+- [x] The job form has Model preset (Use current, plus the catalog names)
+      and Engine (Use current, Native, Grok). The row meta shows a pinned
+      preset and engine
+
+Done (2026-09-29): a scheduled run copied the window's preset and engine,
+so a 7:45 job followed whatever the window last selected. The job now
+stores a catalog name and an engine kind. The tick and Run now open the
+session on that pair and do not write Settings. A name that has left the
+catalog, or a pinned Grok engine that will not start, is a failed receipt
+and is delivered like any other failure. Edit keeps an omitted pin and
+clears a blank one. Class B entry in DECISIONS.md.
+
+Suite: 3609 passed / 8 skipped, ruff + `mypy --strict` clean over 158
+files, vitest 1411, svelte-check 709 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
@@ -6989,21 +7027,21 @@ Integration test runs the probe against a headless daemon on CI hosts; full
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 55 | 162 |
-| M1.5 Local models | E18 | 15 | 36 |
+| M1 Headless core | E2–E9 | 62 | 189 |
+| M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 24 | 68 |
-| M3 Shippable | E13–E17, E19 | 47 | 136 |
-| **Total v0.1** | **19** | **148** | **417** |
+| M3 Shippable | E13–E17, E19 | 65 | 179 |
+| **Total v0.1** | **19** | **170** | **481** |
 | M4 Memory (v0.2) | E21–E28 | 32 | 90 |
-| **Total v0.1 + v0.2** | **27** | **180** | **507** |
-| M5 Cowork (v0.3) | E29–E32, E48 | 31 | 84 |
-| M6 Computer use (v0.4) | E20, E33–E34 | 12 | 63 |
-| M7 Remote (v0.5) | E36–E38 | 11 | 43 |
+| **Total v0.1 + v0.2** | **27** | **202** | **571** |
+| M5 Cowork (v0.3) | E29–E32, E48 | 49 | 127 |
+| M6 Computer use (v0.4) | E20, E33–E34 | 13 | 68 |
+| M7 Remote (v0.5) | E36–E38 | 17 | 61 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
 | Later | E47, E49 | 13 | 66 |
-| **Total planned** | **48** | **274** | **893** |
+| **Total planned** | **48** | **321** | **1023** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
