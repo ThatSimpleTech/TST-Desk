@@ -10976,3 +10976,57 @@ point. `move` / `desktop_move`, hide, and unhide do not take
 **Rejected:** Forwarding the wait to the sidecar. Failing the action
 when the window cannot be read. Adding a drag tool. Sleeping when the
 value is 0. Echoing the duration. Hiding the ring during `after_ms`.
+
+## TD-708 — Classifier judgment audit and a signal-only seam (Class B)
+
+2026-09-29.
+
+**Decision:** Classifier judgments get their own append-only `judgments`
+table (schema v3), not a `model_calls` row and not a protocol event.
+Columns are connector, payload digest, label, confidence, latency,
+cost, cache hit, the class after fail-toward-B, and timestamp. The
+digest is the SHA-256 hex of the signal block. Paths, file contents,
+and conversation text are not columns. Connector and label go through
+the same secret redactor as the other audit strings. The digest does
+not, because redaction would change the hash. A static-rule
+short-circuit writes no row.
+
+**Decision:** The classifier prompt carries signals only: tool name,
+workspace-relative paths, hosts, mutation intent, `side_effect_class`,
+and provenance. Canonical arguments stay the session cache key and stay
+off the prompt. This retires the 2026-09-17 choice that the dev-build
+prompt stay byte-identical to the TD-703 prompt, because that prompt
+included arguments and the criterion forbids absolute paths, file
+contents, and conversation text. The default connector still ends the
+prompt with `Class:`. A path that is not inside the workspace is the
+token `outside`.
+
+**Decision:** A connector with a non-empty remote host is not called
+when that host is absent from the boundary allowlist. An empty
+allowlist is network deny. The denial is class B, is not cached, and
+makes no `judge()` call. The worker connector has no remote host, so a
+deny charter does not turn the user's own model off. The gate is on
+the classifier seam only. Verification, the semantic breaker, and
+candidate selection are unchanged.
+
+**Decision:** A hosted connector's dollar amount is recorded with
+`CostTracker.record_classifier_amount` (tier `worker`, so the record
+stays on a known tier, source equal to the connector name, zero
+tokens). It lands on `classifier_cost` and stays off the turn and
+session totals. The worker chat path keeps
+`record_classifier("worker", usage)` inside the completion and is not
+billed a second time when the judgment row is written. A cache hit
+records cost 0 and is not billed again.
+
+**Decision:** The hosted connector id stays the config and protocol
+value `typesafe`. The seam, the loop, and the classifier do not name
+it. The HTTP client lives in `autonomy/typesafe.py`. The URL lives in
+`config.yaml` and the docs, not as a `tstd` source literal. The
+`jev-latest` model default stays on `JudgmentsConfig` and the connector
+constructor.
+
+**Rejected:** A new client event for each judgment. Renaming the
+shipped `typesafe_*` fields. Putting canonical arguments back on the
+prompt. Gating the worker tier on network deny. Gating verification
+and the breaker on the same network check in this story. Storing the
+signal payload in the audit database.

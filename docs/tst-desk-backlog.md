@@ -1183,41 +1183,69 @@ what makes aggressive Class A behavior safe.
 
 ### TD-708 — Judgment seam for the decision classifier (provider-neutral)
 **Size:** 5 · **Depends on:** TD-703, TD-302, TD-706
-**Status:** Dev build shipped on main 2026-09-17 (30fec39, 1af204f). Open for hardening:
-per-judgment audit-trail records (payload, answer, confidence, latency, cost in the SQLite
-audit log — today it is structured logs + `ToolResult.verification`). The TypeSafe
-connector exists (`autonomy/typesafe.py`, opt-in via `judgments.backend`) with real
-confidence; a recorded-fixture accuracy eval against it remains open.
 
 **Acceptance criteria:**
-- [ ] A `JudgmentBackend` protocol (question + bounded state → typed answer + confidence)
+- [x] A `JudgmentBackend` protocol (question + bounded state → typed answer + confidence)
       becomes the single seam behind TD-703's `call_worker`; the existing worker-tier
       chat completion is formalized as the default connector and behavior is unchanged
       without explicit opt-in
-- [ ] The product runs flawlessly with only the default connector — no external
+- [x] The product runs flawlessly with only the default connector — no external
       judgments API configured, present, or required
-- [ ] Additional connectors (a typed-judgment API such as TypeSafe/Jev is the evaluated
+- [x] Additional connectors (a typed-judgment API such as TypeSafe/Jev is the evaluated
       example) live in their own modules behind configuration; core modules carry no
       vendor-specific names, imports, or URLs (prime §2.7)
-- [ ] A connector credential lives in the OS keychain via `keychain.py` — never in
+- [x] A connector credential lives in the OS keychain via `keychain.py` — never in
       config, logs, or the audit database (prime §2.2)
-- [ ] The static rule table (TD-701) always runs first; only unclassified requests reach
+- [x] The static rule table (TD-701) always runs first; only unclassified requests reach
       the judgment seam — asserted by a test that no rule-matched request ever hits it
-- [ ] The judgment request carries classifier signals only (tool name, workspace-relative
+- [x] The judgment request carries classifier signals only (tool name, workspace-relative
       paths, hosts, mutation intent, `side_effect_class`, provenance) — never absolute
       paths, file contents, or conversation text; asserted by test
-- [ ] Every connector fails toward B: unknown labels, timeouts, errors, low confidence,
+- [x] Every connector fails toward B: unknown labels, timeouts, errors, low confidence,
       and (on chat connectors) unparseable replies classify as **B** — the TD-703
       fail-toward-asking invariant holds per connector
-- [ ] A charter/boundary with `network: "deny"`, or a connector host missing from
+- [x] A charter/boundary with `network: "deny"`, or a connector host missing from
       `allowed_hosts`, disables a remote connector for that run; ambiguous cases classify
       as B with no network call attempted
-- [ ] Judgment cost is recorded via `CostTracker.record_classifier()` per connector and
+- [x] Judgment cost is recorded via `CostTracker.record_classifier()` per connector and
       stays visible separately in the cost breakdown
-- [ ] The session cache on (tool, canonical arguments) applies unchanged across
+- [x] The session cache on (tool, canonical arguments) applies unchanged across
       connectors
-- [ ] All connector tests run against mocks; no live network in tests
-- [ ] `docs/configuration.md` documents every new key
+- [x] All connector tests run against mocks; no live network in tests
+- [x] `docs/configuration.md` documents every new key
+
+Done (2026-09-29): the classifier's only fallback is `JudgmentBackend`. The worker
+chat connector stays the default (`test_worker_is_the_default`,
+`test_default_connector_prompt_is_legacy_bytes`,
+`test_classifier_connector_keeps_the_legacy_prompt`); a hosted connector is a
+separate module (`test_typesafe_with_a_stored_key_selects_the_connector`,
+`test_core_modules_do_not_name_a_vendor`) and its key stays in the keychain
+(`test_connector_credential_stays_out_of_config_logs_and_audit`). The static
+table runs first and writes no audit row
+(`test_static_short_circuit_never_calls_backend`,
+`test_static_short_circuit_writes_no_audit_row`). The request is signals only
+(`test_judgment_request_is_classifier_signals_only`). Unknown labels, timeouts,
+errors, low confidence, and unparseable replies classify as B
+(`test_worker_timeout_classifies_as_b`, `test_typesafe_classifier_fails_toward_b`,
+`test_low_confidence_defaults_to_b`, `test_error_fails_closed_without_raising`,
+`test_unparseable_fails_closed`). A remote host outside `allowed_hosts` is B
+with no call (`test_unlisted_remote_host_classifies_b_without_a_call`,
+`test_worker_connector_still_runs_when_network_is_denied`). Cost stays on the
+classifier line (`test_hosted_judgment_cost_stays_on_the_classifier_line`,
+`test_classifier_cost_is_separate_from_main_cost`). The cache key is still
+(tool, canonical arguments) (`test_cache_key_is_tool_and_canonical_arguments`,
+`test_cache_avoids_repeat_judgment`). Connector tests use mocks
+(`test_eval_runner_imports_no_network_client`). Every judgments key is in
+`docs/configuration.md` (`test_every_config_key_is_documented`). Each judgment
+is an append-only `judgments` row
+(`test_append_judgment_stores_digest_label_and_final_class`,
+`test_writer_persists_a_judgment_row`,
+`test_v2_database_gains_the_judgments_table`). Recorded-fixture accuracy is
+`core/scripts/eval_judgment_accuracy.py` (`test_recorded_fixture_reports_accuracy`:
+worker 5/7, B-rate 4/7; typed 6/7, B-rate 3/7).
+
+Suite: 3786 passed / 8 skipped, ruff + `mypy --strict` clean over 166
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
 
 **Notes:** Spec §12.2 designed this seam: "a cheap classifier call on the worker tier …
 plus a static rule table." TD-703's `AmbiguousClassifier(static, call_worker)` is the

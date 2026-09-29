@@ -36,10 +36,11 @@ ToolCallStatus = Literal["success", "error", "refused"]
 
 # ── Schema ─────────────────────────────────────────────────────────────
 #
-# Six schema objects per TD-901: sessions, turns, tool_calls, decisions,
-# model_calls — and `costs`, which is a VIEW over model_calls, not a
-# table. Rollup rows would duplicate truth in a store that can never
-# correct them; a view aggregates on read instead (TD-903 queries it).
+# Schema objects: sessions, turns, tool_calls, decisions, model_calls,
+# judgments (TD-708) — and `costs`, which is a VIEW over model_calls,
+# not a table. Rollup rows would duplicate truth in a store that can
+# never correct them; a view aggregates on read instead (TD-903 queries
+# it).
 #
 # Timestamps are REAL seconds since the Unix epoch (UTC) — sortable, and
 # groupable by local day via datetime(ts, 'unixepoch', 'localtime').
@@ -147,9 +148,30 @@ ALTER TABLE decisions_v2 RENAME TO decisions;
 CREATE INDEX idx_decisions_session ON decisions(session_id, ts);
 """
 
+# v3 adds one row per classifier judgment (TD-708). A judgment is not a
+# model call: the row carries the signal digest, the label, and the
+# class after fail-toward-B, and it must not store the paths or the
+# text that were hashed. Append-only, same as the other tables.
+_SCHEMA_V3 = """
+CREATE TABLE judgments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    connector TEXT NOT NULL,
+    payload_digest TEXT NOT NULL,
+    label TEXT,
+    confidence REAL NOT NULL,
+    latency_ms REAL NOT NULL,
+    cost REAL NOT NULL,
+    cache_hit INTEGER NOT NULL CHECK(cache_hit IN (0, 1)),
+    decision_class TEXT NOT NULL CHECK(decision_class IN ('A', 'B', 'C')),
+    ts REAL NOT NULL
+);
+CREATE INDEX idx_judgments_session ON judgments(session_id, ts);
+"""
+
 # Ordered migration steps; index + 1 is the schema version that step
 # produces. Every release that changes the schema appends one entry.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3)
 
 
 # ── Scrubbing ──────────────────────────────────────────────────────────
@@ -403,6 +425,45 @@ class AuditStore:
                 completion_tokens,
                 cost,
                 1 if is_classifier else 0,
+                ts or time.time(),
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def append_judgment(
+        self,
+        session_id: str,
+        connector: str,
+        payload_digest: str,
+        label: str | None,
+        confidence: float,
+        latency_ms: float,
+        cost: float,
+        cache_hit: bool,
+        decision_class: DecisionClass,
+        ts: float | None = None,
+    ) -> int:
+        """Record one classifier judgment.
+
+        ``payload_digest`` is a hash of the classifier signals.  The
+        paths and the text that were hashed are not columns — storing
+        them would put workspace layout in the audit database.
+        """
+        cur = self._conn.execute(
+            "INSERT INTO judgments (session_id, connector, payload_digest, label,"
+            " confidence, latency_ms, cost, cache_hit, decision_class, ts)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                redact_secrets(connector),
+                payload_digest,
+                redact_secrets(label) if label is not None else None,
+                confidence,
+                latency_ms,
+                cost,
+                1 if cache_hit else 0,
+                decision_class,
                 ts or time.time(),
             ),
         )

@@ -27,7 +27,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from .audit_writer import ModelCallSink
+from .audit_writer import ModelCallSink, forward_classifier_judgment
 from .autonomy import (
     AmbiguousClassifier,
     Boundary,
@@ -39,17 +39,18 @@ from .autonomy import (
 )
 from .autonomy.breakers import record_autonomy_round
 from .autonomy.checkpoint import auto_branch
+from .autonomy.connector import classifier_connector, judgment_backend_for
 from .autonomy.dod import make_dod_poller
-from .autonomy.judgment import JudgmentBackend
+from .autonomy.judgment import JudgmentBackend, note_judgment_completion_cost
 from .autonomy.runner import advance_autonomy
 from .autonomy.supervisor import attach_drift_check
-from .autonomy.typesafe import TypeSafeJudgmentBackend
 from .autonomy.verify import (
     clear_turn_writes,
     maybe_verify_after_turn,
     note_tool_result,
 )
 from .autonomy.wakeup import deliver_wakeup
+from .autonomy.worker import JudgmentAudit
 from .compaction import budget_threshold, estimate_tokens, maybe_compact
 from .config import ConfigError, JudgmentsConfig, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
@@ -61,7 +62,7 @@ from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_fai
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
 from .discovery import discover_model, resolve_tier_slugs
-from .keychain import KeychainError, get_api_key
+from .keychain import KeychainError
 from .local_worker import (
     effective_tier,
     mark_cu_tool,
@@ -156,37 +157,6 @@ def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
     if cls is None:
         return None
     return cls.value
-
-
-async def judgment_backend_for(
-    cfg: JudgmentsConfig,
-    worker_completion: Callable[[str], Awaitable[str]],
-) -> JudgmentBackend:
-    """The configured connector, or the worker tier when it cannot serve.
-
-    TypeSafe needs its keychain key (prime §2.2); a missing key logs and
-    falls back to the worker connector — fail toward working, never a block.
-    """
-    if cfg.backend == "typesafe":
-        if not cfg.typesafe_base_url.strip():
-            log.warning(
-                "judgments.backend is typesafe but no base_url is set; using the worker tier"
-            )
-        else:
-            try:
-                key = await get_api_key(cfg.typesafe_credential)
-            except KeychainError:
-                log.warning(
-                    "judgments.backend is typesafe but no %r key is stored; using the worker tier",
-                    cfg.typesafe_credential,
-                )
-            else:
-                return TypeSafeJudgmentBackend(
-                    base_url=cfg.typesafe_base_url,
-                    api_key=key,
-                    model=cfg.typesafe_model,
-                )
-    return WorkerChatJudgmentBackend(worker_completion)
 
 
 def _cap_violation(
@@ -689,10 +659,14 @@ async def agent_loop(
         resp = await worker_client.chat_completion(request)
         if isinstance(resp, ProviderError):
             raise RuntimeError(f"worker call failed: {resp.message}")
+        cost = 0.0
         if resp.usage is not None:
-            tracker.record_classifier("worker", resp.usage, worker_cfg)
+            cost = tracker.record_classifier("worker", resp.usage, worker_cfg)
             # Classifier / DoD cost shows up in the meter too (TD-1006).
             await session.event_log.add(tracker.emit_cost_update(session.id))
+        # The judgment seam reads this after the await.  DoD polls share
+        # the callable and ignore the note.
+        note_judgment_completion_cost(cost)
         return content_as_text(resp.message.content)
 
     async def _judgment_backend_for(cfg: JudgmentsConfig) -> JudgmentBackend:
@@ -710,19 +684,28 @@ async def agent_loop(
             writable_patterns=tuple(session.boundary_config.boundary.writable_paths),
             allowed_hosts=session.boundary_config.allowed_hosts,
         )
+        judgments_cfg = config.judgments
         if tool_dispatcher.classifier is None:
+
+            def _on_judgment(record: JudgmentAudit) -> None:
+                forward_classifier_judgment(
+                    record,
+                    session_id=session.id,
+                    writer=audit_sink,
+                    tracker=tracker,
+                )
+
             tool_dispatcher.classifier = AmbiguousClassifier(
                 static=DecisionClassifier(boundary),
-                call_worker=_worker_completion,
+                backend=await classifier_connector(judgments_cfg, _worker_completion),
+                min_confidence=judgments_cfg.confidence_threshold,
+                on_audit=_on_judgment,
             )
 
-        # TD-708/709/710 (dev): the judgment seam.  The default connector
-        # wraps the same worker completion the classifier uses; each
-        # feature gates individually in config and defaults off, so an
-        # unconfigured run is byte-identical to the pre-seam product.
-        # A configured ``typesafe`` backend without its keychain key falls
-        # back to the worker connector — fail toward working, never a block.
-        judgments_cfg = config.judgments
+        # Judgment features gate individually and default off, so an
+        # unconfigured run does not build a second connector.  A hosted
+        # connector without its keychain key falls back to the worker
+        # tier — fail toward working, never a block.
         needs_backend = (
             judgments_cfg.semantic_breaker
             or judgments_cfg.candidate_selection

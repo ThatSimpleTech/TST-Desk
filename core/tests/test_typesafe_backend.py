@@ -146,8 +146,8 @@ class TestBackendSelection:
     """loop.judgment_backend_for: the configured connector or a safe fallback."""
 
     async def test_worker_is_the_default(self) -> None:
+        from tstd.autonomy.connector import judgment_backend_for
         from tstd.config import JudgmentsConfig
-        from tstd.loop import judgment_backend_for
 
         async def complete(prompt: str) -> str:
             return "B"
@@ -158,14 +158,14 @@ class TestBackendSelection:
     async def test_typesafe_without_a_stored_key_falls_back(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from tstd.autonomy.connector import judgment_backend_for
         from tstd.config import JudgmentsConfig
         from tstd.keychain import KeychainError
-        from tstd.loop import judgment_backend_for
 
         async def no_key(_credential: str) -> str:
             raise KeychainError("not found")
 
-        monkeypatch.setattr("tstd.loop.get_api_key", no_key)
+        monkeypatch.setattr("tstd.autonomy.connector.get_api_key", no_key)
 
         async def complete(prompt: str) -> str:
             return "B"
@@ -176,13 +176,13 @@ class TestBackendSelection:
     async def test_typesafe_with_a_stored_key_selects_the_connector(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from tstd.autonomy.connector import judgment_backend_for
         from tstd.config import JudgmentsConfig
-        from tstd.loop import judgment_backend_for
 
         async def have_key(_credential: str) -> str:
             return "ts-stored"
 
-        monkeypatch.setattr("tstd.loop.get_api_key", have_key)
+        monkeypatch.setattr("tstd.autonomy.connector.get_api_key", have_key)
 
         async def complete(prompt: str) -> str:
             return "B"
@@ -196,13 +196,13 @@ class TestBackendSelection:
     async def test_typesafe_without_a_base_url_falls_back(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from tstd.autonomy.connector import judgment_backend_for
         from tstd.config import JudgmentsConfig
-        from tstd.loop import judgment_backend_for
 
         async def have_key(_credential: str) -> str:
             return "ts-stored"
 
-        monkeypatch.setattr("tstd.loop.get_api_key", have_key)
+        monkeypatch.setattr("tstd.autonomy.connector.get_api_key", have_key)
 
         async def complete(prompt: str) -> str:
             return "B"

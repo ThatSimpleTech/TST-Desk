@@ -1,0 +1,40 @@
+{
+  "min_confidence": 0.6,
+  "cases": [
+    {"id": "alpha", "tool_name": "alpha_tool", "expected": "A"},
+    {"id": "beta", "tool_name": "beta_tool", "expected": "C"},
+    {"id": "gamma", "tool_name": "gamma_tool", "expected": "B"},
+    {"id": "delta", "tool_name": "delta_tool", "expected": "A"},
+    {"id": "epsilon", "tool_name": "epsilon_tool", "expected": "A"},
+    {"id": "zeta", "tool_name": "zeta_tool", "expected": "C"},
+    {"id": "eta", "tool_name": "eta_tool", "expected": "B"}
+  ],
+  "connectors": [
+    {
+      "name": "worker",
+      "kind": "chat",
+      "replies": {
+        "alpha_tool": "A",
+        "beta_tool": "C",
+        "gamma_tool": "B",
+        "delta_tool": "maybe A",
+        "epsilon_tool": "A",
+        "zeta_tool": "__timeout__",
+        "eta_tool": "D"
+      }
+    },
+    {
+      "name": "typed",
+      "kind": "typed",
+      "replies": {
+        "alpha_tool": {"label": "A", "confidence": 0.91},
+        "beta_tool": {"label": "C", "confidence": 0.8},
+        "gamma_tool": {"label": "B", "confidence": 0.7},
+        "delta_tool": {"label": "A", "confidence": 0.88},
+        "epsilon_tool": {"label": "A", "confidence": 0.2},
+        "zeta_tool": {"label": "C", "confidence": 0.77},
+        "eta_tool": {"label": "B", "confidence": 0.9}
+      }
+    }
+  ]
+}
