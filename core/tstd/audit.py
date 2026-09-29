@@ -1,7 +1,9 @@
 """Append-only audit store (TD-901).
 
 Every turn, tool call, decision, and model call is recorded in SQLite at
-``<user data dir>/audit.db``. INSERT-only is a property of this codebase,
+``<data dir>/audit.db``. A daemon passes its data directory.
+:meth:`AuditStore.open_default` is the library path and still uses the
+user data directory. INSERT-only is a property of this codebase,
 not of the file: no UPDATE or DELETE statements exist anywhere in tstd
 (asserted by a source-level test in ``tests/test_audit.py``), but the
 connection is read-write — inserts and migrations need it, and migration
@@ -166,6 +168,17 @@ def _result_hash(output: str | None) -> str | None:
 # ── Store ──────────────────────────────────────────────────────────────
 
 
+def audit_db_path(data_dir: Path | None = None) -> Path:
+    """``audit.db`` for a daemon data directory, or the library default.
+
+    ``None`` is ``user_data_dir() / "audit.db"``. A daemon passes its
+    directory. :meth:`AuditStore.open_default` is the ``None`` path for
+    callers that have no daemon.
+    """
+    root = data_dir if data_dir is not None else user_data_dir()
+    return root / "audit.db"
+
+
 class AuditStore:
     """INSERT-only handle over the audit database.
 
@@ -187,8 +200,8 @@ class AuditStore:
 
     @classmethod
     def open_default(cls) -> AuditStore:
-        """Open the store at the user data directory location."""
-        return cls(user_data_dir() / "audit.db")
+        """Open the store at the library default, not a daemon data dir."""
+        return cls(audit_db_path(None))
 
     @property
     def db_path(self) -> Path:

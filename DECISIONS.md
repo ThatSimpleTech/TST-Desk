@@ -10765,3 +10765,52 @@ and the port file is still there. The timer is not the loop, and
 handler. `asyncio.wait_for` alone around `_shutdown`. Arming the same
 budget for the websocket shutdown message, which would change Windows.
 Moving `config.yaml` with `--data-dir`.
+
+## TD-4843 — Daemon files follow --data-dir (Class B)
+
+2026-09-29.
+
+**Decision:** The config a daemon loads, reloads, and writes is
+`<data-dir>/config.yaml`. `main` already resolves the data directory
+once. With no `--data-dir` that directory is `user_data_dir()`, so the
+file stays where it is today. `tst` reads the same file for its turn
+timeout and already passes `--data-dir` when it spawns `tstd`. The
+credentials catalog is that file; secrets stay in the OS keychain.
+
+**Decision:** `cached_config()` with no path remains the library cache
+for callers that have no daemon. A daemon does not call that form. It
+passes its path into the existing loader. The cache holds one entry, so
+a daemon and a library caller in one process do not share an object.
+`AuditStore.open_default`, `load_config()` / `ensure_user_config()`
+with no path, and `setup_logging()` with no `log_dir` stay on the
+library default for the same reason.
+
+**Decision:** These are not under `--data-dir`. The OS keychain is the
+OS keychain. `~/.tst-cu-mcp/config.yaml` (or `TST_CU_MCP_CONFIG`) is
+shared with `tst-cu-mcp`. `~/.grok` (or `GROK_HOME`) is the Grok CLI
+home. `CHARTER.md` is `.tst/autonomy/` in the workspace.
+`last-workspace.yaml` and `close-is-not-quit.yaml` are host files; the
+host already joins them to the data directory it passes as
+`--data-dir`. The Python daemon does not read them.
+
+**Rationale:** `tstd --data-dir <scratch>` loaded and wrote the real
+user `config.yaml`, so a test or a second daemon used that user's
+presets, credentials, and settings. TD-4842 moved the log only and
+rejected moving `config.yaml`. That left the same hole. The host
+already reads `<data-dir>/config.yaml` for the embeddings sidecar, so
+the daemon now uses the file the host is looking at.
+
+Voice, approvals, session stars, workspace pins, coworker, memory,
+remote attach, the remote token, computer-use indicator prefs, the
+per-platform permission flags, scheduler jobs and history, `port.json`,
+the session store and transcripts, `audit.db`, logs, exports, the
+browser profile, and `cu-agent.sock` already took a data directory.
+Search endpoints for a session come from that session's config, not
+from the library cache.
+
+**Alternative rejected:** Changing what `cached_config()` with no
+arguments returns while a daemon is alive. Library callers and the
+existing tests depend on that being the default file. Also rejected:
+copying the library config into an explicit data dir on startup, which
+would put the user's file back in the scratch daemon. Also rejected:
+moving the keychain, the cu-mcp policy, or the Grok home.

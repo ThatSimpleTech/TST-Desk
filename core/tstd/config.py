@@ -4,8 +4,10 @@ Slugs, prices, and provider URLs live in ``config.yaml`` — never in Python
 source code (TD-302). This module loads, validates, and selects presets.
 
 A shipped default config ships with the package; on first load it is copied
-to the user data directory so users can edit it. Validation produces
-actionable error messages that name the offending key.
+to the resolved config path so users can edit it. With no path that is the
+user data directory. A daemon passes its data directory, so ``--data-dir``
+is the file it reads and writes. Validation produces actionable error
+messages that name the offending key.
 """
 
 from __future__ import annotations
@@ -605,7 +607,7 @@ class VoiceConfig(BaseModel):
     Empty ``base_url`` means the composer uses OS dictation only. A filled
     URL is an OpenAI-compatible ``/audio/transcriptions`` root; the host
     comes from this file, never from Python. Dictation itself is off until
-    Settings turns it on (``{user_data_dir}/voice.yaml``).
+    Settings turns it on (``voice.yaml`` in the daemon's data directory).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -877,15 +879,27 @@ def default_config_yaml() -> str:
     return resources.files("tstd").joinpath(_DEFAULT_CONFIG_RESOURCE).read_text(encoding="utf-8")
 
 
-def ensure_user_config(path: Path | None = None) -> Path:
-    """Copy the shipped default config to the user data dir if missing.
+def config_yaml_path(data_dir: Path | None = None) -> Path:
+    """``config.yaml`` for a daemon data directory, or the library default.
 
-    Returns the path to the user config file. Both streams are closed
-    before return, including when the copy raises: an unclosed handle
-    is reported later as ``ResourceWarning`` when it is collected
-    (TD-4835).
+    ``None`` is ``user_data_dir() / "config.yaml"`` — callers that have no
+    daemon. A daemon passes the directory it was started with, including
+    when that directory is the platform default, so an explicit
+    ``--data-dir`` is never resolved by calling this with ``None``.
     """
-    config_path = path or (user_data_dir() / "config.yaml")
+    root = data_dir if data_dir is not None else user_data_dir()
+    return root / "config.yaml"
+
+
+def ensure_user_config(path: Path | None = None) -> Path:
+    """Copy the shipped default config to the resolved path if missing.
+
+    Returns that path. ``None`` is the library file
+    (:func:`config_yaml_path`). Both streams are closed before return,
+    including when the copy raises: an unclosed handle is reported later
+    as ``ResourceWarning`` when it is collected (TD-4835).
+    """
+    config_path = path if path is not None else config_yaml_path()
     if not config_path.exists():
         config_path.parent.mkdir(parents=True, exist_ok=True)
         source = resources.files("tstd").joinpath(_DEFAULT_CONFIG_RESOURCE)
