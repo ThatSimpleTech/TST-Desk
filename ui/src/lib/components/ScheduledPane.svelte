@@ -12,19 +12,31 @@
 		setDraftField,
 		setParseText,
 	} from '../scheduled.svelte.js';
-	import { jobFailed, jobLastRun, jobsEmptyCopy, jobWhen } from '../scheduled';
+	import { jobFailed, jobLastRun, jobMeta, jobsEmptyCopy, workspaceSuggestions } from '../scheduled';
+	import { visibleRecents, workspaces } from '../workspaces.svelte.js';
+	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
 
 	let empty = $derived(jobsEmptyCopy());
+	let known = $derived(
+		workspaceSuggestions(
+			workspaces.pinned,
+			visibleRecents().map((r) => r.path),
+		),
+	);
+
+	// Same native dialog the wizard and title bar use; a typed path still works.
+	async function browse(): Promise<void> {
+		const { open } = await import('@tauri-apps/plugin-dialog');
+		const chosen = await open({ directory: true, multiple: false });
+		if (typeof chosen === 'string' && chosen.length > 0) setDraftField('workspace', chosen);
+	}
 </script>
 
 <div class="pane">
 	<section class="list-col" aria-label="Scheduled">
 		<h1 class="title">Scheduled</h1>
 		<p class="lede">Jobs the daemon will run. This pane does not fire them.</p>
-		{#if scheduled.error !== null}
-			<p class="error">{scheduled.error}</p>
-		{/if}
 		{#if scheduled.items.length === 0}
 			<EmptyState align="start" body={empty} />
 		{:else}
@@ -33,7 +45,7 @@
 					<li>
 						<div class="card" class:card-failed={jobFailed(row)}>
 							<span class="card-name">{row.instruction}</span>
-							<span class="card-meta">{jobWhen(row)} · {row.deliver_to}</span>
+							<span class="card-meta">{jobMeta(row)}</span>
 							<span class="card-path">{row.workspace}</span>
 							<span class="card-run" class:run-failed={jobFailed(row)}>{jobLastRun(row)}</span>
 							{#if row.last_summary}
@@ -68,11 +80,22 @@
 		<button class="action" type="button" onclick={() => parseJobRequest()}>Parse</button>
 		<label class="field">
 			<span>Workspace</span>
-			<input
-				type="text"
-				value={scheduled.draft.workspace}
-				oninput={(e) => setDraftField('workspace', e.currentTarget.value)}
-			/>
+			<span class="row">
+				<input
+					type="text"
+					list="scheduled-workspaces"
+					value={scheduled.draft.workspace}
+					oninput={(e) => setDraftField('workspace', e.currentTarget.value)}
+					placeholder="~/Documents/project"
+				/>
+				<button class="action" type="button" onclick={browse}>Browse…</button>
+			</span>
+			<datalist id="scheduled-workspaces">
+				{#each known as path (path)}
+					<option value={path} label={workspaceName(path)}></option>
+				{/each}
+			</datalist>
+			<span class="hint">A full folder path, not a project name.</span>
 		</label>
 		<label class="field">
 			<span>Instruction</span>
@@ -88,7 +111,9 @@
 				type="text"
 				value={scheduled.draft.cadence}
 				oninput={(e) => setDraftField('cadence', e.currentTarget.value)}
+				placeholder="weekdays at 7:45"
 			/>
+			<span class="hint">e.g. weekdays at 7:45 · every 2 hours · 45 7 * * 1-5</span>
 		</label>
 		<label class="field">
 			<span>Next run</span>
@@ -110,6 +135,9 @@
 				<option value="ntfy">ntfy</option>
 			</select>
 		</label>
+		{#if scheduled.error !== null}
+			<p class="error" role="alert">{scheduled.error}</p>
+		{/if}
 		<button class="action create" type="button" onclick={() => createJob()}>Create</button>
 	</section>
 </div>
@@ -168,10 +196,29 @@
 		color: var(--color-ink-secondary);
 	}
 
+	/* Sits beside Create so a rejected save is read where it was made; the
+	   daemon's message can carry a long path, so it must wrap. */
 	.error {
-		margin: var(--space-4) 0 0;
+		margin: 0;
 		font-size: var(--text-sm);
 		color: var(--color-err);
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
+	}
+
+	.row {
+		display: flex;
+		gap: var(--space-2);
+	}
+
+	.row input {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.hint {
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
 	}
 
 	.list {

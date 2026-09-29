@@ -5956,6 +5956,36 @@ clippy `-D warnings` clean, 47 Rust tests.
 
 ---
 
+### TD-3808 — A job the pane refused in plain English
+**Size:** 3 · **Depends on:** TD-3805, TD-3807
+
+**Acceptance criteria:**
+- [x] A cadence typed the way people say it ("7:45 on weekdays", "daily
+      at 9", "mon, wed and fri at 5pm", `@daily`) saves, stored as cron
+- [x] A cron cadence fires at the user's wall-clock time, not UTC; jobs
+      saved before this keep their UTC meaning
+- [x] A rejected save reads as one line per field, never a pydantic dump
+- [x] The workspace is picked from known folders or the native dialog; a
+      bare folder name resolves only when exactly one known workspace
+      has it, and a missing folder is refused on create
+- [x] Impossible cron fields are refused at save, not in the runner
+
+Done (2026-09-29): reported from the pane as a raw two-error pydantic
+dump for Workspace `Client Reports` and Cadence `7:45 on weekdays`.
+`scheduler/phrases.py` turns phrases into cron at the edge; `Job` gains
+an IANA `timezone` (on `SaveJob` / `JobEntry` too) that `_next_cron`
+matches against on the wall clock; `describe_validation_error` renders
+`Workspace: …; Cadence: …`. The pane sends the viewer's zone, suggests
+pinned and recent folders with a Browse… button, shows the cadence in
+words on each row, and puts errors beside Create. `tzdata` is a
+Windows-only dependency so the zone check works there. Class B entry in
+DECISIONS.md.
+
+Suite: 3440 passed / 8 skipped, ruff + `mypy --strict` clean over 153
+files, vitest 1371, svelte-check 703 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone

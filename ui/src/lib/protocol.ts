@@ -618,6 +618,8 @@ export interface SaveJob extends ClientMessage {
   next_run?: string | null;
   deliver_to?: "window" | "slack" | "ntfy" | null;
   paused?: boolean;
+  /** IANA zone the cadence is evaluated in, e.g. `America/Chicago`. Absent or null is legacy UTC. */
+  timezone?: string | null;
 }
 
 /** Remove a scheduled job by id (TD-3805). */
@@ -1448,6 +1450,8 @@ export interface JobEntry {
   next_run: string | null;
   deliver_to: "window" | "slack" | "ntfy";
   paused: boolean;
+  /** IANA zone the cadence is evaluated in. Absent or null is legacy UTC. */
+  timezone?: string | null;
   /** The last fire's receipt (TD-3807). Null until the job has run once. */
   last_run: string | null;
   last_status: "ok" | "failed" | null;

@@ -7,7 +7,8 @@ A missed ``next_run`` is one fire, then the next slot is computed from
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
+from zoneinfo import ZoneInfo
 
 from .models import Job, JobError, RunStatus, normalize_next_run, normalize_summary
 
@@ -56,8 +57,12 @@ def due_jobs(jobs: list[Job], now: datetime) -> list[Job]:
     return due
 
 
-def next_run_after(cadence: str, now: datetime) -> datetime:
-    """The next fire strictly after ``now``. One step, not N missed slots."""
+def next_run_after(cadence: str, now: datetime, tz: str | None = None) -> datetime:
+    """The next fire strictly after ``now``. One step, not N missed slots.
+
+    ``tz`` is the IANA zone a cron cadence is read in (None is UTC). Intervals
+    are elapsed time, so they ignore it. The result is always UTC.
+    """
     now_utc = as_utc(now)
     interval = _INTERVAL.fullmatch(cadence)
     if interval is not None:
@@ -69,7 +74,7 @@ def next_run_after(cadence: str, now: datetime) -> datetime:
             "day": timedelta(days=count),
         }[unit]
         return now_utc + delta
-    return _next_cron(cadence, now_utc)
+    return _next_cron(cadence, now_utc, ZoneInfo(tz) if tz else UTC)
 
 
 def advance_job(job: Job, now: datetime) -> Job:
@@ -84,7 +89,7 @@ def advance_job(job: Job, now: datetime) -> Job:
     """
     if job.cadence is None:
         return job.model_copy(update={"paused": True, "next_run": None})
-    nxt = next_run_after(job.cadence, now)
+    nxt = next_run_after(job.cadence, now, job.timezone)
     return job.model_copy(update={"next_run": normalize_next_run(nxt.isoformat())})
 
 
@@ -116,32 +121,55 @@ def arm_cadence_job(job: Job, now: datetime) -> Job:
     """Give a cadence-only job its first ``next_run`` without firing it."""
     if job.cadence is None or job.next_run is not None:
         return job
-    nxt = next_run_after(job.cadence, now)
+    nxt = next_run_after(job.cadence, now, job.timezone)
     return job.model_copy(update={"next_run": normalize_next_run(nxt.isoformat())})
 
 
-def _next_cron(expr: str, after: datetime) -> datetime:
+def _next_cron(expr: str, after: datetime, zone: tzinfo) -> datetime:
+    """Next cron match strictly after ``after``, matched on ``zone``'s wall clock.
+
+    The search walks naive wall-clock times and only converts a candidate that
+    already matches, so DST costs one conversion per hit, not one per minute.
+    Day and hour mismatches jump a whole day or hour, which keeps a
+    year-out search to a few hundred steps.
+
+    DST: a wall time that does not exist (the spring-forward gap) is skipped
+    rather than shifted, so ``30 2 * * *`` misses that one night. A wall time
+    that happens twice (fall back) fires once, at its first occurrence, because
+    the walk visits each wall-clock minute only once.
+    """
     fields = expr.split()
     if len(fields) != 5:
         raise JobError(f"cadence is not a 5-field cron expression: {expr!r}")
-    cursor = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    cursor = after.astimezone(zone).replace(second=0, microsecond=0, tzinfo=None)
+    cursor += timedelta(minutes=1)
     limit = cursor + _CRON_HORIZON
     while cursor < limit:
-        if _cron_matches(fields, cursor):
-            return cursor
-        cursor += timedelta(minutes=1)
+        if not _date_matches(fields, cursor):
+            cursor = cursor.replace(hour=0, minute=0) + timedelta(days=1)
+        elif not _field_matches(fields[1], cursor.hour):
+            cursor = cursor.replace(minute=0) + timedelta(hours=1)
+        elif not _field_matches(fields[0], cursor.minute):
+            cursor += timedelta(minutes=1)
+        else:
+            fire = _wall_to_utc(cursor, zone)
+            if fire is not None and fire > after:
+                return fire
+            cursor += timedelta(minutes=1)
     raise JobError("no next cron fire within a year")
 
 
-def _cron_matches(fields: list[str], when: datetime) -> bool:
-    minute, hour, day, month, dow = fields
-    if not _field_matches(minute, when.minute):
-        return False
-    if not _field_matches(hour, when.hour):
-        return False
-    if not _field_matches(month, when.month):
-        return False
-    return _day_matches(day, dow, when)
+def _wall_to_utc(wall: datetime, zone: tzinfo) -> datetime | None:
+    """UTC instant for a naive wall time, or None if that time never happened."""
+    local = wall.replace(tzinfo=zone)
+    instant = local.astimezone(UTC)
+    if instant.astimezone(zone).replace(tzinfo=None) != wall:
+        return None
+    return instant
+
+
+def _date_matches(fields: list[str], when: datetime) -> bool:
+    return _field_matches(fields[3], when.month) and _day_matches(fields[2], fields[4], when)
 
 
 def _day_matches(day: str, dow: str, when: datetime) -> bool:

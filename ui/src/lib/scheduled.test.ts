@@ -3,12 +3,16 @@ import type { ClientMessageUnion, DaemonEventUnion, JobEntry } from "./protocol"
 import {
 	emptyDraft,
 	formatLocal,
+	humanizeCadence,
 	jobFailed,
+	jobMeta,
 	jobLastRun,
 	jobWhen,
 	jobsEmptyCopy,
 	saveFromDraft,
 	saveFromJob,
+	viewerTimeZone,
+	workspaceSuggestions,
 } from "./scheduled";
 
 const mocks = vi.hoisted(() => ({
@@ -79,14 +83,15 @@ describe("copy and draft", () => {
 	});
 
 	it("omits blank cadence and next_run on create", () => {
-		expect(saveFromDraft(emptyDraft("/ws"))).toEqual({
+		expect(saveFromDraft(emptyDraft("/ws"), "UTC")).toEqual({
 			type: "save_job",
 			workspace: "/ws",
 			instruction: undefined,
-			cadence: "every 1 hour",
+			cadence: "weekdays at 9:00",
 			next_run: undefined,
 			deliver_to: "window",
 			paused: false,
+			timezone: "UTC",
 		});
 	});
 
@@ -101,6 +106,7 @@ describe("copy and draft", () => {
 			next_run: "2026-08-21T18:00:00+00:00",
 			deliver_to: "window",
 			paused: true,
+			timezone: undefined,
 		});
 	});
 
@@ -137,6 +143,69 @@ describe("copy and draft", () => {
 		const bad = job({ id: "j1", last_run: "2026-08-21T18:00:00+00:00", last_status: "failed" });
 		expect(jobLastRun(bad, "UTC")).toMatch(/^Failed /);
 		expect(jobFailed(bad)).toBe(true);
+	});
+});
+
+describe("time zone", () => {
+	it("sends the given zone on create", () => {
+		expect(saveFromDraft(emptyDraft("/ws"), "America/Chicago").timezone).toBe("America/Chicago");
+	});
+
+	it("defaults to the viewer's own zone", () => {
+		expect(saveFromDraft(emptyDraft("/ws")).timezone).toBe(viewerTimeZone());
+	});
+
+	it("passes a job's zone through Pause/Resume unchanged", () => {
+		expect(saveFromJob(job({ id: "j1", timezone: "Asia/Tokyo" }), true).timezone).toBe("Asia/Tokyo");
+		expect(saveFromJob(job({ id: "j1", timezone: null }), true).timezone).toBeNull();
+		expect(saveFromJob(job({ id: "j1" }), true).timezone).toBeUndefined();
+	});
+});
+
+describe("humanizeCadence", () => {
+	const cases: [string, string | null | undefined, string][] = [
+		["45 7 * * 1-5", "America/Chicago", "Weekdays at 7:45 AM"],
+		["0 9 * * *", "America/Chicago", "Daily at 9:00 AM"],
+		["0 0 * * *", "UTC", "Daily at 12:00 AM"],
+		["30 12 * * 0,6", "UTC", "Weekends at 12:30 PM"],
+		["30 17 * * 6,0", "UTC", "Weekends at 5:30 PM"],
+		["0 8 * * 1", "UTC", "Mondays at 8:00 AM"],
+		["0 8 * * 7", "UTC", "Sundays at 8:00 AM"],
+		["0 8 * * 1,3,5", "UTC", "Mon, Wed and Fri at 8:00 AM"],
+		["0 8 * * 1,2,3,4,5", "UTC", "Weekdays at 8:00 AM"],
+		["45 7 * * 1-5", null, "Weekdays at 7:45 AM UTC"],
+		["45 7 * * 1-5", undefined, "Weekdays at 7:45 AM UTC"],
+		["every 2 hours", "UTC", "every 2 hours"],
+		["*/15 * * * *", "UTC", "*/15 * * * *"],
+		["0 9 1 * *", "UTC", "0 9 1 * *"],
+		["0 9 * 6 *", "UTC", "0 9 * 6 *"],
+		["0 9 * * MON", "UTC", "0 9 * * MON"],
+		["0 9 * * 8", "UTC", "0 9 * * 8"],
+		["60 9 * * *", "UTC", "60 9 * * *"],
+		["0 24 * * *", "UTC", "0 24 * * *"],
+		["0 9 * *", "UTC", "0 9 * *"],
+	];
+	it.each(cases)("%s (%s) -> %s", (cadence, tz, expected) => {
+		expect(humanizeCadence(cadence, tz)).toBe(expected);
+	});
+
+	it("shows the words beside the next fire, not twice", () => {
+		const row = job({ id: "j1", cadence: "45 7 * * 1-5", timezone: "UTC", deliver_to: "slack" });
+		expect(jobMeta(row, "UTC")).toBe("Weekdays at 7:45 AM · slack");
+	});
+
+	it("adds the cadence after a concrete next run", () => {
+		const row = job({ id: "j1", cadence: "45 7 * * 1-5", timezone: "UTC", next_run: "2026-08-21T07:45:00+00:00" });
+		const meta = jobMeta(row, "UTC").split(" · ");
+		expect(meta).toHaveLength(3);
+		expect(meta[1]).toBe("Weekdays at 7:45 AM");
+		expect(meta[2]).toBe("window");
+	});
+});
+
+describe("workspaceSuggestions", () => {
+	it("lists pinned first and drops repeats", () => {
+		expect(workspaceSuggestions(["/a", "/b"], ["/b", "/c"])).toEqual(["/a", "/b", "/c"]);
 	});
 });
 
@@ -185,10 +254,11 @@ describe("scheduled store", () => {
 			type: "save_job",
 			workspace: "/ws/proj",
 			instruction: "summarize the inbox",
-			cadence: "every 1 hour",
+			cadence: "weekdays at 9:00",
 			next_run: undefined,
 			deliver_to: "window",
 			paused: false,
+			timezone: viewerTimeZone(),
 		});
 	});
 
