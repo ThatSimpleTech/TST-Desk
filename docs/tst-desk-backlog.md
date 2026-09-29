@@ -7281,8 +7281,8 @@ clean over 163 files, vitest 1412, svelte-check 709 files 0 errors
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 18 | 76 |
-| **Total planned** | **48** | **327** | **1035** |
+| Later | E47, E49 | 19 | 77 |
+| **Total planned** | **48** | **328** | **1036** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
