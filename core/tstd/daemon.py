@@ -325,7 +325,7 @@ from .provider import (
     RetryConfig,
     auth_failure_message,
 )
-from .provider_refresh import RefreshingProvider
+from .provider_refresh import RefreshingProvider, _close_client
 from .remote_attach import (
     bind_spec_when_enabled,
     load_remote_attach,
@@ -372,6 +372,7 @@ from .shutdown_budget import (
     install_posix_shutdown_signals,
     remove_posix_shutdown_signals,
 )
+from .shutdown_phases import ShutdownPhases, reap_shutdown_distill
 from .speech import transcribe as transcribe_speech
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
@@ -1533,51 +1534,86 @@ class Daemon:
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:
-        """Graceful shutdown: distill, cancel tasks, close sockets, flush."""
-        log.info("shutting down")
-        await self._distill_live_sessions()
+        """Graceful shutdown: distill, cancel tasks, close sockets, flush.
 
+        Distill runs beside the rest of the close. A provider read that
+        is still open when those steps return is cancelled: that read's
+        timeout is longer than the shutdown budget, and waiting on it
+        was the SIGTERM that exited through the budget after one
+        finished turn (TD-4844). A distill that has already returned is
+        kept.
+        """
+        log.info("shutting down")
+        phases = ShutdownPhases()
+
+        async def _distill() -> None:
+            await phases.run("distill", self._distill_live_sessions())
+
+        distill = asyncio.create_task(_distill(), name="shutdown-distill")
+        try:
+            await self._shutdown_subsystems(phases)
+        finally:
+            await reap_shutdown_distill(distill)
+            await phases.run("provider", self._close_provider_clients())
+            phases.log_if_slow()
+        log.info("shutdown complete")
+
+    async def _shutdown_subsystems(self, phases: ShutdownPhases) -> None:
+        """Close sockets, sessions, and writers. Does not wait on the provider."""
         if self._cu_server is not None:
             from .cu_host import stop_cu_socket
 
-            await stop_cu_socket(self.data_dir)
+            await phases.run("cu_socket", stop_cu_socket(self.data_dir))
             self._cu_server = None
 
         # Stop the WebSocket server (closes clients and removes the port file)
-        await self.ws_server.stop()
+        await phases.run("ws_stop", self.ws_server.stop())
 
         # Stop session loops
         sessions = await self.session_registry.list_sessions()
         for session in sessions:
             runner = self.session_registry.get_runner(session.id)
             if runner is not None:
-                await runner.cancel()
+                await phases.run(f"cancel {session.id[:8]}", runner.cancel())
 
         # Cancel streaming tasks
         for task in list(self._streaming_tasks.values()):
             if not task.done():
                 task.cancel()
         if self._streaming_tasks:
-            await asyncio.gather(*self._streaming_tasks.values(), return_exceptions=True)
+            await phases.run(
+                "streaming",
+                asyncio.gather(*self._streaming_tasks.values(), return_exceptions=True),
+            )
             self._streaming_tasks.clear()
 
         # Cancel remaining daemon tasks (e.g. the parent watchdog)
         for task in self._tasks:
             task.cancel()
         if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+            await phases.run(
+                "tasks",
+                asyncio.gather(*self._tasks, return_exceptions=True),
+            )
             self._tasks.clear()
 
         # Drain audit writes before closing the store (state flushed)
         if self._audit_writer is not None:
-            await self._audit_writer.close()
+            await phases.run("audit", self._audit_writer.close())
             self._audit_writer = None
 
-        await self.desktop_driver.aclose()
-        await self.browser_driver.aclose()
-        await self._mcp.aclose()
+        await phases.run("desktop", self.desktop_driver.aclose())
+        await phases.run("browser", self.browser_driver.aclose())
+        await phases.run("mcp", self._mcp.aclose())
 
-        log.info("shutdown complete")
+    async def _close_provider_clients(self) -> None:
+        """Drop HTTP pools opened for this process. Never logs a secret."""
+        clients = list(self._clients.values())
+        self._clients.clear()
+        if self._provider is not None and self._provider not in clients:
+            clients.append(self._provider)
+        for client in clients:
+            await _close_client(client)
 
     def _on_signal(self) -> None:
         """Request the same shutdown the websocket message uses.

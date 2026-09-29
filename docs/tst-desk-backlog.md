@@ -7147,6 +7147,39 @@ files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
 
 ---
 
+### TD-4844 — Shutdown after a finished session completes inside the budget
+**Size:** 2 · **Depends on:** TD-4842
+
+A daemon that had served one completed turn (`open_workspace`,
+`attach`, `user_message`, `turn_complete`, client then disconnected)
+took 5.1s to exit on SIGTERM. The shutdown budget fired and the
+process exited non-zero. With no completed session it exited in 0.1s.
+
+**Acceptance criteria:**
+- [x] A spawned daemon that completes one mock-provider turn, drops
+      the client, and receives SIGTERM exits 0 well inside the 5s
+      budget, and the port file is removed
+- [x] The same holds when quit-distill's provider call does not
+      return. Shutdown does not wait out that read
+- [x] When a shutdown phase exceeds 1s, an INFO log names the longest
+      phase
+- [x] TD-4842's budget path still exits non-zero and removes the port
+      file when cleanup does not return
+
+Done (2026-09-29): quit distill still runs, beside the rest of the
+close. A provider that has already answered keeps its proposal. A
+provider call still in flight when the sockets, sessions, and audit
+writer are done is cancelled and logged, and the process exits 0. The
+read that blocked was distill's non-streaming completion, whose
+timeout is longer than the shutdown budget. A phase still running
+after one second is named in the log. End session still waits on the
+provider. Class B entry in DECISIONS.md.
+
+Suite: 3706 passed / 8 skipped, ruff + `mypy --strict` clean over 163
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -7182,8 +7215,8 @@ files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 16 | 72 |
-| **Total planned** | **48** | **324** | **1029** |
+| Later | E47, E49 | 18 | 76 |
+| **Total planned** | **48** | **326** | **1033** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

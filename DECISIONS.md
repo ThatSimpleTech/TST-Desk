@@ -10814,3 +10814,36 @@ existing tests depend on that being the default file. Also rejected:
 copying the library config into an explicit data dir on startup, which
 would put the user's file back in the scratch daemon. Also rejected:
 moving the keychain, the cu-mcp policy, or the Grok home.
+
+## TD-4844 — Quit distill does not hold the shutdown budget (Class B)
+
+2026-09-29.
+
+**Decision:** Graceful shutdown still starts distill for every live
+session that had a completed turn. The call runs beside the rest of
+the close. If it has returned when the sockets, session tasks, and
+audit writer have finished, the proposal is kept. If the provider
+call is still in flight, shutdown cancels it, logs that distill was
+skipped, closes the provider clients, and goes on. End session is
+unchanged and still waits on the provider.
+
+**Decision:** A shutdown step that is still running after one second
+is logged at INFO, on `tstd.shutdown`, with the step's name and how
+long it has been running. When the close finishes, the same line names
+the longest finished step if that step exceeded one second.
+
+**Rationale:** After one finished turn, SIGTERM sat in distill's
+non-streaming completion. That read is allowed to take 120 seconds,
+so the 5 second budget called `os._exit(1)` before the websocket
+server stopped. An idle daemon, and a daemon whose provider answered,
+left in a fraction of a second. TD-2302 already says a provider that
+cannot complete distill is logged and skipped, and quit still reaps.
+A proposal emitted after the client has gone is not written and is
+not restored. The log line is what was missing when the budget fired:
+the process died without naming the step.
+
+**Alternative rejected:** Raising the shutdown budget or the provider
+read timeout. Wrapping distill in `wait_for` and discarding the
+timeout. Skipping distill even when the provider has already
+answered. Closing the HTTP client before the call, which fails every
+quit distill including a fast one.
