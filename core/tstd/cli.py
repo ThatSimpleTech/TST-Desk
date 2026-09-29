@@ -234,7 +234,7 @@ def _finish_assistant_line(printed: bool) -> None:
         sys.stdout.flush()
 
 
-async def _run_session(ws: Any, workspace: Path, message: str) -> int:
+async def _run_session(ws: Any, workspace: Path, message: str, data_dir: Path | None = None) -> int:
     ack = await _recv_event(ws, 10.0)
     if ack.get("type") != "hello_ack":
         if ack.get("type") == "error":
@@ -258,10 +258,10 @@ async def _run_session(ws: Any, workspace: Path, message: str) -> int:
         ws,
         {"type": "user_message", "session_id": session_id, "content": message},
     )
-    return await _stream_turn(ws, session_id)
+    return await _stream_turn(ws, session_id, data_dir)
 
 
-def _turn_timeout_secs() -> float:
+def _turn_timeout_secs(data_dir: Path | None = None) -> float:
     """How long to wait on a turn, given what the daemon may spend retrying.
 
     The base allowance covers a slow first token. On top of it goes the
@@ -272,9 +272,9 @@ def _turn_timeout_secs() -> float:
     falls back to the base allowance rather than failing the command.
     """
     try:
-        from .config import load_config
+        from .config import config_yaml_path, load_config
 
-        retry = load_config().provider_retry
+        retry = load_config(config_yaml_path(data_dir)).provider_retry
         return _TURN_TIMEOUT_SECS + worst_case_retry_seconds(
             RetryConfig(
                 max_retries=retry.max_retries,
@@ -286,9 +286,9 @@ def _turn_timeout_secs() -> float:
         return _TURN_TIMEOUT_SECS
 
 
-async def _stream_turn(ws: Any, session_id: str) -> int:
+async def _stream_turn(ws: Any, session_id: str, data_dir: Path | None = None) -> int:
     printed = False
-    deadline = time.monotonic() + _turn_timeout_secs()
+    deadline = time.monotonic() + _turn_timeout_secs(data_dir)
     while time.monotonic() < deadline:
         remaining = max(0.1, deadline - time.monotonic())
         try:
@@ -330,7 +330,7 @@ async def run_turn(workspace: Path, message: str, data_dir: Path) -> int:
     try:
         async with connect(f"ws://127.0.0.1:{info['port']}") as ws:
             await _send(ws, hello_message(str(info["token"])))
-            return await _run_session(ws, workspace, message)
+            return await _run_session(ws, workspace, message, data_dir)
     except OSError as e:
         raise CliError(f"could not connect to daemon: {e}") from e
     except TimeoutError as e:

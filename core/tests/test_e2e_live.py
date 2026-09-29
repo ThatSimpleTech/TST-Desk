@@ -21,6 +21,7 @@ loop itself is broken.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ from tstd.e2e_live import (
     live_preflight,
     raise_on_contract_failure,
 )
+from tstd.logging import user_data_dir
 
 pytestmark = pytest.mark.live
 
@@ -75,9 +77,14 @@ async def test_headless_harness_live(tmp_path: Path) -> None:
         pytest.skip(f"live harness not run: {reason}")
 
     workspace = tmp_path / "workspace"
+    data = tmp_path / "data"
+    data.mkdir()
+    # The daemon loads <data-dir>/config.yaml (TD-4843). The preset this
+    # fixture activated is the library file; copy it in before the pass.
+    shutil.copyfile(user_data_dir() / "config.yaml", data / "config.yaml")
     provider = LiveProvider(brain.base_url)
     try:
-        result = await run(workspace, tmp_path / "data", live_plan(workspace, provider))
+        result = await run(workspace, data, live_plan(workspace, provider))
     finally:
         await provider.aclose()
 
