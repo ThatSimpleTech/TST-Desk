@@ -31,14 +31,22 @@ def store(tmp_path: Path) -> Iterator[AuditStore]:
 # ── Schema ─────────────────────────────────────────────────────────────
 
 
-def test_schema_has_all_six_objects(store: AuditStore) -> None:
+def test_schema_has_the_audit_tables(store: AuditStore) -> None:
+    """The set grew by the judgments table (TD-708). The old name counted six."""
     rows = store._conn.execute(
         "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
         " AND name != 'schema_migrations'"
     ).fetchall()
     tables = {name for typ, name in rows if typ == "table"}
     views = {name for typ, name in rows if typ == "view"}
-    assert tables == {"sessions", "turns", "tool_calls", "decisions", "model_calls"}
+    assert tables == {
+        "sessions",
+        "turns",
+        "tool_calls",
+        "decisions",
+        "model_calls",
+        "judgments",
+    }
     assert views == {"costs"}
 
 
@@ -51,6 +59,7 @@ def test_indexes_exist_for_ui_queries(store: AuditStore) -> None:
         "idx_decisions_session",
         "idx_model_calls_session",
         "idx_model_calls_ts",
+        "idx_judgments_session",
     } <= names
 
 
@@ -81,6 +90,7 @@ def test_store_exposes_no_update_methods(store: AuditStore) -> None:
     public = [m for m in dir(store) if not m.startswith("_")]
     assert public == [
         "append_decision",
+        "append_judgment",
         "append_model_call",
         "append_session",
         "append_tool_call",
@@ -197,6 +207,71 @@ def test_failed_migration_rolls_back_atomically() -> None:
     # Neither the table nor the version stamp survived.
     assert conn.execute("SELECT name FROM sqlite_master WHERE name='t1'").fetchone() is None
     assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 0
+
+
+def test_v2_database_gains_the_judgments_table() -> None:
+    """Schema v3 is the judgments table. A v2 file grows it and nothing else."""
+    conn = sqlite3.connect(":memory:")
+    try:
+        AuditStore._migrate(conn, MIGRATIONS[:2])
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        assert "judgments" not in names
+        AuditStore._migrate(conn, MIGRATIONS)
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        assert "judgments" in names
+        assert "idx_judgments_session" in names
+        version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+        assert version is not None
+        assert version[0] == len(MIGRATIONS)
+    finally:
+        conn.close()
+
+
+def test_append_judgment_stores_digest_label_and_final_class(store: AuditStore) -> None:
+    digest = "ab" * 32
+    row_id = store.append_judgment(
+        "s1",
+        "typed",
+        digest,
+        "A",
+        0.5,
+        12.0,
+        0.25,
+        False,
+        "B",
+        ts=50.0,
+    )
+    assert row_id == 1
+    row = store._conn.execute(
+        "SELECT connector, payload_digest, label, confidence, latency_ms, cost,"
+        " cache_hit, decision_class, ts FROM judgments"
+    ).fetchone()
+    assert row == ("typed", digest, "A", 0.5, 12.0, 0.25, 0, "B", 50.0)
+
+
+def test_append_judgment_redacts_credentials_but_not_the_digest(store: AuditStore) -> None:
+    secret = "sk-" + "m" * 24
+    digest = "cd" * 32
+    store.append_judgment("s1", secret, digest, secret, 1.0, 1.0, 0.0, True, "A", ts=1.0)
+    row = store._conn.execute(
+        "SELECT connector, payload_digest, label, cache_hit FROM judgments"
+    ).fetchone()
+    assert row == ("[REDACTED]", digest, "[REDACTED]", 1)
+    store._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    blob = store.db_path.read_bytes()
+    wal = Path(str(store.db_path) + "-wal")
+    if wal.exists():
+        blob += wal.read_bytes()
+    assert secret.encode() not in blob
+
+
+def test_judgment_row_requires_a_session(tmp_path: Path) -> None:
+    store = AuditStore(tmp_path / "audit.db")
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            store.append_judgment("missing", "worker", "ab" * 32, None, 0.0, 0.0, 0.0, False, "B")
+    finally:
+        store.close()
 
 
 # ── Secret scrubbing (prime directive §2.2) ────────────────────────────

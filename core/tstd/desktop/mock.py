@@ -200,5 +200,10 @@ class MockDesktopDriver:
         self._record("hit_test", False, x=x, y=y)
         return scripted_ax_hit_node(x, y)
 
+    async def foreground_window(self) -> dict[str, Any]:
+        # A read. Not recorded in ``calls``: action tests pin that list,
+        # and the handler reads this after the action on purpose.
+        return {"app": self.foreground_app, "title": self.foreground_title}
+
     async def aclose(self) -> None:
         return None

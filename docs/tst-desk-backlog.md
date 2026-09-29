@@ -1183,41 +1183,69 @@ what makes aggressive Class A behavior safe.
 
 ### TD-708 — Judgment seam for the decision classifier (provider-neutral)
 **Size:** 5 · **Depends on:** TD-703, TD-302, TD-706
-**Status:** Dev build shipped on main 2026-09-17 (30fec39, 1af204f). Open for hardening:
-per-judgment audit-trail records (payload, answer, confidence, latency, cost in the SQLite
-audit log — today it is structured logs + `ToolResult.verification`). The TypeSafe
-connector exists (`autonomy/typesafe.py`, opt-in via `judgments.backend`) with real
-confidence; a recorded-fixture accuracy eval against it remains open.
 
 **Acceptance criteria:**
-- [ ] A `JudgmentBackend` protocol (question + bounded state → typed answer + confidence)
+- [x] A `JudgmentBackend` protocol (question + bounded state → typed answer + confidence)
       becomes the single seam behind TD-703's `call_worker`; the existing worker-tier
       chat completion is formalized as the default connector and behavior is unchanged
       without explicit opt-in
-- [ ] The product runs flawlessly with only the default connector — no external
+- [x] The product runs flawlessly with only the default connector — no external
       judgments API configured, present, or required
-- [ ] Additional connectors (a typed-judgment API such as TypeSafe/Jev is the evaluated
+- [x] Additional connectors (a typed-judgment API such as TypeSafe/Jev is the evaluated
       example) live in their own modules behind configuration; core modules carry no
       vendor-specific names, imports, or URLs (prime §2.7)
-- [ ] A connector credential lives in the OS keychain via `keychain.py` — never in
+- [x] A connector credential lives in the OS keychain via `keychain.py` — never in
       config, logs, or the audit database (prime §2.2)
-- [ ] The static rule table (TD-701) always runs first; only unclassified requests reach
+- [x] The static rule table (TD-701) always runs first; only unclassified requests reach
       the judgment seam — asserted by a test that no rule-matched request ever hits it
-- [ ] The judgment request carries classifier signals only (tool name, workspace-relative
+- [x] The judgment request carries classifier signals only (tool name, workspace-relative
       paths, hosts, mutation intent, `side_effect_class`, provenance) — never absolute
       paths, file contents, or conversation text; asserted by test
-- [ ] Every connector fails toward B: unknown labels, timeouts, errors, low confidence,
+- [x] Every connector fails toward B: unknown labels, timeouts, errors, low confidence,
       and (on chat connectors) unparseable replies classify as **B** — the TD-703
       fail-toward-asking invariant holds per connector
-- [ ] A charter/boundary with `network: "deny"`, or a connector host missing from
+- [x] A charter/boundary with `network: "deny"`, or a connector host missing from
       `allowed_hosts`, disables a remote connector for that run; ambiguous cases classify
       as B with no network call attempted
-- [ ] Judgment cost is recorded via `CostTracker.record_classifier()` per connector and
+- [x] Judgment cost is recorded via `CostTracker.record_classifier()` per connector and
       stays visible separately in the cost breakdown
-- [ ] The session cache on (tool, canonical arguments) applies unchanged across
+- [x] The session cache on (tool, canonical arguments) applies unchanged across
       connectors
-- [ ] All connector tests run against mocks; no live network in tests
-- [ ] `docs/configuration.md` documents every new key
+- [x] All connector tests run against mocks; no live network in tests
+- [x] `docs/configuration.md` documents every new key
+
+Done (2026-09-29): the classifier's only fallback is `JudgmentBackend`. The worker
+chat connector stays the default (`test_worker_is_the_default`,
+`test_default_connector_prompt_is_legacy_bytes`,
+`test_classifier_connector_keeps_the_legacy_prompt`); a hosted connector is a
+separate module (`test_typesafe_with_a_stored_key_selects_the_connector`,
+`test_core_modules_do_not_name_a_vendor`) and its key stays in the keychain
+(`test_connector_credential_stays_out_of_config_logs_and_audit`). The static
+table runs first and writes no audit row
+(`test_static_short_circuit_never_calls_backend`,
+`test_static_short_circuit_writes_no_audit_row`). The request is signals only
+(`test_judgment_request_is_classifier_signals_only`). Unknown labels, timeouts,
+errors, low confidence, and unparseable replies classify as B
+(`test_worker_timeout_classifies_as_b`, `test_typesafe_classifier_fails_toward_b`,
+`test_low_confidence_defaults_to_b`, `test_error_fails_closed_without_raising`,
+`test_unparseable_fails_closed`). A remote host outside `allowed_hosts` is B
+with no call (`test_unlisted_remote_host_classifies_b_without_a_call`,
+`test_worker_connector_still_runs_when_network_is_denied`). Cost stays on the
+classifier line (`test_hosted_judgment_cost_stays_on_the_classifier_line`,
+`test_classifier_cost_is_separate_from_main_cost`). The cache key is still
+(tool, canonical arguments) (`test_cache_key_is_tool_and_canonical_arguments`,
+`test_cache_avoids_repeat_judgment`). Connector tests use mocks
+(`test_eval_runner_imports_no_network_client`). Every judgments key is in
+`docs/configuration.md` (`test_every_config_key_is_documented`). Each judgment
+is an append-only `judgments` row
+(`test_append_judgment_stores_digest_label_and_final_class`,
+`test_writer_persists_a_judgment_row`,
+`test_v2_database_gains_the_judgments_table`). Recorded-fixture accuracy is
+`core/scripts/eval_judgment_accuracy.py` (`test_recorded_fixture_reports_accuracy`:
+worker 5/7, B-rate 4/7; typed 6/7, B-rate 3/7).
+
+Suite: 3786 passed / 8 skipped, ruff + `mypy --strict` clean over 166
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
 
 **Notes:** Spec §12.2 designed this seam: "a cheap classifier call on the worker tier …
 plus a static rule table." TD-703's `AmbiguousClassifier(static, call_worker)` is the
@@ -8282,10 +8310,9 @@ DECISIONS.md.
 
 **Not closed here.** The session's other findings are separate work: 99% of its
 wall clock was time-to-first-token (mean 41s), so the unit to optimize is
-round-trips — `settle_ms` on actions, `after_ms` on screenshot, the foreground
-window returned with every action result, and a `launch_app` tool so opening an
-app is one call instead of a Spotlight pantomime. Not filed; not in this
-milestone.
+round-trips — `settle_ms` on actions, `after_ms` on screenshot, and the
+foreground window returned with every action result. `launch_app` landed in
+TD-4829. The waits are TD-4847. There is still no drag tool.
 
 ---
 
@@ -8306,6 +8333,47 @@ engine; TD-4830 is the Settings page.
 
 **Completed (2026-09-09):** `tst-cu-mcp` background tools plus host `cu_ax`.
 Windows/Linux list apps best-effort; AX snapshot/action is macOS-only.
+
+---
+
+### TD-4847 — Computer use in fewer round-trips
+**Size:** 3 · **Depends on:** TD-4828, TD-4829
+
+A live computer-use session spent 99% of its wall clock on model
+time-to-first-token (mean 41s). The unit to optimize is round-trips.
+
+**Acceptance criteria:**
+- [x] `click`, `type_text`, `press_keys`, `scroll`, `launch_app`, and
+      `ui_action`, and the daemon tools `desktop_click`, `desktop_type`,
+      and `desktop_scroll`, take optional `settle_ms`, an integer from 0
+      to 5000 inclusive. After the action and that wait, the same result
+      includes `foreground_window` with `app` (process name) and `title`
+- [x] `screenshot` and `desktop_screenshot` take optional `after_ms` in
+      the same range, and the wait happens before the capture
+- [x] Omitting the parameter, or passing 0, does not sleep. An action
+      result still includes the foreground window. A screenshot's
+      payload is unchanged
+- [x] A value outside that range, or a non-integer (including `true`),
+      is refused before the action or the capture
+- [x] Tool descriptions tell the model it can batch the wait
+- [x] Tests cover schema bounds, settle-then-foreground, and `after_ms`
+      delaying capture, all through an injected clock. No-desktop runs
+      stay green
+
+Done (2026-09-29): The wait sits in the tool layer. Daemon handlers
+wait in-process and then read the driver; they do not forward
+`settle_ms` or `after_ms` to the sidecar. `launch_app` was already an
+MCP tool (TD-4829) and now takes `settle_ms`; it was not added again.
+There is still no drag tool, so drag has no parameter. `move` and
+hide/unhide are unchanged. No protocol change and no new config key.
+Class B in DECISIONS.md.
+
+Suite: core 3757 passed / 8 skipped; ruff clean; `mypy --strict` clean
+over 164 files; ui vitest 1412; svelte-check 709 files, 0 errors,
+0 warnings. tst-cu-mcp: 567 passed / 35 skipped, plus 3 failures that
+already exist because `DarwinBackend.hit_test` is nested inside
+`_mark_prompted` (unchanged here). ruff and mypy are clean on the
+files this story touched.
 
 ---
 

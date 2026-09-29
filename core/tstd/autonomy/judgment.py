@@ -11,8 +11,8 @@ The seam is the infrastructure; connectors are pluggable:
   the same worker-tier completion callable TD-703 already used, with a
   strict parse.  The product runs fully on it; no external judgments
   API is configured, present, or required.
-- A typed-judgment API (the TypeSafe/Jev connector) is a separate,
-  optional module selected by configuration — never named here.
+- A hosted typed-judgment API is a separate optional module selected
+  by configuration.  This module does not name that connector.
 
 Every connector fails closed: errors, timeouts, unparseable replies,
 and unknown labels yield a ``Judgment`` with ``label=None``, and callers
@@ -22,6 +22,7 @@ verification, inert for the breaker).
 
 from __future__ import annotations
 
+import contextvars
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -29,6 +30,21 @@ from enum import StrEnum
 from typing import Protocol
 
 from ..logging import get_logger
+
+# The worker completion records its dollar cost on the tracker, then
+# notes it here so the judgment can carry the same figure into the
+# audit row.  A contextvar keeps the callable's ``str -> str`` shape:
+# tests and DoD polls share that callable and must not grow a return
+# type.  The var is set for the task that is inside ``judge``.
+_completion_cost: contextvars.ContextVar[float] = contextvars.ContextVar(
+    "tstd_judgment_completion_cost", default=0.0
+)
+
+
+def note_judgment_completion_cost(cost: float) -> None:
+    """Remember the dollar cost of the completion the current task just made."""
+    _completion_cost.set(cost)
+
 
 log = get_logger("tstd.judgment")
 
@@ -76,15 +92,25 @@ class Judgment:
     backend: str
     latency_ms: float
     reason: str = "ok"
+    # Dollar cost of this call.  Zero when the connector reported none
+    # (a chat parse has no price of its own; the completion notes it).
+    cost: float = 0.0
 
     @property
     def ok(self) -> bool:
         return self.label is not None
 
     @classmethod
-    def failed(cls, *, backend: str, reason: str, latency_ms: float = 0.0) -> Judgment:
+    def failed(
+        cls, *, backend: str, reason: str, latency_ms: float = 0.0, cost: float = 0.0
+    ) -> Judgment:
         return cls(
-            label=None, confidence=0.0, backend=backend, latency_ms=latency_ms, reason=reason
+            label=None,
+            confidence=0.0,
+            backend=backend,
+            latency_ms=latency_ms,
+            reason=reason,
+            cost=cost,
         )
 
 
@@ -155,28 +181,52 @@ class WorkerChatJudgmentBackend:
     def name(self) -> str:
         return self._name
 
+    @property
+    def remote_host(self) -> str | None:
+        """The worker tier is the user's model, not a charter network target."""
+        return None
+
     async def judge(self, question: JudgmentQuestion) -> Judgment:
+        # Drop a cost a previous completion on this task may have noted.
+        _completion_cost.set(0.0)
         started = time.perf_counter()
         try:
             text = await self._complete(self._renderer(question))
+        except TimeoutError:
+            latency_ms = (time.perf_counter() - started) * 1000.0
+            return Judgment.failed(
+                backend=self._name,
+                reason="timeout",
+                latency_ms=latency_ms,
+                cost=_completion_cost.get(),
+            )
         except Exception as exc:
             latency_ms = (time.perf_counter() - started) * 1000.0
+            # The exception text can echo a request.  The type name cannot
+            # carry a credential (prime §2.2).
             log.warning(
                 "judgment backend call failed; failing closed",
-                extra={"extra_fields": {"backend": self._name, "error": str(exc)}},
+                extra={"extra_fields": {"backend": self._name, "error_type": type(exc).__name__}},
             )
-            return Judgment.failed(backend=self._name, reason="error", latency_ms=latency_ms)
+            return Judgment.failed(
+                backend=self._name,
+                reason="error",
+                latency_ms=latency_ms,
+                cost=_completion_cost.get(),
+            )
         latency_ms = (time.perf_counter() - started) * 1000.0
+        cost = _completion_cost.get()
         label = parse_judgment(text, question.resolved_options())
         if label is None:
             return Judgment.failed(
-                backend=self._name, reason="parse_failure", latency_ms=latency_ms
+                backend=self._name, reason="parse_failure", latency_ms=latency_ms, cost=cost
             )
         return Judgment(
             label=label,
             confidence=1.0,
             backend=self._name,
             latency_ms=latency_ms,
+            cost=cost,
         )
 
 
@@ -187,14 +237,26 @@ class ScriptedJudgmentBackend:
     so tests exercise the fail-closed path by omission.
     """
 
-    def __init__(self, judgments: Sequence[Judgment] = (), *, name: str = "scripted") -> None:
+    def __init__(
+        self,
+        judgments: Sequence[Judgment] = (),
+        *,
+        name: str = "scripted",
+        remote_host: str | None = None,
+    ) -> None:
         self._queue: list[Judgment] = list(judgments)
         self._name = name
+        self._remote_host = remote_host
         self.questions: list[JudgmentQuestion] = []
 
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def remote_host(self) -> str | None:
+        """Set in tests that stand in for a hosted connector."""
+        return self._remote_host
 
     async def judge(self, question: JudgmentQuestion) -> Judgment:
         self.questions.append(question)
@@ -207,6 +269,7 @@ class ScriptedJudgmentBackend:
             backend=self._name,
             latency_ms=judgment.latency_ms,
             reason=judgment.reason,
+            cost=judgment.cost,
         )
 
 
