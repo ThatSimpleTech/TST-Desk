@@ -10892,3 +10892,37 @@ prompt. That would hide an outside read. A Settings toggle. Settings
 sections are appearance, computer, engine, model, policy, mcp, key, and
 about. A protocol field on the instruction stack, or a synthetic unread
 source. Threading the flag into the supervisor.
+
+## TD-4846 — A retried key that is also rejected uses one code (Class B)
+
+2026-09-29.
+
+**Decision:** An authentication failure still closes the cached HTTP
+client, rebuilds it from the keychain, and retries the call once, only
+when the key digest changed. If that retry is also an authentication
+failure (HTTP 401 or 403, or `auth_failed` / `forbidden`), the error
+delivered to the window is `api_key_rejected` with the same host
+sentence an unchanged key already uses. The provider's own
+`auth_failed` message is not forwarded. There is no third try. A
+non-auth error on the retry is returned as the provider sent it.
+
+This replaces the TD-4840 sentence that a second authentication
+failure, after the key did change, is the provider's own error.
+
+**Decision:** `ResourceWarning` and
+`pytest.PytestUnraisableExceptionWarning` are errors in the default
+pytest configuration. The shutdown test that left a listening socket
+and an unanswered connection open now closes both. Production shutdown
+is unchanged.
+
+**Rationale:** The window picks its banner from
+`turn_complete.error_code`. `auth_failed` is the generic 401 copy, so
+a rotated key that the provider also rejected showed "Authentication
+failed…" instead of the credential and host. One situation had two
+codes. The warning gate existed only as a command-line flag, so a
+later story could pass the ordinary suite while leaking a socket.
+
+**Alternative rejected:** Teaching the UI to notice the host sentence
+inside chat text while the event still says `auth_failed`. A third
+retry. Suppressing the warning on that one test. Changing production
+shutdown so the test's server would close.
