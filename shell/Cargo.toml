@@ -29,13 +29,14 @@ tauri-plugin-notification = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
-tokio = { version = "1", features = ["process", "net", "time", "rt", "sync", "macros", "io-util"] }
+tokio = { version = "1", features = ["process", "net", "time", "rt", "sync", "macros", "io-util", "fs"] }
 tokio-tungstenite = "0.30"
 futures-util = "0.3"
 which = "7"
 dirs = "6"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 sha2 = "0.10"
+hex = "0.4.3"
 
 # TD-5144: free space before a received download (statfs/statvfs,
 # GetDiskFreeSpaceExW). Both were already in Cargo.lock.

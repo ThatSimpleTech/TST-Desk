@@ -18,8 +18,15 @@ storing any secret in the repo or in config files.
 the maintainer invokes at release time.
 
 When signing lands (target: first **external-user** or **v0.2** release,
-whichever comes first), TD-4704 (auto-updater) may default on. Until then the
-updater stays off.
+whichever comes first), installers can be notarized and the updater can
+require an Apple or Authenticode signature. Until then TD-4837 still
+installs updates: the host downloads the GitHub release asset and refuses
+it unless `SHA256SUMS.txt` on that release matches. That is the same check
+the release notes already ask a person to do. It is not a substitute for
+notarization — Gatekeeper or SmartScreen can still warn when a replaced
+bundle's signature changes, and a dev-signed local build that takes an
+unsigned GitHub update will be asked for Screen Recording and Accessibility
+again.
 
 ## Where secrets live (never the repo)
 

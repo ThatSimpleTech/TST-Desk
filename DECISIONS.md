@@ -13530,3 +13530,35 @@ blob. A Graph-style JSON body instead of the RFC 2822 message. Treating
 HTTP 202 as success. Following redirects. Logging `error_description`
 or a Gmail response body. Bumping the protocol version. A second
 loopback listener.
+
+---
+
+## 2026-09-29 — TD-4837: checksum-verified auto-update (Class B)
+
+**Decision:** A packaged release build checks `tstdesk-v*` GitHub releases
+on launch and every four hours, downloads the asset for this OS and CPU,
+and installs it only when `SHA256SUMS.txt` on that release matches.
+Automatic is the default (`{data_dir}/update.yaml`, explicit `automatic:
+false` turns it off). Debug and `target/` builds do not poll and do not
+replace themselves. The UI is a banner with Restart and Later, plus
+**Check for Updates…** in the app menu — Claude's two choices, without a
+modal over a running session. This supersedes the 2026-08-27 TD-4704
+refusal of in-app install and of a background check. The maintainer asked
+for that behavior on 2026-09-29.
+
+**Rationale:** The published release already tells people to verify
+`SHA256SUMS.txt`. Doing that check in the host is the same trust decision,
+applied to the next tag, and it does not require an Apple or Authenticode
+certificate. The request is the releases API plus the asset URLs those
+releases name. No install id, no analytics host. Notarization stays
+deferred (TD-4903): an unsigned replacement can still trip Gatekeeper, and
+a dev-signed app that takes a GitHub build will be asked for Screen
+Recording and Accessibility again. The ready-state copy says so.
+
+**Alternative rejected:** `tauri-plugin-updater` with a minisign key
+(nothing signs release artifacts today, and the private key must not live
+in the repo). Also rejected: leaving the manual "open the releases page"
+button as the only path after the maintainer asked for Claude's updater.
+Also rejected: re-signing the downloaded app with the local `tst-desk-dev`
+identity (the installed bytes would no longer be the release that was
+hashed).

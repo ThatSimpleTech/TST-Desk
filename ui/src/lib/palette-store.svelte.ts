@@ -18,6 +18,7 @@ import {
 	type PaletteEntry,
 } from "./palette";
 import { isTauri } from "./open-file";
+import { checkForUpdates } from "./update.svelte";
 import { setCuKill } from "./cu-kill.svelte.js";
 import { chat } from "./chat-store.svelte.js";
 import { endSession, openInTerminal } from "./session-actions.svelte.js";
@@ -154,6 +155,9 @@ function dispatch(command: PaletteCommand): void {
 			if (isTauri()) {
 				void invoke("quit_app");
 			}
+			return;
+		case "check-for-updates":
+			void checkForUpdates();
 			return;
 	}
 }

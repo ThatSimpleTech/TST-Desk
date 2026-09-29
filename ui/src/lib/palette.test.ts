@@ -146,6 +146,7 @@ describe("icons", () => {
 
 	it("covers every action the palette offers", () => {
 		expect(ACTION_ENTRIES.map((e) => e.command.kind).sort()).toEqual([
+			"check-for-updates",
 			"end-session",
 			"new-session",
 			"new-window",

@@ -222,10 +222,7 @@ mod tests {
 
     #[test]
     fn save_rejects_blank_path() {
-        let dir = std::env::temp_dir().join(format!(
-            "tstd-last-ws-blank-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("tstd-last-ws-blank-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(save_last_workspace(&dir, "   ").is_err());
         let _ = std::fs::remove_dir_all(dir);

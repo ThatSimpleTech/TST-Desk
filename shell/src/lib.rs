@@ -261,6 +261,14 @@ fn build_app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+Q"),
     )?;
+    let check_updates = MenuItem::with_id(
+        h,
+        "check-for-updates",
+        "Check for Updates…",
+        true,
+        None::<&str>,
+    )?;
+    app.manage(updater::UpdateMenu(check_updates.clone()));
     let edit = Submenu::with_items(
         h,
         "Edit",
@@ -285,6 +293,8 @@ fn build_app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
             &[
                 &PredefinedMenuItem::about(h, None, None)?,
                 &PredefinedMenuItem::separator(h)?,
+                &check_updates,
+                &PredefinedMenuItem::separator(h)?,
                 &PredefinedMenuItem::hide(h, None)?,
                 &PredefinedMenuItem::hide_others(h, None)?,
                 &PredefinedMenuItem::separator(h)?,
@@ -305,7 +315,7 @@ fn build_app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        let file = Submenu::with_items(h, "File", true, &[&quit])?;
+        let file = Submenu::with_items(h, "File", true, &[&check_updates, &quit])?;
         Menu::with_items(h, &[&file, &edit])
     }
 }
@@ -328,6 +338,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            updater::install(app.handle());
             // A setup error panics the app. A log folder that cannot be
             // opened must not keep TST Desk from starting (TD-5021).
             if let Err(e) = app
@@ -356,6 +367,7 @@ pub fn run() {
             app.manage(handle);
             app.manage(embeddings);
             quick_entry::setup(app)?;
+            updater::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -381,11 +393,16 @@ pub fn run() {
             tray::set_tray_running_count,
             session_window::open_session_window,
             updater::check_for_updates,
+            updater::update_status,
+            updater::download_update,
+            updater::restart_to_update,
+            updater::open_update_installer,
+            updater::set_automatic_updates,
         ])
-        .on_menu_event(|app, event| {
-            if event.id() == "quit-tst-desk" {
-                request_quit(app);
-            }
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "quit-tst-desk" => request_quit(app),
+            "check-for-updates" => updater::on_menu(app),
+            _ => {}
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

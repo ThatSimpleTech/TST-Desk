@@ -7181,6 +7181,10 @@ window destroys it, closing the last still hides when coworker is on.
 points at `docs/signing.md` and the releases page. In-app install flips on when
 signing lands.
 
+**Addendum (2026-09-29):** TD-4837 turns in-app install on without waiting
+for notarization. Integrity is `SHA256SUMS.txt`. The historical note above
+is what shipped that day.
+
 ---
 
 ### TD-4705 — Image / vision attachments
@@ -7341,6 +7345,10 @@ updater UI.
 `docs/signing.md` records cost, secret homes (GitHub encrypted secrets +
 OS keychain for runtime keys), and future CI env wiring. README unsigned
 section unchanged; points at the doc. TD-4704 stays off until certs land.
+
+**Addendum (2026-09-29):** Signing is still refused. TD-4837 installs
+checksum-verified GitHub assets anyway; notarization remains the thing
+this story did not do.
 
 ---
 
@@ -7829,8 +7837,8 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49, E53 | 26 | 94 |
-| **Total planned** | **49** | **342** | **1076** |
+| Later | E47, E49, E53 | 27 | 99 |
+| **Total planned** | **49** | **343** | **1081** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -8948,6 +8956,36 @@ hit-test work, not this fix.
 `expect_window: "Dock"` and the agent had to drop the guard to proceed. The guard's
 purpose is catching wrong-app actuation; system overlays can't be frontmost, so the
 check had no signal to give.
+
+### TD-4837 — Auto-update from GitHub releases
+**Size:** 5 · **Depends on:** TD-4704, TD-1303
+**Status:** Complete 2026-09-29
+
+The maintainer asked for a Claude Desktop-style updater. TD-4704 had
+stopped at a manual check, and TD-4903 still refuses Apple and
+Authenticode signing. This story installs the published artifact after
+`SHA256SUMS.txt` matches. It does not notarize anything.
+
+**Acceptance criteria:**
+- [x] A packaged release build checks GitHub `tstdesk-v*` releases on
+      launch and every four hours, and from the app menu, the command
+      palette, and Settings → About
+- [x] When a newer release exists, the host downloads that platform's
+      asset and installs it only if `SHA256SUMS.txt` matches
+- [x] Restart replaces a macOS bundle or an AppImage, or runs the
+      Windows installer; a `.deb` opens in the system installer
+- [x] No telemetry: the only requests are the GitHub releases API and
+      the release asset URLs, with no client identifier
+- [x] Automatic install is on until the user turns it off in
+      Settings → About; the preference is `{data_dir}/update.yaml`
+- [x] Debug builds do not poll. An unpackaged build reports the release
+      and does not replace itself
+- [x] Apple notarization stays deferred (`docs/signing.md`)
+
+**Done (2026-09-29):** Host updater in `shell/src/updater/`. Banner under
+the shell header, About switch, app-menu item, palette command. Tests
+cover release selection, URL allowlisting, checksum parsing, bundle-path
+detection, and banner actions.
 
 ### TD-4835 — Deterministic resource lifecycle cleanup
 **Size:** 2 · **Depends on:** TD-4833

@@ -37,6 +37,8 @@
 	import { startScheduled, refreshJobs } from '../scheduled.svelte.js';
 	import TitleBar from './TitleBar.svelte';
 	import NotificationBanner from '../NotificationBanner.svelte';
+	import UpdateBanner from '../UpdateBanner.svelte';
+	import { startUpdates } from '../update.svelte';
 	import ToastStack from '../ToastStack.svelte';
 	import WizardPane from './WizardPane.svelte';
 	import DoctorPane from './DoctorPane.svelte';
@@ -195,6 +197,10 @@
 		const offCuKill = startCuKill();
 		const offGrok = startGrok();
 		const offVoice = startVoice();
+		let offUpdates = () => {};
+		void startUpdates().then((off) => {
+			offUpdates = off;
+		});
 		let offCloseHint = () => {};
 		void startCloseHint().then((off) => {
 			offCloseHint = off;
@@ -234,6 +240,7 @@
 			offCuKill();
 			offGrok();
 			offVoice();
+			offUpdates();
 			offCloseHint();
 			offQuickEntryPermission();
 			mq.removeEventListener('change', syncNarrow);
@@ -403,6 +410,7 @@
 </header>
 
 <NotificationBanner />
+<UpdateBanner />
 
 <div
 	class="shell-body"
