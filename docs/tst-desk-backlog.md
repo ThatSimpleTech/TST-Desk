@@ -8094,8 +8094,9 @@ unapproved follow-ups (see `reports/td-4833/warning-investigation.md`).
 **Acceptance criteria:**
 - [x] A macOS write spawns argv exactly `security -i` and sends one
       `add-generic-password -U -a … -s … -l … -w <secret>` line on stdin.
-      Spaces, both quotes, backslashes, `$`, and non-ASCII round-trip. A
-      newline or NUL is refused, and the error does not contain the value.
+      Spaces, both quotes, backslashes, `$`, and backticks round-trip.
+      A character outside printable ASCII (0x20–0x7E), a newline, or a
+      NUL is refused, and the error does not contain the value.
       A failed sub-command is an error even when `security -i` exits 0.
       A hung CLI is still a locked keychain (TD-1105)
 - [x] Before that add, `SecItemDelete` with the authentication UI forced
@@ -8106,7 +8107,10 @@ unapproved follow-ups (see `reports/td-4833/warning-investigation.md`).
       and the item exists, `SecItemCopyMatching` runs with
       `kSecReturnData` and `kSecUseAuthenticationUIFail`. If that also
       fails, the error says to re-save the key in Settings → API keys
-      and contains no secret. A real lock stays a locked-keychain error.
+      and contains no secret. An empty or whitespace-only secret is the
+      same not-found family ("the stored API key for '<name>' is empty
+      — re-save it in Settings → API keys") and is never returned.
+      A real lock stays a locked-keychain error.
       Not-found does not fall back
 - [x] Presence (`api_key_is_stored`, setup state, the TD-4835 cache) is
       `find-generic-password` without `-w` and does not call
@@ -8127,7 +8131,12 @@ the trusted application is `/usr/bin/security` and the secret stays off
 argv. A re-save deletes the old item in-process, then via the CLI, then
 adds it again. If the CLI read fails for an item that exists, this
 binary tries `SecItemCopyMatching` with the UI forced off; otherwise
-the user is told to re-save. Class B entry in DECISIONS.md.
+the user is told to re-save. `security -w` prints any byte outside
+printable ASCII as hex, and a real key can be all hex, so save refuses
+those characters instead of decoding on read. An empty or
+whitespace-only secret is refused at save and, if already stored, is a
+not-found error rather than `Authorization: Bearer `. Class B entry in
+DECISIONS.md.
 
-Suite: 3508 passed / 8 skipped, ruff + `mypy --strict` clean over 155
+Suite: 3539 passed / 8 skipped, ruff + `mypy --strict` clean over 155
 files, vitest 1404, svelte-check 707 files 0 errors 0 warnings.

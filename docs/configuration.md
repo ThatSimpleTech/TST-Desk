@@ -82,7 +82,10 @@ local. Omit it for a keyed local server so the tier URL stays in charge.
 Settings → API keys has a Host field that writes this key (TD-1722); blank
 keeps the preset URL. Add as
 many as you need — OpenRouter, a keyed local server, a second remote. A tier's
-`credential` field picks which one that model sends.
+`credential` field picks which one that model sends. The secret must be
+printable ASCII (space through `~`). On macOS, `security -w` prints
+anything else as hex, so save refuses it. An empty or whitespace-only
+item is treated as missing.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

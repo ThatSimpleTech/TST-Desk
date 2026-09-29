@@ -25,7 +25,6 @@ from tstd.config import (
 )
 from tstd.config_write import delete_mcp_server_entry, save_mcp_server
 from tstd.daemon import Daemon
-from tstd.keychain import KeychainError
 from tstd.mcp.loader import McpSupervisor
 from tstd.protocol import SetMcpServer, parse_client_message
 from tstd.tools import ToolDispatcher, create_registry
@@ -169,14 +168,6 @@ class TestWire:
 
 
 class TestDaemonAck:
-    @pytest.fixture(autouse=True)
-    def _no_key(self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        async def _missing(_provider_name: str = "openrouter") -> str:
-            raise KeychainError("API key not found in keychain.")
-
-        monkeypatch.setattr("tstd.daemon.get_api_key", _missing, raising=False)
-        cached_config.cache_clear()
-
     async def test_set_disable_delete_appear_on_setup_state(
         self, isolated_home: Path, tmp_path: Path
     ) -> None:

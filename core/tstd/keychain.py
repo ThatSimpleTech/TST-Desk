@@ -304,6 +304,34 @@ def _get_backend() -> KeychainBackend:
 # ── Public API ─────────────────────────────────────────────────────────
 
 
+def _reject_api_key_value(secret: str) -> None:
+    """Refuse a value ``security find-generic-password -w`` cannot echo.
+
+    That flag prints any byte outside printable ASCII (0x20-0x7E) as hex.
+    A real key can be all hex, so the read path must not decode it. An
+    empty or whitespace-only value would leave the provider as
+    ``Authorization: Bearer ``. The message never includes the secret.
+    """
+    if "\n" in secret or "\x00" in secret:
+        raise KeychainError("A keychain value cannot contain a newline or NUL.")
+    if not secret.strip():
+        raise KeychainError("API key is empty")
+    if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in secret):
+        raise KeychainError("API keys must be printable ASCII")
+
+
+def _require_api_key_value(value: str, name: str) -> str:
+    """Treat an empty or whitespace-only secret as missing.
+
+    ``name`` is the provider id or the keychain account. It is not the secret.
+    """
+    if value.strip():
+        return value
+    raise KeychainError(
+        f"the stored API key for '{name}' is empty — re-save it in Settings → API keys"
+    )
+
+
 async def api_key_is_stored(provider_name: str = "openrouter") -> bool:
     """Whether ``tst-{provider_name}`` exists, without reading the secret.
 
@@ -328,10 +356,13 @@ async def get_api_key(provider_name: str = "openrouter") -> str:
         The API key string.
 
     Raises:
-        KeychainError: If the key is not found or retrieval fails.
+        KeychainError: If the key is not found, empty, or retrieval fails.
+            An empty or whitespace-only item uses the not-found family so it
+            is never returned as a bearer token.
     """
     backend = _get_backend()
-    return await backend.get_secret(f"tst-{provider_name}")
+    value = await backend.get_secret(f"tst-{provider_name}")
+    return _require_api_key_value(value, provider_name)
 
 
 async def store_api_key(api_key: str, provider_name: str = "openrouter") -> None:
@@ -345,8 +376,10 @@ async def store_api_key(api_key: str, provider_name: str = "openrouter") -> None
         provider_name: The provider name (e.g. ``openrouter``, ``openai``).
 
     Raises:
-        KeychainError: If storage fails.
+        KeychainError: If the value is empty, not printable ASCII, or storage fails.
+            The message does not include the secret.
     """
+    _reject_api_key_value(api_key)
     backend = _get_backend()
     await backend.set_secret(f"tst-{provider_name}", api_key)
 

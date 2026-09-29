@@ -11,7 +11,9 @@ one ``add-generic-password`` command on stdin. The creating binary is
 ``/usr/bin/security``, whose apple-tool partition the CLI can read after a
 rebuild. The secret stays off argv. Quoting matches SecurityTool
 ``split_line``: backslash is an escape inside both quote styles, and
-``$`` is not expanded.
+``$`` is not expanded. Only printable ASCII is stored. ``security -w``
+prints anything else as hex, and a real key may be all hex, so reads
+do not decode.
 
 A TD-4813 item is deleted in-process first (``tstd`` is the trusted app
 for that ACL) and then via the CLI. ``-U`` updates the password but does
@@ -34,6 +36,8 @@ from .keychain import (
     KeychainLockedError,
     _await_cli,
     _classify_cli_failure,
+    _reject_api_key_value,
+    _require_api_key_value,
     _spawn_cli,
 )
 
@@ -68,8 +72,8 @@ def quote_arg(value: str) -> str:
 
     ``split_line`` treats ``\\`` as an escape inside both quote styles and
     does not expand ``$``. A single-quoted word with ``\\`` and ``'``
-    escaped round-trips every other character, including spaces, double
-    quotes, and non-ASCII. Newline and NUL cannot be one argument.
+    escaped round-trips spaces, quotes, backslash, ``$``, and backtick.
+    Callers refuse anything outside printable ASCII before this runs.
     """
     escaped = value.replace("\\", "\\\\").replace("'", "\\'")
     return f"'{escaped}'"
@@ -87,8 +91,9 @@ def interactive_add_payload(account: str, secret: str, service: str = _SERVICE) 
     the command (exit 0, nothing stored), and a second blank line resets
     ``security -i``'s status so a failed add can exit 0.
     """
-    for value in (account, service, secret):
-        _reject_unquotable(value)
+    _reject_unquotable(account)
+    _reject_unquotable(service)
+    _reject_api_key_value(secret)
     label = f"TST Desk {account}"
     line = (
         "add-generic-password -U "
@@ -214,9 +219,10 @@ async def _copy_if_present(account: str, service: str, original: KeychainError) 
     if blob is None:
         raise KeychainError(_RESAVE) from None
     try:
-        return blob.decode("utf-8")
+        text = blob.decode("utf-8")
     except UnicodeDecodeError:
         raise KeychainError(_RESAVE) from None
+    return _require_api_key_value(text, account)
 
 
 async def read_secret(account: str, service: str = _SERVICE) -> str:
@@ -240,7 +246,9 @@ async def read_secret(account: str, service: str = _SERVICE) -> str:
     except KeychainLockedError as locked:
         return await _copy_if_present(account, service, locked)
     if proc.returncode == 0:
-        return stdout.decode().strip()
+        # ``-w`` appends a newline. Whitespace-only collapses to the
+        # empty-key error; a hex string is returned unchanged.
+        return _require_api_key_value(stdout.decode().strip(), account)
     stderr_text = stderr.decode(errors="replace").strip()
     if _not_found(stderr_text):
         raise KeychainError(_missing_message(account, service))

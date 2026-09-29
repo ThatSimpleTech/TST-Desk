@@ -10485,8 +10485,20 @@ newline-terminated, and nothing else. The creating binary is
 `/usr/bin/security` (the apple-tool partition), which the CLI can read
 after a rebuild. Quoting follows SecurityTool `split_line`: backslash
 is an escape inside both quote styles, `$` is not expanded, and
-whitespace splits only outside quotes. A newline or NUL cannot be one
-argument and is refused without echoing the value. A missing trailing
+whitespace splits only outside quotes. Spaces, both quotes, backslash,
+`$`, and backtick round-trip. `find-generic-password -w` prints any
+byte outside printable ASCII (0x20–0x7E) as hex. A real key can be all
+hex, so the read path does not decode. Save refuses those characters
+with "API keys must be printable ASCII" and does not include the
+secret. A newline or NUL cannot be one argument and is refused the
+same way, without echoing the value. An empty or whitespace-only
+secret is refused at save ("API key is empty"). One already stored is
+a not-found `KeychainError`: "the stored API key for '<name>' is empty
+— re-save it in Settings → API keys". `<name>` is the provider id from
+`get_api_key`, and the keychain account on the macOS read path. The
+value is never returned, so it cannot become `Authorization: Bearer `.
+The same save checks run inside the macOS stdin builder, because every
+secret written that way is later read with `-w`. A missing trailing
 newline makes readline drop the command and exit 0; a blank line after
 a failure resets the process status to 0. Any non-zero exit or any
 stderr is a failure, and the secret and the stdin line are stripped
@@ -10513,7 +10525,9 @@ binary. That recovers a TD-4813 item while this build is still trusted.
 If it fails, the error tells the user to re-save the key in Settings →
 API keys and contains no secret. A real lock (the attributes probe
 fails the same way) stays `KeychainLockedError`. Not-found does not
-fall back.
+fall back. An empty or whitespace-only password, from `-w` or from the
+in-process copy, is the empty-key error above, not a re-save and not a
+decoded hex string.
 
 **Presence does not read the secret.** `api_key_is_stored` is that
 attributes-only lookup on macOS. The TD-4835 cache and its invalidation
@@ -10521,5 +10535,5 @@ on key mutations are unchanged. Linux and Windows backends are
 unchanged; their default `has_secret` may still read the secret.
 
 Rejected: keeping SecItemAdd and adding `/usr/bin/security` to the ACL
-(the partition is still the ad-hoc `tstd` signature), passing `-A`, and
-putting the secret back on argv.
+(the partition is still the ad-hoc `tstd` signature), passing `-A`,
+putting the secret back on argv, and decoding `-w`'s hex form on read.
