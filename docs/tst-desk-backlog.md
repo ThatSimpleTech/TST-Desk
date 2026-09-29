@@ -7006,6 +7006,39 @@ files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
 
 ---
 
+### TD-4841 — Reviving a session must not fail its audit write
+**Size:** 2 · **Depends on:** TD-902
+
+`AuditWriter.attach_session` inserted a `sessions` row on every attach,
+including revive, with `started_at` set to the current clock. The id was
+already stored, so each daemon start logged `audit write failed`
+(`UNIQUE constraint failed: sessions.session_id`) once per revived
+session.
+
+**Acceptance criteria:**
+- [x] Opening a session, then reviving it, then reviving it again leaves
+      exactly one `sessions` row and does not log `audit write failed`
+- [x] `append_session` with the same id, workspace, and start time does
+      not write again and does not error
+- [x] The same id with a different workspace or start time raises
+      `IntegrityError`, the writer reports it, and the stored row is
+      unchanged
+- [x] A failed write does not drop later queued audit entries
+- [x] No UPDATE or DELETE of audit rows
+
+Done (2026-09-29): attaching a session inserts its audit row once. Revive
+attaches again and leaves that row, including the original start time,
+and does not log `audit write failed`. An identical `append_session`
+is a no-op. The same id with a different workspace or start time still
+raises, the writer reports it, and the stored row is unchanged. A failed
+insert rolls back the transaction it opened so a later queued audit
+write still lands. Class B entry in DECISIONS.md.
+
+Suite: 3619 passed / 8 skipped, ruff + `mypy --strict` clean over 157
+files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -7028,21 +7061,21 @@ files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 55 | 162 |
-| M1.5 Local models | E18 | 15 | 36 |
+| M1 Headless core | E2–E9 | 62 | 189 |
+| M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 24 | 68 |
-| M3 Shippable | E13–E17, E19 | 47 | 136 |
-| **Total v0.1** | **19** | **148** | **417** |
+| M3 Shippable | E13–E17, E19 | 65 | 179 |
+| **Total v0.1** | **19** | **170** | **481** |
 | M4 Memory (v0.2) | E21–E28 | 32 | 90 |
-| **Total v0.1 + v0.2** | **27** | **180** | **507** |
-| M5 Cowork (v0.3) | E29–E32, E48 | 31 | 84 |
-| M6 Computer use (v0.4) | E20, E33–E34 | 12 | 63 |
-| M7 Remote (v0.5) | E36–E38 | 11 | 43 |
+| **Total v0.1 + v0.2** | **27** | **202** | **571** |
+| M5 Cowork (v0.3) | E29–E32, E48 | 49 | 127 |
+| M6 Computer use (v0.4) | E20, E33–E34 | 13 | 68 |
+| M7 Remote (v0.5) | E36–E38 | 16 | 56 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 13 | 66 |
-| **Total planned** | **48** | **274** | **893** |
+| Later | E47, E49 | 15 | 70 |
+| **Total planned** | **48** | **322** | **1022** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -420,3 +421,72 @@ async def test_write_failure_tells_the_user_once_per_burst(tmp_path: Path) -> No
     errors = [e for e in session.event_log.all_events if isinstance(e, Error)]
     assert len(errors) == 2
     await writer.close()  # writer owns the store's lifecycle
+
+
+# ── Session attach is once, and a failure does not drop the queue ─────
+
+
+def _session_rows(store: AuditStore) -> list[tuple[str, str, float]]:
+    rows = store._conn.execute(
+        "SELECT session_id, workspace_path, started_at FROM sessions ORDER BY session_id"
+    ).fetchall()
+    return [(str(row[0]), str(row[1]), float(row[2])) for row in rows]
+
+
+async def test_reattach_keeps_one_session_row(
+    store: AuditStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Attach, then attach again, then attach again: one row, no error."""
+    session = Session("/tmp/ws")
+    writer = AuditWriter(store)
+    writer.start()
+    writer.attach_session(session)
+    await writer._queue.join()
+    original = _session_rows(store)
+    assert len(original) == 1
+
+    with caplog.at_level(logging.ERROR, logger="tstd.audit"):
+        for _ in range(2):
+            again = Session(session.workspace_path)
+            again.id = session.id
+            writer.attach_session(again)
+        await writer._queue.join()
+    assert [r for r in caplog.records if r.getMessage() == "audit write failed"] == []
+    assert _session_rows(store) == original
+    await writer.close()
+
+
+async def test_conflicting_attach_is_reported_and_later_writes_land(
+    store: AuditStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A bad session row is an error. The turn queued behind it still lands."""
+    session = Session("/tmp/ws")
+    writer = AuditWriter(store)
+    writer.attach_session(session)
+    other = Session("/elsewhere")
+    other.id = session.id
+    writer.attach_session(other)
+    await session.event_log.add(
+        TurnComplete(
+            session_id=session.id,
+            tokens=3,
+            cost=0.01,
+            tier="brain",
+            duration=0.2,
+            seq=1,
+        )
+    )
+    with caplog.at_level(logging.ERROR, logger="tstd.audit"):
+        writer.start()
+        await writer._queue.join()
+
+    assert any(r.getMessage() == "audit write failed" for r in caplog.records)
+    rows = _session_rows(store)
+    assert len(rows) == 1
+    assert rows[0][0] == session.id
+    assert rows[0][1] == "/tmp/ws"
+    assert store._conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0] == 1
+    errors = [e for e in other.event_log.all_events if isinstance(e, Error)]
+    assert len(errors) == 1
+    assert errors[0].code == "audit_write_failed"
+    await writer.close()

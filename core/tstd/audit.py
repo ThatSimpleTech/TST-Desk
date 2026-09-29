@@ -237,13 +237,48 @@ class AuditStore:
     # One row per completed fact. Nothing is ever updated: a tool call is
     # recorded after it resolves, paired with its result, not patched.
 
+    def _session_row(self, session_id: str) -> tuple[str, float] | None:
+        row = self._conn.execute(
+            "SELECT workspace_path, started_at FROM sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return (str(row[0]), float(row[1]))
+
     def append_session(self, session_id: str, workspace_path: str, started_at: float) -> None:
-        """Record a session's start. Called once per session."""
-        self._conn.execute(
-            "INSERT INTO sessions (session_id, workspace_path, started_at) VALUES (?, ?, ?)",
-            (session_id, workspace_path, started_at),
-        )
-        self._conn.commit()
+        """Record a session start. An identical row is a no-op.
+
+        The same id with different content raises ``IntegrityError``.
+        The stored row is not rewritten.
+        """
+        existing = self._session_row(session_id)
+        if existing == (workspace_path, float(started_at)):
+            return
+        try:
+            self._conn.execute(
+                "INSERT INTO sessions (session_id, workspace_path, started_at) VALUES (?, ?, ?)",
+                (session_id, workspace_path, started_at),
+            )
+            self._conn.commit()
+        except sqlite3.IntegrityError:
+            # The failed INSERT leaves a deferred transaction open. Roll
+            # it back so the next write is not stuck in it; nothing committed.
+            self._conn.rollback()
+            raise
+
+    def record_session_attach(
+        self, session_id: str, workspace_path: str, started_at: float
+    ) -> None:
+        """Insert the start row once. A later attach must not send a new clock.
+
+        Same workspace: the original row stands. A different workspace is
+        a conflict and raises, because the stored row cannot be rewritten.
+        """
+        existing = self._session_row(session_id)
+        if existing is not None and existing[0] == workspace_path:
+            return
+        self.append_session(session_id, workspace_path, started_at)
 
     def append_turn(
         self,
