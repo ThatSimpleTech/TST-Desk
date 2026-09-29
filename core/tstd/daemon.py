@@ -324,6 +324,7 @@ from .provider import (
     RetryConfig,
     auth_failure_message,
 )
+from .provider_refresh import RefreshingProvider
 from .remote_attach import (
     bind_spec_when_enabled,
     load_remote_attach,
@@ -807,27 +808,67 @@ class Daemon:
         """Build a client for the active brain tier."""
         return await self._build_client(self.config.tier("brain"))
 
+    def _credential_label(self, cred_id: str) -> str:
+        """Display name for a failure message. Never the secret."""
+        row = self.config.credentials.get(cred_id)
+        if row is not None:
+            return row.name
+        if cred_id == DEFAULT_CREDENTIAL_ID:
+            return "OpenRouter"
+        return cred_id
+
+    def _drop_provider_clients(self) -> None:
+        """Drop cached provider handles after an in-app key mutation.
+
+        The next ``_client_for`` rebuilds from the keychain. A live
+        session still holds its handle; that handle re-reads the keychain
+        on the next authentication failure (TD-4840).
+        """
+        self._clients.clear()
+
     async def _client_for(self, tier_cfg: TierConfig) -> ProviderLike:
         """The provider client for *tier_cfg*, cached by URL and key.
 
         An injected constructor provider (tests) is returned for every
         tier so a mock stays in front of the loop. Production caches one
-        client per ``(base_url, credential)`` so two keys on one host do
+        handle per ``(base_url, credential)`` so two keys on one host do
         not share a client, and a remapped local worker (TD-3903) does
-        not reuse the remote brain client.
+        not reuse the remote brain client. The handle, not the HTTP
+        client, is what the session loop keeps. An authentication failure
+        closes the HTTP client and rebuilds it from the keychain (TD-4840).
+        A missing or empty key is not cached, so the next turn re-reads.
         """
         if self._provider is not None:
             return self._provider
-        cache_key = (
-            resolve_base_url(self.config, tier_cfg),
-            resolve_credential_id(tier_cfg) or "",
-        )
+        base_url = resolve_base_url(self.config, tier_cfg)
+        cred_id = resolve_credential_id(tier_cfg) or ""
+        cache_key = (base_url, cred_id)
         cached = self._clients.get(cache_key)
         if cached is not None:
             return cached
-        client = await self._build_client(tier_cfg)
-        self._clients[cache_key] = client
-        return client
+        try:
+            client = await self._build_client(tier_cfg)
+        except KeychainError:
+            # Nothing was inserted. Pop anyway so a later edit cannot
+            # leave a sentinel that skips the next keychain read.
+            self._clients.pop(cache_key, None)
+            raise
+        if not cred_id:
+            self._clients[cache_key] = client
+            return client
+
+        async def rebuild() -> ProviderClient:
+            return await self._build_client(tier_cfg)
+
+        handle = RefreshingProvider(
+            client,
+            credential_id=cred_id,
+            credential_name=self._credential_label(cred_id),
+            base_url=base_url,
+            rebuild=rebuild,
+        )
+        self._clients[cache_key] = handle
+        return handle
 
     async def _ensure_provider(self) -> ProviderLike:
         """Create the shared provider client on first use.
@@ -944,7 +985,7 @@ class Daemon:
         """Re-read config.yaml, keep the live preset, drop cached clients."""
         self.config = load_config().model_copy(update={"active_preset": self.config.active_preset})
         self._slug_snapshot = _snapshot_slugs(self.config)
-        self._clients.clear()
+        self._drop_provider_clients()
 
     def _host_to_persist(
         self, cred_id: str, catalog_name: str, requested: str | None
@@ -2367,7 +2408,7 @@ class Daemon:
                 return build_error("keychain_locked", str(e))
             except (KeychainError, NotImplementedError) as e:
                 return build_error("key_delete_failed", f"Could not remove the API key: {e}")
-            self._clients.clear()
+            self._drop_provider_clients()
             self._invalidate_stored_probe()
             log.info(
                 "api key removed from keychain",

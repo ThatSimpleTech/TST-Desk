@@ -10575,3 +10575,44 @@ existing event already renders.
 
 **Alternative rejected:** Hardcoding 32768, and retrying inside the
 provider client (that would resend the same oversized prompt).
+
+## TD-4840 — A fixed or rotated API key is picked up without a restart (Class B)
+
+2026-09-29.
+
+**Decision:** `Daemon._clients` keeps one handle per `(base_url, credential)`.
+The HTTP client inside that handle is what gets closed and replaced. The
+session loop holds the handle for the life of the session, so replacing
+the dict entry alone would leave the stale client in place.
+
+**Decision:** An authentication failure (HTTP 401 or 403, or the codes
+`auth_failed` and `forbidden`) rebuilds the client from the keychain and
+retries the call once, only when the SHA-256 digest of the key changed.
+Digests are compared in memory with `hmac.compare_digest` and are never
+logged. An unchanged key fails the turn with `api_key_rejected` and a
+message that names the credential and the host, never the key. The chat
+transcript carries that sentence. The banner in `error-copy.ts` is static.
+No protocol change.
+
+**Decision:** `KeychainError` while building the first client caches
+nothing. The same error during a refresh is returned as `missing_api_key`
+so the session stays up and the next turn reads the keychain again. A
+second authentication failure, after the key did change, is the provider's
+own error. There is no third try.
+
+**Decision:** An in-app key change still drops the cache and does not close
+clients a live session is holding. Those handles re-read the keychain on
+the next authentication failure. A keyless loopback client stays unwrapped.
+
+**Rationale:** The cache exists so a turn does not prompt the macOS
+keychain on every call (TD-4838). The bug was the other side of that: a
+key fixed outside the app, or rotated on the server, stayed inside the
+client until restart. One retry distinguishes "the key changed" from
+"this key is wrong". Retrying an unchanged key would only repeat the 401.
+
+**Alternative rejected:** Re-reading the keychain on every request.
+Retrying when the digest is unchanged. Logging the key or the digest. A
+protocol field so the banner can name the host. Mutating
+`ProviderClient.api_key` in place without closing the HTTP client.
+Refreshing inside `retry_call`. An epoch counter so an in-app edit is
+noticed before the next 401.
