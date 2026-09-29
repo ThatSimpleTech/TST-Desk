@@ -6967,6 +6967,45 @@ Integration test runs the probe against a headless daemon on CI hosts; full
 
 ---
 
+### TD-4840 — A fixed or rotated API key is picked up without a restart
+**Size:** 2 · **Depends on:** TD-4838, TD-4839
+
+`Daemon._clients` kept the API key read when the client was built, and
+dropped that client only when a key changed inside the app. A key fixed
+in the keychain from outside, or rotated by the server, was sent on
+every later turn until restart. An empty stored value went out as
+`Authorization: Bearer `.
+
+**Acceptance criteria:**
+- [x] HTTP 401 and 403 (`auth_failed`, `forbidden`) close that tier's
+      cached HTTP client, rebuild it from the keychain, and retry the
+      call once, only when a digest of the key changed. The key and the
+      digest are not logged
+- [x] An unchanged key fails the turn with `api_key_rejected` and a
+      message naming the credential and host, for example
+      "EZER (192.0.2.49:4000) rejected the API key (401) — check it in
+      Settings → API keys". `error-copy.ts` maps the code. The
+      conversation is preserved
+- [x] A missing or empty key (`KeychainError`) is not cached, so the
+      next turn reads the keychain again
+- [x] Changing or deleting a key in the app still drops the cache, and
+      that drop does not close a client a live session is holding
+- [x] A stale key is retried once with the new key and the turn
+      succeeds. An unchanged key is not retried. Evicted clients are
+      closed. Logs and the turn text do not contain the key
+
+Done (2026-09-29): a cached provider handle closes its HTTP client after
+a rejected key and rebuilds from the keychain. The call is retried once
+when the key's digest changed. An unchanged key fails the turn with
+`api_key_rejected`, naming the credential and host. A missing or empty
+key is not cached. In-app key changes still clear the cache without
+closing live clients. Class B entry in DECISIONS.md.
+
+Suite: 3612 passed / 8 skipped, ruff + `mypy --strict` clean over 157
+files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |

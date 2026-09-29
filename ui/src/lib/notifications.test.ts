@@ -72,6 +72,18 @@ describe("error copy", () => {
     }
   });
 
+  it("an unchanged rejected key points at Settings → API keys", () => {
+    // TD-4840. The daemon already re-read the keychain, so the banner
+    // must not read as an unrecognised code, and it must not send the
+    // user back through the first-run wizard.
+    const spec = turnFailureCopy("api_key_rejected");
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.title).toBe("API key rejected");
+    expect(spec?.body).toContain("Settings → API keys");
+    expect(spec?.body).not.toContain("api_key_rejected");
+    expect(spec?.body).not.toContain("title-bar gear");
+  });
+
   it("an unresolved local model is a banner naming the fix, not a raw code", () => {
     // TD-1805 shipped the error_code to the wire with no entry here, so the
     // user read "model_unresolved" off the fallback. Nothing works until they
