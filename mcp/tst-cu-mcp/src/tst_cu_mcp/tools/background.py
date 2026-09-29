@@ -7,6 +7,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from tst_cu_mcp import ui
+from tst_cu_mcp.settle import SETTLE_NOTE, SettleMs, bound_ms, with_foreground
 
 
 def register_background_tools(server: MCPServer) -> None:
@@ -49,7 +50,7 @@ def register_background_tools(server: MCPServer) -> None:
             "Act on one accessibility element without moving the pointer or "
             "keyboard. `action` is press, set_value, focus, raise, or show_menu. "
             "`element_id` comes from ui_snapshot. `set_value` needs `value`. "
-            "The app does not have to be in front. Refused for denied apps."
+            "The app does not have to be in front. Refused for denied apps." + SETTLE_NOTE
         ),
         structured_output=False,
     )
@@ -58,20 +59,23 @@ def register_background_tools(server: MCPServer) -> None:
         element_id: str,
         action: str,
         value: str | None = None,
+        settle_ms: SettleMs = 0,
     ) -> dict[str, Any]:
-        return ui.ui_action(app, element_id, action, value)
+        bound_ms(settle_ms, name="settle_ms")
+        return with_foreground(ui.ui_action(app, element_id, action, value), settle_ms)
 
     @server.tool(
         name="launch_app",
         description=(
             "Open an application by display name or bundle id (macOS `open -a` / "
             "`open -b`) without Spotlight and without taking the pointer. Then "
-            "ui_snapshot. Denied apps are refused."
+            "ui_snapshot. Denied apps are refused." + SETTLE_NOTE
         ),
         structured_output=False,
     )
-    def launch_app(app: str) -> dict[str, Any]:
-        return ui.launch_app(app)
+    def launch_app(app: str, settle_ms: SettleMs = 0) -> dict[str, Any]:
+        bound_ms(settle_ms, name="settle_ms")
+        return with_foreground(ui.launch_app(app), settle_ms)
 
     @server.tool(
         name="hide_other_apps",
