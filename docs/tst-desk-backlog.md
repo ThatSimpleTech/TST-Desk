@@ -7112,6 +7112,74 @@ files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
 
 ---
 
+### TD-4843 — Everything the daemon reads and writes follows --data-dir
+**Size:** 2 · **Depends on:** TD-4842
+
+`tstd --data-dir <scratch>` still loaded and wrote the real user
+`config.yaml`. A test or a second daemon used that user's presets,
+credentials, and settings, and a Settings write landed in the real
+file. TD-4842 fixed the same class of bug for logs only.
+
+**Acceptance criteria:**
+- [x] The daemon loads, reloads, and writes `<data-dir>/config.yaml`.
+      With no `--data-dir`, that file is the platform user data
+      directory, the same place as before
+- [x] A Settings write from a daemon with its own data dir lands in
+      that file. The library default is untouched
+- [x] `cached_config()` with no path still reads the library default
+      for callers that have no daemon
+- [x] The other daemon and `tst` files follow that data dir. The OS
+      keychain, the cu-mcp policy, the Grok home, the workspace
+      charter, and the library `open_default` path stay where they are
+- [x] `tst` reads `<data-dir>/config.yaml` for the turn timeout
+
+Done (2026-09-29): a daemon's config file is `<data-dir>/config.yaml`
+for load, reload, and every Settings write. No flag still uses the
+platform directory. `cached_config()` with no path is unchanged.
+Voice, approvals, stars, pins, memory, scheduler, port file, sessions,
+audit, logs, and the rest of the daemon tree already took a data
+directory; the ones that did not now do, except the keychain, the
+shared cu-mcp policy, the Grok home, and the workspace charter.
+`tst` turn timeout reads the same file. Class B entry in DECISIONS.md.
+
+Suite: 3696 passed / 8 skipped, ruff + `mypy --strict` clean over 162
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
+
+---
+
+### TD-4844 — Shutdown after a finished session completes inside the budget
+**Size:** 2 · **Depends on:** TD-4842
+
+A daemon that had served one completed turn (`open_workspace`,
+`attach`, `user_message`, `turn_complete`, client then disconnected)
+took 5.1s to exit on SIGTERM. The shutdown budget fired and the
+process exited non-zero. With no completed session it exited in 0.1s.
+
+**Acceptance criteria:**
+- [x] A spawned daemon that completes one mock-provider turn, drops
+      the client, and receives SIGTERM exits 0 well inside the 5s
+      budget, and the port file is removed
+- [x] The same holds when quit-distill's provider call does not
+      return. Shutdown does not wait out that read
+- [x] When a shutdown phase exceeds 1s, an INFO log names the longest
+      phase
+- [x] TD-4842's budget path still exits non-zero and removes the port
+      file when cleanup does not return
+
+Done (2026-09-29): quit distill still runs, beside the rest of the
+close. A provider that has already answered keeps its proposal. A
+provider call still in flight when the sockets, sessions, and audit
+writer are done is cancelled and logged, and the process exits 0. The
+read that blocked was distill's non-streaming completion, whose
+timeout is longer than the shutdown budget. A phase still running
+after one second is named in the log. End session still waits on the
+provider. Class B entry in DECISIONS.md.
+
+Suite: 3706 passed / 8 skipped, ruff + `mypy --strict` clean over 163
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -7147,8 +7215,8 @@ files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 15 | 70 |
-| **Total planned** | **48** | **323** | **1027** |
+| Later | E47, E49 | 18 | 76 |
+| **Total planned** | **48** | **326** | **1033** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

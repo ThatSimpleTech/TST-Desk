@@ -23,6 +23,7 @@ anything to it.
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -110,7 +111,12 @@ class TestHarnessOnTheLocalPreset:
     ) -> None:
         """The regression, end to end: before the fix this raised
         ``ModelDiscoveryError`` out of plan construction and no pass ran."""
-        result = await run(tmp_path / "workspace", tmp_path / "data")
+        data = tmp_path / "data"
+        data.mkdir()
+        # The daemon reads <data-dir>/config.yaml, not the library file
+        # this fixture just wrote (TD-4843).
+        shutil.copyfile(user_data_dir() / "config.yaml", data / "config.yaml")
+        result = await run(tmp_path / "workspace", data)
         assert result.ok, f"harness failed:\n{result.report()}"
 
     async def test_the_script_is_keyed_on_the_discovered_model(
