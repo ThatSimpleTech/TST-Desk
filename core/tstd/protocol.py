@@ -1026,6 +1026,9 @@ class SaveJob(ClientMessage):
     next_run: str | None = None
     deliver_to: Literal["window", "slack", "ntfy"] | None = None
     paused: bool = False
+    # IANA name ("America/Chicago") a cron cadence is read in. Omitted on an
+    # edit keeps the job's current zone; None on create means UTC.
+    timezone: str | None = None
 
 
 class DeleteJob(ClientMessage):
@@ -2255,6 +2258,7 @@ class JobEntry(BaseModel):
     next_run: str | None = None
     deliver_to: Literal["window", "slack", "ntfy"]
     paused: bool = False
+    timezone: str | None = None
     last_run: str | None = None
     last_status: Literal["ok", "failed"] | None = None
     last_summary: str | None = None

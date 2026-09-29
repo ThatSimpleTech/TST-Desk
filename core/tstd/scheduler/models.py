@@ -12,6 +12,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     BaseModel,
@@ -23,6 +24,7 @@ from pydantic import (
 )
 
 from ..logging import redact_secrets
+from .phrases import expand_alias, phrase_to_cron
 
 DeliverTo = Literal["window", "slack", "ntfy"]
 RunStatus = Literal["ok", "failed"]
@@ -38,6 +40,24 @@ _INTERVAL = re.compile(
     r"^every\s+([1-9]\d*)\s+(minutes?|hours?|days?)$",
     re.IGNORECASE,
 )
+# Inclusive bounds per cron field. Day-of-week allows 7 because Sunday is
+# both 0 and 7. Checked at save time so a typo is refused with the form still
+# open, instead of failing inside the runner's next-fire search.
+_CRON_BOUNDS = (
+    ("minute", 0, 59),
+    ("hour", 0, 23),
+    ("day", 1, 31),
+    ("month", 1, 12),
+    ("weekday", 0, 7),
+)
+_FIELD_LABELS = {
+    "workspace": "Workspace",
+    "instruction": "Instruction",
+    "cadence": "Cadence",
+    "next_run": "Next run",
+    "deliver_to": "Deliver to",
+    "timezone": "Time zone",
+}
 _UNITS = {
     "minute": "minute",
     "minutes": "minute",
@@ -68,6 +88,7 @@ class JobDraft(BaseModel):
     next_run: str | None = None
     deliver_to: DeliverTo | None = None
     paused: bool = False
+    timezone: str | None = None
 
 
 class Job(BaseModel):
@@ -87,6 +108,9 @@ class Job(BaseModel):
     next_run: str | None = None
     deliver_to: DeliverTo
     paused: bool = False
+    # IANA name the cron cadence is read in. None is UTC, which is what every
+    # job saved before this field existed already means.
+    timezone: str | None = None
 
     # ── Last run (TD-3807) ────────────────────────────────────────────
     # Optional so a jobs.json written before this landed still loads.
@@ -124,6 +148,11 @@ class Job(BaseModel):
         if value is None:
             return None
         return normalize_cadence(value)
+
+    @field_validator("timezone")
+    @classmethod
+    def _timezone_known(cls, value: str | None) -> str | None:
+        return normalize_timezone(value)
 
     @field_validator("next_run")
     @classmethod
@@ -176,7 +205,9 @@ def normalize_workspace(raw: str) -> str:
         raise JobValidationError("workspace must be a filesystem path")
     path = Path(text).expanduser()
     if not path.is_absolute():
-        raise JobValidationError("workspace must be an absolute path")
+        raise JobValidationError(
+            f"must be a full folder path such as ~/Documents/project (got {raw.strip()!r})"
+        )
     return os.path.normpath(str(path))
 
 
@@ -193,10 +224,68 @@ def normalize_cadence(raw: str) -> str:
         return f"every {count} {unit}"
     fields = text.split()
     if len(fields) == 5 and all(_CRON_FIELD.fullmatch(part) for part in fields):
+        _check_cron_ranges(fields, text)
         return " ".join(fields)
+    cron = expand_alias(text) or phrase_to_cron(text)
+    if cron is not None:
+        return cron
     raise JobValidationError(
-        "cadence must be a 5-field cron expression or 'every N minutes|hours|days'"
+        f"cadence not understood: {text!r}. "
+        "Try 'weekdays at 7:45', 'every 2 hours', or cron like '45 7 * * 1-5'"
     )
+
+
+def _check_cron_ranges(fields: list[str], text: str) -> None:
+    for (name, low, high), field in zip(_CRON_BOUNDS, fields, strict=True):
+        for part in field.split(","):
+            base, _, step = part.partition("/")
+            numbers = [] if base == "*" else [int(n) for n in base.split("-")]
+            in_range = all(low <= n <= high for n in numbers)
+            if not in_range or numbers != sorted(numbers) or step == "0":
+                raise JobValidationError(
+                    f"cadence has an impossible {name} in {text!r} "
+                    f"(allowed {low}-{high}); cron is 'minute hour day month weekday'"
+                )
+
+
+def normalize_timezone(raw: str | None) -> str | None:
+    """A known IANA zone name, or None for UTC. Blank means unset."""
+    if raw is None or not raw.strip():
+        return None
+    name = raw.strip()
+    try:
+        ZoneInfo(name)
+    except (KeyError, ValueError, OSError):
+        # Unknown names are ZoneInfoNotFoundError (a KeyError), malformed
+        # keys like "../etc" are ValueError, a directory name like "America"
+        # is an OSError. To the user they are all the same mistake.
+        raise JobValidationError(f"timezone '{name}' is not a known IANA time zone") from None
+    return name
+
+
+def describe_validation_error(exc: ValidationError) -> str:
+    """One human line for a pydantic failure: ``Workspace: …; Cadence: …``.
+
+    The default rendering is a multi-line dump with a docs link, which the
+    window shows verbatim. Each part is cut down to the message the
+    validator wrote; a model-level error has no field and is the bare message.
+    """
+    parts: list[str] = []
+    for error in exc.errors():
+        message = error["msg"].removeprefix("Value error, ")
+        field = str(error["loc"][0]) if error["loc"] else ""
+        label = _FIELD_LABELS.get(field, field.replace("_", " ").capitalize())
+        parts.append(f"{label}: {_drop_field_name(message, field)}" if label else message)
+    return "; ".join(parts)
+
+
+def _drop_field_name(message: str, field: str) -> str:
+    """Validators name their own field ("cadence not understood"); after the
+    label that reads twice, so the repeat goes."""
+    for name in (field, field.replace("_", " ")):
+        if name and message.lower().startswith(name + " "):
+            return message[len(name) + 1 :]
+    return message
 
 
 def normalize_summary(raw: str | None) -> str | None:
@@ -257,8 +346,7 @@ def validate_draft(draft: JobDraft) -> Job:
             next_run=draft.next_run,
             deliver_to=draft.deliver_to or "window",
             paused=draft.paused,
+            timezone=draft.timezone,
         )
-    except (ValidationError, JobValidationError) as exc:
-        if isinstance(exc, JobValidationError):
-            raise
-        raise JobValidationError(str(exc)) from exc
+    except ValidationError as exc:
+        raise JobValidationError(describe_validation_error(exc)) from exc

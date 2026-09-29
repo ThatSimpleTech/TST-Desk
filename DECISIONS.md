@@ -10308,3 +10308,53 @@ stdout reader's private `_limit`. This preserves the 16 MiB stdout allowance
 and also applies it to stderr, as the public API configures both pipe readers.
 Assistant continuation preserves existing message metadata and multimodal parts;
 only the text projection is used for visible-delta comparison.
+
+## TD-3808 — Plain-English cadence, per-job time zone, readable job errors (Class B)
+
+**Cadence phrases become cron at the edge.** `normalize_cadence` accepts
+`7:45 on weekdays`, `every day at 9:30pm`, `mon, wed and fri at 17:00`,
+`hourly`, and the `@hourly|@daily|@midnight|@weekly|@monthly` aliases, and
+stores the equivalent 5-field cron (`45 7 * * 1-5`). The store, runner and UI
+only ever see an interval or cron; English lives in one module
+(`scheduler/phrases.py`). The grammar is a bag of tokens (fillers, day words,
+at most one clock time) rather than per-word-order rules, so "at 9am every
+day" and "every day at 9am" need no separate patterns. A bare number counts
+as a time only after "at", and inside a longer sentence a phrase needs a day
+word or an explicit time, so "look at 3 files" is not a schedule. Cron fields
+are now range-checked at save time; before, `99 99 * * *` saved and then
+failed inside the runner's next-fire search.
+
+**`timezone` (IANA name) on Job, JobDraft, `SaveJob`, `JobEntry`.** "7:45"
+means the user's 7:45, but cron was evaluated in UTC, which would have fired
+that job at 02:45 Central. A cron cadence is now matched against the zone's
+wall clock and `next_run` is still stored as UTC ISO. `None` keeps the UTC
+behaviour, so existing `jobs.json` rows are unchanged; intervals are elapsed
+time and ignore the zone. An edit that omits `timezone` keeps the current one
+(as `cadence` does), and an edit that changes cadence or zone without
+supplying `next_run` clears the stale slot so the runner re-arms it.
+Rejected: storing a UTC offset (wrong half the year) and deriving the zone in
+the daemon from the OS (a daemon can run on a different host than the user's
+clock, and the choice would be invisible on the row).
+
+**DST.** The next-fire search walks naive wall-clock time and converts only
+matching candidates. A wall time that does not exist (spring-forward gap) is
+skipped, not shifted, so `30 2 * * *` misses that one night. A wall time that
+repeats (fall back) fires once, at its first occurrence. Day and hour
+mismatches jump a whole day or hour, so a year-horizon search is a few hundred
+steps instead of 527k.
+
+**Dependency: `tzdata` on Windows only.** `zoneinfo` reads the OS tz
+database on macOS and Linux; Windows has none, and the pane now sends the
+viewer's zone on every create, so without it every Windows save would be
+refused as an unknown zone. Added as `tzdata; sys_platform == 'win32'`
+(Apache-2.0, pure data, no code), so macOS and Linux installs are unchanged.
+
+**Errors.** `describe_validation_error` renders a pydantic failure as
+`Workspace: …; Cadence: …` (field labels, no `Value error,` prefix, no
+`[type=…]`, no docs link). `validate_draft`, the daemon save path and the JSON
+draft parse use it. A bare workspace name ("Client Reports") on *create* resolves
+to the one known workspace (sessions and pins) with that basename,
+case-insensitively; zero or several matches fall through to the "must be a
+full folder path" error rather than guess. A missing folder is refused on
+create only; the model validator stays lenient because it also loads old rows,
+and a job whose folder moved must still be pausable or deletable.
