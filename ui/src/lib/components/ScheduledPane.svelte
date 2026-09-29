@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Scheduled rail surface (TD-3805, TD-3810, TD-3811).
+	// Scheduled rail surface (TD-3805, TD-3810, TD-3811, TD-3813).
 	//
 	// Lists persisted jobs and creates, edits, pauses, deletes, and runs them
 	// through protocol verbs. Draft fields, not NL. Run now fires one job; the
@@ -25,12 +25,14 @@
 		jobFailed,
 		jobFormCopy,
 		jobMeta,
+		jobMissed,
 		jobsEmptyCopy,
 		workspaceSuggestions,
 	} from '../scheduled';
 	import { visibleRecents, workspaces } from '../workspaces.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
+	import ScheduledGraceField from './ScheduledGraceField.svelte';
 	import ScheduledHistory from './ScheduledHistory.svelte';
 	import ScheduledPinFields from './ScheduledPinFields.svelte';
 
@@ -62,11 +64,15 @@
 			<ul class="list">
 				{#each scheduled.items as row (row.id)}
 					<li>
-						<div class="card" class:card-failed={jobFailed(row)}>
+						<div class="card" class:card-failed={jobFailed(row)} class:card-missed={jobMissed(row)}>
 							<span class="card-name">{row.instruction}</span>
 							<span class="card-meta">{jobMeta(row)}</span>
 							<span class="card-path">{row.workspace}</span>
-							<span class="card-run" class:run-failed={jobFailed(row) && !row.running}>{jobActivity(row)}</span>
+							<span
+								class="card-run"
+								class:run-failed={jobFailed(row) && !row.running}
+								class:run-missed={jobMissed(row) && !row.running}>{jobActivity(row)}</span
+							>
 							{#if row.last_summary}
 								<p class="card-summary">{row.last_summary}</p>
 							{/if}
@@ -164,6 +170,7 @@
 				<option value="ntfy">ntfy</option>
 			</select>
 		</label>
+		<ScheduledGraceField />
 		<ScheduledPinFields />
 		{#if scheduled.error !== null}
 			<p class="error" role="alert">{scheduled.error}</p>
@@ -304,6 +311,15 @@
 
 	.card-failed {
 		border-color: var(--color-err);
+	}
+
+	/* Missed is a skipped slot, not a turn that failed. Warn, not the error red. */
+	.run-missed {
+		color: var(--color-warn);
+	}
+
+	.card-missed {
+		border-color: var(--color-warn);
 	}
 
 	/* The last summary is the only place a scheduled run's output is

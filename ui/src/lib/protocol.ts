@@ -633,6 +633,10 @@ export interface SaveJob extends ClientMessage {
   preset?: string | null;
   /** `native` or `grok`. Same omit / `""` rules as `preset`. `""` clears; it is not a kind. */
   engine?: "" | "native" | "grok" | null;
+  /** How late a slot may be and still run (TD-3813). A phrase ("2 hours",
+   *  "30 minutes") or a number of seconds. On an edit, omitted keeps the
+   *  stored grace and `""` clears it. Omitted on create means always run. */
+  grace?: string | number | null;
 }
 
 /** Remove a scheduled job by id (TD-3805). */
@@ -1486,9 +1490,12 @@ export interface JobEntry {
   preset?: string | null;
   /** Engine kind. Absent or null means use the window's current engine. */
   engine?: "native" | "grok" | null;
-  /** The last fire's receipt (TD-3807). Null until the job has run once. */
+  /** Seconds a slot may be late and still run. Absent or null means always run (TD-3813). */
+  grace?: number | null;
+  /** The last fire's receipt (TD-3807). Null until the job has run once.
+   *  `missed` is a slot skipped for lateness, not a failed turn (TD-3813). */
   last_run: string | null;
-  last_status: "ok" | "failed" | null;
+  last_status: "ok" | "failed" | "missed" | null;
   last_summary: string | null;
   last_session_id: string | null;
   /** True while a turn for this job is in flight (TD-3809). Not stored. */
@@ -1506,7 +1513,8 @@ export interface JobRunEntry {
   started_at: string;
   scheduled_for: string | null;
   trigger: "schedule" | "manual";
-  status: "ok" | "failed";
+  /** `missed` is a slot skipped for lateness (TD-3813). */
+  status: "ok" | "failed" | "missed";
   summary: string | null;
   session_id: string | null;
 }

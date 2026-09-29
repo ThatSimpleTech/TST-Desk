@@ -21,6 +21,7 @@ from ..logging import get_logger
 from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
 from .history import append_run
+from .late import skip_if_late
 from .models import DeliverTo, Job
 from .pin import (
     bind_scheduled_pin,
@@ -249,6 +250,11 @@ async def _run_one(
     run_turn: TurnFn,
     deliver: Deliver,
 ) -> None:
+    # A slot past grace is spent like a run — next slot, receipt, history,
+    # one line on the channel — but the session does not start. Run now
+    # never enters this function, so asking for a run cannot skip it.
+    if await skip_if_late(data_dir, job, now, deliver):
+        return
     result = await _turn_result(job, run_turn)
     # The slot that fired. advance_job replaces it, so the log has to
     # capture it first — a manual run passes None instead.

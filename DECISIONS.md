@@ -10926,3 +10926,49 @@ later story could pass the ordinary suite while leaking a socket.
 inside chat text while the event still says `auth_failed`. A third
 retry. Suppressing the warning on that one test. Changing production
 shutdown so the test's server would close.
+
+## TD-3813 — A late slot has a grace, stored as seconds (Class B)
+
+2026-09-29.
+
+**Decision:** `Job.grace` and `JobEntry.grace` are an integer number of
+seconds, or null. Null is the previous behaviour: a missed slot runs
+once on wake. Save accepts the same plain-English durations the
+scheduler already understands ("2 hours", "30 minutes", "every 2
+hours") and a positive integer number of seconds, so a `job_list` row
+can be saved back. The tick compares `now - next_run` to that duration
+and does not parse text. A jobs.json written before this field loads
+with grace null.
+
+**Rationale:** "2 hours", "120 minutes", and 7200 are one window. A
+phrase on disk would be parsed on every tick, two spellings would not
+compare equal, and a bad string would fail the tick instead of the
+save.
+
+**Alternative rejected:** Storing the raw phrase. Storing the text in
+the cadence's "every N unit" shape. That shape is a schedule, not a
+lateness window.
+
+**Decision:** `SaveJob.grace` is `str | int | None`. On an edit, null
+keeps the stored seconds and `""` clears them. On create, null and
+`""` both mean always run. `JobEntry.grace` is always seconds or null.
+No protocol version bump. An old client ignores the new field, the
+same way TD-3810 and TD-3812 added fields.
+
+**Decision:** The tick skips only when lateness is strictly greater
+than grace. A slot that is late by exactly the grace still runs. The
+select says "more than". Run now does not consult grace.
+
+**Alternative rejected:** Skipping at `>=`, which would drop a slot
+the user said was still worth running. Letting Run now honor grace,
+which would make an explicit fire do nothing.
+
+**Decision:** A skip uses the same `advance_job` a run uses. A one-shot
+is spent the TD-3807 way (paused, `next_run` cleared) and a recurring
+job gets one future slot. The tick stamps `last_status: missed`,
+appends a history line with trigger `schedule`, delivers one line on
+the job's channel, and does not open a session. The clock in that line
+is the slot in the job's zone, UTC when the job has none. Lateness is
+ceiled to the minute so the line never claims a shorter delay. A grace
+longer than 366 days is refused at save time so a typo cannot overflow
+the clock arithmetic.
