@@ -658,6 +658,7 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         timezone=job.timezone,
         preset=job.preset,
         engine=job.engine,
+        grace=job.grace,
         last_run=job.last_run,
         last_status=job.last_status,
         last_summary=job.last_summary,
@@ -3523,6 +3524,7 @@ class Daemon:
                     preset=msg.preset,
                     engine=msg.engine,
                     known_presets=self.config.presets,
+                    grace=msg.grace,
                 ),
             )
         job = validate_draft(
@@ -3537,6 +3539,7 @@ class Daemon:
                 timezone=msg.timezone,
                 preset=msg.preset,
                 engine=msg.engine,
+                grace=msg.grace,
             )
         )
         # Create only: an existing job whose folder moved must stay editable

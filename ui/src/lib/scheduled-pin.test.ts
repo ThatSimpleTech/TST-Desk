@@ -120,6 +120,7 @@ describe("pin on the wire", () => {
 				paused: false,
 				preset: "",
 				engine: "",
+				grace: "",
 			},
 			"UTC",
 		);
@@ -136,6 +137,7 @@ describe("pin on the wire", () => {
 				paused: false,
 				preset: "vllm",
 				engine: "grok",
+				grace: "",
 			},
 			"UTC",
 		);

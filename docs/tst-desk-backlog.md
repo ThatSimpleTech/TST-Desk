@@ -6184,6 +6184,37 @@ files, vitest 1411, svelte-check 709 files 0 errors 0 warnings.
 
 ---
 
+### TD-3813 — Skip a scheduled slot that is already hours late
+**Size:** 3 · **Depends on:** TD-3807, TD-3811
+
+**Acceptance criteria:**
+- [x] A job may set `grace` as a plain-English duration ("2 hours",
+      "30 minutes"). It is stored as seconds. Omitted means a late slot
+      still runs once
+- [x] A due slot older than now minus grace does not start a session.
+      The job advances as a run would, and a one-shot is spent. The
+      receipt and the history line are `missed` with trigger `schedule`,
+      and the channel gets one skip line
+- [x] A slot inside the grace, a slot with no grace, and Run now all
+      run. A slot that is late by exactly the grace still runs
+- [x] The job form has If late (Always run / 30 min / 1 h / 2 h / 6 h).
+      Edit keeps an omitted grace and clears `""`. The row and the
+      history say Missed, distinct from Failed
+
+Done (2026-09-29): a laptop that slept through 7:45 still fired the
+morning digest when it opened at 18:00. A job can now name how late is
+still that slot. Past that, the tick spends the slot, records `missed`,
+and sends one line ("Skipped the 7:45 AM run — 10 h late") instead of
+starting a session. Run now still fires. The form's If late select is
+Always run unless the user picks a window. The row, the history, and
+the window notification say Missed, not Failed. Class B entry in
+DECISIONS.md.
+
+Suite: 3779 passed / 8 skipped, ruff + `mypy --strict` clean over 165
+files, vitest 1420, svelte-check 711 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone

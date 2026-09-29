@@ -24,11 +24,12 @@ from pydantic import (
 )
 
 from ..logging import redact_secrets
+from .grace import GraceError, parse_grace
 from .phrases import expand_alias, phrase_to_cron
 from .pin import normalize_engine, normalize_preset
 
 DeliverTo = Literal["window", "slack", "ntfy"]
-RunStatus = Literal["ok", "failed"]
+RunStatus = Literal["ok", "failed", "missed"]
 
 #: A run summary is a receipt, not a transcript. Anything longer is cut so
 #: jobs.json cannot grow without bound on a job that fires every minute.
@@ -60,6 +61,7 @@ _FIELD_LABELS = {
     "timezone": "Time zone",
     "preset": "Preset",
     "engine": "Engine",
+    "grace": "If late",
 }
 _UNITS = {
     "minute": "minute",
@@ -95,6 +97,8 @@ class JobDraft(BaseModel):
     # Catalog name and engine kind (TD-3812). Blank becomes None in ``Job``.
     preset: str | None = None
     engine: str | None = None
+    # Phrase ("2 hours") or seconds. Blank is no grace. ``Job`` stores seconds.
+    grace: str | int | None = None
 
 
 class Job(BaseModel):
@@ -124,6 +128,10 @@ class Job(BaseModel):
     # works. Slugs, URLs, and keys are not stored.
     preset: str | None = None
     engine: Literal["native", "grok"] | None = None
+    # Seconds a slot may be late and still run (TD-3813). None fires a
+    # missed slot once, however old it is. The phrase is not stored:
+    # "2 hours" and 7200 are one window, and the tick subtracts it.
+    grace: int | None = None
 
     # ── Last run (TD-3807) ────────────────────────────────────────────
     # Optional so a jobs.json written before this landed still loads.
@@ -184,6 +192,16 @@ class Job(BaseModel):
         if not isinstance(value, str):
             raise ValueError("must be native or grok")
         return normalize_engine(value)
+
+    @field_validator("grace", mode="before")
+    @classmethod
+    def _grace_seconds(cls, value: object) -> int | None:
+        # The annotation is the stored seconds. The phrase is accepted
+        # here so a hand-edited jobs.json and a save both land as one int.
+        try:
+            return parse_grace(value)
+        except GraceError as exc:
+            raise ValueError(str(exc)) from None
 
     @field_validator("next_run")
     @classmethod
@@ -382,6 +400,9 @@ def validate_draft(draft: JobDraft) -> Job:
             # The field is the stored kind. The validator still accepts "",
             # "Native", and a bad string, and turns the last into the error.
             engine=cast(Literal["native", "grok"] | None, draft.engine),
+            # Same as engine: the annotation is seconds, the validator
+            # accepts the phrase and a blank.
+            grace=cast(int | None, draft.grace),
         )
     except ValidationError as exc:
         raise JobValidationError(describe_validation_error(exc)) from exc

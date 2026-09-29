@@ -1,7 +1,9 @@
 """When a job is due and how the cadence advances (TD-3804).
 
 A missed ``next_run`` is one fire, then the next slot is computed from
-*now* — never a catch-up loop over every skipped interval.
+*now* — never a catch-up loop over every skipped interval. When the job
+sets ``grace`` and the slot is already older than that, the same advance
+happens without the fire (TD-3813).
 """
 
 from __future__ import annotations

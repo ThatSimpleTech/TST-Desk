@@ -1041,6 +1041,12 @@ class SaveJob(ClientMessage):
     # so the field stays a string until the job normalizes it.
     preset: str | None = None
     engine: str | None = None
+    # How late a slot may be and still run (TD-3813). A phrase the
+    # scheduler already understands ("2 hours", "30 minutes", "every 2
+    # hours") or a positive number of seconds. The job stores seconds.
+    # On an edit, None keeps the stored grace and "" clears it back to
+    # always running a late slot once. Omitted on create means that too.
+    grace: str | int | None = None
 
 
 class DeleteJob(ClientMessage):
@@ -2302,8 +2308,11 @@ class JobEntry(BaseModel):
     # None means the run uses the window's current preset and engine.
     preset: str | None = None
     engine: Literal["native", "grok"] | None = None
+    # Seconds a slot may be late and still run. None fires a missed slot
+    # once, however old it is (TD-3813). The phrase is not on this event.
+    grace: int | None = None
     last_run: str | None = None
-    last_status: Literal["ok", "failed"] | None = None
+    last_status: Literal["ok", "failed", "missed"] | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
     # Not persisted. It mirrors the daemon's in-flight set, so a restart
@@ -2327,13 +2336,14 @@ class JobRunEntry(BaseModel):
 
     ``scheduled_for`` is the slot that fired, or null for Run now.
     ``summary`` is already redacted and capped the same way as
-    ``JobEntry.last_summary``.
+    ``JobEntry.last_summary``. ``missed`` is a slot skipped for lateness,
+    not a turn that failed (TD-3813).
     """
 
     started_at: str
     scheduled_for: str | None = None
     trigger: Literal["schedule", "manual"]
-    status: Literal["ok", "failed"]
+    status: Literal["ok", "failed", "missed"]
     summary: str | None = None
     session_id: str | None = None
 

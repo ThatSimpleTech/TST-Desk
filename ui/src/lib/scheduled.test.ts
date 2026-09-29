@@ -5,13 +5,17 @@ import {
 	formatLocal,
 	humanizeCadence,
 	jobActivity,
+	draftFromJob,
+	graceDraftValue,
 	jobFailed,
 	jobMeta,
+	jobMissed,
 	jobLastRun,
 	jobRunLabel,
 	jobWhen,
 	jobsEmptyCopy,
 	saveFromDraft,
+	saveFromEdit,
 	saveFromJob,
 	sessionMissingCopy,
 	viewerTimeZone,
@@ -235,6 +239,7 @@ describe("scheduled store", () => {
 	});
 
 	it("parses NL into the draft without saving", () => {
+		setDraftField("grace", "6 hours");
 		setParseText("every 2 hours in /ws/proj summarize the inbox deliver to slack");
 		expect(parseJobRequest()).toBe(true);
 		expect(mocks.sent.at(-1)).toEqual({
@@ -255,6 +260,7 @@ describe("scheduled store", () => {
 		expect(scheduled.draft.instruction).toBe("summarize the inbox");
 		expect(scheduled.draft.cadence).toBe("every 2 hours");
 		expect(scheduled.draft.deliver_to).toBe("slack");
+		expect(scheduled.draft.grace).toBe("6 hours");
 		expect(scheduled.items).toEqual([]);
 	});
 
@@ -493,5 +499,42 @@ describe("run history (TD-3811)", () => {
 		expect(scheduled.historyOpen).toEqual({});
 		expect(scheduled.historySeen).toEqual({});
 		expect(scheduled.runs).toEqual({});
+	});
+});
+
+describe("grace (TD-3813)", () => {
+	it("names a missed slot without calling it a failure", () => {
+		const missed = job({
+			id: "j1",
+			last_run: "2026-08-21T18:00:00+00:00",
+			last_status: "missed",
+		});
+		expect(jobLastRun(missed, "UTC")).toMatch(/^Missed /);
+		expect(jobFailed(missed)).toBe(false);
+		expect(jobMissed(missed)).toBe(true);
+		expect(jobMissed(job({ id: "j1", last_status: "failed" }))).toBe(false);
+		const label = jobRunLabel(run({ status: "missed" }), "UTC");
+		expect(label).toMatch(/^Missed /);
+		expect(label).not.toMatch(/Failed/);
+		expect(label.toLowerCase()).not.toContain("manual");
+	});
+
+	it("maps stored seconds to the phrase the form sends", () => {
+		expect(graceDraftValue(null)).toBe("");
+		expect(graceDraftValue(undefined)).toBe("");
+		expect(graceDraftValue(7200)).toBe("2 hours");
+		expect(graceDraftValue(3600)).toBe("1 hour");
+		expect(graceDraftValue(5400)).toBe("90 minutes");
+		expect(graceDraftValue(86400)).toBe("1 day");
+		expect(graceDraftValue(172800)).toBe("2 days");
+		expect(graceDraftValue(90)).toBe("90");
+
+		const row = job({ id: "j1", grace: 7200, cadence: "every 1 hour" });
+		expect(draftFromJob(row).grace).toBe("2 hours");
+		expect(saveFromEdit(draftFromJob(row), row, "UTC").grace).toBe("2 hours");
+		expect(saveFromEdit({ ...draftFromJob(row), grace: "" }, row, "UTC").grace).toBe("");
+		expect(saveFromJob(row, true)).not.toHaveProperty("grace");
+		expect(saveFromDraft({ ...emptyDraft("/ws"), grace: "2 hours" }, "UTC").grace).toBe("2 hours");
+		expect(saveFromDraft(emptyDraft("/ws"), "UTC")).not.toHaveProperty("grace");
 	});
 });

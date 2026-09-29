@@ -86,14 +86,19 @@ export function scheduledNotices(
 		if (job.deliver_to !== "window" || !job.last_run) continue;
 		const seen = before.get(job.id);
 		if (seen === undefined || seen === job.last_run) continue;
-		const failed = job.last_status === "failed";
 		notices.push({
-			title: failed ? "Scheduled job failed" : "Scheduled job ran",
+			title: scheduledTitle(job.last_status),
 			body: banner(job.last_summary ?? job.instruction),
 			kind: "scheduled",
 		});
 	}
 	return notices;
+}
+
+function scheduledTitle(status: JobEntry["last_status"]): string {
+	if (status === "failed") return "Scheduled job failed";
+	if (status === "missed") return "Scheduled job missed";
+	return "Scheduled job ran";
 }
 
 /** OS notifications fire only when the window is not the front one.

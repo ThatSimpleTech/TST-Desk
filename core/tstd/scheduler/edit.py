@@ -1,11 +1,12 @@
-"""Merge a ``save_job`` onto an existing scheduled job (TD-3810, TD-3812).
+"""Merge a ``save_job`` onto an existing scheduled job (TD-3810, TD-3812, TD-3813).
 
 Create validates a whole draft. An edit is a patch: fields the client left
 out stay as stored, because Pause is a save that only flips ``paused`` and
-must not wipe the run receipt or the armed slot. A blank cadence, next
-run, preset, or engine is the explicit "remove this" — without it a
-recurring job could never become a one-shot, and a pinned model could
-never go back to whatever the window is using.
+must not wipe the run receipt, the armed slot, or how late is still
+worth running. A blank cadence, next run, preset, engine, or grace is
+the explicit "remove this" — without it a recurring job could never
+become a one-shot, a pinned model could never go back to whatever the
+window is using, and a grace could never go back to always running.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ def apply_job_edit(
     preset: str | None,
     engine: str | None,
     known_presets: Mapping[str, object],
+    grace: str | int | None,
 ) -> Job:
     """Return the job to persist. Raises ``JobValidationError``; does not write."""
     new_workspace = _workspace_for_edit(existing, workspace, known_workspaces)
@@ -53,6 +55,7 @@ def apply_job_edit(
     new_next = _merge_cleared(next_run, existing.next_run)
     new_preset = _merge_cleared(preset, existing.preset)
     new_engine = _merge_cleared(engine, existing.engine)
+    new_grace = _merge_grace(grace, existing.grace)
     # The stored slot was computed from the old cadence and zone. When either
     # changes and the client did not send a replacement time, drop it so the
     # runner re-arms instead of firing the stale instant.
@@ -73,6 +76,8 @@ def apply_job_edit(
             preset=new_preset,
             # Same as validate_draft: the annotation is the stored kind.
             engine=cast(Literal["native", "grok"] | None, new_engine),
+            # The annotation is seconds. The validator accepts the phrase.
+            grace=cast(int | None, new_grace),
             # The receipt belongs to the run, not to this edit.
             last_run=existing.last_run,
             last_status=existing.last_status,
@@ -90,6 +95,15 @@ def apply_job_edit(
 
 def _had_schedule(job: Job) -> bool:
     return job.cadence is not None or job.next_run is not None
+
+
+def _merge_grace(sent: str | int | None, current: int | None) -> str | int | None:
+    """``None`` keeps the stored seconds. A blank string clears. A phrase sets."""
+    if sent is None:
+        return current
+    if isinstance(sent, str) and not sent.strip():
+        return None
+    return sent
 
 
 def _merge_cleared(sent: str | None, current: str | None) -> str | None:

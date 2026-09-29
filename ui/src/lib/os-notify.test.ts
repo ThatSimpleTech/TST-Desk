@@ -247,6 +247,19 @@ describe("scheduledNotices", () => {
 		});
 	});
 
+	it("marks a skipped slot as missed, not as a run or a failure", () => {
+		const before = runStamps([jobRow({ id: "j1" })]);
+		const missed = {
+			...RAN_ONCE,
+			last_status: "missed",
+			last_summary: "Skipped the 7:45 AM run — 10 h late",
+		} as JobEntry;
+		expect(scheduledNotices(before, [missed])[0]).toMatchObject({
+			title: "Scheduled job missed",
+			body: "Skipped the 7:45 AM run — 10 h late",
+		});
+	});
+
 	it("leaves slack and ntfy alone — they already delivered themselves", () => {
 		const before = runStamps([jobRow({ id: "j1", deliver_to: "slack" })]);
 		const ran = { ...RAN_ONCE, deliver_to: "slack" } as JobEntry;
