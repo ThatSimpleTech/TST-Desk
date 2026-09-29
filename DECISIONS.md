@@ -10765,3 +10765,48 @@ and the port file is still there. The timer is not the loop, and
 handler. `asyncio.wait_for` alone around `_shutdown`. Arming the same
 budget for the websocket shutdown message, which would change Windows.
 Moving `config.yaml` with `--data-dir`.
+
+## TD-4845 — User-global Claude Code steering is opt-in (Class B)
+
+2026-09-29.
+
+**Decision:** `steering.claude_global_fallback` defaults to false.
+Discovery reads `~/.tstdesk/AGENTS.md` as the only user-global file.
+`~/.claude/CLAUDE.md` is not opened, and nothing it imports is opened,
+unless the key is true. When the key is true, the TD-502 fallback is
+unchanged, including the class C approval for an import that sits
+outside both the workspace and `~/.tstdesk`. Workspace-root and nested
+`CLAUDE.md` stay on the unconditional fallback. Those are project files.
+
+**Decision:** When the key is false, `~/.claude/CLAUDE.md` exists, and
+`~/.tstdesk/AGENTS.md` does not, Doctor's steering row appends
+`~/.claude/CLAUDE.md not loaded — enable steering.claude_global_fallback to use it`.
+The path is the tilde form so the row never carries an absolute home
+(TD-1104). The row stays `ok` when steering is otherwise clean. A row
+that already failed keeps the note on the same detail. There is no new
+protocol event. The instruction stack does not carry the note. When
+`~/.tstdesk/AGENTS.md` is present and the key is false, the Claude path
+is not statted and is not recorded as `shadowed_path`. Shadowing is
+recorded only while the fallback is enabled, because only then is that
+file a candidate.
+
+**Decision:** The autonomy supervisor builds validator context without
+the flag. The validator subset does not include `CLAUDE.md`, so an
+enabled fallback would not change that prompt. Settings has no steering
+section. The key is config-only. `SteeringConfig` does not forbid
+unknown keys, matching `SearchConfig` and `ProjectContextConfig`: a
+typo stays at the safe default.
+
+**Rationale:** On the owner's Mac, `~/.claude/CLAUDE.md` opens with
+`@rules-core.md`. Every new session raised a class C import approval
+for `~/.claude/rules-core.md` and spent about 1,700 tokens of Claude
+Code rules inside a 32k window. TST Desk's global file is its own. The
+change has to be discoverable, so Doctor names the file that was left
+unread. The product owner chose this on 2026-09-29 ("Own global file").
+
+**Alternative rejected:** Reading the Claude file and skipping its
+imports. The tokens would still be spent. Suppressing only the class C
+prompt. That would hide an outside read. A Settings toggle. Settings
+sections are appearance, computer, engine, model, policy, mcp, key, and
+about. A protocol field on the instruction stack, or a synthetic unread
+source. Threading the flag into the supervisor.

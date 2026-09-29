@@ -609,7 +609,9 @@ coverage requirement in the project alongside E7.**
 - [x] Test: a workspace containing only `CLAUDE.md` files loads with full fidelity
 
 **Notes:** This is an adoption feature. Existing repos configured for other tools must work on
-day one with nothing to port. Do not treat it as an edge case.
+day one with nothing to port. Do not treat it as an edge case. TD-4845 makes the user-global
+`~/.claude/CLAUDE.md` fallback opt-in (`steering.claude_global_fallback`, default false).
+Workspace and nested `CLAUDE.md` fallback is unchanged.
 
 ---
 
@@ -770,6 +772,31 @@ splitting personal steering across files more friction than it looks. And
 `ui/src/lib/components/StackPanel.svelte:41` hardcodes `warning.includes('exceeds 200 lines')`
 to choose its badge text, so changing `LINE_LIMIT` silently drops the short badge back to the
 full warning string.
+
+---
+
+### TD-4845 — TST Desk's global instructions do not borrow Claude Code's by default
+**Size:** 2 · **Depends on:** TD-502
+
+**Acceptance criteria:**
+- [x] With `steering.claude_global_fallback` false (the default), discovery does not read
+      `~/.claude/CLAUDE.md` or anything it imports
+- [x] With the key true, `~/.claude/CLAUDE.md` is the user-global fallback when
+      `~/.tstdesk/AGENTS.md` is absent, and an import outside the workspace still requires
+      approval
+- [x] `~/.tstdesk/AGENTS.md` wins when it is present. With the key false the Claude file is
+      not recorded as shadowed
+- [x] Workspace and nested `CLAUDE.md` fallback is unchanged
+- [x] When the key is false, `~/.claude/CLAUDE.md` exists, and `~/.tstdesk/AGENTS.md` does not,
+      Doctor's steering row says `not loaded — enable steering.claude_global_fallback to use it`.
+      The note is absent when that file is loaded, absent, or outranked by `~/.tstdesk/AGENTS.md`
+
+Done (2026-09-29): the user-global Claude Code file is opt-in. The shipped default leaves it
+unread, and Doctor names it once in that case. Workspace `CLAUDE.md` fallback is unchanged.
+Settings has no steering section, so the key is config-only. Class B entry in DECISIONS.md.
+
+Suite: 3679 passed / 8 skipped, ruff + `mypy --strict` clean over 160
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
 
 ---
 
