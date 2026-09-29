@@ -11,7 +11,6 @@ import asyncio
 import contextlib
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -129,7 +128,7 @@ from .local_worker import (
     titlebar_hosts,
     titlebar_slugs,
 )
-from .logging import get_logger, setup_logging, user_data_dir
+from .logging import get_logger, log_directory, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .mcp.loader import McpSupervisor
 from .memory_commit import MemoryCommitter
@@ -324,6 +323,7 @@ from .provider import (
     RetryConfig,
     auth_failure_message,
 )
+from .provider_refresh import RefreshingProvider
 from .remote_attach import (
     bind_spec_when_enabled,
     load_remote_attach,
@@ -365,6 +365,11 @@ from .session_lifecycle import archive_session, delete_session, move_session, re
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
+from .shutdown_budget import (
+    ShutdownBudget,
+    install_posix_shutdown_signals,
+    remove_posix_shutdown_signals,
+)
 from .speech import transcribe as transcribe_speech
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
@@ -691,10 +696,12 @@ class Daemon:
         notify_send: NotifySendFn | None = None,
         scheduler_tick: float = 15.0,
         interfaces: InterfaceEnumerator | None = None,
+        shutdown_budget: ShutdownBudget | None = None,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
+        self._shutdown_budget = shutdown_budget if shutdown_budget is not None else ShutdownBudget()
         self._tasks: list[asyncio.Task[Any]] = []
         self.session_registry = SessionRegistry()
         self._session_store = SessionStore(self.data_dir)
@@ -810,27 +817,67 @@ class Daemon:
         """Build a client for the active brain tier."""
         return await self._build_client(self.config.tier("brain"))
 
+    def _credential_label(self, cred_id: str) -> str:
+        """Display name for a failure message. Never the secret."""
+        row = self.config.credentials.get(cred_id)
+        if row is not None:
+            return row.name
+        if cred_id == DEFAULT_CREDENTIAL_ID:
+            return "OpenRouter"
+        return cred_id
+
+    def _drop_provider_clients(self) -> None:
+        """Drop cached provider handles after an in-app key mutation.
+
+        The next ``_client_for`` rebuilds from the keychain. A live
+        session still holds its handle; that handle re-reads the keychain
+        on the next authentication failure (TD-4840).
+        """
+        self._clients.clear()
+
     async def _client_for(self, tier_cfg: TierConfig) -> ProviderLike:
         """The provider client for *tier_cfg*, cached by URL and key.
 
         An injected constructor provider (tests) is returned for every
         tier so a mock stays in front of the loop. Production caches one
-        client per ``(base_url, credential)`` so two keys on one host do
+        handle per ``(base_url, credential)`` so two keys on one host do
         not share a client, and a remapped local worker (TD-3903) does
-        not reuse the remote brain client.
+        not reuse the remote brain client. The handle, not the HTTP
+        client, is what the session loop keeps. An authentication failure
+        closes the HTTP client and rebuilds it from the keychain (TD-4840).
+        A missing or empty key is not cached, so the next turn re-reads.
         """
         if self._provider is not None:
             return self._provider
-        cache_key = (
-            resolve_base_url(self.config, tier_cfg),
-            resolve_credential_id(tier_cfg) or "",
-        )
+        base_url = resolve_base_url(self.config, tier_cfg)
+        cred_id = resolve_credential_id(tier_cfg) or ""
+        cache_key = (base_url, cred_id)
         cached = self._clients.get(cache_key)
         if cached is not None:
             return cached
-        client = await self._build_client(tier_cfg)
-        self._clients[cache_key] = client
-        return client
+        try:
+            client = await self._build_client(tier_cfg)
+        except KeychainError:
+            # Nothing was inserted. Pop anyway so a later edit cannot
+            # leave a sentinel that skips the next keychain read.
+            self._clients.pop(cache_key, None)
+            raise
+        if not cred_id:
+            self._clients[cache_key] = client
+            return client
+
+        async def rebuild() -> ProviderClient:
+            return await self._build_client(tier_cfg)
+
+        handle = RefreshingProvider(
+            client,
+            credential_id=cred_id,
+            credential_name=self._credential_label(cred_id),
+            base_url=base_url,
+            rebuild=rebuild,
+        )
+        self._clients[cache_key] = handle
+        return handle
 
     async def _ensure_provider(self) -> ProviderLike:
         """Create the shared provider client on first use.
@@ -947,7 +994,7 @@ class Daemon:
         """Re-read config.yaml, keep the live preset, drop cached clients."""
         self.config = load_config().model_copy(update={"active_preset": self.config.active_preset})
         self._slug_snapshot = _snapshot_slugs(self.config)
-        self._clients.clear()
+        self._drop_provider_clients()
 
     def _host_to_persist(
         self, cred_id: str, catalog_name: str, requested: str | None
@@ -1426,40 +1473,39 @@ class Daemon:
             "starting",
             extra={"extra_fields": {"version": self._version(), "data_dir": str(self.data_dir)}},
         )
+        # Before restore. A signal during rehydrate has to arm the budget;
+        # the port file is not written until serve, but a stuck restore
+        # must still end.
+        install_posix_shutdown_signals(self._on_signal)
 
-        # Ensure data directory exists
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-
-        # Audit writer before revive so restored loops can record calls.
-        self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
-        self._audit_writer.start()
-
-        # Rehydrate sessions from the registry plus any persisted
-        # transcript. A session with a conversation snapshot is revived
-        # for real; one without is an interrupted tombstone.
-        await self._restore_sessions()
-
-        # Register signal handlers.  asyncio's add_signal_handler is
-        # POSIX-only — it raises NotImplementedError on Windows, where
-        # shutdown still arrives via the shutdown message, the parent
-        # watchdog, or the console control event the host sends.
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            with contextlib.suppress(NotImplementedError):
-                loop.add_signal_handler(sig, self._on_signal)
-
-        # If the host told us its PID, watch it: if the host dies (including
-        # by force-quit) we must not become an orphan.
-        if self._parent_pid is not None:
-            self._tasks.append(asyncio.create_task(self._parent_watchdog(self._parent_pid)))
-
-        # Start subsystems
         try:
-            await self._serve()
-        except asyncio.CancelledError:
-            pass
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+
+            # Audit writer before revive so restored loops can record calls.
+            self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
+            self._audit_writer.start()
+
+            # Rehydrate sessions from the registry plus any persisted
+            # transcript. A session with a conversation snapshot is revived
+            # for real; one without is an interrupted tombstone.
+            await self._restore_sessions()
+
+            # A signal during restore already requested shutdown. Do not
+            # bind a port just to tear it down.
+            if not self._shutdown_event.is_set():
+                # If the host told us its PID, watch it: if the host dies
+                # (including by force-quit) we must not become an orphan.
+                if self._parent_pid is not None:
+                    self._tasks.append(asyncio.create_task(self._parent_watchdog(self._parent_pid)))
+
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._serve()
         finally:
-            await self._shutdown()
+            try:
+                await self._shutdown()
+            finally:
+                self._shutdown_budget.finish()
+                remove_posix_shutdown_signals()
 
         log.info(
             "stopped",
@@ -1527,9 +1573,15 @@ class Daemon:
         log.info("shutdown complete")
 
     def _on_signal(self) -> None:
-        """Handle OS signals for graceful shutdown."""
-        log.info("signal received")
+        """Request the same shutdown the websocket message uses.
+
+        Arm the budget before logging. ``emit`` takes the logging lock;
+        a callback that logs first never sets the event if that lock is
+        stuck, and the process stays up until something else kills it.
+        """
         self._shutdown_event.set()
+        self._shutdown_budget.arm(self.data_dir)
+        log.info("signal received")
 
     async def _restore_sessions(self) -> None:
         """Rehydrate the registry. Revive only when a conversation snapshot exists.
@@ -2370,7 +2422,7 @@ class Daemon:
                 return build_error("keychain_locked", str(e))
             except (KeychainError, NotImplementedError) as e:
                 return build_error("key_delete_failed", f"Could not remove the API key: {e}")
-            self._clients.clear()
+            self._drop_provider_clients()
             self._invalidate_stored_probe()
             log.info(
                 "api key removed from keychain",
@@ -3732,8 +3784,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data_dir = Path(args.data_dir) if args.data_dir else None
-    setup_logging(level=args.log_level)
+    # One resolution for the log file and the daemon. Passing None would
+    # call user_data_dir() again, and on Linux that helper renames a
+    # leftover directory the first time it runs.
+    data_dir = Path(args.data_dir) if args.data_dir else user_data_dir()
+    setup_logging(level=args.log_level, log_dir=log_directory(data_dir))
 
     async def _run() -> None:
         daemon = Daemon(data_dir=data_dir, parent_pid=args.parent_pid)

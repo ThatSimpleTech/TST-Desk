@@ -7005,6 +7005,113 @@ Integration test runs the probe against a headless daemon on CI hosts; full
 
 ---
 
+### TD-4840 — A fixed or rotated API key is picked up without a restart
+**Size:** 2 · **Depends on:** TD-4838, TD-4839
+
+`Daemon._clients` kept the API key read when the client was built, and
+dropped that client only when a key changed inside the app. A key fixed
+in the keychain from outside, or rotated by the server, was sent on
+every later turn until restart. An empty stored value went out as
+`Authorization: Bearer `.
+
+**Acceptance criteria:**
+- [x] HTTP 401 and 403 (`auth_failed`, `forbidden`) close that tier's
+      cached HTTP client, rebuild it from the keychain, and retry the
+      call once, only when a digest of the key changed. The key and the
+      digest are not logged
+- [x] An unchanged key fails the turn with `api_key_rejected` and a
+      message naming the credential and host, for example
+      "EZER (192.0.2.49:4000) rejected the API key (401) — check it in
+      Settings → API keys". `error-copy.ts` maps the code. The
+      conversation is preserved
+- [x] A missing or empty key (`KeychainError`) is not cached, so the
+      next turn reads the keychain again
+- [x] Changing or deleting a key in the app still drops the cache, and
+      that drop does not close a client a live session is holding
+- [x] A stale key is retried once with the new key and the turn
+      succeeds. An unchanged key is not retried. Evicted clients are
+      closed. Logs and the turn text do not contain the key
+
+Done (2026-09-29): a cached provider handle closes its HTTP client after
+a rejected key and rebuilds from the keychain. The call is retried once
+when the key's digest changed. An unchanged key fails the turn with
+`api_key_rejected`, naming the credential and host. A missing or empty
+key is not cached. In-app key changes still clear the cache without
+closing live clients. Class B entry in DECISIONS.md.
+
+Suite: 3612 passed / 8 skipped, ruff + `mypy --strict` clean over 157
+files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
+### TD-4841 — Reviving a session must not fail its audit write
+**Size:** 2 · **Depends on:** TD-902
+
+`AuditWriter.attach_session` inserted a `sessions` row on every attach,
+including revive, with `started_at` set to the current clock. The id was
+already stored, so each daemon start logged `audit write failed`
+(`UNIQUE constraint failed: sessions.session_id`) once per revived
+session.
+
+**Acceptance criteria:**
+- [x] Opening a session, then reviving it, then reviving it again leaves
+      exactly one `sessions` row and does not log `audit write failed`
+- [x] `append_session` with the same id, workspace, and start time does
+      not write again and does not error
+- [x] The same id with a different workspace or start time raises
+      `IntegrityError`, the writer reports it, and the stored row is
+      unchanged
+- [x] A failed write does not drop later queued audit entries
+- [x] No UPDATE or DELETE of audit rows
+
+Done (2026-09-29): attaching a session inserts its audit row once. Revive
+attaches again and leaves that row, including the original start time,
+and does not log `audit write failed`. An identical `append_session`
+is a no-op. The same id with a different workspace or start time still
+raises, the writer reports it, and the stored row is unchanged. A failed
+insert rolls back the transaction it opened so a later queued audit
+write still lands. Class B entry in DECISIONS.md.
+
+Suite: 3619 passed / 8 skipped, ruff + `mypy --strict` clean over 157
+files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
+### TD-4842 — The daemon honours --data-dir for logs and stops on SIGTERM
+**Size:** 2 · **Depends on:** TD-1002
+
+`tstd --data-dir <scratch>` wrote `tstd.log` into the real user data
+directory, so a test turn polluted the user's log. SIGTERM left that
+daemon running (state SN) until SIGKILL.
+
+**Acceptance criteria:**
+- [x] Log files are `<data-dir>/logs/tstd.log`. With no `--data-dir`,
+      that directory is the platform user data directory, the same
+      place as before
+- [x] `tst` spawns `tstd` with that `--data-dir`, so a CLI-started
+      daemon logs in the same tree
+- [x] On macOS and Linux, SIGTERM and SIGINT request the existing
+      graceful shutdown through the event loop. The process exits
+      within 5 seconds and the port file is gone. If cleanup does not
+      finish, the process exits non-zero and the port file is still
+      removed
+- [x] Windows does not install a signal handler. Shutdown there stays
+      the websocket message, the parent watchdog, or the console event
+
+Done (2026-09-29): the daemon resolves its data directory once and
+writes `logs/tstd.log` there. `tst` already passes `--data-dir`, so
+its daemon logs in that tree. `config.yaml` stays in the user data
+directory. On macOS and Linux the event loop handles SIGTERM and
+SIGINT by setting `_shutdown_event`, the same path as the shutdown
+message, and a 5 second timer exits non-zero and removes the port
+file if cleanup does not return. Windows is unchanged. Class B entry
+in DECISIONS.md.
+
+Suite: 3627 passed / 8 skipped, ruff + `mypy --strict` clean over 158
+files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -7040,8 +7147,8 @@ Integration test runs the probe against a headless daemon on CI hosts; full
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 13 | 66 |
-| **Total planned** | **48** | **321** | **1023** |
+| Later | E47, E49 | 15 | 70 |
+| **Total planned** | **48** | **323** | **1027** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

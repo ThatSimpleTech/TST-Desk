@@ -10655,3 +10655,113 @@ the pin already on the form.
 and can be persisted), widening `TurnFn` (every scheduler fake would have
 to grow a parameter), letting `_resolved_preset` fall back when the pin is
 gone, and storing the slug or the base URL on the job.
+
+## TD-4840 — A fixed or rotated API key is picked up without a restart (Class B)
+
+2026-09-29.
+
+**Decision:** `Daemon._clients` keeps one handle per `(base_url, credential)`.
+The HTTP client inside that handle is what gets closed and replaced. The
+session loop holds the handle for the life of the session, so replacing
+the dict entry alone would leave the stale client in place.
+
+**Decision:** An authentication failure (HTTP 401 or 403, or the codes
+`auth_failed` and `forbidden`) rebuilds the client from the keychain and
+retries the call once, only when the SHA-256 digest of the key changed.
+Digests are compared in memory with `hmac.compare_digest` and are never
+logged. An unchanged key fails the turn with `api_key_rejected` and a
+message that names the credential and the host, never the key. The chat
+transcript carries that sentence. The banner in `error-copy.ts` is static.
+No protocol change.
+
+**Decision:** `KeychainError` while building the first client caches
+nothing. The same error during a refresh is returned as `missing_api_key`
+so the session stays up and the next turn reads the keychain again. A
+second authentication failure, after the key did change, is the provider's
+own error. There is no third try.
+
+**Decision:** An in-app key change still drops the cache and does not close
+clients a live session is holding. Those handles re-read the keychain on
+the next authentication failure. A keyless loopback client stays unwrapped.
+
+**Rationale:** The cache exists so a turn does not prompt the macOS
+keychain on every call (TD-4838). The bug was the other side of that: a
+key fixed outside the app, or rotated on the server, stayed inside the
+client until restart. One retry distinguishes "the key changed" from
+"this key is wrong". Retrying an unchanged key would only repeat the 401.
+
+**Alternative rejected:** Re-reading the keychain on every request.
+Retrying when the digest is unchanged. Logging the key or the digest. A
+protocol field so the banner can name the host. Mutating
+`ProviderClient.api_key` in place without closing the HTTP client.
+Refreshing inside `retry_call`. An epoch counter so an in-app edit is
+noticed before the next 401.
+
+## TD-4841 — Reviving a session must not fail its audit write (Class B)
+
+2026-09-29.
+
+**Decision:** `append_session` returns without writing when the same
+session id, workspace, and start time are already stored. The same id
+with a different workspace or start time raises `sqlite3.IntegrityError`.
+The stored row is not updated and not deleted. A failed insert rolls
+back the deferred transaction it opened so the next write is not left
+inside it. The rejected statement never committed, so the rollback
+removes nothing from the log.
+
+**Decision:** `AuditWriter.attach_session` enqueues
+`record_session_attach`. The first attach inserts, using the clock at
+drain time. A later attach for the same id and workspace — revive —
+does not insert and does not pass a new `started_at` into
+`append_session`. A different workspace is a conflict and is reported
+on the existing audit-failure path. Open and revive both call
+`attach_session`. The store tells a first insert from a re-attach,
+including when the original insert never landed: the row is absent, so
+the attach inserts one and later turns still satisfy the foreign key.
+
+**Rationale:** Revive was inserting the session row again with a fresh
+`started_at`. That is not the original start, and the primary key
+rejected it once per revived session on every daemon start. `INSERT OR
+IGNORE` would also swallow a real workspace conflict. Rewriting
+`started_at` would break the append-only log.
+
+**Alternative rejected:** A revive flag that skips the insert. A session
+whose first audit write was lost would then have no `sessions` row, and
+every later turn would fail the foreign key. Also rejected: treating a
+new `started_at` as the same row inside `append_session`.
+
+## TD-4842 — Logs follow --data-dir, and SIGTERM is bounded (Class B)
+
+2026-09-29.
+
+**Decision:** The daemon log is `<data-dir>/logs/tstd.log`. `main`
+resolves the data directory once and passes that path to both
+`setup_logging` and `Daemon`. With no `--data-dir` the directory is
+`user_data_dir()`, so the default log path is unchanged. `config.yaml`
+stays in the user data directory. `tst` already spawns `tstd` with
+`--data-dir`, so a CLI-started daemon logs in that same tree.
+
+**Decision:** On macOS and Linux, SIGTERM and SIGINT are installed on
+the running event loop before session restore. The callback sets the
+same `_shutdown_event` the websocket `shutdown` message sets, and arms
+a 5 second wall-clock timer. The timer runs on a daemon thread. If
+cleanup has not returned, it deletes the port file and calls
+`os._exit(1)`. A finished shutdown cancels the timer and the process
+exits 0. The handler is removed when `run` returns so an in-process
+daemon does not leave its callback on the caller's loop. Windows does
+not install these handlers. Shutdown there stays the websocket message,
+the parent watchdog, or the console event.
+
+**Rationale:** `--data-dir` moved the session store and the audit
+database, and the log file stayed in the real user data directory. A
+scratch daemon wrote into `~/Library/Application Support/.../logs`.
+The loop handler already requested shutdown, but a cleanup stuck on
+the loop thread never runs `call_later`, and `SystemExit` still waits
+for the default executor. The process then stays asleep until SIGKILL,
+and the port file is still there. The timer is not the loop, and
+`os._exit` does not wait out a stuck thread.
+
+**Alternative rejected:** `signal.signal` instead of the loop's
+handler. `asyncio.wait_for` alone around `_shutdown`. Arming the same
+budget for the websocket shutdown message, which would change Windows.
+Moving `config.yaml` with `--data-dir`.
