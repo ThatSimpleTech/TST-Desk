@@ -1,8 +1,8 @@
 // Scheduled rail helpers (TD-3805).
 //
 // Draft fields the pane sends on `save_job` — not a natural-language
-// parse. Pause is the same verb with `paused` flipped. The rail never
-// runs a job; TD-3804's tick does that.
+// parse. Pause is the same verb with `paused` flipped. Run now is
+// `run_job`; the tick still owns the schedule.
 
 import type { JobEntry, SaveJob } from "./protocol";
 
@@ -152,6 +152,12 @@ export function jobLastRun(job: JobEntry, timeZone?: string): string {
 	if (!job.last_run) return "Never run";
 	const when = formatLocal(job.last_run, timeZone);
 	return job.last_status === "failed" ? `Failed ${when}` : `Ran ${when}`;
+}
+
+/** Row status. An in-flight turn replaces the previous receipt until it lands. */
+export function jobActivity(job: JobEntry, timeZone?: string): string {
+	if (job.running) return "Running…";
+	return jobLastRun(job, timeZone);
 }
 
 /** True when the last fire failed, so the row can mark itself. */

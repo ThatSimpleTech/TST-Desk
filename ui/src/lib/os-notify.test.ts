@@ -196,6 +196,7 @@ function jobRow(over: Partial<JobEntry> & Pick<JobEntry, "id">): JobEntry {
 		next_run: null,
 		deliver_to: "window",
 		paused: false,
+		running: false,
 		last_run: null,
 		last_status: null,
 		last_summary: null,

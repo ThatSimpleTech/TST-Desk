@@ -1014,8 +1014,8 @@ class SaveJob(ClientMessage):
     """Create or replace a scheduled job (TD-3805).
 
     Draft fields, not a natural-language parse. Pause is this verb with
-    ``paused`` set. The runner (TD-3804) is the only code that fires
-    jobs. Acked with ``job_list``.
+    ``paused`` set. Firing a job is ``run_job`` or the scheduler tick,
+    never this verb. Acked with ``job_list``.
     """
 
     type: Literal["save_job"] = "save_job"
@@ -1052,6 +1052,21 @@ class ParseJob(ClientMessage):
 
     type: Literal["parse_job"] = "parse_job"
     text: str = ""
+
+
+class RunJob(ClientMessage):
+    """Fire one scheduled job now (TD-3809).
+
+    Connection-scoped. The daemon starts the turn as its own task and
+    answers at once with ``job_list`` (``running`` set on that row). A
+    second ``job_list`` is pushed when the turn finishes. Does not move
+    ``next_run`` and does not change ``paused``, including on a job that
+    is already paused. Unknown id is ``job_not_found``; a job already in
+    flight is ``job_running``.
+    """
+
+    type: Literal["run_job"] = "run_job"
+    job_id: str = Field(min_length=1)
 
 
 class Transcribe(ClientMessage):
@@ -2263,10 +2278,13 @@ class JobEntry(BaseModel):
     last_status: Literal["ok", "failed"] | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
+    # Not persisted. It mirrors the daemon's in-flight set, so a restart
+    # cannot show a turn that is no longer happening (TD-3809).
+    running: bool = False
 
 
 class JobList(DaemonEvent):
-    """Response to ``list_jobs`` / ``save_job`` / ``delete_job`` (TD-3805).
+    """Response to ``list_jobs`` / ``save_job`` / ``delete_job`` / ``run_job`` (TD-3805).
 
     Connection-scoped. Seq is fixed at 1 so it cannot rewind attach.
     """
@@ -2392,6 +2410,7 @@ ClientMessageT = Annotated[
     | SaveJob
     | DeleteJob
     | ParseJob
+    | RunJob
     | Transcribe,
     Field(discriminator="type"),
 ]
@@ -2547,6 +2566,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "save_job",
         "delete_job",
         "parse_job",
+        "run_job",
         "transcribe",
     }
 )

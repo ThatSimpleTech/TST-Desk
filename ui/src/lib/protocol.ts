@@ -634,6 +634,15 @@ export interface ParseJob extends ClientMessage {
   text: string;
 }
 
+/** Fire one scheduled job now (TD-3809). Connection-scoped.
+ *
+ *  Answered at once with `job_list` (`running` set); another `job_list` is
+ *  pushed when the turn finishes. Does not move `next_run` or `paused`. */
+export interface RunJob extends ClientMessage {
+  type: "run_job";
+  job_id: string;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -719,6 +728,7 @@ export type ClientMessageUnion =
   | SaveJob
   | DeleteJob
   | ParseJob
+  | RunJob
   | Transcribe;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
@@ -1457,9 +1467,11 @@ export interface JobEntry {
   last_status: "ok" | "failed" | null;
   last_summary: string | null;
   last_session_id: string | null;
+  /** True while a turn for this job is in flight (TD-3809). Not stored. */
+  running: boolean;
 }
 
-/** Response to list_jobs / save_job / delete_job (TD-3805). Connection-scoped. */
+/** Response to list_jobs / save_job / delete_job / run_job (TD-3805, TD-3809). Connection-scoped. */
 export interface JobList extends DaemonEvent {
   type: "job_list";
   jobs: JobEntry[];
