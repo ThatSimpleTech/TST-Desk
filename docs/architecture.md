@@ -375,7 +375,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
 | `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener. Acked with `setup_state` (TD-3603). |
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
-| `save_job` | — | Create or replace a scheduled job from draft fields. Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
+| `save_job` | — | Create or replace a scheduled job from draft fields. An existing `id` edits that job and keeps its run receipt; on that edit an omitted cadence or next run keeps the stored value and an empty string clears it (TD-3810). Pause is this verb with `paused` set. Does not run the job. Acked with `job_list` (TD-3805). |
 | `delete_job` | — | Remove a scheduled job by id. Acked with `job_list`. Unknown id is a typed error (TD-3805). |
 | `parse_job` | — | Turn natural language into a job draft. Does not persist. Acked with `job_draft`. Save is a second call (TD-3803). |
 | `run_job` | — | Fire one job now. Acked at once with `job_list` (`running` set); a second `job_list` is pushed when the turn finishes. Does not move `next_run` or `paused`. Unknown id is `job_not_found`; a job already in flight is `job_running` (TD-3809). |

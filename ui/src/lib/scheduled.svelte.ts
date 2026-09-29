@@ -1,12 +1,20 @@
-// Scheduled rail store (TD-3805).
+// Scheduled rail store (TD-3805, TD-3810).
 //
-// Data-dir jobs from `job_list`. Create / pause / delete / run send
+// Data-dir jobs from `job_list`. Create / edit / pause / delete / run send
 // protocol verbs; the daemon talks to the store. Run now starts a turn.
-// The tick still owns the schedule.
+// The tick still owns the schedule. Edit loads a row into the draft; the
+// daemon keeps the run receipt because the save carries the existing id.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import type { DaemonEventUnion, JobEntry } from "./protocol";
-import { emptyDraft, saveFromDraft, saveFromJob, type JobDraftFields } from "./scheduled";
+import {
+	draftFromJob,
+	emptyDraft,
+	saveFromDraft,
+	saveFromEdit,
+	saveFromJob,
+	type JobDraftFields,
+} from "./scheduled";
 
 export const scheduled = $state({
 	items: [] as JobEntry[],
@@ -14,14 +22,15 @@ export const scheduled = $state({
 	error: null as string | null,
 	draft: emptyDraft(null),
 	parseText: "",
+	editingId: null as string | null,
 });
 
 let started = false;
 let stopEvents: (() => void) | null = null;
-// A create is in flight. The daemon acks with `job_list`, which is the
-// only signal that it took the draft — clearing the form before that
-// would throw away the user's text on a validation error.
-let createPending = false;
+// A create or an edit-save is in flight. The daemon acks with `job_list`,
+// which is the only signal that it took the draft — clearing the form
+// before that would throw away the user's text on a validation error.
+let savePending = false;
 
 function ensureStarted(): void {
 	if (started) return;
@@ -40,7 +49,7 @@ export function startScheduled(): () => void {
 
 export function resetScheduled(): void {
 	started = false;
-	createPending = false;
+	savePending = false;
 	stopEvents?.();
 	stopEvents = null;
 	scheduled.items = [];
@@ -48,6 +57,13 @@ export function resetScheduled(): void {
 	scheduled.error = null;
 	scheduled.draft = emptyDraft(null);
 	scheduled.parseText = "";
+	scheduled.editingId = null;
+}
+
+function freshDraft(): JobDraftFields {
+	// Keep the workspace: the next job is usually in the same folder,
+	// whether the last one was created or just edited.
+	return emptyDraft(scheduled.draft.workspace || null);
 }
 
 /** Ask the daemon for the job list. Prefills workspace when the draft is empty. */
@@ -87,7 +103,44 @@ export function createJob(): boolean {
 	const sent = sendToDaemon(saveFromDraft(scheduled.draft));
 	// Only arm the reset if the frame actually went out; a create that
 	// never left must keep what the user typed.
-	if (sent) createPending = true;
+	if (sent) savePending = true;
+	return sent;
+}
+
+/** Load a row into the form. Run now, Pause and Delete keep working. */
+export function editJob(jobId: string): boolean {
+	const job = scheduled.items.find((row) => row.id === jobId);
+	if (job === undefined) return false;
+	ensureStarted();
+	// A save already in flight belongs to the previous draft. Letting its
+	// ack land must not wipe the row just loaded.
+	savePending = false;
+	scheduled.error = null;
+	scheduled.editingId = job.id;
+	scheduled.draft = draftFromJob(job);
+	return true;
+}
+
+/** Leave edit mode and restore the empty new-job draft. */
+export function cancelEdit(): void {
+	if (scheduled.editingId === null) return;
+	savePending = false;
+	scheduled.editingId = null;
+	scheduled.error = null;
+	scheduled.draft = freshDraft();
+}
+
+/** Save the row in the form. The id is what keeps the receipt. */
+export function saveEdit(): boolean {
+	const id = scheduled.editingId;
+	if (id === null) return false;
+	const job = scheduled.items.find((row) => row.id === id);
+	if (job === undefined) return false;
+	ensureStarted();
+	scheduled.loading = true;
+	scheduled.error = null;
+	const sent = sendToDaemon(saveFromEdit(scheduled.draft, job));
+	if (sent) savePending = true;
 	return sent;
 }
 
@@ -105,6 +158,13 @@ export function deleteScheduledJob(jobId: string): boolean {
 	ensureStarted();
 	scheduled.loading = true;
 	scheduled.error = null;
+	// The form was showing this row. Drop it now; a failed delete leaves
+	// the row in the list and the user can open it again.
+	if (scheduled.editingId === jobId) {
+		savePending = false;
+		scheduled.editingId = null;
+		scheduled.draft = freshDraft();
+	}
 	return sendToDaemon({ type: "delete_job", job_id: jobId });
 }
 
@@ -122,10 +182,20 @@ function reduce(event: DaemonEventUnion): void {
 		scheduled.items = event.jobs;
 		scheduled.loading = false;
 		scheduled.error = null;
-		if (createPending) {
-			createPending = false;
-			// Keep the workspace — the next job is usually in the same one.
-			scheduled.draft = emptyDraft(scheduled.draft.workspace || null);
+		if (savePending) {
+			savePending = false;
+			scheduled.editingId = null;
+			scheduled.draft = freshDraft();
+			return;
+		}
+		// The row being edited is gone (deleted elsewhere, or the ack raced
+		// the click). The form must not keep offering Save for a missing id.
+		if (
+			scheduled.editingId !== null &&
+			!event.jobs.some((row) => row.id === scheduled.editingId)
+		) {
+			scheduled.editingId = null;
+			scheduled.draft = freshDraft();
 		}
 		return;
 	}
@@ -150,7 +220,7 @@ function reduce(event: DaemonEventUnion): void {
 		event.type === "error" &&
 		(event.code === "job_invalid" || event.code === "job_not_found" || event.code === "job_running")
 	) {
-		createPending = false;
+		savePending = false;
 		scheduled.loading = false;
 		scheduled.error = event.message;
 	}

@@ -10387,3 +10387,42 @@ re-read after the turn so a pause or an edit made while it ran is what
 receives the receipt, and a job deleted in that window is not written
 back. Rejected: clearing `next_run` on a manual one-shot (that is what
 makes the 7:45 slot disappear) and unpausing as a side effect of the run.
+
+## TD-3810 — Edit a scheduled job in place (Class B)
+
+**An edit is a patch, and `""` is the clear.** `save_job` with an existing
+id already replaced the row and kept the run receipt. Omitted `cadence` /
+`next_run` keep the stored values, which is what Pause and Resume send.
+That left no way to remove a field, so a recurring job could not become a
+one-shot without a delete. On an edit, an empty string now clears that
+field. Create is unchanged: the pane still omits a blank there, and a
+blank on create is "not provided", not a clear. No new protocol verb and
+no new field — the meaning of `""` on an update is the contract.
+
+**A cleared schedule is refused only when the edit removed one.** After
+the merge the job must have a cadence or a next run, reported as
+`Cadence or next run is required`, and nothing is written. A spent
+one-shot already has neither field and a receipt. Resume does not change
+the schedule (it sends nulls, or omits them), and an edit that sends `""`
+for fields that are already empty is not a change either, so both still
+save. The check compares the stored schedule with the merged one. Keying
+it off `last_run` alone would have made Resume fail the moment the rule
+existed.
+
+**Workspace is checked when the text changes.** The same
+`resolve_workspace_name` and `require_folder` as create, and the same
+`Workspace:` sentence. The stored path, including one whose folder has
+since moved, is left alone so the row can still be edited, paused, or
+deleted. A trailing slash that normalizes to the stored path counts as
+unchanged.
+
+**The viewer zone is a client fact.** The daemon does not invent one (it
+can run on a different host than the clock the user typed against,
+TD-3808). The pane keeps the job's zone on edit. It sends the viewer's
+zone only when the job has none and the cadence text changed, so a legacy
+UTC job starts meaning the new cadence in local time. A cadence or zone
+change with no replacement `next_run` still drops the armed slot so the
+runner re-arms. A cadence job's stored `next_run` is that slot, not user
+input: the form leaves it blank and omits it. Rejected: a separate
+`update_job` verb, and treating a blank next run on a cadence job as
+"clear the slot".

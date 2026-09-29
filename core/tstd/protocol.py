@@ -1011,10 +1011,13 @@ class ListJobs(ClientMessage):
 
 
 class SaveJob(ClientMessage):
-    """Create or replace a scheduled job (TD-3805).
+    """Create or replace a scheduled job (TD-3805, TD-3810).
 
-    Draft fields, not a natural-language parse. Pause is this verb with
-    ``paused`` set. Firing a job is ``run_job`` or the scheduler tick,
+    Draft fields, not a natural-language parse. An existing ``id`` updates
+    that job and keeps its run receipt. On that update, an omitted cadence
+    or next run keeps the stored value, and an empty string clears it so
+    the job can switch between recurring and one-shot. Pause is this verb
+    with ``paused`` set. Firing a job is ``run_job`` or the scheduler tick,
     never this verb. Acked with ``job_list``.
     """
 
@@ -1022,12 +1025,14 @@ class SaveJob(ClientMessage):
     id: str | None = None
     workspace: str | None = None
     instruction: str | None = None
+    # On an update, None keeps the stored value and "" clears it (TD-3810).
     cadence: str | None = None
     next_run: str | None = None
     deliver_to: Literal["window", "slack", "ntfy"] | None = None
     paused: bool = False
     # IANA name ("America/Chicago") a cron cadence is read in. Omitted on an
-    # edit keeps the job's current zone; None on create means UTC.
+    # edit keeps the job's current zone; None on create means UTC. The pane
+    # sends one on edit only for a legacy job whose cadence text changed.
     timezone: str | None = None
 
 

@@ -1,8 +1,9 @@
-// Scheduled rail helpers (TD-3805).
+// Scheduled rail helpers (TD-3805, TD-3810).
 //
 // Draft fields the pane sends on `save_job` — not a natural-language
-// parse. Pause is the same verb with `paused` flipped. Run now is
-// `run_job`; the tick still owns the schedule.
+// parse. Pause is the same verb with `paused` flipped. Edit is the same
+// verb with the job's id. Run now is `run_job`; the tick still owns the
+// schedule.
 
 import type { JobEntry, SaveJob } from "./protocol";
 
@@ -202,4 +203,80 @@ export function saveFromJob(job: JobEntry, paused: boolean): SaveJob {
 		paused,
 		timezone: job.timezone,
 	};
+}
+
+/** Form copy. Create stays the new-job wording; edit names the save. */
+export function jobFormCopy(editing: boolean): { title: string; lede: string; submit: string } {
+	if (editing) {
+		return {
+			title: "Edit job",
+			lede: "Change the fields, then save. Cadence or next run, not both.",
+			submit: "Save",
+		};
+	}
+	return {
+		title: "New job",
+		lede: "Parse a sentence, edit the draft, then create. Cadence or next run, not both.",
+		submit: "Create",
+	};
+}
+
+/**
+ * Load a row into the form.
+ *
+ * A cadence job's `next_run` is the slot the runner armed, not a time the
+ * user typed. Leaving it blank is what keeps Save from sending it back.
+ */
+export function draftFromJob(job: JobEntry): JobDraftFields {
+	const recurring = typeof job.cadence === "string" && job.cadence.trim() !== "";
+	return {
+		workspace: job.workspace,
+		instruction: job.instruction,
+		cadence: recurring ? job.cadence ?? "" : "",
+		next_run: recurring ? "" : (job.next_run ?? ""),
+		deliver_to: job.deliver_to,
+		paused: job.paused,
+	};
+}
+
+/**
+ * Wire payload for an in-place edit.
+ *
+ * A blank cadence is sent as `""` because omitting it means "keep", and
+ * that is the only way a recurring job becomes a one-shot. `next_run` is
+ * sent only for a one-shot: on a cadence job the field is the armed slot
+ * and the daemon keeps or re-arms it. The viewer zone goes out only for a
+ * legacy job (no zone stored) whose cadence text changed — any other edit
+ * keeps the zone the job already has.
+ *
+ * `paused` is the row's, not the draft's. The form has no pause control,
+ * and Pause on the row can flip while the form is open.
+ */
+export function saveFromEdit(
+	draft: JobDraftFields,
+	job: JobEntry,
+	timezone: string | undefined = viewerTimeZone(),
+): SaveJob {
+	const cadence = draft.cadence.trim();
+	const nextRun = draft.next_run.trim();
+	const payload: SaveJob = {
+		type: "save_job",
+		id: job.id,
+		workspace: blankToNull(draft.workspace),
+		instruction: blankToNull(draft.instruction),
+		deliver_to: draft.deliver_to,
+		paused: job.paused,
+	};
+	if (cadence === "") {
+		payload.cadence = "";
+		payload.next_run = nextRun;
+	} else {
+		payload.cadence = cadence;
+	}
+	const legacy = job.timezone == null;
+	const cadenceChanged = cadence !== (job.cadence ?? "").trim();
+	if (legacy && cadenceChanged && timezone !== undefined && timezone !== "") {
+		payload.timezone = timezone;
+	}
+	return payload;
 }

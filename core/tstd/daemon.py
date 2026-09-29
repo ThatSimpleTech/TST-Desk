@@ -327,12 +327,12 @@ from .remote_attach import (
     save_remote_attach,
 )
 from .router import TIER_NAMES, TierRouter
+from .scheduler.edit import apply_job_edit
 from .scheduler.models import (
     DeliverTo,
     Job,
     JobDraft,
     JobValidationError,
-    describe_validation_error,
     validate_draft,
 )
 from .scheduler.runner import (
@@ -3352,7 +3352,20 @@ class Daemon:
         """Persist a draft or an update. Does not run the job."""
         existing = get_job(self.data_dir, msg.id) if msg.id else None
         if existing is not None:
-            return save_job(self.data_dir, self._updated_job(existing, msg))
+            return save_job(
+                self.data_dir,
+                apply_job_edit(
+                    existing,
+                    workspace=msg.workspace,
+                    instruction=msg.instruction,
+                    cadence=msg.cadence,
+                    next_run=msg.next_run,
+                    deliver_to=msg.deliver_to,
+                    paused=msg.paused,
+                    timezone=msg.timezone,
+                    known_workspaces=self._known_workspaces(),
+                ),
+            )
         job = validate_draft(
             JobDraft(
                 id=msg.id,
@@ -3366,7 +3379,8 @@ class Daemon:
             )
         )
         # Create only: an existing job whose folder moved must stay editable
-        # so it can still be paused or deleted.
+        # so it can still be paused or deleted. Edits re-check in apply_job_edit
+        # when the workspace text itself changed.
         require_folder(job.workspace)
         return save_job(self.data_dir, job)
 
@@ -3374,35 +3388,6 @@ class Daemon:
         """Workspace paths the daemon has seen: sessions and pinned folders."""
         known = {record.workspace_path for record in self._session_store.records()}
         return known | set(self.workspace_pins)
-
-    @staticmethod
-    def _updated_job(existing: Job, msg: SaveJob) -> Job:
-        cadence = existing.cadence if msg.cadence is None else msg.cadence
-        timezone = existing.timezone if msg.timezone is None else msg.timezone
-        next_run = existing.next_run if msg.next_run is None else msg.next_run
-        if msg.next_run is None and (cadence, timezone) != (existing.cadence, existing.timezone):
-            # The stored slot was computed from the old cadence/zone; clearing
-            # it lets the runner re-arm from the new one.
-            next_run = None
-        try:
-            return Job(
-                id=existing.id,
-                workspace=msg.workspace or existing.workspace,
-                instruction=msg.instruction or existing.instruction,
-                cadence=cadence,
-                next_run=next_run,
-                deliver_to=msg.deliver_to or existing.deliver_to,
-                paused=msg.paused,
-                timezone=timezone,
-                # The receipt belongs to the run, not to this edit — an
-                # edit (Pause is one) must not erase what last happened.
-                last_run=existing.last_run,
-                last_status=existing.last_status,
-                last_summary=existing.last_summary,
-                last_session_id=existing.last_session_id,
-            )
-        except ValidationError as exc:
-            raise JobValidationError(describe_validation_error(exc)) from exc
 
     async def _handle_design_hit_test(self, msg: DesignHitTest) -> str:
         """Observe the last CU surface at a CSS-pixel point (TD-3403 / TD-3406)."""

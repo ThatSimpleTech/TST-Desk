@@ -6014,6 +6014,45 @@ files, vitest 1374, svelte-check 703 files 0 errors 0 warnings.
 
 ---
 
+### TD-3810 — Edit a job in place
+**Size:** 2 · **Depends on:** TD-3809
+
+**Acceptance criteria:**
+- [x] A row's Edit loads that job into the form — id, workspace,
+      instruction, cadence or next run, deliver to. The heading is
+      "Edit job", the primary button is "Save", and Cancel restores the
+      empty new-job draft. Create is unchanged
+- [x] A cadence job shows its cadence and a blank next run. Save sends
+      `next_run` only for a one-shot
+- [x] On edit, an omitted cadence or next run keeps the stored value and
+      an empty string clears it, so a job can switch between recurring
+      and one-shot. Clearing the last of the two is
+      `Cadence or next run is required`, except when the edit did not
+      change them: a spent one-shot's Resume still saves
+- [x] A changed workspace is resolved and must exist, the same check as
+      create. An unchanged workspace stays editable, pausable and
+      deletable when the folder has moved
+- [x] An edit keeps the job's time zone. A legacy job with no zone
+      adopts the viewer's zone only when the cadence text changes. A
+      cadence or zone change still clears a stale next run so the runner
+      re-arms
+- [x] Run now, Pause and Delete keep working while a row is being
+      edited. Deleting the row being edited resets the form
+
+Done (2026-09-29): the form could only create, so fixing an instruction
+meant delete and re-add, which threw away the run receipt. `save_job`
+already updated an existing id. The pane now loads that id. An edit is a
+patch: omitted cadence and next run keep what is stored, and `""` clears
+the field. The armed slot of a cadence job is not put back in the form.
+A workspace is checked only when its text changes. The pane sends the
+viewer's zone only for a legacy job whose cadence text changed. Class B
+entry in DECISIONS.md.
+
+Suite: 3460 passed / 8 skipped, ruff + `mypy --strict` clean over 154
+files, vitest 1391, svelte-check 704 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone

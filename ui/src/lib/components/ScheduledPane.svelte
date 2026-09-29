@@ -1,25 +1,38 @@
 <script lang="ts">
-	// Scheduled rail surface (TD-3805).
+	// Scheduled rail surface (TD-3805, TD-3810).
 	//
-	// Lists persisted jobs and creates / pauses / deletes / runs them through
-	// protocol verbs. Draft fields, not NL. Run now fires one job; the tick
-	// still owns the schedule.
+	// Lists persisted jobs and creates, edits, pauses, deletes, and runs them
+	// through protocol verbs. Draft fields, not NL. Run now fires one job; the
+	// tick still owns the schedule. Edit loads the row; a cadence job's armed
+	// slot stays off the form so Save does not send it back.
 	import {
+		cancelEdit,
 		createJob,
 		deleteScheduledJob,
+		editJob,
 		parseJobRequest,
 		pauseJob,
 		runJob,
+		saveEdit,
 		scheduled,
 		setDraftField,
 		setParseText,
 	} from '../scheduled.svelte.js';
-	import { jobActivity, jobFailed, jobMeta, jobsEmptyCopy, workspaceSuggestions } from '../scheduled';
+	import {
+		jobActivity,
+		jobFailed,
+		jobFormCopy,
+		jobMeta,
+		jobsEmptyCopy,
+		workspaceSuggestions,
+	} from '../scheduled';
 	import { visibleRecents, workspaces } from '../workspaces.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
 
 	let empty = $derived(jobsEmptyCopy());
+	let editing = $derived(scheduled.editingId !== null);
+	let formCopy = $derived(jobFormCopy(editing));
 	let known = $derived(
 		workspaceSuggestions(
 			workspaces.pinned,
@@ -54,6 +67,7 @@
 								<p class="card-summary">{row.last_summary}</p>
 							{/if}
 							<div class="actions">
+								<button class="action" type="button" onclick={() => editJob(row.id)}>Edit</button>
 								<button
 									class="action"
 									type="button"
@@ -75,9 +89,9 @@
 			</ul>
 		{/if}
 	</section>
-	<section class="form-col" aria-label="New scheduled job">
-		<h2 class="form-title">New job</h2>
-		<p class="lede">Parse a sentence, edit the draft, then create. Cadence or next run, not both.</p>
+	<section class="form-col" aria-label={editing ? 'Edit scheduled job' : 'New scheduled job'}>
+		<h2 class="form-title">{formCopy.title}</h2>
+		<p class="lede">{formCopy.lede}</p>
 		<label class="field">
 			<span>Describe the job</span>
 			<textarea
@@ -148,7 +162,14 @@
 		{#if scheduled.error !== null}
 			<p class="error" role="alert">{scheduled.error}</p>
 		{/if}
-		<button class="action create" type="button" onclick={() => createJob()}>Create</button>
+		<div class="row">
+			<button class="action create" type="button" onclick={() => (editing ? saveEdit() : createJob())}>
+				{formCopy.submit}
+			</button>
+			{#if editing}
+				<button class="action" type="button" onclick={() => cancelEdit()}>Cancel</button>
+			{/if}
+		</div>
 	</section>
 </div>
 
