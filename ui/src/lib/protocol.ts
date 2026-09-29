@@ -608,17 +608,24 @@ export interface ListJobs extends ClientMessage {
   type: "list_jobs";
 }
 
-/** Create or replace a scheduled job from draft fields (TD-3805). Pause is this verb. */
+/** Create or replace a scheduled job from draft fields (TD-3805, TD-3810).
+ *
+ *  An existing `id` updates that job and keeps its run receipt. On that
+ *  update, an omitted cadence or next run keeps the stored value, and `""`
+ *  clears it. Pause is this verb. */
 export interface SaveJob extends ClientMessage {
   type: "save_job";
   id?: string | null;
   workspace?: string | null;
   instruction?: string | null;
+  /** On an update, omitted keeps the stored value and `""` clears it. */
   cadence?: string | null;
+  /** On an update, omitted keeps the stored value and `""` clears it. */
   next_run?: string | null;
   deliver_to?: "window" | "slack" | "ntfy" | null;
   paused?: boolean;
-  /** IANA zone the cadence is evaluated in, e.g. `America/Chicago`. Absent or null is legacy UTC. */
+  /** IANA zone the cadence is evaluated in, e.g. `America/Chicago`.
+   *  Omitted on an edit keeps the job's zone. Absent or null on create is legacy UTC. */
   timezone?: string | null;
 }
 
