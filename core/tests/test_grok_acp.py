@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import stat
 import sys
@@ -106,6 +107,18 @@ def main():
 
 if __name__ == "__main__":
     main()
+"""
+
+
+# Emits one update and then blocks. The reader enters the update handler
+# and stays there, which is the close() path that used to abandon the task.
+STUCK_UPDATE_AGENT = r"""
+import json, sys, time
+
+msg = {"jsonrpc": "2.0", "method": "session/update", "params": {"update": {}}}
+sys.stdout.write(json.dumps(msg) + "\n")
+sys.stdout.flush()
+time.sleep(60)
 """
 
 
@@ -231,6 +244,48 @@ class TestAcpClient:
             assert result.get("stopReason") == "end_turn"
         finally:
             await client.close()
+
+    @pytest.mark.asyncio
+    async def test_close_awaits_a_stuck_reader(self, tmp_path: Path) -> None:
+        """``close`` returns only after pipe tasks have finished.
+
+        A reader blocked in a handler used to be cancelled and abandoned.
+        The task, and the transport it still held, were destroyed with the
+        loop (TD-4835).
+        """
+        agent = tmp_path / "stuck_agent.py"
+        agent.write_text(STUCK_UPDATE_AGENT, encoding="utf-8")
+        entered = asyncio.Event()
+
+        async def on_update(_params: dict[str, object]) -> None:
+            entered.set()
+            await asyncio.Event().wait()
+
+        client = AcpClient()
+        client.on_update(on_update)
+        await client.start([sys.executable, str(agent)], cwd=str(tmp_path), env=os.environ.copy())
+        reader = client._reader_task
+        assert reader is not None
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            await asyncio.wait_for(client.close(), timeout=5)
+            assert reader.done()
+            proc = client._proc
+            assert proc is not None
+            assert proc.returncode is not None
+            transport = proc._transport
+            assert transport is None or transport.is_closing()
+        finally:
+            if not reader.done():
+                reader.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reader
+            proc = client._proc
+            if proc is not None and proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError, OSError):
+                    proc.kill()
+                with contextlib.suppress(ProcessLookupError, OSError):
+                    await proc.wait()
 
 
 class TestPromptImages:

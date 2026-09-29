@@ -17,9 +17,10 @@ The service name is always ``com.thatsimpletech.tstdesk``.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import sys
 from abc import ABC, abstractmethod
+
+from .proc_lifecycle import finish_subprocess
 
 
 class KeychainError(Exception):
@@ -70,12 +71,13 @@ async def _await_cli(
 ) -> tuple[bytes, bytes]:
     """``communicate`` with a deadline; a hung CLI is a locked keychain."""
     try:
-        return await asyncio.wait_for(proc.communicate(input=stdin), timeout=_CLI_TIMEOUT_SECS)
+        # The post-kill wait stays at one second: a CLI that ignores
+        # SIGKILL is already a locked keychain, and the suite's hung-CLI
+        # stand-in must not pick up the longer default grace.
+        return await finish_subprocess(
+            proc, timeout=_CLI_TIMEOUT_SECS, stdin=stdin, reap_timeout=1.0
+        )
     except TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        with contextlib.suppress(ProcessLookupError, TimeoutError):
-            await asyncio.wait_for(proc.wait(), timeout=1.0)
         raise KeychainLockedError(_TIMEOUT_GUIDANCE) from None
 
 

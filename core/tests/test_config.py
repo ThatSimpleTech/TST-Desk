@@ -7,7 +7,7 @@ and the "no slugs in source code" assertion.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
+from typing import IO, ClassVar
 
 import pytest
 import yaml
@@ -118,6 +118,40 @@ class TestLoading:
         ensure_user_config(config_path)
         assert config_path.read_text() == "# custom"
 
+    def test_ensure_user_config_closes_streams_on_success(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opened = _track_config_opens(monkeypatch)
+        dest = tmp_path / "config.yaml"
+        ensure_user_config(dest)
+        assert len(opened) == 2
+        assert all(handle.closed for handle in opened)
+        assert "moonshotai/kimi-k3" in dest.read_text(encoding="utf-8")
+
+    def test_ensure_user_config_closes_streams_when_copy_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opened = _track_config_opens(monkeypatch)
+
+        def boom(_src: object, _dst: object, _length: int = 0) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr("tstd.config.shutil.copyfileobj", boom)
+        with pytest.raises(OSError, match="disk full"):
+            ensure_user_config(tmp_path / "config.yaml")
+        assert len(opened) == 2
+        assert all(handle.closed for handle in opened)
+
+    def test_ensure_user_config_existing_file_opens_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opened = _track_config_opens(monkeypatch)
+        dest = tmp_path / "config.yaml"
+        dest.write_text("# custom", encoding="utf-8")
+        ensure_user_config(dest)
+        assert opened == []
+        assert dest.read_text(encoding="utf-8") == "# custom"
+
     def test_cached_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """cached_config returns the same object on repeated calls.
 
@@ -132,6 +166,21 @@ class TestLoading:
         finally:
             cached_config.cache_clear()
         assert c1 is c2
+
+
+def _track_config_opens(monkeypatch: pytest.MonkeyPatch) -> list[IO[bytes]]:
+    """Record binary opens of ``config.yaml`` so tests can see they close."""
+    opened: list[IO[bytes]] = []
+    real_open = Path.open
+
+    def tracking(self: Path, mode: str = "r", *args: object, **kwargs: object) -> IO[bytes]:
+        handle: IO[bytes] = real_open(self, mode, *args, **kwargs)  # type: ignore[arg-type, assignment]
+        if self.name == "config.yaml" and "b" in mode:
+            opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", tracking)
+    return opened
 
 
 # ── Tiers and presets ────────────────────────────────────────────────────

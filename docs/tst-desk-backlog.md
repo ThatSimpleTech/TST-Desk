@@ -8084,7 +8084,7 @@ check had no signal to give.
 
 ### TD-4835 — Deterministic resource lifecycle cleanup
 **Size:** 2 · **Depends on:** TD-4833
-**Status:** Approved 2026-09-17
+**Status:** Complete 2026-09-29
 
 **Why:** The TD-4833 investigation reproduced two distinct resource defects. Neither
 may be closed by suppressing warnings or adding sleeps.
@@ -8099,25 +8099,40 @@ may be closed by suppressing warnings or adding sleeps.
    source is unconfirmed; the reported test is not necessarily the origin.
 
 **Acceptance criteria:**
-- [ ] `ensure_user_config` context-manages both streams; closure holds on copy success
+- [x] `ensure_user_config` context-manages both streams; closure holds on copy success
       and on an I/O failure mid-copy; an existing user config is still preserved.
-- [ ] Subprocess-owning components close deterministically on cancellation and
+- [x] Subprocess-owning components close deterministically on cancellation and
       shutdown: no transport is finalized after loop close. Candidates named by the
       investigation (checkpoint `_git` on cancellation, `run_shell`'s cancelled
       spawn branch, `AcpClient.close` task awaiting) must each be inspected; a
       component is only changed where a defect is identified, and the fix targets
       the established source.
-- [ ] Regression tests fail before the fix and pass after, using deterministic
+- [x] Regression tests fail before the fix and pass after, using deterministic
       hooks — no sleeps, no warning-filter suppression, no best-effort teardown.
-- [ ] The full core suite passes with `pytest.PytestUnraisableExceptionWarning`
+- [x] The full core suite passes with `pytest.PytestUnraisableExceptionWarning`
       and `ResourceWarning` escalated to errors, and stays green on a repeat run
       (the original warning is intermittent).
-- [ ] `DECISIONS.md` records any structural choice (e.g. a shared async-subprocess
+- [x] `DECISIONS.md` records any structural choice (e.g. a shared async-subprocess
       helper) with rationale; fixes stay within TD-4833's residual-warning scope.
-- [ ] Ruff lint/format and strict mypy remain clean.
+- [x] Ruff lint/format and strict mypy remain clean.
 
 **Non-goals:** Frontend bundle optimization and live/soak testing are separate,
 unapproved follow-ups (see `reports/td-4833/warning-investigation.md`).
+
+Done (2026-09-29): `ensure_user_config` closes both streams on success and on a
+failed copy, and still leaves an existing user config untouched. Cancelled
+`communicate()` calls (checkpoint, charter, revert, supervisor, memory commit,
+sandbox, keychain) and the shell's task-cancel path kill and `wait` on the
+caller's task before the loop can close. A refused group kill does not SIGKILL
+only the leader. `AcpClient.close` awaits the reader it used to abandon.
+The escalated suite also closed the harness temp dir, the debug log handler
+the websockets cap test dropped, and the rebinding test's listening socket.
+MCP and desktop stdio `aclose` were left as they were. Class B entry in
+DECISIONS.md.
+
+Suite: 3593 passed / 8 skipped, twice, with `ResourceWarning` and
+`PytestUnraisableExceptionWarning` as errors. ruff + `mypy --strict` clean
+over 157 files, vitest 1405, svelte-check 707 files 0 errors 0 warnings.
 
 ---
 

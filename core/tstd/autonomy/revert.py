@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from ..logging import get_logger
+from ..proc_lifecycle import finish_subprocess
 from .checkpoint import auto_branch, auto_ref
 
 if TYPE_CHECKING:
@@ -315,10 +316,8 @@ async def _git(
     except OSError as e:
         return 1, "", str(e)
     try:
-        out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT)
+        out_b, err_b = await finish_subprocess(proc, timeout=_GIT_TIMEOUT)
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
         return 1, "", "git timed out"
     rc = proc.returncode if proc.returncode is not None else -1
     return rc, out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace")
