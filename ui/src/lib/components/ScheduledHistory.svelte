@@ -46,7 +46,11 @@
 			<ul class="runs">
 				{#each runs as run, index (`${run.started_at}:${index}`)}
 					<li class="run">
-						<span class="when" class:failed={run.status === 'failed'}>{jobRunLabel(run)}</span>
+						<span
+							class="when"
+							class:failed={run.status === 'failed'}
+							class:missed={run.status === 'missed'}>{jobRunLabel(run)}</span
+						>
 						{#if run.summary}
 							<p class="summary">{run.summary}</p>
 						{/if}
@@ -125,6 +129,11 @@
 	.gone {
 		font-size: var(--text-xs);
 		color: var(--color-err);
+	}
+
+	/* A skipped slot is not a failed turn. */
+	.missed {
+		color: var(--color-warn);
 	}
 
 	/* Same clamp as the row receipt: one long turn must not push the list away. */

@@ -1,4 +1,4 @@
-// Scheduled rail store (TD-3805, TD-3810, TD-3811).
+// Scheduled rail store (TD-3805, TD-3810, TD-3811, TD-3813, TD-3814).
 //
 // Data-dir jobs from `job_list`. Create / edit / pause / delete / run send
 // protocol verbs; the daemon talks to the store. Run now starts a turn.
@@ -246,9 +246,11 @@ function reduce(event: DaemonEventUnion): void {
 			next_run: event.next_run ?? scheduled.draft.next_run,
 			deliver_to: event.deliver_to ?? scheduled.draft.deliver_to,
 			paused: event.paused ?? scheduled.draft.paused,
-			// A sentence does not name a model. Keep the pin already on the form.
+			// A sentence does not name a model, a lateness window, or retries.
 			preset: scheduled.draft.preset,
 			engine: scheduled.draft.engine,
+			grace: scheduled.draft.grace,
+			retries: scheduled.draft.retries,
 		};
 		return;
 	}
