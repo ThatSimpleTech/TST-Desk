@@ -7039,6 +7039,41 @@ files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
 
 ---
 
+### TD-4842 — The daemon honours --data-dir for logs and stops on SIGTERM
+**Size:** 2 · **Depends on:** TD-1002
+
+`tstd --data-dir <scratch>` wrote `tstd.log` into the real user data
+directory, so a test turn polluted the user's log. SIGTERM left that
+daemon running (state SN) until SIGKILL.
+
+**Acceptance criteria:**
+- [x] Log files are `<data-dir>/logs/tstd.log`. With no `--data-dir`,
+      that directory is the platform user data directory, the same
+      place as before
+- [x] `tst` spawns `tstd` with that `--data-dir`, so a CLI-started
+      daemon logs in the same tree
+- [x] On macOS and Linux, SIGTERM and SIGINT request the existing
+      graceful shutdown through the event loop. The process exits
+      within 5 seconds and the port file is gone. If cleanup does not
+      finish, the process exits non-zero and the port file is still
+      removed
+- [x] Windows does not install a signal handler. Shutdown there stays
+      the websocket message, the parent watchdog, or the console event
+
+Done (2026-09-29): the daemon resolves its data directory once and
+writes `logs/tstd.log` there. `tst` already passes `--data-dir`, so
+its daemon logs in that tree. `config.yaml` stays in the user data
+directory. On macOS and Linux the event loop handles SIGTERM and
+SIGINT by setting `_shutdown_event`, the same path as the shutdown
+message, and a 5 second timer exits non-zero and removes the port
+file if cleanup does not return. Windows is unchanged. Class B entry
+in DECISIONS.md.
+
+Suite: 3627 passed / 8 skipped, ruff + `mypy --strict` clean over 158
+files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |

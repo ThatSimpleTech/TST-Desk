@@ -102,6 +102,8 @@ def daemon_argv(data_dir: Path) -> list[str]:
 
     ``python -m tstd.daemon`` so the port-file pid is this interpreter,
     not a console-script trampoline (TD-1406). No ``--parent-pid``.
+    ``--data-dir`` is the directory this process and ``tstd`` share,
+    including ``logs/``.
     """
     return [sys.executable, "-m", "tstd.daemon", "--data-dir", str(data_dir)]
 
