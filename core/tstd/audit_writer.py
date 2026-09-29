@@ -118,11 +118,20 @@ class AuditWriter:
     # ── Producers (event loop thread, never block) ─────────────────────
 
     def attach_session(self, session: Session) -> None:
-        """Record the session and subscribe to its event log."""
+        """Record the session and subscribe to its event log.
+
+        Open and revive both attach. The start row is inserted once;
+        a later attach for the same workspace must not submit a new
+        ``started_at`` or the primary key rejects a fact the log
+        cannot rewrite.
+        """
         self._sessions[session.id] = session
         workspace = session.workspace_path
         sid = session.id
-        self._enqueue(sid, lambda: self._store.append_session(sid, workspace, time.time()))
+        self._enqueue(
+            sid,
+            lambda: self._store.record_session_attach(sid, workspace, time.time()),
+        )
         session.event_log.subscribe(self._make_subscriber(session))
 
     def record_model_call(self, session_id: str, record: CallRecord, is_classifier: bool) -> None:

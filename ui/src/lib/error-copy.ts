@@ -80,6 +80,14 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		title: "API key rejected",
 		body: "The provider rejected the stored key (401). Re-enter a valid key: title-bar gear → Provider API key. Check the base_url in config.yaml matches the key's provider, and resend.",
 	},
+	// The daemon re-read the keychain and the key was unchanged (TD-4840).
+	// The chat message names the credential and host; this banner is the
+	// part that stays on screen until the user fixes the key.
+	api_key_rejected: {
+		severity: "banner",
+		title: "API key rejected",
+		body: "The provider rejected the stored API key. Check it in Settings → API keys, then resend. The conversation is preserved.",
+	},
 	// A banner, not a toast: the key is valid and the request well-formed, but
 	// nothing will succeed until the account is topped up, so this blocks work
 	// exactly the way a missing key does.

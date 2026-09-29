@@ -88,8 +88,60 @@ def test_store_exposes_no_update_methods(store: AuditStore) -> None:
         "close",
         "db_path",
         "open_default",
+        "record_session_attach",
         "schema_version",
     ]
+
+
+def _session_rows(store: AuditStore) -> list[tuple[str, str, float]]:
+    rows = store._conn.execute(
+        "SELECT session_id, workspace_path, started_at FROM sessions ORDER BY session_id"
+    ).fetchall()
+    return [(str(row[0]), str(row[1]), float(row[2])) for row in rows]
+
+
+@pytest.mark.parametrize(
+    ("workspace", "started_at", "conflicts"),
+    [
+        ("/tmp/workspace", 1000.0, False),
+        ("/elsewhere", 1000.0, True),
+        ("/tmp/workspace", 2000.0, True),
+    ],
+)
+def test_append_session_identical_is_a_noop_and_conflict_is_an_error(
+    store: AuditStore, workspace: str, started_at: float, conflicts: bool
+) -> None:
+    """Same fact is not written twice. A different fact is still an error.
+
+    The fixture already inserted ``s1``. A conflict must leave that row
+    byte-for-byte, and the connection must still accept a later insert.
+    """
+    before = _session_rows(store)
+    if conflicts:
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
+            store.append_session("s1", workspace, started_at)
+        store.append_turn("s1", 1, "brain", 1, 0.0, 0.1, ts=1000.0)
+        assert store._conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0] == 1
+    else:
+        store.append_session("s1", workspace, started_at)
+    assert _session_rows(store) == before
+
+
+def test_record_session_attach_keeps_the_original_row(store: AuditStore) -> None:
+    """Revive samples a new clock. That must not replace the stored start."""
+    store.record_session_attach("s-new", "/ws", 10.0)
+    store.record_session_attach("s-new", "/ws", 99.0)
+    store.record_session_attach("s-new", "/ws", 10.0)
+    assert store._conn.execute(
+        "SELECT workspace_path, started_at FROM sessions WHERE session_id = 's-new'"
+    ).fetchone() == ("/ws", 10.0)
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
+        store.record_session_attach("s-new", "/other", 99.0)
+    assert store._conn.execute(
+        "SELECT workspace_path, started_at FROM sessions WHERE session_id = 's-new'"
+    ).fetchone() == ("/ws", 10.0)
+    # The fixture row is untouched, and the rejected attach did not add one.
+    assert [row[0] for row in _session_rows(store)] == ["s-new", "s1"]
 
 
 # ── Migrations ─────────────────────────────────────────────────────────
