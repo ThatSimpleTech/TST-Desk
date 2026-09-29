@@ -257,6 +257,21 @@ screenshot()                  # fresh coordinates
 click(..., expect_window="Claude")
 ```
 
+### One call instead of three
+
+`click`, `type_text`, `press_keys`, `scroll`, `launch_app`, and `ui_action`
+take `settle_ms` (integer milliseconds, 0-5000). The tool waits that long
+after it acts, then returns `foreground_window` with `app` (process name)
+and `title` in the same result. Omit `settle_ms`, or pass 0, and nothing
+waits — the window is still included, so a follow-up `get_foreground_window`
+is optional.
+
+`screenshot` takes `after_ms` (0-5000) when the next look should happen
+after a short pause. Omit it, or pass 0, and the capture is immediate.
+
+`wait` and `wait_for_window` are still the tools for a wait longer than
+five seconds, or for "is this window in front yet?".
+
 Neither trap is a bug in this server, and the second is only partly fixable
 inside it. They are the cost of driving a UI by coordinates, and the reason
 `screenshot` is cheap.

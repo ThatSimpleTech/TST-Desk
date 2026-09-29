@@ -8210,10 +8210,9 @@ DECISIONS.md.
 
 **Not closed here.** The session's other findings are separate work: 99% of its
 wall clock was time-to-first-token (mean 41s), so the unit to optimize is
-round-trips — `settle_ms` on actions, `after_ms` on screenshot, the foreground
-window returned with every action result, and a `launch_app` tool so opening an
-app is one call instead of a Spotlight pantomime. Not filed; not in this
-milestone.
+round-trips — `settle_ms` on actions, `after_ms` on screenshot, and the
+foreground window returned with every action result. `launch_app` landed in
+TD-4829. The waits are TD-4847. There is still no drag tool.
 
 ---
 
@@ -8234,6 +8233,47 @@ engine; TD-4830 is the Settings page.
 
 **Completed (2026-09-09):** `tst-cu-mcp` background tools plus host `cu_ax`.
 Windows/Linux list apps best-effort; AX snapshot/action is macOS-only.
+
+---
+
+### TD-4847 — Computer use in fewer round-trips
+**Size:** 3 · **Depends on:** TD-4828, TD-4829
+
+A live computer-use session spent 99% of its wall clock on model
+time-to-first-token (mean 41s). The unit to optimize is round-trips.
+
+**Acceptance criteria:**
+- [x] `click`, `type_text`, `press_keys`, `scroll`, `launch_app`, and
+      `ui_action`, and the daemon tools `desktop_click`, `desktop_type`,
+      and `desktop_scroll`, take optional `settle_ms`, an integer from 0
+      to 5000 inclusive. After the action and that wait, the same result
+      includes `foreground_window` with `app` (process name) and `title`
+- [x] `screenshot` and `desktop_screenshot` take optional `after_ms` in
+      the same range, and the wait happens before the capture
+- [x] Omitting the parameter, or passing 0, does not sleep. An action
+      result still includes the foreground window. A screenshot's
+      payload is unchanged
+- [x] A value outside that range, or a non-integer (including `true`),
+      is refused before the action or the capture
+- [x] Tool descriptions tell the model it can batch the wait
+- [x] Tests cover schema bounds, settle-then-foreground, and `after_ms`
+      delaying capture, all through an injected clock. No-desktop runs
+      stay green
+
+Done (2026-09-29): The wait sits in the tool layer. Daemon handlers
+wait in-process and then read the driver; they do not forward
+`settle_ms` or `after_ms` to the sidecar. `launch_app` was already an
+MCP tool (TD-4829) and now takes `settle_ms`; it was not added again.
+There is still no drag tool, so drag has no parameter. `move` and
+hide/unhide are unchanged. No protocol change and no new config key.
+Class B in DECISIONS.md.
+
+Suite: core 3757 passed / 8 skipped; ruff clean; `mypy --strict` clean
+over 164 files; ui vitest 1412; svelte-check 709 files, 0 errors,
+0 warnings. tst-cu-mcp: 567 passed / 35 skipped, plus 3 failures that
+already exist because `DarwinBackend.hit_test` is nested inside
+`_mark_prompted` (unchanged here). ruff and mypy are clean on the
+files this story touched.
 
 ---
 
