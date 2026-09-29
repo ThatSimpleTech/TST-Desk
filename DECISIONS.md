@@ -10926,3 +10926,53 @@ later story could pass the ordinary suite while leaking a socket.
 inside chat text while the event still says `auth_failed`. A third
 retry. Suppressing the warning on that one test. Changing production
 shutdown so the test's server would close.
+
+## TD-4847 — Computer use in fewer round-trips (Class B)
+
+2026-09-29.
+
+**Decision:** `settle_ms` and `after_ms` are integers from 0 to 5000
+inclusive, on both the computer-use MCP tools and the daemon
+`desktop_*` tools. Five seconds covers a menu or a focus change. A
+longer wait stays on `wait` / `wait_for_window`. One action must not
+wedge the single-call stdio server. `bool` is rejected: it is an
+`int` subclass, and `True` must not become a 1 ms wait.
+
+**Decision:** The foreground identity on an action result is
+`{"app", "title"}`. `app` is the process name from
+`foreground_window` (`WindowInfo.process`). Bounds and pid stay on
+`get_foreground_window`. Sidecar JSON uses `process`; the daemon maps
+`process` to `app` when `app` is absent.
+
+**Decision:** Omitted or 0 does not sleep, and the action result still
+includes `foreground_window`. The screenshot payload is unchanged;
+only timing changes when `after_ms` is greater than 0. The result
+does not echo the wait.
+
+**Decision:** The wait lives in the tool layer, not in the OS
+backends. Daemon handlers wait in-process and then read the driver.
+They do not forward `settle_ms` or `after_ms` to the sidecar, which
+would pause twice. MCP tools implement the same contract for a model
+that calls computer-use directly.
+
+**Decision:** The bound is checked before actuation. A bad wait does
+not click, type, launch, or capture. Kill-switch, focus mismatch, and
+other refusals stay inside the existing action and do not sleep or
+attach a success window.
+
+**Decision:** A failed foreground read after a successful action does
+not fail the action. A retry would click again. The result is
+`{"app": "", "title": "", "read": "unavailable"}`. Exception text is
+not copied. The log records only the exception type name.
+
+**Decision:** `after_ms` sleeps before the screenshot hides the ring,
+so the ring is not hidden during the wait. Capture still hides the
+ring as it does today.
+
+**Decision:** No drag tool. Click remains a press and release at one
+point. `move` / `desktop_move`, hide, and unhide do not take
+`settle_ms`. No new config key. No protocol change.
+
+**Rejected:** Forwarding the wait to the sidecar. Failing the action
+when the window cannot be read. Adding a drag tool. Sleeping when the
+value is 0. Echoing the duration. Hiding the ring during `after_ms`.
