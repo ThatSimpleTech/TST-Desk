@@ -179,6 +179,7 @@ class PromptAssembler:
         home_dir: str | Path | None = None,
         manifest_config: ManifestConfig | None = None,
         tier_config: TierContextConfig | None = None,
+        claude_global_fallback: bool = False,
     ) -> None:
         """Create an assembler bound to *workspace_path*.
 
@@ -187,11 +188,14 @@ class PromptAssembler:
             home_dir: Override home directory (test seam).
             manifest_config: Optional manifest limits (depth/caps).
             tier_config: Optional per-tier context config override.
+            claude_global_fallback: Pass ``config.steering`` through.
+                Default false matches the shipped config (TD-4845).
         """
         self._workspace = Path(workspace_path)
         self._home_dir = home_dir
         self._manifest = WorkspaceManifest(manifest_config or ManifestConfig())
         self._tier_config = tier_config
+        self._claude_global_fallback = claude_global_fallback
         self.last_assembled: AssembledPrompt | None = None
 
     async def assemble(
@@ -269,6 +273,7 @@ class PromptAssembler:
             config=self._tier_config,
             approved_imports=approved_imports,
             denied_imports=denied_imports,
+            claude_global_fallback=self._claude_global_fallback,
         )
 
         # Stable-prefix order: base, then the workspace root, then the

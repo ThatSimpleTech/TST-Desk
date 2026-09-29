@@ -231,6 +231,15 @@ embeddings:
 project_context:
   token_budget: 2000
 
+# User-global steering (TD-4845). ~/.tstdesk/AGENTS.md is always the
+# global file. ~/.claude/CLAUDE.md is Claude Code's file and is not
+# read — nor anything it imports — unless this is true. Workspace and
+# nested CLAUDE.md are project files and are not gated here. When this
+# is false and that Claude file exists with no ~/.tstdesk/AGENTS.md,
+# Doctor's steering row says it was not loaded.
+steering:
+  claude_global_fallback: false
+
 # On-disk session event log (TD-2901). Attach replays this file. The cap
 # is an event count so from_seq stays honest; 0 is invalid, not unbounded.
 session:
