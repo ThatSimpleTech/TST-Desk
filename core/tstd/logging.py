@@ -16,6 +16,10 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+# Rotating daemon log. ``--data-dir`` relocates this with the rest of that
+# tree (TD-4842); the default data dir keeps today's platform path.
+LOG_FILE_NAME = "tstd.log"
+
 # Patterns that must be redacted in log output (from tst-cua policy.py).
 SECRET_PATTERNS: list[re.Pattern[str]] = [
     # OpenAI / OpenRouter / Anthropic key. Dashed forms (sk-or-v1-…,
@@ -68,6 +72,11 @@ def user_data_dir() -> Path:
     xdg = os.environ.get("XDG_DATA_HOME")
     base = Path(xdg) if xdg else Path.home() / ".local" / "share"
     return linux_user_data_dir(base)
+
+
+def log_directory(data_dir: Path) -> Path:
+    """Directory that holds ``tstd.log`` for a daemon data directory."""
+    return data_dir / "logs"
 
 
 def redact_secrets(text: str) -> str:
@@ -153,7 +162,9 @@ def setup_logging(
 
     Args:
         level: Log level (name or int).
-        log_dir: Directory for rotating log files. Defaults to user data dir.
+        log_dir: Directory for rotating log files. Defaults to
+            ``<user data dir>/logs``. The daemon passes ``<data-dir>/logs``
+            so ``--data-dir`` does not leave lines in the real data dir.
         log_to_stdout: Also emit JSON lines to stdout.
         max_bytes: Max size per log file before rotation.
         backup_count: Number of rotated log files to keep.
@@ -170,9 +181,9 @@ def setup_logging(
     # the frame logger at INFO no matter what --log-level was requested.
     logging.getLogger("websockets").setLevel(max(level, logging.INFO))
 
-    log_dir = log_dir or (user_data_dir() / "logs")
+    log_dir = log_dir or log_directory(user_data_dir())
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "tstd.log"
+    log_file = log_dir / LOG_FILE_NAME
 
     root = logging.getLogger()
     root.setLevel(level)

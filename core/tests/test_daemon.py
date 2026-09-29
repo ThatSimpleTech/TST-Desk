@@ -19,6 +19,7 @@ from tstd.logging import (
     setup_logging,
     user_data_dir,
 )
+from tstd.shutdown_budget import ShutdownBudget
 
 
 class TestDaemonState:
@@ -242,19 +243,34 @@ class TestLogging:
         assert user_data_dir() == tmp_path / "tst-desk"
 
 
+def _safe_budget() -> ShutdownBudget:
+    """A budget that cannot ``os._exit`` the suite if a test forgets to cancel."""
+    return ShutdownBudget(seconds=30, exit_process=lambda _code: None)
+
+
 class TestSignalHandling:
     @pytest.mark.asyncio
-    async def test_signal_requests_shutdown(self) -> None:
-        """Signal handler sets shutdown event."""
-        d = Daemon()
-        assert d._shutdown_event.is_set() is False
-        d._on_signal()
-        assert d._shutdown_event.is_set() is True
+    async def test_signal_requests_shutdown(self, tmp_path: Path) -> None:
+        """Signal handler sets shutdown event and arms the budget once."""
+        d = Daemon(data_dir=tmp_path, shutdown_budget=_safe_budget())
+        try:
+            assert d._shutdown_event.is_set() is False
+            d._on_signal()
+            assert d._shutdown_event.is_set() is True
+            assert d._shutdown_budget.pending
+            d._on_signal()
+            assert d._shutdown_budget.pending
+        finally:
+            d._shutdown_budget.finish()
+            assert not d._shutdown_budget.pending
 
     @pytest.mark.asyncio
-    async def test_signal_handles_multiple_signals(self) -> None:
+    async def test_signal_handles_multiple_signals(self, tmp_path: Path) -> None:
         """Multiple signals don't cause errors."""
-        d = Daemon()
-        d._on_signal()
-        d._on_signal()  # second signal, already shutting down
-        assert d._shutdown_event.is_set() is True
+        d = Daemon(data_dir=tmp_path, shutdown_budget=_safe_budget())
+        try:
+            d._on_signal()
+            d._on_signal()  # second signal, already shutting down
+            assert d._shutdown_event.is_set() is True
+        finally:
+            d._shutdown_budget.finish()

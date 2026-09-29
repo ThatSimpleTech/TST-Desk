@@ -44,8 +44,8 @@ both exist, `tst-desk` wins and the leftover is left alone.
 
 There is no dedicated environment variable for this path and no CLI flag for it. On Linux and
 Windows it moves with the platform's own data-directory variable, as the table shows; on macOS
-the path is fixed. Note that the daemon's `--data-dir` moves the session store and the audit
-database but does **not** move this file.
+the path is fixed. The daemon's `--data-dir` moves the session store, the audit
+database, and the log files (`logs/tstd.log`). It does **not** move this file.
 
 **Unknown keys are ignored, in both files.** A misspelled key is not an error — it is dropped,
 and the default applies. `writeable_paths` (with the extra `e`) leaves you with the default
