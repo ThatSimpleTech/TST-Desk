@@ -210,6 +210,7 @@ export type RailRowActionId =
 	| "star"
 	| "unstar"
 	| "rename"
+	| "schedule"
 	| "archive"
 	| "unarchive"
 	| "move"
@@ -272,6 +273,15 @@ export function rowActions(archived: boolean, starred = false): RailRowAction[] 
 			icon: "pencil",
 			danger: false,
 			hint: "Change the name in the list. Empty restores the automatic title.",
+		},
+		{
+			id: "schedule",
+			label: "Schedule this chat",
+			icon: "clock",
+			danger: false,
+			hint:
+				"Open Scheduled with this chat's workspace, model, and first message. " +
+				"Nothing is saved until you create the job.",
 		},
 		archived
 			? {

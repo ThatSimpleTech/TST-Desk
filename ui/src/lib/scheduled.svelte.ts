@@ -10,7 +10,8 @@
 // (a parked approval settling does not move `last_run`).
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
-import type { DaemonEventUnion, JobEntry, JobRunEntry } from "./protocol";
+import { showScheduled } from "./projects.svelte.js";
+import type { DaemonEventUnion, JobEntry, JobRunEntry, JobTemplateEntry } from "./protocol";
 import {
 	draftFromJob,
 	emptyDraft,
@@ -19,6 +20,12 @@ import {
 	saveFromJob,
 	type JobDraftFields,
 } from "./scheduled";
+import {
+	applyTemplateEvent,
+	draftFromTemplate,
+	saveTemplateFromDraft,
+	type TemplateFlags,
+} from "./scheduled-template";
 
 export const scheduled = $state({
 	items: [] as JobEntry[],
@@ -35,6 +42,12 @@ export const scheduled = $state({
 	historyMark: {} as Record<string, string | null>,
 	/** Runs by job id, newest first. Absent until `job_runs` arrives. */
 	runs: {} as Record<string, JobRunEntry[]>,
+	/** Built-ins first, then the user's templates (TD-3816). */
+	templates: [] as JobTemplateEntry[],
+	/** Id of the template currently filling the draft. `""` is none. */
+	templateId: "",
+	/** Name for Save as template. Cleared only after that save is acked. */
+	templateName: "",
 });
 
 let started = false;
@@ -43,6 +56,12 @@ let stopEvents: (() => void) | null = null;
 // which is the only signal that it took the draft — clearing the form
 // before that would throw away the user's text on a validation error.
 let savePending = false;
+// Separate from savePending. A template save must not arm the job-list
+// reset, or the ack for an unrelated job list would wipe the form.
+const templateFlags: TemplateFlags = {
+	templateSavePending: false,
+	awaitingSource: false,
+};
 
 function ensureStarted(): void {
 	if (started) return;
@@ -62,6 +81,8 @@ export function startScheduled(): () => void {
 export function resetScheduled(): void {
 	started = false;
 	savePending = false;
+	templateFlags.templateSavePending = false;
+	templateFlags.awaitingSource = false;
 	stopEvents?.();
 	stopEvents = null;
 	scheduled.items = [];
@@ -74,6 +95,9 @@ export function resetScheduled(): void {
 	scheduled.historySeen = {};
 	scheduled.historyMark = {};
 	scheduled.runs = {};
+	scheduled.templates = [];
+	scheduled.templateId = "";
+	scheduled.templateName = "";
 }
 
 function freshDraft(): JobDraftFields {
@@ -91,6 +115,7 @@ export function refreshJobs(workspaceHint?: string | null): void {
 	scheduled.loading = true;
 	scheduled.error = null;
 	sendToDaemon({ type: "list_jobs" });
+	sendToDaemon({ type: "list_job_templates" });
 }
 
 export function setDraftField<K extends keyof JobDraftFields>(
@@ -133,6 +158,7 @@ export function editJob(jobId: string): boolean {
 	savePending = false;
 	scheduled.error = null;
 	scheduled.editingId = job.id;
+	scheduled.templateId = "";
 	scheduled.draft = draftFromJob(job);
 	return true;
 }
@@ -142,6 +168,7 @@ export function cancelEdit(): void {
 	if (scheduled.editingId === null) return;
 	savePending = false;
 	scheduled.editingId = null;
+	scheduled.templateId = "";
 	scheduled.error = null;
 	scheduled.draft = freshDraft();
 }
@@ -179,6 +206,7 @@ export function deleteScheduledJob(jobId: string): boolean {
 	if (scheduled.editingId === jobId) {
 		savePending = false;
 		scheduled.editingId = null;
+		scheduled.templateId = "";
 		scheduled.draft = freshDraft();
 	}
 	return sendToDaemon({ type: "delete_job", job_id: jobId });
@@ -213,7 +241,68 @@ export function runJob(jobId: string): boolean {
 	return sendToDaemon({ type: "run_job", job_id: jobId });
 }
 
+/** Fill the draft from a template. Does not send `save_job`. */
+export function applyTemplate(id: string): void {
+	if (id === "") {
+		scheduled.templateId = "";
+		return;
+	}
+	const template = scheduled.templates.find((row) => row.id === id);
+	if (template === undefined) {
+		scheduled.templateId = "";
+		return;
+	}
+	ensureStarted();
+	templateFlags.awaitingSource = false;
+	savePending = false;
+	scheduled.editingId = null;
+	scheduled.error = null;
+	scheduled.templateId = template.id;
+	scheduled.draft = draftFromTemplate(template, scheduled.draft);
+}
+
+export function setTemplateName(value: string): void {
+	scheduled.templateName = value;
+}
+
+/** Store the current form under `templateName`. Does not create a job. */
+export function saveAsTemplate(): boolean {
+	const name = scheduled.templateName.trim();
+	if (name === "") {
+		scheduled.error = "name is required";
+		return false;
+	}
+	ensureStarted();
+	scheduled.error = null;
+	const sent = sendToDaemon(saveTemplateFromDraft(name, scheduled.draft));
+	if (sent) templateFlags.templateSavePending = true;
+	return sent;
+}
+
+/**
+ * Open Scheduled with this chat's workspace, pin, and first message.
+ *
+ * The pane stays put when the frame never leaves: there is nothing to fill.
+ */
+export function openScheduledFromSession(sessionId: string): boolean {
+	ensureStarted();
+	const sent = sendToDaemon({ type: "get_session_job_source", session_id: sessionId });
+	if (!sent) return false;
+	templateFlags.awaitingSource = true;
+	savePending = false;
+	scheduled.editingId = null;
+	scheduled.templateId = "";
+	scheduled.error = null;
+	showScheduled();
+	return true;
+}
+
 function reduce(event: DaemonEventUnion): void {
+	const templateOutcome = applyTemplateEvent(event, scheduled, templateFlags);
+	if (templateOutcome.handled) {
+		if (templateOutcome.clearJobSave) savePending = false;
+		return;
+	}
 	if (event.type === "job_list") {
 		scheduled.items = event.jobs;
 		scheduled.loading = false;
@@ -222,6 +311,7 @@ function reduce(event: DaemonEventUnion): void {
 		if (savePending) {
 			savePending = false;
 			scheduled.editingId = null;
+			scheduled.templateId = "";
 			scheduled.draft = freshDraft();
 			return;
 		}

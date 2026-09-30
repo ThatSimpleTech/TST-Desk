@@ -11443,3 +11443,77 @@ cannot sit on a 5 second grace for each child.
 task. Calling `request_shutdown` and relying on the runtime to poll.
 Giving the daemon and the embeddings sidecar 3 seconds each. SIGKILL
 as soon as Exit arrives when no in-app quit is in progress.
+
+## TD-3816 — Job templates and schedule this chat (Class B)
+
+2026-09-29.
+
+**Decision:** User templates live at `{data_dir}/scheduler/templates.json`,
+the same data dir as jobs (TD-4843). Built-ins are data in code and are
+merged in when the list is read. A file row whose id is a built-in id
+is dropped, so the file cannot replace "Weekday morning digest".
+
+**Rationale:** The useful instruction is one the user already wrote.
+Shipping two shapes in code means a fresh data dir still has something
+to start from, and a user template follows `--data-dir` the way jobs do.
+
+**Alternative rejected:** A template directory of markdown files. Putting
+built-ins in the json file, which a save could then overwrite.
+
+**Decision:** A template stores the cadence phrase, or a next-run rule
+(`tomorrow at 9:00`, or an ISO instant). The phrase is validated with
+the job parsers and is not rewritten to cron. The pane resolves
+`tomorrow at H:MM` to a local ISO instant when the user applies the
+template, so the stored rule does not go stale.
+
+**Rationale:** The form is the phrase the user would type. Storing cron
+would show `45 7 * * 1-5` the next time they started from the template.
+Resolving "tomorrow" at save time would mean the reminder is the wrong
+day the next morning.
+
+**Alternative rejected:** Rewriting template cadences to cron. Resolving
+"tomorrow" in the daemon at save time.
+
+**Decision:** A template may omit the instruction and the workspace. A
+job still may not. A workspace, when set, is resolved like a job name
+and then must be an absolute path with no secrets. The folder is not
+required to exist until a job is created. A preset is checked against
+the catalog on save only. Grace and retries are stored like jobs
+(seconds, a count, and the 10-minute default delay).
+
+**Rationale:** The weekday digest ships with a blank instruction on
+purpose. Requiring a folder would refuse a template for a project the
+user has not created yet. Re-checking the catalog on load would hide a
+template whose preset was removed.
+
+**Alternative rejected:** Requiring a workspace on every template.
+Calling `require_folder` at template save. Re-checking presets when the
+file is read.
+
+**Decision:** Schedule this chat is a rail-row action, after Rename.
+`get_session_job_source` answers with `session_job_source`. `session_list`
+has no engine and no full first user message, so this is the smallest
+read. The instruction is the earliest remaining `user_turn` display
+text, then the conversation. A live pin wins over the stored record.
+The verb does not create a job. A trimmed log can only yield the
+earliest turn that is still there.
+
+**Rationale:** The title is a 60-character first line and can be renamed.
+Putting the transcript on `session_list` would ship every first message
+to every window on every list refresh.
+
+**Alternative rejected:** Stuffing the first message and the engine onto
+`session_list`. Using the session title as the instruction.
+
+**Decision:** Deleting or overwriting a built-in is `template_builtin`
+and does not rewrite the list as success. Save as template is create-only
+(a new id). The pane has no template delete control. Delete is a protocol
+verb covered by the Python tests. No `PROTOCOL_VERSION` bump. No new
+config key.
+
+**Rationale:** The client must not be able to replace a built-in by id.
+An update-by-id would need a second form the story does not ask for.
+The wire change is additive, same as TD-3812 through TD-3815.
+
+**Alternative rejected:** Update-by-id. A delete button on the pane.
+Bumping `PROTOCOL_VERSION` for two new events.

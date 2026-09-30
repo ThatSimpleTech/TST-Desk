@@ -19,6 +19,7 @@
 
 import { sendToDaemon } from "./connection-status.svelte.js";
 import { openSessionWindow } from "./open-session-window";
+import { openScheduledFromSession } from "./scheduled.svelte.js";
 import { closeRowMenus, sessions } from "./sessions.svelte.js";
 import { workspaces } from "./workspaces.svelte.js";
 
@@ -61,6 +62,13 @@ export function setArchived(sessionId: string, archived: boolean): boolean {
 
 export function setStarred(sessionId: string, starred: boolean): boolean {
 	const sent = sendToDaemon({ type: "set_session_star", session_id: sessionId, starred });
+	if (sent) closeRowMenus();
+	return sent;
+}
+
+/** Open Scheduled with this chat filled in. Nothing is saved until Create. */
+export function scheduleThisChat(sessionId: string): boolean {
+	const sent = openScheduledFromSession(sessionId);
 	if (sent) closeRowMenus();
 	return sent;
 }

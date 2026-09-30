@@ -1334,6 +1334,31 @@
     "type": "list_job_runs",
     "job_id": "job-1"
   },
+  "list_job_templates": {
+    "type": "list_job_templates"
+  },
+  "save_job_template": {
+    "type": "save_job_template",
+    "name": "Inbox digest",
+    "instruction": "summarize the inbox",
+    "cadence": "weekdays at 7:45",
+    "next_run": null,
+    "deliver_to": "window",
+    "grace": "2 hours",
+    "retries": 1,
+    "retry_delay": "10 minutes",
+    "preset": "vllm",
+    "engine": "native",
+    "workspace": "/home/user/project"
+  },
+  "delete_job_template": {
+    "type": "delete_job_template",
+    "template_id": "tmpl-1"
+  },
+  "get_session_job_source": {
+    "type": "get_session_job_source",
+    "session_id": "sess-1"
+  },
   "job_list": {
     "type": "job_list",
     "seq": 1,
@@ -1397,6 +1422,51 @@
         "attempts": null
       }
     ]
+  },
+  "job_templates": {
+    "type": "job_templates",
+    "seq": 1,
+    "templates": [
+      {
+        "id": "weekday-morning-digest",
+        "name": "Weekday morning digest",
+        "builtin": true,
+        "instruction": "",
+        "cadence": "weekdays at 7:45",
+        "next_run": null,
+        "deliver_to": "window",
+        "grace": 7200,
+        "retries": 1,
+        "retry_delay": 600,
+        "preset": null,
+        "engine": null,
+        "workspace": null
+      },
+      {
+        "id": "tmpl-1",
+        "name": "Inbox digest",
+        "builtin": false,
+        "instruction": "summarize the inbox",
+        "cadence": null,
+        "next_run": "tomorrow at 9:00",
+        "deliver_to": "window",
+        "grace": null,
+        "retries": 0,
+        "retry_delay": null,
+        "preset": "vllm",
+        "engine": "native",
+        "workspace": "/home/user/project"
+      }
+    ]
+  },
+  "session_job_source": {
+    "type": "session_job_source",
+    "seq": 1,
+    "session_id": "sess-1",
+    "workspace": "/home/user/project",
+    "preset": "vllm",
+    "engine": "grok",
+    "instruction": "summarize the inbox"
   },
   "job_draft": {
     "type": "job_draft",

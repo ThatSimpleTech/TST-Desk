@@ -126,9 +126,15 @@ import type {
   ParseJob,
   RunJob,
   ListJobRuns,
+  ListJobTemplates,
+  SaveJobTemplate,
+  DeleteJobTemplate,
+  GetSessionJobSource,
   JobList,
   JobRuns,
   JobDraftReply,
+  JobTemplates,
+  SessionJobSource,
   Transcribe,
   Transcript,
   Ping,
@@ -976,6 +982,10 @@ describe("All fixtures have required shape", () => {
       "parse_job",
       "run_job",
       "list_job_runs",
+      "list_job_templates",
+      "save_job_template",
+      "delete_job_template",
+      "get_session_job_source",
       "transcribe",
     ];
     for (const key of clientTypes) {
@@ -1003,6 +1013,8 @@ describe("All fixtures have required shape", () => {
       "job_list",
       "job_runs",
       "job_draft",
+      "job_templates",
+      "session_job_source",
       "grok_commands",
       "grok_plan",
       "grok_mode",
@@ -1372,6 +1384,42 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(runs.runs[2]?.summary).toBe("Run `echo hi`");
     expect(runs.runs[2]?.session_id).toBe("sess-park");
     expect("session_id" in runs).toBe(false);
+  });
+
+  it("job templates and session job source (TD-3816)", () => {
+    const list = fixtures.list_job_templates as ListJobTemplates;
+    expect(list.type).toBe("list_job_templates");
+    expect("session_id" in list).toBe(false);
+    const save = fixtures.save_job_template as SaveJobTemplate;
+    expect(save.type).toBe("save_job_template");
+    expect(save.name).toBe("Inbox digest");
+    expect(save.cadence).toBe("weekdays at 7:45");
+    expect(save.grace).toBe("2 hours");
+    expect(save.retries).toBe(1);
+    expect(save.preset).toBe("vllm");
+    expect(save.engine).toBe("native");
+    const del = fixtures.delete_job_template as DeleteJobTemplate;
+    expect(del.type).toBe("delete_job_template");
+    expect(del.template_id).toBe("tmpl-1");
+    const ask = fixtures.get_session_job_source as GetSessionJobSource;
+    expect(ask.type).toBe("get_session_job_source");
+    expect(ask.session_id).toBe("sess-1");
+    expect("session_id" in ask).toBe(true);
+    const templates = fixtures.job_templates as JobTemplates;
+    expect(templates.type).toBe("job_templates");
+    expect(isNumber(templates.seq)).toBe(true);
+    expect(templates.templates[0]?.cadence).toBe("weekdays at 7:45");
+    expect(templates.templates[0]?.builtin).toBe(true);
+    expect(templates.templates[0]?.grace).toBe(7200);
+    expect(templates.templates[1]?.next_run).toBe("tomorrow at 9:00");
+    expect(templates.templates[1]?.builtin).toBe(false);
+    expect("session_id" in templates).toBe(false);
+    const source = fixtures.session_job_source as SessionJobSource;
+    expect(source.type).toBe("session_job_source");
+    expect(source.engine).toBe("grok");
+    expect(source.preset).toBe("vllm");
+    expect(source.instruction).toBe("summarize the inbox");
+    expect(isNumber(source.seq)).toBe(true);
   });
 
   it("transcribe / transcript (TD-4701)", () => {

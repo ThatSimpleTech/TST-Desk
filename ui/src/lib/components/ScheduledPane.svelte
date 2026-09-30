@@ -40,6 +40,7 @@
 	import ScheduledHistory from './ScheduledHistory.svelte';
 	import ScheduledRetriesField from './ScheduledRetriesField.svelte';
 	import ScheduledPinFields from './ScheduledPinFields.svelte';
+	import ScheduledTemplateFields from './ScheduledTemplateFields.svelte';
 
 	let empty = $derived(jobsEmptyCopy());
 	let editing = $derived(scheduled.editingId !== null);
@@ -139,6 +140,7 @@
 	<section class="form-col" aria-label={editing ? 'Edit scheduled job' : 'New scheduled job'}>
 		<h2 class="form-title">{formCopy.title}</h2>
 		<p class="lede">{formCopy.lede}</p>
+		<ScheduledTemplateFields />
 		<label class="field">
 			<span>Describe the job</span>
 			<textarea

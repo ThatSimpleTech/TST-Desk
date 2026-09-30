@@ -1110,6 +1110,63 @@ class ListJobRuns(ClientMessage):
     job_id: str = Field(min_length=1)
 
 
+class ListJobTemplates(ClientMessage):
+    """List built-in and user job templates (TD-3816).
+
+    Connection-scoped. The daemon answers with ``job_templates``. Does not
+    create a job or a template file.
+    """
+
+    type: Literal["list_job_templates"] = "list_job_templates"
+
+
+class SaveJobTemplate(ClientMessage):
+    """Store the current job form as a new template (TD-3816).
+
+    Create only. The daemon assigns the id, so a client cannot overwrite a
+    built-in. An empty instruction is allowed: the weekday digest ships that
+    way. Acked with ``job_templates``. Does not create a job. ``name`` is
+    not ``min_length`` here — an empty or secret-shaped name is refused by
+    the template check, whose message does not echo the text.
+    """
+
+    type: Literal["save_job_template"] = "save_job_template"
+    name: str = ""
+    instruction: str = ""
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    grace: str | int | None = None
+    retries: int | None = None
+    retry_delay: str | int | None = None
+    preset: str | None = None
+    engine: str | None = None
+    workspace: str | None = None
+
+
+class DeleteJobTemplate(ClientMessage):
+    """Remove a user job template (TD-3816).
+
+    Built-ins answer ``template_builtin`` and are not removed. Unknown id
+    is ``template_not_found``. Acked with ``job_templates``.
+    """
+
+    type: Literal["delete_job_template"] = "delete_job_template"
+    template_id: str = ""
+
+
+class GetSessionJobSource(ClientMessage):
+    """Read one chat into a job draft (TD-3816).
+
+    Connection-scoped. The daemon answers with ``session_job_source``.
+    ``session_list`` has no engine and no full first message, so this is
+    the read. It does not create a job. Unknown id is ``session_not_found``.
+    """
+
+    type: Literal["get_session_job_source"] = "get_session_job_source"
+    session_id: str = ""
+
+
 class Transcribe(ClientMessage):
     """Hold-to-talk audio for speech-to-text (TD-4701).
 
@@ -2402,6 +2459,55 @@ class JobDraftReply(DaemonEvent):
     paused: bool = False
 
 
+class JobTemplateEntry(BaseModel):
+    """One template on ``job_templates`` (TD-3816).
+
+    ``cadence`` is the phrase, not cron. ``next_run`` is an ISO instant or
+    the rule ``tomorrow at H:MM``. ``builtin`` rows are not in the file.
+    """
+
+    id: str
+    name: str
+    builtin: bool = False
+    instruction: str = ""
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"]
+    grace: int | None = None
+    retries: int = 0
+    retry_delay: int | None = None
+    preset: str | None = None
+    engine: Literal["native", "grok"] | None = None
+    workspace: str | None = None
+
+
+class JobTemplates(DaemonEvent):
+    """Response to list / save / delete template (TD-3816).
+
+    Connection-scoped. Seq is fixed at 1 so it cannot rewind attach.
+    """
+
+    type: Literal["job_templates"] = "job_templates"
+    seq: int = 1
+    templates: list[JobTemplateEntry] = Field(default_factory=list)
+
+
+class SessionJobSource(DaemonEvent):
+    """Response to ``get_session_job_source`` (TD-3816).
+
+    Connection-scoped. Seq is fixed at 1. ``instruction`` is the earliest
+    remaining user message, and may be empty. This event does not save a job.
+    """
+
+    type: Literal["session_job_source"] = "session_job_source"
+    seq: int = 1
+    session_id: str
+    workspace: str
+    preset: str | None = None
+    engine: Literal["native", "grok"] | None = None
+    instruction: str = ""
+
+
 class Transcript(DaemonEvent):
     """Reply to ``transcribe`` (TD-4701). Connection-scoped.
 
@@ -2505,6 +2611,10 @@ ClientMessageT = Annotated[
     | ParseJob
     | RunJob
     | ListJobRuns
+    | ListJobTemplates
+    | SaveJobTemplate
+    | DeleteJobTemplate
+    | GetSessionJobSource
     | Transcribe,
     Field(discriminator="type"),
 ]
@@ -2562,6 +2672,8 @@ DaemonEventT = Annotated[
     | JobList
     | JobRuns
     | JobDraftReply
+    | JobTemplates
+    | SessionJobSource
     | GrokCommands
     | GrokPlan
     | GrokMode
@@ -2663,6 +2775,10 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "parse_job",
         "run_job",
         "list_job_runs",
+        "list_job_templates",
+        "save_job_template",
+        "delete_job_template",
+        "get_session_job_source",
         "transcribe",
     }
 )
@@ -2720,6 +2836,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "job_list",
         "job_runs",
         "job_draft",
+        "job_templates",
+        "session_job_source",
         "grok_commands",
         "grok_plan",
         "grok_mode",

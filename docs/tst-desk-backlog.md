@@ -6323,6 +6323,41 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 
 ---
 
+### TD-3816 — Job templates, and "Schedule this chat"
+**Size:** 3 · **Depends on:** TD-3808, TD-3809, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814, TD-3815
+
+**Acceptance criteria:**
+- [x] Two built-in templates ship in code, with no model names or URLs:
+      "Weekday morning digest" (cadence `weekdays at 7:45`, grace 2 h,
+      retries 1, deliver to window, instruction empty) and "One-shot
+      reminder" (next run tomorrow at 9:00 local)
+- [x] User templates persist in `{data_dir}/scheduler/templates.json`:
+      name, instruction, cadence or next-run rule, grace, retries/delay,
+      deliver_to, preset, engine, optional workspace
+- [x] Validation uses the job rules for secret-shaped instructions and
+      catalog presets. A bad draft is `template_invalid` and nothing is
+      written
+- [x] `list_job_templates`, `save_job_template`, and `delete_job_template`
+      answer with `job_templates`. Built-in templates cannot be deleted
+- [x] The Scheduled pane has Start from template, which fills the draft
+      and does not save a job, and Save as template, which stores the
+      current form under a name
+- [x] Schedule this chat on the session row menu opens Scheduled with
+      the draft prefilled from that session's workspace, preset, engine,
+      and first user message
+
+Done (2026-09-29): a job form started blank, so a chat that already
+worked had to be retyped. The daemon ships two templates and stores the
+user's own under the data dir. The Scheduled pane can start from one or
+save the form as one, without creating a job until Create. The session
+menu's Schedule this chat opens that pane with the workspace, preset,
+engine, and first message filled in. Class B entry in DECISIONS.md.
+
+Suite: 3996 passed / 8 skipped, ruff + `mypy --strict` clean over 175
+files, vitest 1442, svelte-check 717 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
