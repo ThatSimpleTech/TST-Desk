@@ -7423,6 +7423,49 @@ files, vitest 1428, svelte-check 713 files 0 errors 0 warnings.
 
 ---
 
+### TD-4849 — Quitting the app lets the daemon finish its graceful shutdown
+**Size:** 2 · **Depends on:** TD-4848, TD-4844, TD-4842
+
+AppleScript quit reached `RunEvent::Exit` and SIGKILLed the daemon
+within about a second. `port.json` stayed, and the daemon log had
+nothing between the last handshake and the next start. `wait_for_done`
+resolved when the supervisor socket ended, so the Exit backstop killed
+the process group before the daemon read `{"type":"shutdown"}`. Every
+quit skipped the audit drain, session persistence, and the port-file
+release.
+
+**Acceptance criteria:**
+- [x] Quit waits until the process-group leader has been reaped, inside
+      the existing 5s grace and the 10s quit timeout. SIGKILL happens
+      only when that bound expires
+- [x] `RunEvent::Exit`'s best-effort kill is a no-op when the leader
+      has already exited, and on a normal quit it does not kill before
+      the grace
+- [x] The host keeps the shutdown socket open until the daemon closes
+      it or the grace expires. The daemon logs
+      `shutdown requested via websocket` at INFO and runs its normal
+      shutdown, including the port-file release, before that close
+- [x] A fake sidecar that sleeps, then removes a marker, on the
+      shutdown frame exits 0 with the marker gone and is not SIGKILLed
+      inside the grace. A fake that ignores the frame is SIGKILLed when
+      the bound expires, and the marker stays
+
+Done (2026-09-29): the host flushes `shutdown` and reads until the
+daemon closes the socket or the grace ends. It does not call
+`close().await` and does not add a protocol ack. `wait_for_done`
+resolves when the leader is reaped. SIGKILL is only the grace
+fallback, including from `RunEvent::Exit`, which waits out a quit
+already in progress. A clean leader exit does not group-kill. The
+shutdown-requested log was already there; the clean-shutdown test
+now asserts it. Class B entry in DECISIONS.md revises the TD-4848
+drop-immediately decision.
+
+Suite: 3957 passed / 8 skipped, ruff + `mypy --strict` clean over 172
+files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
+`cargo test` 69 passed, `cargo clippy --all-targets -- -D warnings` clean.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -7458,8 +7501,8 @@ files, vitest 1428, svelte-check 713 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 20 | 78 |
-| **Total planned** | **48** | **333** | **1051** |
+| Later | E47, E49 | 21 | 80 |
+| **Total planned** | **48** | **334** | **1053** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
