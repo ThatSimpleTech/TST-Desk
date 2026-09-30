@@ -56,7 +56,7 @@ class TestSaveJudgments:
         # is replaced in place, so everything before it is byte-identical.
         assert "compaction budget" in after
         assert after.split("\njudgments:")[0] == before.split("\njudgments:")[0]
-        assert 'backend: typesafe' in after
+        assert "backend: typesafe" in after
 
     def test_rejects_non_judgments_config(self, tmp_path: Path) -> None:
         path = _seed(tmp_path)

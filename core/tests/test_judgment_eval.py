@@ -221,9 +221,7 @@ class TestCandidateSelectionEval:
         driver = MockBrowserDriver()
         nodes = await driver.extract_candidates()
         candidates = [
-            c
-            for i, n in enumerate(nodes)
-            if (c := candidate_from_node(n, i)) is not None
+            c for i, n in enumerate(nodes) if (c := candidate_from_node(n, i)) is not None
         ]
 
         # Baseline: the brain reads the raw node dump (what a DOM snapshot

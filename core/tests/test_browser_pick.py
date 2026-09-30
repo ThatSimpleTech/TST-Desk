@@ -140,9 +140,7 @@ class TestBrowserPick:
 
     async def test_tool_absent_when_flag_off(self, tmp_path: Path) -> None:
         driver = MockBrowserDriver()
-        dispatcher, session = _dispatcher(
-            tmp_path, driver, None, candidate_selection=False
-        )
+        dispatcher, session = _dispatcher(tmp_path, driver, None, candidate_selection=False)
         result = await dispatcher.dispatch(
             "c1", "browser_pick", {"target": "sign in"}, session=session
         )
