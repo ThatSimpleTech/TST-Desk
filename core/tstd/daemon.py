@@ -397,7 +397,12 @@ from .shutdown_budget import (
     install_posix_shutdown_signals,
     remove_posix_shutdown_signals,
 )
-from .shutdown_phases import ShutdownPhases, reap_shutdown_distill
+from .shutdown_phases import (
+    ProviderFlight,
+    ShutdownPhases,
+    SignalingProvider,
+    reap_shutdown_distill,
+)
 from .speech import transcribe as transcribe_speech
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
@@ -1611,8 +1616,9 @@ class Daemon:
         is still open when those steps return is cancelled: that read's
         timeout is longer than the shutdown budget, and waiting on it
         was the SIGTERM that exited through the budget after one
-        finished turn (TD-4844). A distill that has already returned is
-        kept.
+        finished turn (TD-4844). Local prep and an in-process provider
+        are awaited so a ready mock still proposes (TD-4851). A distill
+        that has already returned is kept.
 
         The port file is released before the log line. ``emit`` takes
         the logging lock, and a callback that logs first never reaches
@@ -1624,15 +1630,16 @@ class Daemon:
         release_port_file(self.data_dir)
         log.info("shutting down")
         phases = ShutdownPhases()
+        flight = ProviderFlight()
 
         async def _distill() -> None:
-            await phases.run("distill", self._distill_live_sessions())
+            await phases.run("distill", self._distill_live_sessions(flight))
 
         distill = asyncio.create_task(_distill(), name="shutdown-distill")
         try:
             await self._shutdown_subsystems(phases)
         finally:
-            await reap_shutdown_distill(distill)
+            await reap_shutdown_distill(distill, flight)
             await phases.run("provider", self._close_provider_clients())
             phases.log_if_slow()
         log.info("shutdown complete")
@@ -2933,13 +2940,18 @@ class Daemon:
             },
         )
 
-    async def _run_distill(self, session: Session) -> None:
+    async def _run_distill(
+        self,
+        session: Session,
+        flight: ProviderFlight | None = None,
+    ) -> None:
         """Park a proposal and emit ``memory_proposal`` when memory changed."""
         if session.turn_in_flight or completed_turn_count(session) < 1:
             return
         try:
             provider = await self._ensure_provider()
-            emitted = await distill_if_due(session, provider, self.config)
+            distill_provider = provider if flight is None else SignalingProvider(provider, flight)
+            emitted = await distill_if_due(session, distill_provider, self.config)
         except Exception as exc:
             log.warning(
                 "distill skipped; provider failed",
@@ -2951,13 +2963,13 @@ class Daemon:
         self._pending_memory[session.id] = emitted
         await session.event_log.add(emitted.event)
 
-    async def _distill_live_sessions(self) -> None:
+    async def _distill_live_sessions(self, flight: ProviderFlight | None = None) -> None:
         """Graceful quit: distill every live idle session that had a turn."""
         sessions = await self.session_registry.list_sessions()
         for session in sessions:
             if session.state in TERMINAL_STATES:
                 continue
-            await self._run_distill(session)
+            await self._run_distill(session, flight)
 
     async def _attach_session_runtime(self, sess: Session) -> None:
         """Boundary, tools, persist hooks, and a running loop for *sess*."""
