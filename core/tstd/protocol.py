@@ -2329,7 +2329,10 @@ class JobEntry(BaseModel):
     retry_delay: int | None = None
     attempt: int = 0
     last_run: str | None = None
-    last_status: Literal["ok", "failed", "missed"] | None = None
+    # ``waiting`` is a run parked on an approval card (TD-3815). It is
+    # not a failure and it is not retried. The same receipt becomes
+    # ``ok`` or ``failed`` when that session finishes.
+    last_status: Literal["ok", "failed", "missed", "waiting"] | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
     # Not persisted. It mirrors the daemon's in-flight set, so a restart
@@ -2354,13 +2357,15 @@ class JobRunEntry(BaseModel):
     ``scheduled_for`` is the slot that fired, or null for Run now.
     ``summary`` is already redacted and capped the same way as
     ``JobEntry.last_summary``. ``missed`` is a slot skipped for lateness,
-    not a turn that failed (TD-3813).
+    not a turn that failed (TD-3813). ``waiting`` is a run parked on an
+    approval card; the same line is updated when that turn finishes
+    (TD-3815).
     """
 
     started_at: str
     scheduled_for: str | None = None
     trigger: Literal["schedule", "manual"]
-    status: Literal["ok", "failed", "missed"]
+    status: Literal["ok", "failed", "missed", "waiting"]
     summary: str | None = None
     session_id: str | None = None
     # 1-based try and the budget (retries + 1) when the job retries

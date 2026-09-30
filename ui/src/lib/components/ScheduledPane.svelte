@@ -26,9 +26,13 @@
 		jobFormCopy,
 		jobMeta,
 		jobMissed,
+		jobWaiting,
 		jobsEmptyCopy,
+		sessionMissingCopy,
 		workspaceSuggestions,
 	} from '../scheduled';
+	import { showHome } from '../projects.svelte.js';
+	import { selectRow, sessions } from '../sessions.svelte.js';
 	import { visibleRecents, workspaces } from '../workspaces.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
@@ -39,6 +43,18 @@
 
 	let empty = $derived(jobsEmptyCopy());
 	let editing = $derived(scheduled.editingId !== null);
+	let missing = $state<Record<string, true>>({});
+
+	function openSession(sessionId: string | null): void {
+		if (sessionId === null || sessionId === '') return;
+		const known = sessions.rows.some((row) => row.sessionId === sessionId);
+		if (!known) {
+			missing = { ...missing, [sessionId]: true };
+			return;
+		}
+		selectRow(sessionId);
+		showHome();
+	}
 	let formCopy = $derived(jobFormCopy(editing));
 	let known = $derived(
 		workspaceSuggestions(
@@ -65,19 +81,38 @@
 			<ul class="list">
 				{#each scheduled.items as row (row.id)}
 					<li>
-						<div class="card" class:card-failed={jobFailed(row)} class:card-missed={jobMissed(row)}>
+						<div
+							class="card"
+							class:card-failed={jobFailed(row)}
+							class:card-missed={jobMissed(row)}
+							class:card-waiting={jobWaiting(row)}
+						>
 							<span class="card-name">{row.instruction}</span>
 							<span class="card-meta">{jobMeta(row)}</span>
 							<span class="card-path">{row.workspace}</span>
 							<span
 								class="card-run"
 								class:run-failed={jobFailed(row) && !row.running}
-								class:run-missed={jobMissed(row) && !row.running}>{jobActivity(row)}</span
+								class:run-missed={jobMissed(row) && !row.running}
+								class:run-waiting={jobWaiting(row) && !row.running}>{jobActivity(row)}</span
 							>
 							{#if row.last_summary}
 								<p class="card-summary">{row.last_summary}</p>
 							{/if}
 							<ScheduledHistory jobId={row.id} />
+							{#if jobWaiting(row) && row.last_session_id}
+								{#if missing[row.last_session_id]}
+									<p class="gone">{sessionMissingCopy()}</p>
+								{:else}
+									<button
+										class="action"
+										type="button"
+										onclick={() => openSession(row.last_session_id)}
+									>
+										Open session
+									</button>
+								{/if}
+							{/if}
 							<div class="actions">
 								<button class="action" type="button" onclick={() => editJob(row.id)}>Edit</button>
 								<button
@@ -322,6 +357,21 @@
 
 	.card-missed {
 		border-color: var(--color-warn);
+	}
+
+	/* Waiting is an approval card, not a failed or skipped turn. */
+	.run-waiting {
+		color: var(--color-accent);
+	}
+
+	.card-waiting {
+		border-color: var(--color-accent);
+	}
+
+	.gone {
+		margin: var(--space-1) 0 0;
+		font-size: var(--text-xs);
+		color: var(--color-err);
 	}
 
 	/* The last summary is the only place a scheduled run's output is

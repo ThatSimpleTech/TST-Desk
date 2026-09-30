@@ -6284,6 +6284,45 @@ files, vitest 1428, svelte-check 713 files 0 errors 0 warnings.
 
 ---
 
+### TD-3815 — Park a scheduled run that is waiting for your approval
+**Size:** 5 · **Depends on:** TD-3809, TD-3811, TD-3814
+
+**Acceptance criteria:**
+- [x] When a scheduled or Run now session enters `awaiting_approval`,
+      the runner stops at once and records `waiting` with the session
+      id and the pending tool summary. It delivers one line (`7:45 AM
+      job is waiting for your approval: …`, or `This job is waiting…`
+      for Run now) and does not retry. A scheduled fire advances the
+      regular cadence. Run now does not move the schedule
+- [x] The job keeps the link to that parked session. When the session
+      reaches `turn_complete`, the same history line and the receipt
+      become ok or failed with the final summary, and that outcome is
+      delivered once. A denial is failed. Cancel, or a daemon restart,
+      resolves the park as failed `approval never answered`. Nothing
+      parked remains
+- [x] While a previous run is still parked, the next slot does not
+      start a session. It is `missed` with `previous run still waiting
+      for approval`, and the cadence still advances. Grace does not
+      also skip that slot
+- [x] The row and the history show "Waiting for approval" with an
+      Open session action. A window notice fires for the park and
+      again when it settles, even though `last_run` does not move
+
+Done (2026-09-29): a scheduled turn that hit an approval card used to
+sit until the 120s turn timeout, then record a timeout. That string is
+transient, so the next try opened another session onto the same card.
+The runner now parks as soon as the session is waiting, advances the
+slot, and delivers one line. The same history row becomes ok or failed
+when the user answers, or `approval never answered` if the session is
+cancelled or the daemon starts again. The next slot while that park is
+open is missed, not a second session. The pane says "Waiting for
+approval" and can open the session. Class B entry in DECISIONS.md.
+
+Suite: 3957 passed / 8 skipped, ruff + `mypy --strict` clean over 172
+files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
@@ -7415,12 +7454,12 @@ files, vitest 1428, svelte-check 713 files 0 errors 0 warnings.
 | **Total v0.1 + v0.2** | **27** | **203** | **573** |
 | M5 Cowork (v0.3) | E29–E32, E48 | 50 | 130 |
 | M6 Computer use (v0.4) | E20, E33–E34 | 13 | 68 |
-| M7 Remote (v0.5) | E36–E38 | 19 | 67 |
+| M7 Remote (v0.5) | E36–E38 | 20 | 72 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
 | Later | E47, E49 | 20 | 78 |
-| **Total planned** | **48** | **332** | **1046** |
+| **Total planned** | **48** | **333** | **1051** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

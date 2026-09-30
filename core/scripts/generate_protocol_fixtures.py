@@ -968,6 +968,14 @@ FIXTURES = {
                 summary="Skipped the 7:45 AM run — 10 h late",
                 session_id=None,
             ),
+            JobRunEntry(
+                started_at="2026-08-21T23:00:00+00:00",
+                scheduled_for="2026-08-21T19:00:00+00:00",
+                trigger="schedule",
+                status="waiting",
+                summary="Run `echo hi`",
+                session_id="sess-park",
+            ),
         ],
     ),
     "job_draft": JobDraftReply(
