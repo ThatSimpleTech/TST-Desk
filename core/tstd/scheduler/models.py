@@ -70,6 +70,7 @@ _FIELD_LABELS = {
     "grace": "If late",
     "retries": "Retries",
     "retry_delay": "Retry delay",
+    "then": "Then",
 }
 _UNITS = {
     "minute": "minute",
@@ -112,6 +113,10 @@ class JobDraft(BaseModel):
     # 10-minute default once retries is at least 1.
     retries: int | None = None
     retry_delay: str | int | None = None
+    # Another job's id, run once after this one ends ok (TD-3817). Blank
+    # is no follow-on. The cycle check needs the other jobs, so it is not
+    # done here.
+    then: str | None = None
 
 
 class Job(BaseModel):
@@ -156,6 +161,11 @@ class Job(BaseModel):
     # retry instant and ``resume_at`` is the regular slot to restore.
     attempt: int = 0
     resume_at: str | None = None
+    # The job to start once after this one ends ok (TD-3817). None means
+    # the run stands alone. The id is not checked against the other rows
+    # here: a receipt stamp must still save when the follow-on was deleted
+    # between the read and the write. Save refuses a missing id and a cycle.
+    then: str | None = None
 
     # ── Last run (TD-3807) ────────────────────────────────────────────
     # Optional so a jobs.json written before this landed still loads.
@@ -259,6 +269,22 @@ class Job(BaseModel):
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError("must be a whole number")
         return value
+
+    @field_validator("then", mode="before")
+    @classmethod
+    def _then_is_a_job_id(cls, value: object) -> str | None:
+        # Blank clears the link. A slash would be a path, and the id rule
+        # is the same one history uses so the follow-on can be named.
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("must be a job id")
+        text = value.strip()
+        if not text:
+            return None
+        if Path(text).name != text or text in {".", ".."}:
+            raise ValueError("must be a job id")
+        return text
 
     @field_validator("resume_at")
     @classmethod
@@ -494,6 +520,7 @@ def validate_draft(draft: JobDraft) -> Job:
             grace=cast(int | None, draft.grace),
             retries=0 if draft.retries is None else draft.retries,
             retry_delay=cast(int | None, draft.retry_delay),
+            then=draft.then,
         )
     except ValidationError as exc:
         raise JobValidationError(describe_validation_error(exc)) from exc

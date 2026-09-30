@@ -88,9 +88,16 @@ def delete_job(data_dir: str | Path, job_id: str) -> bool:
     """Remove a job by id, and its run history. False when it was not present."""
     with _STORE_LOCK:
         jobs = _read_jobs(data_dir)
-        kept = [item for item in jobs if item.id != job_id]
-        if len(kept) == len(jobs):
+        if not any(item.id == job_id for item in jobs):
             return False
+        # A follow-on that named this job would otherwise point at nothing.
+        # Clearing it here, under the same lock as the delete, is what the
+        # next job_list shows (TD-3817).
+        kept = [
+            item.model_copy(update={"then": None}) if item.then == job_id else item
+            for item in jobs
+            if item.id != job_id
+        ]
         _write_jobs(Path(data_dir), kept)
         # The id came from a row that validated, so it is a single path segment.
         # History lock is taken second. Callers that update a run take the

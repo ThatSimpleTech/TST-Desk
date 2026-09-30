@@ -195,7 +195,15 @@ async def run_due_jobs(
         if in_flight is not None and not in_flight.claim(job.id):
             continue
         try:
-            await _run_one(data_dir, job, now_utc, run_turn, deliver, on_parked=on_parked)
+            await _run_one(
+                data_dir,
+                job,
+                now_utc,
+                run_turn,
+                deliver,
+                on_parked=on_parked,
+                in_flight=in_flight,
+            )
         finally:
             if in_flight is not None:
                 in_flight.release(job.id)
@@ -225,6 +233,7 @@ async def run_manual_job(
     run_turn: TurnFn,
     deliver: Deliver,
     on_parked: ParkHook | None = None,
+    in_flight: InFlight | None = None,
 ) -> None:
     """One explicit fire. Receipt and delivery, without touching the schedule.
 
@@ -273,7 +282,20 @@ async def run_manual_job(
             trigger="manual",
             scheduled_for=None,
         )
+        linked = stamped
+    else:
+        linked = None
     await deliver(channel, result.summary)
+    if linked is not None and result.ok:
+        await _start_chain(
+            data_dir,
+            linked,
+            now,
+            run_turn=run_turn,
+            deliver=deliver,
+            in_flight=in_flight,
+            on_parked=on_parked,
+        )
 
 
 async def _run_one(
@@ -284,6 +306,7 @@ async def _run_one(
     deliver: Deliver,
     *,
     on_parked: ParkHook | None = None,
+    in_flight: InFlight | None = None,
 ) -> None:
     # A parked approval still owns the previous session. The next slot
     # is missed before grace, which would otherwise describe the same
@@ -357,6 +380,16 @@ async def _run_one(
         )
         return
     await deliver(job.deliver_to, settled.receipt)
+    if result.ok:
+        await _start_chain(
+            data_dir,
+            stamped,
+            now,
+            run_turn=run_turn,
+            deliver=deliver,
+            in_flight=in_flight,
+            on_parked=on_parked,
+        )
 
 
 async def _park_and_arm(
@@ -388,6 +421,35 @@ async def _park_and_arm(
     )
     if on_parked is not None:
         on_parked(job.id, session_id, started)
+
+
+async def _start_chain(
+    data_dir: Path,
+    parent: Job,
+    now: datetime,
+    *,
+    run_turn: TurnFn,
+    deliver: Deliver,
+    in_flight: InFlight | None,
+    on_parked: ParkHook | None,
+) -> None:
+    """After an ok fire, start ``then`` if the job has one.
+
+    Imported here so loading the runner does not load the chain, which
+    imports this module for the turn.
+    """
+    from .chain import follow_chain
+
+    await follow_chain(
+        data_dir,
+        parent,
+        now,
+        depth=0,
+        run_turn=run_turn,
+        deliver=deliver,
+        in_flight=in_flight,
+        on_parked=on_parked,
+    )
 
 
 async def _remember_run(

@@ -924,6 +924,8 @@ FIXTURES = {
         # TD-3814: a count and a phrase, not nulls.
         retries=2,
         retry_delay="10 minutes",
+        # TD-3817: a real follow-on id, not null.
+        then="job-2",
     ),
     "delete_job": DeleteJob(job_id="job-1"),
     "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
@@ -959,6 +961,7 @@ FIXTURES = {
                 retries=2,
                 retry_delay=600,
                 attempt=0,
+                then="job-2",
                 # TD-3807: a real receipt, not nulls — an all-null sample
                 # would not prove the TypeScript side accepts the values.
                 last_run="2026-08-21T15:00:00+00:00",
@@ -997,6 +1000,15 @@ FIXTURES = {
                 status="waiting",
                 summary="Run `echo hi`",
                 session_id="sess-park",
+            ),
+            JobRunEntry(
+                started_at="2026-08-21T23:30:00+00:00",
+                scheduled_for=None,
+                trigger="chained",
+                status="ok",
+                summary="draft ready",
+                session_id="sess-chain",
+                note="after job-1",
             ),
         ],
     ),

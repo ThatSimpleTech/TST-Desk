@@ -11517,3 +11517,105 @@ The wire change is additive, same as TD-3812 through TD-3815.
 
 **Alternative rejected:** Update-by-id. A delete button on the pane.
 Bumping `PROTOCOL_VERSION` for two new events.
+
+## TD-3817 — Run one job after another succeeds (Class B)
+
+2026-09-29.
+
+**Decision:** `then` is another job's id. It is checked for a missing id
+and for a cycle only when the user saves. `save_job` itself does not
+check, so a receipt can still be written if the follow-on disappeared
+between the read and the write. Pause omits the field and is not
+checked, so a hand-edited loop can still be paused. The model accepts
+any single path segment, including one that is not in the file, so an
+older `jobs.json` and a dangling link still load.
+
+**Rationale:** The runner stamps a receipt under the same save the user
+uses to pause. A cycle check there would refuse the stamp, or refuse
+the pause. The pane is the place that can show the error and leave the
+previous row in place.
+
+**Alternative rejected:** Checking the link every time the row is
+written. Refusing to load a jobs file that contains a cycle.
+
+**Decision:** Deleting a job clears `then` on every job that pointed at
+that id, under the same store lock as the delete. The next `job_list`
+is the only notice. A job the deleted row itself pointed at is left
+alone.
+
+**Rationale:** A follow-on that names a missing id would fail the next
+user save, and the row would keep offering a job that is gone. The
+client already replaces its list from `job_list`.
+
+**Alternative rejected:** Leaving the dangling id until the next edit.
+A new event for "your link was cleared".
+
+**Decision:** One ok end — a scheduled success, a success on a later
+try, or Run now — starts `then` once, immediately. The child's cadence
+and `next_run` stay where they are. The history trigger is `chained`,
+`scheduled_for` is null, and `note` is `after <parent id>`. The turn
+summary is not prefixed with that note. The child's retry and grace
+belong to its own slot, so this fire does not retry and is not skipped
+for lateness. A later ok end of the parent starts the child again.
+A child that is also due can still run its own slot on a later tick,
+or on the same tick if it was already due, because the schedule did
+not move.
+
+**Rationale:** The point of the link is "when the digest works, draft
+the follow-up", not "move the follow-up onto the digest's clock".
+Run now is the existing fire that does not touch the schedule, so the
+chain uses that shape. The note is separate so the draft's own summary
+stays the summary.
+
+**Alternative rejected:** Rewriting the child's `next_run` to now.
+Putting the parent id in the summary. Treating a chained failure as a
+retry of the child's slot. Firing the child only the first time the
+parent ever succeeds.
+
+**Decision:** The runtime walk stops after five follow-on starts. A
+longer chain still saves. The sixth job is not started and is not
+recorded as missed. A cycle is refused at save with the loop joined by
+` → ` (`A → B → A`). A loop that sits downstream of the job being
+saved is reported as that loop, not the whole path from the job.
+
+**Rationale:** An acyclic chain of six is a real schedule. Walking it
+inside the tick would hold every other job until the last turn
+returned. Five is enough for "digest, then draft, then file" and still
+bounded. Recording a miss for the job that did not start would look
+like that job failed a slot it never had.
+
+**Alternative rejected:** A depth of one. Refusing to save a chain
+longer than five. Writing a missed line for the job past the cap.
+
+**Decision:** A failed, missed, or parked parent does not start its
+child. Settling a parked approval to ok later does not start it
+either. A paused child, or a child the in-flight guard already holds,
+records one `missed` history line with summary `paused` or
+`already running`, delivers that reason once, and does not move the
+child's schedule. The same guard Run now uses is passed into the
+chain. The parent stays claimed until the walk returns, so a
+hand-edited cycle stops on `already running` instead of re-entering.
+
+**Rationale:** The follow-on means the parent succeeded. A skip, a
+failure, and a card waiting on the user are not that. The miss reasons
+match the words the story names, and delivery matches a grace skip so
+the channel is not silent. The guard is the one TD-3809 already uses,
+not a second set.
+
+**Alternative rejected:** Chaining when a parked run is later approved.
+Starting a second copy of a child that is already running. A separate
+in-flight set for chained fires.
+
+**Decision:** On edit, omitted `then` keeps the stored id and `""`
+clears it, same as grace. Templates do not store `then`. Applying one
+clears the draft field. No `PROTOCOL_VERSION` bump and no new config
+key. The row meta shows `→` and the child's instruction (the id if the
+list does not have that job).
+
+**Rationale:** Pause is a save that must not wipe the link, and Save
+is the verb that can clear it. A template has no follow-on to restore.
+The wire change is additive, same as TD-3812 through TD-3816.
+
+**Alternative rejected:** Bumping `PROTOCOL_VERSION`. A config key for
+the depth cap. Showing the raw id on the row when the instruction is
+already in the list.

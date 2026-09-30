@@ -645,9 +645,13 @@ export interface SaveJob extends ClientMessage {
    *  edit, omitted keeps the stored delay and `""` means the 10-minute
    *  default when `retries` is at least 1. Ignored when retries is 0. */
   retry_delay?: string | number | null;
+  /** Another job's id, started once after this one ends ok (TD-3817).
+   *  On an edit, omitted keeps the stored id and `""` clears it. Omitted
+   *  on create means no follow-on. A cycle is refused at save. */
+  then?: string | null;
 }
 
-/** Remove a scheduled job by id (TD-3805). */
+/** Remove a scheduled job by id (TD-3805). Also clears `then` on jobs that pointed at it (TD-3817). */
 export interface DeleteJob extends ClientMessage {
   type: "delete_job";
   job_id: string;
@@ -1544,6 +1548,8 @@ export interface JobEntry {
   /** Tries already used for the slot in progress. Above 0, a retry is waiting
    *  and the window does not notify until the slot finishes. */
   attempt?: number | null;
+  /** Another job's id, started once after this one ends ok (TD-3817). Null means none. */
+  then?: string | null;
   /** The last fire's receipt (TD-3807). Null until the job has run once.
    *  `missed` is a slot skipped for lateness, not a failed turn (TD-3813).
    *  `waiting` is a run parked on an approval card (TD-3815). */
@@ -1561,11 +1567,12 @@ export interface JobList extends DaemonEvent {
   jobs: JobEntry[];
 }
 
-/** One fire on job_runs (TD-3811). `scheduled_for` is null for Run now. */
+/** One fire on job_runs (TD-3811). `scheduled_for` is null for Run now and for a chained fire. */
 export interface JobRunEntry {
   started_at: string;
   scheduled_for: string | null;
-  trigger: "schedule" | "manual";
+  /** `chained` is a fire started because another job ended ok (TD-3817). */
+  trigger: "schedule" | "manual" | "chained";
   /** `missed` is a slot skipped for lateness (TD-3813).
    *  `waiting` is a run parked on an approval card (TD-3815). */
   status: "ok" | "failed" | "missed" | "waiting";
@@ -1575,6 +1582,8 @@ export interface JobRunEntry {
   attempt?: number | null;
   /** Budget for the slot, `retries + 1`. Null alongside `attempt`. */
   attempts?: number | null;
+  /** Names the parent of a chained fire (TD-3817). Null on a slot and on Run now. */
+  note?: string | null;
 }
 
 /** Response to list_job_runs (TD-3811). Connection-scoped. Newest first. */

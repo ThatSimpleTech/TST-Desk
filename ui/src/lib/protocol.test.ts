@@ -1339,6 +1339,7 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(save.grace).toBe("2 hours");
     expect(save.retries).toBe(2);
     expect(save.retry_delay).toBe("10 minutes");
+    expect(save.then).toBe("job-2");
     const del = fixtures.delete_job as DeleteJob;
     expect(del.type).toBe("delete_job");
     expect(isString(del.job_id)).toBe(true);
@@ -1353,6 +1354,7 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(jobs.jobs[0]?.retries).toBe(2);
     expect(jobs.jobs[0]?.retry_delay).toBe(600);
     expect(jobs.jobs[0]?.attempt).toBe(0);
+    expect(jobs.jobs[0]?.then).toBe("job-2");
     expect("session_id" in jobs).toBe(false);
     const run = fixtures.run_job as RunJob;
     expect(run.type).toBe("run_job");
@@ -1383,6 +1385,11 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(runs.runs[2]?.status).toBe("waiting");
     expect(runs.runs[2]?.summary).toBe("Run `echo hi`");
     expect(runs.runs[2]?.session_id).toBe("sess-park");
+    expect(runs.runs[0]?.note ?? null).toBeNull();
+    expect(runs.runs[3]?.trigger).toBe("chained");
+    expect(runs.runs[3]?.note).toBe("after job-1");
+    expect(runs.runs[3]?.scheduled_for ?? null).toBeNull();
+    expect(runs.runs[3]?.summary).toBe("draft ready");
     expect("session_id" in runs).toBe(false);
   });
 

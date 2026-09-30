@@ -345,11 +345,12 @@ function reduce(event: DaemonEventUnion): void {
 			next_run: event.next_run ?? scheduled.draft.next_run,
 			deliver_to: event.deliver_to ?? scheduled.draft.deliver_to,
 			paused: event.paused ?? scheduled.draft.paused,
-			// A sentence does not name a model, a lateness window, or retries.
+			// A sentence does not name a model, a lateness window, retries, or a follow-on.
 			preset: scheduled.draft.preset,
 			engine: scheduled.draft.engine,
 			grace: scheduled.draft.grace,
 			retries: scheduled.draft.retries,
+			then: scheduled.draft.then,
 		};
 		return;
 	}

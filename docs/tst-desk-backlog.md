@@ -6358,6 +6358,40 @@ files, vitest 1442, svelte-check 717 files 0 errors 0 warnings.
 
 ---
 
+### TD-3817 — Run one job after another succeeds
+**Size:** 3 · **Depends on:** TD-3809, TD-3811, TD-3814
+
+**Acceptance criteria:**
+- [x] A job may set optional `then` to another job's id. After a run
+      ends ok — a scheduled success, a success on a later try, or Run
+      now — that job starts once, immediately, with history trigger
+      `chained` and a note naming the parent. The child's cadence and
+      next run stay where they are
+- [x] A cycle is refused at save (`A → B → A`). A chain longer than
+      one link is allowed. A run stops after five follow-ons
+- [x] A failed, missed, or parked parent does not start its child. A
+      child that is paused or already running records `missed`
+      (`paused`, `already running`) and is not started twice
+- [x] Deleting a job clears `then` on jobs that pointed at it, and
+      `job_list` shows that. An omitted `then` on edit keeps the stored
+      id and `""` clears it. Pause on the child records the chained
+      start as missed
+- [x] The job form has Then run, listing the other jobs. The row shows
+      `→` and the child. History shows chained runs
+
+Done (2026-09-29): two jobs no longer have to guess clock times so the
+second starts after the first. A job can name the one to run once it
+ends ok. The follow-on keeps its own schedule. The save refuses a
+cycle, and one fire walks at most five links. A failure, a skipped
+slot, and a run parked on an approval card do not continue. A paused
+or already-running follow-on is recorded missed. Deleting a job clears
+the links that named it. Class B entry in DECISIONS.md.
+
+Suite: 4015 passed / 8 skipped, ruff + `mypy --strict` clean over 176
+files, vitest 1445, svelte-check 719 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
