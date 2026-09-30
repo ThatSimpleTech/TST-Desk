@@ -7,6 +7,7 @@ process is up.
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -23,6 +24,8 @@ from tstd.ws import create_port_file_path
 
 _CORE = Path(__file__).resolve().parent.parent
 _CANARY = "sk-ant-api03-CANARYCANARYCANARY"
+# Not this process, and not a pid a test daemon will be assigned.
+_FOREIGN_PID = 2_147_483_646
 
 
 def _spawn(argv: list[str]) -> subprocess.Popen[bytes]:
@@ -76,6 +79,14 @@ def _stop(proc: subprocess.Popen[bytes]) -> None:
 
 def _read_log(data_dir: Path) -> str:
     return (log_directory(data_dir) / LOG_FILE_NAME).read_text(encoding="utf-8")
+
+
+def _rewrite_pid(port: Path, pid: int) -> None:
+    data = json.loads(port.read_text(encoding="utf-8"))
+    data["pid"] = pid
+    tmp = port.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(tmp, port)
 
 
 class TestDataDirLogs:
@@ -134,10 +145,43 @@ def test_signal_stops_daemon_and_removes_port_file(tmp_path: Path, sig: int) -> 
         _stop(proc)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows keeps the websocket shutdown path; SIGTERM is not installed",
+)
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_signal_leaves_a_port_file_that_names_another_process(tmp_path: Path, sig: int) -> None:
+    data_dir = tmp_path / "scratch"
+    proc = _spawn(daemon_argv(data_dir))
+    try:
+        _wait_until_serving(proc)
+        port = create_port_file_path(data_dir)
+        _rewrite_pid(port, _FOREIGN_PID)
+        try:
+            os.kill(proc.pid, sig)
+        except PermissionError:
+            pytest.skip("the OS vetoed the test's own kill (TD-605)")
+        try:
+            code = proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            raise AssertionError("daemon still running 5s after the signal") from None
+        assert code == 0
+        kept = json.loads(port.read_text(encoding="utf-8"))
+        assert kept["pid"] == _FOREIGN_PID
+    finally:
+        _stop(proc)
+
+
 class TestShutdownBudget:
     def test_expire_removes_the_port_file_and_exits_once(self, tmp_path: Path) -> None:
         port = create_port_file_path(tmp_path)
-        port.write_text(_CANARY, encoding="utf-8")
+        # The canary is the token. Expiry used to unlink whatever bytes
+        # were at the path; it now deletes the file only when the pid
+        # names this process, and still must not log the token.
+        port.write_text(
+            json.dumps({"port": 1, "token": _CANARY, "pid": os.getpid()}),
+            encoding="utf-8",
+        )
         (tmp_path / "keep.txt").write_text("keep", encoding="utf-8")
         codes: list[int] = []
         budget = ShutdownBudget(exit_process=codes.append)
@@ -150,6 +194,22 @@ class TestShutdownBudget:
         text = _read_log(tmp_path)
         assert "shutdown exceeded the 5s budget" in text
         assert _CANARY not in text
+
+    def test_expire_leaves_a_foreign_port_file(self, tmp_path: Path) -> None:
+        port = create_port_file_path(tmp_path)
+        port.write_text(
+            json.dumps({"port": 1, "token": _CANARY, "pid": _FOREIGN_PID}),
+            encoding="utf-8",
+        )
+        codes: list[int] = []
+        budget = ShutdownBudget(exit_process=codes.append)
+        budget._data_dir = tmp_path
+        budget._expire()
+        assert codes == [1]
+        kept = json.loads(port.read_text(encoding="utf-8"))
+        assert kept["pid"] == _FOREIGN_PID
+        assert kept["token"] == _CANARY
+        assert _CANARY not in _read_log(tmp_path)
 
     def test_finish_leaves_the_port_file(self, tmp_path: Path) -> None:
         port = create_port_file_path(tmp_path)

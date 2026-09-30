@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime
+import threading
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -35,6 +37,27 @@ HISTORY_CAP = 50
 RunTrigger = Literal["schedule", "manual"]
 
 _HISTORY_DIR = "history"
+# One lock per file. Append and an in-place settle both rewrite the
+# whole log; without this a miss line and a parked-line update lose
+# each other's write. Not the jobs.json lock — callers finish the
+# history write, release this, then save the job.
+_GUARD = threading.Lock()
+_LOCKS: dict[str, threading.Lock] = {}
+
+
+@dataclass(frozen=True)
+class HistoryClose:
+    """What ``close_waiting_run`` did to the matching line.
+
+    ``flipped`` is true only when a line that was still ``waiting`` was
+    rewritten, or a missing line was appended. A line that is already
+    ok or failed is left alone so a later revive cannot turn a settled
+    run into "approval never answered".
+    """
+
+    flipped: bool
+    status: RunStatus | None
+    summary: str | None
 
 
 class JobRun(BaseModel):
@@ -143,21 +166,113 @@ def append_run(
         attempt=attempt,
         attempts=attempts,
     )
-    runs = _read_runs(path)
-    runs.append(record)
-    if len(runs) > HISTORY_CAP:
-        runs = runs[-HISTORY_CAP:]
-    _write_runs(path, runs)
+    with _history_lock(path):
+        runs = _read_runs(path)
+        runs.append(record)
+        _write_capped(path, runs)
     return record
+
+
+def close_waiting_run(
+    data_dir: str | Path,
+    job_id: str,
+    *,
+    started_at: str,
+    session_id: str | None,
+    status: RunStatus,
+    summary: str | None,
+    trigger: RunTrigger,
+    scheduled_for: str | None,
+) -> HistoryClose:
+    """Rewrite the parked line, or append one if it was never written.
+
+    Match on ``started_at``. When both sides name a session, it has to
+    be the same one, so a newer park's line is not the one that settles.
+    A line that is no longer ``waiting`` is returned as it stands.
+    """
+    path = history_path(data_dir, job_id)
+    with _history_lock(path):
+        runs = _read_runs(path)
+        index = _waiting_index(runs, started_at, session_id)
+        if index is None:
+            record = JobRun(
+                started_at=started_at or as_utc(datetime.now(UTC)).isoformat(),
+                scheduled_for=scheduled_for,
+                trigger=trigger,
+                status=status,
+                summary=summary,
+                session_id=session_id,
+            )
+            runs.append(record)
+            _write_capped(path, runs)
+            return HistoryClose(True, record.status, record.summary)
+        current = runs[index]
+        if current.status != "waiting":
+            return HistoryClose(False, current.status, current.summary)
+        record = JobRun(
+            started_at=current.started_at,
+            scheduled_for=current.scheduled_for,
+            trigger=current.trigger,
+            status=status,
+            summary=summary,
+            session_id=current.session_id,
+            attempt=current.attempt,
+            attempts=current.attempts,
+        )
+        runs[index] = record
+        _write_runs(path, runs)
+        return HistoryClose(True, record.status, record.summary)
 
 
 def delete_history(data_dir: str | Path, job_id: str) -> bool:
     """Remove the job's log. False when there was nothing to remove."""
     path = history_path(data_dir, job_id)
-    if not path.is_file():
-        return False
-    path.unlink()
+    with _history_lock(path):
+        if not path.is_file():
+            return False
+        path.unlink()
     return True
+
+
+def _history_lock(path: Path) -> threading.Lock:
+    key = str(path)
+    with _GUARD:
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _LOCKS[key] = lock
+        return lock
+
+
+def _waiting_index(runs: list[JobRun], started_at: str, session_id: str | None) -> int | None:
+    want = _norm_stamp(started_at)
+    if want is None:
+        return None
+    fallback: int | None = None
+    for index, run in enumerate(runs):
+        if _norm_stamp(run.started_at) != want:
+            continue
+        if session_id and run.session_id and run.session_id != session_id:
+            continue
+        if run.status == "waiting":
+            return index
+        fallback = index
+    return fallback
+
+
+def _norm_stamp(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        return normalize_next_run(value)
+    except JobValidationError:
+        return None
+
+
+def _write_capped(path: Path, runs: list[JobRun]) -> None:
+    if len(runs) > HISTORY_CAP:
+        runs = runs[-HISTORY_CAP:]
+    _write_runs(path, runs)
 
 
 def _read_runs(path: Path) -> list[JobRun]:

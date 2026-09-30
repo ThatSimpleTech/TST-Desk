@@ -60,9 +60,14 @@ function banner(text: string): string {
 	return `${clean.slice(0, _BANNER_CHARS - 1).trimEnd()}…`;
 }
 
-/** `last_run` per job id, "" for a job that has never fired. */
+/** Receipt identity. A parked approval settles without moving `last_run`,
+ *  so the stamp also carries status and summary. */
 export function runStamps(jobs: readonly JobEntry[]): Map<string, string> {
-	return new Map(jobs.map((job) => [job.id, job.last_run ?? ""]));
+	return new Map(jobs.map((job) => [job.id, runStamp(job)]));
+}
+
+function runStamp(job: JobEntry): string {
+	return `${job.last_run ?? ""}\u0000${job.last_status ?? ""}\u0000${job.last_summary ?? ""}`;
 }
 
 /**
@@ -89,7 +94,7 @@ export function scheduledNotices(
 		// once, when it succeeds or the tries run out (attempt back to 0).
 		if ((job.attempt ?? 0) > 0) continue;
 		const seen = before.get(job.id);
-		if (seen === undefined || seen === job.last_run) continue;
+		if (seen === undefined || seen === runStamp(job)) continue;
 		notices.push({
 			title: scheduledTitle(job.last_status),
 			body: banner(job.last_summary ?? job.instruction),
@@ -102,6 +107,7 @@ export function scheduledNotices(
 function scheduledTitle(status: JobEntry["last_status"]): string {
 	if (status === "failed") return "Scheduled job failed";
 	if (status === "missed") return "Scheduled job missed";
+	if (status === "waiting") return "Scheduled job is waiting for approval";
 	return "Scheduled job ran";
 }
 

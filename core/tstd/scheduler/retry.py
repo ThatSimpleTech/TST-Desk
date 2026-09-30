@@ -217,6 +217,15 @@ def _will_retry(retries: int, n: int, reason: str | None) -> bool:
     return is_transient_failure(reason)
 
 
+def finish_slot(job: Job, now: datetime) -> dict[str, Any]:
+    """Schedule update for a fire that is done with this slot.
+
+    Parking on approval uses the same advance as a success: the slot
+    is over, and a retry must not open another session onto the card.
+    """
+    return _finished(job, now)
+
+
 def _finished(job: Job, now: datetime) -> dict[str, Any]:
     """Success or the last failure. Counters drop; the regular slot returns.
 

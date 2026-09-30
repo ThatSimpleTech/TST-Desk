@@ -238,16 +238,23 @@ export function jobMissed(job: JobEntry): boolean {
 	return job.last_status === "missed";
 }
 
-function outcomeWord(status: "ok" | "failed" | "missed" | null): string {
+/** True when the last fire is parked on an approval card. Not a failure. */
+export function jobWaiting(job: JobEntry): boolean {
+	return job.last_status === "waiting";
+}
+
+function outcomeWord(status: JobEntry["last_status"] | JobRunEntry["status"]): string {
 	if (status === "failed") return "Failed";
 	if (status === "missed") return "Missed";
+	if (status === "waiting") return "Waiting for approval";
 	return "Ran";
 }
 
 /**
- * One history row: local time, Ran, Failed, or Missed, and "manual" only
- * when the fire was Run now. A scheduled fire is the default, so naming
- * it adds nothing. Missed is a skipped slot, not a failed turn.
+ * One history row: local time, Ran, Failed, Missed, or Waiting for
+ * approval, and "manual" only when the fire was Run now. A scheduled
+ * fire is the default, so naming it adds nothing. Missed is a skipped
+ * slot, and waiting is an approval card, not a failed turn.
  */
 export function jobRunLabel(run: JobRunEntry, timeZone?: string): string {
 	const when = formatLocal(run.started_at, timeZone);

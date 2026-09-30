@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .logging import LOG_FILE_NAME, log_directory, redact_secrets
-from .ws import remove_port_file
+from .port_file import release_port_file
 
 # Long enough for a quiet daemon to close its sockets and its audit
 # writer. Short enough that a supervising ``kill`` is not still waiting
@@ -34,9 +34,8 @@ _POSIX_SHUTDOWN_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 def install_posix_shutdown_signals(callback: Callable[[], None]) -> None:
     """Point SIGTERM and SIGINT at *callback* on the running loop.
 
-    Windows has no ``add_signal_handler``. Shutdown there stays the
-    websocket message, the parent watchdog, or the console event the
-    host already sends.
+    Windows has no ``add_signal_handler``. Ctrl+C, Ctrl+Break, and
+    console close are installed from ``console_shutdown``.
     """
     if sys.platform == "win32":
         return
@@ -118,8 +117,9 @@ class ShutdownBudget:
             data_dir = self._data_dir
         try:
             if data_dir is not None:
-                with contextlib.suppress(OSError):
-                    remove_port_file(data_dir)
+                # Pid-checked. A file that no longer names this process
+                # belongs to whoever replaced it; expiry must not delete it.
+                release_port_file(data_dir)
                 _note_timeout(data_dir, self._seconds)
         finally:
             self._exit(1)

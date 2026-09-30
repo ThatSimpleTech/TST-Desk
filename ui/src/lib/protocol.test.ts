@@ -1368,6 +1368,9 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(runs.runs[1]?.trigger).toBe("schedule");
     expect(runs.runs[1]?.summary).toBe("Skipped the 7:45 AM run — 10 h late");
     expect(runs.runs[1]?.session_id ?? null).toBeNull();
+    expect(runs.runs[2]?.status).toBe("waiting");
+    expect(runs.runs[2]?.summary).toBe("Run `echo hi`");
+    expect(runs.runs[2]?.session_id).toBe("sess-park");
     expect("session_id" in runs).toBe(false);
   });
 
