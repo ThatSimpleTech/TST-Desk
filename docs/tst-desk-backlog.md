@@ -7636,7 +7636,7 @@ provider read is still cancelled.
 - [x] A refused group kill does not SIGKILL the leader while that
       leader is observed alive
 
-Done (2026-09-29): quit-distill publishes its provider future and the
+Done (2026-09-30): quit-distill publishes its provider future and the
 reap waits through local prep and one loop turn. An in-process mock
 finishes in that turn. A call still pending is cancelled, and the
 nested task is cancelled on its own because Python 3.11 does not
@@ -7644,10 +7644,14 @@ cancel it with the parent. Every shell exit closes a dead transport,
 including one whose loop was already cleared. A live refused leader
 is left running and closed by a retained watcher once it exits,
 including when loop shutdown cancels that watcher. Linux `waitid`
-with `WNOWAIT` sees the exit without reaping it out from under
-`ThreadedChildWatcher`. Class B entry in DECISIONS.md.
+with `WNOWAIT` sees an unreaped exit without taking it from
+`ThreadedChildWatcher`. `ChildProcessError` means the pid is not our
+child, or it was already reaped, so that case uses the transport
+returncode and `Popen.poll`, the same path as a build with no
+`os.waitid`. Tests inject both shapes and do not ask the kernel
+about a pid. Class B entry in DECISIONS.md.
 
-Suite: 3963 passed / 8 skipped, ruff + `mypy --strict` clean over 172
+Suite: 3974 passed / 8 skipped, ruff + `mypy --strict` clean over 172
 files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 
 ---

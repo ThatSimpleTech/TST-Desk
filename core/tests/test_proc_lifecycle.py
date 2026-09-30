@@ -9,11 +9,13 @@ hooks fail if a site returns from cancellation without kill + wait.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
 
+from tstd import proc_lifecycle
 from tstd.autonomy.charter import _git as charter_git
 from tstd.autonomy.checkpoint import Checkpointer, checkpoint_start_error
 from tstd.autonomy.revert import _git as revert_git
@@ -168,10 +170,99 @@ class _Parked:
         return -9
 
 
+class _Poll:
+    """Stand-in for ``Popen.poll``. The real call is a ``waitpid``."""
+
+    def __init__(self, code: int | None) -> None:
+        self.code = code
+        self.calls = 0
+
+    def poll(self) -> int | None:
+        self.calls += 1
+        return self.code
+
+
+class _Waitid:
+    """Fake ``os.waitid``. ``kind`` is ``live``, ``exited``, or ``echild``."""
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+        self.calls: list[tuple[int, int, int]] = []
+
+    def __call__(self, idtype: int, pid: int, options: int) -> object | None:
+        self.calls.append((idtype, pid, options))
+        wexited = getattr(os, "WEXITED", 0)
+        wnohang = getattr(os, "WNOHANG", 0)
+        wnowait = getattr(os, "WNOWAIT", 0)
+        if wexited and wnohang and wnowait:
+            assert options & (wexited | wnohang | wnowait) == wexited | wnohang | wnowait
+        p_pid = getattr(os, "P_PID", None)
+        if isinstance(p_pid, int):
+            assert idtype == p_pid
+        if self.kind == "live":
+            return None
+        if self.kind == "exited":
+            return object()
+        raise ChildProcessError(10, "No child processes")
+
+
+def _boom(*_args: object, **_kwargs: object) -> object:
+    raise AssertionError("os.waitid was called")
+
+
+def _use_waitid(monkeypatch: pytest.MonkeyPatch, kind: str) -> _Waitid | None:
+    """Force one waitid branch. A direct ``os.waitid`` call fails the test."""
+    monkeypatch.setattr(os, "waitid", _boom, raising=False)
+    script = None if kind == "absent" else _Waitid(kind)
+
+    def platform() -> Callable[..., object] | None:
+        return script
+
+    monkeypatch.setattr(proc_lifecycle, "_platform_waitid", platform)
+    return script
+
+
+def _parked(code: int | None) -> tuple[_Parked, _Poll]:
+    proc = _Parked()
+    poll = _Poll(code)
+    proc._transport._proc = poll
+    return proc, poll
+
+
 def _closer() -> asyncio.Task[None]:
     closers = [task for task in asyncio.all_tasks() if task.get_name() == "shell-transport-close"]
     assert len(closers) == 1
     return closers[0]
+
+
+# No ``os.waitid`` (macOS 3.11), a live child, and ECHILD. All three stay open.
+_LIVE_WAITID = ("absent", "live", "echild")
+
+
+@pytest.mark.parametrize(
+    ("branch", "expected"),
+    [
+        ("absent", False),
+        ("live", False),
+        ("echild", False),
+        ("exited", True),
+    ],
+)
+def test_exited_unreaped_branches(
+    monkeypatch: pytest.MonkeyPatch, branch: str, expected: bool
+) -> None:
+    monkeypatch.setattr(os, "waitid", _boom, raising=False)
+    script = None if branch == "absent" else _Waitid(branch)
+    assert proc_lifecycle._exited_unreaped(4242, waitid=script) is expected
+    if script is not None:
+        assert [call[1] for call in script.calls] == [4242]
+
+
+def test_non_positive_pid_does_not_call_waitid() -> None:
+    script = _Waitid("exited")
+    assert proc_lifecycle._exited_unreaped(0, waitid=script) is False
+    assert proc_lifecycle._exited_unreaped(-1, waitid=script) is False
+    assert script.calls == []
 
 
 class TestRetainTransport:
@@ -185,20 +276,31 @@ class TestRetainTransport:
         assert transport.closed
         assert not any(task.get_name() == "shell-transport-close" for task in asyncio.all_tasks())
 
-    async def test_live_leader_is_not_closed(self) -> None:
-        proc = _Parked()
+    @pytest.mark.parametrize("branch", _LIVE_WAITID)
+    async def test_live_leader_is_not_closed(
+        self, monkeypatch: pytest.MonkeyPatch, branch: str
+    ) -> None:
+        script = _use_waitid(monkeypatch, branch)
+        proc, poll = _parked(None)
         retain_subprocess_transport(proc)  # type: ignore[arg-type]
         await asyncio.sleep(0)
         assert proc._transport.closed is False
+        assert poll.calls == 1
+        if script is not None:
+            assert [call[1] for call in script.calls] == [proc.pid]
         closer = _closer()
         closer.cancel()
         with pytest.raises(asyncio.CancelledError):
             await closer
         assert proc._transport.closed is False
 
-    async def test_cancelled_watcher_closes_after_the_child_exits(self) -> None:
+    @pytest.mark.parametrize("branch", _LIVE_WAITID)
+    async def test_cancelled_watcher_closes_after_the_child_exits(
+        self, monkeypatch: pytest.MonkeyPatch, branch: str
+    ) -> None:
         """Loop shutdown cancels the watcher. A returncode of -9 still closes."""
-        proc = _Parked()
+        script = _use_waitid(monkeypatch, branch)
+        proc, poll = _parked(None)
         retain_subprocess_transport(proc)  # type: ignore[arg-type]
         await asyncio.sleep(0)
         proc.returncode = -9
@@ -208,6 +310,32 @@ class TestRetainTransport:
         with pytest.raises(asyncio.CancelledError):
             await closer
         assert proc._transport.closed
+        assert poll.calls == 1
+        if script is not None:
+            assert [call[1] for call in script.calls] == [proc.pid]
+
+    async def test_unreaped_exit_closes_without_a_returncode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``waitid`` status closes while the transport returncode is still None."""
+        script = _use_waitid(monkeypatch, "exited")
+        proc, poll = _parked(None)
+        retain_subprocess_transport(proc)  # type: ignore[arg-type]
+        await asyncio.sleep(0)
+        assert proc._transport.closed
+        assert poll.calls == 0
+        assert script is not None
+        assert [call[1] for call in script.calls] == [proc.pid]
+        assert not any(task.get_name() == "shell-transport-close" for task in asyncio.all_tasks())
+
+    async def test_echild_defers_to_poll(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Already reaped: ECHILD, then ``Popen.poll`` carries the code."""
+        script = _use_waitid(monkeypatch, "echild")
+        proc, poll = _parked(-9)
+        retain_subprocess_transport(proc)  # type: ignore[arg-type]
+        assert proc._transport.closed
+        assert poll.calls == 1
+        assert script is not None and [call[1] for call in script.calls] == [proc.pid]
 
 
 async def _checkpoint(workspace: Path) -> None:
