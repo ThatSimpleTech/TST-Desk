@@ -27,8 +27,9 @@ If only the reverse-DNS leftover exists, it is renamed once to `tst-desk`. If
 both exist, `tst-desk` wins and the leftover is left alone — two live stores
 are not merged.
 
-`--data-dir` still moves the session store and the audit database. It does
-**not** move `config.yaml`.
+`--data-dir` moves the session store, the audit database, `logs/tstd.log`, and
+`config.yaml`. With no flag, `config.yaml` stays in the platform directory above.
+The OS keychain does not move.
 
 ---
 

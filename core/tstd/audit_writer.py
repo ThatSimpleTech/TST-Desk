@@ -27,7 +27,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .audit import AuditStore, DecisionClass, ToolCallStatus
-from .cost import billable_cached_tokens
+from .autonomy.worker import JudgmentAudit
+from .cost import CostTracker, billable_cached_tokens
 from .logging import get_logger
 from .protocol import DaemonEvent, DecisionLogged, Error, SessionState, ToolResult, TurnComplete
 from .protocol import ToolCall as ToolCallEvent
@@ -46,11 +47,33 @@ _Op = tuple[str | None, Callable[[], object]]
 
 
 class ModelCallSink(Protocol):
-    """What the agent loop needs from the audit writer (TD-902)."""
+    """What the agent loop needs from the audit writer (TD-902, TD-708)."""
 
     def record_model_call(
         self, session_id: str, record: CallRecord, is_classifier: bool
     ) -> None: ...
+
+    def record_judgment(self, session_id: str, record: JudgmentAudit) -> None: ...
+
+
+def forward_classifier_judgment(
+    record: JudgmentAudit,
+    *,
+    session_id: str,
+    writer: ModelCallSink | None,
+    tracker: CostTracker,
+) -> None:
+    """Audit one classifier judgment and bill a hosted connector.
+
+    The worker connector bills itself inside the completion (tier
+    prices).  Recording that cost again would double it.  A hosted
+    connector has no tier price, so its reported dollars are recorded
+    here and stay on the classifier line.
+    """
+    if writer is not None:
+        writer.record_judgment(session_id, record)
+    if record.invoked and record.connector != "worker":
+        tracker.record_classifier_amount(record.connector, record.model, record.cost)
 
 
 @dataclass
@@ -118,12 +141,40 @@ class AuditWriter:
     # ── Producers (event loop thread, never block) ─────────────────────
 
     def attach_session(self, session: Session) -> None:
-        """Record the session and subscribe to its event log."""
+        """Record the session and subscribe to its event log.
+
+        Open and revive both attach. The start row is inserted once;
+        a later attach for the same workspace must not submit a new
+        ``started_at`` or the primary key rejects a fact the log
+        cannot rewrite.
+        """
         self._sessions[session.id] = session
         workspace = session.workspace_path
         sid = session.id
-        self._enqueue(sid, lambda: self._store.append_session(sid, workspace, time.time()))
+        self._enqueue(
+            sid,
+            lambda: self._store.record_session_attach(sid, workspace, time.time()),
+        )
         session.event_log.subscribe(self._make_subscriber(session))
+
+    def record_judgment(self, session_id: str, record: JudgmentAudit) -> None:
+        """Enqueue one classifier-judgment row (TD-708). Never blocks."""
+        # The drain runs after this returns, so the lambda keeps this call's row.
+        rec = record
+        self._enqueue(
+            session_id,
+            lambda: self._store.append_judgment(
+                session_id=session_id,
+                connector=rec.connector,
+                payload_digest=rec.payload_digest,
+                label=rec.label,
+                confidence=rec.confidence,
+                latency_ms=rec.latency_ms,
+                cost=rec.cost,
+                cache_hit=rec.cache_hit,
+                decision_class=rec.decision_class.value,
+            ),
+        )
 
     def record_model_call(self, session_id: str, record: CallRecord, is_classifier: bool) -> None:
         """Sink for ``CostTracker`` listeners (TD-902 feed 2).

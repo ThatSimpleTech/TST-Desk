@@ -89,11 +89,14 @@ from tstd.protocol import (
     JobDraftReply,
     JobEntry,
     JobList,
+    JobRunEntry,
+    JobRuns,
     ListArtifacts,
     ListCommands,
     ListGrokExtensions,
     ListGrokSessions,
     ListInstructions,
+    ListJobRuns,
     ListJobs,
     ListMemory,
     ListPins,
@@ -125,6 +128,7 @@ from tstd.protocol import (
     RuleActivated,
     RunDiagnostics,
     RunGrokCommand,
+    RunJob,
     RunVerify,
     SaveCharter,
     SaveJob,
@@ -904,9 +908,20 @@ FIXTURES = {
         instruction="summarize the inbox",
         cadence="every 1 hour",
         deliver_to="window",
+        # TD-3812: a real pin, not nulls — an all-null sample would not
+        # prove the TypeScript side accepts the values.
+        preset="vllm",
+        engine="native",
+        # TD-3813: a phrase, not null — the job stores the seconds.
+        grace="2 hours",
+        # TD-3814: a count and a phrase, not nulls.
+        retries=2,
+        retry_delay="10 minutes",
     ),
     "delete_job": DeleteJob(job_id="job-1"),
     "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
+    "run_job": RunJob(job_id="job-1"),
+    "list_job_runs": ListJobRuns(job_id="job-1"),
     "job_list": JobList(
         jobs=[
             JobEntry(
@@ -916,13 +931,51 @@ FIXTURES = {
                 cadence="every 1 hour",
                 deliver_to="window",
                 paused=False,
+                preset="vllm",
+                engine="native",
+                grace=7200,
+                retries=2,
+                retry_delay=600,
+                attempt=0,
                 # TD-3807: a real receipt, not nulls — an all-null sample
                 # would not prove the TypeScript side accepts the values.
                 last_run="2026-08-21T15:00:00+00:00",
                 last_status="ok",
                 last_summary="3 threads need a reply",
                 last_session_id="sess-1",
+                running=False,
             )
+        ],
+    ),
+    "job_runs": JobRuns(
+        job_id="job-1",
+        runs=[
+            JobRunEntry(
+                started_at="2026-08-21T15:00:00+00:00",
+                scheduled_for="2026-08-21T12:00:00+00:00",
+                trigger="schedule",
+                status="ok",
+                summary="3 threads need a reply",
+                session_id="sess-1",
+                attempt=2,
+                attempts=3,
+            ),
+            JobRunEntry(
+                started_at="2026-08-21T22:45:00+00:00",
+                scheduled_for="2026-08-21T12:45:00+00:00",
+                trigger="schedule",
+                status="missed",
+                summary="Skipped the 7:45 AM run — 10 h late",
+                session_id=None,
+            ),
+            JobRunEntry(
+                started_at="2026-08-21T23:00:00+00:00",
+                scheduled_for="2026-08-21T19:00:00+00:00",
+                trigger="schedule",
+                status="waiting",
+                summary="Run `echo hi`",
+                session_id="sess-park",
+            ),
         ],
     ),
     "job_draft": JobDraftReply(

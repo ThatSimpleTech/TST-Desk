@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from pathlib import Path
 
+import pytest
+
 from tests.test_loop import wait_for_turn
+from tstd.audit import AuditStore
+from tstd.audit_writer import AuditWriter
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
-from tstd.protocol import AssistantDelta, UserTurn
+from tstd.protocol import AssistantDelta, Error, UserTurn
 from tstd.provider import ChatMessage
 from tstd.session_persist import SessionPersist
 from tstd.session_store import SessionStore
@@ -19,6 +25,41 @@ async def _stop_runners(daemon: Daemon) -> None:
         runner = daemon.session_registry.get_runner(sess.id)
         if runner is not None:
             await runner.cancel()
+
+
+def _mock() -> MockProvider:
+    return MockProvider(default=Script(kind="stream", content="ok"))
+
+
+def _arm_audit(daemon: Daemon) -> AuditWriter:
+    writer = AuditWriter(AuditStore(daemon.data_dir / "audit.db"))
+    daemon._audit_writer = writer
+    writer.start()
+    return writer
+
+
+async def _shutdown_audit(daemon: Daemon) -> None:
+    await _stop_runners(daemon)
+    writer = daemon._audit_writer
+    if writer is not None:
+        await writer.close()
+        daemon._audit_writer = None
+    for task in list(daemon._tasks):
+        task.cancel()
+    if daemon._tasks:
+        await asyncio.gather(*daemon._tasks, return_exceptions=True)
+        daemon._tasks.clear()
+
+
+def _audit_sessions(data_dir: Path) -> list[tuple[str, str, float]]:
+    store = AuditStore(data_dir / "audit.db")
+    try:
+        rows = store._conn.execute(
+            "SELECT session_id, workspace_path, started_at FROM sessions ORDER BY session_id"
+        ).fetchall()
+        return [(str(row[0]), str(row[1]), float(row[2])) for row in rows]
+    finally:
+        store.close()
 
 
 class TestRestoreHonesty:
@@ -162,3 +203,56 @@ class TestRestoreHonesty:
         assert sess is not None
         assert sess.state == "complete"
         assert daemon.session_registry.get_runner("done-1") is None
+
+
+class TestAuditOnRevive:
+    async def test_open_then_revive_twice_writes_one_session_row(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The start row is recorded at open. Revive does not write it again."""
+        data_dir = tmp_path / "data"
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        data_dir.mkdir()
+
+        daemon = Daemon(data_dir=data_dir, provider=_mock())
+        writer = _arm_audit(daemon)
+        try:
+            await daemon._start_session(str(workspace))
+            sessions = await daemon.session_registry.list_sessions()
+            assert len(sessions) == 1
+            session_id = sessions[0].id
+            daemon._session_persist.save_conversation(
+                session_id,
+                [ChatMessage(role="user", content="hello")],
+            )
+            await writer._queue.join()
+        finally:
+            await _shutdown_audit(daemon)
+
+        opened = _audit_sessions(data_dir)
+        assert opened == [(session_id, str(workspace), opened[0][2])]
+
+        for _ in range(2):
+            revived = Daemon(data_dir=data_dir, provider=_mock())
+            revive_writer = _arm_audit(revived)
+            try:
+                with caplog.at_level(logging.ERROR):
+                    marked = len(caplog.records)
+                    await revived._restore_sessions()
+                    await revive_writer._queue.join()
+                    fresh = caplog.records[marked:]
+                assert [r for r in fresh if r.getMessage() == "audit write failed"] == []
+                sess = revived.session_registry.get(session_id)
+                assert sess is not None
+                assert sess.state == "running"
+                assert revived.session_registry.get_runner(session_id) is not None
+                assert [
+                    event
+                    for event in sess.event_log.all_events
+                    if isinstance(event, Error) and event.code == "audit_write_failed"
+                ] == []
+            finally:
+                await _shutdown_audit(revived)
+
+        assert _audit_sessions(data_dir) == opened

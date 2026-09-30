@@ -78,16 +78,16 @@ async def test_probe_keychain_on_clean_daemon(
 
     fk = FakeKeychain()
 
-    async def _get(provider_name: str = "openrouter") -> str:
-        return await fk.get(provider_name)
-
     async def _store(api_key: str, provider_name: str = "openrouter") -> None:
         await fk.store(api_key, provider_name)
 
     async def _delete(provider_name: str = "openrouter") -> None:
         await fk.delete(provider_name)
 
-    monkeypatch.setattr("tstd.daemon.get_api_key", _get)
+    async def _present(provider_name: str = "openrouter") -> bool:
+        return provider_name in fk.stored
+
+    monkeypatch.setattr("tstd.daemon.api_key_is_stored", _present)
     monkeypatch.setattr("tstd.daemon.store_api_key", _store)
     monkeypatch.setattr("tstd.daemon.delete_api_key", _delete)
     monkeypatch.setattr("tstd.daemon.ProviderClient", FakeProviderClient)

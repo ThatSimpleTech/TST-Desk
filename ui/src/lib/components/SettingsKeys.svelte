@@ -111,7 +111,7 @@
 					type="password"
 					autocomplete="off"
 					value={keyDrafts[cred.id] ?? ""}
-					placeholder="sk-…"
+					placeholder="Paste API key"
 					oninput={(e) => (keyDrafts[cred.id] = e.currentTarget.value)}
 				/>
 			</label>
@@ -157,7 +157,7 @@
 		type="password"
 		autocomplete="off"
 		bind:value={newKey}
-		placeholder="sk-…"
+		placeholder="Paste API key"
 	/>
 </label>
 <label class="field">
@@ -178,7 +178,13 @@
 	>
 </div>
 {#if onboarding.validation}
-	<p class="hint" aria-live="polite">{onboarding.validation.detail}</p>
+	<p
+		class={onboarding.validation.ok ? "hint" : "test-fail"}
+		aria-live="polite"
+	>
+		{onboarding.validation.detail ||
+			(onboarding.validation.ok ? "" : "The key was rejected.")}
+	</p>
 {/if}
 </div>
 
@@ -186,6 +192,12 @@
 	.hint {
 		font-size: var(--text-sm);
 		color: var(--color-ink-secondary);
+		margin: var(--space-3) 0 0;
+	}
+
+	.test-fail {
+		font-size: var(--text-sm);
+		color: var(--color-err);
 		margin: var(--space-3) 0 0;
 	}
 

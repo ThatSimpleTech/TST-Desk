@@ -9,11 +9,17 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+// Only the macOS actuator (and the cross-platform unit tests) use these; the
+// Linux and Windows builds compile them but never call them.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const SOCK_ENV: &str = "TST_CU_AGENT_SOCK";
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const SOCK_NAME: &str = "cu-agent.sock";
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn sock_path(data_dir: &Path) -> PathBuf {
     data_dir.join(SOCK_NAME)
 }
@@ -49,6 +55,7 @@ pub fn bind_and_serve(data_dir: &Path) {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, PartialEq)]
 enum Command<'a> {
     Quit,
@@ -86,6 +93,7 @@ enum Command<'a> {
     Unknown,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn parse_line(text: &str) -> Command<'_> {
     let text = text.trim();
     if text.is_empty() || text == "quit" {

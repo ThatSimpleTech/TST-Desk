@@ -1,10 +1,11 @@
-// Scheduled rail helpers (TD-3805).
+// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814).
 //
 // Draft fields the pane sends on `save_job` — not a natural-language
-// parse. Pause is the same verb with `paused` flipped. The rail never
-// runs a job; TD-3804's tick does that.
+// parse. Pause is the same verb with `paused` flipped. Edit is the same
+// verb with the job's id. Run now is `run_job`; the tick still owns the
+// schedule.
 
-import type { JobEntry, SaveJob } from "./protocol";
+import type { JobEntry, JobRunEntry, SaveJob } from "./protocol";
 
 export type DeliverTo = JobEntry["deliver_to"];
 
@@ -15,6 +16,67 @@ export interface JobDraftFields {
 	next_run: string;
 	deliver_to: DeliverTo;
 	paused: boolean;
+	/** Catalog preset name. `""` means use whatever the window is using. */
+	preset: string;
+	/** `""` means use the window's engine. */
+	engine: "" | "native" | "grok";
+	/** Phrase sent as `grace`, or `""` for always run. */
+	grace: string;
+	/** `""` is no retries. `"1"` `"2"` `"3"` are extra tries after the first. */
+	retries: string;
+}
+
+/** If late. `seconds` is what the daemon stores; the wire value is the phrase. */
+export const GRACE_CHOICES: readonly { value: string; label: string; seconds: number | null }[] = [
+	{ value: "", label: "Always run", seconds: null },
+	{ value: "30 minutes", label: "Skip if more than 30 min late", seconds: 30 * 60 },
+	{ value: "1 hour", label: "Skip if more than 1 h late", seconds: 60 * 60 },
+	{ value: "2 hours", label: "Skip if more than 2 h late", seconds: 2 * 60 * 60 },
+	{ value: "6 hours", label: "Skip if more than 6 h late", seconds: 6 * 60 * 60 },
+];
+
+/** Extra tries. The delay is always 10 minutes; the daemon stores the seconds. */
+export const RETRY_CHOICES: readonly { value: string; label: string }[] = [
+	{ value: "", label: "None" },
+	{ value: "1", label: "1" },
+	{ value: "2", label: "2" },
+	{ value: "3", label: "3" },
+];
+
+export const RETRY_DELAY = "10 minutes";
+
+/** Draft value for a stored retry count. An unknown count still round-trips. */
+export function retriesDraftValue(count: number | null | undefined): string {
+	if (count == null || count <= 0) return "";
+	return String(count);
+}
+
+const _MINUTE = 60;
+const _HOUR = 3600;
+const _DAY = 86400;
+
+/** Draft value for a stored grace. Unknown counts still round-trip on Save. */
+export function graceDraftValue(seconds: number | null | undefined): string {
+	if (seconds == null) return "";
+	const known = GRACE_CHOICES.find((choice) => choice.seconds === seconds);
+	if (known !== undefined) return known.value;
+	return graceWire(seconds);
+}
+
+function graceWire(seconds: number): string {
+	if (seconds > 0 && seconds % _DAY === 0) {
+		const count = seconds / _DAY;
+		return `${count} ${count === 1 ? "day" : "days"}`;
+	}
+	if (seconds > 0 && seconds % _HOUR === 0) {
+		const count = seconds / _HOUR;
+		return `${count} ${count === 1 ? "hour" : "hours"}`;
+	}
+	if (seconds > 0 && seconds % _MINUTE === 0) {
+		const count = seconds / _MINUTE;
+		return `${count} ${count === 1 ? "minute" : "minutes"}`;
+	}
+	return String(seconds);
 }
 
 export function jobsEmptyCopy(): string {
@@ -25,10 +87,14 @@ export function emptyDraft(workspace: string | null): JobDraftFields {
 	return {
 		workspace: workspace ?? "",
 		instruction: "",
-		cadence: "every 1 hour",
+		cadence: "weekdays at 9:00",
 		next_run: "",
 		deliver_to: "window",
 		paused: false,
+		preset: "",
+		engine: "",
+		grace: "",
+		retries: "",
 	};
 }
 
@@ -55,6 +121,88 @@ export function formatLocal(iso: string, timeZone?: string): string {
 	}
 }
 
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_PLURALS = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+
+/** Cron day-of-week field as a set of 0-6 (7 is Sunday), or null if not a plain list/range. */
+function parseDays(field: string): Set<number> | null {
+	const days = new Set<number>();
+	for (const part of field.split(",")) {
+		const m = /^(\d)(?:-(\d))?$/.exec(part);
+		if (m === null) return null;
+		const lo = Number(m[1]);
+		const hi = m[2] === undefined ? lo : Number(m[2]);
+		if (lo > hi || hi > 7) return null;
+		for (let d = lo; d <= hi; d += 1) days.add(d % 7);
+	}
+	return days;
+}
+
+function clock(hour: number, minute: number): string {
+	const suffix = hour < 12 ? "AM" : "PM";
+	return `${hour % 12 === 0 ? 12 : hour % 12}:${String(minute).padStart(2, "0")} ${suffix}`;
+}
+
+/**
+ * A stored cadence in words: `45 7 * * 1-5` becomes "Weekdays at 7:45 AM".
+ *
+ * Deliberately narrow — fixed minute and hour, dom/month `*`, dow a list or
+ * range. Anything else (steps, names, `*` hours, a plain-English cadence the
+ * daemon kept as written) comes back unchanged, because a wrong translation
+ * of a schedule is worse than the raw cron. Legacy jobs with no zone run in
+ * UTC, so the clock time says so.
+ */
+export function humanizeCadence(cadence: string, timezone?: string | null): string {
+	const f = cadence.trim().split(/\s+/);
+	if (f.length !== 5 || f[2] !== "*" || f[3] !== "*") return cadence;
+	if (!/^\d{1,2}$/.test(f[0]) || !/^\d{1,2}$/.test(f[1])) return cadence;
+	const minute = Number(f[0]);
+	const hour = Number(f[1]);
+	if (minute > 59 || hour > 23) return cadence;
+	const days = f[4] === "*" ? null : parseDays(f[4]);
+	if (f[4] !== "*" && (days === null || days.size === 0)) return cadence;
+	const key = days === null ? "" : [...days].sort((a, b) => a - b).join("");
+	let who: string;
+	if (days === null || days.size === 7) who = "Daily";
+	else if (key === "12345") who = "Weekdays";
+	else if (key === "06") who = "Weekends";
+	else if (days.size === 1) who = DAY_PLURALS[[...days][0]];
+	else {
+		const names = [...days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((d) => DAY_NAMES[d]);
+		who = `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+	}
+	const utc = timezone ? "" : " UTC";
+	return `${who} at ${clock(hour, minute)}${utc}`;
+}
+
+/** Known project folders for the workspace field: pinned first, then recents, deduped. */
+export function workspaceSuggestions(pinned: string[], recents: string[]): string[] {
+	return [...new Set([...pinned, ...recents])];
+}
+
+/** The browser's own zone, or undefined when the runtime cannot say. */
+export function viewerTimeZone(): string | undefined {
+	try {
+		return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Row meta: when it next fires, the cadence in words if that adds anything, and where it delivers. */
+export function jobMeta(job: JobEntry, timeZone?: string): string {
+	const when = jobWhen(job, timeZone);
+	const words = job.cadence ? humanizeCadence(job.cadence, job.timezone) : null;
+	// With no next run, jobWhen already fell back to the raw cadence; show
+	// the readable form instead of both.
+	const parts = words !== null && when === job.cadence ? [words] : [when];
+	if (words !== null && when !== job.cadence) parts.push(words);
+	parts.push(job.deliver_to);
+	if (job.preset) parts.push(job.preset);
+	if (job.engine) parts.push(job.engine);
+	return parts.join(" · ");
+}
+
 export function jobWhen(job: JobEntry, timeZone?: string): string {
 	if (job.paused) return "Paused";
 	if (job.next_run) return formatLocal(job.next_run, timeZone);
@@ -71,7 +219,13 @@ export function jobWhen(job: JobEntry, timeZone?: string): string {
 export function jobLastRun(job: JobEntry, timeZone?: string): string {
 	if (!job.last_run) return "Never run";
 	const when = formatLocal(job.last_run, timeZone);
-	return job.last_status === "failed" ? `Failed ${when}` : `Ran ${when}`;
+	return `${outcomeWord(job.last_status)} ${when}`;
+}
+
+/** Row status. An in-flight turn replaces the previous receipt until it lands. */
+export function jobActivity(job: JobEntry, timeZone?: string): string {
+	if (job.running) return "Running…";
+	return jobLastRun(job, timeZone);
 }
 
 /** True when the last fire failed, so the row can mark itself. */
@@ -79,14 +233,59 @@ export function jobFailed(job: JobEntry): boolean {
 	return job.last_status === "failed";
 }
 
+/** True when the last slot was skipped for lateness. Not a failure. */
+export function jobMissed(job: JobEntry): boolean {
+	return job.last_status === "missed";
+}
+
+/** True when the last fire is parked on an approval card. Not a failure. */
+export function jobWaiting(job: JobEntry): boolean {
+	return job.last_status === "waiting";
+}
+
+function outcomeWord(status: JobEntry["last_status"] | JobRunEntry["status"]): string {
+	if (status === "failed") return "Failed";
+	if (status === "missed") return "Missed";
+	if (status === "waiting") return "Waiting for approval";
+	return "Ran";
+}
+
+/**
+ * One history row: local time, Ran, Failed, Missed, or Waiting for
+ * approval, and "manual" only when the fire was Run now. A scheduled
+ * fire is the default, so naming it adds nothing. Missed is a skipped
+ * slot, and waiting is an approval card, not a failed turn.
+ */
+export function jobRunLabel(run: JobRunEntry, timeZone?: string): string {
+	const when = formatLocal(run.started_at, timeZone);
+	const outcome = outcomeWord(run.status);
+	const attempt = attemptSuffix(run);
+	if (run.trigger === "manual") return `${outcome} ${when} · manual${attempt}`;
+	return `${outcome} ${when}${attempt}`;
+}
+
+/** History names the try only when the job retries. Run now has no number. */
+function attemptSuffix(run: JobRunEntry): string {
+	if (run.attempt == null || run.attempts == null) return "";
+	return ` · attempt ${run.attempt} of ${run.attempts}`;
+}
+
+/** The rail no longer lists the session a run recorded. */
+export function sessionMissingCopy(): string {
+	return "Session no longer exists";
+}
+
 function blankToNull(value: string): string | undefined {
 	const text = value.trim();
 	return text === "" ? undefined : text;
 }
 
-/** Wire payload for a new job. Empty cadence / next_run are omitted. */
-export function saveFromDraft(draft: JobDraftFields): SaveJob {
-	return {
+/** Wire payload for a new job. Empty cadence / next_run / pin are omitted. */
+export function saveFromDraft(
+	draft: JobDraftFields,
+	timezone: string | undefined = viewerTimeZone(),
+): SaveJob {
+	const payload: SaveJob = {
 		type: "save_job",
 		workspace: blankToNull(draft.workspace),
 		instruction: blankToNull(draft.instruction),
@@ -94,10 +293,39 @@ export function saveFromDraft(draft: JobDraftFields): SaveJob {
 		next_run: blankToNull(draft.next_run),
 		deliver_to: draft.deliver_to,
 		paused: draft.paused,
+		// The zone the user typed the cadence in; without it the daemon
+		// would read "7:45" as UTC.
+		timezone,
 	};
+	const preset = blankToNull(draft.preset);
+	if (preset !== undefined) payload.preset = preset;
+	if (draft.engine === "native" || draft.engine === "grok") payload.engine = draft.engine;
+	// Blank is "always run", the same as omitting the field on create.
+	const grace = draft.grace.trim();
+	if (grace !== "") payload.grace = grace;
+	const retries = retryCount(draft.retries);
+	if (retries !== undefined) {
+		payload.retries = retries;
+		payload.retry_delay = RETRY_DELAY;
+	}
+	return payload;
 }
 
-/** Wire payload to replace a listed job, including pause. */
+function retryCount(raw: string): number | undefined {
+	const text = raw.trim();
+	if (text === "") return undefined;
+	const count = Number(text);
+	if (!Number.isInteger(count) || count < 1) return undefined;
+	return count;
+}
+
+/**
+ * Wire payload to replace a listed job, including pause.
+ *
+ * Preset and engine are omitted on purpose. Pause must not resend them:
+ * a catalog name that has since been removed would fail the save, and
+ * the job could not be paused.
+ */
 export function saveFromJob(job: JobEntry, paused: boolean): SaveJob {
 	return {
 		type: "save_job",
@@ -108,5 +336,104 @@ export function saveFromJob(job: JobEntry, paused: boolean): SaveJob {
 		next_run: job.next_run,
 		deliver_to: job.deliver_to,
 		paused,
+		timezone: job.timezone,
 	};
+}
+
+/** Form copy. Create stays the new-job wording; edit names the save. */
+export function jobFormCopy(editing: boolean): { title: string; lede: string; submit: string } {
+	if (editing) {
+		return {
+			title: "Edit job",
+			lede: "Change the fields, then save. Cadence or next run, not both.",
+			submit: "Save",
+		};
+	}
+	return {
+		title: "New job",
+		lede: "Parse a sentence, edit the draft, then create. Cadence or next run, not both.",
+		submit: "Create",
+	};
+}
+
+/**
+ * Load a row into the form.
+ *
+ * A cadence job's `next_run` is the slot the runner armed, not a time the
+ * user typed. Leaving it blank is what keeps Save from sending it back.
+ */
+export function draftFromJob(job: JobEntry): JobDraftFields {
+	const recurring = typeof job.cadence === "string" && job.cadence.trim() !== "";
+	return {
+		workspace: job.workspace,
+		instruction: job.instruction,
+		cadence: recurring ? job.cadence ?? "" : "",
+		next_run: recurring ? "" : (job.next_run ?? ""),
+		deliver_to: job.deliver_to,
+		paused: job.paused,
+		preset: job.preset ?? "",
+		engine: job.engine ?? "",
+		grace: graceDraftValue(job.grace),
+		retries: retriesDraftValue(job.retries),
+	};
+}
+
+/**
+ * Wire payload for an in-place edit.
+ *
+ * A blank cadence is sent as `""` because omitting it means "keep", and
+ * that is the only way a recurring job becomes a one-shot. `next_run` is
+ * sent only for a one-shot: on a cadence job the field is the armed slot
+ * and the daemon keeps or re-arms it. The viewer zone goes out only for a
+ * legacy job (no zone stored) whose cadence text changed — any other edit
+ * keeps the zone the job already has.
+ *
+ * `paused` is the row's, not the draft's. The form has no pause control,
+ * and Pause on the row can flip while the form is open.
+ */
+export function saveFromEdit(
+	draft: JobDraftFields,
+	job: JobEntry,
+	timezone: string | undefined = viewerTimeZone(),
+): SaveJob {
+	const cadence = draft.cadence.trim();
+	const nextRun = draft.next_run.trim();
+	const payload: SaveJob = {
+		type: "save_job",
+		id: job.id,
+		workspace: blankToNull(draft.workspace),
+		instruction: blankToNull(draft.instruction),
+		deliver_to: draft.deliver_to,
+		paused: job.paused,
+	};
+	if (cadence === "") {
+		payload.cadence = "";
+		payload.next_run = nextRun;
+	} else {
+		payload.cadence = cadence;
+	}
+	const legacy = job.timezone == null;
+	const cadenceChanged = cadence !== (job.cadence ?? "").trim();
+	if (legacy && cadenceChanged && timezone !== undefined && timezone !== "") {
+		payload.timezone = timezone;
+	}
+	// Always sent. `""` clears a pin back to "use current"; omitting it
+	// would keep the stored one, which is Pause, not Save.
+	payload.preset = draft.preset.trim();
+	payload.engine = draft.engine;
+	// Always sent. `""` clears a grace back to always run; omitting it
+	// would keep the stored one, which is Pause, not Save.
+	payload.grace = draft.grace.trim();
+	// Always sent. `0` and a blank delay clear retries. A count sends the
+	// 10-minute gap the select means; omitting both would keep the stored
+	// policy, which is Pause, not Save.
+	const retries = retryCount(draft.retries);
+	if (retries === undefined) {
+		payload.retries = 0;
+		payload.retry_delay = "";
+	} else {
+		payload.retries = retries;
+		payload.retry_delay = RETRY_DELAY;
+	}
+	return payload;
 }

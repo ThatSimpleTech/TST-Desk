@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -30,6 +29,8 @@ import websockets.exceptions
 from websockets.asyncio.server import Server, ServerConnection, serve
 
 from .logging import get_logger
+from .port_file import PORT_FILE_NAME as _PORT_FILE
+from .port_file import release_port_file, write_port_file
 from .protocol import (
     HandshakeError,
     build_error,
@@ -51,12 +52,16 @@ log = get_logger("tstd.ws")
 
 # Token length in bytes (64 hex chars)
 _TOKEN_BYTES = 32
-_PORT_FILE = "port.json"
 
 # How often the server emits the application-level ping (TD-1716).  Fast
 # enough that a client can call a 30s silence a zombie after two missed
 # frames; slow enough to cost nothing.
 PING_INTERVAL_SECONDS = 15.0
+
+# Host grace is 5s. The library's close handshake defaults to 10s, so
+# one peer that never acks used to be killed with the port file still
+# on disk. One second fits two clients inside that grace.
+_SHUTDOWN_CLOSE_SECONDS = 1.0
 
 
 def generate_token() -> str:
@@ -64,55 +69,15 @@ def generate_token() -> str:
     return secrets.token_hex(_TOKEN_BYTES)
 
 
-def write_port_file(data_dir: Path, port: int, token: str, pid: int | None = None) -> Path:
-    """Write the port, token, and PID to the port file with restricted permissions.
-
-    If the file already exists, it is treated as stale (left by a previous
-    daemon instance) and replaced — a dead daemon's port file must never
-    block startup.
-
-    The write is atomic (temp file + rename) so a supervising host polling
-    the file never sees a partial read. The PID lets the host distinguish a
-    live daemon's file from a stale one left by a prior, dead instance.
-
-    Args:
-        data_dir: The daemon's user data directory.
-        port: The port the WebSocket server is listening on.
-        token: The auth token clients must present.
-        pid: The daemon's process ID. Defaults to the current process.
-
-    Returns:
-        The path to the written port file.
-    """
-    port_file = data_dir / _PORT_FILE
-    if port_file.exists():
-        log.warning(
-            "stale port file detected, replacing",
-            extra={"extra_fields": {"path": str(port_file)}},
-        )
-    content = json.dumps(
-        {"port": port, "token": token, "pid": pid if pid is not None else os.getpid()},
-        indent=2,
-    )
-    tmp_file = data_dir / (f".{_PORT_FILE}.{os.getpid()}.tmp")
-    tmp_file.write_text(content)
-    # Set mode 0o600 (owner read/write only) before it is renamed into place.
-    # POSIX mode bits only: on Windows os.chmod can merely toggle the
-    # read-only flag, so this is a silent no-op there — ACL-based
-    # restriction is a separate hardening story (TD-1406).
-    tmp_file.chmod(0o600)
-    os.replace(tmp_file, port_file)
-    log.info(
-        "port file written",
-        extra={"extra_fields": {"path": str(port_file), "port": port}},
-    )
-    return port_file
-
-
-def remove_port_file(data_dir: Path) -> None:
-    """Delete the port file, if present. Used on clean shutdown."""
-    port_file = data_dir / _PORT_FILE
-    port_file.unlink(missing_ok=True)
+async def _close_client(conn: ServerConnection) -> None:
+    """Close one client without waiting out a peer that never acks."""
+    conn.close_timeout = _SHUTDOWN_CLOSE_SECONDS
+    with contextlib.suppress(
+        websockets.exceptions.ConnectionClosed,
+        websockets.exceptions.ConcurrencyError,
+        OSError,
+    ):
+        await conn.close(1001, "Server shutting down")
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -360,8 +325,33 @@ class WebSocketServer:
         return sent
 
     async def stop(self) -> None:
-        """Stop the WebSocket server and close all connections."""
+        """Stop the WebSocket server and close all connections.
+
+        The port file is released before any await. It used to be
+        unlinked only after every client finished its close handshake,
+        and a peer that never acked outlived the host's kill grace.
+        Releasing again at the end would delete a successor's file.
+        The remote token goes with the extra listener.
+        """
         log.info("ws server stopping")
+        release_port_file(self.data_dir)
+        # Same turn as server.close(), before any await: the library's
+        # close task reads this when it runs, and the default is 10s.
+        # ``connections`` covers a socket that finished the HTTP upgrade
+        # but has not reached ``_on_connect`` yet.
+        armed = set(self._connections)
+        for server in (self._server, self._extra_server):
+            # Test doubles stand in for the listener and have no client set.
+            if isinstance(server, Server):
+                armed.update(server.connections)
+        for conn in armed:
+            conn.close_timeout = _SHUTDOWN_CLOSE_SECONDS
+        # Stop accepting before the close wait so a new handshake cannot
+        # attach and hold ``wait_closed`` at the library's 10s default.
+        if self._server is not None:
+            self._server.close()
+        if self._extra_server is not None:
+            self._extra_server.close()
 
         if self._ping_task is not None:
             self._ping_task.cancel()
@@ -369,25 +359,16 @@ class WebSocketServer:
                 await self._ping_task
             self._ping_task = None
 
-        # Close all client connections (iterate over a copy to avoid
-        # concurrent modification from disconnect callbacks)
         connections = list(self._connections)
-        for conn in connections:
-            with contextlib.suppress(websockets.exceptions.ConnectionClosed):
-                await conn.close(1001, "Server shutting down")
+        if connections:
+            await asyncio.gather(*(_close_client(conn) for conn in connections))
         self._connections.clear()
         self._handshaken.clear()
 
         await self._stop_extra()
         if self._server is not None:
-            self._server.close()
             await self._server.wait_closed()
         self._server = None
-
-        # Clean shutdown removes the port file so the host can tell a live
-        # daemon from a defunct one. The remote token is already gone with
-        # the extra listener; a new file is minted on the next remote-bind.
-        remove_port_file(self.data_dir)
 
         log.info("ws server stopped")
 

@@ -545,6 +545,39 @@ difference between $2.80/M and $0.30/M on the brain tier.
 
 ---
 
+### TD-4839 — Fit in-flight tool results to the tier window
+**Size:** 5 · **Depends on:** TD-405
+
+A fixed 50,000-character tool cap, plus compaction that only cuts at user
+boundaries, let one turn of parallel reads exceed a 32,768-token tier. The
+provider's raw context error was shown as assistant prose.
+
+**Acceptance criteria:**
+- [x] Per-result cap is the smaller of 50,000 characters and a quarter of
+      the tier's remaining window (`context_window` − `max_output_tokens` −
+      current prompt tokens, at 4 characters per token), and never below
+      4,000. A 128k or 1M tier stays at 50,000
+- [x] Before each model call, in-flight tool results are elided (head, tail,
+      and a re-read note) until the prompt fits the compaction budget.
+      `tool_calls` stay paired with their results. The user message stays.
+      The activity timeline gets `ContextCompacted`
+- [x] HTTP 400 context-window refusals are `context_overflow`, distinct from
+      HTTP 413 `context_length_exceeded`. The loop retries once at half the
+      budget, then fails the turn with `error_code="context_overflow"` and a
+      short message naming the configured model and window. The raw provider
+      text is logged, not shown
+- [x] Other provider errors do not put raw upstream JSON in assistant text
+
+Done (2026-09-29): the cap scales with the tier, in-flight tool results are
+elided before each provider call, and a context-window HTTP 400 is retried
+once then failed with a short message from config. Class B entry in
+DECISIONS.md.
+
+Suite: 3518 passed / 8 skipped, ruff + `mypy --strict` clean over 156
+files, vitest 1403, svelte-check 706 files 0 errors 0 warnings.
+
+---
+
 ## Epic E5 — Context assembler (steering)
 
 **Goal:** correct, inspectable, affordable instruction loading. Spec §4. **Highest test
@@ -576,7 +609,9 @@ coverage requirement in the project alongside E7.**
 - [x] Test: a workspace containing only `CLAUDE.md` files loads with full fidelity
 
 **Notes:** This is an adoption feature. Existing repos configured for other tools must work on
-day one with nothing to port. Do not treat it as an edge case.
+day one with nothing to port. Do not treat it as an edge case. TD-4845 makes the user-global
+`~/.claude/CLAUDE.md` fallback opt-in (`steering.claude_global_fallback`, default false).
+Workspace and nested `CLAUDE.md` fallback is unchanged.
 
 ---
 
@@ -737,6 +772,31 @@ splitting personal steering across files more friction than it looks. And
 `ui/src/lib/components/StackPanel.svelte:41` hardcodes `warning.includes('exceeds 200 lines')`
 to choose its badge text, so changing `LINE_LIMIT` silently drops the short badge back to the
 full warning string.
+
+---
+
+### TD-4845 — TST Desk's global instructions do not borrow Claude Code's by default
+**Size:** 2 · **Depends on:** TD-502
+
+**Acceptance criteria:**
+- [x] With `steering.claude_global_fallback` false (the default), discovery does not read
+      `~/.claude/CLAUDE.md` or anything it imports
+- [x] With the key true, `~/.claude/CLAUDE.md` is the user-global fallback when
+      `~/.tstdesk/AGENTS.md` is absent, and an import outside the workspace still requires
+      approval
+- [x] `~/.tstdesk/AGENTS.md` wins when it is present. With the key false the Claude file is
+      not recorded as shadowed
+- [x] Workspace and nested `CLAUDE.md` fallback is unchanged
+- [x] When the key is false, `~/.claude/CLAUDE.md` exists, and `~/.tstdesk/AGENTS.md` does not,
+      Doctor's steering row says `not loaded — enable steering.claude_global_fallback to use it`.
+      The note is absent when that file is loaded, absent, or outranked by `~/.tstdesk/AGENTS.md`
+
+Done (2026-09-29): the user-global Claude Code file is opt-in. The shipped default leaves it
+unread, and Doctor names it once in that case. Workspace `CLAUDE.md` fallback is unchanged.
+Settings has no steering section, so the key is config-only. Class B entry in DECISIONS.md.
+
+Suite: 3679 passed / 8 skipped, ruff + `mypy --strict` clean over 160
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
 
 ---
 
@@ -1123,41 +1183,69 @@ what makes aggressive Class A behavior safe.
 
 ### TD-708 — Judgment seam for the decision classifier (provider-neutral)
 **Size:** 5 · **Depends on:** TD-703, TD-302, TD-706
-**Status:** Dev build shipped on main 2026-09-17 (30fec39, 1af204f). Open for hardening:
-per-judgment audit-trail records (payload, answer, confidence, latency, cost in the SQLite
-audit log — today it is structured logs + `ToolResult.verification`). The TypeSafe
-connector exists (`autonomy/typesafe.py`, opt-in via `judgments.backend`) with real
-confidence; a recorded-fixture accuracy eval against it remains open.
 
 **Acceptance criteria:**
-- [ ] A `JudgmentBackend` protocol (question + bounded state → typed answer + confidence)
+- [x] A `JudgmentBackend` protocol (question + bounded state → typed answer + confidence)
       becomes the single seam behind TD-703's `call_worker`; the existing worker-tier
       chat completion is formalized as the default connector and behavior is unchanged
       without explicit opt-in
-- [ ] The product runs flawlessly with only the default connector — no external
+- [x] The product runs flawlessly with only the default connector — no external
       judgments API configured, present, or required
-- [ ] Additional connectors (a typed-judgment API such as TypeSafe/Jev is the evaluated
+- [x] Additional connectors (a typed-judgment API such as TypeSafe/Jev is the evaluated
       example) live in their own modules behind configuration; core modules carry no
       vendor-specific names, imports, or URLs (prime §2.7)
-- [ ] A connector credential lives in the OS keychain via `keychain.py` — never in
+- [x] A connector credential lives in the OS keychain via `keychain.py` — never in
       config, logs, or the audit database (prime §2.2)
-- [ ] The static rule table (TD-701) always runs first; only unclassified requests reach
+- [x] The static rule table (TD-701) always runs first; only unclassified requests reach
       the judgment seam — asserted by a test that no rule-matched request ever hits it
-- [ ] The judgment request carries classifier signals only (tool name, workspace-relative
+- [x] The judgment request carries classifier signals only (tool name, workspace-relative
       paths, hosts, mutation intent, `side_effect_class`, provenance) — never absolute
       paths, file contents, or conversation text; asserted by test
-- [ ] Every connector fails toward B: unknown labels, timeouts, errors, low confidence,
+- [x] Every connector fails toward B: unknown labels, timeouts, errors, low confidence,
       and (on chat connectors) unparseable replies classify as **B** — the TD-703
       fail-toward-asking invariant holds per connector
-- [ ] A charter/boundary with `network: "deny"`, or a connector host missing from
+- [x] A charter/boundary with `network: "deny"`, or a connector host missing from
       `allowed_hosts`, disables a remote connector for that run; ambiguous cases classify
       as B with no network call attempted
-- [ ] Judgment cost is recorded via `CostTracker.record_classifier()` per connector and
+- [x] Judgment cost is recorded via `CostTracker.record_classifier()` per connector and
       stays visible separately in the cost breakdown
-- [ ] The session cache on (tool, canonical arguments) applies unchanged across
+- [x] The session cache on (tool, canonical arguments) applies unchanged across
       connectors
-- [ ] All connector tests run against mocks; no live network in tests
-- [ ] `docs/configuration.md` documents every new key
+- [x] All connector tests run against mocks; no live network in tests
+- [x] `docs/configuration.md` documents every new key
+
+Done (2026-09-29): the classifier's only fallback is `JudgmentBackend`. The worker
+chat connector stays the default (`test_worker_is_the_default`,
+`test_default_connector_prompt_is_legacy_bytes`,
+`test_classifier_connector_keeps_the_legacy_prompt`); a hosted connector is a
+separate module (`test_typesafe_with_a_stored_key_selects_the_connector`,
+`test_core_modules_do_not_name_a_vendor`) and its key stays in the keychain
+(`test_connector_credential_stays_out_of_config_logs_and_audit`). The static
+table runs first and writes no audit row
+(`test_static_short_circuit_never_calls_backend`,
+`test_static_short_circuit_writes_no_audit_row`). The request is signals only
+(`test_judgment_request_is_classifier_signals_only`). Unknown labels, timeouts,
+errors, low confidence, and unparseable replies classify as B
+(`test_worker_timeout_classifies_as_b`, `test_typesafe_classifier_fails_toward_b`,
+`test_low_confidence_defaults_to_b`, `test_error_fails_closed_without_raising`,
+`test_unparseable_fails_closed`). A remote host outside `allowed_hosts` is B
+with no call (`test_unlisted_remote_host_classifies_b_without_a_call`,
+`test_worker_connector_still_runs_when_network_is_denied`). Cost stays on the
+classifier line (`test_hosted_judgment_cost_stays_on_the_classifier_line`,
+`test_classifier_cost_is_separate_from_main_cost`). The cache key is still
+(tool, canonical arguments) (`test_cache_key_is_tool_and_canonical_arguments`,
+`test_cache_avoids_repeat_judgment`). Connector tests use mocks
+(`test_eval_runner_imports_no_network_client`). Every judgments key is in
+`docs/configuration.md` (`test_every_config_key_is_documented`). Each judgment
+is an append-only `judgments` row
+(`test_append_judgment_stores_digest_label_and_final_class`,
+`test_writer_persists_a_judgment_row`,
+`test_v2_database_gains_the_judgments_table`). Recorded-fixture accuracy is
+`core/scripts/eval_judgment_accuracy.py` (`test_recorded_fixture_reports_accuracy`:
+worker 5/7, B-rate 4/7; typed 6/7, B-rate 3/7).
+
+Suite: 3786 passed / 8 skipped, ruff + `mypy --strict` clean over 166
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
 
 **Notes:** Spec §12.2 designed this seam: "a cheap classifier call on the worker tier …
 plus a static rule table." TD-703's `AmbiguousClassifier(static, call_worker)` is the
@@ -5956,6 +6044,285 @@ clippy `-D warnings` clean, 47 Rust tests.
 
 ---
 
+### TD-3808 — A job the pane refused in plain English
+**Size:** 3 · **Depends on:** TD-3805, TD-3807
+
+**Acceptance criteria:**
+- [x] A cadence typed the way people say it ("7:45 on weekdays", "daily
+      at 9", "mon, wed and fri at 5pm", `@daily`) saves, stored as cron
+- [x] A cron cadence fires at the user's wall-clock time, not UTC; jobs
+      saved before this keep their UTC meaning
+- [x] A rejected save reads as one line per field, never a pydantic dump
+- [x] The workspace is picked from known folders or the native dialog; a
+      bare folder name resolves only when exactly one known workspace
+      has it, and a missing folder is refused on create
+- [x] Impossible cron fields are refused at save, not in the runner
+
+Done (2026-09-29): reported from the pane as a raw two-error pydantic
+dump for Workspace `Client Reports` and Cadence `7:45 on weekdays`.
+`scheduler/phrases.py` turns phrases into cron at the edge; `Job` gains
+an IANA `timezone` (on `SaveJob` / `JobEntry` too) that `_next_cron`
+matches against on the wall clock; `describe_validation_error` renders
+`Workspace: …; Cadence: …`. The pane sends the viewer's zone, suggests
+pinned and recent folders with a Browse… button, shows the cadence in
+words on each row, and puts errors beside Create. `tzdata` is a
+Windows-only dependency so the zone check works there. Class B entry in
+DECISIONS.md.
+
+Suite: 3440 passed / 8 skipped, ruff + `mypy --strict` clean over 153
+files, vitest 1371, svelte-check 703 files 0 errors 0 warnings.
+
+---
+
+### TD-3809 — Run now
+**Size:** 2 · **Depends on:** TD-3808
+
+**Acceptance criteria:**
+- [x] `run_job { job_id }` replies at once with `job_list` and finishes
+      the turn in the background; a second `job_list` is pushed when it
+      lands
+- [x] The receipt matches a scheduled run, and `next_run` / `paused`
+      are left alone, including a paused job and a one-shot's slot
+- [x] A job already in flight is `job_running`; the tick skips it and
+      leaves it due for the next tick
+- [x] An unknown id is `job_not_found`
+- [x] Each row has Run now; while `running` the row says "Running…" and
+      the button is disabled
+
+Done (2026-09-29): the pane could not fire a job, so trying an
+instruction meant waiting for the next slot. `run_job` claims the id
+in `InFlight` (shared with the tick), replies with `job_list`
+(`JobEntry.running`), and runs the turn on its own task. `record_run`
+stamps the receipt and delivers to the job's channel without
+`advance_job`. Errors use the existing `scheduled.error` path. Class B
+entry in DECISIONS.md.
+
+Suite: 3454 passed / 8 skipped, ruff + `mypy --strict` clean over 153
+files, vitest 1374, svelte-check 703 files 0 errors 0 warnings.
+
+---
+
+### TD-3810 — Edit a job in place
+**Size:** 2 · **Depends on:** TD-3809
+
+**Acceptance criteria:**
+- [x] A row's Edit loads that job into the form — id, workspace,
+      instruction, cadence or next run, deliver to. The heading is
+      "Edit job", the primary button is "Save", and Cancel restores the
+      empty new-job draft. Create is unchanged
+- [x] A cadence job shows its cadence and a blank next run. Save sends
+      `next_run` only for a one-shot
+- [x] On edit, an omitted cadence or next run keeps the stored value and
+      an empty string clears it, so a job can switch between recurring
+      and one-shot. Clearing the last of the two is
+      `Cadence or next run is required`, except when the edit did not
+      change them: a spent one-shot's Resume still saves
+- [x] A changed workspace is resolved and must exist, the same check as
+      create. An unchanged workspace stays editable, pausable and
+      deletable when the folder has moved
+- [x] An edit keeps the job's time zone. A legacy job with no zone
+      adopts the viewer's zone only when the cadence text changes. A
+      cadence or zone change still clears a stale next run so the runner
+      re-arms
+- [x] Run now, Pause and Delete keep working while a row is being
+      edited. Deleting the row being edited resets the form
+
+Done (2026-09-29): the form could only create, so fixing an instruction
+meant delete and re-add, which threw away the run receipt. `save_job`
+already updated an existing id. The pane now loads that id. An edit is a
+patch: omitted cadence and next run keep what is stored, and `""` clears
+the field. The armed slot of a cadence job is not put back in the form.
+A workspace is checked only when its text changes. The pane sends the
+viewer's zone only for a legacy job whose cadence text changed. Class B
+entry in DECISIONS.md.
+
+Suite: 3460 passed / 8 skipped, ruff + `mypy --strict` clean over 154
+files, vitest 1391, svelte-check 704 files 0 errors 0 warnings.
+
+---
+
+### TD-3811 — Run history, and open the session
+**Size:** 3 · **Depends on:** TD-3810
+
+**Acceptance criteria:**
+- [x] Each scheduled fire and each Run now appends one record to
+      `{data_dir}/scheduler/history/<job_id>.jsonl`: `started_at`,
+      `scheduled_for` (the slot that fired, or null for Run now),
+      `trigger`, `status`, a redacted and capped `summary`, and
+      `session_id`. The log keeps 50 records, oldest dropped. A corrupt
+      line is skipped and is never fatal. The file stays in the user
+      data dir
+- [x] `delete_job` removes that job's history file
+- [x] `list_job_runs { job_id }` replies with `job_runs`, newest first.
+      An unknown id is `job_not_found`
+- [x] Each card has a History disclosure. Opening it lists the runs in
+      local time: Ran or Failed, "manual" only for Run now, and the
+      clamped summary. Open session uses the rail's existing attach. A
+      session that is no longer listed says so. An open disclosure
+      refreshes when that job's `last_run` changes
+- [x] `last_*` stays the row receipt
+
+Done (2026-09-29): the row kept one receipt, so an earlier run and the
+session it happened in were gone. Each fire now appends a line under
+the user data dir. The pane asks for that log when History is opened,
+and again when the row's `last_run` moves. Open session is `selectRow`
+plus the return to chat a project recent already uses. Class B entry
+in DECISIONS.md.
+
+Suite: 3483 passed / 8 skipped, ruff + `mypy --strict` clean over 155
+files, vitest 1402, svelte-check 706 files 0 errors 0 warnings.
+
+---
+
+### TD-3812 — Pin the preset and the engine on a scheduled job
+**Size:** 5 · **Depends on:** TD-3808, TD-3809, TD-3810, TD-3811
+
+**Acceptance criteria:**
+- [x] `Job`, `JobDraft`, `SaveJob`, and `JobEntry` carry optional `preset`
+      (a catalog name) and `engine` (`native` or `grok`). Omitted means
+      the run uses the window's current preset and engine. The job stores
+      only the name and the kind
+- [x] Save validates the preset name against the config catalog. A name
+      that is not in the catalog is `job_invalid` and nothing is written
+- [x] A scheduled run, from the tick and from Run now, starts its session
+      on the job's preset and engine. It does not change the window's
+      active preset or engine, and it does not call `save_active_preset`
+      or `save_engine_kind`
+- [x] A preset that no longer exists, or a pinned Grok engine that is
+      unavailable, records a failed receipt and a history line
+      (`preset 'x' no longer exists`, `grok engine is unavailable`) and
+      delivers that summary like any other failure
+- [x] On edit, an omitted preset or engine keeps the stored value and an
+      empty string clears it back to use current. Pause omits both, so a
+      job whose preset has left the catalog can still be paused
+- [x] The job form has Model preset (Use current, plus the catalog names)
+      and Engine (Use current, Native, Grok). The row meta shows a pinned
+      preset and engine
+
+Done (2026-09-29): a scheduled run copied the window's preset and engine,
+so a 7:45 job followed whatever the window last selected. The job now
+stores a catalog name and an engine kind. The tick and Run now open the
+session on that pair and do not write Settings. A name that has left the
+catalog, or a pinned Grok engine that will not start, is a failed receipt
+and is delivered like any other failure. Edit keeps an omitted pin and
+clears a blank one. Class B entry in DECISIONS.md.
+
+Suite: 3609 passed / 8 skipped, ruff + `mypy --strict` clean over 158
+files, vitest 1411, svelte-check 709 files 0 errors 0 warnings.
+
+---
+
+### TD-3813 — Skip a scheduled slot that is already hours late
+**Size:** 3 · **Depends on:** TD-3807, TD-3811
+
+**Acceptance criteria:**
+- [x] A job may set `grace` as a plain-English duration ("2 hours",
+      "30 minutes"). It is stored as seconds. Omitted means a late slot
+      still runs once
+- [x] A due slot older than now minus grace does not start a session.
+      The job advances as a run would, and a one-shot is spent. The
+      receipt and the history line are `missed` with trigger `schedule`,
+      and the channel gets one skip line
+- [x] A slot inside the grace, a slot with no grace, and Run now all
+      run. A slot that is late by exactly the grace still runs
+- [x] The job form has If late (Always run / 30 min / 1 h / 2 h / 6 h).
+      Edit keeps an omitted grace and clears `""`. The row and the
+      history say Missed, distinct from Failed
+
+Done (2026-09-29): a laptop that slept through 7:45 still fired the
+morning digest when it opened at 18:00. A job can now name how late is
+still that slot. Past that, the tick spends the slot, records `missed`,
+and sends one line ("Skipped the 7:45 AM run — 10 h late") instead of
+starting a session. Run now still fires. The form's If late select is
+Always run unless the user picks a window. The row, the history, and
+the window notification say Missed, not Failed. Class B entry in
+DECISIONS.md.
+
+Suite: 3779 passed / 8 skipped, ruff + `mypy --strict` clean over 165
+files, vitest 1420, svelte-check 711 files 0 errors 0 warnings.
+
+---
+
+### TD-3814 — Retry a scheduled run that failed for a transient reason
+**Size:** 3 · **Depends on:** TD-3813
+
+**Acceptance criteria:**
+- [x] A job may set `retries` from 0 to 3 (default 0) and `retry_delay`
+      as a plain-English duration. The delay is stored as seconds. When
+      retries is at least 1 and the delay is omitted, it is 10 minutes.
+      retries 0 stores no delay
+- [x] After a failed scheduled run, when the failure is transient and
+      attempts remain, the next attempt is now plus `retry_delay` and
+      the regular slot is remembered. The attempt count is persisted
+      and resets after success or when that regular slot resumes. Run
+      now does not retry and does not move the schedule
+- [x] Transient is a provider connection error, a timeout, HTTP 5xx,
+      or HTTP 429. `context_overflow`, `auth_failed`,
+      `api_key_rejected`, and a missing workspace or preset are not.
+      One table classifies them. Anything it does not name is not
+      transient
+- [x] Each attempt appends a history line naming attempt n of m. The
+      receipt shows the latest attempt. Delivery happens once per slot,
+      after success or the last failure, not after an intermediate try
+- [x] Grace applies to a regular slot only. A retry attempt is not
+      skipped for being late
+- [x] The job form has Retries (None / 1 / 2 / 3), and a count means a
+      10-minute delay. History shows the attempt numbers
+
+Done (2026-09-29): a provider that was down at the slot failed the run
+and waited until the next regular time. A job can now ask for up to
+three extra tries. A connection error, a timeout, HTTP 5xx, or a 429
+arms the next try and remembers the regular slot, including an hourly
+interval that would otherwise drift. A rejected key, a full context,
+and a missing workspace or preset fail once. Run now does not retry.
+Grace still skips only a late regular slot. The channel hears the slot
+once, when it succeeds or the tries run out. The receipt and the
+history name the attempt. Class B entry in DECISIONS.md.
+
+Suite: 3856 passed / 8 skipped, ruff + `mypy --strict` clean over 166
+files, vitest 1428, svelte-check 713 files 0 errors 0 warnings.
+
+---
+
+### TD-3815 — Park a scheduled run that is waiting for your approval
+**Size:** 5 · **Depends on:** TD-3809, TD-3811, TD-3814
+
+**Acceptance criteria:**
+- [x] When a scheduled or Run now session enters `awaiting_approval`,
+      the runner stops at once and records `waiting` with the session
+      id and the pending tool summary. It delivers one line (`7:45 AM
+      job is waiting for your approval: …`, or `This job is waiting…`
+      for Run now) and does not retry. A scheduled fire advances the
+      regular cadence. Run now does not move the schedule
+- [x] The job keeps the link to that parked session. When the session
+      reaches `turn_complete`, the same history line and the receipt
+      become ok or failed with the final summary, and that outcome is
+      delivered once. A denial is failed. Cancel, or a daemon restart,
+      resolves the park as failed `approval never answered`. Nothing
+      parked remains
+- [x] While a previous run is still parked, the next slot does not
+      start a session. It is `missed` with `previous run still waiting
+      for approval`, and the cadence still advances. Grace does not
+      also skip that slot
+- [x] The row and the history show "Waiting for approval" with an
+      Open session action. A window notice fires for the park and
+      again when it settles, even though `last_run` does not move
+
+Done (2026-09-29): a scheduled turn that hit an approval card used to
+sit until the 120s turn timeout, then record a timeout. That string is
+transient, so the next try opened another session onto the same card.
+The runner now parks as soon as the session is waiting, advances the
+slot, and delivers one line. The same history row becomes ok or failed
+when the user answers, or `approval never answered` if the session is
+cancelled or the daemon starts again. The next slot while that park is
+open is missed, not a second session. The pane says "Waiting for
+approval" and can open the session. Class B entry in DECISIONS.md.
+
+Suite: 3957 passed / 8 skipped, ruff + `mypy --strict` clean over 172
+files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
@@ -6804,6 +7171,385 @@ Integration test runs the probe against a headless daemon on CI hosts; full
 
 ---
 
+### TD-4840 — A fixed or rotated API key is picked up without a restart
+**Size:** 2 · **Depends on:** TD-4838, TD-4839
+
+`Daemon._clients` kept the API key read when the client was built, and
+dropped that client only when a key changed inside the app. A key fixed
+in the keychain from outside, or rotated by the server, was sent on
+every later turn until restart. An empty stored value went out as
+`Authorization: Bearer `.
+
+**Acceptance criteria:**
+- [x] HTTP 401 and 403 (`auth_failed`, `forbidden`) close that tier's
+      cached HTTP client, rebuild it from the keychain, and retry the
+      call once, only when a digest of the key changed. The key and the
+      digest are not logged
+- [x] An unchanged key fails the turn with `api_key_rejected` and a
+      message naming the credential and host, for example
+      "EZER (192.0.2.49:4000) rejected the API key (401) — check it in
+      Settings → API keys". `error-copy.ts` maps the code. The
+      conversation is preserved
+- [x] A missing or empty key (`KeychainError`) is not cached, so the
+      next turn reads the keychain again
+- [x] Changing or deleting a key in the app still drops the cache, and
+      that drop does not close a client a live session is holding
+- [x] A stale key is retried once with the new key and the turn
+      succeeds. An unchanged key is not retried. Evicted clients are
+      closed. Logs and the turn text do not contain the key
+
+Done (2026-09-29): a cached provider handle closes its HTTP client after
+a rejected key and rebuilds from the keychain. The call is retried once
+when the key's digest changed. An unchanged key fails the turn with
+`api_key_rejected`, naming the credential and host. A missing or empty
+key is not cached. In-app key changes still clear the cache without
+closing live clients. Class B entry in DECISIONS.md.
+
+Suite: 3612 passed / 8 skipped, ruff + `mypy --strict` clean over 157
+files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
+### TD-4841 — Reviving a session must not fail its audit write
+**Size:** 2 · **Depends on:** TD-902
+
+`AuditWriter.attach_session` inserted a `sessions` row on every attach,
+including revive, with `started_at` set to the current clock. The id was
+already stored, so each daemon start logged `audit write failed`
+(`UNIQUE constraint failed: sessions.session_id`) once per revived
+session.
+
+**Acceptance criteria:**
+- [x] Opening a session, then reviving it, then reviving it again leaves
+      exactly one `sessions` row and does not log `audit write failed`
+- [x] `append_session` with the same id, workspace, and start time does
+      not write again and does not error
+- [x] The same id with a different workspace or start time raises
+      `IntegrityError`, the writer reports it, and the stored row is
+      unchanged
+- [x] A failed write does not drop later queued audit entries
+- [x] No UPDATE or DELETE of audit rows
+
+Done (2026-09-29): attaching a session inserts its audit row once. Revive
+attaches again and leaves that row, including the original start time,
+and does not log `audit write failed`. An identical `append_session`
+is a no-op. The same id with a different workspace or start time still
+raises, the writer reports it, and the stored row is unchanged. A failed
+insert rolls back the transaction it opened so a later queued audit
+write still lands. Class B entry in DECISIONS.md.
+
+Suite: 3619 passed / 8 skipped, ruff + `mypy --strict` clean over 157
+files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
+### TD-4842 — The daemon honours --data-dir for logs and stops on SIGTERM
+**Size:** 2 · **Depends on:** TD-1002
+
+`tstd --data-dir <scratch>` wrote `tstd.log` into the real user data
+directory, so a test turn polluted the user's log. SIGTERM left that
+daemon running (state SN) until SIGKILL.
+
+**Acceptance criteria:**
+- [x] Log files are `<data-dir>/logs/tstd.log`. With no `--data-dir`,
+      that directory is the platform user data directory, the same
+      place as before
+- [x] `tst` spawns `tstd` with that `--data-dir`, so a CLI-started
+      daemon logs in the same tree
+- [x] On macOS and Linux, SIGTERM and SIGINT request the existing
+      graceful shutdown through the event loop. The process exits
+      within 5 seconds and the port file is gone. If cleanup does not
+      finish, the process exits non-zero and the port file is still
+      removed
+- [x] Windows does not install a signal handler. Shutdown there stays
+      the websocket message, the parent watchdog, or the console event
+
+Done (2026-09-29): the daemon resolves its data directory once and
+writes `logs/tstd.log` there. `tst` already passes `--data-dir`, so
+its daemon logs in that tree. `config.yaml` stays in the user data
+directory. On macOS and Linux the event loop handles SIGTERM and
+SIGINT by setting `_shutdown_event`, the same path as the shutdown
+message, and a 5 second timer exits non-zero and removes the port
+file if cleanup does not return. Windows is unchanged. Class B entry
+in DECISIONS.md.
+
+Suite: 3627 passed / 8 skipped, ruff + `mypy --strict` clean over 158
+files, vitest 1406, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
+### TD-4843 — Everything the daemon reads and writes follows --data-dir
+**Size:** 2 · **Depends on:** TD-4842
+
+`tstd --data-dir <scratch>` still loaded and wrote the real user
+`config.yaml`. A test or a second daemon used that user's presets,
+credentials, and settings, and a Settings write landed in the real
+file. TD-4842 fixed the same class of bug for logs only.
+
+**Acceptance criteria:**
+- [x] The daemon loads, reloads, and writes `<data-dir>/config.yaml`.
+      With no `--data-dir`, that file is the platform user data
+      directory, the same place as before
+- [x] A Settings write from a daemon with its own data dir lands in
+      that file. The library default is untouched
+- [x] `cached_config()` with no path still reads the library default
+      for callers that have no daemon
+- [x] The other daemon and `tst` files follow that data dir. The OS
+      keychain, the cu-mcp policy, the Grok home, the workspace
+      charter, and the library `open_default` path stay where they are
+- [x] `tst` reads `<data-dir>/config.yaml` for the turn timeout
+
+Done (2026-09-29): a daemon's config file is `<data-dir>/config.yaml`
+for load, reload, and every Settings write. No flag still uses the
+platform directory. `cached_config()` with no path is unchanged.
+Voice, approvals, stars, pins, memory, scheduler, port file, sessions,
+audit, logs, and the rest of the daemon tree already took a data
+directory; the ones that did not now do, except the keychain, the
+shared cu-mcp policy, the Grok home, and the workspace charter.
+`tst` turn timeout reads the same file. Class B entry in DECISIONS.md.
+
+Suite: 3696 passed / 8 skipped, ruff + `mypy --strict` clean over 162
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
+
+---
+
+### TD-4844 — Shutdown after a finished session completes inside the budget
+**Size:** 2 · **Depends on:** TD-4842
+
+A daemon that had served one completed turn (`open_workspace`,
+`attach`, `user_message`, `turn_complete`, client then disconnected)
+took 5.1s to exit on SIGTERM. The shutdown budget fired and the
+process exited non-zero. With no completed session it exited in 0.1s.
+
+**Acceptance criteria:**
+- [x] A spawned daemon that completes one mock-provider turn, drops
+      the client, and receives SIGTERM exits 0 well inside the 5s
+      budget, and the port file is removed
+- [x] The same holds when quit-distill's provider call does not
+      return. Shutdown does not wait out that read
+- [x] When a shutdown phase exceeds 1s, an INFO log names the longest
+      phase
+- [x] TD-4842's budget path still exits non-zero and removes the port
+      file when cleanup does not return
+
+Done (2026-09-29): quit distill still runs, beside the rest of the
+close. A provider that has already answered keeps its proposal. A
+provider call still in flight when the sockets, sessions, and audit
+writer are done is cancelled and logged, and the process exits 0. The
+read that blocked was distill's non-streaming completion, whose
+timeout is longer than the shutdown budget. A phase still running
+after one second is named in the log. End session still waits on the
+provider. Class B entry in DECISIONS.md.
+
+Suite: 3706 passed / 8 skipped, ruff + `mypy --strict` clean over 163
+files, vitest 1412, svelte-check 709 files 0 errors 0 warnings.
+
+---
+
+### TD-4846 — Keep the strict warning gate green and on by default; one code for a rejected key
+**Size:** 1 · **Depends on:** TD-4835, TD-4840, TD-4844
+
+Three review findings from integrating TD-4835 through TD-4845. The
+stuck-provider shutdown test left its listening socket, and the
+connection it accepts and never answers, for the garbage collector.
+`ResourceWarning` failed that test once those warnings were errors.
+A key that changed and was rejected on the one retry logged the host
+sentence, but the event the window received was still `auth_failed`,
+so the banner was the generic "Authentication failed…" copy.
+
+**Acceptance criteria:**
+- [x] `test_stuck_provider_read_does_not_burn_the_shutdown_budget`
+      closes every socket it opens. The hung handler waits on an event
+      the test sets during teardown, then `server_close()` runs. No
+      sleep and no warning filter. Production shutdown is unchanged
+- [x] `error::ResourceWarning` and
+      `error::pytest.PytestUnraisableExceptionWarning` are the default
+      pytest filters, beside the filters that were already there. The
+      full suite passes twice under them
+- [x] When a changed key is retried once and rejected again, the turn
+      the window receives is `api_key_rejected` with the same host
+      sentence as an unchanged key. Both paths assert that code and
+      that message
+
+Done (2026-09-29): the shutdown test wakes its hung handler and closes
+the server, including the listening socket. Those two warnings are
+errors in `core/pyproject.toml`. A second rejection after a rotated
+key is `api_key_rejected` with the credential and host sentence, on
+both the completion and the stream, so the window does not show the
+generic 401 banner. Class B entry in DECISIONS.md.
+
+Suite: 3724 passed / 8 skipped, twice, with `ResourceWarning` and
+`PytestUnraisableExceptionWarning` as errors. ruff + `mypy --strict`
+clean over 163 files, vitest 1412, svelte-check 709 files 0 errors
+0 warnings.
+
+---
+
+### TD-4848 — The port file is removed on every clean shutdown path
+**Size:** 1 · **Depends on:** TD-4842, TD-4844
+
+Quitting the app left `port.json` behind, so the next start logged
+`WARNING tstd.ws stale port file detected, replacing`. SIGTERM and
+SIGINT already removed the file. The host's shutdown message, the
+parent-death watchdog, and Windows console close did not.
+
+**Acceptance criteria:**
+- [x] Clean shutdown via the websocket `shutdown` message removes
+      `port.json` when it names this process, and leaves a file whose
+      pid is not this process
+- [x] The parent-death watchdog does the same
+- [x] On Windows, console close, logoff, and shutdown run that
+      finalizer and request the same shutdown. Ctrl+C and Ctrl+Break
+      stay on the signal path. On macOS and Linux, SIGTERM and SIGINT
+      still remove the file. The budget still exits non-zero and
+      removes the file only when it names this process
+- [x] A stale `port.json` at start is replaced and logged at INFO
+      with the dead pid, not WARNING
+- [x] Host quit still sends the shutdown message, drops its socket,
+      and keeps the bounded SIGKILL fallback
+
+Done (2026-09-29): one pid-checked finalizer runs at the start of
+shutdown, at the start of websocket stop, on budget expiry, and on
+the Windows console-close thread. A file that names another process
+stays. A crash leftover is still replaced, and the log is INFO with
+the dead pid. The host flushes `shutdown` and drops its socket
+instead of holding it through the grace; client close handshakes
+during stop are bounded to one second. The websocket message still
+does not arm the budget. Class B entry in DECISIONS.md.
+
+Suite: 3938 passed / 8 skipped, ruff + `mypy --strict` clean over 171
+files, vitest 1428, svelte-check 713 files 0 errors 0 warnings.
+`cargo test` 64 passed, `cargo clippy -D warnings` clean.
+
+---
+
+### TD-4849 — Quitting the app lets the daemon finish its graceful shutdown
+**Size:** 2 · **Depends on:** TD-4848, TD-4844, TD-4842
+
+AppleScript quit reached `RunEvent::Exit` and SIGKILLed the daemon
+within about a second. `port.json` stayed, and the daemon log had
+nothing between the last handshake and the next start. `wait_for_done`
+resolved when the supervisor socket ended, so the Exit backstop killed
+the process group before the daemon read `{"type":"shutdown"}`. Every
+quit skipped the audit drain, session persistence, and the port-file
+release.
+
+**Acceptance criteria:**
+- [x] Quit waits until the process-group leader has been reaped, inside
+      the existing 5s grace and the 10s quit timeout. SIGKILL happens
+      only when that bound expires
+- [x] `RunEvent::Exit`'s best-effort kill is a no-op when the leader
+      has already exited, and on a normal quit it does not kill before
+      the grace
+- [x] The host keeps the shutdown socket open until the daemon closes
+      it or the grace expires. The daemon logs
+      `shutdown requested via websocket` at INFO and runs its normal
+      shutdown, including the port-file release, before that close
+- [x] A fake sidecar that sleeps, then removes a marker, on the
+      shutdown frame exits 0 with the marker gone and is not SIGKILLed
+      inside the grace. A fake that ignores the frame is SIGKILLed when
+      the bound expires, and the marker stays
+
+Done (2026-09-29): the host flushes `shutdown` and reads until the
+daemon closes the socket or the grace ends. It does not call
+`close().await` and does not add a protocol ack. `wait_for_done`
+resolves when the leader is reaped. SIGKILL is only the grace
+fallback, including from `RunEvent::Exit`, which waits out a quit
+already in progress. A clean leader exit does not group-kill. The
+shutdown-requested log was already there; the clean-shutdown test
+now asserts it. Class B entry in DECISIONS.md revises the TD-4848
+drop-immediately decision.
+
+Suite: 3957 passed / 8 skipped, ruff + `mypy --strict` clean over 172
+files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
+`cargo test` 69 passed, `cargo clippy --all-targets -- -D warnings` clean.
+
+---
+
+### TD-4850 — A system quit also shuts the daemon down gracefully
+**Size:** 2 · **Depends on:** TD-4849
+
+A Dock, AppleScript, logout, restart, or shutdown quit is
+`RunEvent::Exit` with no `ExitRequested`. tao 0.35 on macOS implements
+`applicationWillTerminate` only, so `request_quit` never ran and Exit
+SIGKILLed the sidecar. A live `osascript` quit of the TD-4849 build
+(2026-09-29 21:05) left `port.json` and wrote no
+`shutdown requested via websocket`. TD-4849 fixed the in-app quit path.
+
+**Acceptance criteria:**
+- [x] `RunEvent::Exit` with no graceful quit already in progress sends
+      `{"type":"shutdown"}` on the existing connection, or SIGTERM to the
+      process-group leader when that socket is unavailable, then waits
+      for the leader to be reaped. SIGKILL happens only when the bound
+      expires. The wait is synchronous on the caller. The daemon and the
+      embeddings sidecar share one bound of at most 3 seconds
+- [x] When a graceful quit has already reaped the leader, `RunEvent::Exit`
+      does not signal it again
+- [x] An embeddings sidecar that is already gone does not add to the
+      bound. One that is still running is signalled inside that same bound
+- [x] A slow cooperative fake sidecar is not SIGKILLed, and its marker
+      is removed. An unresponsive fake is SIGKILLed when the bound
+      expires. The wait for both children stays inside one bound
+
+Done (2026-09-29): system quit writes the shutdown frame on a duplicated
+fd of the live connection, from the main thread, with `thread::sleep`
+rather than the tokio runtime. SIGTERM is the fallback when that fd is
+missing or the write fails. SIGKILL is only the 3 second fallback. The
+embeddings sidecar shares that deadline and is skipped when it is
+already gone. An in-app quit still waits out the 5 second grace, and a
+leader that has already been reaped is left alone. Class B entry in
+DECISIONS.md.
+
+Suite: 3957 passed / 8 skipped, ruff + `mypy --strict` clean over 172
+files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
+`cargo test` 77 passed, `cargo clippy --all-targets -- -D warnings` clean.
+
+---
+
+### TD-4851 — Two tests that fail only on Linux CI
+**Size:** 1 · **Depends on:** TD-4844, TD-4846, TD-4835
+
+GitHub Actions on ubuntu-latest (Python 3.11) reported `2 failed,
+3950 passed` on a pull request whose tests passed on macOS.
+`test_shutdown_distills_a_ready_provider` found no `MemoryProposal`:
+quit-distill was cancelled while the ready mock was still in the
+local memory read. `test_kill_refusal_on_task_cancel_logged` raised
+`ResourceWarning: unclosed transport` for a subprocess whose
+returncode was -9. Both are now deterministic. A slow or stuck
+provider read is still cancelled.
+
+**Acceptance criteria:**
+- [x] A provider that can answer without I/O still gets its quit
+      proposal when the rest of shutdown finishes first
+- [x] A provider call that is still pending after one loop turn is
+      cancelled, the skip line is logged, and shutdown does not wait
+      it out
+- [x] A killed subprocess transport is closed on every shell exit,
+      including a refused group kill and a returncode of -9, with no
+      ResourceWarning
+- [x] A refused group kill does not SIGKILL the leader while that
+      leader is observed alive
+
+Done (2026-09-30): quit-distill publishes its provider future and the
+reap waits through local prep and one loop turn. An in-process mock
+finishes in that turn. A call still pending is cancelled, and the
+nested task is cancelled on its own because Python 3.11 does not
+cancel it with the parent. Every shell exit closes a dead transport,
+including one whose loop was already cleared. A live refused leader
+is left running and closed by a retained watcher once it exits,
+including when loop shutdown cancels that watcher. Linux `waitid`
+with `WNOWAIT` sees an unreaped exit without taking it from
+`ThreadedChildWatcher`. `ChildProcessError` means the pid is not our
+child, or it was already reaped, so that case uses the transport
+returncode and `Popen.poll`, the same path as a build with no
+`os.waitid`. Tests inject both shapes and do not ask the kernel
+about a pid. Class B entry in DECISIONS.md.
+
+Suite: 3974 passed / 8 skipped, ruff + `mypy --strict` clean over 172
+files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -6826,21 +7572,21 @@ Integration test runs the probe against a headless daemon on CI hosts; full
 | Milestone | Epics | Stories | Points |
 |---|---|---|---|
 | M0 Foundation | E1 | 7 | 15 |
-| M1 Headless core | E2–E9 | 55 | 162 |
-| M1.5 Local models | E18 | 15 | 36 |
+| M1 Headless core | E2–E9 | 63 | 191 |
+| M1.5 Local models | E18 | 12 | 30 |
 | M2 The window | E10–E12 | 24 | 68 |
-| M3 Shippable | E13–E17, E19 | 47 | 136 |
-| **Total v0.1** | **19** | **148** | **417** |
+| M3 Shippable | E13–E17, E19 | 65 | 179 |
+| **Total v0.1** | **19** | **171** | **483** |
 | M4 Memory (v0.2) | E21–E28 | 32 | 90 |
-| **Total v0.1 + v0.2** | **27** | **180** | **507** |
-| M5 Cowork (v0.3) | E29–E32, E48 | 31 | 84 |
-| M6 Computer use (v0.4) | E20, E33–E34 | 12 | 63 |
-| M7 Remote (v0.5) | E36–E38 | 11 | 43 |
+| **Total v0.1 + v0.2** | **27** | **203** | **573** |
+| M5 Cowork (v0.3) | E29–E32, E48 | 50 | 130 |
+| M6 Computer use (v0.4) | E20, E33–E34 | 13 | 68 |
+| M7 Remote (v0.5) | E36–E38 | 20 | 72 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 13 | 66 |
-| **Total planned** | **48** | **274** | **893** |
+| Later | E47, E49 | 23 | 83 |
+| **Total planned** | **48** | **336** | **1056** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -7768,10 +8514,9 @@ DECISIONS.md.
 
 **Not closed here.** The session's other findings are separate work: 99% of its
 wall clock was time-to-first-token (mean 41s), so the unit to optimize is
-round-trips — `settle_ms` on actions, `after_ms` on screenshot, the foreground
-window returned with every action result, and a `launch_app` tool so opening an
-app is one call instead of a Spotlight pantomime. Not filed; not in this
-milestone.
+round-trips — `settle_ms` on actions, `after_ms` on screenshot, and the
+foreground window returned with every action result. `launch_app` landed in
+TD-4829. The waits are TD-4847. There is still no drag tool.
 
 ---
 
@@ -7792,6 +8537,47 @@ engine; TD-4830 is the Settings page.
 
 **Completed (2026-09-09):** `tst-cu-mcp` background tools plus host `cu_ax`.
 Windows/Linux list apps best-effort; AX snapshot/action is macOS-only.
+
+---
+
+### TD-4847 — Computer use in fewer round-trips
+**Size:** 3 · **Depends on:** TD-4828, TD-4829
+
+A live computer-use session spent 99% of its wall clock on model
+time-to-first-token (mean 41s). The unit to optimize is round-trips.
+
+**Acceptance criteria:**
+- [x] `click`, `type_text`, `press_keys`, `scroll`, `launch_app`, and
+      `ui_action`, and the daemon tools `desktop_click`, `desktop_type`,
+      and `desktop_scroll`, take optional `settle_ms`, an integer from 0
+      to 5000 inclusive. After the action and that wait, the same result
+      includes `foreground_window` with `app` (process name) and `title`
+- [x] `screenshot` and `desktop_screenshot` take optional `after_ms` in
+      the same range, and the wait happens before the capture
+- [x] Omitting the parameter, or passing 0, does not sleep. An action
+      result still includes the foreground window. A screenshot's
+      payload is unchanged
+- [x] A value outside that range, or a non-integer (including `true`),
+      is refused before the action or the capture
+- [x] Tool descriptions tell the model it can batch the wait
+- [x] Tests cover schema bounds, settle-then-foreground, and `after_ms`
+      delaying capture, all through an injected clock. No-desktop runs
+      stay green
+
+Done (2026-09-29): The wait sits in the tool layer. Daemon handlers
+wait in-process and then read the driver; they do not forward
+`settle_ms` or `after_ms` to the sidecar. `launch_app` was already an
+MCP tool (TD-4829) and now takes `settle_ms`; it was not added again.
+There is still no drag tool, so drag has no parameter. `move` and
+hide/unhide are unchanged. No protocol change and no new config key.
+Class B in DECISIONS.md.
+
+Suite: core 3757 passed / 8 skipped; ruff clean; `mypy --strict` clean
+over 164 files; ui vitest 1412; svelte-check 709 files, 0 errors,
+0 warnings. tst-cu-mcp: 567 passed / 35 skipped, plus 3 failures that
+already exist because `DarwinBackend.hit_test` is nested inside
+`_mark_prompted` (unchanged here). ruff and mypy are clean on the
+files this story touched.
 
 ---
 
@@ -7921,7 +8707,7 @@ check had no signal to give.
 
 ### TD-4835 — Deterministic resource lifecycle cleanup
 **Size:** 2 · **Depends on:** TD-4833
-**Status:** Approved 2026-09-17
+**Status:** Complete 2026-09-29
 
 **Why:** The TD-4833 investigation reproduced two distinct resource defects. Neither
 may be closed by suppressing warnings or adding sleeps.
@@ -7936,22 +8722,92 @@ may be closed by suppressing warnings or adding sleeps.
    source is unconfirmed; the reported test is not necessarily the origin.
 
 **Acceptance criteria:**
-- [ ] `ensure_user_config` context-manages both streams; closure holds on copy success
+- [x] `ensure_user_config` context-manages both streams; closure holds on copy success
       and on an I/O failure mid-copy; an existing user config is still preserved.
-- [ ] Subprocess-owning components close deterministically on cancellation and
+- [x] Subprocess-owning components close deterministically on cancellation and
       shutdown: no transport is finalized after loop close. Candidates named by the
       investigation (checkpoint `_git` on cancellation, `run_shell`'s cancelled
       spawn branch, `AcpClient.close` task awaiting) must each be inspected; a
       component is only changed where a defect is identified, and the fix targets
       the established source.
-- [ ] Regression tests fail before the fix and pass after, using deterministic
+- [x] Regression tests fail before the fix and pass after, using deterministic
       hooks — no sleeps, no warning-filter suppression, no best-effort teardown.
-- [ ] The full core suite passes with `pytest.PytestUnraisableExceptionWarning`
+- [x] The full core suite passes with `pytest.PytestUnraisableExceptionWarning`
       and `ResourceWarning` escalated to errors, and stays green on a repeat run
       (the original warning is intermittent).
-- [ ] `DECISIONS.md` records any structural choice (e.g. a shared async-subprocess
+- [x] `DECISIONS.md` records any structural choice (e.g. a shared async-subprocess
       helper) with rationale; fixes stay within TD-4833's residual-warning scope.
-- [ ] Ruff lint/format and strict mypy remain clean.
+- [x] Ruff lint/format and strict mypy remain clean.
 
 **Non-goals:** Frontend bundle optimization and live/soak testing are separate,
 unapproved follow-ups (see `reports/td-4833/warning-investigation.md`).
+
+Done (2026-09-29): `ensure_user_config` closes both streams on success and on a
+failed copy, and still leaves an existing user config untouched. Cancelled
+`communicate()` calls (checkpoint, charter, revert, supervisor, memory commit,
+sandbox, keychain) and the shell's task-cancel path kill and `wait` on the
+caller's task before the loop can close. A refused group kill does not SIGKILL
+only the leader. `AcpClient.close` awaits the reader it used to abandon.
+The escalated suite also closed the harness temp dir, the debug log handler
+the websockets cap test dropped, and the rebinding test's listening socket.
+MCP and desktop stdio `aclose` were left as they were. Class B entry in
+DECISIONS.md.
+
+Suite: 3593 passed / 8 skipped, twice, with `ResourceWarning` and
+`PytestUnraisableExceptionWarning` as errors. ruff + `mypy --strict` clean
+over 157 files, vitest 1405, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
+### TD-4838 — macOS keychain items are readable by the security CLI
+**Size:** 3 · **Depends on:** TD-4813, TD-4835
+
+**Acceptance criteria:**
+- [x] A macOS write spawns argv exactly `security -i` and sends one
+      `add-generic-password -U -a … -s … -l … -w <secret>` line on stdin.
+      Spaces, both quotes, backslashes, `$`, and backticks round-trip.
+      A character outside printable ASCII (0x20–0x7E), a newline, or a
+      NUL is refused, and the error does not contain the value.
+      A failed sub-command is an error even when `security -i` exits 0.
+      A hung CLI is still a locked keychain (TD-1105)
+- [x] Before that add, `SecItemDelete` with the authentication UI forced
+      off runs, then the CLI delete. A missing item is not an error.
+      Re-saving replaces a TD-4813 item with one `/usr/bin/security` can
+      read. `-U` is not what repairs the ACL
+- [x] Reads stay on `security find-generic-password -w`. If that fails
+      and the item exists, `SecItemCopyMatching` runs with
+      `kSecReturnData` and `kSecUseAuthenticationUIFail`. If that also
+      fails, the error says to re-save the key in Settings → API keys
+      and contains no secret. An empty or whitespace-only secret is the
+      same not-found family ("the stored API key for '<name>' is empty
+      — re-save it in Settings → API keys") and is never returned.
+      A real lock stays a locked-keychain error.
+      Not-found does not fall back
+- [x] Presence (`api_key_is_stored`, setup state, the TD-4835 cache) is
+      `find-generic-password` without `-w` and does not call
+      `get_api_key`. The pane shows the key as stored and enables Test
+      when the item exists. Cache invalidation on key mutations is
+      unchanged
+- [x] Settings → API keys placeholders say "Paste API key". A failed
+      Test shows the daemon's reason
+- [x] Linux and Windows backends are unchanged. Tests fake subprocess
+      and ctypes and do not touch the host keychain
+
+Done (2026-09-29): TD-4813 wrote the item from inside `tstd`, so the ACL
+trusted only that binary. This app is ad-hoc signed, and reads still go
+through `/usr/bin/security`, which was denied. The presence probe was a
+full secret read, so Settings said "No key stored" for a key that was
+saved. The write is now `security -i` with the add command on stdin, so
+the trusted application is `/usr/bin/security` and the secret stays off
+argv. A re-save deletes the old item in-process, then via the CLI, then
+adds it again. If the CLI read fails for an item that exists, this
+binary tries `SecItemCopyMatching` with the UI forced off; otherwise
+the user is told to re-save. `security -w` prints any byte outside
+printable ASCII as hex, and a real key can be all hex, so save refuses
+those characters instead of decoding on read. An empty or
+whitespace-only secret is refused at save and, if already stored, is a
+not-found error rather than `Authorization: Bearer `. Class B entry in
+DECISIONS.md.
+
+Suite: 3539 passed / 8 skipped, ruff + `mypy --strict` clean over 155
+files, vitest 1404, svelte-check 707 files 0 errors 0 warnings.

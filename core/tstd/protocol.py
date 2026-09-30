@@ -1011,28 +1011,59 @@ class ListJobs(ClientMessage):
 
 
 class SaveJob(ClientMessage):
-    """Create or replace a scheduled job (TD-3805).
+    """Create or replace a scheduled job (TD-3805, TD-3810).
 
-    Draft fields, not a natural-language parse. Pause is this verb with
-    ``paused`` set. The runner (TD-3804) is the only code that fires
-    jobs. Acked with ``job_list``.
+    Draft fields, not a natural-language parse. An existing ``id`` updates
+    that job and keeps its run receipt. On that update, an omitted cadence
+    or next run keeps the stored value, and an empty string clears it so
+    the job can switch between recurring and one-shot. Pause is this verb
+    with ``paused`` set. Firing a job is ``run_job`` or the scheduler tick,
+    never this verb. Acked with ``job_list``.
     """
 
     type: Literal["save_job"] = "save_job"
     id: str | None = None
     workspace: str | None = None
     instruction: str | None = None
+    # On an update, None keeps the stored value and "" clears it (TD-3810).
     cadence: str | None = None
     next_run: str | None = None
     deliver_to: Literal["window", "slack", "ntfy"] | None = None
     paused: bool = False
+    # IANA name ("America/Chicago") a cron cadence is read in. Omitted on an
+    # edit keeps the job's current zone; None on create means UTC. The pane
+    # sends one on edit only for a legacy job whose cadence text changed.
+    timezone: str | None = None
+    # Catalog preset name and engine kind (TD-3812). None on create uses
+    # whatever the window is using. On an edit, None keeps the stored pin
+    # and "" clears it back to that. The name only — never a slug, URL, or
+    # key. ``engine`` is ``native`` or ``grok``; "" clears and is not a kind,
+    # so the field stays a string until the job normalizes it.
+    preset: str | None = None
+    engine: str | None = None
+    # How late a slot may be and still run (TD-3813). A phrase the
+    # scheduler already understands ("2 hours", "30 minutes", "every 2
+    # hours") or a positive number of seconds. The job stores seconds.
+    # On an edit, None keeps the stored grace and "" clears it back to
+    # always running a late slot once. Omitted on create means that too.
+    grace: str | int | None = None
+    # Extra tries after a transient scheduled failure (TD-3814). 0-3.
+    # On an edit, None keeps the stored count. Omitted on create means
+    # never retry. Run now ignores this. 0 clears a count the way ""
+    # clears grace.
+    retries: int | None = None
+    # Gap between those tries. A phrase ("10 minutes") or seconds. On an
+    # edit, None keeps the stored delay and "" means the 10-minute default
+    # when retries is at least 1. Omitted on create with retries set is
+    # that default. Ignored when retries is 0.
+    retry_delay: str | int | None = None
 
 
 class DeleteJob(ClientMessage):
     """Remove a scheduled job by id (TD-3805).
 
-    Acked with ``job_list``. Unknown id is a typed error. Does not run
-    anything.
+    Also removes that job's run history (TD-3811). Acked with ``job_list``.
+    Unknown id is a typed error. Does not run anything.
     """
 
     type: Literal["delete_job"] = "delete_job"
@@ -1049,6 +1080,34 @@ class ParseJob(ClientMessage):
 
     type: Literal["parse_job"] = "parse_job"
     text: str = ""
+
+
+class RunJob(ClientMessage):
+    """Fire one scheduled job now (TD-3809).
+
+    Connection-scoped. The daemon starts the turn as its own task and
+    answers at once with ``job_list`` (``running`` set on that row). A
+    second ``job_list`` is pushed when the turn finishes. Does not move
+    ``next_run`` and does not change ``paused``, including on a job that
+    is already paused. Unknown id is ``job_not_found``; a job already in
+    flight is ``job_running``.
+    """
+
+    type: Literal["run_job"] = "run_job"
+    job_id: str = Field(min_length=1)
+
+
+class ListJobRuns(ClientMessage):
+    """List one job's run history (TD-3811).
+
+    Connection-scoped. The daemon answers with ``job_runs``, newest first.
+    Unknown id is ``job_not_found``. Does not run the job. History is not
+    part of ``job_list``: that push already happens on every fire, and a
+    capped log does not belong on every pause.
+    """
+
+    type: Literal["list_job_runs"] = "list_job_runs"
+    job_id: str = Field(min_length=1)
 
 
 class Transcribe(ClientMessage):
@@ -2255,14 +2314,34 @@ class JobEntry(BaseModel):
     next_run: str | None = None
     deliver_to: Literal["window", "slack", "ntfy"]
     paused: bool = False
+    timezone: str | None = None
+    # None means the run uses the window's current preset and engine.
+    preset: str | None = None
+    engine: Literal["native", "grok"] | None = None
+    # Seconds a slot may be late and still run. None fires a missed slot
+    # once, however old it is (TD-3813). The phrase is not on this event.
+    grace: int | None = None
+    # Extra tries after the first scheduled fire, and the gap in seconds
+    # (TD-3814). ``retry_delay`` is null when retries is 0. ``attempt`` is
+    # how many tries this slot has already used. Above 0 the row is waiting
+    # on a retry, and a window notification waits for the slot to finish.
+    retries: int = 0
+    retry_delay: int | None = None
+    attempt: int = 0
     last_run: str | None = None
-    last_status: Literal["ok", "failed"] | None = None
+    # ``waiting`` is a run parked on an approval card (TD-3815). It is
+    # not a failure and it is not retried. The same receipt becomes
+    # ``ok`` or ``failed`` when that session finishes.
+    last_status: Literal["ok", "failed", "missed", "waiting"] | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
+    # Not persisted. It mirrors the daemon's in-flight set, so a restart
+    # cannot show a turn that is no longer happening (TD-3809).
+    running: bool = False
 
 
 class JobList(DaemonEvent):
-    """Response to ``list_jobs`` / ``save_job`` / ``delete_job`` (TD-3805).
+    """Response to ``list_jobs`` / ``save_job`` / ``delete_job`` / ``run_job`` (TD-3805).
 
     Connection-scoped. Seq is fixed at 1 so it cannot rewind attach.
     """
@@ -2270,6 +2349,42 @@ class JobList(DaemonEvent):
     type: Literal["job_list"] = "job_list"
     seq: int = 1
     jobs: list[JobEntry] = Field(default_factory=list)
+
+
+class JobRunEntry(BaseModel):
+    """One fire on ``job_runs`` (TD-3811).
+
+    ``scheduled_for`` is the slot that fired, or null for Run now.
+    ``summary`` is already redacted and capped the same way as
+    ``JobEntry.last_summary``. ``missed`` is a slot skipped for lateness,
+    not a turn that failed (TD-3813). ``waiting`` is a run parked on an
+    approval card; the same line is updated when that turn finishes
+    (TD-3815).
+    """
+
+    started_at: str
+    scheduled_for: str | None = None
+    trigger: Literal["schedule", "manual"]
+    status: Literal["ok", "failed", "missed", "waiting"]
+    summary: str | None = None
+    session_id: str | None = None
+    # 1-based try and the budget (retries + 1) when the job retries
+    # (TD-3814). Null on a job that does not retry, and on Run now.
+    attempt: int | None = None
+    attempts: int | None = None
+
+
+class JobRuns(DaemonEvent):
+    """Response to ``list_job_runs`` (TD-3811).
+
+    Connection-scoped. Seq is fixed at 1 so it cannot rewind attach.
+    ``runs`` is newest first.
+    """
+
+    type: Literal["job_runs"] = "job_runs"
+    seq: int = 1
+    job_id: str
+    runs: list[JobRunEntry] = Field(default_factory=list)
 
 
 class JobDraftReply(DaemonEvent):
@@ -2388,6 +2503,8 @@ ClientMessageT = Annotated[
     | SaveJob
     | DeleteJob
     | ParseJob
+    | RunJob
+    | ListJobRuns
     | Transcribe,
     Field(discriminator="type"),
 ]
@@ -2443,6 +2560,7 @@ DaemonEventT = Annotated[
     | DesignHit
     | CuPermissions
     | JobList
+    | JobRuns
     | JobDraftReply
     | GrokCommands
     | GrokPlan
@@ -2543,6 +2661,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "save_job",
         "delete_job",
         "parse_job",
+        "run_job",
+        "list_job_runs",
         "transcribe",
     }
 )
@@ -2598,6 +2718,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "design_hit",
         "cu_permissions",
         "job_list",
+        "job_runs",
         "job_draft",
         "grok_commands",
         "grok_plan",

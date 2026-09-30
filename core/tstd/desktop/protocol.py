@@ -114,6 +114,13 @@ class DesktopDriver(Protocol):
     async def check_permissions(self) -> dict[str, Any]:
         """Probe capture/input status. Must not prompt or hang."""
 
+    async def foreground_window(self) -> dict[str, Any]:
+        """App and title of the window in front. Read-only.
+
+        ``app`` is the process name. Action tools read this after
+        ``settle_ms`` so the model does not need a second call (TD-4847).
+        """
+
     async def hit_test(self, x: float, y: float) -> dict[str, Any]:
         """Observe the AX / UIA / AT-SPI node at a frame pixel. Never actuates.
 

@@ -127,9 +127,10 @@ async def mock_plan(workspace: Path) -> HarnessPlan:
 
     Frozen behaviour — the live leg (TD-1803) was added alongside it, never
     on top of it.  Async only because the model tag may have to be read from
-    the endpoint before the scripts can be keyed on it (TD-1805): resolving
-    here is the call the daemon is about to make anyway, on the same shared
-    config object, so the pass pays one round-trip rather than two.  No
+    the endpoint before the scripts can be keyed on it (TD-1805).  This
+    resolves the library config the caller installed.  The daemon resolves
+    ``<data-dir>/config.yaml`` on its own (TD-4843), so a pass that is not
+    on the shipped preset copies that file into the data dir first.  No
     model call is made here and the provider is still the offline mock.
     """
     config = cached_config()
@@ -308,25 +309,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.live_endpoint is None and args.live_model is not None:
         parser.error("--live-model has no effect without --live-endpoint")
 
-    scratch = tempfile.TemporaryDirectory(prefix="tstd-e2e-")
-    root = Path(scratch.name)
-    workspace = args.workspace or root / "workspace"
-    data_dir = args.data_dir or root / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
+    # Cleanup has to be explicit. Leaving the directory to ``__del__`` warns
+    # once ResourceWarning is an error, and the early live-endpoint return
+    # used to skip it entirely (TD-4835).
+    with tempfile.TemporaryDirectory(prefix="tstd-e2e-") as scratch_name:
+        root = Path(scratch_name)
+        workspace = args.workspace or root / "workspace"
+        data_dir = args.data_dir or root / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.live_endpoint is not None:
-        return _run_live(workspace, data_dir, args.live_endpoint, args.live_model)
+        if args.live_endpoint is not None:
+            return _run_live(workspace, data_dir, args.live_endpoint, args.live_model)
 
-    try:
-        result = asyncio.run(run(workspace, data_dir))
-    except ModelDiscoveryError as e:
-        # The active preset leaves its model tag to the endpoint and the
-        # endpoint cannot supply one.  That is a fact about the machine, not
-        # a failed check — the same "not run" the live leg reports (2).
-        print(f"SKIP  harness not run: {e}")
-        return 2
-    print(result.report())
-    return 0 if result.ok else 1
+        try:
+            result = asyncio.run(run(workspace, data_dir))
+        except ModelDiscoveryError as e:
+            # The active preset leaves its model tag to the endpoint and the
+            # endpoint cannot supply one.  That is a fact about the machine, not
+            # a failed check — the same "not run" the live leg reports (2).
+            print(f"SKIP  harness not run: {e}")
+            return 2
+        print(result.report())
+        return 0 if result.ok else 1
 
 
 if __name__ == "__main__":

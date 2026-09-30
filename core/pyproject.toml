@@ -9,6 +9,8 @@ dependencies = [
     "jsonschema>=4.26.0",
     "pydantic>=2",
     "pyyaml>=6.0",
+    # zoneinfo has no tz database on Windows; job time zones need one (TD-3808).
+    "tzdata>=2024.1; sys_platform == 'win32'",
     "websockets>=17.0.1",
 ]
 
@@ -76,3 +78,11 @@ asyncio_mode = "auto"
 # ordinary suite stays offline; opt in with `uv run pytest -m live`.
 addopts = ["-m", "not live"]
 markers = ["live: needs a reachable local OpenAI-compatible model endpoint"]
+# Leaked sockets and exceptions raised from ``__del__`` fail the run.
+# TD-4835 showed the suite can stay clean under these. TD-4846 makes
+# that the default so a later change cannot drop the gate by forgetting
+# the command-line flags.
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]

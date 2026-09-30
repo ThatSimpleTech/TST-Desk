@@ -124,7 +124,10 @@ import type {
   SaveJob,
   DeleteJob,
   ParseJob,
+  RunJob,
+  ListJobRuns,
   JobList,
+  JobRuns,
   JobDraftReply,
   Transcribe,
   Transcript,
@@ -971,6 +974,8 @@ describe("All fixtures have required shape", () => {
       "set_remote_attach",
       "list_jobs", "save_job", "delete_job",
       "parse_job",
+      "run_job",
+      "list_job_runs",
       "transcribe",
     ];
     for (const key of clientTypes) {
@@ -996,6 +1001,7 @@ describe("All fixtures have required shape", () => {
       "design_hit",
       "cu_permissions",
       "job_list",
+      "job_runs",
       "job_draft",
       "grok_commands",
       "grok_plan",
@@ -1316,6 +1322,11 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isString(save.workspace)).toBe(true);
     expect(isString(save.instruction)).toBe(true);
     expect(save.deliver_to).toBe("window");
+    expect(save.preset).toBe("vllm");
+    expect(save.engine).toBe("native");
+    expect(save.grace).toBe("2 hours");
+    expect(save.retries).toBe(2);
+    expect(save.retry_delay).toBe("10 minutes");
     const del = fixtures.delete_job as DeleteJob;
     expect(del.type).toBe("delete_job");
     expect(isString(del.job_id)).toBe(true);
@@ -1323,7 +1334,44 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(jobs.type).toBe("job_list");
     expect(isNumber(jobs.seq)).toBe(true);
     expect(isString(jobs.jobs[0]?.id)).toBe(true);
+    expect(jobs.jobs[0]?.running).toBe(false);
+    expect(jobs.jobs[0]?.preset).toBe("vllm");
+    expect(jobs.jobs[0]?.engine).toBe("native");
+    expect(jobs.jobs[0]?.grace).toBe(7200);
+    expect(jobs.jobs[0]?.retries).toBe(2);
+    expect(jobs.jobs[0]?.retry_delay).toBe(600);
+    expect(jobs.jobs[0]?.attempt).toBe(0);
     expect("session_id" in jobs).toBe(false);
+    const run = fixtures.run_job as RunJob;
+    expect(run.type).toBe("run_job");
+    expect(run.job_id).toBe("job-1");
+    expect("session_id" in run).toBe(false);
+  });
+
+  it("list_job_runs / job_runs (TD-3811)", () => {
+    const req = fixtures.list_job_runs as ListJobRuns;
+    expect(req.type).toBe("list_job_runs");
+    expect(req.job_id).toBe("job-1");
+    expect("session_id" in req).toBe(false);
+    const runs = fixtures.job_runs as JobRuns;
+    expect(runs.type).toBe("job_runs");
+    expect(isNumber(runs.seq)).toBe(true);
+    expect(runs.job_id).toBe("job-1");
+    expect(runs.runs[0]?.trigger).toBe("schedule");
+    expect(runs.runs[0]?.status).toBe("ok");
+    expect(runs.runs[0]?.session_id).toBe("sess-1");
+    expect(runs.runs[0]?.attempt).toBe(2);
+    expect(runs.runs[0]?.attempts).toBe(3);
+    expect(runs.runs[1]?.attempt ?? null).toBeNull();
+    expect(runs.runs[1]?.attempts ?? null).toBeNull();
+    expect(runs.runs[1]?.status).toBe("missed");
+    expect(runs.runs[1]?.trigger).toBe("schedule");
+    expect(runs.runs[1]?.summary).toBe("Skipped the 7:45 AM run — 10 h late");
+    expect(runs.runs[1]?.session_id ?? null).toBeNull();
+    expect(runs.runs[2]?.status).toBe("waiting");
+    expect(runs.runs[2]?.summary).toBe("Run `echo hi`");
+    expect(runs.runs[2]?.session_id).toBe("sess-park");
+    expect("session_id" in runs).toBe(false);
   });
 
   it("transcribe / transcript (TD-4701)", () => {

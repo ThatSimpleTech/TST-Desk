@@ -608,16 +608,43 @@ export interface ListJobs extends ClientMessage {
   type: "list_jobs";
 }
 
-/** Create or replace a scheduled job from draft fields (TD-3805). Pause is this verb. */
+/** Create or replace a scheduled job from draft fields (TD-3805, TD-3810).
+ *
+ *  An existing `id` updates that job and keeps its run receipt. On that
+ *  update, an omitted cadence or next run keeps the stored value, and `""`
+ *  clears it. Pause is this verb. */
 export interface SaveJob extends ClientMessage {
   type: "save_job";
   id?: string | null;
   workspace?: string | null;
   instruction?: string | null;
+  /** On an update, omitted keeps the stored value and `""` clears it. */
   cadence?: string | null;
+  /** On an update, omitted keeps the stored value and `""` clears it. */
   next_run?: string | null;
   deliver_to?: "window" | "slack" | "ntfy" | null;
   paused?: boolean;
+  /** IANA zone the cadence is evaluated in, e.g. `America/Chicago`.
+   *  Omitted on an edit keeps the job's zone. Absent or null on create is legacy UTC. */
+  timezone?: string | null;
+  /** Catalog preset name (TD-3812). On create, omitted uses the window's current
+   *  preset. On an edit, omitted keeps the stored pin and `""` clears it.
+   *  The name only — never a slug, URL, or key. */
+  preset?: string | null;
+  /** `native` or `grok`. Same omit / `""` rules as `preset`. `""` clears; it is not a kind. */
+  engine?: "" | "native" | "grok" | null;
+  /** How late a slot may be and still run (TD-3813). A phrase ("2 hours",
+   *  "30 minutes") or a number of seconds. On an edit, omitted keeps the
+   *  stored grace and `""` clears it. Omitted on create means always run. */
+  grace?: string | number | null;
+  /** Extra tries after a transient scheduled failure (TD-3814). 0–3.
+   *  On an edit, omitted keeps the stored count. Omitted on create means
+   *  never retry. `0` clears. Run now ignores this. */
+  retries?: number | null;
+  /** Gap between those tries. A phrase ("10 minutes") or seconds. On an
+   *  edit, omitted keeps the stored delay and `""` means the 10-minute
+   *  default when `retries` is at least 1. Ignored when retries is 0. */
+  retry_delay?: string | number | null;
 }
 
 /** Remove a scheduled job by id (TD-3805). */
@@ -630,6 +657,21 @@ export interface DeleteJob extends ClientMessage {
 export interface ParseJob extends ClientMessage {
   type: "parse_job";
   text: string;
+}
+
+/** Fire one scheduled job now (TD-3809). Connection-scoped.
+ *
+ *  Answered at once with `job_list` (`running` set); another `job_list` is
+ *  pushed when the turn finishes. Does not move `next_run` or `paused`. */
+export interface RunJob extends ClientMessage {
+  type: "run_job";
+  job_id: string;
+}
+
+/** List one job's run history (TD-3811). Connection-scoped. Newest first. */
+export interface ListJobRuns extends ClientMessage {
+  type: "list_job_runs";
+  job_id: string;
 }
 
 export type ClientMessageUnion =
@@ -717,6 +759,8 @@ export type ClientMessageUnion =
   | SaveJob
   | DeleteJob
   | ParseJob
+  | RunJob
+  | ListJobRuns
   | Transcribe;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
@@ -1448,17 +1492,59 @@ export interface JobEntry {
   next_run: string | null;
   deliver_to: "window" | "slack" | "ntfy";
   paused: boolean;
-  /** The last fire's receipt (TD-3807). Null until the job has run once. */
+  /** IANA zone the cadence is evaluated in. Absent or null is legacy UTC. */
+  timezone?: string | null;
+  /** Catalog preset name. Absent or null means use the window's current preset. */
+  preset?: string | null;
+  /** Engine kind. Absent or null means use the window's current engine. */
+  engine?: "native" | "grok" | null;
+  /** Seconds a slot may be late and still run. Absent or null means always run (TD-3813). */
+  grace?: number | null;
+  /** Extra tries after the first scheduled fire (TD-3814). Absent or 0 means never retry. */
+  retries?: number | null;
+  /** Seconds between those tries. Absent or null when retries is 0. */
+  retry_delay?: number | null;
+  /** Tries already used for the slot in progress. Above 0, a retry is waiting
+   *  and the window does not notify until the slot finishes. */
+  attempt?: number | null;
+  /** The last fire's receipt (TD-3807). Null until the job has run once.
+   *  `missed` is a slot skipped for lateness, not a failed turn (TD-3813).
+   *  `waiting` is a run parked on an approval card (TD-3815). */
   last_run: string | null;
-  last_status: "ok" | "failed" | null;
+  last_status: "ok" | "failed" | "missed" | "waiting" | null;
   last_summary: string | null;
   last_session_id: string | null;
+  /** True while a turn for this job is in flight (TD-3809). Not stored. */
+  running: boolean;
 }
 
-/** Response to list_jobs / save_job / delete_job (TD-3805). Connection-scoped. */
+/** Response to list_jobs / save_job / delete_job / run_job (TD-3805, TD-3809). Connection-scoped. */
 export interface JobList extends DaemonEvent {
   type: "job_list";
   jobs: JobEntry[];
+}
+
+/** One fire on job_runs (TD-3811). `scheduled_for` is null for Run now. */
+export interface JobRunEntry {
+  started_at: string;
+  scheduled_for: string | null;
+  trigger: "schedule" | "manual";
+  /** `missed` is a slot skipped for lateness (TD-3813).
+   *  `waiting` is a run parked on an approval card (TD-3815). */
+  status: "ok" | "failed" | "missed" | "waiting";
+  summary: string | null;
+  session_id: string | null;
+  /** 1-based try when the job retries (TD-3814). Null on Run now and when retries is 0. */
+  attempt?: number | null;
+  /** Budget for the slot, `retries + 1`. Null alongside `attempt`. */
+  attempts?: number | null;
+}
+
+/** Response to list_job_runs (TD-3811). Connection-scoped. Newest first. */
+export interface JobRuns extends DaemonEvent {
+  type: "job_runs";
+  job_id: string;
+  runs: JobRunEntry[];
 }
 
 export interface GrokCommand {
@@ -1597,6 +1683,7 @@ export type DaemonEventUnion =
   | DesignHit
   | CuPermissions
   | JobList
+  | JobRuns
   | JobDraftReply
   | GrokCommands
   | GrokPlan

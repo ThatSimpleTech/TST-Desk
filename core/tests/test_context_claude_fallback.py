@@ -60,8 +60,9 @@ def _build_workspace(
     return home, workspace
 
 
-def _make_resolver(home: Path) -> SteeringFileResolver:
-    return SteeringFileResolver(home_dir=home)
+def _make_resolver(home: Path, *, claude_global_fallback: bool = False) -> SteeringFileResolver:
+    """Build a resolver. Global Claude fallback is opt-in (TD-4845)."""
+    return SteeringFileResolver(home_dir=home, claude_global_fallback=claude_global_fallback)
 
 
 # ── Tests: fallback at each level ─────────────────────────────────────────
@@ -73,7 +74,7 @@ class TestFallbackAtEachLevel:
     def test_global_fallback_to_claude(self, tmp_path: Path) -> None:
         """~/.claude/CLAUDE.md is used when ~/.tstdesk/AGENTS.md is absent."""
         home, ws = _build_workspace(tmp_path, global_claude="global claude prefs")
-        sources = _make_resolver(home).resolve(ws)
+        sources = _make_resolver(home, claude_global_fallback=True).resolve(ws)
         global_sources = [s for s in sources if s.precedence == Precedence.USER_GLOBAL]
         assert len(global_sources) == 1
         assert global_sources[0].is_fallback is True
@@ -104,7 +105,7 @@ class TestFallbackAtEachLevel:
     def test_global_fallback_path_is_correct(self, tmp_path: Path) -> None:
         """Verify the global fallback path is ~/.claude/CLAUDE.md."""
         home, ws = _build_workspace(tmp_path, global_claude="prefs")
-        sources = _make_resolver(home).resolve(ws)
+        sources = _make_resolver(home, claude_global_fallback=True).resolve(ws)
         global_sources = [s for s in sources if s.precedence == Precedence.USER_GLOBAL]
         assert len(global_sources) == 1
         expected = home / ".claude" / "CLAUDE.md"
@@ -124,7 +125,7 @@ class TestShadowing:
             global_agents="global agents",
             global_claude="global claude",
         )
-        sources = _make_resolver(home).resolve(ws)
+        sources = _make_resolver(home, claude_global_fallback=True).resolve(ws)
         global_sources = [s for s in sources if s.precedence == Precedence.USER_GLOBAL]
         assert len(global_sources) == 1
         assert global_sources[0].path.name == "AGENTS.md"
@@ -183,7 +184,9 @@ class TestClaudeOnlyWorkspace:
             rules={"lint.md": "lint rules"},
             nested={"src": (None, "src claude")},
         )
-        sources = _make_resolver(home).resolve(ws)
+        # User-global Claude fallback is opt-in (TD-4845). This row pins
+        # the enabled path, which is what TD-502 specified.
+        sources = _make_resolver(home, claude_global_fallback=True).resolve(ws)
 
         # All four levels present
         assert len(sources) == 4
@@ -212,7 +215,7 @@ class TestClaudeOnlyWorkspace:
             global_claude="global: use tabs",
             root_claude="workspace: use spaces",
         )
-        sources = _make_resolver(home).resolve(ws)
+        sources = _make_resolver(home, claude_global_fallback=True).resolve(ws)
         assert len(sources) == 2
         # Last source (highest precedence) wins
         assert sources[-1].path.name == "CLAUDE.md"
@@ -252,7 +255,7 @@ class TestFallbackPrecedence:
     def test_global_claude_still_outranks_nothing(self, tmp_path: Path) -> None:
         """Global CLAUDE.md is still USER_GLOBAL precedence."""
         home, ws = _build_workspace(tmp_path, global_claude="global claude")
-        sources = _make_resolver(home).resolve(ws)
+        sources = _make_resolver(home, claude_global_fallback=True).resolve(ws)
         assert sources[0].precedence == Precedence.USER_GLOBAL
 
     def test_fallback_does_not_create_new_precedence_level(self, tmp_path: Path) -> None:

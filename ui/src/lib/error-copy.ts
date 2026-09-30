@@ -13,7 +13,9 @@
 //   - banner when the user must act before work continues (missing/invalid
 //     key, permission, cap hit, session failed)
 //   - toast when the failure is transient or the next action may succeed
-//     (rate limit, provider 5xx, context overflow — the loop compacts)
+//     (rate limit, provider 5xx). context_length_exceeded stays a toast:
+//     the next message compacts. context_overflow is a banner — the loop
+//     already retried once and this tier's window still does not fit.
 
 export type NoticeSeverity = "toast" | "banner";
 
@@ -78,6 +80,14 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		title: "API key rejected",
 		body: "The provider rejected the stored key (401). Re-enter a valid key: title-bar gear → Provider API key. Check the base_url in config.yaml matches the key's provider, and resend.",
 	},
+	// The daemon re-read the keychain and the key was unchanged (TD-4840).
+	// The chat message names the credential and host; this banner is the
+	// part that stays on screen until the user fixes the key.
+	api_key_rejected: {
+		severity: "banner",
+		title: "API key rejected",
+		body: "The provider rejected the stored API key. Check it in Settings → API keys, then resend. The conversation is preserved.",
+	},
 	// A banner, not a toast: the key is valid and the request well-formed, but
 	// nothing will succeed until the account is topped up, so this blocks work
 	// exactly the way a missing key does.
@@ -100,6 +110,14 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		severity: "toast",
 		title: "Context window exceeded",
 		body: "The request was too large. The next message compacts context and may succeed; otherwise switch to a larger-context model in config.yaml or start a fresh session.",
+	},
+	// The loop already retried once and elided. Another send on this tier
+	// hits the same window, so this blocks until the user changes tier or
+	// starts a fresh session.
+	context_overflow: {
+		severity: "banner",
+		title: "Context window exceeded",
+		body: "This turn does not fit the model's context window in config.yaml. Switch the tier to a larger-context model, or start a fresh session.",
 	},
 	server_error: { severity: "toast", title: "Provider error", body: "The provider returned an internal error (500). Resend in a moment." },
 	bad_gateway: { severity: "toast", title: "Provider unreachable", body: "Bad gateway from the provider (502). Resend in a moment." },

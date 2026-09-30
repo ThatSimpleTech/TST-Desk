@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gc
 import os
+import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -108,6 +111,45 @@ requires_posix_killpg = pytest.mark.skipif(
     sys.platform == "win32",
     reason="TD-1406: kill-refusal tests patch os.killpg; Windows uses taskkill",
 )
+
+
+def _leader_state(pid: int) -> str:
+    """Process state. ``Z`` is a zombie, which ``os.kill(pid, 0)`` still accepts."""
+    try:
+        out = subprocess.check_output(
+            ["ps", "-o", "state=", "-p", str(pid)],
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+    return out.strip()
+
+
+async def _join_transport_closers() -> None:
+    """Cancel the shell's exit-close watcher the way loop shutdown does.
+
+    Unraisable collection runs before the asyncio fixture tears the loop
+    down, so a transport still open here is the leak TD-4851 closes.
+    """
+    closers = [task for task in asyncio.all_tasks() if task.get_name() == "shell-transport-close"]
+    for task in closers:
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    gc.collect()
+
+
+def _stop_probe(tmp_path: Path) -> None:
+    """SIGKILL a probe group the refusal tests deliberately left alive."""
+    path = tmp_path / "pgid.txt"
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8").strip().split()
+    if not text:
+        return
+    with contextlib.suppress(ProcessLookupError, PermissionError, ValueError):
+        os.killpg(int(text[0]), signal.SIGKILL)
 
 
 async def _wait_for_file(path: Path, seconds: float | None = None) -> None:
@@ -213,6 +255,55 @@ async def _stub_worker(prompt: str) -> str:
 
 def make_session(workspace: Path) -> Session:
     return Session(str(workspace))
+
+
+class _Pipe:
+    def __init__(self) -> None:
+        self._done = asyncio.Event()
+
+    def release(self) -> None:
+        self._done.set()
+
+    async def read(self, _n: int) -> bytes:
+        await self._done.wait()
+        return b""
+
+
+class _ReapProc:
+    """Stand-in child. ``wait`` records which task reaped it."""
+
+    def __init__(self) -> None:
+        self.pid = 1
+        self.returncode: int | None = None
+        self.stdout = _Pipe()
+        self.stderr = _Pipe()
+        self.stdin = None
+        self.completed_by: list[asyncio.Task[object]] = []
+        self._waiters: list[asyncio.Future[int]] = []
+
+    def release(self) -> None:
+        self.returncode = -9
+        self.stdout.release()
+        self.stderr.release()
+        for fut in self._waiters:
+            if not fut.done():
+                fut.set_result(-9)
+
+    def kill(self) -> None:
+        self.release()
+
+    async def wait(self) -> int:
+        caller = asyncio.current_task()
+        if self.returncode is not None:
+            if caller is not None:
+                self.completed_by.append(caller)
+            return self.returncode
+        fut: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+        self._waiters.append(fut)
+        rc = await fut
+        if caller is not None:
+            self.completed_by.append(caller)
+        return rc
 
 
 def make_shell_dispatcher(
@@ -355,6 +446,36 @@ class TestCancel:
             return  # the OS vetoed the kill; the command ran out
         await _assert_group_gone(tmp_path)
 
+    async def test_task_cancel_reaps_on_the_shell_task(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CancelledError path must ``wait`` itself.
+
+        Killing the group and then cancelling the work task cancels that
+        task's ``proc.wait()``. The transport stays open until ``__del__``
+        if this task never waits (TD-4835).
+        """
+        proc = _ReapProc()
+        spawned = asyncio.Event()
+
+        async def fake_shell(*_args: object, **_kwargs: object) -> _ReapProc:
+            spawned.set()
+            return proc
+
+        def fake_kill(target: _ReapProc) -> None:
+            target.release()
+            return None
+
+        monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
+        monkeypatch.setattr("tstd.tools.shell._kill_process_group", fake_kill)
+        session = make_session(tmp_path)
+        task = asyncio.create_task(run_shell(session, "sleep 30", timeout_secs=30))
+        await spawned.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task in proc.completed_by
+
     async def test_escape_writer_does_not_fire_on_a_clock(self, tmp_path: Path) -> None:
         """TD-1409: a ``sleep 2; touch kicked`` writer would produce the
         marker during a 3s delayed kill.  The release-gated writer must
@@ -426,12 +547,21 @@ class TestCancel:
         task = asyncio.create_task(
             dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
         )
-        await asyncio.sleep(0.3)
-        await session.cancel()
-        result = await task
-        assert result.status == "success"
-        assert _KILL_REFUSED in result.output
-        assert "process group killed" not in result.output
+        await _wait_for_file(tmp_path / "pgid.txt")
+        try:
+            await session.cancel()
+            result = await task
+            assert result.status == "success"
+            assert _KILL_REFUSED in result.output
+            assert "process group killed" not in result.output
+            pid = int((tmp_path / "pgid.txt").read_text(encoding="utf-8").strip().split()[0])
+            os.kill(pid, 0)
+            state = _leader_state(pid)
+            assert state and not state.startswith("Z")
+        finally:
+            monkeypatch.undo()
+            _stop_probe(tmp_path)
+            await _join_transport_closers()
 
     @requires_posix_killpg
     async def test_kill_refusal_on_task_cancel_logged(
@@ -451,11 +581,25 @@ class TestCancel:
         task = asyncio.create_task(
             dispatcher.dispatch("c1", "shell", {"command": _ESCAPE_PROBE_CMD}, session)
         )
-        await asyncio.sleep(0.3)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-        assert any(_KILL_REFUSED in r.getMessage() for r in caplog.records)
+        await _wait_for_file(tmp_path / "pgid.txt")
+        pid = int((tmp_path / "pgid.txt").read_text(encoding="utf-8").strip())
+        try:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            assert any(_KILL_REFUSED in r.getMessage() for r in caplog.records)
+            # Refusal leaves the leader alive. SIGKILL of only that pid
+            # orphans the grandchild and strands the pipe transports.
+            # ``os.kill(pid, 0)`` is true for a zombie, so the state has
+            # to show the process is still running.
+            os.kill(pid, 0)
+            state = _leader_state(pid)
+            assert state and not state.startswith("Z")
+            assert any(task.get_name() == "shell-transport-close" for task in asyncio.all_tasks())
+        finally:
+            monkeypatch.undo()
+            _stop_probe(tmp_path)
+            await _join_transport_closers()
 
 
 # ── AC3: streamed to the timeline as it arrives ────────────────────────

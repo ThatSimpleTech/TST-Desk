@@ -150,6 +150,16 @@ class McpDesktopDriver:
         await self._client.call_tool(MCP_TOOLS["scroll"], args)
         return json.dumps({"scrolled": {"dx": dx, "dy": dy}})
 
+    async def foreground_window(self) -> dict[str, Any]:
+        # Read-only, like screenshot. The fixed message is deliberate:
+        # a sidecar error can quote a window title or a path.
+        self._refuse_if_no_live_path()
+        try:
+            result = await self._client.call_tool("get_foreground_window", {})
+        except Exception as exc:
+            raise DesktopError("cu_error", "foreground window was not read") from exc
+        return _hit_json(result)
+
     async def hit_test(self, x: float, y: float) -> dict[str, Any]:
         # Observe only: kill-switch must not block this, same as screenshot.
         self._refuse_if_no_live_path()

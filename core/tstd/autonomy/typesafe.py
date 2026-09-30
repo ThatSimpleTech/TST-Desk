@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -54,25 +55,42 @@ class TypeSafeJudgmentBackend:
     def name(self) -> str:
         return "typesafe"
 
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def remote_host(self) -> str | None:
+        """Hostname the connector would dial.  The charter gates on this."""
+        host = urlsplit(self._base_url).hostname
+        if not host:
+            return None
+        return host.casefold()
+
     async def judge(self, question: JudgmentQuestion) -> Judgment:
         started = time.perf_counter()
         try:
-            answers = await self._evaluate(question)
-            judgment = self._map_answer(question, answers)
+            answer = await self._evaluate(question)
+            label, confidence, cost = self._map_answer(question, answer)
         except Exception as exc:
             latency_ms = (time.perf_counter() - started) * 1000.0
+            # Exception text can include the request URL and, on some
+            # transports, headers.  The type name cannot carry the key.
+            timed_out = isinstance(exc, (TimeoutError, httpx.TimeoutException))
+            reason = "timeout" if timed_out else "error"
             log.warning(
-                "typesafe judgment failed; failing closed",
-                extra={"extra_fields": {"error": str(exc)[:200]}},
+                "hosted judgment failed; failing closed",
+                extra={"extra_fields": {"error_type": type(exc).__name__}},
             )
-            return Judgment.failed(backend=self.name, reason="error", latency_ms=latency_ms)
+            return Judgment.failed(backend=self.name, reason=reason, latency_ms=latency_ms)
         latency_ms = (time.perf_counter() - started) * 1000.0
         return Judgment(
-            label=judgment[0],
-            confidence=judgment[1],
+            label=label,
+            confidence=confidence,
             backend=self.name,
             latency_ms=latency_ms,
-            reason="ok" if judgment[0] is not None else "parse_failure",
+            cost=cost,
+            reason="ok" if label is not None else "parse_failure",
         )
 
     async def _evaluate(self, question: JudgmentQuestion) -> dict[str, Any]:
@@ -100,18 +118,34 @@ class TypeSafeJudgmentBackend:
         return answer
 
     @staticmethod
-    def _map_answer(question: JudgmentQuestion, answer: dict[str, Any]) -> tuple[str | None, float]:
+    def _map_answer(
+        question: JudgmentQuestion, answer: dict[str, Any]
+    ) -> tuple[str | None, float, float]:
+        cost = _reported_cost(answer.get("cost"))
         if question.kind is JudgmentKind.CHOICE:
             choice = answer.get("choice")
             if not isinstance(choice, str) or choice not in question.resolved_options():
-                return None, 0.0
+                return None, 0.0, cost
             confidence = answer.get("confidence")
-            return choice, float(confidence) if isinstance(confidence, (int, float)) else 1.0
+            parsed = float(confidence) if isinstance(confidence, (int, float)) else 1.0
+            return choice, parsed, cost
         probability = answer.get("noul")
         if not isinstance(probability, (int, float)):
-            return None, 0.0
+            return None, 0.0, cost
         p = max(0.0, min(1.0, float(probability)))
-        return ("yes" if p >= 0.5 else "no"), abs(p - 0.5) * 2
+        return ("yes" if p >= 0.5 else "no"), abs(p - 0.5) * 2, cost
+
+
+def _reported_cost(value: object) -> float:
+    """A dollar figure the connector put on the answer, or zero.
+
+    ``bool`` is an ``int`` subclass and is not a price.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    if value < 0:
+        return 0.0
+    return float(value)
 
 
 def _question_body(question: JudgmentQuestion) -> dict[str, Any]:

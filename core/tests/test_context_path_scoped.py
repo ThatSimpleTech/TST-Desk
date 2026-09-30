@@ -543,8 +543,15 @@ class TestFrontmatterStrippedAtEveryLevel:
         _write(target, f"{_FOREIGN_FRONTMATTER}{body}\n")
 
         # src/main.py keeps the rule-level fixture active, so every level
-        # under test actually reaches the block.
-        result = _make_assembler(home).assemble_sync(ws, matched_paths={"src/main.py"})
+        # under test actually reaches the block. User-global CLAUDE.md
+        # is opt-in (TD-4845); this row still proves frontmatter is
+        # stripped when that fallback is enabled.
+        result = ContextAssembler(
+            resolver=SteeringFileResolver(
+                home_dir=home,
+                claude_global_fallback=relpath == "~/.claude/CLAUDE.md",
+            )
+        ).assemble_sync(ws, matched_paths={"src/main.py"})
 
         assert len(result.sources) == 1, f"{relpath} was not discovered exactly once"
         assert body in result.block

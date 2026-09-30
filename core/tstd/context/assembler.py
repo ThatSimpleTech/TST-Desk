@@ -106,6 +106,9 @@ class AssembledSteering:
         pending_imports: External-import paths awaiting approval (TD-505),
             deduplicated and sorted for determinism.  The loop raises an
             approval request for each before the turn proceeds.
+        notices: Discovery notes that are not sources (TD-4845).  Today
+            the only one is the unread ``~/.claude/CLAUDE.md`` hint.
+            Empty when there is nothing to say.  Never part of the block.
     """
 
     block: str
@@ -113,6 +116,7 @@ class AssembledSteering:
     import_issues: tuple[str, ...] = ()
     total_tokens: TokenCount = field(default_factory=lambda: TokenCount(count=0, method=""))
     pending_imports: tuple[Path, ...] = ()
+    notices: tuple[str, ...] = ()
 
 
 class ContextAssembler:
@@ -179,6 +183,8 @@ class ContextAssembler:
     ) -> AssembledSteering:
         """Synchronous variant of :meth:`assemble` (tests, CLI)."""
         sources = self._resolver.resolve(workspace_path)
+        notice = self._resolver.claude_global_notice()
+        notices = (notice,) if notice is not None else ()
         resolved: list[ResolvedSource] = []
         parts: list[str] = []
         all_issues: list[str] = []
@@ -250,6 +256,7 @@ class ContextAssembler:
             import_issues=tuple(all_issues),
             total_tokens=self._sum_tokens(resolved),
             pending_imports=tuple(sorted(pending)),
+            notices=notices,
         )
 
     @staticmethod

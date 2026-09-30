@@ -18,8 +18,13 @@ if TYPE_CHECKING:
     from ..config import ModelConfig
 
 
+def browser_profile_dir(data_dir: Path) -> Path:
+    """Persistent Playwright profile. Never the workspace."""
+    return data_dir / "browser-profile"
+
+
 def browser_driver_from_config(config: ModelConfig, data_dir: Path) -> BrowserDriver:
     """Return the configured browser driver. Never binds a socket."""
     if config.computer_use.browser == "playwright" and playwright_available():
-        return PlaywrightBrowserDriver(data_dir / "browser-profile")
+        return PlaywrightBrowserDriver(browser_profile_dir(data_dir))
     return MockBrowserDriver()

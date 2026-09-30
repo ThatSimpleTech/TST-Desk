@@ -1,45 +1,128 @@
 <script lang="ts">
-	// Scheduled rail surface (TD-3805).
+	// Scheduled rail surface (TD-3805, TD-3810, TD-3811, TD-3813, TD-3814).
 	//
-	// Lists persisted jobs and creates / pauses / deletes them through
-	// protocol verbs. Draft fields, not NL. The pane never runs a job.
+	// Lists persisted jobs and creates, edits, pauses, deletes, and runs them
+	// through protocol verbs. Draft fields, not NL. Run now fires one job; the
+	// tick still owns the schedule. Edit loads the row; a cadence job's armed
+	// slot stays off the form so Save does not send it back. History on a card
+	// is that job's run log, not the single receipt on the row. A job can pin
+	// a preset and an engine so it does not follow the window.
 	import {
+		cancelEdit,
 		createJob,
 		deleteScheduledJob,
+		editJob,
 		parseJobRequest,
 		pauseJob,
+		runJob,
+		saveEdit,
 		scheduled,
 		setDraftField,
 		setParseText,
 	} from '../scheduled.svelte.js';
-	import { jobFailed, jobLastRun, jobsEmptyCopy, jobWhen } from '../scheduled';
+	import {
+		jobActivity,
+		jobFailed,
+		jobFormCopy,
+		jobMeta,
+		jobMissed,
+		jobWaiting,
+		jobsEmptyCopy,
+		sessionMissingCopy,
+		workspaceSuggestions,
+	} from '../scheduled';
+	import { showHome } from '../projects.svelte.js';
+	import { selectRow, sessions } from '../sessions.svelte.js';
+	import { visibleRecents, workspaces } from '../workspaces.svelte.js';
+	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
+	import ScheduledGraceField from './ScheduledGraceField.svelte';
+	import ScheduledHistory from './ScheduledHistory.svelte';
+	import ScheduledRetriesField from './ScheduledRetriesField.svelte';
+	import ScheduledPinFields from './ScheduledPinFields.svelte';
 
 	let empty = $derived(jobsEmptyCopy());
+	let editing = $derived(scheduled.editingId !== null);
+	let missing = $state<Record<string, true>>({});
+
+	function openSession(sessionId: string | null): void {
+		if (sessionId === null || sessionId === '') return;
+		const known = sessions.rows.some((row) => row.sessionId === sessionId);
+		if (!known) {
+			missing = { ...missing, [sessionId]: true };
+			return;
+		}
+		selectRow(sessionId);
+		showHome();
+	}
+	let formCopy = $derived(jobFormCopy(editing));
+	let known = $derived(
+		workspaceSuggestions(
+			workspaces.pinned,
+			visibleRecents().map((r) => r.path),
+		),
+	);
+
+	// Same native dialog the wizard and title bar use; a typed path still works.
+	async function browse(): Promise<void> {
+		const { open } = await import('@tauri-apps/plugin-dialog');
+		const chosen = await open({ directory: true, multiple: false });
+		if (typeof chosen === 'string' && chosen.length > 0) setDraftField('workspace', chosen);
+	}
 </script>
 
 <div class="pane">
 	<section class="list-col" aria-label="Scheduled">
 		<h1 class="title">Scheduled</h1>
-		<p class="lede">Jobs the daemon will run. This pane does not fire them.</p>
-		{#if scheduled.error !== null}
-			<p class="error">{scheduled.error}</p>
-		{/if}
+		<p class="lede">Jobs the daemon runs on a schedule. Run now fires one without moving its next slot.</p>
 		{#if scheduled.items.length === 0}
 			<EmptyState align="start" body={empty} />
 		{:else}
 			<ul class="list">
 				{#each scheduled.items as row (row.id)}
 					<li>
-						<div class="card" class:card-failed={jobFailed(row)}>
+						<div
+							class="card"
+							class:card-failed={jobFailed(row)}
+							class:card-missed={jobMissed(row)}
+							class:card-waiting={jobWaiting(row)}
+						>
 							<span class="card-name">{row.instruction}</span>
-							<span class="card-meta">{jobWhen(row)} · {row.deliver_to}</span>
+							<span class="card-meta">{jobMeta(row)}</span>
 							<span class="card-path">{row.workspace}</span>
-							<span class="card-run" class:run-failed={jobFailed(row)}>{jobLastRun(row)}</span>
+							<span
+								class="card-run"
+								class:run-failed={jobFailed(row) && !row.running}
+								class:run-missed={jobMissed(row) && !row.running}
+								class:run-waiting={jobWaiting(row) && !row.running}>{jobActivity(row)}</span
+							>
 							{#if row.last_summary}
 								<p class="card-summary">{row.last_summary}</p>
 							{/if}
+							<ScheduledHistory jobId={row.id} />
+							{#if jobWaiting(row) && row.last_session_id}
+								{#if missing[row.last_session_id]}
+									<p class="gone">{sessionMissingCopy()}</p>
+								{:else}
+									<button
+										class="action"
+										type="button"
+										onclick={() => openSession(row.last_session_id)}
+									>
+										Open session
+									</button>
+								{/if}
+							{/if}
 							<div class="actions">
+								<button class="action" type="button" onclick={() => editJob(row.id)}>Edit</button>
+								<button
+									class="action"
+									type="button"
+									disabled={row.running}
+									onclick={() => runJob(row.id)}
+								>
+									Run now
+								</button>
 								<button class="action" type="button" onclick={() => pauseJob(row.id)}>
 									{row.paused ? 'Resume' : 'Pause'}
 								</button>
@@ -53,9 +136,9 @@
 			</ul>
 		{/if}
 	</section>
-	<section class="form-col" aria-label="New scheduled job">
-		<h2 class="form-title">New job</h2>
-		<p class="lede">Parse a sentence, edit the draft, then create. Cadence or next run, not both.</p>
+	<section class="form-col" aria-label={editing ? 'Edit scheduled job' : 'New scheduled job'}>
+		<h2 class="form-title">{formCopy.title}</h2>
+		<p class="lede">{formCopy.lede}</p>
 		<label class="field">
 			<span>Describe the job</span>
 			<textarea
@@ -68,11 +151,22 @@
 		<button class="action" type="button" onclick={() => parseJobRequest()}>Parse</button>
 		<label class="field">
 			<span>Workspace</span>
-			<input
-				type="text"
-				value={scheduled.draft.workspace}
-				oninput={(e) => setDraftField('workspace', e.currentTarget.value)}
-			/>
+			<span class="row">
+				<input
+					type="text"
+					list="scheduled-workspaces"
+					value={scheduled.draft.workspace}
+					oninput={(e) => setDraftField('workspace', e.currentTarget.value)}
+					placeholder="~/Documents/project"
+				/>
+				<button class="action" type="button" onclick={browse}>Browse…</button>
+			</span>
+			<datalist id="scheduled-workspaces">
+				{#each known as path (path)}
+					<option value={path} label={workspaceName(path)}></option>
+				{/each}
+			</datalist>
+			<span class="hint">A full folder path, not a project name.</span>
 		</label>
 		<label class="field">
 			<span>Instruction</span>
@@ -88,7 +182,9 @@
 				type="text"
 				value={scheduled.draft.cadence}
 				oninput={(e) => setDraftField('cadence', e.currentTarget.value)}
+				placeholder="weekdays at 7:45"
 			/>
+			<span class="hint">e.g. weekdays at 7:45 · every 2 hours · 45 7 * * 1-5</span>
 		</label>
 		<label class="field">
 			<span>Next run</span>
@@ -110,7 +206,20 @@
 				<option value="ntfy">ntfy</option>
 			</select>
 		</label>
-		<button class="action create" type="button" onclick={() => createJob()}>Create</button>
+		<ScheduledGraceField />
+		<ScheduledRetriesField />
+		<ScheduledPinFields />
+		{#if scheduled.error !== null}
+			<p class="error" role="alert">{scheduled.error}</p>
+		{/if}
+		<div class="row">
+			<button class="action create" type="button" onclick={() => (editing ? saveEdit() : createJob())}>
+				{formCopy.submit}
+			</button>
+			{#if editing}
+				<button class="action" type="button" onclick={() => cancelEdit()}>Cancel</button>
+			{/if}
+		</div>
 	</section>
 </div>
 
@@ -168,10 +277,29 @@
 		color: var(--color-ink-secondary);
 	}
 
+	/* Sits beside Create so a rejected save is read where it was made; the
+	   daemon's message can carry a long path, so it must wrap. */
 	.error {
-		margin: var(--space-4) 0 0;
+		margin: 0;
 		font-size: var(--text-sm);
 		color: var(--color-err);
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
+	}
+
+	.row {
+		display: flex;
+		gap: var(--space-2);
+	}
+
+	.row input {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.hint {
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
 	}
 
 	.list {
@@ -222,6 +350,30 @@
 		border-color: var(--color-err);
 	}
 
+	/* Missed is a skipped slot, not a turn that failed. Warn, not the error red. */
+	.run-missed {
+		color: var(--color-warn);
+	}
+
+	.card-missed {
+		border-color: var(--color-warn);
+	}
+
+	/* Waiting is an approval card, not a failed or skipped turn. */
+	.run-waiting {
+		color: var(--color-accent);
+	}
+
+	.card-waiting {
+		border-color: var(--color-accent);
+	}
+
+	.gone {
+		margin: var(--space-1) 0 0;
+		font-size: var(--text-xs);
+		color: var(--color-err);
+	}
+
 	/* The last summary is the only place a scheduled run's output is
 	   readable in the window; clamp it so one long turn cannot push the
 	   rest of the list off-screen. */
@@ -255,8 +407,13 @@
 		cursor: pointer;
 	}
 
-	.action:hover {
+	.action:hover:not(:disabled) {
 		background: var(--color-sunken);
+	}
+
+	.action:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 
 	.action-danger {

@@ -10,7 +10,14 @@
 //! - orphan watchdog: `core/tstd/daemon.py` (`--parent-pid`)
 //! - coworker flag: `{data_dir}/coworker.yaml` (TD-2902)
 //!
-//! Quit sends `shutdown` and best-effort-kills from `RunEvent::Exit`.
+//! Quit sends `shutdown`, holds that socket until the daemon closes it or
+//! the grace expires, and waits until the process-group leader is reaped.
+//! SIGKILL is only that grace fallback. An in-app quit's `RunEvent::Exit`
+//! does not kill a leader that has already exited, and waits out the
+//! remaining grace instead of killing early. A system quit (Dock,
+//! AppleScript, logout) has no `ExitRequested`; that path sends the same
+//! frame on the main thread inside a 3 second budget shared with the
+//! embeddings sidecar.
 //! Close hides the window and leaves the host (and `tstd`) running when
 //! coworker mode is on. Spawn always passes `--parent-pid`: close does
 //! not kill the host, so the watchdog stays quiet; SIGKILL of the host
@@ -24,12 +31,16 @@ pub mod close_hint;
 pub mod coworker;
 mod daemon_pid;
 pub mod embeddings;
+#[cfg(all(test, unix))]
+pub(crate) mod fake_sidecar;
+mod shutdown;
+mod system_exit;
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -43,6 +54,7 @@ pub use coworker::{
     LifecycleEvent,
 };
 pub use daemon_pid::{kill_spawned_group, pid_is_alive, port_file_belongs_to_spawn};
+pub(crate) use system_exit::on_host_exit;
 
 /// Protocol version advertised in the `hello` handshake.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -53,7 +65,7 @@ const PORT_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long the host waits for a `hello_ack` before declaring the daemon bad.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the host waits after sending `shutdown` before sending SIGKILL.
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+const SHUTDOWN_GRACE: Duration = shutdown::SHUTDOWN_GRACE;
 
 type ClientWs =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -105,8 +117,16 @@ pub struct DaemonHandle {
     status_rx: watch::Receiver<DaemonStatus>,
     shutdown: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
+    /// Set on the first [`Self::request_shutdown`]. Distinguishes an
+    /// in-app quit (wait out [`SHUTDOWN_GRACE`]) from a system quit.
+    shutdown_started: Arc<Mutex<Option<Instant>>>,
+    /// System quit owns the shutdown write. The supervisor must not
+    /// send a second frame on the same socket.
+    system_exit: Arc<AtomicBool>,
     conn: Arc<Mutex<Option<ConnInfo>>>,
     child_pid: Arc<AtomicI32>,
+    exit_socket: Arc<system_exit::ExitSocketSlot>,
+    finished: Arc<AtomicBool>,
     done: Arc<Notify>,
 }
 
@@ -125,8 +145,28 @@ impl DaemonHandle {
     ///
     /// Does not clear [`Self::child_pid`]: `RunEvent::Exit` may fire
     /// immediately after this and still needs the group leader for
-    /// [`best_effort_kill`].
+    /// [`best_effort_kill`]. The timestamp is stored first so that kill
+    /// sees a quit in progress even if it runs before the flag.
     pub fn request_shutdown(&self) {
+        {
+            let mut started = self.shutdown_started.lock().unwrap();
+            if started.is_none() {
+                *started = Some(Instant::now());
+            }
+        }
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.shutdown_notify.notify_waiters();
+        self.set_status(DaemonStatus::Stopping);
+    }
+
+    /// System quit, which never called [`Self::request_shutdown`].
+    ///
+    /// Does not set [`Self::shutdown_started`]: that timestamp is how
+    /// `RunEvent::Exit` tells an in-app quit from this path. Wakes the
+    /// supervisor so it waits for the process instead of writing the
+    /// socket the main thread is using.
+    pub(crate) fn claim_system_exit(&self) {
+        self.system_exit.store(true, Ordering::SeqCst);
         self.shutdown.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         self.set_status(DaemonStatus::Stopping);
@@ -146,9 +186,25 @@ impl DaemonHandle {
         *self.conn.lock().unwrap() = c;
     }
 
+    /// Resolves when the supervision loop has reaped the leader (or given
+    /// up). A notify that landed before this is polled still resolves:
+    /// `notify_waiters` does not store a permit.
     pub async fn wait_for_done(&self) {
-        self.done.notified().await;
+        let notified = self.done.notified();
+        tokio::pin!(notified);
+        if self.finished.load(Ordering::SeqCst) || notified.as_mut().enable() {
+            return;
+        }
+        if self.finished.load(Ordering::SeqCst) {
+            return;
+        }
+        notified.as_mut().await;
     }
+}
+
+fn mark_done(h: &DaemonHandle) {
+    h.finished.store(true, Ordering::SeqCst);
+    h.done.notify_waiters();
 }
 
 /// Spawn the supervision loop for the given app handle and data dir.
@@ -162,8 +218,12 @@ pub fn start(app: AppHandle, data_dir: PathBuf) -> DaemonHandle {
         status_rx,
         shutdown: Arc::new(AtomicBool::new(false)),
         shutdown_notify: Arc::new(Notify::new()),
+        shutdown_started: Arc::new(Mutex::new(None)),
+        system_exit: Arc::new(AtomicBool::new(false)),
         conn: Arc::new(Mutex::new(None)),
         child_pid: Arc::new(AtomicI32::new(-1)),
+        exit_socket: Arc::new(system_exit::ExitSocketSlot::new()),
+        finished: Arc::new(AtomicBool::new(false)),
         done: Arc::new(Notify::new()),
     };
     let loop_handle = handle.clone();
@@ -258,7 +318,7 @@ async fn run_supervision(h: DaemonHandle) {
 
         emit(&h, "starting", None, 0);
 
-        let (mut watch, mut ws, port_file, pid) = match acquire_daemon(&h.data_dir).await {
+        let (mut watch, ws, port_file, pid) = match acquire_daemon(&h.data_dir).await {
             Ok(acquired) => acquired,
             Err(e) => {
                 log::error!("{e}");
@@ -269,6 +329,10 @@ async fn run_supervision(h: DaemonHandle) {
             }
         };
         h.child_pid.store(pid as i32, Ordering::Relaxed);
+        // Dup of the live socket. System quit writes the shutdown frame
+        // on it from the main thread; this task keeps `ws`.
+        h.exit_socket
+            .store(system_exit::duplicate_client_socket(&ws));
 
         // Success: the daemon is up and we are connected.
         restart = 0;
@@ -280,6 +344,9 @@ async fn run_supervision(h: DaemonHandle) {
             port: port_file.port,
         });
         emit(&h, "connected", Some(port_file.port), 0);
+        // Taken only on the shutdown arm. The crash arm drops it, which
+        // is the same as `ws` falling out of scope at the end of the loop.
+        let mut socket = Some(ws);
 
         // Supervise: the listener exits, or a shutdown request from the host.
         let shutdown_req = h.shutdown_notify.clone();
@@ -292,6 +359,13 @@ async fn run_supervision(h: DaemonHandle) {
         tokio::select! {
             () = watch.wait_exit(pid) => {
                 log::info!("daemon exited under supervision (pid {pid})");
+                h.exit_socket.store(None);
+                if h.shutdown.load(Ordering::SeqCst) {
+                    // Quit won the race with a clean leader exit. A group
+                    // kill here reaps a grandchild that is still flushing.
+                    finish_stopped(&h);
+                    return;
+                }
                 // Bootloader may have exited while the grandchild still
                 // listens — reap the group before we spawn another.
                 if matches!(watch, ChildWatch::Spawned { .. }) {
@@ -299,14 +373,23 @@ async fn run_supervision(h: DaemonHandle) {
                 }
             }
             _ = &mut shutdown_wait => {
+                if h.system_exit.load(Ordering::SeqCst) {
+                    // The main thread is writing the shutdown frame on the
+                    // duplicated fd. A second write here interleaves masks.
+                    match &mut watch {
+                        ChildWatch::Spawned { child } => {
+                            let _ = child.wait().await;
+                        }
+                        ChildWatch::Attached => wait_pid_gone(pid).await,
+                    }
+                    finish_stopped(&h);
+                    return;
+                }
                 h.set_status(DaemonStatus::Stopping);
                 emit(&h, "stopping", None, 0);
-                graceful_shutdown(&h, &mut ws, &mut watch, pid).await;
-                h.set_conn(None);
-                h.child_pid.store(-1, Ordering::Relaxed);
-                h.set_status(DaemonStatus::Stopped);
-                emit(&h, "stopped", None, 0);
-                h.done.notify_waiters();
+                let held = socket.take().expect("supervision socket");
+                graceful_shutdown(&h, held, &mut watch, pid).await;
+                finish_stopped(&h);
                 return;
             }
         }
@@ -318,10 +401,20 @@ async fn run_supervision(h: DaemonHandle) {
         }
     }
 
+    h.exit_socket.store(None);
     h.set_conn(None);
     h.child_pid.store(-1, Ordering::Relaxed);
     h.set_status(DaemonStatus::Stopped);
-    h.done.notify_waiters();
+    mark_done(&h);
+}
+
+fn finish_stopped(h: &DaemonHandle) {
+    h.exit_socket.store(None);
+    h.set_conn(None);
+    h.child_pid.store(-1, Ordering::Relaxed);
+    h.set_status(DaemonStatus::Stopped);
+    emit(h, "stopped", None, 0);
+    mark_done(h);
 }
 
 /// Run one backoff step after a crash. Returns false when retries are spent.
@@ -469,7 +562,14 @@ async fn acquire_daemon(data_dir: &Path) -> Result<(ChildWatch, ClientWs, PortFi
             return Err(e);
         }
     };
-    Ok((ChildWatch::Spawned { child: Box::new(child) }, ws, port_file, pid))
+    Ok((
+        ChildWatch::Spawned {
+            child: Box::new(child),
+        },
+        ws,
+        port_file,
+        pid,
+    ))
 }
 
 /// `port.json` when it names a live process. Handshake is the attach
@@ -596,39 +696,26 @@ pub async fn connect_handshake(port: u16, token: &str) -> Result<ClientWs, Strin
     }
 }
 
-/// Send `shutdown` over WS, wait a short grace, then kill the process group.
+/// Send `shutdown`, wait until the leader is reaped, SIGKILL only at the grace.
 async fn graceful_shutdown(
     h: &DaemonHandle,
-    ws: &mut ClientWs,
+    ws: ClientWs,
     watch: &mut ChildWatch,
     spawned_pid: u32,
 ) {
     h.set_status(DaemonStatus::Stopping);
-    let _ = ws
-        .send(Message::Text(r#"{"type":"shutdown"}"#.into()))
-        .await;
-    // No graceful close handshake: the daemon tears down its own connection
-    // DURING shutdown, so waiting for a close ack can race it into a hang.
-
-    match watch {
+    let reap = match watch {
         ChildWatch::Spawned { child } => {
-            match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
-                Ok(Ok(_status)) => log::info!("daemon exited cleanly after shutdown"),
-                Ok(Err(e)) => log::warn!("daemon wait errored after shutdown: {e}"),
-                Err(_elapsed) => {
-                    log::warn!("daemon did not exit within grace; killing the process group");
-                }
-            }
-            reap_tree(child, spawned_pid).await;
+            shutdown::shutdown_and_reap(ws, child, spawned_pid, SHUTDOWN_GRACE).await
         }
-        ChildWatch::Attached => {
-            match tokio::time::timeout(SHUTDOWN_GRACE, wait_pid_gone(spawned_pid)).await {
-                Ok(()) => log::info!("attached daemon exited cleanly after shutdown"),
-                Err(_elapsed) => {
-                    log::warn!("attached daemon did not exit within grace; killing");
-                }
-            }
-            daemon_pid::kill_spawned_group(spawned_pid);
+        ChildWatch::Attached => shutdown::shutdown_attached(ws, spawned_pid, SHUTDOWN_GRACE).await,
+    };
+    match reap {
+        shutdown::Reap::Exited { code } => {
+            log::info!("daemon exited cleanly after shutdown (code {code:?})");
+        }
+        shutdown::Reap::Killed => {
+            log::warn!("daemon did not exit within grace; killed the process group");
         }
     }
 }
@@ -639,12 +726,25 @@ async fn reap_tree(child: &mut tokio::process::Child, spawned_pid: u32) {
     let _ = child.wait().await;
 }
 
-/// Synchronous, best-effort kill of the daemon tree, for `RunEvent::Exit`.
-/// The daemon's own parent-pid watchdog is the real backstop; this only
-/// closes the small window before the OS reaps us.
+/// In-app quit's `RunEvent::Exit` backstop. [`DaemonHandle::request_shutdown`]
+/// has already run. Killing before that grace is what skipped the daemon's
+/// shutdown when macOS delivered Exit while the leader was still closing.
+/// A system quit does not call this; see [`system_exit`]. The daemon's
+/// parent-pid watchdog covers a host that dies without either path.
 pub fn best_effort_kill(handle: &DaemonHandle) {
-    if let Some(pid) = handle.child_pid() {
-        daemon_pid::kill_spawned_group(pid);
+    let Some(pid) = handle.child_pid() else {
+        return;
+    };
+    let started = *handle.shutdown_started.lock().unwrap();
+    let elapsed = started.map(|t| t.elapsed());
+    match shutdown::exit_action(pid_is_alive(pid), elapsed, SHUTDOWN_GRACE) {
+        shutdown::ExitAction::Noop => {}
+        shutdown::ExitAction::Kill => daemon_pid::kill_spawned_group(pid),
+        shutdown::ExitAction::Wait => {
+            if let Some(started) = started {
+                shutdown::block_until_leader_gone(pid, started + SHUTDOWN_GRACE);
+            }
+        }
     }
 }
 

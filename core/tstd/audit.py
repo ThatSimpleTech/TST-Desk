@@ -1,7 +1,9 @@
 """Append-only audit store (TD-901).
 
 Every turn, tool call, decision, and model call is recorded in SQLite at
-``<user data dir>/audit.db``. INSERT-only is a property of this codebase,
+``<data dir>/audit.db``. A daemon passes its data directory.
+:meth:`AuditStore.open_default` is the library path and still uses the
+user data directory. INSERT-only is a property of this codebase,
 not of the file: no UPDATE or DELETE statements exist anywhere in tstd
 (asserted by a source-level test in ``tests/test_audit.py``), but the
 connection is read-write — inserts and migrations need it, and migration
@@ -34,10 +36,11 @@ ToolCallStatus = Literal["success", "error", "refused"]
 
 # ── Schema ─────────────────────────────────────────────────────────────
 #
-# Six schema objects per TD-901: sessions, turns, tool_calls, decisions,
-# model_calls — and `costs`, which is a VIEW over model_calls, not a
-# table. Rollup rows would duplicate truth in a store that can never
-# correct them; a view aggregates on read instead (TD-903 queries it).
+# Schema objects: sessions, turns, tool_calls, decisions, model_calls,
+# judgments (TD-708) — and `costs`, which is a VIEW over model_calls,
+# not a table. Rollup rows would duplicate truth in a store that can
+# never correct them; a view aggregates on read instead (TD-903 queries
+# it).
 #
 # Timestamps are REAL seconds since the Unix epoch (UTC) — sortable, and
 # groupable by local day via datetime(ts, 'unixepoch', 'localtime').
@@ -145,9 +148,30 @@ ALTER TABLE decisions_v2 RENAME TO decisions;
 CREATE INDEX idx_decisions_session ON decisions(session_id, ts);
 """
 
+# v3 adds one row per classifier judgment (TD-708). A judgment is not a
+# model call: the row carries the signal digest, the label, and the
+# class after fail-toward-B, and it must not store the paths or the
+# text that were hashed. Append-only, same as the other tables.
+_SCHEMA_V3 = """
+CREATE TABLE judgments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    connector TEXT NOT NULL,
+    payload_digest TEXT NOT NULL,
+    label TEXT,
+    confidence REAL NOT NULL,
+    latency_ms REAL NOT NULL,
+    cost REAL NOT NULL,
+    cache_hit INTEGER NOT NULL CHECK(cache_hit IN (0, 1)),
+    decision_class TEXT NOT NULL CHECK(decision_class IN ('A', 'B', 'C')),
+    ts REAL NOT NULL
+);
+CREATE INDEX idx_judgments_session ON judgments(session_id, ts);
+"""
+
 # Ordered migration steps; index + 1 is the schema version that step
 # produces. Every release that changes the schema appends one entry.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3)
 
 
 # ── Scrubbing ──────────────────────────────────────────────────────────
@@ -164,6 +188,17 @@ def _result_hash(output: str | None) -> str | None:
 
 
 # ── Store ──────────────────────────────────────────────────────────────
+
+
+def audit_db_path(data_dir: Path | None = None) -> Path:
+    """``audit.db`` for a daemon data directory, or the library default.
+
+    ``None`` is ``user_data_dir() / "audit.db"``. A daemon passes its
+    directory. :meth:`AuditStore.open_default` is the ``None`` path for
+    callers that have no daemon.
+    """
+    root = data_dir if data_dir is not None else user_data_dir()
+    return root / "audit.db"
 
 
 class AuditStore:
@@ -187,8 +222,8 @@ class AuditStore:
 
     @classmethod
     def open_default(cls) -> AuditStore:
-        """Open the store at the user data directory location."""
-        return cls(user_data_dir() / "audit.db")
+        """Open the store at the library default, not a daemon data dir."""
+        return cls(audit_db_path(None))
 
     @property
     def db_path(self) -> Path:
@@ -237,13 +272,48 @@ class AuditStore:
     # One row per completed fact. Nothing is ever updated: a tool call is
     # recorded after it resolves, paired with its result, not patched.
 
+    def _session_row(self, session_id: str) -> tuple[str, float] | None:
+        row = self._conn.execute(
+            "SELECT workspace_path, started_at FROM sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return (str(row[0]), float(row[1]))
+
     def append_session(self, session_id: str, workspace_path: str, started_at: float) -> None:
-        """Record a session's start. Called once per session."""
-        self._conn.execute(
-            "INSERT INTO sessions (session_id, workspace_path, started_at) VALUES (?, ?, ?)",
-            (session_id, workspace_path, started_at),
-        )
-        self._conn.commit()
+        """Record a session start. An identical row is a no-op.
+
+        The same id with different content raises ``IntegrityError``.
+        The stored row is not rewritten.
+        """
+        existing = self._session_row(session_id)
+        if existing == (workspace_path, float(started_at)):
+            return
+        try:
+            self._conn.execute(
+                "INSERT INTO sessions (session_id, workspace_path, started_at) VALUES (?, ?, ?)",
+                (session_id, workspace_path, started_at),
+            )
+            self._conn.commit()
+        except sqlite3.IntegrityError:
+            # The failed INSERT leaves a deferred transaction open. Roll
+            # it back so the next write is not stuck in it; nothing committed.
+            self._conn.rollback()
+            raise
+
+    def record_session_attach(
+        self, session_id: str, workspace_path: str, started_at: float
+    ) -> None:
+        """Insert the start row once. A later attach must not send a new clock.
+
+        Same workspace: the original row stands. A different workspace is
+        a conflict and raises, because the stored row cannot be rewritten.
+        """
+        existing = self._session_row(session_id)
+        if existing is not None and existing[0] == workspace_path:
+            return
+        self.append_session(session_id, workspace_path, started_at)
 
     def append_turn(
         self,
@@ -355,6 +425,45 @@ class AuditStore:
                 completion_tokens,
                 cost,
                 1 if is_classifier else 0,
+                ts or time.time(),
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def append_judgment(
+        self,
+        session_id: str,
+        connector: str,
+        payload_digest: str,
+        label: str | None,
+        confidence: float,
+        latency_ms: float,
+        cost: float,
+        cache_hit: bool,
+        decision_class: DecisionClass,
+        ts: float | None = None,
+    ) -> int:
+        """Record one classifier judgment.
+
+        ``payload_digest`` is a hash of the classifier signals.  The
+        paths and the text that were hashed are not columns — storing
+        them would put workspace layout in the audit database.
+        """
+        cur = self._conn.execute(
+            "INSERT INTO judgments (session_id, connector, payload_digest, label,"
+            " confidence, latency_ms, cost, cache_hit, decision_class, ts)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                redact_secrets(connector),
+                payload_digest,
+                redact_secrets(label) if label is not None else None,
+                confidence,
+                latency_ms,
+                cost,
+                1 if cache_hit else 0,
+                decision_class,
                 ts or time.time(),
             ),
         )

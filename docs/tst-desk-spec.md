@@ -158,9 +158,11 @@ Loaded at session start, in order, lowest → highest precedence:
 | Rules dir | `<workspace>/.tst/rules/*.md` | Modular, path-scoped rules |
 | Directory | `<workspace>/**/AGENTS.md` | Subtree-specific rules |
 
-**Fallback for adoption:** if `AGENTS.md` is absent, read `CLAUDE.md` at the same path.
-This is deliberate — point TST Desk at any repo already configured for Claude Code and it
-works day one, nothing to port. Do not skip this; it is a meaningful adoption unlock.
+**Fallback for adoption:** inside the workspace, if `AGENTS.md` is absent, read `CLAUDE.md`
+at the same path (repo root and nested directories). This is deliberate — point TST Desk at
+any repo already configured for Claude Code and the project files work on day one. The
+user-global file is only `~/.tstdesk/AGENTS.md`. `~/.claude/CLAUDE.md` is not read unless
+`steering.claude_global_fallback` is true (default false).
 
 More specific overrides broader. Files are concatenated into a single steering block with
 provenance comments so the model knows where a rule came from.

@@ -27,7 +27,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from .audit_writer import ModelCallSink
+from .audit_writer import ModelCallSink, forward_classifier_judgment
 from .autonomy import (
     AmbiguousClassifier,
     Boundary,
@@ -39,28 +39,30 @@ from .autonomy import (
 )
 from .autonomy.breakers import record_autonomy_round
 from .autonomy.checkpoint import auto_branch
+from .autonomy.connector import classifier_connector, judgment_backend_for
 from .autonomy.dod import make_dod_poller
-from .autonomy.judgment import JudgmentBackend
+from .autonomy.judgment import JudgmentBackend, note_judgment_completion_cost
 from .autonomy.runner import advance_autonomy
 from .autonomy.supervisor import attach_drift_check
-from .autonomy.typesafe import TypeSafeJudgmentBackend
 from .autonomy.verify import (
     clear_turn_writes,
     maybe_verify_after_turn,
     note_tool_result,
 )
 from .autonomy.wakeup import deliver_wakeup
-from .compaction import maybe_compact
+from .autonomy.worker import JudgmentAudit
+from .compaction import budget_threshold, estimate_tokens, maybe_compact
 from .config import ConfigError, JudgmentsConfig, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
 from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
+from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_failure_text
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
 from .discovery import discover_model, resolve_tier_slugs
-from .keychain import KeychainError, get_api_key
+from .keychain import KeychainError
 from .local_worker import (
     effective_tier,
     mark_cu_tool,
@@ -68,7 +70,7 @@ from .local_worker import (
     titlebar_hosts,
     titlebar_slugs,
 )
-from .logging import get_logger
+from .logging import get_logger, redact_secrets
 from .memory_commit import MemoryCommitter
 from .policy import load_approved_imports, save_approved_imports
 from .prompt_images import cap_prompt_images
@@ -155,37 +157,6 @@ def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
     if cls is None:
         return None
     return cls.value
-
-
-async def judgment_backend_for(
-    cfg: JudgmentsConfig,
-    worker_completion: Callable[[str], Awaitable[str]],
-) -> JudgmentBackend:
-    """The configured connector, or the worker tier when it cannot serve.
-
-    TypeSafe needs its keychain key (prime §2.2); a missing key logs and
-    falls back to the worker connector — fail toward working, never a block.
-    """
-    if cfg.backend == "typesafe":
-        if not cfg.typesafe_base_url.strip():
-            log.warning(
-                "judgments.backend is typesafe but no base_url is set; using the worker tier"
-            )
-        else:
-            try:
-                key = await get_api_key(cfg.typesafe_credential)
-            except KeychainError:
-                log.warning(
-                    "judgments.backend is typesafe but no %r key is stored; using the worker tier",
-                    cfg.typesafe_credential,
-                )
-            else:
-                return TypeSafeJudgmentBackend(
-                    base_url=cfg.typesafe_base_url,
-                    api_key=key,
-                    model=cfg.typesafe_model,
-                )
-    return WorkerChatJudgmentBackend(worker_completion)
 
 
 def _cap_violation(
@@ -314,19 +285,22 @@ async def _stream_and_parse(
     tracker: CostTracker,
     tier: TierName,
     tier_cfg: Any,
-) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None]:
+) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None, str]:
     """Call the provider, stream deltas, and accumulate tool calls.
 
     Returns:
         A tuple of ``(collected_content, tool_calls, failed, error_msg,
-        error_code)``. ``error_code`` is the provider's typed code (e.g.
-        ``auth_failed``) so clients can key tailored copy off it (TD-1008).
+        error_code, raw_detail)``. ``error_code`` is the provider's typed
+        code (e.g. ``auth_failed``) so clients can key tailored copy off
+        it (TD-1008). ``raw_detail`` is the upstream body for the log;
+        it is empty unless the chunk is a ``ProviderError``.
     """
     collected_content = ""
     tool_calls: dict[int, dict[str, str | int]] = {}
     failed = False
     error_msg = ""
     error_code: str | None = None
+    raw_detail = ""
 
     # TD-1804: usage is collected from any chunk that carries it and
     # recorded once, after the stream closes.  Providers disagree about
@@ -347,6 +321,7 @@ async def _stream_and_parse(
 
         if isinstance(chunk, ProviderError):
             failed, error_msg, error_code = True, chunk.message, chunk.code
+            raw_detail = chunk.detail
             break
 
         # Stream reasoning delta (TD-1901).  Emitted, never accumulated:
@@ -391,7 +366,7 @@ async def _stream_and_parse(
         # cost_update per recorded call, not one per turn.
         await session.event_log.add(tracker.emit_cost_update(session.id))
 
-    return collected_content, tool_calls, failed, error_msg, error_code
+    return collected_content, tool_calls, failed, error_msg, error_code, raw_detail
 
 
 async def _build_assistant_tool_call(
@@ -615,7 +590,10 @@ async def agent_loop(
             persistence.  The sink only enqueues — it never blocks.
     """
     # ── Conversation state ──────────────────────────────────────────
-    assembler = prompt_assembler or PromptAssembler(session.workspace_path)
+    assembler = prompt_assembler or PromptAssembler(
+        session.workspace_path,
+        claude_global_fallback=config.steering.claude_global_fallback,
+    )
     embeddings_client = EmbeddingsClient.from_config(config)
 
     # External-import approvals (TD-505): approved paths are durable per
@@ -681,10 +659,14 @@ async def agent_loop(
         resp = await worker_client.chat_completion(request)
         if isinstance(resp, ProviderError):
             raise RuntimeError(f"worker call failed: {resp.message}")
+        cost = 0.0
         if resp.usage is not None:
-            tracker.record_classifier("worker", resp.usage, worker_cfg)
+            cost = tracker.record_classifier("worker", resp.usage, worker_cfg)
             # Classifier / DoD cost shows up in the meter too (TD-1006).
             await session.event_log.add(tracker.emit_cost_update(session.id))
+        # The judgment seam reads this after the await.  DoD polls share
+        # the callable and ignore the note.
+        note_judgment_completion_cost(cost)
         return content_as_text(resp.message.content)
 
     async def _judgment_backend_for(cfg: JudgmentsConfig) -> JudgmentBackend:
@@ -702,19 +684,28 @@ async def agent_loop(
             writable_patterns=tuple(session.boundary_config.boundary.writable_paths),
             allowed_hosts=session.boundary_config.allowed_hosts,
         )
+        judgments_cfg = config.judgments
         if tool_dispatcher.classifier is None:
+
+            def _on_judgment(record: JudgmentAudit) -> None:
+                forward_classifier_judgment(
+                    record,
+                    session_id=session.id,
+                    writer=audit_sink,
+                    tracker=tracker,
+                )
+
             tool_dispatcher.classifier = AmbiguousClassifier(
                 static=DecisionClassifier(boundary),
-                call_worker=_worker_completion,
+                backend=await classifier_connector(judgments_cfg, _worker_completion),
+                min_confidence=judgments_cfg.confidence_threshold,
+                on_audit=_on_judgment,
             )
 
-        # TD-708/709/710 (dev): the judgment seam.  The default connector
-        # wraps the same worker completion the classifier uses; each
-        # feature gates individually in config and defaults off, so an
-        # unconfigured run is byte-identical to the pre-seam product.
-        # A configured ``typesafe`` backend without its keychain key falls
-        # back to the worker connector — fail toward working, never a block.
-        judgments_cfg = config.judgments
+        # Judgment features gate individually and default off, so an
+        # unconfigured run does not build a second connector.  A hosted
+        # connector without its keychain key falls back to the worker
+        # tier — fail toward working, never a block.
         needs_backend = (
             judgments_cfg.semantic_breaker
             or judgments_cfg.candidate_selection
@@ -928,6 +919,9 @@ async def agent_loop(
         # 2. Tool-call round-trip loop
         #    Each iteration: call provider → execute tool calls → loop
         #    until the model returns a text response.
+        #    One overflow retry per user turn. Resetting this inside the
+        #    loop would clear it on the continue that performs the retry.
+        overflow_retried = False
         while True:
             # 2a. Determine active tier via router
             tier = router.record_turn_start()
@@ -1170,6 +1164,38 @@ async def agent_loop(
                     },
                 )
 
+            # In-flight tool results sit past the compaction cut (TD-4839).
+            # Elide their middles until the prompt fits the same budget,
+            # or half of it after a provider context overflow. Messages
+            # stay, so a tool_calls group is never split.
+            elide_budget = max(1, budget_threshold(tier_cfg) // 2) if overflow_retried else None
+            fitted, fit = fit_inflight_turn(messages, tier_cfg, counter, budget=elide_budget)
+            if fit is not None:
+                messages[:] = fitted
+                await session.event_log.add(
+                    ContextCompacted(
+                        session_id=session.id,
+                        dropped_messages=fit.elided_results,
+                        kept_messages=fit.kept_messages,
+                        tokens_before=fit.tokens_before,
+                        tokens_after=fit.tokens_after,
+                        seq=1,  # overwritten by the event log
+                    )
+                )
+                log.info(
+                    "in-turn context elided",
+                    extra={
+                        "extra_fields": {
+                            "session_id": session.id,
+                            "tier": tier,
+                            "dropped_messages": fit.elided_results,
+                            "tokens_before": fit.tokens_before,
+                            "tokens_after": fit.tokens_after,
+                            "counter_method": fit.counter_method,
+                        }
+                    },
+                )
+
             dropped_images = cap_prompt_images(messages, config.computer_use.max_prompt_images)
             if dropped_images:
                 log.info(
@@ -1271,7 +1297,14 @@ async def agent_loop(
                 session.delegate_runtime.iterations = _iterations
 
             # 2d. Call provider (streaming)
-            collected_content, tool_calls, failed, error_msg, error_code = await _stream_and_parse(
+            (
+                collected_content,
+                tool_calls,
+                failed,
+                error_msg,
+                error_code,
+                raw_detail,
+            ) = await _stream_and_parse(
                 provider,
                 model_slug,
                 messages,
@@ -1289,8 +1322,32 @@ async def agent_loop(
                 if session.cancel_requested:
                     break
 
+                if error_code == "context_overflow":
+                    # The raw body is for the log. Assistant text is built
+                    # below from the configured window, after one tighter retry.
+                    raw = redact_secrets(raw_detail or error_msg)[:2000]
+                    log.warning(
+                        "provider context overflow",
+                        extra={
+                            "extra_fields": {
+                                "session_id": session.id,
+                                "model": model_slug,
+                                "context_window": tier_cfg.context_window,
+                                "error": raw,
+                            }
+                        },
+                    )
+                    if not overflow_retried:
+                        overflow_retried = True
+                        continue
+
                 router.record_failure()
-                failure_msg = f"I encountered an error: {error_msg}"
+                failure_msg = transcript_failure_text(
+                    error_code,
+                    error_msg,
+                    model=model_slug,
+                    context_window=tier_cfg.context_window,
+                )
                 messages.append(
                     ChatMessage(
                         role="assistant",
@@ -1384,6 +1441,17 @@ async def agent_loop(
 
                 # 2g. Execute tool calls via dispatcher (if available)
                 if tool_dispatcher is not None:
+                    # The historical 50_000 ceiling is the large-window cap.
+                    # A smaller tier cannot absorb several results at that
+                    # size, so the cap scales with the tokens still free
+                    # in this prompt (TD-4839). Set on the dispatcher: the
+                    # delegate child copies the attribute when it is built.
+                    prefix_tokens, _ = estimate_tokens(messages, counter)
+                    tool_dispatcher.max_result_chars = tool_result_char_cap(
+                        tier_cfg.context_window,
+                        tier_cfg.max_output_tokens,
+                        prefix_tokens,
+                    )
                     # Yield control so the event loop can process cancellation
                     # between the ToolCall event emission and the dispatch.
                     # 0.05s is enough for the test to detect the event and cancel.

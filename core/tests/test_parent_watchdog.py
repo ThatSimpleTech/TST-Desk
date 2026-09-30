@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import pytest
 
 from tstd.coworker import save_coworker
 from tstd.daemon import Daemon, _parent_alive
+from tstd.ws import create_port_file_path
 
 
 class TestParentAlive:
@@ -28,18 +30,65 @@ class TestParentAlive:
         assert not _parent_alive(proc.pid)
 
 
+async def _wait_for_port_file(path: Path) -> None:
+    """Same readiness poll as the shutdown-message tests."""
+    try:
+        async with asyncio.timeout(5):
+            while True:
+                if await asyncio.to_thread(path.is_file):
+                    return
+                await asyncio.sleep(0.01)
+    except TimeoutError as exc:
+        raise AssertionError(f"port file never appeared at {path}") from exc
+
+
 class TestWatchdog:
     async def test_daemon_shuts_down_when_parent_dies(self) -> None:
-        sleeper = await asyncio.create_subprocess_exec(
-            sys.executable, "-c", "import time; time.sleep(60)"
-        )
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                daemon = Daemon(data_dir=Path(tmp), parent_pid=sleeper.pid)
-                # Aggressive poll so the test stays fast.
-                daemon._parent_poll_interval = 0.05
-                runner = asyncio.create_task(daemon.run())
-                await asyncio.sleep(0.2)  # let the watchdog start
+        await _parent_death(coworker=False, foreign_pid=None)
+
+    async def test_parent_death_leaves_a_foreign_port_file(self) -> None:
+        await _parent_death(coworker=False, foreign_pid=os.getpid() + 1)
+
+    async def test_watchdog_inactive_without_parent_pid(self) -> None:
+        # No --parent-pid: the daemon must not die on its own.
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            daemon = Daemon(data_dir=data_dir)
+            runner = asyncio.create_task(daemon.run())
+            port = create_port_file_path(data_dir)
+            await _wait_for_port_file(port)
+            assert not daemon._shutdown_event.is_set()
+            daemon._shutdown_event.set()
+            await asyncio.wait_for(runner, timeout=5.0)
+            assert not port.exists()
+
+    async def test_coworker_on_still_trips_watchdog_when_parent_dies(self) -> None:
+        # Close keeps the host alive, so --parent-pid stays armed even
+        # when coworker.yaml is on. Fake parent death must still shut
+        # tstd down (TD-2903: no orphan after SIGKILL of the host).
+        await _parent_death(coworker=True, foreign_pid=None)
+
+
+async def _parent_death(*, coworker: bool, foreign_pid: int | None) -> None:
+    sleeper = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", "import time; time.sleep(60)"
+    )
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            if coworker:
+                save_coworker(tmp, True)
+            daemon = Daemon(data_dir=data_dir, parent_pid=sleeper.pid)
+            # Aggressive poll so the test stays fast.
+            daemon._parent_poll_interval = 0.05
+            runner = asyncio.create_task(daemon.run())
+            port = create_port_file_path(data_dir)
+            try:
+                await _wait_for_port_file(port)
+                if foreign_pid is not None:
+                    body = json.loads(port.read_text(encoding="utf-8"))
+                    body["pid"] = foreign_pid
+                    port.write_text(json.dumps(body), encoding="utf-8")
                 try:
                     sleeper.kill()
                 except PermissionError:
@@ -53,45 +102,17 @@ class TestWatchdog:
                 await asyncio.wait_for(sleeper.wait(), timeout=5)
                 await asyncio.wait_for(runner, timeout=5.0)
                 assert daemon._shutdown_event.is_set()
-        finally:
-            if sleeper.returncode is None:
-                with contextlib.suppress(PermissionError):
-                    sleeper.kill()
-
-    async def test_watchdog_inactive_without_parent_pid(self) -> None:
-        # No --parent-pid: the daemon must not die on its own.
-        with tempfile.TemporaryDirectory() as tmp:
-            daemon = Daemon(data_dir=Path(tmp))
-            runner = asyncio.create_task(daemon.run())
-            await asyncio.sleep(0.2)
-            assert not daemon._shutdown_event.is_set()
-            assert runner is not None
-            # Now shut it down via the event so the test doesn't leak a task.
-            daemon._shutdown_event.set()
-            await asyncio.wait_for(runner, timeout=5.0)
-
-    async def test_coworker_on_still_trips_watchdog_when_parent_dies(self) -> None:
-        # Close keeps the host alive, so --parent-pid stays armed even
-        # when coworker.yaml is on. Fake parent death must still shut
-        # tstd down (TD-2903: no orphan after SIGKILL of the host).
-        sleeper = await asyncio.create_subprocess_exec(
-            sys.executable, "-c", "import time; time.sleep(60)"
-        )
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                save_coworker(tmp, True)
-                daemon = Daemon(data_dir=Path(tmp), parent_pid=sleeper.pid)
-                daemon._parent_poll_interval = 0.05
-                runner = asyncio.create_task(daemon.run())
-                await asyncio.sleep(0.2)
-                try:
-                    sleeper.kill()
-                except PermissionError:
-                    pytest.skip("the OS vetoed the test's own kill (TD-605)")
-                await asyncio.wait_for(sleeper.wait(), timeout=5)
-                await asyncio.wait_for(runner, timeout=5.0)
-                assert daemon._shutdown_event.is_set()
-        finally:
-            if sleeper.returncode is None:
-                with contextlib.suppress(PermissionError):
-                    sleeper.kill()
+                if foreign_pid is None:
+                    assert not port.exists()
+                else:
+                    kept = json.loads(port.read_text(encoding="utf-8"))
+                    assert kept["pid"] == foreign_pid
+            finally:
+                if not runner.done():
+                    daemon._shutdown_event.set()
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(runner, timeout=5)
+    finally:
+        if sleeper.returncode is None:
+            with contextlib.suppress(PermissionError):
+                sleeper.kill()

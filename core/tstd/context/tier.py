@@ -156,6 +156,7 @@ def assemble_for_tier_sync(
     config: TierContextConfig | None = None,
     approved_imports: frozenset[Path] = frozenset(),
     denied_imports: frozenset[Path] = frozenset(),
+    claude_global_fallback: bool = False,
 ) -> TierContext:
     """Synchronous variant of :func:`assemble_for_tier` (tests, CLI).
 
@@ -180,8 +181,12 @@ def assemble_for_tier_sync(
     """
     cfg = config if config is not None else default_config_for_tier(tier)
 
-    # Build the assembler (with a test seam for home_dir).
-    resolver = SteeringFileResolver(home_dir=home_dir) if home_dir is not None else None
+    # home_dir=None is the real home. The flag still has to ride along:
+    # a default resolver would drop an enabled Claude global fallback.
+    resolver = SteeringFileResolver(
+        home_dir=home_dir,
+        claude_global_fallback=claude_global_fallback,
+    )
     assembler = ContextAssembler(resolver=resolver)
 
     # Assemble steering, with a source filter for the validator.
@@ -242,6 +247,7 @@ async def assemble_for_tier(
     config: TierContextConfig | None = None,
     approved_imports: frozenset[Path] = frozenset(),
     denied_imports: frozenset[Path] = frozenset(),
+    claude_global_fallback: bool = False,
 ) -> TierContext:
     """Assemble the per-tier context for *tier*.
 
@@ -264,4 +270,5 @@ async def assemble_for_tier(
         config=config,
         approved_imports=approved_imports,
         denied_imports=denied_imports,
+        claude_global_fallback=claude_global_fallback,
     )
