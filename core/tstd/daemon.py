@@ -345,6 +345,7 @@ from .remote_attach import (
     save_remote_attach,
 )
 from .router import TIER_NAMES, TierRouter
+from .scheduler.chain import require_chain
 from .scheduler.chat_source import SessionScheduleSource, session_schedule_source
 from .scheduler.edit import apply_job_edit
 from .scheduler.history import JobRun, list_runs
@@ -684,6 +685,7 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         retries=job.retries,
         retry_delay=job.retry_delay,
         attempt=job.attempt,
+        then=job.then,
         last_run=job.last_run,
         last_status=job.last_status,
         last_summary=job.last_summary,
@@ -706,6 +708,7 @@ def _job_runs_event(job_id: str, runs: list[JobRun]) -> str:
                 session_id=run.session_id,
                 attempt=run.attempt,
                 attempts=run.attempts,
+                note=run.note,
             )
             for run in runs
         ],
@@ -3688,6 +3691,7 @@ class Daemon:
                 run_turn=self._scheduled_run_turn,
                 deliver=self._scheduler_deliver,
                 on_parked=self._arm_park_watch,
+                in_flight=self._in_flight,
             )
         except Exception:
             log.exception(
@@ -3708,26 +3712,29 @@ class Daemon:
         """Persist a draft or an update. Does not run the job."""
         existing = get_job(self.data_dir, msg.id) if msg.id else None
         if existing is not None:
-            return save_job(
-                self.data_dir,
-                apply_job_edit(
-                    existing,
-                    workspace=msg.workspace,
-                    instruction=msg.instruction,
-                    cadence=msg.cadence,
-                    next_run=msg.next_run,
-                    deliver_to=msg.deliver_to,
-                    paused=msg.paused,
-                    timezone=msg.timezone,
-                    known_workspaces=self._known_workspaces(),
-                    preset=msg.preset,
-                    engine=msg.engine,
-                    known_presets=self.config.presets,
-                    grace=msg.grace,
-                    retries=msg.retries,
-                    retry_delay=msg.retry_delay,
-                ),
+            job = apply_job_edit(
+                existing,
+                workspace=msg.workspace,
+                instruction=msg.instruction,
+                cadence=msg.cadence,
+                next_run=msg.next_run,
+                deliver_to=msg.deliver_to,
+                paused=msg.paused,
+                timezone=msg.timezone,
+                known_workspaces=self._known_workspaces(),
+                preset=msg.preset,
+                engine=msg.engine,
+                known_presets=self.config.presets,
+                grace=msg.grace,
+                retries=msg.retries,
+                retry_delay=msg.retry_delay,
+                then=msg.then,
             )
+            # Pause omits ``then``. Checking a link it did not send would
+            # refuse to pause a row whose file was hand-edited into a loop.
+            if msg.then is not None:
+                require_chain(list_jobs(self.data_dir), job)
+            return save_job(self.data_dir, job)
         job = validate_draft(
             JobDraft(
                 id=msg.id,
@@ -3743,6 +3750,7 @@ class Daemon:
                 grace=msg.grace,
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
+                then=msg.then,
             )
         )
         # Create only: an existing job whose folder moved must stay editable
@@ -3751,6 +3759,7 @@ class Daemon:
         # so a bad preset is the sentence the user sees.
         require_known_preset(job.preset, self.config.presets)
         require_folder(job.workspace)
+        require_chain(list_jobs(self.data_dir), job)
         return save_job(self.data_dir, job)
 
     def _known_workspaces(self) -> set[str]:

@@ -122,6 +122,7 @@ describe("pin on the wire", () => {
 				engine: "",
 				grace: "",
 				retries: "",
+				then: "",
 			},
 			"UTC",
 		);
@@ -140,6 +141,7 @@ describe("pin on the wire", () => {
 				engine: "grok",
 				grace: "",
 				retries: "",
+				then: "",
 			},
 			"UTC",
 		);

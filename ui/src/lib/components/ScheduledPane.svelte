@@ -39,6 +39,7 @@
 	import ScheduledGraceField from './ScheduledGraceField.svelte';
 	import ScheduledHistory from './ScheduledHistory.svelte';
 	import ScheduledRetriesField from './ScheduledRetriesField.svelte';
+	import ScheduledThenField from './ScheduledThenField.svelte';
 	import ScheduledPinFields from './ScheduledPinFields.svelte';
 	import ScheduledTemplateFields from './ScheduledTemplateFields.svelte';
 
@@ -89,7 +90,7 @@
 							class:card-waiting={jobWaiting(row)}
 						>
 							<span class="card-name">{row.instruction}</span>
-							<span class="card-meta">{jobMeta(row)}</span>
+							<span class="card-meta">{jobMeta(row, undefined, scheduled.items)}</span>
 							<span class="card-path">{row.workspace}</span>
 							<span
 								class="card-run"
@@ -210,6 +211,7 @@
 		</label>
 		<ScheduledGraceField />
 		<ScheduledRetriesField />
+		<ScheduledThenField />
 		<ScheduledPinFields />
 		{#if scheduled.error !== null}
 			<p class="error" role="alert">{scheduled.error}</p>

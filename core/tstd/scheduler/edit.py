@@ -1,6 +1,6 @@
 """Merge a ``save_job`` onto an existing scheduled job.
 
-TD-3810, TD-3812, TD-3813, TD-3814, TD-3815.
+TD-3810, TD-3812, TD-3813, TD-3814, TD-3815, TD-3817.
 
 Create validates a whole draft. An edit is a patch: fields the client left
 out stay as stored, because Pause is a save that only flips ``paused`` and
@@ -53,6 +53,7 @@ def apply_job_edit(
     grace: str | int | None,
     retries: int | None,
     retry_delay: str | int | None,
+    then: str | None = None,
 ) -> Job:
     """Return the job to persist. Raises ``JobValidationError``; does not write."""
     new_workspace = _workspace_for_edit(existing, workspace, known_workspaces)
@@ -64,6 +65,8 @@ def apply_job_edit(
     new_grace = _merge_grace(grace, existing.grace)
     new_retries: int | str | None = existing.retries if retries is None else retries
     new_delay = _merge_delay(retry_delay, existing.retry_delay)
+    # Pause omits ``then``. None keeps the link; "" clears it (TD-3817).
+    new_then = _merge_cleared(then, existing.then)
     # The stored slot was computed from the old cadence and zone. When either
     # changes and the client did not send a replacement time, drop it so the
     # runner re-arms instead of firing the stale instant.
@@ -118,6 +121,7 @@ def apply_job_edit(
             retry_delay=cast(int | None, new_delay),
             attempt=attempt,
             resume_at=resume_at,
+            then=new_then,
             # The receipt belongs to the run, not to this edit.
             last_run=existing.last_run,
             last_status=existing.last_status,

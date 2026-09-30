@@ -1316,7 +1316,8 @@
     "engine": "native",
     "grace": "2 hours",
     "retries": 2,
-    "retry_delay": "10 minutes"
+    "retry_delay": "10 minutes",
+    "then": "job-2"
   },
   "delete_job": {
     "type": "delete_job",
@@ -1378,6 +1379,7 @@
         "retries": 2,
         "retry_delay": 600,
         "attempt": 0,
+        "then": "job-2",
         "last_run": "2026-08-21T15:00:00+00:00",
         "last_status": "ok",
         "last_summary": "3 threads need a reply",
@@ -1399,7 +1401,8 @@
         "summary": "3 threads need a reply",
         "session_id": "sess-1",
         "attempt": 2,
-        "attempts": 3
+        "attempts": 3,
+        "note": null
       },
       {
         "started_at": "2026-08-21T22:45:00+00:00",
@@ -1409,7 +1412,8 @@
         "summary": "Skipped the 7:45 AM run \u2014 10 h late",
         "session_id": null,
         "attempt": null,
-        "attempts": null
+        "attempts": null,
+        "note": null
       },
       {
         "started_at": "2026-08-21T23:00:00+00:00",
@@ -1419,7 +1423,19 @@
         "summary": "Run `echo hi`",
         "session_id": "sess-park",
         "attempt": null,
-        "attempts": null
+        "attempts": null,
+        "note": null
+      },
+      {
+        "started_at": "2026-08-21T23:30:00+00:00",
+        "scheduled_for": null,
+        "trigger": "chained",
+        "status": "ok",
+        "summary": "draft ready",
+        "session_id": "sess-chain",
+        "attempt": null,
+        "attempts": null,
+        "note": "after job-1"
       }
     ]
   },

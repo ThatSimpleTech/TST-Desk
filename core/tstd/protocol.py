@@ -1057,12 +1057,18 @@ class SaveJob(ClientMessage):
     # when retries is at least 1. Omitted on create with retries set is
     # that default. Ignored when retries is 0.
     retry_delay: str | int | None = None
+    # Another job's id to start once after this one ends ok (TD-3817).
+    # On an edit, None keeps the stored id and "" clears it. Omitted on
+    # create means no follow-on. A cycle is refused at save. The child's
+    # own schedule is not moved when it is started this way.
+    then: str | None = None
 
 
 class DeleteJob(ClientMessage):
     """Remove a scheduled job by id (TD-3805).
 
-    Also removes that job's run history (TD-3811). Acked with ``job_list``.
+    Also removes that job's run history (TD-3811) and clears ``then`` on
+    any job that pointed at this id (TD-3817). Acked with ``job_list``.
     Unknown id is a typed error. Does not run anything.
     """
 
@@ -2385,6 +2391,9 @@ class JobEntry(BaseModel):
     retries: int = 0
     retry_delay: int | None = None
     attempt: int = 0
+    # Another job's id, started once after this one ends ok (TD-3817).
+    # None means this job stands alone. The child's schedule is separate.
+    then: str | None = None
     last_run: str | None = None
     # ``waiting`` is a run parked on an approval card (TD-3815). It is
     # not a failure and it is not retried. The same receipt becomes
@@ -2421,7 +2430,9 @@ class JobRunEntry(BaseModel):
 
     started_at: str
     scheduled_for: str | None = None
-    trigger: Literal["schedule", "manual"]
+    # ``chained`` is a fire started because another job ended ok (TD-3817).
+    # ``scheduled_for`` is null, the same as Run now: this was not a slot.
+    trigger: Literal["schedule", "manual", "chained"]
     status: Literal["ok", "failed", "missed", "waiting"]
     summary: str | None = None
     session_id: str | None = None
@@ -2429,6 +2440,9 @@ class JobRunEntry(BaseModel):
     # (TD-3814). Null on a job that does not retry, and on Run now.
     attempt: int | None = None
     attempts: int | None = None
+    # Names the job whose ok run started a chained fire (TD-3817). Null
+    # on a scheduled slot and on Run now.
+    note: str | None = None
 
 
 class JobRuns(DaemonEvent):

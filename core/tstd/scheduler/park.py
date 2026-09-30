@@ -26,7 +26,7 @@ from ..logging import get_logger
 from ..protocol import ApprovalRequest, ToolResult, TurnComplete
 from ..session import Session
 from .grace import _clock
-from .history import append_run, close_waiting_run
+from .history import RunTrigger, append_run, close_waiting_run
 from .models import DeliverTo, Job, normalize_next_run, normalize_summary
 from .retry import finish_slot
 from .schedule import as_utc, parse_next_run, record_run
@@ -119,9 +119,10 @@ async def park_run(
     session_id: str,
     summary: str,
     advance: bool,
-    trigger: Literal["schedule", "manual"],
+    trigger: RunTrigger,
     scheduled_for: str | None,
     deliver: SlotDeliver,
+    note: str | None = None,
 ) -> str:
     """Persist ``waiting``, append the history line, deliver once.
 
@@ -159,6 +160,7 @@ async def park_run(
         status="waiting",
         summary=text,
         session_id=session_id,
+        note=note,
     )
     log.info(
         "scheduled run parked for approval",
@@ -350,7 +352,7 @@ async def _settle(
     status: _Outcome,
     summary: str,
     deliver: SlotDeliver,
-    trigger: Literal["schedule", "manual"],
+    trigger: RunTrigger,
     scheduled_for: str | None,
 ) -> bool:
     """History first, then the job, then one delivery if we still own it.
@@ -384,7 +386,7 @@ def _close_and_save(
     started_at: str,
     status: _Outcome,
     summary: str,
-    trigger: Literal["schedule", "manual"],
+    trigger: RunTrigger,
     scheduled_for: str | None,
 ) -> _Disk:
     closed = close_waiting_run(

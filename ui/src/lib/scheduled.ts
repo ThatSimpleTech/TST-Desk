@@ -1,4 +1,4 @@
-// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814).
+// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814, TD-3817).
 //
 // Draft fields the pane sends on `save_job` — not a natural-language
 // parse. Pause is the same verb with `paused` flipped. Edit is the same
@@ -24,6 +24,8 @@ export interface JobDraftFields {
 	grace: string;
 	/** `""` is no retries. `"1"` `"2"` `"3"` are extra tries after the first. */
 	retries: string;
+	/** Another job's id, or `""` for no follow-on (TD-3817). */
+	then: string;
 }
 
 /** If late. `seconds` is what the daemon stores; the wire value is the phrase. */
@@ -95,6 +97,7 @@ export function emptyDraft(workspace: string | null): JobDraftFields {
 		engine: "",
 		grace: "",
 		retries: "",
+		then: "",
 	};
 }
 
@@ -189,8 +192,8 @@ export function viewerTimeZone(): string | undefined {
 	}
 }
 
-/** Row meta: when it next fires, the cadence in words if that adds anything, and where it delivers. */
-export function jobMeta(job: JobEntry, timeZone?: string): string {
+/** Row meta: when it next fires, the cadence in words if that adds anything, where it delivers, and the job that runs after a success. */
+export function jobMeta(job: JobEntry, timeZone?: string, jobs?: readonly JobEntry[]): string {
 	const when = jobWhen(job, timeZone);
 	const words = job.cadence ? humanizeCadence(job.cadence, job.timezone) : null;
 	// With no next run, jobWhen already fell back to the raw cadence; show
@@ -200,7 +203,15 @@ export function jobMeta(job: JobEntry, timeZone?: string): string {
 	parts.push(job.deliver_to);
 	if (job.preset) parts.push(job.preset);
 	if (job.engine) parts.push(job.engine);
+	// The row stores an id. The instruction is on the list the pane already has.
+	if (job.then) parts.push(`→ ${childLabel(job.then, jobs)}`);
 	return parts.join(" · ");
+}
+
+function childLabel(id: string, jobs: readonly JobEntry[] | undefined): string {
+	const child = jobs?.find((row) => row.id === id);
+	const instruction = child?.instruction.trim() ?? "";
+	return instruction !== "" ? instruction : id;
 }
 
 export function jobWhen(job: JobEntry, timeZone?: string): string {
@@ -261,6 +272,11 @@ export function jobRunLabel(run: JobRunEntry, timeZone?: string): string {
 	const outcome = outcomeWord(run.status);
 	const attempt = attemptSuffix(run);
 	if (run.trigger === "manual") return `${outcome} ${when} · manual${attempt}`;
+	// Not the slot, and not Run now. The note names the job that started this one.
+	if (run.trigger === "chained") {
+		const note = run.note?.trim() ? ` · ${run.note.trim()}` : "";
+		return `${outcome} ${when} · chained${note}${attempt}`;
+	}
 	return `${outcome} ${when}${attempt}`;
 }
 
@@ -308,6 +324,9 @@ export function saveFromDraft(
 		payload.retries = retries;
 		payload.retry_delay = RETRY_DELAY;
 	}
+	// Blank is no follow-on, the same as omitting the field on create.
+	const follow = draft.then.trim();
+	if (follow !== "") payload.then = follow;
 	return payload;
 }
 
@@ -375,6 +394,7 @@ export function draftFromJob(job: JobEntry): JobDraftFields {
 		engine: job.engine ?? "",
 		grace: graceDraftValue(job.grace),
 		retries: retriesDraftValue(job.retries),
+		then: job.then ?? "",
 	};
 }
 
@@ -435,5 +455,8 @@ export function saveFromEdit(
 		payload.retries = retries;
 		payload.retry_delay = RETRY_DELAY;
 	}
+	// Always sent. `""` clears a follow-on; omitting it would keep the
+	// stored one, which is Pause, not Save.
+	payload.then = draft.then.trim();
 	return payload;
 }
