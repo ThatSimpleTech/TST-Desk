@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -19,6 +19,7 @@ from ..config import ModelConfig
 from ..logging import get_logger
 from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
+from .calendar import begin_tick, consider_calendar, note_unreadable, skip_for_calendar
 from .history import append_run
 from .late import skip_if_late
 from .models import DeliverTo, Job
@@ -183,6 +184,9 @@ async def run_due_jobs(
     is left due: the tick must not wait, or one manual turn would hold
     every other job (and shutdown) until it returned.
     """
+    # One read of each calendar for this tick, even if the file changes
+    # while the jobs run. The next tick looks at the mtime again.
+    begin_tick()
     now_utc = as_utc(now)
     jobs = await asyncio.to_thread(list_jobs, data_dir)
     for job in jobs:
@@ -322,7 +326,17 @@ async def _run_one(
     # Run now never enters this function, so asking for a run cannot skip.
     if job.attempt == 0 and await skip_if_late(data_dir, job, now, deliver):
         return
+    # The calendar is the regular slot only. A retry is that slot's later
+    # try, and Run now never enters this function. A blocked day is not an
+    # ok end, so the follow-on does not start. An unreadable file is not
+    # a block: the turn still runs, and the receipt says so once.
+    verdict = await consider_calendar(job)
+    if job.attempt == 0 and verdict == "skip":
+        await skip_for_calendar(data_dir, job, now)
+        return
     result = await _turn_result(job, run_turn)
+    if verdict == "unreadable":
+        result = replace(result, summary=note_unreadable(result.summary))
     if result.waiting and result.session_id:
         # Not settle_scheduled: a waiting card is not a failure, so it
         # must not arm a retry, and the slot still advances once.

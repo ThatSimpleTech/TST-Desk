@@ -649,6 +649,14 @@ export interface SaveJob extends ClientMessage {
    *  On an edit, omitted keeps the stored id and `""` clears it. Omitted
    *  on create means no follow-on. A cycle is refused at save. */
   then?: string | null;
+  /** Absolute path of a local .ics file (TD-3818). On an edit, omitted
+   *  keeps the stored path and `""` clears it. Omitted on create means
+   *  no calendar. The file must exist when the path is set or changed. */
+  skip_calendar?: string | null;
+  /** Case-insensitive substring, or several joined by `|`. Blank matches
+   *  every event. On an edit, omitted keeps the stored list and `""`
+   *  clears it. Omitted on create means every event. */
+  skip_match?: string | null;
 }
 
 /** Remove a scheduled job by id (TD-3805). Also clears `then` on jobs that pointed at it (TD-3817). */
@@ -1550,11 +1558,16 @@ export interface JobEntry {
   attempt?: number | null;
   /** Another job's id, started once after this one ends ok (TD-3817). Null means none. */
   then?: string | null;
+  /** Local .ics that can block a regular slot (TD-3818). Null means none. */
+  skip_calendar?: string | null;
+  /** Substrings joined by `|`. Null or blank matches every event. */
+  skip_match?: string | null;
   /** The last fire's receipt (TD-3807). Null until the job has run once.
    *  `missed` is a slot skipped for lateness, not a failed turn (TD-3813).
-   *  `waiting` is a run parked on an approval card (TD-3815). */
+   *  `waiting` is a run parked on an approval card (TD-3815).
+   *  `skipped` is a regular slot blocked by a local calendar (TD-3818). */
   last_run: string | null;
-  last_status: "ok" | "failed" | "missed" | "waiting" | null;
+  last_status: "ok" | "failed" | "missed" | "waiting" | "skipped" | null;
   last_summary: string | null;
   last_session_id: string | null;
   /** True while a turn for this job is in flight (TD-3809). Not stored. */
@@ -1574,8 +1587,10 @@ export interface JobRunEntry {
   /** `chained` is a fire started because another job ended ok (TD-3817). */
   trigger: "schedule" | "manual" | "chained";
   /** `missed` is a slot skipped for lateness (TD-3813).
-   *  `waiting` is a run parked on an approval card (TD-3815). */
-  status: "ok" | "failed" | "missed" | "waiting";
+   *  `waiting` is a run parked on an approval card (TD-3815).
+   *  `skipped` is a regular slot blocked by a local calendar (TD-3818).
+   *  Its summary is `calendar`, not the event title. */
+  status: "ok" | "failed" | "missed" | "waiting" | "skipped";
   summary: string | null;
   session_id: string | null;
   /** 1-based try when the job retries (TD-3814). Null on Run now and when retries is 0. */

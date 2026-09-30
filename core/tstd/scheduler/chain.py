@@ -3,9 +3,10 @@
 ``then`` is another job's id. A scheduled run that ends ok, including one
 that succeeded on a later try, and Run now, start that job once. The
 child's cadence and next run stay where they are: this fire is not its
-slot. A failure, a skipped slot, and a run parked on an approval card do
-not start it. Approving that card later does not start it either: the
-park settles on its own path, and only a runner success walks ``then``.
+slot. A failure, a skipped slot, a day blocked on a local calendar, and a
+run parked on an approval card do not start it. Approving that card
+later does not start it either: the park settles on its own path, and
+only a runner success walks ``then``.
 A chain may be longer than one link. The save refuses a cycle. A run
 stops after five follow-ons so a long chain cannot hold the tick open.
 

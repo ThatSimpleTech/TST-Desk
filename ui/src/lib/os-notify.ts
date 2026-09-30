@@ -93,6 +93,8 @@ export function scheduledNotices(
 		// show the latest try. That is not delivery: the slot notifies
 		// once, when it succeeds or the tries run out (attempt back to 0).
 		if ((job.attempt ?? 0) > 0) continue;
+		// A calendar skip is expected. The pane shows it; the window does not.
+		if (job.last_status === "skipped") continue;
 		const seen = before.get(job.id);
 		if (seen === undefined || seen === runStamp(job)) continue;
 		notices.push({

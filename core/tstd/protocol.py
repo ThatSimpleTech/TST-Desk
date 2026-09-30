@@ -1062,6 +1062,14 @@ class SaveJob(ClientMessage):
     # create means no follow-on. A cycle is refused at save. The child's
     # own schedule is not moved when it is started this way.
     then: str | None = None
+    # Absolute path of a local .ics file (TD-3818). On an edit, None keeps
+    # the stored path and "" clears it. Omitted on create means no calendar.
+    # The file must exist when the path is set or changed. Pause omits it.
+    skip_calendar: str | None = None
+    # Case-insensitive substring, or several joined by "|". Blank matches
+    # every event. On an edit, None keeps the stored list and "" clears it
+    # back to every event. Omitted on create means every event.
+    skip_match: str | None = None
 
 
 class DeleteJob(ClientMessage):
@@ -2394,11 +2402,17 @@ class JobEntry(BaseModel):
     # Another job's id, started once after this one ends ok (TD-3817).
     # None means this job stands alone. The child's schedule is separate.
     then: str | None = None
+    # Local .ics that can block a regular slot, and the match list
+    # (TD-3818). None means the slot is not blocked by a calendar.
+    skip_calendar: str | None = None
+    skip_match: str | None = None
     last_run: str | None = None
     # ``waiting`` is a run parked on an approval card (TD-3815). It is
     # not a failure and it is not retried. The same receipt becomes
     # ``ok`` or ``failed`` when that session finishes.
-    last_status: Literal["ok", "failed", "missed", "waiting"] | None = None
+    # ``skipped`` is a regular slot blocked by a local calendar (TD-3818).
+    # It is not ``missed`` (that one was late) and nothing is delivered.
+    last_status: Literal["ok", "failed", "missed", "waiting", "skipped"] | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
     # Not persisted. It mirrors the daemon's in-flight set, so a restart
@@ -2425,7 +2439,8 @@ class JobRunEntry(BaseModel):
     ``JobEntry.last_summary``. ``missed`` is a slot skipped for lateness,
     not a turn that failed (TD-3813). ``waiting`` is a run parked on an
     approval card; the same line is updated when that turn finishes
-    (TD-3815).
+    (TD-3815). ``skipped`` is a regular slot blocked by a local calendar
+    (TD-3818). Its summary is ``calendar``, not the event title.
     """
 
     started_at: str
@@ -2433,7 +2448,7 @@ class JobRunEntry(BaseModel):
     # ``chained`` is a fire started because another job ended ok (TD-3817).
     # ``scheduled_for`` is null, the same as Run now: this was not a slot.
     trigger: Literal["schedule", "manual", "chained"]
-    status: Literal["ok", "failed", "missed", "waiting"]
+    status: Literal["ok", "failed", "missed", "waiting", "skipped"]
     summary: str | None = None
     session_id: str | None = None
     # 1-based try and the budget (retries + 1) when the job retries

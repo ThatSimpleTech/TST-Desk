@@ -926,6 +926,9 @@ FIXTURES = {
         retry_delay="10 minutes",
         # TD-3817: a real follow-on id, not null.
         then="job-2",
+        # TD-3818: a real local calendar, not nulls.
+        skip_calendar="/home/user/holidays.ics",
+        skip_match="holiday|PTO|OOO",
     ),
     "delete_job": DeleteJob(job_id="job-1"),
     "parse_job": ParseJob(text="every 2 hours in /ws/proj summarize the inbox deliver to slack"),
@@ -962,6 +965,8 @@ FIXTURES = {
                 retry_delay=600,
                 attempt=0,
                 then="job-2",
+                skip_calendar="/home/user/holidays.ics",
+                skip_match="holiday|PTO|OOO",
                 # TD-3807: a real receipt, not nulls — an all-null sample
                 # would not prove the TypeScript side accepts the values.
                 last_run="2026-08-21T15:00:00+00:00",
@@ -1009,6 +1014,14 @@ FIXTURES = {
                 summary="draft ready",
                 session_id="sess-chain",
                 note="after job-1",
+            ),
+            JobRunEntry(
+                started_at="2026-12-25T15:00:00+00:00",
+                scheduled_for="2026-12-25T13:00:00+00:00",
+                trigger="schedule",
+                status="skipped",
+                summary="calendar",
+                session_id=None,
             ),
         ],
     ),

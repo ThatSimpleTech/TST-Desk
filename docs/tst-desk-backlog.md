@@ -6392,6 +6392,43 @@ files, vitest 1445, svelte-check 719 files 0 errors 0 warnings.
 
 ---
 
+### TD-3818 — Skip a scheduled run on days blocked in a local calendar file
+**Size:** 3 · **Depends on:** TD-3813
+
+**Acceptance criteria:**
+- [x] A job may set optional `skip_calendar`, an absolute path to a
+      local `.ics` under the same path rules as a workspace. The file
+      must exist when the path is set or changed. Optional `skip_match`
+      is a case-insensitive substring, or several joined by `|`. Blank
+      matches every event
+- [x] On a regular slot, when the slot's local date in the job's time
+      zone falls inside a matching event (all-day by date; timed when
+      the slot instant falls within it), the runner does not start a
+      session. It advances the slot, records `skipped` (distinct from
+      `missed`), delivers nothing, and the reason is `calendar`
+- [x] Run now, a chained fire, and a retry do not skip for the
+      calendar. An unreadable file still runs, and the receipt notes
+      `calendar unreadable` once. The file is read at most once per tick
+- [x] The reader covers `VEVENT` with `DTSTART` / `DTEND` (`DATE` and
+      `DATE-TIME`, `TZID` and UTC), `SUMMARY`, and `RRULE`
+      `DAILY` / `WEEKLY` / `YEARLY` with `COUNT`, `UNTIL`, and `BYDAY`.
+      Nothing is fetched
+- [x] The pane has Skip days in calendar, a native `.ics` picker, and
+      Only events matching. The row and the history show
+      "Skipped (calendar)"
+
+Done (2026-09-29): a weekday job can name a local calendar and skip
+the slot when a matching event covers that local day. The receipt is
+the word `calendar`. The event title is not stored or delivered, and
+the window stays quiet. Run now, a retry, and a follow-on still run.
+A file that cannot be read does not cancel the job; the receipt notes
+that once. The parser is internal. Class B entry in DECISIONS.md.
+
+Suite: 4073 passed / 8 skipped, ruff + `mypy --strict` clean over 181
+files, vitest 1452, svelte-check 721 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone

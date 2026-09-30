@@ -50,6 +50,7 @@
 							class="when"
 							class:failed={run.status === 'failed'}
 							class:missed={run.status === 'missed'}
+							class:skipped={run.status === 'skipped'}
 							class:waiting={run.status === 'waiting'}>{jobRunLabel(run)}</span
 						>
 						{#if run.summary}
@@ -140,6 +141,11 @@
 	/* An approval card is not a failed turn either. */
 	.waiting {
 		color: var(--color-accent);
+	}
+
+	/* A calendar block is expected. It is not a late slot. */
+	.skipped {
+		color: var(--color-ink-secondary);
 	}
 
 	/* Same clamp as the row receipt: one long turn must not push the list away. */
