@@ -12,7 +12,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 # A child that survives SIGKILL must not pin the daemon. The shell tool
 # already bounds its post-kill wait at five seconds; git and sandbox
@@ -232,7 +233,7 @@ def _child_is_dead(proc: asyncio.subprocess.Process, transport: Any) -> bool:
     """
     if _transport_returncode(transport) is not None or proc.returncode is not None:
         return True
-    if _exited_unreaped(_pid(proc, transport)):
+    if _exited_unreaped(_pid(proc, transport), waitid=_platform_waitid()):
         return True
     popen = getattr(transport, "_proc", None)
     if popen is None:
@@ -266,32 +267,66 @@ def _pid(proc: asyncio.subprocess.Process, transport: Any) -> int:
     return pid if isinstance(pid, int) else 0
 
 
-def _exited_unreaped(pid: int) -> bool:
+def _platform_waitid() -> Callable[..., object] | None:
+    """``os.waitid`` where this interpreter has it, else None.
+
+    CPython 3.11 on Linux provides it. The macOS builds of 3.11 and 3.12
+    do not. Tests replace this so both branches run without asking the
+    kernel about a pid.
+    """
+    candidate: object = getattr(os, "waitid", None)
+    if not callable(candidate):
+        return None
+    return cast(Callable[..., object], candidate)
+
+
+def _exited_unreaped(pid: int, *, waitid: Callable[..., object] | None) -> bool:
     """True when *pid* has exited and this process has not collected it.
 
     ``waitid`` with ``WNOWAIT`` does not reap, so ``ThreadedChildWatcher``
-    can still ``waitpid`` the same child. CPython 3.11 on Linux has
-    ``os.waitid``. The macOS builds of 3.11 and 3.12 do not; those fall
-    through to the transport returncode and ``Popen.poll``.
+    can still ``waitpid`` the same child. Pass None on builds with no
+    ``os.waitid`` (macOS 3.11 and 3.12). The caller then uses the
+    transport returncode and ``Popen.poll``.
+
+    ``ChildProcessError`` is ECHILD: the pid is not our child, or its
+    status was already collected. The caller falls through on that too.
+    Mapping it to an unreaped exit closed live leaders on Linux, where
+    ``waitid`` of a pid this process did not spawn raises (TD-4851).
     """
-    waitid = getattr(os, "waitid", None)
+    if waitid is None or pid <= 0:
+        return False
+    flags = _waitid_flags(waitid)
+    if flags is None:
+        return False
+    idtype, options = flags
+    try:
+        info = waitid(idtype, pid, options)
+    except ChildProcessError:
+        return False
+    except OSError:
+        return False
+    return info is not None
+
+
+def _waitid_flags(waitid: Callable[..., object]) -> tuple[int, int] | None:
+    """``(P_PID, WEXITED|WNOHANG|WNOWAIT)`` for one non-reaping poll.
+
+    An injected fake still has to run on a build with no wait flags
+    (Windows). Stand-in zeros are only for that fake. The real
+    ``os.waitid`` is absent there, so it is not called with them.
+    """
     p_pid = getattr(os, "P_PID", None)
     wexited = getattr(os, "WEXITED", None)
     wnohang = getattr(os, "WNOHANG", None)
     wnowait = getattr(os, "WNOWAIT", None)
     if (
-        not callable(waitid)
-        or p_pid is None
-        or wexited is None
-        or wnohang is None
-        or wnowait is None
-        or pid <= 0
+        isinstance(p_pid, int)
+        and isinstance(wexited, int)
+        and isinstance(wnohang, int)
+        and isinstance(wnowait, int)
     ):
-        return False
-    try:
-        info = waitid(p_pid, pid, wexited | wnohang | wnowait)
-    except ChildProcessError:
-        return True
-    except OSError:
-        return False
-    return info is not None
+        return p_pid, wexited | wnohang | wnowait
+    platform: object = getattr(os, "waitid", None)
+    if waitid is platform:
+        return None
+    return 0, 0
