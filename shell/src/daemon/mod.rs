@@ -10,7 +10,8 @@
 //! - orphan watchdog: `core/tstd/daemon.py` (`--parent-pid`)
 //! - coworker flag: `{data_dir}/coworker.yaml` (TD-2902)
 //!
-//! Quit sends `shutdown` and best-effort-kills from `RunEvent::Exit`.
+//! Quit sends `shutdown`, drops that socket, waits out the grace, then
+//! best-effort-kills from `RunEvent::Exit` if the daemon is still up.
 //! Close hides the window and leaves the host (and `tstd`) running when
 //! coworker mode is on. Spawn always passes `--parent-pid`: close does
 //! not kill the host, so the watchdog stays quiet; SIGKILL of the host
@@ -54,6 +55,8 @@ const PORT_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the host waits after sending `shutdown` before sending SIGKILL.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// The daemon's shutdown message. One spelling, shared with the test.
+const SHUTDOWN_FRAME: &str = r#"{"type":"shutdown"}"#;
 
 type ClientWs =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -258,7 +261,7 @@ async fn run_supervision(h: DaemonHandle) {
 
         emit(&h, "starting", None, 0);
 
-        let (mut watch, mut ws, port_file, pid) = match acquire_daemon(&h.data_dir).await {
+        let (mut watch, ws, port_file, pid) = match acquire_daemon(&h.data_dir).await {
             Ok(acquired) => acquired,
             Err(e) => {
                 log::error!("{e}");
@@ -280,6 +283,9 @@ async fn run_supervision(h: DaemonHandle) {
             port: port_file.port,
         });
         emit(&h, "connected", Some(port_file.port), 0);
+        // Taken only on the shutdown arm. The crash arm drops it, which
+        // is the same as `ws` falling out of scope at the end of the loop.
+        let mut socket = Some(ws);
 
         // Supervise: the listener exits, or a shutdown request from the host.
         let shutdown_req = h.shutdown_notify.clone();
@@ -301,7 +307,8 @@ async fn run_supervision(h: DaemonHandle) {
             _ = &mut shutdown_wait => {
                 h.set_status(DaemonStatus::Stopping);
                 emit(&h, "stopping", None, 0);
-                graceful_shutdown(&h, &mut ws, &mut watch, pid).await;
+                let held = socket.take().expect("supervision socket");
+                graceful_shutdown(&h, held, &mut watch, pid).await;
                 h.set_conn(None);
                 h.child_pid.store(-1, Ordering::Relaxed);
                 h.set_status(DaemonStatus::Stopped);
@@ -596,19 +603,30 @@ pub async fn connect_handshake(port: u16, token: &str) -> Result<ClientWs, Strin
     }
 }
 
-/// Send `shutdown` over WS, wait a short grace, then kill the process group.
+/// Send `shutdown` and drop the socket.
+///
+/// `close().await` waits for the daemon's close ack. The daemon is
+/// tearing the listener down, and that wait used to outlast
+/// [`SHUTDOWN_GRACE`]. Flush the frame and drop; the grace timer is
+/// the bound, and SIGKILL still follows it.
+async fn ask_daemon_to_shutdown(mut ws: ClientWs) {
+    let _ = ws.send(Message::Text(SHUTDOWN_FRAME.into())).await;
+    let _ = ws.flush().await;
+}
+
+/// Send `shutdown`, drop the socket, wait out the grace, then kill.
+///
+/// Holding the socket open made the daemon's close handshake wait
+/// longer than [`SHUTDOWN_GRACE`], so the port file was still on disk
+/// when the fallback kill landed.
 async fn graceful_shutdown(
     h: &DaemonHandle,
-    ws: &mut ClientWs,
+    ws: ClientWs,
     watch: &mut ChildWatch,
     spawned_pid: u32,
 ) {
     h.set_status(DaemonStatus::Stopping);
-    let _ = ws
-        .send(Message::Text(r#"{"type":"shutdown"}"#.into()))
-        .await;
-    // No graceful close handshake: the daemon tears down its own connection
-    // DURING shutdown, so waiting for a close ack can race it into a hang.
+    ask_daemon_to_shutdown(ws).await;
 
     match watch {
         ChildWatch::Spawned { child } => {
@@ -880,5 +898,36 @@ mod tests {
         assert!(canonical.join("config.yaml").is_file());
         assert!(legacy.join("port.json").is_file());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn shutdown_ask_releases_the_socket_without_a_close_ack() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut peer = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let first = peer.next().await;
+            let second = tokio::time::timeout(Duration::from_secs(2), peer.next()).await;
+            (first, second)
+        });
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), ask_daemon_to_shutdown(ws))
+            .await
+            .expect("shutdown ask waited for a close ack");
+
+        let (first, second) = server.await.unwrap();
+        match first {
+            Some(Ok(Message::Text(text))) => assert_eq!(text.as_str(), SHUTDOWN_FRAME),
+            other => panic!("expected the shutdown frame, got {other:?}"),
+        }
+        match second {
+            Ok(None | Some(Ok(Message::Close(_))) | Some(Err(_))) => {}
+            Ok(Some(Ok(other))) => panic!("host stayed up and sent {other:?}"),
+            Err(_) => panic!("host kept the socket open for 2s"),
+        }
     }
 }
