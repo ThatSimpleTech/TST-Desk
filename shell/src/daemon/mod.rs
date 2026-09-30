@@ -12,9 +12,12 @@
 //!
 //! Quit sends `shutdown`, holds that socket until the daemon closes it or
 //! the grace expires, and waits until the process-group leader is reaped.
-//! SIGKILL is only that grace fallback. `RunEvent::Exit` does not kill a
-//! leader that has already exited, and on a normal quit it waits out the
-//! same grace instead of killing early.
+//! SIGKILL is only that grace fallback. An in-app quit's `RunEvent::Exit`
+//! does not kill a leader that has already exited, and waits out the
+//! remaining grace instead of killing early. A system quit (Dock,
+//! AppleScript, logout) has no `ExitRequested`; that path sends the same
+//! frame on the main thread inside a 3 second budget shared with the
+//! embeddings sidecar.
 //! Close hides the window and leaves the host (and `tstd`) running when
 //! coworker mode is on. Spawn always passes `--parent-pid`: close does
 //! not kill the host, so the watchdog stays quiet; SIGKILL of the host
@@ -28,7 +31,10 @@ pub mod close_hint;
 pub mod coworker;
 mod daemon_pid;
 pub mod embeddings;
+#[cfg(all(test, unix))]
+pub(crate) mod fake_sidecar;
 mod shutdown;
+mod system_exit;
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -48,6 +54,7 @@ pub use coworker::{
     LifecycleEvent,
 };
 pub use daemon_pid::{kill_spawned_group, pid_is_alive, port_file_belongs_to_spawn};
+pub(crate) use system_exit::on_host_exit;
 
 /// Protocol version advertised in the `hello` handshake.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -110,11 +117,15 @@ pub struct DaemonHandle {
     status_rx: watch::Receiver<DaemonStatus>,
     shutdown: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
-    /// Set on the first [`Self::request_shutdown`]. `RunEvent::Exit` uses
-    /// it so a quit does not SIGKILL before [`SHUTDOWN_GRACE`].
+    /// Set on the first [`Self::request_shutdown`]. Distinguishes an
+    /// in-app quit (wait out [`SHUTDOWN_GRACE`]) from a system quit.
     shutdown_started: Arc<Mutex<Option<Instant>>>,
+    /// System quit owns the shutdown write. The supervisor must not
+    /// send a second frame on the same socket.
+    system_exit: Arc<AtomicBool>,
     conn: Arc<Mutex<Option<ConnInfo>>>,
     child_pid: Arc<AtomicI32>,
+    exit_socket: Arc<system_exit::ExitSocketSlot>,
     finished: Arc<AtomicBool>,
     done: Arc<Notify>,
 }
@@ -143,6 +154,19 @@ impl DaemonHandle {
                 *started = Some(Instant::now());
             }
         }
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.shutdown_notify.notify_waiters();
+        self.set_status(DaemonStatus::Stopping);
+    }
+
+    /// System quit, which never called [`Self::request_shutdown`].
+    ///
+    /// Does not set [`Self::shutdown_started`]: that timestamp is how
+    /// `RunEvent::Exit` tells an in-app quit from this path. Wakes the
+    /// supervisor so it waits for the process instead of writing the
+    /// socket the main thread is using.
+    pub(crate) fn claim_system_exit(&self) {
+        self.system_exit.store(true, Ordering::SeqCst);
         self.shutdown.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         self.set_status(DaemonStatus::Stopping);
@@ -195,8 +219,10 @@ pub fn start(app: AppHandle, data_dir: PathBuf) -> DaemonHandle {
         shutdown: Arc::new(AtomicBool::new(false)),
         shutdown_notify: Arc::new(Notify::new()),
         shutdown_started: Arc::new(Mutex::new(None)),
+        system_exit: Arc::new(AtomicBool::new(false)),
         conn: Arc::new(Mutex::new(None)),
         child_pid: Arc::new(AtomicI32::new(-1)),
+        exit_socket: Arc::new(system_exit::ExitSocketSlot::new()),
         finished: Arc::new(AtomicBool::new(false)),
         done: Arc::new(Notify::new()),
     };
@@ -303,6 +329,10 @@ async fn run_supervision(h: DaemonHandle) {
             }
         };
         h.child_pid.store(pid as i32, Ordering::Relaxed);
+        // Dup of the live socket. System quit writes the shutdown frame
+        // on it from the main thread; this task keeps `ws`.
+        h.exit_socket
+            .store(system_exit::duplicate_client_socket(&ws));
 
         // Success: the daemon is up and we are connected.
         restart = 0;
@@ -329,6 +359,7 @@ async fn run_supervision(h: DaemonHandle) {
         tokio::select! {
             () = watch.wait_exit(pid) => {
                 log::info!("daemon exited under supervision (pid {pid})");
+                h.exit_socket.store(None);
                 if h.shutdown.load(Ordering::SeqCst) {
                     // Quit won the race with a clean leader exit. A group
                     // kill here reaps a grandchild that is still flushing.
@@ -342,6 +373,18 @@ async fn run_supervision(h: DaemonHandle) {
                 }
             }
             _ = &mut shutdown_wait => {
+                if h.system_exit.load(Ordering::SeqCst) {
+                    // The main thread is writing the shutdown frame on the
+                    // duplicated fd. A second write here interleaves masks.
+                    match &mut watch {
+                        ChildWatch::Spawned { child } => {
+                            let _ = child.wait().await;
+                        }
+                        ChildWatch::Attached => wait_pid_gone(pid).await,
+                    }
+                    finish_stopped(&h);
+                    return;
+                }
                 h.set_status(DaemonStatus::Stopping);
                 emit(&h, "stopping", None, 0);
                 let held = socket.take().expect("supervision socket");
@@ -358,6 +401,7 @@ async fn run_supervision(h: DaemonHandle) {
         }
     }
 
+    h.exit_socket.store(None);
     h.set_conn(None);
     h.child_pid.store(-1, Ordering::Relaxed);
     h.set_status(DaemonStatus::Stopped);
@@ -365,6 +409,7 @@ async fn run_supervision(h: DaemonHandle) {
 }
 
 fn finish_stopped(h: &DaemonHandle) {
+    h.exit_socket.store(None);
     h.set_conn(None);
     h.child_pid.store(-1, Ordering::Relaxed);
     h.set_status(DaemonStatus::Stopped);
@@ -681,10 +726,11 @@ async fn reap_tree(child: &mut tokio::process::Child, spawned_pid: u32) {
     let _ = child.wait().await;
 }
 
-/// `RunEvent::Exit` backstop. A normal quit records [`DaemonHandle::request_shutdown`]
-/// first; killing before that grace is what skipped the daemon's shutdown
-/// when macOS delivered Exit while the leader was still closing. The
-/// daemon's parent-pid watchdog covers a host that dies without this call.
+/// In-app quit's `RunEvent::Exit` backstop. [`DaemonHandle::request_shutdown`]
+/// has already run. Killing before that grace is what skipped the daemon's
+/// shutdown when macOS delivered Exit while the leader was still closing.
+/// A system quit does not call this; see [`system_exit`]. The daemon's
+/// parent-pid watchdog covers a host that dies without either path.
 pub fn best_effort_kill(handle: &DaemonHandle) {
     let Some(pid) = handle.child_pid() else {
         return;

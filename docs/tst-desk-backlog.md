@@ -7466,6 +7466,46 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 
 ---
 
+### TD-4850 — A system quit also shuts the daemon down gracefully
+**Size:** 2 · **Depends on:** TD-4849
+
+A Dock, AppleScript, logout, restart, or shutdown quit is
+`RunEvent::Exit` with no `ExitRequested`. tao 0.35 on macOS implements
+`applicationWillTerminate` only, so `request_quit` never ran and Exit
+SIGKILLed the sidecar. A live `osascript` quit of the TD-4849 build
+(2026-09-29 21:05) left `port.json` and wrote no
+`shutdown requested via websocket`. TD-4849 fixed the in-app quit path.
+
+**Acceptance criteria:**
+- [x] `RunEvent::Exit` with no graceful quit already in progress sends
+      `{"type":"shutdown"}` on the existing connection, or SIGTERM to the
+      process-group leader when that socket is unavailable, then waits
+      for the leader to be reaped. SIGKILL happens only when the bound
+      expires. The wait is synchronous on the caller. The daemon and the
+      embeddings sidecar share one bound of at most 3 seconds
+- [x] When a graceful quit has already reaped the leader, `RunEvent::Exit`
+      does not signal it again
+- [x] An embeddings sidecar that is already gone does not add to the
+      bound. One that is still running is signalled inside that same bound
+- [x] A slow cooperative fake sidecar is not SIGKILLed, and its marker
+      is removed. An unresponsive fake is SIGKILLed when the bound
+      expires. The wait for both children stays inside one bound
+
+Done (2026-09-29): system quit writes the shutdown frame on a duplicated
+fd of the live connection, from the main thread, with `thread::sleep`
+rather than the tokio runtime. SIGTERM is the fallback when that fd is
+missing or the write fails. SIGKILL is only the 3 second fallback. The
+embeddings sidecar shares that deadline and is skipped when it is
+already gone. An in-app quit still waits out the 5 second grace, and a
+leader that has already been reaped is left alone. Class B entry in
+DECISIONS.md.
+
+Suite: 3957 passed / 8 skipped, ruff + `mypy --strict` clean over 172
+files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
+`cargo test` 77 passed, `cargo clippy --all-targets -- -D warnings` clean.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -7501,8 +7541,8 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 21 | 80 |
-| **Total planned** | **48** | **334** | **1053** |
+| Later | E47, E49 | 22 | 82 |
+| **Total planned** | **48** | **335** | **1055** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

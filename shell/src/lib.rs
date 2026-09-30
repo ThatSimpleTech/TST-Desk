@@ -392,8 +392,8 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
             match event {
-                // Cmd+Q / dock Quit / menu Quit TST Desk — shutdown + reap.
-                // Close is hide, not this.
+                // Menu Quit / Cmd+Q. Dock, AppleScript, and logout do not
+                // raise this on macOS; they arrive as Exit. Close is hide.
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     if !is_quitting() {
                         api.prevent_exit();
@@ -401,11 +401,14 @@ pub fn run() {
                     }
                 }
                 tauri::RunEvent::Exit => {
-                    // No-op once the leader has been reaped. A normal quit
-                    // waits out the remaining grace here instead of SIGKILL:
-                    // macOS can deliver Exit while the daemon is still closing.
-                    daemon::best_effort_kill(&app_handle.state::<DaemonHandle>());
-                    daemon::embeddings::best_effort_kill(&app_handle.state::<EmbeddingsHandle>());
+                    // In-app quit has already asked the supervisor to stop.
+                    // Dock, AppleScript, logout, and restart are Exit with
+                    // no ExitRequested (tao has no applicationShouldTerminate).
+                    // That path shuts down on this thread. See daemon::system_exit.
+                    daemon::on_host_exit(
+                        &app_handle.state::<DaemonHandle>(),
+                        &app_handle.state::<EmbeddingsHandle>(),
+                    );
                 }
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => show_any_window(app_handle),
