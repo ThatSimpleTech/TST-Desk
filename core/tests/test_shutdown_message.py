@@ -11,10 +11,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 
+import pytest
 from websockets.asyncio.client import connect
 
 from tstd.daemon import Daemon
@@ -65,10 +67,23 @@ async def _shutdown_via_message(data_dir: Path, *, foreign_pid: int | None) -> P
 
 
 class TestShutdownMessage:
-    async def test_shutdown_message_stops_daemon_cleanly(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+    async def test_shutdown_message_stops_daemon_cleanly(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with (
+            caplog.at_level(logging.INFO, logger="tstd.daemon"),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
             port_file = await _shutdown_via_message(Path(tmp), foreign_pid=None)
             assert not port_file.exists()
+        requested = [
+            record
+            for record in caplog.records
+            if record.name == "tstd.daemon"
+            and record.levelno == logging.INFO
+            and record.getMessage() == "shutdown requested via websocket"
+        ]
+        assert requested
 
     async def test_shutdown_message_leaves_a_foreign_port_file(self) -> None:
         foreign = os.getpid() + 1
