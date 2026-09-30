@@ -21,7 +21,7 @@ from tstd.autonomy.sandbox import inspect_runtime
 from tstd.autonomy.supervisor import _git as supervisor_git
 from tstd.keychain import LinuxSecretService
 from tstd.memory_commit import MemoryCommitter
-from tstd.proc_lifecycle import finish_subprocess, reap_subprocess
+from tstd.proc_lifecycle import finish_subprocess, reap_subprocess, retain_subprocess_transport
 
 
 class _DeadTransport:
@@ -140,6 +140,74 @@ class TestFinishSubprocess:
         proc._transport = transport  # type: ignore[attr-defined]
         await reap_subprocess(proc, timeout=0, kill=False)  # type: ignore[arg-type]
         assert transport.closed is False
+
+    async def test_reap_closes_a_dead_transport_whose_loop_is_gone(self) -> None:
+        """``_call_connection_lost`` clears ``_loop`` and leaves ``_closed`` false."""
+        proc = _Hold()
+        proc.returncode = -9
+        transport = _DeadTransport()
+        transport._loop = None
+        proc._transport = transport  # type: ignore[attr-defined]
+        await reap_subprocess(proc, timeout=0, kill=False)  # type: ignore[arg-type]
+        assert transport.closed
+        assert proc.killed is False
+
+
+class _Parked:
+    """A live child whose ``wait`` does not return until ``release``."""
+
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.pid = 4242
+        self._gate = asyncio.Event()
+        self._transport = _DeadTransport()
+        self._transport.returncode = None
+
+    async def wait(self) -> int:
+        await self._gate.wait()
+        return -9
+
+
+def _closer() -> asyncio.Task[None]:
+    closers = [task for task in asyncio.all_tasks() if task.get_name() == "shell-transport-close"]
+    assert len(closers) == 1
+    return closers[0]
+
+
+class TestRetainTransport:
+    async def test_dead_transport_closes_without_a_watcher(self) -> None:
+        proc = _Hold()
+        proc.returncode = -9
+        transport = _DeadTransport()
+        transport._loop = None
+        proc._transport = transport  # type: ignore[attr-defined]
+        retain_subprocess_transport(proc)  # type: ignore[arg-type]
+        assert transport.closed
+        assert not any(task.get_name() == "shell-transport-close" for task in asyncio.all_tasks())
+
+    async def test_live_leader_is_not_closed(self) -> None:
+        proc = _Parked()
+        retain_subprocess_transport(proc)  # type: ignore[arg-type]
+        await asyncio.sleep(0)
+        assert proc._transport.closed is False
+        closer = _closer()
+        closer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closer
+        assert proc._transport.closed is False
+
+    async def test_cancelled_watcher_closes_after_the_child_exits(self) -> None:
+        """Loop shutdown cancels the watcher. A returncode of -9 still closes."""
+        proc = _Parked()
+        retain_subprocess_transport(proc)  # type: ignore[arg-type]
+        await asyncio.sleep(0)
+        proc.returncode = -9
+        proc._transport.returncode = -9
+        closer = _closer()
+        closer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closer
+        assert proc._transport.closed
 
 
 async def _checkpoint(workspace: Path) -> None:
