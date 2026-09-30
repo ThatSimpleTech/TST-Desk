@@ -11407,3 +11407,39 @@ the TD-4844 shutdown phases.
 10 second handshake TD-4848 removed). SIGKILL as soon as the socket
 ends. Group-kill after a clean leader exit. Changing the embeddings
 supervisor, which still kills on shutdown with no websocket grace.
+
+## TD-4850 — System quit shuts the daemon down on the main thread (Class B)
+
+2026-09-29.
+
+**Decision:** This revises the TD-4849 clause that SIGKILLs on
+`RunEvent::Exit` when shutdown was not requested. tao 0.35 implements
+`applicationWillTerminate` and not `applicationShouldTerminate`, so
+Dock, AppleScript, logout, restart, and shutdown are `RunEvent::Exit`
+with no `ExitRequested`. That callback runs on the main thread. The
+host duplicates the fd of the connection the supervisor already holds
+and writes a masked `{"type":"shutdown"}` frame with `write` and
+`thread::sleep`. It does not `block_on` the tokio runtime. The fd
+stays open until the leader is reaped or killed. If the dup is missing
+or the write fails, the process group is SIGTERMed (TD-4842). SIGKILL
+is only when the leader is still running at the deadline.
+
+**Decision:** The deadline is 3 seconds and it is shared. The daemon
+is asked first. The embeddings sidecar has no shutdown frame. If its
+pid is still running it is SIGTERMed and then uses whatever time is
+left; if it is already gone it is not waited on. An in-app quit still
+uses the 5 second grace and the 10 second outer bound.
+`shutdown_started` stays the mark of that path. System quit sets a
+separate flag so the supervisor does not write a second frame, and it
+does not notify the embeddings supervisor, whose shutdown arm SIGKILLs
+immediately.
+
+**Rationale:** A live `osascript` quit of the TD-4849 build
+(2026-09-29 21:05) left `port.json` and wrote no shutdown line. The
+processes were gone in about a second because Exit SIGKILLed. Logout
+cannot sit on a 5 second grace for each child.
+
+**Rejected:** Opening a second websocket. `block_on` of the supervisor
+task. Calling `request_shutdown` and relying on the runtime to poll.
+Giving the daemon and the embeddings sidecar 3 seconds each. SIGKILL
+as soon as Exit arrives when no in-app quit is in progress.

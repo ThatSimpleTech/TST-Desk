@@ -45,7 +45,9 @@ pub(crate) enum ExitAction {
 }
 
 /// `elapsed` is how long ago [`super::DaemonHandle::request_shutdown`] ran.
-/// `None` means this exit is not a normal quit.
+/// `None` means this was not an in-app quit. This helper then says kill.
+/// A system quit does not use that arm; it asks the process to stop
+/// first. See `system_exit`.
 pub(crate) fn exit_action(alive: bool, elapsed: Option<Duration>, grace: Duration) -> ExitAction {
     if !alive {
         return ExitAction::Noop;
@@ -102,18 +104,24 @@ pub(crate) async fn shutdown_attached(ws: ClientWs, leader_pid: u32, grace: Dura
 }
 
 /// Block the `RunEvent::Exit` caller until the leader is gone or `deadline`.
-/// SIGKILL only at the deadline. A zombie counts as gone: `kill -0` still
-/// succeeds, and a group kill would hit a grandchild that is still flushing.
-pub(crate) fn block_until_leader_gone(pid: u32, deadline: Instant) {
+/// SIGKILL only at the deadline. Returns whether this call SIGKILLed.
+/// A zombie counts as gone: `kill -0` still succeeds, and a group kill
+/// would hit a grandchild that is still flushing.
+///
+/// `thread::sleep` is deliberate. This runs on the main thread from
+/// `applicationWillTerminate`, which must not `block_on` the runtime.
+pub(crate) fn block_until_leader_gone(pid: u32, deadline: Instant) -> bool {
     while Instant::now() < deadline {
         if !leader_still_running(pid) {
-            return;
+            return false;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
     if leader_still_running(pid) {
         kill_spawned_group(pid);
+        return true;
     }
+    false
 }
 
 async fn wait_spawned(
@@ -169,7 +177,7 @@ async fn wait_pid(leader_pid: u32, deadline: Instant) -> Reap {
     }
 }
 
-fn leader_still_running(pid: u32) -> bool {
+pub(crate) fn leader_still_running(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
