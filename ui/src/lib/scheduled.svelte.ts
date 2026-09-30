@@ -5,7 +5,9 @@
 // The tick still owns the schedule. Edit loads a row into the draft; the
 // daemon keeps the run receipt because the save carries the existing id.
 // History is a separate log: opening a disclosure asks for `list_job_runs`,
-// and an open one is asked again when that job's `last_run` moves.
+// and an open one is asked again when that job's `last_run` moves, or
+// when the receipt's status or summary changes under the same stamp
+// (a parked approval settling does not move `last_run`).
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import type { DaemonEventUnion, JobEntry, JobRunEntry } from "./protocol";
@@ -29,6 +31,8 @@ export const scheduled = $state({
 	historyOpen: {} as Record<string, boolean>,
 	/** `last_run` the open disclosure was last fetched against. Null is "never run". */
 	historySeen: {} as Record<string, string | null>,
+	/** Status and summary fetched against, so a parked run settling refetches. */
+	historyMark: {} as Record<string, string | null>,
 	/** Runs by job id, newest first. Absent until `job_runs` arrives. */
 	runs: {} as Record<string, JobRunEntry[]>,
 });
@@ -68,6 +72,7 @@ export function resetScheduled(): void {
 	scheduled.editingId = null;
 	scheduled.historyOpen = {};
 	scheduled.historySeen = {};
+	scheduled.historyMark = {};
 	scheduled.runs = {};
 }
 
@@ -192,6 +197,10 @@ export function toggleJobHistory(jobId: string): void {
 		...scheduled.historySeen,
 		[jobId]: job?.last_run ?? null,
 	};
+	scheduled.historyMark = {
+		...scheduled.historyMark,
+		[jobId]: job === undefined ? null : receiptMark(job),
+	};
 	sendToDaemon({ type: "list_job_runs", job_id: jobId });
 }
 
@@ -264,11 +273,17 @@ function reduce(event: DaemonEventUnion): void {
 	}
 }
 
+/** Status plus summary. `last_run` does not move when a parked approval settles. */
+function receiptMark(job: JobEntry): string {
+	return `${job.last_status ?? ""}\u0000${job.last_summary ?? ""}`;
+}
+
 /** Keep open disclosures, and ask again when that job's receipt moved. */
 function syncOpenHistory(jobs: JobEntry[]): void {
 	const live = new Set(jobs.map((job) => job.id));
 	const open: Record<string, boolean> = {};
 	const seen: Record<string, string | null> = {};
+	const marks: Record<string, string | null> = {};
 	const runs: Record<string, JobRunEntry[]> = {};
 	for (const [id, rows] of Object.entries(scheduled.runs)) {
 		if (live.has(id)) runs[id] = rows;
@@ -277,13 +292,18 @@ function syncOpenHistory(jobs: JobEntry[]): void {
 		if (scheduled.historyOpen[job.id] !== true) continue;
 		open[job.id] = true;
 		const current = job.last_run ?? null;
+		const mark = receiptMark(job);
 		const had = Object.prototype.hasOwnProperty.call(scheduled.historySeen, job.id);
-		if (had && (scheduled.historySeen[job.id] ?? null) !== current) {
+		const runMoved = (scheduled.historySeen[job.id] ?? null) !== current;
+		const markMoved = (scheduled.historyMark[job.id] ?? null) !== mark;
+		if (had && (runMoved || markMoved)) {
 			sendToDaemon({ type: "list_job_runs", job_id: job.id });
 		}
 		seen[job.id] = current;
+		marks[job.id] = mark;
 	}
 	scheduled.historyOpen = open;
 	scheduled.historySeen = seen;
+	scheduled.historyMark = marks;
 	scheduled.runs = runs;
 }

@@ -35,7 +35,7 @@ from .retry import (
 )
 
 DeliverTo = Literal["window", "slack", "ntfy"]
-RunStatus = Literal["ok", "failed", "missed"]
+RunStatus = Literal["ok", "failed", "missed", "waiting"]
 
 #: A run summary is a receipt, not a transcript. Anything longer is cut so
 #: jobs.json cannot grow without bound on a job that fires every minute.
@@ -165,6 +165,12 @@ class Job(BaseModel):
     last_status: RunStatus | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
+    # The session parked on an approval card, and the history line that
+    # records it (TD-3815). Disk only: a restart has to find the run
+    # after the process that was waiting is gone. The pane uses
+    # ``last_status`` and ``last_session_id``; these two are not on the wire.
+    parked_session_id: str | None = None
+    parked_started_at: str | None = None
 
     @field_validator("id")
     @classmethod
@@ -257,6 +263,21 @@ class Job(BaseModel):
     @field_validator("resume_at")
     @classmethod
     def _resume_at_iso(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return normalize_next_run(value)
+
+    @field_validator("parked_session_id")
+    @classmethod
+    def _parked_session(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+    @field_validator("parked_started_at")
+    @classmethod
+    def _parked_started_iso(cls, value: str | None) -> str | None:
         if value is None or not value.strip():
             return None
         return normalize_next_run(value)

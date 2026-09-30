@@ -9,7 +9,9 @@ host can tell a live daemon from a defunct one.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -31,33 +33,46 @@ async def _wait_for_port_file(path: Path, seconds: float = 10.0) -> dict:
         raise RuntimeError(f"port file never appeared at {path}") from e
 
 
+async def _shutdown_via_message(data_dir: Path, *, foreign_pid: int | None) -> Path:
+    daemon = Daemon(data_dir=data_dir)
+    runner = asyncio.create_task(daemon.run())
+    port_file = create_port_file_path(data_dir)
+    try:
+        info = await _wait_for_port_file(port_file)
+        if foreign_pid is not None:
+            info["pid"] = foreign_pid
+            port_file.write_text(json.dumps(info), encoding="utf-8")
+        async with connect(f"ws://127.0.0.1:{info['port']}") as ws:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "hello",
+                        "token": info["token"],
+                        "version": PROTOCOL_VERSION,
+                    }
+                )
+            )
+            ack = json.loads(await ws.recv())
+            assert ack["type"] == "hello_ack"
+            await ws.send(json.dumps({"type": "shutdown"}))
+        await asyncio.wait_for(runner, timeout=5.0)
+    finally:
+        if not runner.done():
+            daemon._shutdown_event.set()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(runner, timeout=5)
+    return port_file
+
+
 class TestShutdownMessage:
     async def test_shutdown_message_stops_daemon_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            data_dir = Path(tmp)
-            daemon = Daemon(data_dir=data_dir)
-            runner = asyncio.create_task(daemon.run())
-
-            port_file = create_port_file_path(data_dir)
-            info = await _wait_for_port_file(port_file)
-
-            async with connect(f"ws://127.0.0.1:{info['port']}") as ws:
-                await ws.send(
-                    json.dumps(
-                        {
-                            "type": "hello",
-                            "token": info["token"],
-                            "version": PROTOCOL_VERSION,
-                        }
-                    )
-                )
-                ack = json.loads(await ws.recv())
-                assert ack["type"] == "hello_ack"
-
-                await ws.send(json.dumps({"type": "shutdown"}))
-
-            # The daemon should stop cleanly of its own accord.
-            await asyncio.wait_for(runner, timeout=5.0)
-
-            # Clean shutdown removes the port file.
+            port_file = await _shutdown_via_message(Path(tmp), foreign_pid=None)
             assert not port_file.exists()
+
+    async def test_shutdown_message_leaves_a_foreign_port_file(self) -> None:
+        foreign = os.getpid() + 1
+        with tempfile.TemporaryDirectory() as tmp:
+            port_file = await _shutdown_via_message(Path(tmp), foreign_pid=foreign)
+            kept = json.loads(port_file.read_text(encoding="utf-8"))
+            assert kept["pid"] == foreign
