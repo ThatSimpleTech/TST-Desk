@@ -11078,6 +11078,146 @@ a schedule change, which would drop the retry a Pause is supposed to
 keep. Refusing to spend the one-shot because both schedule fields are
 empty.
 
+## TD-3815 — Park a run that is waiting for approval (Class B)
+
+**Decision:** `waiting` is a receipt status on `RunStatus`,
+`JobEntry.last_status`, and `JobRunEntry.status`. It is not a failure
+and not transient. The runner returns as soon as the session state is
+`awaiting_approval`. It does not wait out `_TURN_TIMEOUT_SECS` and it
+does not call `settle_scheduled`, so a retry cannot open another
+session onto the same card. No new protocol event and no version bump.
+The link that finds the run after a restart, `parked_session_id` and
+`parked_started_at`, stays on the job file. The pane uses `last_status`
+and `last_session_id`.
+
+**Rationale:** The timeout string was already classified as transient.
+Sitting on the card until that fired, then retrying, opened more
+sessions that blocked on the same approval. A status the retry table
+does not treat as failure stops that without a second code path in
+`settle_scheduled`.
+
+**Alternative rejected:** A new daemon event for the park. Keeping the
+runner inside the 120s wait and teaching the retry table to ignore
+that one timeout. Putting the park link on the wire.
+
+**Decision:** Parking a scheduled fire advances with `finish_slot`: a
+one-shot is spent, a recurring job takes its next slot, and `attempt`
+and `resume_at` clear, even when `retries` is greater than 0. Run now
+parks without moving `next_run`, `paused`, `attempt`, or `resume_at`.
+The history line stores no attempt numbers. The receipt while waiting
+is the tool summary, not "attempt N of M".
+
+**Rationale:** The slot is over once it is waiting on a person. Another
+try would be a second session on the same card. Run now was never a
+slot, so it still must not move the schedule.
+
+**Alternative rejected:** Arming a retry at `retry_delay` until the
+card is answered. Prefixing the waiting receipt with the attempt, which
+would make a park look like a failed try.
+
+**Decision:** The channel hears one sentence at park time. A scheduled
+slot uses the same 12-hour clock as a skipped slot (`7:45 AM job is
+waiting for your approval: …`) in the job's timezone, UTC when it has
+none. Run now has no slot, so the sentence is `This job is waiting for
+your approval: …`. The summary is the latest approval card, passed
+through `normalize_summary`. Empty after redaction becomes `a tool
+call`. The log records the length, not the text.
+
+**Rationale:** The user has to know which job stopped and what it
+wants. The clock matches the skip line they already read. The receipt
+stays the tool summary so the row and the history can replace it with
+the final outcome later.
+
+**Alternative rejected:** Delivering the whole sentence as
+`last_summary`. Logging the command.
+
+**Decision:** One task named `park:<job id>` follows the session until
+`turn_complete` or the user cancels it, then rewrites that same history
+line. The receipt is updated only when `parked_session_id` is still
+this session. The final line is delivered only when that history line
+was still `waiting`. An approval that then succeeds is `ok` with the
+turn's text. A tool result of `approval_denied` is `failed` with that
+result's output (`Denied by user` when it is blank), not whatever the
+model says afterwards. Cancel wins over both. Cancelling the watch
+task does not settle: that is process shutdown, and the row stays
+parked for the next start. A newer park (Run now is allowed while one
+is parked) keeps its link; the old line still settles, and it does not
+deliver.
+
+**Rationale:** The history the user already opened is the run. A second
+line would show the park and the outcome as two fires. Run now has to
+be able to replace the link or a pause-and-run would be stuck behind
+the old card. The old watcher must not erase that replacement.
+
+**Alternative rejected:** Refusing Run now while a park is open.
+Appending a second history line for the outcome. Settling when the
+watch task itself is cancelled, which would mark every clean shutdown
+as unanswered before revive could see it — except that session cancel
+still runs first (below).
+
+**Decision:** Revive runs once, at the start of the scheduler loop,
+before any fire, including when shutdown is already set. Every job
+with `parked_session_id` set is closed. If its history line is still
+`waiting`, the line becomes `failed` / `approval never answered` and
+that sentence is delivered once. If the line is already `ok` or
+`failed`, it is not rewritten; a receipt that is still `waiting` copies
+the line's status and summary, and nothing is delivered. The schedule
+does not move. The session is not reattached, even if it is still in
+memory. A second revive is a no-op.
+
+**Rationale:** After a restart the process that was waiting is gone.
+Leaving the row `waiting` would skip every later slot forever. Copying
+an already-settled line covers a crash between the history rewrite and
+the receipt clear without sending the outcome twice.
+
+**Alternative rejected:** Reattaching the live session on startup.
+Moving the schedule again. Running revive on every tick, which would
+fail a park this process just opened.
+
+**Decision:** The next slot while a park is still open does not start
+a session. It is `missed`, summary exactly `previous run still waiting
+for approval`, `scheduled_for` the slot that came due, and the cadence
+advances. The waiting receipt and the park link stay. This is checked
+before grace, on a fresh locked read. If the watcher has already
+cleared the park, the slot runs. The store lock covers the whole
+read-modify-write. The history lock is separate. A miss takes the store
+lock, releases it, then appends history. Delete takes the store lock
+and then history. Nothing holds a lock across delivery.
+
+**Rationale:** Two sessions on one job, or a late-skip and a park-miss
+for the same instant, would tell two stories. The lock is what stops a
+miss from writing `parked_session_id` back after the watcher cleared it.
+
+**Alternative rejected:** Holding the tick until the card is answered.
+Applying grace to a parked job, which would record a lateness skip
+instead of the park.
+
+**Decision:** The row and the history say "Waiting for approval" and
+offer Open session through the existing attach (`selectRow`, then
+home). `historySeen` stays the `last_run` string. An open history
+refetches when status or summary changes, because settling does not
+move `last_run`. The window notice stamp is `last_run`, status, and
+summary, so the park and the later outcome each ring once. The waiting
+title is "Scheduled job is waiting for approval". `attempt` above 0
+still suppresses that notice. A turn that reports waiting without a
+session id is a normal failure and does not store a park link.
+
+**Alternative rejected:** Bumping `last_run` when the card settles so
+the old refetch would notice. A separate notice event.
+
+**Decision:** `_shutdown` still cancels sessions before daemon tasks. A
+watcher that is still running can therefore observe `cancelled` and
+record `approval never answered` during a clean quit. That is
+acceptable: the user is leaving, and the row must not stay parked. A
+watch task that is cancelled without the session being cancelled
+leaves the row parked for revive.
+
+**Class A:** The wait lives in `scheduler/park.py` and receives the
+turn budget from the runner, so a test can shorten it without importing
+a private constant into the park module. `finish_slot` is the public
+name of the schedule advance. The denial text is the tool result, not
+the model's next sentence. Waiting uses the accent token.
+
 **Decision (Class A):** The form's Retries select is None / 1 / 2 / 3,
 and a count always sends the delay phrase "10 minutes". Save therefore
 replaces a hand-set custom delay. Pause omits the field, so the daemon

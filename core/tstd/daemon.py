@@ -347,6 +347,7 @@ from .scheduler.models import (
     JobValidationError,
     validate_draft,
 )
+from .scheduler.park import drop_parked, follow_parked, revive_parked
 from .scheduler.pin import require_known_preset
 from .scheduler.runner import (
     InFlight,
@@ -1702,7 +1703,17 @@ class Daemon:
             )
 
     async def _scheduler_loop(self) -> None:
-        """On start (revive) and on a short tick, fire each due job once."""
+        """Close approvals the last process left parked, then fire due jobs.
+
+        Revive runs once, before the tick, including when shutdown is
+        already set. A later tick must not run it again: that would fail
+        a park this process just opened.
+        """
+        try:
+            if await revive_parked(self.data_dir, self._scheduler_deliver):
+                await self._push_job_list()
+        except Exception:
+            log.exception("scheduler park revive failed")
         while not self._shutdown_event.is_set():
             try:
                 await self.run_due_jobs()
@@ -1729,6 +1740,7 @@ class Daemon:
             run_turn=self._scheduled_run_turn,
             deliver=self._scheduler_deliver,
             in_flight=self._in_flight,
+            on_parked=self._arm_park_watch,
         )
         if ran:
             # Both halves of the row moved: next_run advanced and the run
@@ -1737,6 +1749,45 @@ class Daemon:
             # no sign the job ran (TD-3807).
             await self._push_job_list()
         return ran
+
+    def _arm_park_watch(self, job_id: str, session_id: str, started_at: str) -> None:
+        """Follow a parked approval until the turn ends. Disk already has it."""
+        task = asyncio.create_task(
+            self._watch_park(job_id, session_id, started_at),
+            name=f"park:{job_id}",
+        )
+        self._tasks.append(task)
+
+    async def _watch_park(self, job_id: str, session_id: str, started_at: str) -> None:
+        session = self.session_registry.get(session_id)
+        try:
+            if isinstance(session, Session):
+                changed = await follow_parked(
+                    self.data_dir,
+                    job_id,
+                    session,
+                    started_at,
+                    self._scheduler_deliver,
+                )
+            else:
+                changed = await drop_parked(
+                    self.data_dir,
+                    job_id,
+                    session_id,
+                    started_at,
+                    self._scheduler_deliver,
+                )
+        except asyncio.CancelledError:
+            # Shutdown, not a user cancel. The row stays parked for revive.
+            raise
+        except Exception:
+            log.exception(
+                "parked approval watch failed",
+                extra={"extra_fields": {"job_id": job_id}},
+            )
+            return
+        if changed:
+            await self._push_job_list()
 
     async def _push_job_list(self) -> None:
         """Broadcast the job list to every handshaken client. Never raises."""
@@ -3513,6 +3564,7 @@ class Daemon:
                 datetime.now(UTC),
                 run_turn=self._scheduled_run_turn,
                 deliver=self._scheduler_deliver,
+                on_parked=self._arm_park_watch,
             )
         except Exception:
             log.exception(

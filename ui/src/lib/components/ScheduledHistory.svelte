@@ -49,7 +49,8 @@
 						<span
 							class="when"
 							class:failed={run.status === 'failed'}
-							class:missed={run.status === 'missed'}>{jobRunLabel(run)}</span
+							class:missed={run.status === 'missed'}
+							class:waiting={run.status === 'waiting'}>{jobRunLabel(run)}</span
 						>
 						{#if run.summary}
 							<p class="summary">{run.summary}</p>
@@ -134,6 +135,11 @@
 	/* A skipped slot is not a failed turn. */
 	.missed {
 		color: var(--color-warn);
+	}
+
+	/* An approval card is not a failed turn either. */
+	.waiting {
+		color: var(--color-accent);
 	}
 
 	/* Same clamp as the row receipt: one long turn must not push the list away. */

@@ -216,6 +216,14 @@ const RAN_ONCE = jobRow({
 	last_summary: "3 new messages, none urgent",
 });
 
+function waitingJob(): JobEntry {
+	return {
+		...RAN_ONCE,
+		last_status: "waiting",
+		last_summary: "Run `echo hi`",
+	};
+}
+
 describe("scheduledNotices", () => {
 	it("says nothing about a job it has not seen before", () => {
 		// Reconnecting must not ring for every run in the job's history.
@@ -282,6 +290,34 @@ describe("scheduledNotices", () => {
 			title: "Scheduled job missed",
 			body: "Skipped the 7:45 AM run — 10 h late",
 		});
+	});
+
+	it("announces a parked approval, then the outcome, on the same last_run", () => {
+		// Settling the card does not move last_run. Status and summary do.
+		expect(scheduledNotices(new Map(), [waitingJob()])).toEqual([]);
+		const before = runStamps([jobRow({ id: "j1" })]);
+		expect(scheduledNotices(before, [waitingJob()])).toEqual([
+			{
+				title: "Scheduled job is waiting for approval",
+				body: "Run `echo hi`",
+				kind: "scheduled",
+			},
+		]);
+		const done = {
+			...waitingJob(),
+			last_status: "ok",
+			last_summary: "all done",
+		} as JobEntry;
+		expect(scheduledNotices(runStamps([waitingJob()]), [done])).toEqual([
+			{
+				title: "Scheduled job ran",
+				body: "all done",
+				kind: "scheduled",
+			},
+		]);
+		expect(scheduledNotices(runStamps([done]), [done])).toEqual([]);
+		const mid = { ...waitingJob(), attempt: 1 } as JobEntry;
+		expect(scheduledNotices(before, [mid])).toEqual([]);
 	});
 
 	it("leaves slack and ntfy alone — they already delivered themselves", () => {

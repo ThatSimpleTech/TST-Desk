@@ -1508,9 +1508,10 @@ export interface JobEntry {
    *  and the window does not notify until the slot finishes. */
   attempt?: number | null;
   /** The last fire's receipt (TD-3807). Null until the job has run once.
-   *  `missed` is a slot skipped for lateness, not a failed turn (TD-3813). */
+   *  `missed` is a slot skipped for lateness, not a failed turn (TD-3813).
+   *  `waiting` is a run parked on an approval card (TD-3815). */
   last_run: string | null;
-  last_status: "ok" | "failed" | "missed" | null;
+  last_status: "ok" | "failed" | "missed" | "waiting" | null;
   last_summary: string | null;
   last_session_id: string | null;
   /** True while a turn for this job is in flight (TD-3809). Not stored. */
@@ -1528,8 +1529,9 @@ export interface JobRunEntry {
   started_at: string;
   scheduled_for: string | null;
   trigger: "schedule" | "manual";
-  /** `missed` is a slot skipped for lateness (TD-3813). */
-  status: "ok" | "failed" | "missed";
+  /** `missed` is a slot skipped for lateness (TD-3813).
+   *  `waiting` is a run parked on an approval card (TD-3815). */
+  status: "ok" | "failed" | "missed" | "waiting";
   summary: string | null;
   session_id: string | null;
   /** 1-based try when the job retries (TD-3814). Null on Run now and when retries is 0. */

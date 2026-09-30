@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +22,13 @@ from ..session import Session
 from .history import append_run
 from .late import skip_if_late
 from .models import DeliverTo, Job
+from .park import (
+    ParkHook,
+    await_turn_or_approval,
+    park_run,
+    pending_tool_summary,
+    skip_if_parked,
+)
 from .pin import (
     bind_scheduled_pin,
     current_scheduled_pin,
@@ -53,6 +59,9 @@ class TurnResult:
     # The summary is for the receipt; the code is what a retry decision reads,
     # because the prose does not say ``context_overflow``.
     error_code: str | None = None
+    # The session is on an approval card. Not a failure, and not a retry:
+    # the runner returns without waiting out the turn budget (TD-3815).
+    waiting: bool = False
 
 
 TurnFn = Callable[[Path, str], Awaitable["str | TurnResult"]]
@@ -166,6 +175,7 @@ async def run_due_jobs(
     run_turn: TurnFn,
     deliver: Deliver,
     in_flight: InFlight | None = None,
+    on_parked: ParkHook | None = None,
 ) -> list[str]:
     """Fire each due job once, deliver once, then advance. Sequential.
 
@@ -185,7 +195,7 @@ async def run_due_jobs(
         if in_flight is not None and not in_flight.claim(job.id):
             continue
         try:
-            await _run_one(data_dir, job, now_utc, run_turn, deliver)
+            await _run_one(data_dir, job, now_utc, run_turn, deliver, on_parked=on_parked)
         finally:
             if in_flight is not None:
                 in_flight.release(job.id)
@@ -214,19 +224,37 @@ async def run_manual_job(
     *,
     run_turn: TurnFn,
     deliver: Deliver,
+    on_parked: ParkHook | None = None,
 ) -> None:
     """One explicit fire. Receipt and delivery, without touching the schedule.
 
     ``advance_job`` is what spends a one-shot and moves the 7:45 slot.
     Run now is not that: the row is re-read after the turn so a pause or
     an edit made while it ran is what receives the receipt, and a job
-    deleted in that window is not written back into existence.
+    deleted in that window is not written back into existence. A park
+    is the same shape: the schedule stays, and the watch is armed only
+    after the row is on disk.
     """
     result = await _turn_result(job, run_turn)
     fresh = await asyncio.to_thread(get_job, data_dir, job.id)
     channel = job.deliver_to
     if fresh is not None:
         channel = fresh.deliver_to
+        if result.waiting and result.session_id:
+            await _park_and_arm(
+                data_dir,
+                fresh,
+                now,
+                result,
+                advance=False,
+                trigger="manual",
+                scheduled_for=None,
+                deliver=deliver,
+                on_parked=on_parked,
+            )
+            return
+        if result.waiting:
+            result = TurnResult(summary=result.summary or "a tool call", ok=False)
         stamped = record_run(
             fresh,
             now,
@@ -254,13 +282,41 @@ async def _run_one(
     now: datetime,
     run_turn: TurnFn,
     deliver: Deliver,
+    *,
+    on_parked: ParkHook | None = None,
 ) -> None:
+    # A parked approval still owns the previous session. The next slot
+    # is missed before grace, which would otherwise describe the same
+    # instant as late and open nothing for a different reason.
+    if await skip_if_parked(data_dir, job, now, deliver):
+        return
+    fresh = await asyncio.to_thread(get_job, data_dir, job.id)
+    if fresh is None:
+        return
+    job = fresh
     # Grace is the regular slot only. A retry is already that slot's
     # second chance; skipping it would drop the try the user asked for.
     # Run now never enters this function, so asking for a run cannot skip.
     if job.attempt == 0 and await skip_if_late(data_dir, job, now, deliver):
         return
     result = await _turn_result(job, run_turn)
+    if result.waiting and result.session_id:
+        # Not settle_scheduled: a waiting card is not a failure, so it
+        # must not arm a retry, and the slot still advances once.
+        await _park_and_arm(
+            data_dir,
+            job,
+            now,
+            result,
+            advance=True,
+            trigger="schedule",
+            scheduled_for=job.next_run,
+            deliver=deliver,
+            on_parked=on_parked,
+        )
+        return
+    if result.waiting:
+        result = TurnResult(summary=result.summary or "a tool call", ok=False)
     # The instant that just came due. A retry's next_run is that instant,
     # not the morning slot it is standing in for.
     fired = job.next_run
@@ -301,6 +357,37 @@ async def _run_one(
         )
         return
     await deliver(job.deliver_to, settled.receipt)
+
+
+async def _park_and_arm(
+    data_dir: Path,
+    job: Job,
+    now: datetime,
+    result: TurnResult,
+    *,
+    advance: bool,
+    trigger: Literal["schedule", "manual"],
+    scheduled_for: str | None,
+    deliver: Deliver,
+    on_parked: ParkHook | None,
+) -> None:
+    """Save the park, deliver the waiting line, then arm the watch."""
+    session_id = result.session_id
+    if session_id is None:
+        return
+    started = await park_run(
+        data_dir,
+        job,
+        now,
+        session_id=session_id,
+        summary=result.summary,
+        advance=advance,
+        trigger=trigger,
+        scheduled_for=scheduled_for,
+        deliver=deliver,
+    )
+    if on_parked is not None:
+        on_parked(job.id, session_id, started)
 
 
 async def _remember_run(
@@ -398,26 +485,17 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
             f"session {session_id} was not registered", ok=False, session_id=session_id
         )
     await session.add_user_message(message)
-    await _wait_turn_complete(session)
+    # Read at call time so a test can shorten the budget. An approval
+    # returns before the budget; anything else still waits it out.
+    if await await_turn_or_approval(session, _TURN_TIMEOUT_SECS):
+        return TurnResult(
+            pending_tool_summary(session),
+            ok=True,
+            session_id=session_id,
+            waiting=True,
+        )
     summary, failed, code = turn_outcome(session)
     return TurnResult(summary, ok=not failed, session_id=session_id, error_code=code)
-
-
-async def _wait_turn_complete(session: Session) -> None:
-    deadline = time.monotonic() + _TURN_TIMEOUT_SECS
-    seen = session.event_log.last_seq
-    while time.monotonic() < deadline:
-        if any(isinstance(event, TurnComplete) for event in session.event_log.all_events):
-            return
-        remaining = max(0.05, deadline - time.monotonic())
-        try:
-            seen = await asyncio.wait_for(
-                session.event_log.wait_for_new_event(seen),
-                timeout=min(remaining, 0.25),
-            )
-        except TimeoutError:
-            continue
-    raise TimeoutError("timed out waiting for turn_complete")
 
 
 def turn_summary(session: Session) -> str:

@@ -1,4 +1,6 @@
-"""Merge a ``save_job`` onto an existing scheduled job (TD-3810, TD-3812, TD-3813, TD-3814).
+"""Merge a ``save_job`` onto an existing scheduled job.
+
+TD-3810, TD-3812, TD-3813, TD-3814, TD-3815.
 
 Create validates a whole draft. An edit is a patch: fields the client left
 out stay as stored, because Pause is a save that only flips ``paused`` and
@@ -121,6 +123,11 @@ def apply_job_edit(
             last_status=existing.last_status,
             last_summary=existing.last_summary,
             last_session_id=existing.last_session_id,
+            # Pause is a save that only flips ``paused``. Dropping the
+            # park link here would leave the approval session with no
+            # job to settle into, and the next tick would start another.
+            parked_session_id=existing.parked_session_id,
+            parked_started_at=existing.parked_started_at,
         )
     except ValidationError as exc:
         raise JobValidationError(describe_validation_error(exc)) from exc
