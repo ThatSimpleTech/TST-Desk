@@ -266,19 +266,34 @@ describe("accountRow", () => {
 
 describe("rowActions", () => {
 	it("offers archive, move and delete on a live row", () => {
-		expect(rowActions(false).map((a) => a.id)).toEqual([
+		const live = rowActions(false);
+		expect(live.map((a) => a.id)).toEqual([
 			"star",
 			"rename",
+			"schedule",
 			"archive",
 			"move",
 			"open-window",
 			"delete",
 		]);
+		expect(live.find((a) => a.id === "schedule")).toMatchObject({
+			label: "Schedule this chat",
+			danger: false,
+			icon: "clock",
+		});
 	});
 
 	it("swaps archive for unarchive on a filed row, never both", () => {
 		const ids = rowActions(true).map((a) => a.id);
-		expect(ids).toEqual(["star", "rename", "unarchive", "move", "open-window", "delete"]);
+		expect(ids).toEqual([
+			"star",
+			"rename",
+			"schedule",
+			"unarchive",
+			"move",
+			"open-window",
+			"delete",
+		]);
 		expect(ids).not.toContain("archive");
 	});
 
@@ -286,6 +301,7 @@ describe("rowActions", () => {
 		expect(rowActions(false, true).map((a) => a.id)).toEqual([
 			"unstar",
 			"rename",
+			"schedule",
 			"archive",
 			"move",
 			"open-window",

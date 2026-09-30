@@ -674,6 +674,39 @@ export interface ListJobRuns extends ClientMessage {
   job_id: string;
 }
 
+/** List built-in and user job templates (TD-3816). Connection-scoped. */
+export interface ListJobTemplates extends ClientMessage {
+  type: "list_job_templates";
+}
+
+/** Store the current job form as a new template (TD-3816). Does not create a job. */
+export interface SaveJobTemplate extends ClientMessage {
+  type: "save_job_template";
+  name: string;
+  instruction?: string;
+  cadence?: string | null;
+  next_run?: string | null;
+  deliver_to?: "window" | "slack" | "ntfy" | null;
+  grace?: string | number | null;
+  retries?: number | null;
+  retry_delay?: string | number | null;
+  preset?: string | null;
+  engine?: "" | "native" | "grok" | null;
+  workspace?: string | null;
+}
+
+/** Remove a user job template (TD-3816). Built-ins cannot be deleted. */
+export interface DeleteJobTemplate extends ClientMessage {
+  type: "delete_job_template";
+  template_id: string;
+}
+
+/** Read one chat into a job draft (TD-3816). Does not create a job. */
+export interface GetSessionJobSource extends ClientMessage {
+  type: "get_session_job_source";
+  session_id: string;
+}
+
 export type ClientMessageUnion =
   | Hello
   | OpenWorkspace
@@ -761,6 +794,10 @@ export type ClientMessageUnion =
   | ParseJob
   | RunJob
   | ListJobRuns
+  | ListJobTemplates
+  | SaveJobTemplate
+  | DeleteJobTemplate
+  | GetSessionJobSource
   | Transcribe;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
@@ -1624,6 +1661,39 @@ export interface JobDraftReply extends DaemonEvent {
   paused?: boolean;
 }
 
+/** One template on job_templates (TD-3816). Cadence is the phrase, not cron. */
+export interface JobTemplateEntry {
+  id: string;
+  name: string;
+  builtin: boolean;
+  instruction: string;
+  cadence: string | null;
+  next_run: string | null;
+  deliver_to: "window" | "slack" | "ntfy";
+  grace: number | null;
+  retries: number;
+  retry_delay: number | null;
+  preset: string | null;
+  engine: "native" | "grok" | null;
+  workspace: string | null;
+}
+
+/** Response to list / save / delete template (TD-3816). Connection-scoped. */
+export interface JobTemplates extends DaemonEvent {
+  type: "job_templates";
+  templates: JobTemplateEntry[];
+}
+
+/** Response to get_session_job_source (TD-3816). Connection-scoped. Not saved. */
+export interface SessionJobSource extends DaemonEvent {
+  type: "session_job_source";
+  session_id: string;
+  workspace: string;
+  preset: string | null;
+  engine: "native" | "grok" | null;
+  instruction: string;
+}
+
 /** Reply to transcribe (TD-4701). Connection-scoped. detail is a code, never a URL. */
 export interface Transcript extends DaemonEvent {
   type: "transcript";
@@ -1685,6 +1755,8 @@ export type DaemonEventUnion =
   | JobList
   | JobRuns
   | JobDraftReply
+  | JobTemplates
+  | SessionJobSource
   | GrokCommands
   | GrokPlan
   | GrokMode
