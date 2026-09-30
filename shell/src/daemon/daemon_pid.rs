@@ -174,6 +174,28 @@ pub fn apply_process_group(cmd: &mut tokio::process::Command) {
     let _ = cmd;
 }
 
+/// Ask the spawned tree to exit. Unix: SIGTERM to the process group
+/// (TD-4842 runs the daemon's graceful shutdown on that signal).
+/// Windows: `taskkill /T` without `/F`. Missing processes are fine.
+/// The forceful path is [`kill_spawned_group`].
+pub fn term_spawned_group(leader_pid: u32) {
+    if leader_pid == 0 {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &format!("-{leader_pid}")])
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &leader_pid.to_string(), "/T"])
+            .status();
+    }
+}
+
 /// Kill the spawned tree. On Unix the leader is the process-group id
 /// (we set `process_group(0)` at spawn). On Windows, `taskkill /T` walks
 /// the tree. Missing processes are fine — this is a backstop.

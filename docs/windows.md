@@ -150,9 +150,12 @@ Closing the window is not quitting the app (TD-2902).
   taskbar tooltip). Clicking the app icon shows the window, focuses a parked approval if
   there is one, and re-attaches; a second host process attaches to the live listener
   instead of spawning another daemon.
-- **Quit** (menu / palette **Quit TST Desk**, Cmd+Q, or dock Quit) sends
-  `shutdown`, reaps the process group, and leaves no listener. That is the TD-1002 v0.1
-  contract, kept for Quit.
+- **Quit** (menu / palette **Quit TST Desk**, or Cmd+Q) sends `shutdown`,
+  reaps the process group, and leaves no listener. That is the TD-1002
+  v0.1 contract, kept for Quit. Dock, AppleScript, logout, and restart
+  arrive as `RunEvent::Exit` with no `ExitRequested` and send that same
+  message on the thread that is leaving. The daemon and the embeddings
+  sidecar share one 3 second bound (TD-4850).
 
 The first time this happens: closing the window hides TST Desk; **Quit TST Desk** is what
 stops it.

@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use super::daemon_pid::{apply_process_group, kill_spawned_group};
+use super::daemon_pid::{apply_process_group, kill_spawned_group, pid_is_alive};
 
 /// Own restart cap. Must stay independent of [`super::MAX_RESTARTS`].
 pub const MAX_EMBEDDINGS_RESTARTS: u32 = 3;
@@ -55,6 +55,15 @@ impl EmbeddingsHandle {
         self.shutdown_notify.notify_waiters();
     }
 
+    /// System quit is reaping this child on the main thread.
+    ///
+    /// The flag stops a later exit from being treated as a crash restart.
+    /// Do not notify: the shutdown arm SIGKILLs immediately, which would
+    /// skip the shared budget.
+    pub fn claim_system_exit(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+    }
+
     pub async fn wait_for_done(&self) {
         let notified = self.done.notified();
         tokio::pin!(notified);
@@ -75,11 +84,16 @@ pub fn start(data_dir: PathBuf) -> EmbeddingsHandle {
     handle
 }
 
-/// Synchronous kill for `RunEvent::Exit`, same group-kill as `tstd`.
+/// In-app quit's `RunEvent::Exit` kill. A pid that is already gone is
+/// left alone so this does not add a wait, or signal a recycled pid.
 pub fn best_effort_kill(handle: &EmbeddingsHandle) {
-    if let Some(pid) = handle.child_pid() {
-        kill_spawned_group(pid);
+    let Some(pid) = handle.child_pid() else {
+        return;
+    };
+    if !pid_is_alive(pid) {
+        return;
     }
+    kill_spawned_group(pid);
 }
 
 /// Supervise until quit. Death is logged; `tstd` is never restarted here.
