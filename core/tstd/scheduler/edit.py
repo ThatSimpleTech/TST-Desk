@@ -1,6 +1,6 @@
 """Merge a ``save_job`` onto an existing scheduled job.
 
-TD-3810, TD-3812, TD-3813, TD-3814, TD-3815, TD-3817.
+TD-3810, TD-3812, TD-3813, TD-3814, TD-3815, TD-3817, TD-3818.
 
 Create validates a whole draft. An edit is a patch: fields the client left
 out stay as stored, because Pause is a save that only flips ``paused`` and
@@ -19,6 +19,7 @@ from typing import Literal, cast
 
 from pydantic import ValidationError
 
+from .calendar_path import CalendarPathError, require_calendar_file
 from .models import (
     DeliverTo,
     Job,
@@ -54,6 +55,8 @@ def apply_job_edit(
     retries: int | None,
     retry_delay: str | int | None,
     then: str | None = None,
+    skip_calendar: str | None = None,
+    skip_match: str | None = None,
 ) -> Job:
     """Return the job to persist. Raises ``JobValidationError``; does not write."""
     new_workspace = _workspace_for_edit(existing, workspace, known_workspaces)
@@ -67,6 +70,9 @@ def apply_job_edit(
     new_delay = _merge_delay(retry_delay, existing.retry_delay)
     # Pause omits ``then``. None keeps the link; "" clears it (TD-3817).
     new_then = _merge_cleared(then, existing.then)
+    # Pause omits the calendar too. None keeps it; "" clears it (TD-3818).
+    new_calendar = _merge_cleared(skip_calendar, existing.skip_calendar)
+    new_match = _merge_cleared(skip_match, existing.skip_match)
     # The stored slot was computed from the old cadence and zone. When either
     # changes and the client did not send a replacement time, drop it so the
     # runner re-arms instead of firing the stale instant.
@@ -122,6 +128,8 @@ def apply_job_edit(
             attempt=attempt,
             resume_at=resume_at,
             then=new_then,
+            skip_calendar=new_calendar,
+            skip_match=new_match,
             # The receipt belongs to the run, not to this edit.
             last_run=existing.last_run,
             last_status=existing.last_status,
@@ -135,6 +143,19 @@ def apply_job_edit(
         )
     except ValidationError as exc:
         raise JobValidationError(describe_validation_error(exc)) from exc
+    # Existence is checked only when this edit names a different file.
+    # Pause omits the path, and an unchanged path whose file was deleted
+    # must still save. The run treats a missing file as unreadable.
+    if (
+        skip_calendar is not None
+        and skip_calendar.strip()
+        and job.skip_calendar is not None
+        and job.skip_calendar != existing.skip_calendar
+    ):
+        try:
+            require_calendar_file(job.skip_calendar)
+        except CalendarPathError as exc:
+            raise JobValidationError(str(exc)) from None
     # Only a name the client just sent. Resending a stale name fails here;
     # omitting it (Pause) keeps a pin whose preset has left the catalog.
     if preset is not None and preset.strip():

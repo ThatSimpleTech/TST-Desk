@@ -279,6 +279,16 @@ describe("scheduledNotices", () => {
 		]);
 	});
 
+	it("does not notify for a calendar skip", () => {
+		const before = runStamps([jobRow({ id: "j1" })]);
+		const skipped = {
+			...RAN_ONCE,
+			last_status: "skipped",
+			last_summary: "calendar",
+		} as JobEntry;
+		expect(scheduledNotices(before, [skipped])).toEqual([]);
+	});
+
 	it("marks a skipped slot as missed, not as a run or a failure", () => {
 		const before = runStamps([jobRow({ id: "j1" })]);
 		const missed = {

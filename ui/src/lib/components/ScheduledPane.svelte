@@ -26,6 +26,7 @@
 		jobFormCopy,
 		jobMeta,
 		jobMissed,
+		jobSkipped,
 		jobWaiting,
 		jobsEmptyCopy,
 		sessionMissingCopy,
@@ -36,6 +37,7 @@
 	import { visibleRecents, workspaces } from '../workspaces.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
+	import ScheduledCalendarField from './ScheduledCalendarField.svelte';
 	import ScheduledGraceField from './ScheduledGraceField.svelte';
 	import ScheduledHistory from './ScheduledHistory.svelte';
 	import ScheduledRetriesField from './ScheduledRetriesField.svelte';
@@ -87,6 +89,7 @@
 							class="card"
 							class:card-failed={jobFailed(row)}
 							class:card-missed={jobMissed(row)}
+							class:card-skipped={jobSkipped(row)}
 							class:card-waiting={jobWaiting(row)}
 						>
 							<span class="card-name">{row.instruction}</span>
@@ -96,6 +99,7 @@
 								class="card-run"
 								class:run-failed={jobFailed(row) && !row.running}
 								class:run-missed={jobMissed(row) && !row.running}
+								class:run-skipped={jobSkipped(row) && !row.running}
 								class:run-waiting={jobWaiting(row) && !row.running}>{jobActivity(row)}</span
 							>
 							{#if row.last_summary}
@@ -212,6 +216,7 @@
 		<ScheduledGraceField />
 		<ScheduledRetriesField />
 		<ScheduledThenField />
+		<ScheduledCalendarField />
 		<ScheduledPinFields />
 		{#if scheduled.error !== null}
 			<p class="error" role="alert">{scheduled.error}</p>
@@ -370,6 +375,15 @@
 
 	.card-waiting {
 		border-color: var(--color-accent);
+	}
+
+	/* A calendar block is expected. It is not a late slot and not a failure. */
+	.run-skipped {
+		color: var(--color-ink-secondary);
+	}
+
+	.card-skipped {
+		border-color: var(--color-ink-secondary);
 	}
 
 	.gone {

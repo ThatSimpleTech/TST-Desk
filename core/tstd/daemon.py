@@ -345,6 +345,7 @@ from .remote_attach import (
     save_remote_attach,
 )
 from .router import TIER_NAMES, TierRouter
+from .scheduler.calendar_path import CalendarPathError, require_calendar_file
 from .scheduler.chain import require_chain
 from .scheduler.chat_source import SessionScheduleSource, session_schedule_source
 from .scheduler.edit import apply_job_edit
@@ -686,6 +687,8 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         retry_delay=job.retry_delay,
         attempt=job.attempt,
         then=job.then,
+        skip_calendar=job.skip_calendar,
+        skip_match=job.skip_match,
         last_run=job.last_run,
         last_status=job.last_status,
         last_summary=job.last_summary,
@@ -3729,6 +3732,8 @@ class Daemon:
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
                 then=msg.then,
+                skip_calendar=msg.skip_calendar,
+                skip_match=msg.skip_match,
             )
             # Pause omits ``then``. Checking a link it did not send would
             # refuse to pause a row whose file was hand-edited into a loop.
@@ -3751,6 +3756,8 @@ class Daemon:
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
                 then=msg.then,
+                skip_calendar=msg.skip_calendar,
+                skip_match=msg.skip_match,
             )
         )
         # Create only: an existing job whose folder moved must stay editable
@@ -3759,6 +3766,11 @@ class Daemon:
         # so a bad preset is the sentence the user sees.
         require_known_preset(job.preset, self.config.presets)
         require_folder(job.workspace)
+        if job.skip_calendar is not None:
+            try:
+                require_calendar_file(job.skip_calendar)
+            except CalendarPathError as exc:
+                raise JobValidationError(str(exc)) from None
         require_chain(list_jobs(self.data_dir), job)
         return save_job(self.data_dir, job)
 

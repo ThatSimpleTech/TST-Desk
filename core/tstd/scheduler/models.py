@@ -24,6 +24,7 @@ from pydantic import (
 )
 
 from ..logging import redact_secrets
+from .calendar_path import CalendarPathError, normalize_skip_calendar, normalize_skip_match
 from .grace import GraceError, parse_grace
 from .phrases import expand_alias, phrase_to_cron
 from .pin import normalize_engine, normalize_preset
@@ -35,7 +36,7 @@ from .retry import (
 )
 
 DeliverTo = Literal["window", "slack", "ntfy"]
-RunStatus = Literal["ok", "failed", "missed", "waiting"]
+RunStatus = Literal["ok", "failed", "missed", "waiting", "skipped"]
 
 #: A run summary is a receipt, not a transcript. Anything longer is cut so
 #: jobs.json cannot grow without bound on a job that fires every minute.
@@ -71,6 +72,8 @@ _FIELD_LABELS = {
     "retries": "Retries",
     "retry_delay": "Retry delay",
     "then": "Then",
+    "skip_calendar": "Skip calendar",
+    "skip_match": "Only events matching",
 }
 _UNITS = {
     "minute": "minute",
@@ -117,6 +120,12 @@ class JobDraft(BaseModel):
     # is no follow-on. The cycle check needs the other jobs, so it is not
     # done here.
     then: str | None = None
+    # Absolute path of a local .ics file (TD-3818). Blank is no calendar.
+    # Existence is checked at save, not here: a file that later disappears
+    # must still load so the job can be paused.
+    skip_calendar: str | None = None
+    # Case-insensitive substrings joined by ``|``. Blank matches any event.
+    skip_match: str | None = None
 
 
 class Job(BaseModel):
@@ -166,6 +175,12 @@ class Job(BaseModel):
     # here: a receipt stamp must still save when the follow-on was deleted
     # between the read and the write. Save refuses a missing id and a cycle.
     then: str | None = None
+    # Local .ics whose events can block a regular slot (TD-3818). None
+    # means the slot always runs. The file is not opened here.
+    skip_calendar: str | None = None
+    # Substrings, joined by ``|``, that an event summary must contain.
+    # None matches every event in the file.
+    skip_match: str | None = None
 
     # ── Last run (TD-3807) ────────────────────────────────────────────
     # Optional so a jobs.json written before this landed still loads.
@@ -285,6 +300,30 @@ class Job(BaseModel):
         if Path(text).name != text or text in {".", ".."}:
             raise ValueError("must be a job id")
         return text
+
+    @field_validator("skip_calendar", mode="before")
+    @classmethod
+    def _skip_calendar_path(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("must be a filesystem path")
+        try:
+            return normalize_skip_calendar(value)
+        except CalendarPathError as exc:
+            raise ValueError(str(exc)) from None
+
+    @field_validator("skip_match", mode="before")
+    @classmethod
+    def _skip_match_terms(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("must be text")
+        try:
+            return normalize_skip_match(value)
+        except CalendarPathError as exc:
+            raise ValueError(str(exc)) from None
 
     @field_validator("resume_at")
     @classmethod
@@ -521,6 +560,8 @@ def validate_draft(draft: JobDraft) -> Job:
             retries=0 if draft.retries is None else draft.retries,
             retry_delay=cast(int | None, draft.retry_delay),
             then=draft.then,
+            skip_calendar=draft.skip_calendar,
+            skip_match=draft.skip_match,
         )
     except ValidationError as exc:
         raise JobValidationError(describe_validation_error(exc)) from exc

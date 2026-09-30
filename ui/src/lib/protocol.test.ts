@@ -1340,6 +1340,8 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(save.retries).toBe(2);
     expect(save.retry_delay).toBe("10 minutes");
     expect(save.then).toBe("job-2");
+    expect(save.skip_calendar).toBe("/home/user/holidays.ics");
+    expect(save.skip_match).toBe("holiday|PTO|OOO");
     const del = fixtures.delete_job as DeleteJob;
     expect(del.type).toBe("delete_job");
     expect(isString(del.job_id)).toBe(true);
@@ -1355,6 +1357,8 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(jobs.jobs[0]?.retry_delay).toBe(600);
     expect(jobs.jobs[0]?.attempt).toBe(0);
     expect(jobs.jobs[0]?.then).toBe("job-2");
+    expect(jobs.jobs[0]?.skip_calendar).toBe("/home/user/holidays.ics");
+    expect(jobs.jobs[0]?.skip_match).toBe("holiday|PTO|OOO");
     expect("session_id" in jobs).toBe(false);
     const run = fixtures.run_job as RunJob;
     expect(run.type).toBe("run_job");
@@ -1390,6 +1394,10 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(runs.runs[3]?.note).toBe("after job-1");
     expect(runs.runs[3]?.scheduled_for ?? null).toBeNull();
     expect(runs.runs[3]?.summary).toBe("draft ready");
+    expect(runs.runs[4]?.status).toBe("skipped");
+    expect(runs.runs[4]?.trigger).toBe("schedule");
+    expect(runs.runs[4]?.summary).toBe("calendar");
+    expect(runs.runs[4]?.session_id ?? null).toBeNull();
     expect("session_id" in runs).toBe(false);
   });
 

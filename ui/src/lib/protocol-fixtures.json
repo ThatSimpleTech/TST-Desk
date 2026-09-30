@@ -1317,7 +1317,9 @@
     "grace": "2 hours",
     "retries": 2,
     "retry_delay": "10 minutes",
-    "then": "job-2"
+    "then": "job-2",
+    "skip_calendar": "/home/user/holidays.ics",
+    "skip_match": "holiday|PTO|OOO"
   },
   "delete_job": {
     "type": "delete_job",
@@ -1380,6 +1382,8 @@
         "retry_delay": 600,
         "attempt": 0,
         "then": "job-2",
+        "skip_calendar": "/home/user/holidays.ics",
+        "skip_match": "holiday|PTO|OOO",
         "last_run": "2026-08-21T15:00:00+00:00",
         "last_status": "ok",
         "last_summary": "3 threads need a reply",
@@ -1436,6 +1440,17 @@
         "attempt": null,
         "attempts": null,
         "note": "after job-1"
+      },
+      {
+        "started_at": "2026-12-25T15:00:00+00:00",
+        "scheduled_for": "2026-12-25T13:00:00+00:00",
+        "trigger": "schedule",
+        "status": "skipped",
+        "summary": "calendar",
+        "session_id": null,
+        "attempt": null,
+        "attempts": null,
+        "note": null
       }
     ]
   },

@@ -1,4 +1,4 @@
-// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814, TD-3817).
+// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814, TD-3817, TD-3818).
 //
 // Draft fields the pane sends on `save_job` — not a natural-language
 // parse. Pause is the same verb with `paused` flipped. Edit is the same
@@ -26,6 +26,10 @@ export interface JobDraftFields {
 	retries: string;
 	/** Another job's id, or `""` for no follow-on (TD-3817). */
 	then: string;
+	/** Absolute path of a local .ics file, or `""` for none (TD-3818). */
+	skip_calendar: string;
+	/** Substrings joined by `|`. `""` matches every event. */
+	skip_match: string;
 }
 
 /** If late. `seconds` is what the daemon stores; the wire value is the phrase. */
@@ -98,6 +102,8 @@ export function emptyDraft(workspace: string | null): JobDraftFields {
 		grace: "",
 		retries: "",
 		then: "",
+		skip_calendar: "",
+		skip_match: "",
 	};
 }
 
@@ -254,18 +260,25 @@ export function jobWaiting(job: JobEntry): boolean {
 	return job.last_status === "waiting";
 }
 
+/** True when the last regular slot was blocked by a local calendar. */
+export function jobSkipped(job: JobEntry): boolean {
+	return job.last_status === "skipped";
+}
+
 function outcomeWord(status: JobEntry["last_status"] | JobRunEntry["status"]): string {
 	if (status === "failed") return "Failed";
 	if (status === "missed") return "Missed";
 	if (status === "waiting") return "Waiting for approval";
+	if (status === "skipped") return "Skipped (calendar)";
 	return "Ran";
 }
 
 /**
- * One history row: local time, Ran, Failed, Missed, or Waiting for
- * approval, and "manual" only when the fire was Run now. A scheduled
- * fire is the default, so naming it adds nothing. Missed is a skipped
- * slot, and waiting is an approval card, not a failed turn.
+ * One history row: local time, Ran, Failed, Missed, Waiting for
+ * approval, or Skipped (calendar), and "manual" only when the fire was
+ * Run now. A scheduled fire is the default, so naming it adds nothing.
+ * Missed is a late slot. Waiting is an approval card. Skipped is a day
+ * blocked on a local calendar. None of those is a failed turn.
  */
 export function jobRunLabel(run: JobRunEntry, timeZone?: string): string {
 	const when = formatLocal(run.started_at, timeZone);
@@ -327,6 +340,11 @@ export function saveFromDraft(
 	// Blank is no follow-on, the same as omitting the field on create.
 	const follow = draft.then.trim();
 	if (follow !== "") payload.then = follow;
+	// Blank is no calendar, the same as omitting the field on create.
+	const calendar = draft.skip_calendar.trim();
+	if (calendar !== "") payload.skip_calendar = calendar;
+	const match = draft.skip_match.trim();
+	if (match !== "") payload.skip_match = match;
 	return payload;
 }
 
@@ -343,7 +361,8 @@ function retryCount(raw: string): number | undefined {
  *
  * Preset and engine are omitted on purpose. Pause must not resend them:
  * a catalog name that has since been removed would fail the save, and
- * the job could not be paused.
+ * the job could not be paused. The calendar path is omitted for the
+ * same reason: Pause must not clear it or demand the file still exist.
  */
 export function saveFromJob(job: JobEntry, paused: boolean): SaveJob {
 	return {
@@ -395,6 +414,8 @@ export function draftFromJob(job: JobEntry): JobDraftFields {
 		grace: graceDraftValue(job.grace),
 		retries: retriesDraftValue(job.retries),
 		then: job.then ?? "",
+		skip_calendar: job.skip_calendar ?? "",
+		skip_match: job.skip_match ?? "",
 	};
 }
 
@@ -458,5 +479,9 @@ export function saveFromEdit(
 	// Always sent. `""` clears a follow-on; omitting it would keep the
 	// stored one, which is Pause, not Save.
 	payload.then = draft.then.trim();
+	// Always sent. `""` clears a calendar; omitting it would keep the
+	// stored path, which is Pause, not Save.
+	payload.skip_calendar = draft.skip_calendar.trim();
+	payload.skip_match = draft.skip_match.trim();
 	return payload;
 }

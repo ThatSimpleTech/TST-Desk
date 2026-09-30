@@ -79,9 +79,12 @@ export function draftFromTemplate(
 		engine: template.engine ?? "",
 		grace: graceDraftValue(template.grace),
 		retries: retriesDraftValue(template.retries),
-		// A template does not name a follow-on. Leaving the previous choice
-		// would create a link the template never had.
+		// A template does not name a follow-on or a calendar. Leaving the
+		// previous choice would create a link, or skip days, the template
+		// never had.
 		then: "",
+		skip_calendar: "",
+		skip_match: "",
 	};
 }
 

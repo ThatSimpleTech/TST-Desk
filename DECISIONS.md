@@ -11619,3 +11619,127 @@ The wire change is additive, same as TD-3812 through TD-3816.
 **Alternative rejected:** Bumping `PROTOCOL_VERSION`. A config key for
 the depth cap. Showing the raw id on the row when the instruction is
 already in the list.
+
+## TD-3818 — Skip a scheduled run on days blocked in a local calendar file (Class B)
+
+2026-09-29.
+
+**Decision:** The calendar is a local `.ics` path on the job
+(`skip_calendar`) plus an optional match list (`skip_match`). Parsing
+is a small reader in `scheduler/ics.py`, `ics_lines.py`, and
+`ics_recur.py`. No new dependency.
+
+**Rationale:** A weekday job still fires on a holiday. Fetching a
+calendar would be a network call the user did not initiate.
+`recurring-ical-events` is LGPL, which this repo does not take.
+`icalendar` is BSD and would still leave recurrence to us, so the
+reader covers the events the story names and nothing else.
+
+**Alternative rejected:** An HTTP subscription. Adding `icalendar`.
+Adding the LGPL recurrence package.
+
+**Decision:** A regular slot whose local date, in the job's time zone,
+falls inside a matching event is `skipped`. That status is distinct
+from `missed`. The history summary is the word `calendar`. The event
+title is not stored, logged, or delivered. The channel and the OS
+notice stay quiet. The slot advances, and a one-shot is spent the same
+way a miss spends it. `RunStatus` on the job, the history line, and
+both protocol copies include `skipped`.
+
+**Rationale:** A holiday is expected. `missed` already means the slot
+was late, and that path delivers a line. Reusing it would notify the
+user for a day they asked to skip, and it would put the event title
+on a receipt.
+
+**Alternative rejected:** Recording `missed` with the event title.
+Delivering "skipped for Christmas". A new daemon event for the skip.
+
+**Decision:** An unreadable file, a file over 2 MiB, or a file that
+disappeared does not skip the job. The turn runs, and the receipt
+gains `calendar unreadable` once, joined with an em dash when the
+summary is not empty. An empty `VCALENDAR` is readable and blocks
+nothing. A sibling event that fails to parse is dropped; if every
+event fails, or a `VEVENT` is opened and never closed with no
+completed event beside it, the file is unreadable.
+
+**Rationale:** A broken export should not silently cancel the digest.
+The note has to survive the summary cap, so the room is reserved
+before the cut. The title still stays out of the log: the line names
+the job id only.
+
+**Alternative rejected:** Treating a broken file as a skip. Failing
+the whole file because one event is bad. Logging the parse error.
+
+**Decision:** The path follows the workspace rules: no secret-shaped
+text, no `://`, absolute after `expanduser`, `normpath` without
+resolving links, and a `.ics` suffix. It must exist when the user
+sets it or changes it. Pause omits the field, and an unchanged path
+can be saved after the file is gone. At run time a missing file is
+unreadable and the job runs with the note. `skip_match` is a
+case-insensitive substring of `|` segments, stored with blanks
+dropped and case kept. Blank matches every event.
+
+**Rationale:** The same path checks the workspace already uses, so a
+calendar cannot be a URL or a key. Requiring the file on every pause
+would refuse Pause after the user moved the file. Matching is a
+substring so `holiday` hits `Company Holiday` without a second
+grammar.
+
+**Alternative rejected:** Resolving symlinks. Re-checking existence on
+Pause. A regex match list. Folding the stored match to lowercase.
+
+**Decision:** Each tick reads a path at most once, even if the mtime
+changes mid-tick. The cache key is the normalized path and
+`st_mtime_ns`. A missing file is not stored as a permanent hit. The
+tick is sequential, so the read holds the cache lock off the event
+loop.
+
+**Rationale:** Two jobs can name the same holiday file. Reading it
+twice per minute, or once per retry inside the same tick, does not
+change the answer. Keeping a missing path cached forever would hide
+the file when it comes back.
+
+**Alternative rejected:** Reading on every job. Caching a missing file
+until restart. Watching the file with a daemon thread.
+
+**Decision:** An all-day event covers `DTSTART <= local date < DTEND`
+in the job's zone (`UTC` when the job has none). A missing or inverted
+all-day end is one day. A timed event matches when the slot instant
+is inside `[DTSTART, DTEND)`. A missing timed end matches only that
+instant. Floating times use the job zone. `Z` is UTC. `TZID` is
+`ZoneInfo`, and a product-path prefix falls back to the last two
+segments. `RRULE` supports `DAILY`, `WEEKLY`, and `YEARLY` with
+`COUNT`, `UNTIL`, `BYDAY`, and `INTERVAL`. Another `FREQ`, or a bad
+`INTERVAL` / `COUNT` / `UNTIL`, keeps the first instance only. The
+walk stops at 20 000 steps and then fails open. `EXDATE`, `RDATE`,
+and numeric offsets are ignored.
+
+**Rationale:** Christmas all day in Chicago is still the 25th at
+23:30 local, which is already the 26th in UTC. Using the UTC date
+would run the job on the holiday evening. Timed PTO ends at 17:00,
+so the end instant itself runs. Recurrence has to be bounded or a
+`COUNT` walk from year 2000 would scan the whole calendar on every
+tick; past the cap the job runs.
+
+**Alternative rejected:** Comparing all-day events to the UTC date.
+Treating `DTEND` as inclusive. Expanding `MONTHLY`. Failing the job
+when the walk hits the cap.
+
+**Decision:** Only a regular slot consults the block. Run now, a
+retry (`attempt > 0`), and a chained fire do not skip. Grace and an
+open park are decided first, so a late holiday is `missed` and
+delivered, and the file is not read. A blocked parent does not start
+`then`. An unreadable file is still noted on a retry's receipt.
+Templates do not store the calendar. Applying one clears the draft
+fields. No `PROTOCOL_VERSION` bump and no new config key. The wire
+fields are additive on `SaveJob` and `JobEntry`.
+
+**Rationale:** Run now is the user asking for the job. A retry is the
+slot's later try, not a new day. Grace already owns "this slot is too
+late". A template has no file to restore, and Pause must not demand
+the file still exist. The status literal and two optional fields do
+not break an older client the way a version bump would.
+
+**Alternative rejected:** Skipping Run now. Checking the calendar
+before grace. Storing the path on a template. Bumping
+`PROTOCOL_VERSION`.
