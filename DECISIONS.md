@@ -11743,3 +11743,60 @@ not break an older client the way a version bump would.
 **Alternative rejected:** Skipping Run now. Checking the calendar
 before grace. Storing the path on a template. Bumping
 `PROTOCOL_VERSION`.
+
+## TD-4851 — Ready quit-distill is kept; dead transports are closed (Class B)
+
+2026-09-29.
+
+**Decision:** Quit distill still runs beside the rest of shutdown.
+The reap can now tell a provider call from the local work around it.
+`chat_completion` publishes its future before awaiting it. While that
+future is empty, the reap waits: that is the memory read and, after
+the provider returns, the proposal write. A future that is already
+done, or that finishes on the next loop turn, is kept so the proposal
+lands. A future still pending after that turn is cancelled, the
+existing skip line is logged, and shutdown continues. The nested task
+is cancelled itself. On Python 3.11, cancelling the distill task does
+not cancel it. End session does not use this flight and still waits
+on the provider. Callers with no flight keep the TD-4844 rule: a
+distill task that has not finished is cancelled immediately.
+
+**Decision:** A stuck local read can hold the reap. It is not the
+network read that burned the shutdown budget. The process shutdown
+budget stays the backstop. The budget is not raised.
+
+**Decision:** Every `run_shell` exit closes a dead child's transport,
+including when `_call_connection_lost` has already cleared `_loop`
+and left `_closed` false. That is the state `__del__` warns on. A
+refused group kill still does not `close()` the leader, because
+`close()` SIGKILLs a live child and orphans grandchildren that hold
+the pipes. A retained task waits for the exit and closes then,
+including when loop shutdown cancels the task. The task keeps the
+transport referenced across the test collector's `gc.collect`, which
+runs before the loop fixture tears down.
+
+**Decision:** On Linux, `waitid` with `WNOWAIT` reports that the
+child has exited without reaping it, so `ThreadedChildWatcher` can
+still `waitpid`. CPython 3.11 and 3.12 on macOS do not expose
+`os.waitid`. Those builds use the transport returncode and
+`Popen.poll`.
+
+**Rationale:** On the Linux runner the in-process subsystem awaits
+finished before `asyncio.to_thread` finished reading the memory
+files. The old reap treated "not done" as "provider read" and
+cancelled a mock that had not started its call. The mock's
+`chat_completion` has no `await`, so one loop turn after the read
+completes the proposal. A hang, or an httpx read, is still pending
+after that turn. The same `ThreadedChildWatcher` is the default on
+macOS when pidfd is unavailable. The difference was scheduling.
+Python 3.11 delivers the exit with `call_soon_threadsafe(call_soon,
+_process_exited)`, one turn later than 3.12. A function-scoped test
+loop stops before that turn, the pipes are already closed, and
+`__del__` warns on returncode -9. Closing in the tool, while the
+loop can still run, does not depend on that turn.
+
+**Rejected:** Sleeping, retrying, or filtering the warning. Skipping
+either test. Awaiting every distill task until the provider returns.
+Cancelling local prep the way a socket read is cancelled. `close()`
+on a leader the OS refused to kill. `Popen.poll` as the only death
+check on Linux, which races the watcher's `waitpid`.

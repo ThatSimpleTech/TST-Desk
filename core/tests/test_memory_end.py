@@ -71,16 +71,18 @@ def test_only_graceful_shutdown_reaches_distill() -> None:
     """A crash / SIGKILL / force-quit never calls distill, so it writes nothing."""
     src = Path(__file__).resolve().parents[1] / "tstd" / "daemon.py"
     text = src.read_text(encoding="utf-8")
-    # The call is wrapped so shutdown can time it and drop it when the
-    # provider read is still open (TD-4844). It still has to live in
-    # ``_shutdown`` and nowhere else: a crash never reaches this method.
-    assert text.count("self._distill_live_sessions()") == 1
+    # The call is wrapped so shutdown can time it and drop a provider
+    # read that is still open (TD-4844). The flight argument is how that
+    # wait tells a memory read from the network (TD-4851). The call still
+    # has to live in ``_shutdown`` and nowhere else: a crash never reaches
+    # this method.
+    assert text.count("self._distill_live_sessions(") == 1
     shutdown_at = text.index("async def _shutdown")
-    call_at = text.index("self._distill_live_sessions()")
+    call_at = text.index("self._distill_live_sessions(")
     assert shutdown_at < call_at
     next_def = text.find("\n    async def ", shutdown_at + 1)
     body = text[shutdown_at : next_def if next_def != -1 else len(text)]
-    assert "self._distill_live_sessions()" in body
+    assert "self._distill_live_sessions(" in body
     main_at = text.index("def main(")
     assert "_distill_live_sessions" not in text[main_at:]
 
@@ -123,7 +125,7 @@ class TestEndSession:
 
 class TestGracefulQuit:
     async def test_shutdown_distills_a_ready_provider(self, tmp_path: Path) -> None:
-        """A provider that has already answered is still distilled on quit."""
+        """A provider that can answer without I/O still proposes on quit."""
         ws = tmp_path / "ws"
         daemon = _daemon(tmp_path, ws)
         sid = await _open(daemon, ws)
