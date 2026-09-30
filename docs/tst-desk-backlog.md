@@ -7506,6 +7506,46 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 
 ---
 
+### TD-4851 — Two tests that fail only on Linux CI
+**Size:** 1 · **Depends on:** TD-4844, TD-4846, TD-4835
+
+GitHub Actions on ubuntu-latest (Python 3.11) reported `2 failed,
+3950 passed` on a pull request whose tests passed on macOS.
+`test_shutdown_distills_a_ready_provider` found no `MemoryProposal`:
+quit-distill was cancelled while the ready mock was still in the
+local memory read. `test_kill_refusal_on_task_cancel_logged` raised
+`ResourceWarning: unclosed transport` for a subprocess whose
+returncode was -9. Both are now deterministic. A slow or stuck
+provider read is still cancelled.
+
+**Acceptance criteria:**
+- [x] A provider that can answer without I/O still gets its quit
+      proposal when the rest of shutdown finishes first
+- [x] A provider call that is still pending after one loop turn is
+      cancelled, the skip line is logged, and shutdown does not wait
+      it out
+- [x] A killed subprocess transport is closed on every shell exit,
+      including a refused group kill and a returncode of -9, with no
+      ResourceWarning
+- [x] A refused group kill does not SIGKILL the leader while that
+      leader is observed alive
+
+Done (2026-09-29): quit-distill publishes its provider future and the
+reap waits through local prep and one loop turn. An in-process mock
+finishes in that turn. A call still pending is cancelled, and the
+nested task is cancelled on its own because Python 3.11 does not
+cancel it with the parent. Every shell exit closes a dead transport,
+including one whose loop was already cleared. A live refused leader
+is left running and closed by a retained watcher once it exits,
+including when loop shutdown cancels that watcher. Linux `waitid`
+with `WNOWAIT` sees the exit without reaping it out from under
+`ThreadedChildWatcher`. Class B entry in DECISIONS.md.
+
+Suite: 3963 passed / 8 skipped, ruff + `mypy --strict` clean over 172
+files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -7541,8 +7581,8 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 22 | 82 |
-| **Total planned** | **48** | **335** | **1055** |
+| Later | E47, E49 | 23 | 83 |
+| **Total planned** | **48** | **336** | **1056** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

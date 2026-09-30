@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gc
 import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -109,6 +111,33 @@ requires_posix_killpg = pytest.mark.skipif(
     sys.platform == "win32",
     reason="TD-1406: kill-refusal tests patch os.killpg; Windows uses taskkill",
 )
+
+
+def _leader_state(pid: int) -> str:
+    """Process state. ``Z`` is a zombie, which ``os.kill(pid, 0)`` still accepts."""
+    try:
+        out = subprocess.check_output(
+            ["ps", "-o", "state=", "-p", str(pid)],
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+    return out.strip()
+
+
+async def _join_transport_closers() -> None:
+    """Cancel the shell's exit-close watcher the way loop shutdown does.
+
+    Unraisable collection runs before the asyncio fixture tears the loop
+    down, so a transport still open here is the leak TD-4851 closes.
+    """
+    closers = [task for task in asyncio.all_tasks() if task.get_name() == "shell-transport-close"]
+    for task in closers:
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    gc.collect()
 
 
 def _stop_probe(tmp_path: Path) -> None:
@@ -525,9 +554,14 @@ class TestCancel:
             assert result.status == "success"
             assert _KILL_REFUSED in result.output
             assert "process group killed" not in result.output
+            pid = int((tmp_path / "pgid.txt").read_text(encoding="utf-8").strip().split()[0])
+            os.kill(pid, 0)
+            state = _leader_state(pid)
+            assert state and not state.startswith("Z")
         finally:
             monkeypatch.undo()
             _stop_probe(tmp_path)
+            await _join_transport_closers()
 
     @requires_posix_killpg
     async def test_kill_refusal_on_task_cancel_logged(
@@ -556,10 +590,16 @@ class TestCancel:
             assert any(_KILL_REFUSED in r.getMessage() for r in caplog.records)
             # Refusal leaves the leader alive. SIGKILL of only that pid
             # orphans the grandchild and strands the pipe transports.
+            # ``os.kill(pid, 0)`` is true for a zombie, so the state has
+            # to show the process is still running.
             os.kill(pid, 0)
+            state = _leader_state(pid)
+            assert state and not state.startswith("Z")
+            assert any(task.get_name() == "shell-transport-close" for task in asyncio.all_tasks())
         finally:
             monkeypatch.undo()
             _stop_probe(tmp_path)
+            await _join_transport_closers()
 
 
 # ── AC3: streamed to the timeline as it arrives ────────────────────────

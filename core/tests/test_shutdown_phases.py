@@ -7,7 +7,13 @@ import logging
 
 import pytest
 
-from tstd.shutdown_phases import ShutdownPhases, reap_shutdown_distill
+from tstd.provider import ChatCompletionRequest
+from tstd.shutdown_phases import (
+    ProviderFlight,
+    ShutdownPhases,
+    SignalingProvider,
+    reap_shutdown_distill,
+)
 
 
 async def test_a_finished_phase_over_a_second_is_named(
@@ -111,3 +117,67 @@ async def test_reap_does_not_swallow_a_distill_failure() -> None:
     await asyncio.wait({task})
     with pytest.raises(RuntimeError, match="distill broke"):
         await reap_shutdown_distill(task)
+
+
+async def test_reap_waits_out_local_prep_for_a_ready_provider(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Subsystems can finish before the memory read. A ready provider still proposes."""
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    flight = ProviderFlight()
+
+    async def distill() -> None:
+        await release.wait()
+        fut: asyncio.Future[None] = asyncio.ensure_future(_ready())
+        flight.begin(fut)
+        try:
+            await fut
+        finally:
+            flight.end()
+        finished.set()
+
+    async def _ready() -> None:
+        return None
+
+    task = asyncio.create_task(distill())
+    await asyncio.sleep(0)
+    assert not task.done()
+    reap_task = asyncio.create_task(reap_shutdown_distill(task, flight))
+    await asyncio.sleep(0)
+    assert not reap_task.done()
+    release.set()
+    with caplog.at_level(logging.INFO, logger="tstd.shutdown"):
+        await reap_task
+    assert finished.is_set()
+    assert not task.cancelled()
+    assert not any(
+        record.getMessage() == "distill skipped; provider call still in flight"
+        for record in caplog.records
+    )
+
+
+async def test_reap_cancels_a_provider_call_that_does_not_finish(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    flight = ProviderFlight()
+    request = ChatCompletionRequest(model="test-worker", messages=[])
+
+    class _Hang:
+        async def chat_completion(self, request: ChatCompletionRequest) -> None:
+            del request
+            await asyncio.Event().wait()
+
+    async def distill() -> None:
+        await SignalingProvider(_Hang(), flight).chat_completion(request)  # type: ignore[arg-type]
+
+    task = asyncio.create_task(distill())
+    await asyncio.sleep(0)
+    assert flight.pending is not None
+    with caplog.at_level(logging.INFO, logger="tstd.shutdown"):
+        await asyncio.wait_for(reap_shutdown_distill(task, flight), 1)
+    assert task.cancelled()
+    assert any(
+        record.getMessage() == "distill skipped; provider call still in flight"
+        for record in caplog.records
+    )
