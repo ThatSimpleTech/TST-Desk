@@ -11371,3 +11371,39 @@ delete a successor's file.
 message. TD-4842 rejected that, and it stays rejected. Deleting
 whatever bytes are at the path. Killing the daemon before asking it
 to shut down. Waiting out the library's 10 second close handshake.
+
+## TD-4849 — Quit waits for the daemon process (Class B)
+
+2026-09-29.
+
+**Decision:** This revises the TD-4848 host decision that flushed
+`shutdown` and dropped the socket immediately. The host still does
+not call `close().await`, and there is still no protocol ack. After
+the flush it reads until the peer closes, the read errors, or the
+same 5 second grace ends. The daemon closes that socket from
+`ws_server.stop()`, which is after the shutdown-requested log and
+the port-file release.
+
+**Decision:** `wait_for_done` resolves when the supervision loop has
+reaped the process-group leader, or has given up, not when the
+socket ends. SIGKILL of the group is only the grace fallback. A
+clean leader exit does not group-kill. For a PyInstaller onefile
+sidecar the leader is the bootloader, and it leaves after the
+Python process. `RunEvent::Exit` uses the same rule: if shutdown
+was requested and the grace has not elapsed, it waits out the
+remainder; if the leader is already gone, it does nothing; if
+shutdown was not requested, or the grace has elapsed, it SIGKILLs.
+The outer quit bound stays 10 seconds.
+
+**Rationale:** A live quit of the installed build (2026-09-29)
+left `port.json` and wrote no shutdown line. tao does not implement
+`applicationShouldTerminate`, so macOS delivers `RunEvent::Exit`
+from `applicationWillTerminate` even after `prevent_exit`. That
+callback SIGKILLed the process group before the daemon read the
+frame. Every quit skipped audit drain, session persistence, and
+the TD-4844 shutdown phases.
+
+**Rejected:** A new shutdown ack. Waiting on `close().await` (the
+10 second handshake TD-4848 removed). SIGKILL as soon as the socket
+ends. Group-kill after a clean leader exit. Changing the embeddings
+supervisor, which still kills on shutdown with no websocket grace.

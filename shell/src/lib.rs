@@ -205,6 +205,9 @@ pub(crate) fn request_quit(app: &tauri::AppHandle) {
     embeddings.request_shutdown();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Outer bound if the supervisor never reports done. Its own grace
+        // is 5s and resolves when the leader is reaped; Exit must not
+        // cut that short.
         let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             tokio::join!(handle.wait_for_done(), embeddings.wait_for_done());
         })
@@ -398,6 +401,9 @@ pub fn run() {
                     }
                 }
                 tauri::RunEvent::Exit => {
+                    // No-op once the leader has been reaped. A normal quit
+                    // waits out the remaining grace here instead of SIGKILL:
+                    // macOS can deliver Exit while the daemon is still closing.
                     daemon::best_effort_kill(&app_handle.state::<DaemonHandle>());
                     daemon::embeddings::best_effort_kill(&app_handle.state::<EmbeddingsHandle>());
                 }
