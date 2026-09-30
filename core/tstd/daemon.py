@@ -75,6 +75,10 @@ from .config_write import (
     save_tier_credential,
     save_tier_slug,
 )
+from .console_shutdown import (
+    install_windows_console_shutdown,
+    remove_windows_console_shutdown,
+)
 from .context.assembler import ContextAssembler
 from .context.commands import list_workspace_commands_async
 from .context.discover import SteeringFileResolver, append_steering_notice
@@ -165,6 +169,7 @@ from .policy import (
     save_policy,
     save_skip_all,
 )
+from .port_file import release_port_file
 from .protocol import (
     AddPin,
     AlwaysAllow,
@@ -1498,8 +1503,11 @@ class Daemon:
         )
         # Before restore. A signal during rehydrate has to arm the budget;
         # the port file is not written until serve, but a stuck restore
-        # must still end.
+        # must still end. Windows console close releases the port file on
+        # the handler thread — the process can die when that handler
+        # returns — then asks for this same shutdown.
         install_posix_shutdown_signals(self._on_signal)
+        install_windows_console_shutdown(self._on_signal, self.data_dir)
 
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -1529,6 +1537,7 @@ class Daemon:
             finally:
                 self._shutdown_budget.finish()
                 remove_posix_shutdown_signals()
+                remove_windows_console_shutdown()
 
         log.info(
             "stopped",
@@ -1557,7 +1566,15 @@ class Daemon:
         was the SIGTERM that exited through the budget after one
         finished turn (TD-4844). A distill that has already returned is
         kept.
+
+        The port file is released before the log line. ``emit`` takes
+        the logging lock, and a callback that logs first never reaches
+        later cleanup if that lock is stuck (see ``_on_signal``). The
+        host also kills this process a few seconds after asking it to
+        stop, which is shorter than a close handshake against a client
+        that never answers.
         """
+        release_port_file(self.data_dir)
         log.info("shutting down")
         phases = ShutdownPhases()
 
@@ -1581,7 +1598,9 @@ class Daemon:
             await phases.run("cu_socket", stop_cu_socket(self.data_dir))
             self._cu_server = None
 
-        # Stop the WebSocket server (closes clients and removes the port file)
+        # Stop the WebSocket server. The port file was released above,
+        # before this await; stop releases it again only if it still
+        # names this process.
         await phases.run("ws_stop", self.ws_server.stop())
 
         # Stop session loops

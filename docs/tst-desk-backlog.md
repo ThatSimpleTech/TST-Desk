@@ -7346,6 +7346,44 @@ clean over 163 files, vitest 1412, svelte-check 709 files 0 errors
 
 ---
 
+### TD-4848 — The port file is removed on every clean shutdown path
+**Size:** 1 · **Depends on:** TD-4842, TD-4844
+
+Quitting the app left `port.json` behind, so the next start logged
+`WARNING tstd.ws stale port file detected, replacing`. SIGTERM and
+SIGINT already removed the file. The host's shutdown message, the
+parent-death watchdog, and Windows console close did not.
+
+**Acceptance criteria:**
+- [x] Clean shutdown via the websocket `shutdown` message removes
+      `port.json` when it names this process, and leaves a file whose
+      pid is not this process
+- [x] The parent-death watchdog does the same
+- [x] On Windows, console close, logoff, and shutdown run that
+      finalizer and request the same shutdown. Ctrl+C and Ctrl+Break
+      stay on the signal path. On macOS and Linux, SIGTERM and SIGINT
+      still remove the file. The budget still exits non-zero and
+      removes the file only when it names this process
+- [x] A stale `port.json` at start is replaced and logged at INFO
+      with the dead pid, not WARNING
+- [x] Host quit still sends the shutdown message, drops its socket,
+      and keeps the bounded SIGKILL fallback
+
+Done (2026-09-29): one pid-checked finalizer runs at the start of
+shutdown, at the start of websocket stop, on budget expiry, and on
+the Windows console-close thread. A file that names another process
+stays. A crash leftover is still replaced, and the log is INFO with
+the dead pid. The host flushes `shutdown` and drops its socket
+instead of holding it through the grace; client close handshakes
+during stop are bounded to one second. The websocket message still
+does not arm the budget. Class B entry in DECISIONS.md.
+
+Suite: 3938 passed / 8 skipped, ruff + `mypy --strict` clean over 171
+files, vitest 1428, svelte-check 713 files 0 errors 0 warnings.
+`cargo test` 64 passed, `cargo clippy -D warnings` clean.
+
+---
+
 # Risk register
 
 | # | Risk | Impact | Mitigation |
@@ -7381,8 +7419,8 @@ clean over 163 files, vitest 1412, svelte-check 709 files 0 errors
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 19 | 77 |
-| **Total planned** | **48** | **331** | **1045** |
+| Later | E47, E49 | 20 | 78 |
+| **Total planned** | **48** | **332** | **1046** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

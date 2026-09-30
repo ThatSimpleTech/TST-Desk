@@ -11187,3 +11187,47 @@ shipped `typesafe_*` fields. Putting canonical arguments back on the
 prompt. Gating the worker tier on network deny. Gating verification
 and the breaker on the same network check in this story. Storing the
 signal payload in the audit database.
+
+## TD-4848 — The port file is removed only when it names this process (Class B)
+
+2026-09-29.
+
+**Decision:** `release_port_file` deletes `port.json` only when its
+`pid` is an int (not a bool) naming this process. It runs at the
+start of daemon shutdown, before the shutting-down log and before
+any await, at the start of websocket `stop`, on shutdown-budget
+expiry, and synchronously inside the Windows console handler. A
+missing, unreadable, non-object, or foreign file is left in place.
+There is no lock. The host does not spawn the next daemon until this
+process is dead.
+
+**Decision:** A port file found at startup is still replaced. The log
+line stays `tstd.ws` / `stale port file detected, replacing`, at
+INFO, and includes the dead pid. A file with no pid logs `pid` null.
+The token is not logged.
+
+**Decision:** On Windows, CTRL_CLOSE, CTRL_LOGOFF, and CTRL_SHUTDOWN
+release the file on the console-handler thread, then schedule the
+same callback SIGTERM uses. CTRL_C and CTRL_BREAK are installed with
+`signal.signal` and do not release in the console hook. This is the
+console path TD-4842 named and did not install. The websocket
+shutdown message still does not arm the budget.
+
+**Decision:** The host sends `shutdown`, flushes, and drops its
+socket, then keeps the 5 second SIGKILL fallback. It does not wait
+for a close ack. During `stop`, each client close handshake is
+bounded to 1 second so a peer that never acks cannot outlive that
+grace. The listening socket stops accepting before that wait.
+
+**Rationale:** Quit left `port.json` behind because `stop` unlinked
+it only after `close()`, and the host held its socket while the
+library waited up to 10 seconds for an ack. The host killed the
+process at 5 seconds. The next start logged a warning for an
+ordinary quit. The parent watchdog and Windows console close had no
+backstop that removed the file. An unconditional unlink would also
+delete a successor's file.
+
+**Alternative rejected:** Arming the SIGTERM budget for the websocket
+message. TD-4842 rejected that, and it stays rejected. Deleting
+whatever bytes are at the path. Killing the daemon before asking it
+to shut down. Waiting out the library's 10 second close handshake.
