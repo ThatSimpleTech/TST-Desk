@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Literal
 
 from ..logging import get_logger
+from ..proc_lifecycle import finish_subprocess
 from .classifier import DecisionClass
 
 log = get_logger("tstd.checkpoint")
@@ -179,10 +180,8 @@ async def checkpoint_start_error(workspace: str | Path) -> str | None:
     except OSError:
         return GIT_MISSING_FOR_AUTONOMY
     try:
-        out_b, _err_b = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT)
+        out_b, _err_b = await finish_subprocess(proc, timeout=_GIT_TIMEOUT)
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
         return GIT_MISSING_FOR_AUTONOMY
     rc = proc.returncode if proc.returncode is not None else -1
     if rc != 0 or out_b.decode("utf-8", errors="replace").strip() != "true":
@@ -471,11 +470,6 @@ class Checkpointer:
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        try:
-            out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise
+        out_b, err_b = await finish_subprocess(proc, timeout=_GIT_TIMEOUT)
         rc = proc.returncode if proc.returncode is not None else -1
         return rc, out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace")

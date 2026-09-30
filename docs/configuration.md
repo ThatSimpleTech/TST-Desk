@@ -42,10 +42,11 @@ The Linux leaf is `tst-desk`, not the Tauri identifier
 path. If only the reverse-DNS leftover exists, it is renamed once; if
 both exist, `tst-desk` wins and the leftover is left alone.
 
-There is no dedicated environment variable for this path and no CLI flag for it. On Linux and
+There is no dedicated environment variable for this path. On Linux and
 Windows it moves with the platform's own data-directory variable, as the table shows; on macOS
-the path is fixed. Note that the daemon's `--data-dir` moves the session store and the audit
-database but does **not** move this file.
+the path is fixed. `tstd --data-dir <dir>` and `tst --data-dir <dir>` read and write
+`<dir>/config.yaml` along with the rest of that daemon's files. With no flag, this file
+stays in the platform directory above. The OS keychain does not move.
 
 **Unknown keys are ignored, in both files.** A misspelled key is not an error — it is dropped,
 and the default applies. `writeable_paths` (with the extra `e`) leaves you with the default
@@ -72,6 +73,7 @@ no effect.
 | `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
 | `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. No `env` map — tokens stay in the keychain. |
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
+| `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 
 ### `credentials`
 
@@ -82,7 +84,10 @@ local. Omit it for a keyed local server so the tier URL stays in charge.
 Settings → API keys has a Host field that writes this key (TD-1722); blank
 keeps the preset URL. Add as
 many as you need — OpenRouter, a keyed local server, a second remote. A tier's
-`credential` field picks which one that model sends.
+`credential` field picks which one that model sends. The secret must be
+printable ASCII (space through `~`). On macOS, `security -w` prints
+anything else as hex, so save refuses it. An empty or whitespace-only
+item is treated as missing.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -339,6 +344,24 @@ speech:
 `project_context` is the pinned-file budget on the brain prompt (TD-2805).
 Newest pins drop first when over `token_budget`.
 
+### `steering`
+
+User-global steering (TD-4845). Discovery always reads `~/.tstdesk/AGENTS.md`
+when that file exists. `~/.claude/CLAUDE.md` is Claude Code's global file.
+It is not read, and nothing it imports is read, unless
+`claude_global_fallback` is true. Workspace-root and nested `CLAUDE.md`
+files are project files and are not gated by this key.
+
+When the key is false, `~/.claude/CLAUDE.md` exists, and
+`~/.tstdesk/AGENTS.md` does not, Doctor's steering row says the file was
+not loaded and names this key. Turning the key on restores the previous
+fallback, including the approval prompt for an import that leaves the
+workspace.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `claude_global_fallback` | bool | `false` | When true, `~/.claude/CLAUDE.md` is the user-global file if `~/.tstdesk/AGENTS.md` is absent. When false, that file is never read. |
+
 ### `session`
 
 The durable event log each session writes under the data dir (TD-2901).
@@ -498,6 +521,8 @@ embeddings:
   token_budget: 2000
 project_context:
   token_budget: 2000
+steering:
+  claude_global_fallback: false
 session:
   log_max_events: 10000
 provider_retry:
@@ -568,7 +593,7 @@ The Grok CLI itself is unchanged: `grok`, `grok -p`, `grok agent stdio`, SSH, an
 
 ### `voice`
 
-Hold-to-talk dictation (TD-4701). The Settings toggle is off by default and lives in `{user_data_dir}/voice.yaml`, not this file. This block only names a transcription endpoint. Empty `base_url` means the composer uses OS dictation (no network from `tstd`). Works with whichever engine the session is running — it fills the composer, it does not talk to the agent loop.
+Hold-to-talk dictation (TD-4701). The Settings toggle is off by default and lives in `voice.yaml` in the daemon's data directory (the platform directory above when `--data-dir` is omitted), not this file. This block only names a transcription endpoint. Empty `base_url` means the composer uses OS dictation (no network from `tstd`). Works with whichever engine the session is running — it fills the composer, it does not talk to the agent loop.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -620,6 +645,15 @@ call is spent doing it. So:
   first is your steering block.
 - `max_output_tokens` does **not** cap generation. It only reserves room for the answer inside
   the budget. Your provider's own default output limit is what actually applies.
+
+A single tool result is capped at the smaller of 50,000 characters and a quarter of
+(`context_window` − `max_output_tokens` − tokens already in the prompt), counted at 4 characters
+per token, and never below 4,000 characters. On a 32,768-token tier one result cannot fill the
+window by itself. At 128,000 tokens or larger the cap stays 50,000. If the in-flight turn's tool
+results still exceed the compaction budget, their middles are replaced with a note to re-read
+with offset and limit before the next model call. A provider that still reports a context
+overflow is retried once at a tighter budget. If it overflows again, the turn fails with a short
+message that names the configured window. The raw provider error stays in the log.
 
 ---
 

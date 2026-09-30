@@ -226,6 +226,32 @@ class CostTracker:
         self._notify(record, is_classifier=True)
         return cost
 
+    def record_classifier_amount(self, connector: str, model: str, cost: float) -> float:
+        """Record a classifier spend that is already a dollar amount.
+
+        A hosted judgment connector does not have a tier price.  The
+        amount stays on the classifier line (``source`` is the connector
+        name) and out of the turn total.  Token counts stay zero when
+        the connector did not report any.
+        """
+        amount = round(max(0.0, cost), 6)
+        record = CallRecord(
+            tier="worker",
+            model=model or connector,
+            prompt_tokens=0,
+            cached_prompt_tokens=0,
+            completion_tokens=0,
+            uncached_prompt_tokens=0,
+            prompt_cost=0.0,
+            cached_cost=0.0,
+            completion_cost=0.0,
+            cost=amount,
+            source=connector,
+        )
+        self._classifier_calls.append(record)
+        self._notify(record, is_classifier=True)
+        return amount
+
     def _build_record(
         self,
         tier: TierName,

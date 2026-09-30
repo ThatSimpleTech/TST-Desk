@@ -11,7 +11,6 @@ import asyncio
 import contextlib
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -31,7 +30,7 @@ from .attachments import (
     decode_attachments,
     render_user_content,
 )
-from .audit import AuditStore
+from .audit import AuditStore, audit_db_path
 from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
 from .audit_writer import AuditWriter
 from .autonomy.charter import Charter, CharterError
@@ -56,6 +55,7 @@ from .config import (
     allocate_credential_id,
     apply_credential_host,
     cached_config,
+    config_yaml_path,
     credential_base_url,
     is_loopback_url,
     is_openrouter_family,
@@ -63,6 +63,7 @@ from .config import (
     resolve_base_url,
     resolve_credential_id,
 )
+from .config_bind import call_config_loader
 from .config_write import (
     delete_credential_entry,
     delete_mcp_server_entry,
@@ -74,8 +75,13 @@ from .config_write import (
     save_tier_credential,
     save_tier_slug,
 )
+from .console_shutdown import (
+    install_windows_console_shutdown,
+    remove_windows_console_shutdown,
+)
 from .context.assembler import ContextAssembler
 from .context.commands import list_workspace_commands_async
+from .context.discover import SteeringFileResolver, append_steering_notice
 from .context.instructions import (
     InstructionNameError,
     create_rule_file,
@@ -118,8 +124,8 @@ from .grok_loop import grok_loop
 from .keychain import (
     KeychainError,
     KeychainLockedError,
+    api_key_is_stored,
     delete_api_key,
-    get_api_key,
     store_api_key,
 )
 from .local_worker import (
@@ -129,7 +135,7 @@ from .local_worker import (
     titlebar_hosts,
     titlebar_slugs,
 )
-from .logging import get_logger, setup_logging, user_data_dir
+from .logging import get_logger, log_directory, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop
 from .mcp.loader import McpSupervisor
 from .memory_commit import MemoryCommitter
@@ -163,6 +169,7 @@ from .policy import (
     save_policy,
     save_skip_all,
 )
+from .port_file import release_port_file
 from .protocol import (
     AddPin,
     AlwaysAllow,
@@ -221,11 +228,14 @@ from .protocol import (
     JobDraftReply,
     JobEntry,
     JobList,
+    JobRunEntry,
+    JobRuns,
     ListArtifacts,
     ListCommands,
     ListGrokExtensions,
     ListGrokSessions,
     ListInstructions,
+    ListJobRuns,
     ListJobs,
     ListMemory,
     ListPins,
@@ -253,6 +263,7 @@ from .protocol import (
     RevokePolicyRule,
     RunDiagnostics,
     RunGrokCommand,
+    RunJob,
     RunVerify,
     SaveCharter,
     SaveJob,
@@ -320,22 +331,37 @@ from .provider import (
     RetryConfig,
     auth_failure_message,
 )
+from .provider_refresh import RefreshingProvider, _close_client
 from .remote_attach import (
     bind_spec_when_enabled,
     load_remote_attach,
     save_remote_attach,
 )
 from .router import TIER_NAMES, TierRouter
-from .scheduler.models import DeliverTo, Job, JobDraft, JobValidationError
+from .scheduler.edit import apply_job_edit
+from .scheduler.history import JobRun, list_runs
+from .scheduler.models import (
+    DeliverTo,
+    Job,
+    JobDraft,
+    JobValidationError,
+    validate_draft,
+)
+from .scheduler.park import drop_parked, follow_parked, revive_parked
+from .scheduler.pin import require_known_preset
 from .scheduler.runner import (
+    InFlight,
     RecordingDeliver,
     TurnResult,
+    begin_manual_run,
     channel_notify,
     run_due_jobs,
+    run_manual_job,
     run_turn_on_daemon,
 )
 from .scheduler.runner import SendFn as NotifySendFn
 from .scheduler.store import delete_job, get_job, list_jobs, save_job
+from .scheduler.workspace import require_folder, resolve_workspace_name
 from .session import (
     TERMINAL_STATES,
     QueuedUserMessage,
@@ -348,6 +374,17 @@ from .session_lifecycle import archive_session, delete_session, move_session, re
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
+from .shutdown_budget import (
+    ShutdownBudget,
+    install_posix_shutdown_signals,
+    remove_posix_shutdown_signals,
+)
+from .shutdown_phases import (
+    ProviderFlight,
+    ShutdownPhases,
+    SignalingProvider,
+    reap_shutdown_distill,
+)
 from .speech import transcribe as transcribe_speech
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
@@ -619,8 +656,8 @@ def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
     )
 
 
-def _job_entry(job: Job) -> JobEntry:
-    """Wire shape for a persisted job. The rail lists these; it does not run them."""
+def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
+    """Wire shape for a persisted job. ``running`` is the in-flight guard, not disk."""
     return JobEntry(
         id=job.id,
         workspace=job.workspace,
@@ -629,11 +666,39 @@ def _job_entry(job: Job) -> JobEntry:
         next_run=job.next_run,
         deliver_to=job.deliver_to,
         paused=job.paused,
+        timezone=job.timezone,
+        preset=job.preset,
+        engine=job.engine,
+        grace=job.grace,
+        retries=job.retries,
+        retry_delay=job.retry_delay,
+        attempt=job.attempt,
         last_run=job.last_run,
         last_status=job.last_status,
         last_summary=job.last_summary,
         last_session_id=job.last_session_id,
+        running=running,
     )
+
+
+def _job_runs_event(job_id: str, runs: list[JobRun]) -> str:
+    """Wire shape for one job's history, newest first as ``list_runs`` returns it."""
+    return JobRuns(
+        job_id=job_id,
+        runs=[
+            JobRunEntry(
+                started_at=run.started_at,
+                scheduled_for=run.scheduled_for,
+                trigger=run.trigger,
+                status=run.status,
+                summary=run.summary,
+                session_id=run.session_id,
+                attempt=run.attempt,
+                attempts=run.attempts,
+            )
+            for run in runs
+        ],
+    ).model_dump_json()
 
 
 class Daemon:
@@ -652,14 +717,20 @@ class Daemon:
         notify_send: NotifySendFn | None = None,
         scheduler_tick: float = 15.0,
         interfaces: InterfaceEnumerator | None = None,
+        shutdown_budget: ShutdownBudget | None = None,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
+        self._shutdown_budget = shutdown_budget if shutdown_budget is not None else ShutdownBudget()
         self._tasks: list[asyncio.Task[Any]] = []
         self.session_registry = SessionRegistry()
         self._session_store = SessionStore(self.data_dir)
-        self.config = cached_config()
+        # The path is this daemon's file, never the no-arg library cache.
+        # A zero-arg test double still injects; a real loader is not caught
+        # and retried against the default path (TD-4843).
+        self.config_path = config_yaml_path(self.data_dir)
+        self.config = call_config_loader(cached_config, self.config_path)
         self._session_persist = SessionPersist(
             self.data_dir,
             log_max_events=self.config.session.log_max_events,
@@ -739,6 +810,9 @@ class Daemon:
             send=self._notify_send,
             on_window=self._deliver_to_window,
         )
+        # Process memory, not jobs.json. A crash has no turn left in flight,
+        # and a stale true on disk would disable Run now until edited by hand.
+        self._in_flight = InFlight()
 
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
@@ -768,27 +842,67 @@ class Daemon:
         """Build a client for the active brain tier."""
         return await self._build_client(self.config.tier("brain"))
 
+    def _credential_label(self, cred_id: str) -> str:
+        """Display name for a failure message. Never the secret."""
+        row = self.config.credentials.get(cred_id)
+        if row is not None:
+            return row.name
+        if cred_id == DEFAULT_CREDENTIAL_ID:
+            return "OpenRouter"
+        return cred_id
+
+    def _drop_provider_clients(self) -> None:
+        """Drop cached provider handles after an in-app key mutation.
+
+        The next ``_client_for`` rebuilds from the keychain. A live
+        session still holds its handle; that handle re-reads the keychain
+        on the next authentication failure (TD-4840).
+        """
+        self._clients.clear()
+
     async def _client_for(self, tier_cfg: TierConfig) -> ProviderLike:
         """The provider client for *tier_cfg*, cached by URL and key.
 
         An injected constructor provider (tests) is returned for every
         tier so a mock stays in front of the loop. Production caches one
-        client per ``(base_url, credential)`` so two keys on one host do
+        handle per ``(base_url, credential)`` so two keys on one host do
         not share a client, and a remapped local worker (TD-3903) does
-        not reuse the remote brain client.
+        not reuse the remote brain client. The handle, not the HTTP
+        client, is what the session loop keeps. An authentication failure
+        closes the HTTP client and rebuilds it from the keychain (TD-4840).
+        A missing or empty key is not cached, so the next turn re-reads.
         """
         if self._provider is not None:
             return self._provider
-        cache_key = (
-            resolve_base_url(self.config, tier_cfg),
-            resolve_credential_id(tier_cfg) or "",
-        )
+        base_url = resolve_base_url(self.config, tier_cfg)
+        cred_id = resolve_credential_id(tier_cfg) or ""
+        cache_key = (base_url, cred_id)
         cached = self._clients.get(cache_key)
         if cached is not None:
             return cached
-        client = await self._build_client(tier_cfg)
-        self._clients[cache_key] = client
-        return client
+        try:
+            client = await self._build_client(tier_cfg)
+        except KeychainError:
+            # Nothing was inserted. Pop anyway so a later edit cannot
+            # leave a sentinel that skips the next keychain read.
+            self._clients.pop(cache_key, None)
+            raise
+        if not cred_id:
+            self._clients[cache_key] = client
+            return client
+
+        async def rebuild() -> ProviderClient:
+            return await self._build_client(tier_cfg)
+
+        handle = RefreshingProvider(
+            client,
+            credential_id=cred_id,
+            credential_name=self._credential_label(cred_id),
+            base_url=base_url,
+            rebuild=rebuild,
+        )
+        self._clients[cache_key] = handle
+        return handle
 
     async def _ensure_provider(self) -> ProviderLike:
         """Create the shared provider client on first use.
@@ -867,16 +981,15 @@ class Daemon:
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
-        # Keychain reads can prompt when an item's ACL predates this build's
-        # signature, so probing on every setup_state storms the user with
-        # dialogs (TD-4835).  Presence is cached and invalidated by the key
-        # mutation handlers (set/delete api key, set/delete credential).
+        # Presence is an attributes-only lookup (TD-4838). A full secret
+        # read prompts when the item's ACL trusts only an older tstd
+        # binary, so the pane reported "No key stored" for a key that was
+        # saved. The result stays cached until a key mutation (TD-4835).
         cached = self._stored_probe_cache.get(credential_id)
         if cached is not None:
             return cached
         try:
-            await get_api_key(credential_id)
-            stored = True
+            stored = await api_key_is_stored(credential_id)
         except (KeychainError, FileNotFoundError):
             stored = False
         self._stored_probe_cache[credential_id] = stored
@@ -903,10 +1016,11 @@ class Daemon:
         ]
 
     def _reload_user_config(self) -> None:
-        """Re-read config.yaml, keep the live preset, drop cached clients."""
-        self.config = load_config().model_copy(update={"active_preset": self.config.active_preset})
+        """Re-read this daemon's config.yaml, keep the live preset, drop clients."""
+        loaded = call_config_loader(load_config, self.config_path)
+        self.config = loaded.model_copy(update={"active_preset": self.config.active_preset})
         self._slug_snapshot = _snapshot_slugs(self.config)
-        self._clients.clear()
+        self._drop_provider_clients()
 
     def _host_to_persist(
         self, cred_id: str, catalog_name: str, requested: str | None
@@ -960,7 +1074,7 @@ class Daemon:
         else:
             catalog_name = cred_id
         host = self._host_to_persist(cred_id, catalog_name, base_url)
-        save_credential(cred_id, catalog_name, base_url=host)
+        save_credential(cred_id, catalog_name, path=self.config_path, base_url=host)
         await store_api_key(api_key, cred_id)
         self._reload_user_config()
         return cred_id
@@ -973,7 +1087,7 @@ class Daemon:
         existing = set(self.config.credentials)
         cred_id = credential.strip() if credential else allocate_credential_id(cleaned, existing)
         host = self._host_to_persist(cred_id, cleaned, base_url)
-        save_credential(cred_id, cleaned, base_url=host)
+        save_credential(cred_id, cleaned, path=self.config_path, base_url=host)
         self._reload_user_config()
         return cred_id
 
@@ -995,9 +1109,9 @@ class Daemon:
             if cred_id not in self.config.credentials:
                 raise
         if cred_id in self.config.credentials:
-            delete_credential_entry(cred_id)
+            delete_credential_entry(cred_id, self.config_path)
         for preset_name, tier_name in bound:
-            save_tier_credential(preset_name, tier_name, None)
+            save_tier_credential(preset_name, tier_name, None, self.config_path)
         self._reload_user_config()
 
     def _cu_permissions_session(self, event: DaemonEvent) -> str | None:
@@ -1300,7 +1414,7 @@ class Daemon:
     # way to ask, not a workaround.
 
     def _audit_reader(self) -> AuditStore:
-        return AuditStore(self.data_dir / "audit.db")
+        return AuditStore(audit_db_path(self.data_dir))
 
     async def _usage_report(self) -> UsageReport:
         """Every usage bucket, split by tier, from the audit store."""
@@ -1354,9 +1468,11 @@ class Daemon:
     async def _check_steering(self, workspace: Path) -> DiagnosticCheck:
         """Steering stack parses: resolution runs and imports land."""
         try:
-            assembled = await ContextAssembler().assemble(
-                workspace, approved_imports=_approved_import_allowlist(workspace)
-            )
+            assembled = await ContextAssembler(
+                resolver=SteeringFileResolver(
+                    claude_global_fallback=self.config.steering.claude_global_fallback,
+                )
+            ).assemble(workspace, approved_imports=_approved_import_allowlist(workspace))
         except Exception as e:  # resolution is designed not to raise; report if it does
             return DiagnosticCheck(
                 name="steering",
@@ -1370,13 +1486,19 @@ class Daemon:
             return DiagnosticCheck(
                 name="steering",
                 status="fail",
-                detail=_relativize_paths(f"{issues[0]}{more}", workspace),
+                detail=append_steering_notice(
+                    _relativize_paths(f"{issues[0]}{more}", workspace),
+                    assembled.notices,
+                ),
                 fix="Fix or remove the broken @import in the named file.",
             )
         return DiagnosticCheck(
             name="steering",
             status="ok",
-            detail=f"{len(assembled.sources)} steering source(s) parsed",
+            detail=append_steering_notice(
+                f"{len(assembled.sources)} steering source(s) parsed",
+                assembled.notices,
+            ),
         )
 
     async def run(self) -> None:
@@ -1385,40 +1507,43 @@ class Daemon:
             "starting",
             extra={"extra_fields": {"version": self._version(), "data_dir": str(self.data_dir)}},
         )
+        # Before restore. A signal during rehydrate has to arm the budget;
+        # the port file is not written until serve, but a stuck restore
+        # must still end. Windows console close releases the port file on
+        # the handler thread — the process can die when that handler
+        # returns — then asks for this same shutdown.
+        install_posix_shutdown_signals(self._on_signal)
+        install_windows_console_shutdown(self._on_signal, self.data_dir)
 
-        # Ensure data directory exists
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-
-        # Audit writer before revive so restored loops can record calls.
-        self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
-        self._audit_writer.start()
-
-        # Rehydrate sessions from the registry plus any persisted
-        # transcript. A session with a conversation snapshot is revived
-        # for real; one without is an interrupted tombstone.
-        await self._restore_sessions()
-
-        # Register signal handlers.  asyncio's add_signal_handler is
-        # POSIX-only — it raises NotImplementedError on Windows, where
-        # shutdown still arrives via the shutdown message, the parent
-        # watchdog, or the console control event the host sends.
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            with contextlib.suppress(NotImplementedError):
-                loop.add_signal_handler(sig, self._on_signal)
-
-        # If the host told us its PID, watch it: if the host dies (including
-        # by force-quit) we must not become an orphan.
-        if self._parent_pid is not None:
-            self._tasks.append(asyncio.create_task(self._parent_watchdog(self._parent_pid)))
-
-        # Start subsystems
         try:
-            await self._serve()
-        except asyncio.CancelledError:
-            pass
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+
+            # Audit writer before revive so restored loops can record calls.
+            self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
+            self._audit_writer.start()
+
+            # Rehydrate sessions from the registry plus any persisted
+            # transcript. A session with a conversation snapshot is revived
+            # for real; one without is an interrupted tombstone.
+            await self._restore_sessions()
+
+            # A signal during restore already requested shutdown. Do not
+            # bind a port just to tear it down.
+            if not self._shutdown_event.is_set():
+                # If the host told us its PID, watch it: if the host dies
+                # (including by force-quit) we must not become an orphan.
+                if self._parent_pid is not None:
+                    self._tasks.append(asyncio.create_task(self._parent_watchdog(self._parent_pid)))
+
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._serve()
         finally:
-            await self._shutdown()
+            try:
+                await self._shutdown()
+            finally:
+                self._shutdown_budget.finish()
+                remove_posix_shutdown_signals()
+                remove_windows_console_shutdown()
 
         log.info(
             "stopped",
@@ -1428,7 +1553,7 @@ class Daemon:
     async def _serve(self) -> None:
         """Main serving loop — start subsystems and wait for shutdown."""
         if self._audit_writer is None:
-            self._audit_writer = AuditWriter(AuditStore(self.data_dir / "audit.db"))
+            self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
             self._audit_writer.start()
         await self.ws_server.start()
         if sys.platform == "darwin":
@@ -1439,56 +1564,109 @@ class Daemon:
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:
-        """Graceful shutdown: distill, cancel tasks, close sockets, flush."""
-        log.info("shutting down")
-        await self._distill_live_sessions()
+        """Graceful shutdown: distill, cancel tasks, close sockets, flush.
 
+        Distill runs beside the rest of the close. A provider read that
+        is still open when those steps return is cancelled: that read's
+        timeout is longer than the shutdown budget, and waiting on it
+        was the SIGTERM that exited through the budget after one
+        finished turn (TD-4844). Local prep and an in-process provider
+        are awaited so a ready mock still proposes (TD-4851). A distill
+        that has already returned is kept.
+
+        The port file is released before the log line. ``emit`` takes
+        the logging lock, and a callback that logs first never reaches
+        later cleanup if that lock is stuck (see ``_on_signal``). The
+        host also kills this process a few seconds after asking it to
+        stop, which is shorter than a close handshake against a client
+        that never answers.
+        """
+        release_port_file(self.data_dir)
+        log.info("shutting down")
+        phases = ShutdownPhases()
+        flight = ProviderFlight()
+
+        async def _distill() -> None:
+            await phases.run("distill", self._distill_live_sessions(flight))
+
+        distill = asyncio.create_task(_distill(), name="shutdown-distill")
+        try:
+            await self._shutdown_subsystems(phases)
+        finally:
+            await reap_shutdown_distill(distill, flight)
+            await phases.run("provider", self._close_provider_clients())
+            phases.log_if_slow()
+        log.info("shutdown complete")
+
+    async def _shutdown_subsystems(self, phases: ShutdownPhases) -> None:
+        """Close sockets, sessions, and writers. Does not wait on the provider."""
         if self._cu_server is not None:
             from .cu_host import stop_cu_socket
 
-            await stop_cu_socket(self.data_dir)
+            await phases.run("cu_socket", stop_cu_socket(self.data_dir))
             self._cu_server = None
 
-        # Stop the WebSocket server (closes clients and removes the port file)
-        await self.ws_server.stop()
+        # Stop the WebSocket server. The port file was released above,
+        # before this await; stop releases it again only if it still
+        # names this process.
+        await phases.run("ws_stop", self.ws_server.stop())
 
         # Stop session loops
         sessions = await self.session_registry.list_sessions()
         for session in sessions:
             runner = self.session_registry.get_runner(session.id)
             if runner is not None:
-                await runner.cancel()
+                await phases.run(f"cancel {session.id[:8]}", runner.cancel())
 
         # Cancel streaming tasks
         for task in list(self._streaming_tasks.values()):
             if not task.done():
                 task.cancel()
         if self._streaming_tasks:
-            await asyncio.gather(*self._streaming_tasks.values(), return_exceptions=True)
+            await phases.run(
+                "streaming",
+                asyncio.gather(*self._streaming_tasks.values(), return_exceptions=True),
+            )
             self._streaming_tasks.clear()
 
         # Cancel remaining daemon tasks (e.g. the parent watchdog)
         for task in self._tasks:
             task.cancel()
         if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+            await phases.run(
+                "tasks",
+                asyncio.gather(*self._tasks, return_exceptions=True),
+            )
             self._tasks.clear()
 
         # Drain audit writes before closing the store (state flushed)
         if self._audit_writer is not None:
-            await self._audit_writer.close()
+            await phases.run("audit", self._audit_writer.close())
             self._audit_writer = None
 
-        await self.desktop_driver.aclose()
-        await self.browser_driver.aclose()
-        await self._mcp.aclose()
+        await phases.run("desktop", self.desktop_driver.aclose())
+        await phases.run("browser", self.browser_driver.aclose())
+        await phases.run("mcp", self._mcp.aclose())
 
-        log.info("shutdown complete")
+    async def _close_provider_clients(self) -> None:
+        """Drop HTTP pools opened for this process. Never logs a secret."""
+        clients = list(self._clients.values())
+        self._clients.clear()
+        if self._provider is not None and self._provider not in clients:
+            clients.append(self._provider)
+        for client in clients:
+            await _close_client(client)
 
     def _on_signal(self) -> None:
-        """Handle OS signals for graceful shutdown."""
-        log.info("signal received")
+        """Request the same shutdown the websocket message uses.
+
+        Arm the budget before logging. ``emit`` takes the logging lock;
+        a callback that logs first never sets the event if that lock is
+        stuck, and the process stays up until something else kills it.
+        """
         self._shutdown_event.set()
+        self._shutdown_budget.arm(self.data_dir)
+        log.info("signal received")
 
     async def _restore_sessions(self) -> None:
         """Rehydrate the registry. Revive only when a conversation snapshot exists.
@@ -1532,7 +1710,17 @@ class Daemon:
             )
 
     async def _scheduler_loop(self) -> None:
-        """On start (revive) and on a short tick, fire each due job once."""
+        """Close approvals the last process left parked, then fire due jobs.
+
+        Revive runs once, before the tick, including when shutdown is
+        already set. A later tick must not run it again: that would fail
+        a park this process just opened.
+        """
+        try:
+            if await revive_parked(self.data_dir, self._scheduler_deliver):
+                await self._push_job_list()
+        except Exception:
+            log.exception("scheduler park revive failed")
         while not self._shutdown_event.is_set():
             try:
                 await self.run_due_jobs()
@@ -1558,6 +1746,8 @@ class Daemon:
             when,
             run_turn=self._scheduled_run_turn,
             deliver=self._scheduler_deliver,
+            in_flight=self._in_flight,
+            on_parked=self._arm_park_watch,
         )
         if ran:
             # Both halves of the row moved: next_run advanced and the run
@@ -1566,6 +1756,45 @@ class Daemon:
             # no sign the job ran (TD-3807).
             await self._push_job_list()
         return ran
+
+    def _arm_park_watch(self, job_id: str, session_id: str, started_at: str) -> None:
+        """Follow a parked approval until the turn ends. Disk already has it."""
+        task = asyncio.create_task(
+            self._watch_park(job_id, session_id, started_at),
+            name=f"park:{job_id}",
+        )
+        self._tasks.append(task)
+
+    async def _watch_park(self, job_id: str, session_id: str, started_at: str) -> None:
+        session = self.session_registry.get(session_id)
+        try:
+            if isinstance(session, Session):
+                changed = await follow_parked(
+                    self.data_dir,
+                    job_id,
+                    session,
+                    started_at,
+                    self._scheduler_deliver,
+                )
+            else:
+                changed = await drop_parked(
+                    self.data_dir,
+                    job_id,
+                    session_id,
+                    started_at,
+                    self._scheduler_deliver,
+                )
+        except asyncio.CancelledError:
+            # Shutdown, not a user cancel. The row stays parked for revive.
+            raise
+        except Exception:
+            log.exception(
+                "parked approval watch failed",
+                extra={"extra_fields": {"job_id": job_id}},
+            )
+            return
+        if changed:
+            await self._push_job_list()
 
     async def _push_job_list(self) -> None:
         """Broadcast the job list to every handshaken client. Never raises."""
@@ -2152,7 +2381,7 @@ class Daemon:
                 typesafe_model=self.config.judgments.typesafe_model,
                 typesafe_credential=credential,
             )
-            await asyncio.to_thread(save_judgments, self.config.judgments)
+            await asyncio.to_thread(save_judgments, self.config.judgments, self.config_path)
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetWorkspacePin):
@@ -2283,6 +2512,12 @@ class Daemon:
         if isinstance(msg, ParseJob):
             return await self._handle_parse_job(msg)
 
+        if isinstance(msg, RunJob):
+            return await self._handle_run_job(msg)
+
+        if isinstance(msg, ListJobRuns):
+            return await self._handle_list_job_runs(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -2322,7 +2557,7 @@ class Daemon:
                 return build_error("keychain_locked", str(e))
             except (KeychainError, NotImplementedError) as e:
                 return build_error("key_delete_failed", f"Could not remove the API key: {e}")
-            self._clients.clear()
+            self._drop_provider_clients()
             self._invalidate_stored_probe()
             log.info(
                 "api key removed from keychain",
@@ -2352,7 +2587,7 @@ class Daemon:
 
         if isinstance(msg, SetTierCredential):
             try:
-                save_tier_credential(msg.preset, msg.tier, msg.credential or None)
+                save_tier_credential(msg.preset, msg.tier, msg.credential or None, self.config_path)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
             try:
@@ -2367,7 +2602,7 @@ class Daemon:
 
         if isinstance(msg, SetEngine):
             try:
-                save_engine_kind(msg.kind)
+                save_engine_kind(msg.kind, self.config_path)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
             try:
@@ -2470,7 +2705,7 @@ class Daemon:
                     f"{', '.join(sorted(self.config.presets))}",
                 )
             try:
-                save_active_preset(msg.name)
+                save_active_preset(msg.name, self.config_path)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
             # New sessions route on the new preset immediately; existing
@@ -2486,7 +2721,7 @@ class Daemon:
 
         if isinstance(msg, SetTierSlug):
             try:
-                save_tier_slug(msg.preset, msg.tier, msg.slug)
+                save_tier_slug(msg.preset, msg.tier, msg.slug, self.config_path)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
             # Reload so the edit takes effect on new sessions without a
@@ -2512,7 +2747,7 @@ class Daemon:
                     url=msg.url,
                     enabled=msg.enabled,
                 )
-                save_mcp_server(msg.id, spec)
+                save_mcp_server(msg.id, spec, self.config_path)
             except (ConfigError, ValidationError) as e:
                 return build_error("bad_request", str(e))
             try:
@@ -2525,7 +2760,7 @@ class Daemon:
 
         if isinstance(msg, DeleteMcpServer):
             try:
-                delete_mcp_server_entry(msg.id)
+                delete_mcp_server_entry(msg.id, self.config_path)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
             try:
@@ -2647,13 +2882,18 @@ class Daemon:
             },
         )
 
-    async def _run_distill(self, session: Session) -> None:
+    async def _run_distill(
+        self,
+        session: Session,
+        flight: ProviderFlight | None = None,
+    ) -> None:
         """Park a proposal and emit ``memory_proposal`` when memory changed."""
         if session.turn_in_flight or completed_turn_count(session) < 1:
             return
         try:
             provider = await self._ensure_provider()
-            emitted = await distill_if_due(session, provider, self.config)
+            distill_provider = provider if flight is None else SignalingProvider(provider, flight)
+            emitted = await distill_if_due(session, distill_provider, self.config)
         except Exception as exc:
             log.warning(
                 "distill skipped; provider failed",
@@ -2665,13 +2905,13 @@ class Daemon:
         self._pending_memory[session.id] = emitted
         await session.event_log.add(emitted.event)
 
-    async def _distill_live_sessions(self) -> None:
+    async def _distill_live_sessions(self, flight: ProviderFlight | None = None) -> None:
         """Graceful quit: distill every live idle session that had a turn."""
         sessions = await self.session_registry.list_sessions()
         for session in sessions:
             if session.state in TERMINAL_STATES:
                 continue
-            await self._run_distill(session)
+            await self._run_distill(session, flight)
 
     async def _attach_session_runtime(self, sess: Session) -> None:
         """Boundary, tools, persist hooks, and a running loop for *sess*."""
@@ -2714,8 +2954,10 @@ class Daemon:
             target = tier_cfg if tier_cfg is not None else cfg.tier("brain")
             return await self._client_for(target)
 
+        bound_search = sess.config.search if sess.config is not None else self.config.search
         tool_registry = create_registry(
-            candidate_selection=self.config.judgments.candidate_selection
+            candidate_selection=self.config.judgments.candidate_selection,
+            search=bound_search,
         )
         tool_dispatcher = ToolDispatcher(tool_registry)
         tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals
@@ -2813,7 +3055,13 @@ class Daemon:
         assert sess.router is not None
         await sess.event_log.add(_tier_state_event(sess, _session_model_config(sess, self.config)))
 
-    async def _start_session(self, workspace_path: str) -> str | None:
+    async def _start_session(
+        self,
+        workspace_path: str,
+        *,
+        preset: str | None = None,
+        engine: Literal["native", "grok"] | None = None,
+    ) -> str | None:
         """Create, wire, and start a session in ``workspace_path``.
 
         Shared by ``open_workspace`` and ``new_session`` (TD-1701): both grow
@@ -2822,14 +3070,20 @@ class Daemon:
         on an existing live session).  Returns the session's first event
         (``session_state``, running) as the wire reply, mirroring
         ``open_workspace``'s response.
+
+        ``preset`` and ``engine`` name this session only (TD-3812). Omitted,
+        the session uses the window's current choice. Neither is written to
+        Settings.
         """
         # Memory templates (TD-2101): plant .tst/memory/ on every session
         # start so an already-opened workspace still gets the files. Never
         # overwrites; config scaffold stays OpenWorkspace-only.
         await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
         sess = await self.session_registry.create(workspace_path)
-        sess.engine = self.config.engine.kind
-        self._bind_session_preset(sess, self.config.active_preset)
+        # A scheduled pin names the loop for this session only. The window's
+        # active preset and engine stay where Settings left them.
+        sess.engine = self.config.engine.kind if engine is None else engine
+        self._bind_session_preset(sess, self.config.active_preset if preset is None else preset)
         await self._session_store.upsert(
             sess.id, workspace_path, sess.state, engine=sess.engine, preset=sess.preset
         )
@@ -3069,7 +3323,10 @@ class Daemon:
                 f"Session {msg.session_id!r} not found",
             )
         tier = found.router.active_tier if found.router is not None else "brain"
-        assembled = await PromptAssembler(found.workspace_path).assemble(
+        assembled = await PromptAssembler(
+            found.workspace_path,
+            claude_global_fallback=self.config.steering.claude_global_fallback,
+        ).assemble(
             tier,
             matched_paths=set(found.touched_paths),
             approved_imports=_approved_import_allowlist(found.workspace_path),
@@ -3284,45 +3541,111 @@ class Daemon:
             return build_error("job_not_found", f"Job {msg.job_id!r} not found")
         return await self._job_list_event()
 
+    async def _handle_list_job_runs(self, msg: ListJobRuns) -> str:
+        """One job's history, newest first. Unknown id is ``job_not_found``."""
+        job = await asyncio.to_thread(get_job, self.data_dir, msg.job_id)
+        if job is None:
+            return build_error("job_not_found", f"Job {msg.job_id!r} not found")
+        runs = await asyncio.to_thread(list_runs, self.data_dir, job.id)
+        return _job_runs_event(job.id, runs)
+
+    async def _handle_run_job(self, msg: RunJob) -> str:
+        """Start one job and answer before the turn does (TD-3809).
+
+        The tick awaits ``run_due_jobs`` on this loop. Awaiting the turn
+        here would stall that tick and the socket read, so the turn is its
+        own task. The claim happens first: this reply's ``job_list`` is
+        what tells the pane the row is running.
+        """
+        started = await begin_manual_run(self.data_dir, msg.job_id, self._in_flight)
+        if isinstance(started, str):
+            detail = (
+                f"Job {msg.job_id!r} is already running"
+                if started == "job_running"
+                else f"Job {msg.job_id!r} not found"
+            )
+            return build_error(started, detail)
+        self._tasks.append(asyncio.create_task(self._finish_manual_run(started)))
+        return await self._job_list_event()
+
+    async def _finish_manual_run(self, job: Job) -> None:
+        try:
+            await run_manual_job(
+                self.data_dir,
+                job,
+                datetime.now(UTC),
+                run_turn=self._scheduled_run_turn,
+                deliver=self._scheduler_deliver,
+                on_parked=self._arm_park_watch,
+            )
+        except Exception:
+            log.exception(
+                "manual run failed",
+                extra={"extra_fields": {"job_id": job.id}},
+            )
+        finally:
+            self._in_flight.release(job.id)
+            await self._push_job_list()
+
     async def _job_list_event(self) -> str:
         jobs = await asyncio.to_thread(list_jobs, self.data_dir)
-        return JobList(jobs=[_job_entry(job) for job in jobs]).model_dump_json()
+        return JobList(
+            jobs=[_job_entry(job, running=job.id in self._in_flight) for job in jobs]
+        ).model_dump_json()
 
     def _save_job_record(self, msg: SaveJob) -> Job:
         """Persist a draft or an update. Does not run the job."""
         existing = get_job(self.data_dir, msg.id) if msg.id else None
         if existing is not None:
-            try:
-                updated = Job(
-                    id=existing.id,
-                    workspace=msg.workspace or existing.workspace,
-                    instruction=msg.instruction or existing.instruction,
-                    cadence=existing.cadence if msg.cadence is None else msg.cadence,
-                    next_run=existing.next_run if msg.next_run is None else msg.next_run,
-                    deliver_to=msg.deliver_to or existing.deliver_to,
+            return save_job(
+                self.data_dir,
+                apply_job_edit(
+                    existing,
+                    workspace=msg.workspace,
+                    instruction=msg.instruction,
+                    cadence=msg.cadence,
+                    next_run=msg.next_run,
+                    deliver_to=msg.deliver_to,
                     paused=msg.paused,
-                    # The receipt belongs to the run, not to this edit — an
-                    # edit (Pause is one) must not erase what last happened.
-                    last_run=existing.last_run,
-                    last_status=existing.last_status,
-                    last_summary=existing.last_summary,
-                    last_session_id=existing.last_session_id,
-                )
-            except (ValidationError, JobValidationError) as exc:
-                raise JobValidationError(str(exc)) from exc
-            return save_job(self.data_dir, updated)
-        return save_job(
-            self.data_dir,
+                    timezone=msg.timezone,
+                    known_workspaces=self._known_workspaces(),
+                    preset=msg.preset,
+                    engine=msg.engine,
+                    known_presets=self.config.presets,
+                    grace=msg.grace,
+                    retries=msg.retries,
+                    retry_delay=msg.retry_delay,
+                ),
+            )
+        job = validate_draft(
             JobDraft(
                 id=msg.id,
-                workspace=msg.workspace,
+                workspace=resolve_workspace_name(msg.workspace or "", self._known_workspaces()),
                 instruction=msg.instruction,
                 cadence=msg.cadence,
                 next_run=msg.next_run,
                 deliver_to=msg.deliver_to,
                 paused=msg.paused,
-            ),
+                timezone=msg.timezone,
+                preset=msg.preset,
+                engine=msg.engine,
+                grace=msg.grace,
+                retries=msg.retries,
+                retry_delay=msg.retry_delay,
+            )
         )
+        # Create only: an existing job whose folder moved must stay editable
+        # so it can still be paused or deleted. Edits re-check in apply_job_edit
+        # when the workspace text itself changed. The catalog check is first
+        # so a bad preset is the sentence the user sees.
+        require_known_preset(job.preset, self.config.presets)
+        require_folder(job.workspace)
+        return save_job(self.data_dir, job)
+
+    def _known_workspaces(self) -> set[str]:
+        """Workspace paths the daemon has seen: sessions and pinned folders."""
+        known = {record.workspace_path for record in self._session_store.records()}
+        return known | set(self.workspace_pins)
 
     async def _handle_design_hit_test(self, msg: DesignHitTest) -> str:
         """Observe the last CU surface at a CSS-pixel point (TD-3403 / TD-3406)."""
@@ -3447,7 +3770,7 @@ class Daemon:
         try:
             result = await run_autonomy_start(
                 root,
-                config=cached_config(),
+                config=self.config,
                 charter=msg.charter,
                 notes=msg.notes,
             )
@@ -3613,8 +3936,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data_dir = Path(args.data_dir) if args.data_dir else None
-    setup_logging(level=args.log_level)
+    # One resolution for the log file and the daemon. Passing None would
+    # call user_data_dir() again, and on Linux that helper renames a
+    # leftover directory the first time it runs.
+    data_dir = Path(args.data_dir) if args.data_dir else user_data_dir()
+    setup_logging(level=args.log_level, log_dir=log_directory(data_dir))
 
     async def _run() -> None:
         daemon = Daemon(data_dir=data_dir, parent_pid=args.parent_pid)

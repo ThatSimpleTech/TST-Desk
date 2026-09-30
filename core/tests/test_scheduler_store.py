@@ -143,7 +143,7 @@ def test_malformed_row_is_dropped(tmp_path: Path) -> None:
 
 
 def test_relative_workspace_refused(tmp_path: Path) -> None:
-    with pytest.raises(JobValidationError, match="absolute"):
+    with pytest.raises(JobValidationError, match="full folder path"):
         validate_draft(
             JobDraft(
                 workspace="relative/ws",

@@ -14,6 +14,13 @@ from typing import TYPE_CHECKING
 from ..cu_indicators import hide_real_display_for_screenshot
 from ..desktop import DesktopDriver, DesktopError
 from ..desktop.grounding_client import GroundingLocator, GroundingResult
+from ..desktop.settle import (
+    AFTER_MS_SCHEMA,
+    SETTLE_MS_SCHEMA,
+    bound_ms,
+    pause,
+    with_foreground,
+)
 from ..screen.frames import persist_screen_frame
 from .registry import Tool, ToolRegistry
 
@@ -36,7 +43,9 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
             name="desktop_screenshot",
             description=(
                 "Capture the desktop and return a PNG as base64. This cannot "
-                "move the pointer or type. Optional display is a 0-based index."
+                "move the pointer or type. Optional display is a 0-based index. "
+                "Optional after_ms (0-5000) waits before the capture so "
+                "wait-then-look is one call; omit it or pass 0 to capture now."
             ),
             parameters={
                 "type": "object",
@@ -45,6 +54,7 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
                         "type": "integer",
                         "description": "Display index; omit for the main display",
                     },
+                    "after_ms": AFTER_MS_SCHEMA,
                 },
             },
             side_effect_class="auto",
@@ -75,7 +85,10 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
     registry.register(
         Tool(
             name="desktop_click",
-            description="Click the desktop pointer at a point (global coordinates).",
+            description=(
+                "Click the desktop pointer at a point (global coordinates). "
+                "settle_ms (0-5000) waits, then the result includes foreground_window."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -92,6 +105,7 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
                         "default": 1,
                     },
                     "expect_window": _EXPECT_WINDOW,
+                    "settle_ms": SETTLE_MS_SCHEMA,
                     "target": {
                         "type": "string",
                         "description": (
@@ -114,13 +128,15 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
             name="desktop_type",
             description=(
                 "Type Unicode at the current keyboard focus. Does not move "
-                "focus — click a field first. The typed text is never logged."
+                "focus — click a field first. The typed text is never logged. "
+                "settle_ms (0-5000) waits, then the result includes foreground_window."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "text": {"type": "string", "description": "Text to type"},
                     "expect_window": _EXPECT_WINDOW,
+                    "settle_ms": SETTLE_MS_SCHEMA,
                 },
                 "required": ["text"],
             },
@@ -135,7 +151,8 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
             name="desktop_scroll",
             description=(
                 "Scroll the desktop. dy>0 scrolls up, dy<0 down; dx is "
-                "horizontal. Optional x,y moves the pointer first."
+                "horizontal. Optional x,y moves the pointer first. "
+                "settle_ms (0-5000) waits, then the result includes foreground_window."
             ),
             parameters={
                 "type": "object",
@@ -145,6 +162,7 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
                     "x": {"type": "number", "description": "Optional pointer x before scrolling"},
                     "y": {"type": "number", "description": "Optional pointer y before scrolling"},
                     "expect_window": _EXPECT_WINDOW,
+                    "settle_ms": SETTLE_MS_SCHEMA,
                 },
             },
             side_effect_class="ask",
@@ -203,7 +221,12 @@ async def desktop_screenshot(
     driver: DesktopDriver,
     display: int | None = None,
     tool_call_id: str = "",
+    after_ms: int | None = None,
 ) -> str:
+    # Pause before the ring hides. Forwarding after_ms as well would
+    # wait twice — the sidecar tool has its own after_ms (TD-4847).
+    wait_ms = bound_ms(after_ms, name="after_ms")
+    await pause(wait_ms)
     with hide_real_display_for_screenshot():
         raw = await driver.screenshot(display=display)
     png = _png_from_driver_json(raw)
@@ -234,7 +257,10 @@ async def desktop_click(
     target: str | None = None,
     grounding_client: GroundingLocator | None = None,
     tool_call_id: str = "",
+    settle_ms: int | None = None,
 ) -> str:
+    # Bound before aiming so a bad settle_ms does not capture or click.
+    wait_ms = bound_ms(settle_ms, name="settle_ms")
     aimed_x, aimed_y, grounding = await aim_desktop_click(
         driver,
         x,
@@ -249,7 +275,7 @@ async def desktop_click(
         count=count,
         expect_window=expect_window,
     )
-    return _with_grounding(raw, grounding)
+    return await with_foreground(_with_grounding(raw, grounding), driver, wait_ms)
 
 
 async def desktop_type(
@@ -258,8 +284,11 @@ async def desktop_type(
     driver: DesktopDriver,
     expect_window: str | None = None,
     tool_call_id: str = "",
+    settle_ms: int | None = None,
 ) -> str:
-    return await driver.type_text(text=text, expect_window=expect_window)
+    wait_ms = bound_ms(settle_ms, name="settle_ms")
+    raw = await driver.type_text(text=text, expect_window=expect_window)
+    return await with_foreground(raw, driver, wait_ms)
 
 
 async def desktop_scroll(
@@ -271,8 +300,11 @@ async def desktop_scroll(
     y: float | None = None,
     expect_window: str | None = None,
     tool_call_id: str = "",
+    settle_ms: int | None = None,
 ) -> str:
-    return await driver.scroll(dx=dx, dy=dy, x=x, y=y, expect_window=expect_window)
+    wait_ms = bound_ms(settle_ms, name="settle_ms")
+    raw = await driver.scroll(dx=dx, dy=dy, x=x, y=y, expect_window=expect_window)
+    return await with_foreground(raw, driver, wait_ms)
 
 
 async def aim_desktop_click(

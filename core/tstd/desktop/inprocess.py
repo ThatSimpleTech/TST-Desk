@@ -139,6 +139,15 @@ class InProcessDesktopDriver:
         except Exception as exc:
             raise _map_error(exc) from exc
 
+    async def foreground_window(self) -> dict[str, Any]:
+        from tst_cu_mcp.focus import foreground_window as read_foreground
+
+        try:
+            window = await asyncio.to_thread(read_foreground)
+        except Exception as exc:
+            raise _map_error(exc) from exc
+        return {"app": window.process, "title": window.title}
+
     async def hit_test(self, x: float, y: float) -> dict[str, Any]:
         from tst_cu_mcp.backends import get_backend
 

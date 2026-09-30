@@ -39,10 +39,9 @@ def _config_with_preset(name: str) -> ModelConfig:
 def writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
     """Record slug writes instead of touching the developer's real config.
 
-    The handler calls ``save_tier_slug`` with no path, which resolves to
-    ``user_data_dir()/config.yaml`` — a real file on the machine running the
-    suite. Recording here keeps these runs hermetic; whether the write itself
-    is correct is settled next door (TD-1809's lesson).
+    The handler calls ``save_tier_slug`` with the daemon's config path
+    (TD-4843). Recording here keeps these runs hermetic; whether the write
+    itself lands in that file is settled in ``test_data_dir_config``.
     """
     recorded: list[tuple[str, str, str]] = []
 

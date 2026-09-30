@@ -173,3 +173,120 @@ async def test_pause_keeps_cadence_and_next_run(tmp_path: Path) -> None:
     assert row.cadence == "every 1 hour"
     assert row.next_run == "2026-08-21T18:00:00+00:00"
     await daemon._shutdown()
+
+
+async def _save(daemon: Daemon, **fields: Any) -> dict[str, Any]:
+    payload = {
+        "type": "save_job",
+        "instruction": "summarize the inbox",
+        "cadence": "7:45 on weekdays",
+        "deliver_to": "window",
+        **fields,
+    }
+    return await _handle(daemon, payload)
+
+
+async def test_plain_english_cadence_and_zone_are_stored(tmp_path: Path) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    listed = parse_daemon_event(
+        json.dumps(await _save(daemon, workspace=str(workspace), timezone="America/Chicago"))
+    )
+    assert isinstance(listed, JobList)
+    assert listed.jobs[0].cadence == "45 7 * * 1-5"
+    assert listed.jobs[0].timezone == "America/Chicago"
+    await daemon._shutdown()
+
+
+async def test_edit_without_timezone_keeps_it_and_zone_change_rearms(tmp_path: Path) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    created = parse_daemon_event(
+        json.dumps(await _save(daemon, workspace=str(workspace), timezone="America/Chicago"))
+    )
+    assert isinstance(created, JobList)
+    job_id = created.jobs[0].id
+    save_job(
+        tmp_path / "data",
+        Job.model_validate(
+            {**created.jobs[0].model_dump(), "next_run": "2026-09-28T12:45:00+00:00"}
+        ),
+    )
+    paused = parse_daemon_event(
+        json.dumps(await _handle(daemon, {"type": "save_job", "id": job_id, "paused": True}))
+    )
+    assert isinstance(paused, JobList)
+    assert paused.jobs[0].timezone == "America/Chicago"
+    assert paused.jobs[0].next_run == "2026-09-28T12:45:00+00:00"
+    moved = parse_daemon_event(
+        json.dumps(
+            await _handle(
+                daemon, {"type": "save_job", "id": job_id, "timezone": "America/New_York"}
+            )
+        )
+    )
+    assert isinstance(moved, JobList)
+    assert moved.jobs[0].timezone == "America/New_York"
+    assert moved.jobs[0].next_run is None
+    await daemon._shutdown()
+
+
+async def test_bare_workspace_name_resolves_to_the_one_known_folder(tmp_path: Path) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    known = tmp_path / "Documents" / "Client Reports"
+    known.mkdir(parents=True)
+    daemon.workspace_pins = [str(known)]
+    listed = parse_daemon_event(json.dumps(await _save(daemon, workspace="client reports")))
+    assert isinstance(listed, JobList)
+    assert listed.jobs[0].workspace == str(known)
+    await daemon._shutdown()
+
+
+async def test_ambiguous_or_unknown_workspace_name_is_a_readable_error(tmp_path: Path) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    first = tmp_path / "a" / "Client Reports"
+    second = tmp_path / "b" / "client reports"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    daemon.workspace_pins = [str(first), str(second)]
+    for name in ("Client Reports", "Nowhere"):
+        err = await _save(daemon, workspace=name)
+        assert err["code"] == "job_invalid"
+        assert err["message"].startswith(
+            f"Workspace: must be a full folder path such as ~/Documents/project (got '{name}')"
+        )
+        assert "pydantic.dev" not in err["message"]
+    await daemon._shutdown()
+
+
+async def test_create_refuses_a_missing_folder(tmp_path: Path) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    missing = tmp_path / "gone"
+    err = await _save(daemon, workspace=str(missing))
+    assert err["code"] == "job_invalid"
+    assert err["message"] == f"Workspace: folder not found: {missing}"
+    assert list_jobs(tmp_path / "data") == []
+    await daemon._shutdown()
+
+
+async def test_existing_job_with_a_moved_folder_can_still_be_paused(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    stored = save_job(
+        data,
+        Job(
+            id="moved",
+            workspace=str(tmp_path / "gone"),
+            instruction="x",
+            cadence="every 1 hour",
+            deliver_to="window",
+        ),
+    )
+    daemon = Daemon(data_dir=data)
+    paused = parse_daemon_event(
+        json.dumps(await _handle(daemon, {"type": "save_job", "id": stored.id, "paused": True}))
+    )
+    assert isinstance(paused, JobList)
+    assert paused.jobs[0].paused is True
+    await daemon._shutdown()

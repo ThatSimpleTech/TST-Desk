@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import shutil
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .logging import get_logger
+from .proc_lifecycle import reap_subprocess
 
 log = get_logger("tstd.grok_acp")
 
@@ -143,10 +145,11 @@ class AcpClient:
     ) -> None:
         if self._proc is not None and self._proc.returncode is None:
             return
-        if self._reader_task is not None and not self._reader_task.done():
-            self._reader_task.cancel()
-        if self._stderr_task is not None and not self._stderr_task.done():
-            self._stderr_task.cancel()
+        # A previous agent may have exited without its readers being
+        # awaited. Dropping them here leaves the transport for ``__del__``.
+        if self._proc is not None:
+            await reap_subprocess(self._proc, timeout=2)
+        await self._finish_pipe_tasks()
         self._closed = False
         self._proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -270,20 +273,43 @@ class AcpClient:
             if not fut.done():
                 fut.cancel()
         self._pending.clear()
+        try:
+            await self._close_proc()
+        except asyncio.CancelledError:
+            # The first shutdown was itself cancelled (its exit waiter is
+            # gone). Run it again so the transport is closed before this
+            # cancellation propagates.
+            await self._close_proc()
+            raise
+
+    async def _close_proc(self) -> None:
+        """Terminate the agent and await the tasks that read its pipes.
+
+        ``proc.wait`` is what closes the subprocess transport. Cancelling a
+        reader and returning leaves that task — and any pipe it still holds —
+        to be destroyed after the loop is closed (TD-4835).
+        """
         proc = self._proc
-        if proc is not None and proc.stdin is not None:
+        if proc is not None and proc.stdin is not None and not proc.stdin.is_closing():
             proc.stdin.close()
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError, RuntimeError, OSError):
+                await proc.stdin.wait_closed()
         if proc is not None and proc.returncode is None:
-            proc.terminate()
+            with contextlib.suppress(ProcessLookupError, OSError):
+                proc.terminate()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=2)
             except TimeoutError:
-                proc.kill()
-                await proc.wait()
-        if self._reader_task is not None:
-            self._reader_task.cancel()
-        if self._stderr_task is not None:
-            self._stderr_task.cancel()
+                await reap_subprocess(proc, timeout=2)
+        await self._finish_pipe_tasks()
+
+    async def _finish_pipe_tasks(self) -> None:
+        for task in (self._reader_task, self._stderr_task):
+            if task is None or task.done():
+                continue
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     async def _write(self, message: dict[str, Any]) -> None:
         proc = self._proc

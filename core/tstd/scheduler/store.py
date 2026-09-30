@@ -10,18 +10,27 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
 from ..logging import get_logger
+from .history import delete_history
 from .models import Job, JobDraft, JobValidationError, validate_draft
 
 log = get_logger("tstd.scheduler.store")
 
 _ENVELOPE_VERSION = 1
 _JOBS_FILE = "jobs.json"
+# Re-entrant: ``save_job`` lists under the same lock it holds, and a
+# park settle must read and write as one step. A miss that saved a
+# stale copy would put ``parked_session_id`` back after the watcher
+# had cleared it. History has its own lock; never take that one while
+# this one is held (``delete_job`` takes this one first, then history).
+_STORE_LOCK = threading.RLock()
 
 
 def jobs_path(data_dir: str | Path) -> Path:
@@ -31,6 +40,66 @@ def jobs_path(data_dir: str | Path) -> Path:
 
 def list_jobs(data_dir: str | Path) -> list[Job]:
     """Load jobs. Absent or unreadable is empty; malformed rows are dropped."""
+    with _STORE_LOCK:
+        return _read_jobs(data_dir)
+
+
+def get_job(data_dir: str | Path, job_id: str) -> Job | None:
+    with _STORE_LOCK:
+        for job in _read_jobs(data_dir):
+            if job.id == job_id:
+                return job
+    return None
+
+
+def save_job(data_dir: str | Path, job: Job | JobDraft) -> Job:
+    """Validate (if needed) and persist. Does not run the job."""
+    record = job if isinstance(job, Job) else validate_draft(job)
+    with _STORE_LOCK:
+        return _upsert(data_dir, record)
+
+
+def transform_job(
+    data_dir: str | Path,
+    job_id: str,
+    mutate: Callable[[Job], Job | None],
+) -> Job | None:
+    """Read-modify-write one job. None when it is missing or mutate declines.
+
+    The lock is held across the read and the write so two updates of one
+    row cannot put back a field the other just cleared. ``mutate`` must
+    not touch the history log: this lock is not the history lock.
+    """
+    with _STORE_LOCK:
+        jobs = _read_jobs(data_dir)
+        for index, item in enumerate(jobs):
+            if item.id != job_id:
+                continue
+            updated = mutate(item)
+            if updated is None:
+                return None
+            jobs[index] = updated
+            _write_jobs(Path(data_dir), jobs)
+            return updated
+    return None
+
+
+def delete_job(data_dir: str | Path, job_id: str) -> bool:
+    """Remove a job by id, and its run history. False when it was not present."""
+    with _STORE_LOCK:
+        jobs = _read_jobs(data_dir)
+        kept = [item for item in jobs if item.id != job_id]
+        if len(kept) == len(jobs):
+            return False
+        _write_jobs(Path(data_dir), kept)
+        # The id came from a row that validated, so it is a single path segment.
+        # History lock is taken second. Callers that update a run take the
+        # history lock only, then this one, and never the other way around.
+        delete_history(data_dir, job_id)
+    return True
+
+
+def _read_jobs(data_dir: str | Path) -> list[Job]:
     path = jobs_path(data_dir)
     if not path.exists():
         return []
@@ -59,17 +128,8 @@ def list_jobs(data_dir: str | Path) -> list[Job]:
     return jobs
 
 
-def get_job(data_dir: str | Path, job_id: str) -> Job | None:
-    for job in list_jobs(data_dir):
-        if job.id == job_id:
-            return job
-    return None
-
-
-def save_job(data_dir: str | Path, job: Job | JobDraft) -> Job:
-    """Validate (if needed) and persist. Does not run the job."""
-    record = job if isinstance(job, Job) else validate_draft(job)
-    jobs = list_jobs(data_dir)
+def _upsert(data_dir: str | Path, record: Job) -> Job:
+    jobs = _read_jobs(data_dir)
     for index, item in enumerate(jobs):
         if item.id == record.id:
             jobs[index] = record
@@ -78,16 +138,6 @@ def save_job(data_dir: str | Path, job: Job | JobDraft) -> Job:
     jobs.append(record)
     _write_jobs(Path(data_dir), jobs)
     return record
-
-
-def delete_job(data_dir: str | Path, job_id: str) -> bool:
-    """Remove a job by id. Returns False when it was not present."""
-    jobs = list_jobs(data_dir)
-    kept = [item for item in jobs if item.id != job_id]
-    if len(kept) == len(jobs):
-        return False
-    _write_jobs(Path(data_dir), kept)
-    return True
 
 
 def _rows_from_envelope(raw: Any) -> list[Any] | None:

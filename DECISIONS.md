@@ -10308,3 +10308,1208 @@ stdout reader's private `_limit`. This preserves the 16 MiB stdout allowance
 and also applies it to stderr, as the public API configures both pipe readers.
 Assistant continuation preserves existing message metadata and multimodal parts;
 only the text projection is used for visible-delta comparison.
+
+## TD-3808 — Plain-English cadence, per-job time zone, readable job errors (Class B)
+
+**Cadence phrases become cron at the edge.** `normalize_cadence` accepts
+`7:45 on weekdays`, `every day at 9:30pm`, `mon, wed and fri at 17:00`,
+`hourly`, and the `@hourly|@daily|@midnight|@weekly|@monthly` aliases, and
+stores the equivalent 5-field cron (`45 7 * * 1-5`). The store, runner and UI
+only ever see an interval or cron; English lives in one module
+(`scheduler/phrases.py`). The grammar is a bag of tokens (fillers, day words,
+at most one clock time) rather than per-word-order rules, so "at 9am every
+day" and "every day at 9am" need no separate patterns. A bare number counts
+as a time only after "at", and inside a longer sentence a phrase needs a day
+word or an explicit time, so "look at 3 files" is not a schedule. Cron fields
+are now range-checked at save time; before, `99 99 * * *` saved and then
+failed inside the runner's next-fire search.
+
+**`timezone` (IANA name) on Job, JobDraft, `SaveJob`, `JobEntry`.** "7:45"
+means the user's 7:45, but cron was evaluated in UTC, which would have fired
+that job at 02:45 Central. A cron cadence is now matched against the zone's
+wall clock and `next_run` is still stored as UTC ISO. `None` keeps the UTC
+behaviour, so existing `jobs.json` rows are unchanged; intervals are elapsed
+time and ignore the zone. An edit that omits `timezone` keeps the current one
+(as `cadence` does), and an edit that changes cadence or zone without
+supplying `next_run` clears the stale slot so the runner re-arms it.
+Rejected: storing a UTC offset (wrong half the year) and deriving the zone in
+the daemon from the OS (a daemon can run on a different host than the user's
+clock, and the choice would be invisible on the row).
+
+**DST.** The next-fire search walks naive wall-clock time and converts only
+matching candidates. A wall time that does not exist (spring-forward gap) is
+skipped, not shifted, so `30 2 * * *` misses that one night. A wall time that
+repeats (fall back) fires once, at its first occurrence. Day and hour
+mismatches jump a whole day or hour, so a year-horizon search is a few hundred
+steps instead of 527k.
+
+**Dependency: `tzdata` on Windows only.** `zoneinfo` reads the OS tz
+database on macOS and Linux; Windows has none, and the pane now sends the
+viewer's zone on every create, so without it every Windows save would be
+refused as an unknown zone. Added as `tzdata; sys_platform == 'win32'`
+(Apache-2.0, pure data, no code), so macOS and Linux installs are unchanged.
+
+**Errors.** `describe_validation_error` renders a pydantic failure as
+`Workspace: …; Cadence: …` (field labels, no `Value error,` prefix, no
+`[type=…]`, no docs link). `validate_draft`, the daemon save path and the JSON
+draft parse use it. A bare workspace name ("Client Reports") on *create* resolves
+to the one known workspace (sessions and pins) with that basename,
+case-insensitively; zero or several matches fall through to the "must be a
+full folder path" error rather than guess. A missing folder is refused on
+create only; the model validator stays lenient because it also loads old rows,
+and a job whose folder moved must still be pausable or deletable.
+
+## TD-3809 — Run now (Class B)
+
+**`run_job { job_id }`.** The pane could not fire a job; trying an
+instruction meant waiting for the next slot. The verb claims the job,
+replies at once with `job_list`, and runs the turn on its own task. The
+tick awaits `run_due_jobs` inline, so waiting inside the handler would
+stall every other job and the socket read. When the turn finishes the
+daemon pushes `job_list` again. Unknown id is `job_not_found`. No
+protocol version bump: `JobEntry.running` defaults to false, so an older
+client that ignores the field still parses the list.
+
+**`running` is not stored.** It mirrors an in-memory set of job ids
+(`InFlight` in `scheduler/runner.py`) shared by the tick and Run now.
+Persisting it would survive a crash as a turn that is no longer
+happening and would leave Run now disabled until someone edited
+`jobs.json`. A second Run now, or Run now while the tick holds the id,
+is `job_running`. The tick does not wait on an id already in the set and
+does not advance it, so the slot stays due for the next tick.
+
+**A manual run does not call `advance_job`.** The receipt
+(`last_run`, `last_status`, `last_summary`, `last_session_id`) and the
+delivery are the same as a scheduled fire. `next_run` and `paused` are
+not touched, including a one-shot's slot and a job that was already
+paused — Run now is an explicit request, not a resume. The row is
+re-read after the turn so a pause or an edit made while it ran is what
+receives the receipt, and a job deleted in that window is not written
+back. Rejected: clearing `next_run` on a manual one-shot (that is what
+makes the 7:45 slot disappear) and unpausing as a side effect of the run.
+
+## TD-3810 — Edit a scheduled job in place (Class B)
+
+**An edit is a patch, and `""` is the clear.** `save_job` with an existing
+id already replaced the row and kept the run receipt. Omitted `cadence` /
+`next_run` keep the stored values, which is what Pause and Resume send.
+That left no way to remove a field, so a recurring job could not become a
+one-shot without a delete. On an edit, an empty string now clears that
+field. Create is unchanged: the pane still omits a blank there, and a
+blank on create is "not provided", not a clear. No new protocol verb and
+no new field — the meaning of `""` on an update is the contract.
+
+**A cleared schedule is refused only when the edit removed one.** After
+the merge the job must have a cadence or a next run, reported as
+`Cadence or next run is required`, and nothing is written. A spent
+one-shot already has neither field and a receipt. Resume does not change
+the schedule (it sends nulls, or omits them), and an edit that sends `""`
+for fields that are already empty is not a change either, so both still
+save. The check compares the stored schedule with the merged one. Keying
+it off `last_run` alone would have made Resume fail the moment the rule
+existed.
+
+**Workspace is checked when the text changes.** The same
+`resolve_workspace_name` and `require_folder` as create, and the same
+`Workspace:` sentence. The stored path, including one whose folder has
+since moved, is left alone so the row can still be edited, paused, or
+deleted. A trailing slash that normalizes to the stored path counts as
+unchanged.
+
+**The viewer zone is a client fact.** The daemon does not invent one (it
+can run on a different host than the clock the user typed against,
+TD-3808). The pane keeps the job's zone on edit. It sends the viewer's
+zone only when the job has none and the cadence text changed, so a legacy
+UTC job starts meaning the new cadence in local time. A cadence or zone
+change with no replacement `next_run` still drops the armed slot so the
+runner re-arms. A cadence job's stored `next_run` is that slot, not user
+input: the form leaves it blank and omits it. Rejected: a separate
+`update_job` verb, and treating a blank next run on a cadence job as
+"clear the slot".
+
+## TD-3811 — Run history, and open the session (Class B)
+
+**One JSONL file per job, under the user data dir.** Each fire used to
+overwrite `last_*`, so the pane could not show an earlier run or the
+session it happened in. The log is
+`{data_dir}/scheduler/history/<job_id>.jsonl`: `started_at`,
+`scheduled_for` (the `next_run` captured before `advance_job`, or null
+for Run now), `trigger` (`schedule` or `manual`), `status`, `summary`,
+`session_id`. Cap 50, oldest dropped. The file is rewritten in one
+atomic replace, the same way `jobs.json` is: a seek-append can tear a
+line, and the cap has to drop from the front anyway. A line that does
+not parse is skipped and left out of the next rewrite. The line itself
+is not written to the warning — a secret that failed to parse must not
+land in the log. `normalize_summary` runs on the way in and again on
+the way out, so a hand-edited line is redacted when it is read. The
+module is synchronous, like the job store. The runner and
+`list_job_runs` call it with `asyncio.to_thread`. `delete_job` removes
+the file after the row is gone. A Run now that finds the job deleted
+during the turn does not write the line back; delete already removed
+it. `last_*` stays the row receipt. The log is not in the workspace:
+that tree is git-tracked and moves independently of the daemon.
+
+**`list_job_runs` / `job_runs`.** Connection-scoped. `seq` is fixed at 1
+so the reply cannot rewind attach. `runs` is newest first. Unknown id
+is `job_not_found`. The handler looks the job up before it touches the
+filesystem, so an id that is not a single path segment is the same
+error and never joins a path. A known job with no file is an empty
+list. `JobRunEntry` is the wire shape; the on-disk model stays in
+`scheduler/history.py`. No protocol version bump: an older client
+ignores the verb and the event.
+
+**Open session is the rail's attach.** The disclosure calls `selectRow`
+and `showHome`, the same pair a project recent uses. There is no new
+protocol message. `selectRow` returns without a word when the id is
+absent from the session list, so the disclosure says "Session no longer
+exists" in that case. An open disclosure asks again when a later
+`job_list` shows a different `last_run` for that job.
+
+Rejected: stuffing the log onto `job_list` (that push already happens
+on every fire and every pause), storing the file in the workspace, and
+a dedicated verb to open the session.
+
+## TD-4838 — macOS keychain items must be readable by `security` (Class B)
+
+**Write through `security -i`, not SecItemAdd.** TD-4813 kept the secret
+out of argv by calling `SecItemAdd` inside `tstd`. The item's ACL then
+trusted only that binary. This app is ad-hoc signed (`tst-desk-dev`, no
+Team ID), so a partition tied to `tstd` is not stable across rebuilds,
+and every read still uses `/usr/bin/security`, which was not trusted.
+The Settings pane's presence probe was a full secret read, so a saved
+key looked missing and Test stayed disabled.
+
+The write argv is exactly `security` and `-i`. One stdin line is
+`add-generic-password -U -a … -s … -l 'TST Desk <account>' -w <secret>`,
+newline-terminated, and nothing else. The creating binary is
+`/usr/bin/security` (the apple-tool partition), which the CLI can read
+after a rebuild. Quoting follows SecurityTool `split_line`: backslash
+is an escape inside both quote styles, `$` is not expanded, and
+whitespace splits only outside quotes. Spaces, both quotes, backslash,
+`$`, and backtick round-trip. `find-generic-password -w` prints any
+byte outside printable ASCII (0x20–0x7E) as hex. A real key can be all
+hex, so the read path does not decode. Save refuses those characters
+with "API keys must be printable ASCII" and does not include the
+secret. A newline or NUL cannot be one argument and is refused the
+same way, without echoing the value. An empty or whitespace-only
+secret is refused at save ("API key is empty"). One already stored is
+a not-found `KeychainError`: "the stored API key for '<name>' is empty
+— re-save it in Settings → API keys". `<name>` is the provider id from
+`get_api_key`, and the keychain account on the macOS read path. The
+value is never returned, so it cannot become `Authorization: Bearer `.
+The same save checks run inside the macOS stdin builder, because every
+secret written that way is later read with `-w`. A missing trailing
+newline makes readline drop the command and exit 0; a blank line after
+a failure resets the process status to 0. Any non-zero exit or any
+stderr is a failure, and the secret and the stdin line are stripped
+before that text becomes an exception. `security -i`'s readline buffer
+is 4096 bytes including the NUL, so a command longer than 4095 bytes is
+refused rather than stored truncated. The TD-1105 timeout still maps a
+hung CLI to a locked keychain.
+
+**Delete, then add. Do not repair the ACL with `-U`.** Apple's update
+path changes the password and leaves the ACL unless access is named
+explicitly. `-A` or an empty `-T` would widen or drop the default
+trust. Before the add, `SecItemDelete` with
+`kSecUseAuthenticationUIFail` removes a TD-4813 item (`tstd` is the
+trusted app, and the call must not prompt). The CLI delete then runs.
+"could not be found" is success; a lock still raises, so a locked
+keychain is not mistaken for a stored key. Re-saving in Settings
+replaces the broken item with one `security` can read.
+
+**Reads stay on the CLI.** If `find-generic-password -w` fails and an
+attributes-only lookup (no `-w`, so it does not prompt) shows the item
+exists, `SecItemCopyMatching` with `kSecReturnData`,
+`kSecMatchLimitOne`, and `kSecUseAuthenticationUIFail` tries this
+binary. That recovers a TD-4813 item while this build is still trusted.
+If it fails, the error tells the user to re-save the key in Settings →
+API keys and contains no secret. A real lock (the attributes probe
+fails the same way) stays `KeychainLockedError`. Not-found does not
+fall back. An empty or whitespace-only password, from `-w` or from the
+in-process copy, is the empty-key error above, not a re-save and not a
+decoded hex string.
+
+**Presence does not read the secret.** `api_key_is_stored` is that
+attributes-only lookup on macOS. The TD-4835 cache and its invalidation
+on key mutations are unchanged. Linux and Windows backends are
+unchanged; their default `has_secret` may still read the secret.
+
+Rejected: keeping SecItemAdd and adding `/usr/bin/security` to the ACL
+(the partition is still the ad-hoc `tstd` signature), passing `-A`,
+putting the secret back on argv, and decoding `-w`'s hex form on read.
+
+## TD-4839 — Fit in-flight tool results to the tier window (Class B)
+
+2026-09-29.
+
+**Decision:** The per-result cap is
+`min(50_000, max(4_000, ((context_window − max_output_tokens − prefix_tokens) // 4) × 4))`,
+using the same 4-characters-per-token ratio as the heuristic counter.
+`prefix_tokens` is the estimate of the prompt the results are about to
+join, not only the cache prefix. 128k and 1M tiers still cap at 50,000.
+`fs_read` truncation tells the model to continue with offset/limit. Other
+tools keep the historical marker.
+
+**Decision:** When tool results in the in-flight turn still exceed the
+TD-405 budget, their middles are elided (head, tail, and a re-read note)
+before the provider call. The loop reuses `ContextCompacted`.
+`dropped_messages` counts results whose middle was removed. No message
+is deleted, so an assistant `tool_calls` message stays next to its
+`tool` results, and the user message stays. No protocol bump. A provider
+context overflow retries once with that budget halved, then fails.
+
+**Decision:** An HTTP 400 whose body matches `maximum context length`,
+`context_length_exceeded`, `ContextWindowExceededError`, or
+`prompt is too long` (case-insensitive) is `context_overflow`. HTTP 413
+stays `context_length_exceeded`. The upstream body is
+`ProviderError.detail` and is logged at WARNING after redaction. The
+turn fails with a short message that names the configured slug and
+`context_window`. Assistant text never receives raw upstream JSON.
+
+**Rationale:** Compaction cuts only at user-message boundaries and keeps
+the in-flight turn, so a first-turn parallel read never reaches it. A
+global cut of the 50,000-character ceiling would punish 128k and 1M
+tiers; that was already rejected for screenshots (TD-1729). A new
+protocol event would force a version bump for a timeline row the
+existing event already renders.
+
+**Alternative rejected:** Hardcoding 32768, and retrying inside the
+provider client (that would resend the same oversized prompt).
+
+## TD-4835 — Deterministic resource lifecycle cleanup (Class B)
+
+2026-09-29.
+
+**Decision:** One helper, `tstd.proc_lifecycle`, owns `communicate` with a
+timeout and the cancel/timeout reap. Checkpoint, charter, revert,
+supervisor, memory commit, sandbox, and keychain call `finish_subprocess`.
+The shell's task-cancel path calls `reap_subprocess` after `killpg`.
+`asyncio.timeout` wraps `proc.wait` on the caller's task. `asyncio.wait_for`
+would put `wait` on a child task, so cancelling the shell task would not be
+the waiter that closes the transport.
+
+**Decision:** The reap is bounded. The default grace is 5 seconds, the
+shell tool's existing post-kill bound. Keychain passes 1.0 second, so a
+CLI that ignores SIGKILL stays a locked keychain on the TD-1105 bound and
+the suite's hung-CLI stand-in does not adopt the longer grace. A cancel
+absorbed to finish `wait` is re-raised after the transport is closed. A
+timeout must not swallow a real cancel.
+
+**Decision:** A refused process-group kill does not fall through into
+`proc.kill()`. Killing only the leader orphans the grandchildren that
+still hold the pipes, and the transport is then finalized in `__del__`.
+If the leader is already dead and the grace elapses with a pipe still
+open, the transport is closed on the live loop. `close()` is not called
+while the leader is still running, because that SIGKILLs it.
+
+**Decision:** No new dependency and no protocol change. MCP and desktop
+stdio `aclose` were not changed. The escalated suite did not show an
+unclosed transport from them.
+
+**Rationale:** A cancelled `communicate()` leaves the child running. The
+child watcher holds the transport until that child exits. If the loop is
+already closed, `BaseSubprocessTransport.__del__` calls `call_soon` and
+raises `RuntimeError: Event loop is closed`. The warning is collected by
+whichever test next garbage-collects the object, which is why it surfaced
+in `test_class_c_stops_and_notifies` rather than at the `git` call inside
+autonomy advance.
+
+**Rejected:** Suppressing `ResourceWarning`, sleeping in the regression
+tests, and reaping a leader the OS refused to kill.
+
+## TD-3812 — Pin the preset and the engine on a scheduled job (Class B)
+
+2026-09-29.
+
+**Decision:** A job stores a catalog preset name and an engine kind
+(`native` or `grok`), nothing else. Slugs, URLs, and keys stay in config
+and the keychain. `None` means the fire uses whatever the window is using.
+Save checks a name the client just sent against `config.presets`. A stored
+name is not re-checked when the save omits the field, so Pause can still
+flip a job whose preset has left the catalog. Resending a stale name fails
+the save. At fire time a missing name is `preset '<name>' no longer exists`,
+and a pinned Grok engine whose CLI cannot be found is `grok engine is
+unavailable`. The preset failure wins when both are true. Neither message
+includes a path. The receipt is a `TurnResult`, so the runner does not
+prefix it with `scheduled run failed:`.
+
+**Decision:** The turn callback stays `(workspace, instruction)`. The pin
+is bound on the task for that call and reset in `finally`, so the next job
+on the same task does not inherit it. `run_turn_on_daemon` reads it and
+passes `preset` and `engine` into `_start_session`. Those arguments name
+that session only: `_start_session` does not call `save_active_preset` or
+`save_engine_kind`, and it does not change `config.active_preset` or
+`config.engine.kind`. The loop already reads `session.config` (TD-1721),
+so the pinned preset's slug is what the turn sends. A pin that cannot
+start is refused before the session opens, so the workspace is not
+scaffolded and `_resolved_preset` cannot fall back to the window's preset.
+
+**Decision:** Edit matches TD-3810. Omitted keeps, `""` clears. On create,
+`""` is the same as omitted. `SaveJob.engine` is a string so `""` parses;
+`Job` normalizes it to `native`, `grok`, or none. No protocol version bump.
+The form's Create omits a blank pin. Save always sends the fields. Pause
+omits them. A natural-language parse does not name a model, so it leaves
+the pin already on the form.
+
+**Rejected:** Swapping `daemon.config` for the fire (it races the window
+and can be persisted), widening `TurnFn` (every scheduler fake would have
+to grow a parameter), letting `_resolved_preset` fall back when the pin is
+gone, and storing the slug or the base URL on the job.
+
+## TD-4840 — A fixed or rotated API key is picked up without a restart (Class B)
+
+2026-09-29.
+
+**Decision:** `Daemon._clients` keeps one handle per `(base_url, credential)`.
+The HTTP client inside that handle is what gets closed and replaced. The
+session loop holds the handle for the life of the session, so replacing
+the dict entry alone would leave the stale client in place.
+
+**Decision:** An authentication failure (HTTP 401 or 403, or the codes
+`auth_failed` and `forbidden`) rebuilds the client from the keychain and
+retries the call once, only when the SHA-256 digest of the key changed.
+Digests are compared in memory with `hmac.compare_digest` and are never
+logged. An unchanged key fails the turn with `api_key_rejected` and a
+message that names the credential and the host, never the key. The chat
+transcript carries that sentence. The banner in `error-copy.ts` is static.
+No protocol change.
+
+**Decision:** `KeychainError` while building the first client caches
+nothing. The same error during a refresh is returned as `missing_api_key`
+so the session stays up and the next turn reads the keychain again. A
+second authentication failure, after the key did change, is the provider's
+own error. There is no third try.
+
+**Decision:** An in-app key change still drops the cache and does not close
+clients a live session is holding. Those handles re-read the keychain on
+the next authentication failure. A keyless loopback client stays unwrapped.
+
+**Rationale:** The cache exists so a turn does not prompt the macOS
+keychain on every call (TD-4838). The bug was the other side of that: a
+key fixed outside the app, or rotated on the server, stayed inside the
+client until restart. One retry distinguishes "the key changed" from
+"this key is wrong". Retrying an unchanged key would only repeat the 401.
+
+**Alternative rejected:** Re-reading the keychain on every request.
+Retrying when the digest is unchanged. Logging the key or the digest. A
+protocol field so the banner can name the host. Mutating
+`ProviderClient.api_key` in place without closing the HTTP client.
+Refreshing inside `retry_call`. An epoch counter so an in-app edit is
+noticed before the next 401.
+
+## TD-4841 — Reviving a session must not fail its audit write (Class B)
+
+2026-09-29.
+
+**Decision:** `append_session` returns without writing when the same
+session id, workspace, and start time are already stored. The same id
+with a different workspace or start time raises `sqlite3.IntegrityError`.
+The stored row is not updated and not deleted. A failed insert rolls
+back the deferred transaction it opened so the next write is not left
+inside it. The rejected statement never committed, so the rollback
+removes nothing from the log.
+
+**Decision:** `AuditWriter.attach_session` enqueues
+`record_session_attach`. The first attach inserts, using the clock at
+drain time. A later attach for the same id and workspace — revive —
+does not insert and does not pass a new `started_at` into
+`append_session`. A different workspace is a conflict and is reported
+on the existing audit-failure path. Open and revive both call
+`attach_session`. The store tells a first insert from a re-attach,
+including when the original insert never landed: the row is absent, so
+the attach inserts one and later turns still satisfy the foreign key.
+
+**Rationale:** Revive was inserting the session row again with a fresh
+`started_at`. That is not the original start, and the primary key
+rejected it once per revived session on every daemon start. `INSERT OR
+IGNORE` would also swallow a real workspace conflict. Rewriting
+`started_at` would break the append-only log.
+
+**Alternative rejected:** A revive flag that skips the insert. A session
+whose first audit write was lost would then have no `sessions` row, and
+every later turn would fail the foreign key. Also rejected: treating a
+new `started_at` as the same row inside `append_session`.
+
+## TD-4842 — Logs follow --data-dir, and SIGTERM is bounded (Class B)
+
+2026-09-29.
+
+**Decision:** The daemon log is `<data-dir>/logs/tstd.log`. `main`
+resolves the data directory once and passes that path to both
+`setup_logging` and `Daemon`. With no `--data-dir` the directory is
+`user_data_dir()`, so the default log path is unchanged. `config.yaml`
+stays in the user data directory. `tst` already spawns `tstd` with
+`--data-dir`, so a CLI-started daemon logs in that same tree.
+
+**Decision:** On macOS and Linux, SIGTERM and SIGINT are installed on
+the running event loop before session restore. The callback sets the
+same `_shutdown_event` the websocket `shutdown` message sets, and arms
+a 5 second wall-clock timer. The timer runs on a daemon thread. If
+cleanup has not returned, it deletes the port file and calls
+`os._exit(1)`. A finished shutdown cancels the timer and the process
+exits 0. The handler is removed when `run` returns so an in-process
+daemon does not leave its callback on the caller's loop. Windows does
+not install these handlers. Shutdown there stays the websocket message,
+the parent watchdog, or the console event.
+
+**Rationale:** `--data-dir` moved the session store and the audit
+database, and the log file stayed in the real user data directory. A
+scratch daemon wrote into `~/Library/Application Support/.../logs`.
+The loop handler already requested shutdown, but a cleanup stuck on
+the loop thread never runs `call_later`, and `SystemExit` still waits
+for the default executor. The process then stays asleep until SIGKILL,
+and the port file is still there. The timer is not the loop, and
+`os._exit` does not wait out a stuck thread.
+
+**Alternative rejected:** `signal.signal` instead of the loop's
+handler. `asyncio.wait_for` alone around `_shutdown`. Arming the same
+budget for the websocket shutdown message, which would change Windows.
+Moving `config.yaml` with `--data-dir`.
+
+## TD-4843 — Daemon files follow --data-dir (Class B)
+
+2026-09-29.
+
+**Decision:** The config a daemon loads, reloads, and writes is
+`<data-dir>/config.yaml`. `main` already resolves the data directory
+once. With no `--data-dir` that directory is `user_data_dir()`, so the
+file stays where it is today. `tst` reads the same file for its turn
+timeout and already passes `--data-dir` when it spawns `tstd`. The
+credentials catalog is that file; secrets stay in the OS keychain.
+
+**Decision:** `cached_config()` with no path remains the library cache
+for callers that have no daemon. A daemon does not call that form. It
+passes its path into the existing loader. The cache holds one entry, so
+a daemon and a library caller in one process do not share an object.
+`AuditStore.open_default`, `load_config()` / `ensure_user_config()`
+with no path, and `setup_logging()` with no `log_dir` stay on the
+library default for the same reason.
+
+**Decision:** These are not under `--data-dir`. The OS keychain is the
+OS keychain. `~/.tst-cu-mcp/config.yaml` (or `TST_CU_MCP_CONFIG`) is
+shared with `tst-cu-mcp`. `~/.grok` (or `GROK_HOME`) is the Grok CLI
+home. `CHARTER.md` is `.tst/autonomy/` in the workspace.
+`last-workspace.yaml` and `close-is-not-quit.yaml` are host files; the
+host already joins them to the data directory it passes as
+`--data-dir`. The Python daemon does not read them.
+
+**Rationale:** `tstd --data-dir <scratch>` loaded and wrote the real
+user `config.yaml`, so a test or a second daemon used that user's
+presets, credentials, and settings. TD-4842 moved the log only and
+rejected moving `config.yaml`. That left the same hole. The host
+already reads `<data-dir>/config.yaml` for the embeddings sidecar, so
+the daemon now uses the file the host is looking at.
+
+Voice, approvals, session stars, workspace pins, coworker, memory,
+remote attach, the remote token, computer-use indicator prefs, the
+per-platform permission flags, scheduler jobs and history, `port.json`,
+the session store and transcripts, `audit.db`, logs, exports, the
+browser profile, and `cu-agent.sock` already took a data directory.
+Search endpoints for a session come from that session's config, not
+from the library cache.
+
+**Alternative rejected:** Changing what `cached_config()` with no
+arguments returns while a daemon is alive. Library callers and the
+existing tests depend on that being the default file. Also rejected:
+copying the library config into an explicit data dir on startup, which
+would put the user's file back in the scratch daemon. Also rejected:
+moving the keychain, the cu-mcp policy, or the Grok home.
+
+## TD-4844 — Quit distill does not hold the shutdown budget (Class B)
+
+2026-09-29.
+
+**Decision:** Graceful shutdown still starts distill for every live
+session that had a completed turn. The call runs beside the rest of
+the close. If it has returned when the sockets, session tasks, and
+audit writer have finished, the proposal is kept. If the provider
+call is still in flight, shutdown cancels it, logs that distill was
+skipped, closes the provider clients, and goes on. End session is
+unchanged and still waits on the provider.
+
+**Decision:** A shutdown step that is still running after one second
+is logged at INFO, on `tstd.shutdown`, with the step's name and how
+long it has been running. When the close finishes, the same line names
+the longest finished step if that step exceeded one second.
+
+**Rationale:** After one finished turn, SIGTERM sat in distill's
+non-streaming completion. That read is allowed to take 120 seconds,
+so the 5 second budget called `os._exit(1)` before the websocket
+server stopped. An idle daemon, and a daemon whose provider answered,
+left in a fraction of a second. TD-2302 already says a provider that
+cannot complete distill is logged and skipped, and quit still reaps.
+A proposal emitted after the client has gone is not written and is
+not restored. The log line is what was missing when the budget fired:
+the process died without naming the step.
+
+**Alternative rejected:** Raising the shutdown budget or the provider
+read timeout. Wrapping distill in `wait_for` and discarding the
+timeout. Skipping distill even when the provider has already
+answered. Closing the HTTP client before the call, which fails every
+quit distill including a fast one.
+
+## TD-4845 — User-global Claude Code steering is opt-in (Class B)
+
+2026-09-29.
+
+**Decision:** `steering.claude_global_fallback` defaults to false.
+Discovery reads `~/.tstdesk/AGENTS.md` as the only user-global file.
+`~/.claude/CLAUDE.md` is not opened, and nothing it imports is opened,
+unless the key is true. When the key is true, the TD-502 fallback is
+unchanged, including the class C approval for an import that sits
+outside both the workspace and `~/.tstdesk`. Workspace-root and nested
+`CLAUDE.md` stay on the unconditional fallback. Those are project files.
+
+**Decision:** When the key is false, `~/.claude/CLAUDE.md` exists, and
+`~/.tstdesk/AGENTS.md` does not, Doctor's steering row appends
+`~/.claude/CLAUDE.md not loaded — enable steering.claude_global_fallback to use it`.
+The path is the tilde form so the row never carries an absolute home
+(TD-1104). The row stays `ok` when steering is otherwise clean. A row
+that already failed keeps the note on the same detail. There is no new
+protocol event. The instruction stack does not carry the note. When
+`~/.tstdesk/AGENTS.md` is present and the key is false, the Claude path
+is not statted and is not recorded as `shadowed_path`. Shadowing is
+recorded only while the fallback is enabled, because only then is that
+file a candidate.
+
+**Decision:** The autonomy supervisor builds validator context without
+the flag. The validator subset does not include `CLAUDE.md`, so an
+enabled fallback would not change that prompt. Settings has no steering
+section. The key is config-only. `SteeringConfig` does not forbid
+unknown keys, matching `SearchConfig` and `ProjectContextConfig`: a
+typo stays at the safe default.
+
+**Rationale:** On the owner's Mac, `~/.claude/CLAUDE.md` opens with
+`@rules-core.md`. Every new session raised a class C import approval
+for `~/.claude/rules-core.md` and spent about 1,700 tokens of Claude
+Code rules inside a 32k window. TST Desk's global file is its own. The
+change has to be discoverable, so Doctor names the file that was left
+unread. The product owner chose this on 2026-09-29 ("Own global file").
+
+**Alternative rejected:** Reading the Claude file and skipping its
+imports. The tokens would still be spent. Suppressing only the class C
+prompt. That would hide an outside read. A Settings toggle. Settings
+sections are appearance, computer, engine, model, policy, mcp, key, and
+about. A protocol field on the instruction stack, or a synthetic unread
+source. Threading the flag into the supervisor.
+
+## TD-4846 — A retried key that is also rejected uses one code (Class B)
+
+2026-09-29.
+
+**Decision:** An authentication failure still closes the cached HTTP
+client, rebuilds it from the keychain, and retries the call once, only
+when the key digest changed. If that retry is also an authentication
+failure (HTTP 401 or 403, or `auth_failed` / `forbidden`), the error
+delivered to the window is `api_key_rejected` with the same host
+sentence an unchanged key already uses. The provider's own
+`auth_failed` message is not forwarded. There is no third try. A
+non-auth error on the retry is returned as the provider sent it.
+
+This replaces the TD-4840 sentence that a second authentication
+failure, after the key did change, is the provider's own error.
+
+**Decision:** `ResourceWarning` and
+`pytest.PytestUnraisableExceptionWarning` are errors in the default
+pytest configuration. The shutdown test that left a listening socket
+and an unanswered connection open now closes both. Production shutdown
+is unchanged.
+
+**Rationale:** The window picks its banner from
+`turn_complete.error_code`. `auth_failed` is the generic 401 copy, so
+a rotated key that the provider also rejected showed "Authentication
+failed…" instead of the credential and host. One situation had two
+codes. The warning gate existed only as a command-line flag, so a
+later story could pass the ordinary suite while leaking a socket.
+
+**Alternative rejected:** Teaching the UI to notice the host sentence
+inside chat text while the event still says `auth_failed`. A third
+retry. Suppressing the warning on that one test. Changing production
+shutdown so the test's server would close.
+
+## TD-3813 — A late slot has a grace, stored as seconds (Class B)
+
+2026-09-29.
+
+**Decision:** `Job.grace` and `JobEntry.grace` are an integer number of
+seconds, or null. Null is the previous behaviour: a missed slot runs
+once on wake. Save accepts the same plain-English durations the
+scheduler already understands ("2 hours", "30 minutes", "every 2
+hours") and a positive integer number of seconds, so a `job_list` row
+can be saved back. The tick compares `now - next_run` to that duration
+and does not parse text. A jobs.json written before this field loads
+with grace null.
+
+**Rationale:** "2 hours", "120 minutes", and 7200 are one window. A
+phrase on disk would be parsed on every tick, two spellings would not
+compare equal, and a bad string would fail the tick instead of the
+save.
+
+**Alternative rejected:** Storing the raw phrase. Storing the text in
+the cadence's "every N unit" shape. That shape is a schedule, not a
+lateness window.
+
+**Decision:** `SaveJob.grace` is `str | int | None`. On an edit, null
+keeps the stored seconds and `""` clears them. On create, null and
+`""` both mean always run. `JobEntry.grace` is always seconds or null.
+No protocol version bump. An old client ignores the new field, the
+same way TD-3810 and TD-3812 added fields.
+
+**Decision:** The tick skips only when lateness is strictly greater
+than grace. A slot that is late by exactly the grace still runs. The
+select says "more than". Run now does not consult grace.
+
+**Alternative rejected:** Skipping at `>=`, which would drop a slot
+the user said was still worth running. Letting Run now honor grace,
+which would make an explicit fire do nothing.
+
+**Decision:** A skip uses the same `advance_job` a run uses. A one-shot
+is spent the TD-3807 way (paused, `next_run` cleared) and a recurring
+job gets one future slot. The tick stamps `last_status: missed`,
+appends a history line with trigger `schedule`, delivers one line on
+the job's channel, and does not open a session. The clock in that line
+is the slot in the job's zone, UTC when the job has none. Lateness is
+ceiled to the minute so the line never claims a shorter delay. A grace
+longer than 366 days is refused at save time so a typo cannot overflow
+the clock arithmetic.
+
+## TD-3814 — A failed scheduled slot can try again (Class B)
+
+2026-09-29.
+
+**Decision:** `retries` is how many extra tries follow the first
+scheduled fire. 0 is one try, the old behaviour. 1 is two attempts.
+History says "attempt n of m" with m = retries + 1 and n the try that
+just finished. A job with retries 0, and every Run now, leaves
+`attempt` and `attempts` null so an ordinary receipt stays the sentence
+it always was. The row receipt is prefixed only when the numbers are
+shown. The history line keeps the raw summary.
+
+**Rationale:** "Retries: 1" reads as one more chance, not one try
+total. Putting the numbers on the history line and the receipt, and
+not into the stored summary, keeps a failed fire's text exact for a
+job that does not retry.
+
+**Alternative rejected:** Counting the first fire as retry 0, which
+makes "1" mean a single try. Prefixing the history summary, which
+would change the log a job that does not retry writes.
+
+**Decision:** `retry_delay` is stored as seconds, the same phrases
+grace already accepts. Blank while retries is at least 1 becomes 600
+seconds. retries 0 stores no delay. `parse_retry_delay` itself returns
+None for a blank; the job validator applies the default, because the
+delay field does not know the count. `model_copy` does not re-run that
+validator, so a settle that moves `next_run` does not invent a delay.
+
+**Rationale:** "10 minutes" and 600 are one gap. A phrase on disk
+would be parsed on every tick, and a bad string would fail the tick
+instead of the save.
+
+**Alternative rejected:** A second duration parser. Storing the phrase.
+Defaulting inside the field parser, which cannot see `retries`.
+
+**Decision:** The job persists `attempt` (tries already used this slot,
+0 when idle) and `resume_at` (the regular slot to restore, null for a
+one-shot). The first transient failure sets `resume_at` from
+`advance_job` at the failure instant, not from the retry clock: an
+interval cadence is now plus the interval, so advancing at 18:10 would
+walk 18:00 to 19:10. Later tries keep that `resume_at`. `next_run`
+becomes now plus the delay. On success or the last failure the counters
+clear. A recurring job resumes `resume_at`. A one-shot is spent
+(paused, `next_run` cleared) only when the slot is finished. A retry
+still waiting is not paused, or it would never fire.
+
+**Rationale:** The remembered slot is the one the user scheduled. The
+retry is a stand-in for that slot, not a new cadence.
+
+**Alternative rejected:** Recomputing the next regular slot when the
+retry finishes. Pausing a one-shot as soon as the first try fails.
+
+**Decision:** Grace applies only when `attempt` is 0. A retry fires
+even if it is hours late. A skip is not a failure: it does not retry,
+and it clears `attempt` and `resume_at`.
+
+**Alternative rejected:** Applying grace to the retry instant, which
+would drop the try the user asked for when the laptop slept through
+the ten-minute gap.
+
+**Decision:** Run now does not call `settle_scheduled`. It does not
+change `next_run`, `attempt`, `resume_at`, or `retries`. It always
+delivers, and its history line is trigger `manual` with null attempt
+numbers.
+
+**Decision:** Slack and ntfy are called once per slot, after the final
+outcome. An intermediate try still stamps `last_*` and pushes
+`job_list` so the receipt shows the latest attempt. `JobEntry.attempt`
+is on the wire for that reason. The window notice treats `attempt` > 0
+as not yet delivered; `attempt` 0 or absent still notifies. `resume_at`
+stays off the wire. No protocol version bump. A jobs.json from before
+this field loads with retries 0, delay null, attempt 0, resume_at null.
+
+**Alternative rejected:** Notifying on every try. Hiding the
+intermediate receipt until the slot finishes.
+
+**Decision:** Whether a failure is transient is one table in
+`scheduler/retry.py`. The turn's error code wins over the sentence.
+Transient: connection errors, timeouts, HTTP 429, HTTP 5xx. Not
+transient: `context_overflow`, `context_length_exceeded`, `auth_failed`,
+`api_key_rejected`, `missing_api_key`, a missing workspace, a missing
+preset, an unavailable engine. Anything the table does not match is
+not transient. A bool is not a retry count.
+
+**Rationale:** An unknown failure should wait for the next regular
+slot rather than hammer it. The code has to win because a context
+overflow's sentence can mention a timeout.
+
+**Alternative rejected:** Matching the word "retry" in the prose.
+Treating an unknown code as transient.
+
+**Decision:** `attempt` and `resume_at` are not on `SaveJob`. Pause
+omits retries and the delay and keeps a retry that is already armed,
+including when it sends the armed `next_run` back unchanged. Changing
+the cadence, the zone, or `next_run`, or setting retries to 0 while a
+retry is armed, clears the counters. Turning retries off with the
+schedule otherwise unchanged restores `next_run` to `resume_at`. A
+one-shot in that state is spent, and that spend is not "Cadence or
+next run is required".
+
+**Alternative rejected:** Treating every save that echoes `next_run` as
+a schedule change, which would drop the retry a Pause is supposed to
+keep. Refusing to spend the one-shot because both schedule fields are
+empty.
+
+## TD-3815 — Park a run that is waiting for approval (Class B)
+
+**Decision:** `waiting` is a receipt status on `RunStatus`,
+`JobEntry.last_status`, and `JobRunEntry.status`. It is not a failure
+and not transient. The runner returns as soon as the session state is
+`awaiting_approval`. It does not wait out `_TURN_TIMEOUT_SECS` and it
+does not call `settle_scheduled`, so a retry cannot open another
+session onto the same card. No new protocol event and no version bump.
+The link that finds the run after a restart, `parked_session_id` and
+`parked_started_at`, stays on the job file. The pane uses `last_status`
+and `last_session_id`.
+
+**Rationale:** The timeout string was already classified as transient.
+Sitting on the card until that fired, then retrying, opened more
+sessions that blocked on the same approval. A status the retry table
+does not treat as failure stops that without a second code path in
+`settle_scheduled`.
+
+**Alternative rejected:** A new daemon event for the park. Keeping the
+runner inside the 120s wait and teaching the retry table to ignore
+that one timeout. Putting the park link on the wire.
+
+**Decision:** Parking a scheduled fire advances with `finish_slot`: a
+one-shot is spent, a recurring job takes its next slot, and `attempt`
+and `resume_at` clear, even when `retries` is greater than 0. Run now
+parks without moving `next_run`, `paused`, `attempt`, or `resume_at`.
+The history line stores no attempt numbers. The receipt while waiting
+is the tool summary, not "attempt N of M".
+
+**Rationale:** The slot is over once it is waiting on a person. Another
+try would be a second session on the same card. Run now was never a
+slot, so it still must not move the schedule.
+
+**Alternative rejected:** Arming a retry at `retry_delay` until the
+card is answered. Prefixing the waiting receipt with the attempt, which
+would make a park look like a failed try.
+
+**Decision:** The channel hears one sentence at park time. A scheduled
+slot uses the same 12-hour clock as a skipped slot (`7:45 AM job is
+waiting for your approval: …`) in the job's timezone, UTC when it has
+none. Run now has no slot, so the sentence is `This job is waiting for
+your approval: …`. The summary is the latest approval card, passed
+through `normalize_summary`. Empty after redaction becomes `a tool
+call`. The log records the length, not the text.
+
+**Rationale:** The user has to know which job stopped and what it
+wants. The clock matches the skip line they already read. The receipt
+stays the tool summary so the row and the history can replace it with
+the final outcome later.
+
+**Alternative rejected:** Delivering the whole sentence as
+`last_summary`. Logging the command.
+
+**Decision:** One task named `park:<job id>` follows the session until
+`turn_complete` or the user cancels it, then rewrites that same history
+line. The receipt is updated only when `parked_session_id` is still
+this session. The final line is delivered only when that history line
+was still `waiting`. An approval that then succeeds is `ok` with the
+turn's text. A tool result of `approval_denied` is `failed` with that
+result's output (`Denied by user` when it is blank), not whatever the
+model says afterwards. Cancel wins over both. Cancelling the watch
+task does not settle: that is process shutdown, and the row stays
+parked for the next start. A newer park (Run now is allowed while one
+is parked) keeps its link; the old line still settles, and it does not
+deliver.
+
+**Rationale:** The history the user already opened is the run. A second
+line would show the park and the outcome as two fires. Run now has to
+be able to replace the link or a pause-and-run would be stuck behind
+the old card. The old watcher must not erase that replacement.
+
+**Alternative rejected:** Refusing Run now while a park is open.
+Appending a second history line for the outcome. Settling when the
+watch task itself is cancelled, which would mark every clean shutdown
+as unanswered before revive could see it — except that session cancel
+still runs first (below).
+
+**Decision:** Revive runs once, at the start of the scheduler loop,
+before any fire, including when shutdown is already set. Every job
+with `parked_session_id` set is closed. If its history line is still
+`waiting`, the line becomes `failed` / `approval never answered` and
+that sentence is delivered once. If the line is already `ok` or
+`failed`, it is not rewritten; a receipt that is still `waiting` copies
+the line's status and summary, and nothing is delivered. The schedule
+does not move. The session is not reattached, even if it is still in
+memory. A second revive is a no-op.
+
+**Rationale:** After a restart the process that was waiting is gone.
+Leaving the row `waiting` would skip every later slot forever. Copying
+an already-settled line covers a crash between the history rewrite and
+the receipt clear without sending the outcome twice.
+
+**Alternative rejected:** Reattaching the live session on startup.
+Moving the schedule again. Running revive on every tick, which would
+fail a park this process just opened.
+
+**Decision:** The next slot while a park is still open does not start
+a session. It is `missed`, summary exactly `previous run still waiting
+for approval`, `scheduled_for` the slot that came due, and the cadence
+advances. The waiting receipt and the park link stay. This is checked
+before grace, on a fresh locked read. If the watcher has already
+cleared the park, the slot runs. The store lock covers the whole
+read-modify-write. The history lock is separate. A miss takes the store
+lock, releases it, then appends history. Delete takes the store lock
+and then history. Nothing holds a lock across delivery.
+
+**Rationale:** Two sessions on one job, or a late-skip and a park-miss
+for the same instant, would tell two stories. The lock is what stops a
+miss from writing `parked_session_id` back after the watcher cleared it.
+
+**Alternative rejected:** Holding the tick until the card is answered.
+Applying grace to a parked job, which would record a lateness skip
+instead of the park.
+
+**Decision:** The row and the history say "Waiting for approval" and
+offer Open session through the existing attach (`selectRow`, then
+home). `historySeen` stays the `last_run` string. An open history
+refetches when status or summary changes, because settling does not
+move `last_run`. The window notice stamp is `last_run`, status, and
+summary, so the park and the later outcome each ring once. The waiting
+title is "Scheduled job is waiting for approval". `attempt` above 0
+still suppresses that notice. A turn that reports waiting without a
+session id is a normal failure and does not store a park link.
+
+**Alternative rejected:** Bumping `last_run` when the card settles so
+the old refetch would notice. A separate notice event.
+
+**Decision:** `_shutdown` still cancels sessions before daemon tasks. A
+watcher that is still running can therefore observe `cancelled` and
+record `approval never answered` during a clean quit. That is
+acceptable: the user is leaving, and the row must not stay parked. A
+watch task that is cancelled without the session being cancelled
+leaves the row parked for revive.
+
+**Class A:** The wait lives in `scheduler/park.py` and receives the
+turn budget from the runner, so a test can shorten it without importing
+a private constant into the park module. `finish_slot` is the public
+name of the schedule advance. The denial text is the tool result, not
+the model's next sentence. Waiting uses the accent token.
+
+**Decision (Class A):** The form's Retries select is None / 1 / 2 / 3,
+and a count always sends the delay phrase "10 minutes". Save therefore
+replaces a hand-set custom delay. Pause omits the field, so the daemon
+keeps one. Create omits both when the select is None. An unknown stored
+count stays on the select so an edit does not wipe it.
+
+## TD-4847 — Computer use in fewer round-trips (Class B)
+
+2026-09-29.
+
+**Decision:** `settle_ms` and `after_ms` are integers from 0 to 5000
+inclusive, on both the computer-use MCP tools and the daemon
+`desktop_*` tools. Five seconds covers a menu or a focus change. A
+longer wait stays on `wait` / `wait_for_window`. One action must not
+wedge the single-call stdio server. `bool` is rejected: it is an
+`int` subclass, and `True` must not become a 1 ms wait.
+
+**Decision:** The foreground identity on an action result is
+`{"app", "title"}`. `app` is the process name from
+`foreground_window` (`WindowInfo.process`). Bounds and pid stay on
+`get_foreground_window`. Sidecar JSON uses `process`; the daemon maps
+`process` to `app` when `app` is absent.
+
+**Decision:** Omitted or 0 does not sleep, and the action result still
+includes `foreground_window`. The screenshot payload is unchanged;
+only timing changes when `after_ms` is greater than 0. The result
+does not echo the wait.
+
+**Decision:** The wait lives in the tool layer, not in the OS
+backends. Daemon handlers wait in-process and then read the driver.
+They do not forward `settle_ms` or `after_ms` to the sidecar, which
+would pause twice. MCP tools implement the same contract for a model
+that calls computer-use directly.
+
+**Decision:** The bound is checked before actuation. A bad wait does
+not click, type, launch, or capture. Kill-switch, focus mismatch, and
+other refusals stay inside the existing action and do not sleep or
+attach a success window.
+
+**Decision:** A failed foreground read after a successful action does
+not fail the action. A retry would click again. The result is
+`{"app": "", "title": "", "read": "unavailable"}`. Exception text is
+not copied. The log records only the exception type name.
+
+**Decision:** `after_ms` sleeps before the screenshot hides the ring,
+so the ring is not hidden during the wait. Capture still hides the
+ring as it does today.
+
+**Decision:** No drag tool. Click remains a press and release at one
+point. `move` / `desktop_move`, hide, and unhide do not take
+`settle_ms`. No new config key. No protocol change.
+
+**Rejected:** Forwarding the wait to the sidecar. Failing the action
+when the window cannot be read. Adding a drag tool. Sleeping when the
+value is 0. Echoing the duration. Hiding the ring during `after_ms`.
+
+## TD-708 — Classifier judgment audit and a signal-only seam (Class B)
+
+2026-09-29.
+
+**Decision:** Classifier judgments get their own append-only `judgments`
+table (schema v3), not a `model_calls` row and not a protocol event.
+Columns are connector, payload digest, label, confidence, latency,
+cost, cache hit, the class after fail-toward-B, and timestamp. The
+digest is the SHA-256 hex of the signal block. Paths, file contents,
+and conversation text are not columns. Connector and label go through
+the same secret redactor as the other audit strings. The digest does
+not, because redaction would change the hash. A static-rule
+short-circuit writes no row.
+
+**Decision:** The classifier prompt carries signals only: tool name,
+workspace-relative paths, hosts, mutation intent, `side_effect_class`,
+and provenance. Canonical arguments stay the session cache key and stay
+off the prompt. This retires the 2026-09-17 choice that the dev-build
+prompt stay byte-identical to the TD-703 prompt, because that prompt
+included arguments and the criterion forbids absolute paths, file
+contents, and conversation text. The default connector still ends the
+prompt with `Class:`. A path that is not inside the workspace is the
+token `outside`.
+
+**Decision:** A connector with a non-empty remote host is not called
+when that host is absent from the boundary allowlist. An empty
+allowlist is network deny. The denial is class B, is not cached, and
+makes no `judge()` call. The worker connector has no remote host, so a
+deny charter does not turn the user's own model off. The gate is on
+the classifier seam only. Verification, the semantic breaker, and
+candidate selection are unchanged.
+
+**Decision:** A hosted connector's dollar amount is recorded with
+`CostTracker.record_classifier_amount` (tier `worker`, so the record
+stays on a known tier, source equal to the connector name, zero
+tokens). It lands on `classifier_cost` and stays off the turn and
+session totals. The worker chat path keeps
+`record_classifier("worker", usage)` inside the completion and is not
+billed a second time when the judgment row is written. A cache hit
+records cost 0 and is not billed again.
+
+**Decision:** The hosted connector id stays the config and protocol
+value `typesafe`. The seam, the loop, and the classifier do not name
+it. The HTTP client lives in `autonomy/typesafe.py`. The URL lives in
+`config.yaml` and the docs, not as a `tstd` source literal. The
+`jev-latest` model default stays on `JudgmentsConfig` and the connector
+constructor.
+
+**Rejected:** A new client event for each judgment. Renaming the
+shipped `typesafe_*` fields. Putting canonical arguments back on the
+prompt. Gating the worker tier on network deny. Gating verification
+and the breaker on the same network check in this story. Storing the
+signal payload in the audit database.
+
+## TD-4848 — The port file is removed only when it names this process (Class B)
+
+2026-09-29.
+
+**Decision:** `release_port_file` deletes `port.json` only when its
+`pid` is an int (not a bool) naming this process. It runs at the
+start of daemon shutdown, before the shutting-down log and before
+any await, at the start of websocket `stop`, on shutdown-budget
+expiry, and synchronously inside the Windows console handler. A
+missing, unreadable, non-object, or foreign file is left in place.
+There is no lock. The host does not spawn the next daemon until this
+process is dead.
+
+**Decision:** A port file found at startup is still replaced. The log
+line stays `tstd.ws` / `stale port file detected, replacing`, at
+INFO, and includes the dead pid. A file with no pid logs `pid` null.
+The token is not logged.
+
+**Decision:** On Windows, CTRL_CLOSE, CTRL_LOGOFF, and CTRL_SHUTDOWN
+release the file on the console-handler thread, then schedule the
+same callback SIGTERM uses. CTRL_C and CTRL_BREAK are installed with
+`signal.signal` and do not release in the console hook. This is the
+console path TD-4842 named and did not install. The websocket
+shutdown message still does not arm the budget.
+
+**Decision:** The host sends `shutdown`, flushes, and drops its
+socket, then keeps the 5 second SIGKILL fallback. It does not wait
+for a close ack. During `stop`, each client close handshake is
+bounded to 1 second so a peer that never acks cannot outlive that
+grace. The listening socket stops accepting before that wait.
+
+**Rationale:** Quit left `port.json` behind because `stop` unlinked
+it only after `close()`, and the host held its socket while the
+library waited up to 10 seconds for an ack. The host killed the
+process at 5 seconds. The next start logged a warning for an
+ordinary quit. The parent watchdog and Windows console close had no
+backstop that removed the file. An unconditional unlink would also
+delete a successor's file.
+
+**Alternative rejected:** Arming the SIGTERM budget for the websocket
+message. TD-4842 rejected that, and it stays rejected. Deleting
+whatever bytes are at the path. Killing the daemon before asking it
+to shut down. Waiting out the library's 10 second close handshake.
+
+## TD-4849 — Quit waits for the daemon process (Class B)
+
+2026-09-29.
+
+**Decision:** This revises the TD-4848 host decision that flushed
+`shutdown` and dropped the socket immediately. The host still does
+not call `close().await`, and there is still no protocol ack. After
+the flush it reads until the peer closes, the read errors, or the
+same 5 second grace ends. The daemon closes that socket from
+`ws_server.stop()`, which is after the shutdown-requested log and
+the port-file release.
+
+**Decision:** `wait_for_done` resolves when the supervision loop has
+reaped the process-group leader, or has given up, not when the
+socket ends. SIGKILL of the group is only the grace fallback. A
+clean leader exit does not group-kill. For a PyInstaller onefile
+sidecar the leader is the bootloader, and it leaves after the
+Python process. `RunEvent::Exit` uses the same rule: if shutdown
+was requested and the grace has not elapsed, it waits out the
+remainder; if the leader is already gone, it does nothing; if
+shutdown was not requested, or the grace has elapsed, it SIGKILLs.
+The outer quit bound stays 10 seconds.
+
+**Rationale:** A live quit of the installed build (2026-09-29)
+left `port.json` and wrote no shutdown line. tao does not implement
+`applicationShouldTerminate`, so macOS delivers `RunEvent::Exit`
+from `applicationWillTerminate` even after `prevent_exit`. That
+callback SIGKILLed the process group before the daemon read the
+frame. Every quit skipped audit drain, session persistence, and
+the TD-4844 shutdown phases.
+
+**Rejected:** A new shutdown ack. Waiting on `close().await` (the
+10 second handshake TD-4848 removed). SIGKILL as soon as the socket
+ends. Group-kill after a clean leader exit. Changing the embeddings
+supervisor, which still kills on shutdown with no websocket grace.
+
+## TD-4850 — System quit shuts the daemon down on the main thread (Class B)
+
+2026-09-29.
+
+**Decision:** This revises the TD-4849 clause that SIGKILLs on
+`RunEvent::Exit` when shutdown was not requested. tao 0.35 implements
+`applicationWillTerminate` and not `applicationShouldTerminate`, so
+Dock, AppleScript, logout, restart, and shutdown are `RunEvent::Exit`
+with no `ExitRequested`. That callback runs on the main thread. The
+host duplicates the fd of the connection the supervisor already holds
+and writes a masked `{"type":"shutdown"}` frame with `write` and
+`thread::sleep`. It does not `block_on` the tokio runtime. The fd
+stays open until the leader is reaped or killed. If the dup is missing
+or the write fails, the process group is SIGTERMed (TD-4842). SIGKILL
+is only when the leader is still running at the deadline.
+
+**Decision:** The deadline is 3 seconds and it is shared. The daemon
+is asked first. The embeddings sidecar has no shutdown frame. If its
+pid is still running it is SIGTERMed and then uses whatever time is
+left; if it is already gone it is not waited on. An in-app quit still
+uses the 5 second grace and the 10 second outer bound.
+`shutdown_started` stays the mark of that path. System quit sets a
+separate flag so the supervisor does not write a second frame, and it
+does not notify the embeddings supervisor, whose shutdown arm SIGKILLs
+immediately.
+
+**Rationale:** A live `osascript` quit of the TD-4849 build
+(2026-09-29 21:05) left `port.json` and wrote no shutdown line. The
+processes were gone in about a second because Exit SIGKILLed. Logout
+cannot sit on a 5 second grace for each child.
+
+**Rejected:** Opening a second websocket. `block_on` of the supervisor
+task. Calling `request_shutdown` and relying on the runtime to poll.
+Giving the daemon and the embeddings sidecar 3 seconds each. SIGKILL
+as soon as Exit arrives when no in-app quit is in progress.
+
+## TD-4851 — Ready quit-distill is kept; dead transports are closed (Class B)
+
+2026-09-29.
+
+**Decision:** Quit distill still runs beside the rest of shutdown.
+The reap can now tell a provider call from the local work around it.
+`chat_completion` publishes its future before awaiting it. While that
+future is empty, the reap waits: that is the memory read and, after
+the provider returns, the proposal write. A future that is already
+done, or that finishes on the next loop turn, is kept so the proposal
+lands. A future still pending after that turn is cancelled, the
+existing skip line is logged, and shutdown continues. The nested task
+is cancelled itself. On Python 3.11, cancelling the distill task does
+not cancel it. End session does not use this flight and still waits
+on the provider. Callers with no flight keep the TD-4844 rule: a
+distill task that has not finished is cancelled immediately.
+
+**Decision:** A stuck local read can hold the reap. It is not the
+network read that burned the shutdown budget. The process shutdown
+budget stays the backstop. The budget is not raised.
+
+**Decision:** Every `run_shell` exit closes a dead child's transport,
+including when `_call_connection_lost` has already cleared `_loop`
+and left `_closed` false. That is the state `__del__` warns on. A
+refused group kill still does not `close()` the leader, because
+`close()` SIGKILLs a live child and orphans grandchildren that hold
+the pipes. A retained task waits for the exit and closes then,
+including when loop shutdown cancels the task. The task keeps the
+transport referenced across the test collector's `gc.collect`, which
+runs before the loop fixture tears down.
+
+**Decision:** On Linux, `waitid` with `WNOWAIT` reports that the
+child has exited without reaping it, so `ThreadedChildWatcher` can
+still `waitpid`. A returned status means that. `None` means the
+child has not exited. `ChildProcessError` (ECHILD) means the pid is
+not our child, or the status was already collected. The caller then
+uses the transport returncode and `Popen.poll`. That is also the
+path when `os.waitid` is missing. CPython 3.11 and 3.12 on macOS do
+not expose it. `_exited_unreaped` takes the waitid callable, and
+tests replace `_platform_waitid`, so the missing-waitid branch and a
+fake Linux `waitid` both run on every platform. The fake never
+consults a real pid. Corrected 2026-09-30 after ubuntu CI on
+3461071.
+
+**Rationale:** On the Linux runner the in-process subsystem awaits
+finished before `asyncio.to_thread` finished reading the memory
+files. The old reap treated "not done" as "provider read" and
+cancelled a mock that had not started its call. The mock's
+`chat_completion` has no `await`, so one loop turn after the read
+completes the proposal. A hang, or an httpx read, is still pending
+after that turn. The same `ThreadedChildWatcher` is the default on
+macOS when pidfd is unavailable. The difference was scheduling.
+Python 3.11 delivers the exit with `call_soon_threadsafe(call_soon,
+_process_exited)`, one turn later than 3.12. A function-scoped test
+loop stops before that turn, the pipes are already closed, and
+`__del__` warns on returncode -9. Closing in the tool, while the
+loop can still run, does not depend on that turn. Ubuntu CI on
+3461071 then failed the two retain tests. macOS CPython 3.11 has no
+`os.waitid`, so this machine never entered that branch. On Linux,
+`waitid` of the tests' parked pid raises `ChildProcessError`. The
+first cut treated that as an unreaped exit, closed the live leader,
+and never started the watcher.
+
+**Rejected:** Sleeping, retrying, or filtering the warning. Skipping
+either test. Awaiting every distill task until the provider returns.
+Cancelling local prep the way a socket read is cancelled. `close()`
+on a leader the OS refused to kill. `Popen.poll` as the only death
+check on Linux, which races the watcher's `waitpid`. Treating
+`ChildProcessError` as an unreaped exit.

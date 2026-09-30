@@ -42,9 +42,7 @@ class MockBrowserDriver:
     ) -> None:
         self.pages = dict(pages) if pages is not None else {"about:blank": "Blank"}
         # TD-711: scripted interactive elements for candidate selection.
-        self.candidates = (
-            list(candidates) if candidates is not None else _DEFAULT_CANDIDATES
-        )
+        self.candidates = list(candidates) if candidates is not None else _DEFAULT_CANDIDATES
         self.url = "about:blank"
         self.crash = crash
         self.stall = stall

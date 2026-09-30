@@ -25,7 +25,6 @@ from tstd.config import (
 )
 from tstd.config_write import delete_mcp_server_entry, save_mcp_server
 from tstd.daemon import Daemon
-from tstd.keychain import KeychainError
 from tstd.mcp.loader import McpSupervisor
 from tstd.protocol import SetMcpServer, parse_client_message
 from tstd.tools import ToolDispatcher, create_registry
@@ -169,21 +168,14 @@ class TestWire:
 
 
 class TestDaemonAck:
-    @pytest.fixture(autouse=True)
-    def _no_key(self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        async def _missing(_provider_name: str = "openrouter") -> str:
-            raise KeychainError("API key not found in keychain.")
-
-        monkeypatch.setattr("tstd.daemon.get_api_key", _missing)
-        cached_config.cache_clear()
-
     async def test_set_disable_delete_appear_on_setup_state(
         self, isolated_home: Path, tmp_path: Path
     ) -> None:
-        ensure_user_config()
+        user_path = ensure_user_config()
         cached_config.cache_clear()
         daemon = Daemon(data_dir=tmp_path / "data")
-        path = ensure_user_config()
+        user_before = user_path.read_bytes()
+        path = daemon.config_path
 
         added = await _send(
             daemon,
@@ -226,14 +218,16 @@ class TestDaemonAck:
         assert removed["type"] == "setup_state"
         assert removed["mcp_servers"] == []
         assert _servers(path) == {}
+        assert user_path.read_bytes() == user_before
 
     async def test_http_non_loopback_does_not_write(
         self, isolated_home: Path, tmp_path: Path
     ) -> None:
-        path = ensure_user_config()
+        user_path = ensure_user_config()
         cached_config.cache_clear()
         daemon = Daemon(data_dir=tmp_path / "data")
-        before = path.read_text(encoding="utf-8")
+        user_before = user_path.read_bytes()
+        data_before = daemon.config_path.read_bytes()
 
         reply = await _send(
             daemon,
@@ -247,7 +241,8 @@ class TestDaemonAck:
         )
         assert reply["type"] == "error"
         assert "loopback" in json.dumps(reply)
-        assert path.read_text(encoding="utf-8") == before
+        assert user_path.read_bytes() == user_before
+        assert daemon.config_path.read_bytes() == data_before
 
     async def test_unknown_delete_is_a_typed_error(
         self, isolated_home: Path, tmp_path: Path
@@ -260,10 +255,11 @@ class TestDaemonAck:
         assert "missing" in json.dumps(reply)
 
     async def test_command_string_does_not_write(self, isolated_home: Path, tmp_path: Path) -> None:
-        path = ensure_user_config()
+        user_path = ensure_user_config()
         cached_config.cache_clear()
         daemon = Daemon(data_dir=tmp_path / "data")
-        before = path.read_text(encoding="utf-8")
+        user_before = user_path.read_bytes()
+        data_before = daemon.config_path.read_bytes()
         reply = await _send(
             daemon,
             {
@@ -274,7 +270,8 @@ class TestDaemonAck:
             },
         )
         assert reply["type"] == "error"
-        assert path.read_text(encoding="utf-8") == before
+        assert user_path.read_bytes() == user_before
+        assert daemon.config_path.read_bytes() == data_before
 
 
 class TestReload:

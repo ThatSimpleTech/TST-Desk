@@ -12,7 +12,8 @@ from typing import Any, get_args
 
 from pydantic import ValidationError
 
-from .models import DeliverTo, JobDraft, JobValidationError
+from .models import DeliverTo, JobDraft, JobValidationError, describe_validation_error
+from .phrases import find_phrase
 
 _FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
 _KV = re.compile(
@@ -63,7 +64,7 @@ def _draft_from_json(text: str) -> JobDraft:
     try:
         return JobDraft.model_validate(raw)
     except ValidationError as exc:
-        raise JobValidationError(str(exc)) from exc
+        raise JobValidationError(describe_validation_error(exc)) from exc
 
 
 def _draft_from_key_values(text: str) -> JobDraft:
@@ -99,7 +100,7 @@ def _draft_from_natural_language(text: str) -> JobDraft:
             cadence = prefixed.group(1).strip()
             spans.append(prefixed.span())
         else:
-            cadence = _find_cron(text, spans)
+            cadence = _find_cron(text, spans) or _find_phrase(text, spans)
     next_run = _take(_NEXT, text, spans)
     paused = _PAUSED.search(text) is not None
     if paused:
@@ -135,6 +136,15 @@ def _find_cron(text: str, spans: list[tuple[int, int]]) -> str | None:
             spans.append((window[0].start(), window[4].end()))
             return " ".join(part.group(0) for part in window)
     return None
+
+
+def _find_phrase(text: str, spans: list[tuple[int, int]]) -> str | None:
+    found = find_phrase(text)
+    if found is None:
+        return None
+    start, end, cron = found
+    spans.append((start, end))
+    return cron
 
 
 def _remainder(text: str, spans: list[tuple[int, int]]) -> str:

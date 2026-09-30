@@ -35,7 +35,13 @@ from .boundary import PathGuard, RefusalError
 from .desktop import peel_screenshot_png
 from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry
-from .results import HandlerRefusal, ToolResult, ValidationError, truncate_output
+from .results import (
+    DEFAULT_MAX_RESULT_CHARS,
+    HandlerRefusal,
+    ToolResult,
+    ValidationError,
+    truncate_output,
+)
 
 __all__ = [
     "ToolDispatcher",
@@ -153,7 +159,7 @@ class ToolDispatcher:
     def __init__(
         self,
         registry: ToolRegistry,
-        max_result_chars: int = 50_000,
+        max_result_chars: int = DEFAULT_MAX_RESULT_CHARS,
         classifier: AmbiguousClassifier | None = None,
         path_guard: PathGuard | None = None,
         checkpointer: Checkpointer | None = None,
@@ -579,8 +585,9 @@ class ToolDispatcher:
         if name in {"desktop_screenshot", "browser_screenshot"} and isinstance(output, str):
             output, image_png = peel_screenshot_png(output)
 
-        # 4. Truncate
-        truncated_output, truncated = truncate_output(output, self.max_result_chars)
+        # 4. Truncate. fs_read's marker names offset/limit; other tools
+        #    keep the historical marker (TD-4839).
+        truncated_output, truncated = truncate_output(output, self.max_result_chars, tool_name=name)
 
         # 4.1 Decisions ledger (TD-704).  A Class A/B decision that
         #     executed appends to .tst/autonomy/DECISIONS.md and emits

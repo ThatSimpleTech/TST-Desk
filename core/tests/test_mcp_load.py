@@ -25,7 +25,6 @@ from tstd.config import (
     default_config_yaml,
 )
 from tstd.daemon import Daemon
-from tstd.keychain import KeychainError
 from tstd.logging import user_data_dir
 from tstd.mcp.errors import McpError
 from tstd.mcp.http import assert_loopback_http_url
@@ -240,16 +239,6 @@ def _http_reply(message: dict[str, Any], tool_name: str) -> dict[str, Any] | Non
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": "unknown"}}
 
 
-class FakeKeychain:
-    def __init__(self) -> None:
-        self.stored: dict[str, str] = {}
-
-    async def get(self, provider_name: str = "openrouter") -> str:
-        if provider_name not in self.stored:
-            raise KeychainError(f"API key not found in keychain for {provider_name!r}.")
-        return self.stored[provider_name]
-
-
 class FakeProviderClient:
     scripted: Any = object()
 
@@ -269,12 +258,15 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _write_user_config(mcp_yaml: str) -> Path:
-    dest = user_data_dir() / "config.yaml"
+def _write_config(dest: Path, mcp_yaml: str) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(default_config_yaml().rstrip() + "\n" + mcp_yaml + "\n", encoding="utf-8")
     cached_config.cache_clear()
     return dest
+
+
+def _write_user_config(mcp_yaml: str) -> Path:
+    return _write_config(user_data_dir() / "config.yaml", mcp_yaml)
 
 
 async def _start_daemon(tmp: Path) -> tuple[Daemon, asyncio.Task[Any]]:
@@ -460,32 +452,39 @@ class TestDeadServer:
     async def test_daemon_starts_and_doctor_fails(
         self, isolated_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        fk = FakeKeychain()
-        fk.stored["openrouter"] = "sk-ok"
+        stored = {"openrouter": "sk-ok"}
 
-        async def _get(provider_name: str = "openrouter") -> str:
-            return await fk.get(provider_name)
+        async def _present(provider_name: str = "openrouter") -> bool:
+            return provider_name in stored
 
-        monkeypatch.setattr("tstd.daemon.get_api_key", _get)
+        monkeypatch.setattr("tstd.daemon.api_key_is_stored", _present)
         monkeypatch.setattr("tstd.daemon.ProviderClient", FakeProviderClient)
-        _write_user_config(
+        # The dead server lives in the daemon's data dir. A different file
+        # at the library default must not be what doctor reads (TD-4843).
+        user = _write_user_config("mcp:\n  servers: {}\n")
+        user_before = user.read_bytes()
+        data = tmp_path / "data"
+        _write_config(
+            data / "config.yaml",
             "mcp:\n"
             "  servers:\n"
             "    dead:\n"
             "      transport: stdio\n"
-            f"      command: [{json.dumps(sys.executable)}, '-c', 'raise SystemExit(1)']\n"
+            f"      command: [{json.dumps(sys.executable)}, '-c', 'raise SystemExit(1)']\n",
         )
-        daemon, task = await _start_daemon(tmp_path / "data")
+        daemon, task = await _start_daemon(data)
         try:
             assert daemon.ws_server.port > 0
             checks = await _doctor_checks(daemon)
             names = [c["name"] for c in checks]
             # Additional diagnostics must not hide the failed server's row.
             assert {"daemon", "api_key", "provider", "git", "workspace", "steering"} <= set(names)
+            assert next(c for c in checks if c["name"] == "api_key")["status"] == "ok"
             assert "mcp:dead" in names
             row = next(c for c in checks if c["name"] == "mcp:dead")
             assert row["status"] == "fail"
             assert row["fix"]
+            assert user.read_bytes() == user_before
         finally:
             await _stop_daemon(task)
 

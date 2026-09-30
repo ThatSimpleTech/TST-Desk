@@ -23,6 +23,15 @@ from tst_cu_mcp.coordinates import resolve_point
 from tst_cu_mcp.displays import screen_info
 from tst_cu_mcp.focus import foreground_window
 from tst_cu_mcp.permissions import check_permissions
+from tst_cu_mcp.settle import (
+    AFTER_NOTE,
+    SETTLE_NOTE,
+    AfterMs,
+    SettleMs,
+    bound_ms,
+    pause,
+    with_foreground,
+)
 from tst_cu_mcp.stdio_transport import DrainingStdioServer
 from tst_cu_mcp.tools.background import register_background_tools
 from tst_cu_mcp.tools.health import health_report
@@ -59,6 +68,8 @@ _BASE_INSTRUCTIONS = (
     "`launch_app` opens an app by name. Screenshot / click / type / press_keys "
     "take full control of the screen, mouse, and keyboard — use them only when "
     "the accessibility tree cannot reach the control. Denied apps are refused. "
+    "Pass `settle_ms` on an action, or `after_ms` on screenshot, to wait inside "
+    "that call; every action result includes the foreground window. "
     "There is no per-action approval gate."
 )
 
@@ -207,6 +218,7 @@ def build_server() -> MCPServer:
             "returned text block carries coordinate metadata: click/move coordinates "
             "must be given in the RETURNED IMAGE's pixel space (origin top-left). "
             + _permission_hint()
+            + AFTER_NOTE
         ),
         structured_output=False,
     )
@@ -214,7 +226,10 @@ def build_server() -> MCPServer:
         display: int | None = None,
         region: dict[str, int] | None = None,
         max_long_edge: int = DEFAULT_MAX_LONG_EDGE,
+        after_ms: AfterMs = 0,
     ) -> list[ContentBlock]:
+        # Bound before the wait so an illegal after_ms never captures.
+        pause(bound_ms(after_ms, name="after_ms"))
         region_tuple = parse_region_dict(region)
         result = capture(
             display_index=display,
@@ -323,7 +338,7 @@ def build_server() -> MCPServer:
         name="click",
         description=(
             "Click the mouse at a point. button is 'left' or 'right'; count>=2 "
-            "double/triple-clicks. " + _COORD_HELP + _EXPECT_HELP
+            "double/triple-clicks. " + _COORD_HELP + _EXPECT_HELP + SETTLE_NOTE
         ),
         structured_output=False,
     )
@@ -337,7 +352,9 @@ def build_server() -> MCPServer:
         image_height: int | None = None,
         region: dict[str, int] | None = None,
         expect_window: str | None = None,
+        settle_ms: SettleMs = 0,
     ) -> dict[str, Any]:
+        bound_ms(settle_ms, name="settle_ms")
         gx, gy = resolve_point(
             x=x,
             y=y,
@@ -347,11 +364,14 @@ def build_server() -> MCPServer:
             region=region,
         )
         input_control.click(gx, gy, button=button, count=count, expect_window=expect_window)
-        return {
-            "clicked_points": {"x": round(gx, 1), "y": round(gy, 1)},
-            "button": button,
-            "count": count,
-        }
+        return with_foreground(
+            {
+                "clicked_points": {"x": round(gx, 1), "y": round(gy, 1)},
+                "button": button,
+                "count": count,
+            },
+            settle_ms,
+        )
 
     @server.tool(
         name="type_text",
@@ -363,29 +383,39 @@ def build_server() -> MCPServer:
             + " Note that a window which has only just appeared may not be ready to "
             "receive keystrokes even when it is in front; keys sent too early are "
             "discarded by the receiving window, and this tool cannot detect that. "
-            "Screenshot to confirm the caret before typing anything that matters."
+            "Screenshot to confirm the caret before typing anything that matters." + SETTLE_NOTE
         ),
         structured_output=False,
     )
-    def type_text(text: str, expect_window: str | None = None) -> dict[str, Any]:
+    def type_text(
+        text: str,
+        expect_window: str | None = None,
+        settle_ms: SettleMs = 0,
+    ) -> dict[str, Any]:
+        bound_ms(settle_ms, name="settle_ms")
         input_control.type_text(text, expect_window=expect_window)
-        return {"typed_chars": len(text)}
+        return with_foreground({"typed_chars": len(text)}, settle_ms)
 
     @server.tool(
         name="press_keys",
-        description=(_combo_help() + _permission_hint() + _EXPECT_HELP),
+        description=(_combo_help() + _permission_hint() + _EXPECT_HELP + SETTLE_NOTE),
         structured_output=False,
     )
-    def press_keys(combo: str, expect_window: str | None = None) -> dict[str, Any]:
+    def press_keys(
+        combo: str,
+        expect_window: str | None = None,
+        settle_ms: SettleMs = 0,
+    ) -> dict[str, Any]:
+        bound_ms(settle_ms, name="settle_ms")
         input_control.press_keys(combo, expect_window=expect_window)
-        return {"pressed": combo}
+        return with_foreground({"pressed": combo}, settle_ms)
 
     @server.tool(
         name="scroll",
         description=(
             "Scroll by lines: dy>0 scrolls up, dy<0 down; dx>0 right, dx<0 left. "
             "Optionally pass x,y to move the cursor over a target first (same "
-            "coordinate rules as click). " + _permission_hint() + _EXPECT_HELP
+            "coordinate rules as click). " + _permission_hint() + _EXPECT_HELP + SETTLE_NOTE
         ),
         structured_output=False,
     )
@@ -399,7 +429,9 @@ def build_server() -> MCPServer:
         image_height: int | None = None,
         region: dict[str, int] | None = None,
         expect_window: str | None = None,
+        settle_ms: SettleMs = 0,
     ) -> dict[str, Any]:
+        bound_ms(settle_ms, name="settle_ms")
         if x is not None and y is not None:
             gx, gy = resolve_point(
                 x=x,
@@ -411,7 +443,7 @@ def build_server() -> MCPServer:
             )
             input_control.move_mouse(gx, gy, expect_window=expect_window)
         input_control.scroll(dx, dy, expect_window=expect_window)
-        return {"scrolled": {"dx": dx, "dy": dy}}
+        return with_foreground({"scrolled": {"dx": dx, "dy": dy}}, settle_ms)
 
     register_background_tools(server)
 

@@ -5,9 +5,9 @@ API keys live in the OS keychain, never in config files or environment variables
 reading and writing secrets.
 
 Supported platforms:
-- macOS: `security` CLI to the system keychain; writes go through the
-  Security framework instead (keychain_macos, TD-4813) so the secret never
-  rides in a process's argument list
+- macOS: `security` CLI. Writes go through `security -i` with the add
+  command on stdin (keychain_macos, TD-4838) so the secret never rides in
+  argv and `/usr/bin/security` stays the trusted reader
 - Linux: `secret-tool` CLI (libsecret); the secret travels over stdin
 - Windows: Credential Manager via ctypes (keychain_windows, TD-1102)
 
@@ -17,9 +17,10 @@ The service name is always ``com.thatsimpletech.tstdesk``.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import sys
 from abc import ABC, abstractmethod
+
+from .proc_lifecycle import finish_subprocess
 
 
 class KeychainError(Exception):
@@ -70,12 +71,13 @@ async def _await_cli(
 ) -> tuple[bytes, bytes]:
     """``communicate`` with a deadline; a hung CLI is a locked keychain."""
     try:
-        return await asyncio.wait_for(proc.communicate(input=stdin), timeout=_CLI_TIMEOUT_SECS)
+        # The post-kill wait stays at one second: a CLI that ignores
+        # SIGKILL is already a locked keychain, and the suite's hung-CLI
+        # stand-in must not pick up the longer default grace.
+        return await finish_subprocess(
+            proc, timeout=_CLI_TIMEOUT_SECS, stdin=stdin, reap_timeout=1.0
+        )
     except TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        with contextlib.suppress(ProcessLookupError, TimeoutError):
-            await asyncio.wait_for(proc.wait(), timeout=1.0)
         raise KeychainLockedError(_TIMEOUT_GUIDANCE) from None
 
 
@@ -156,46 +158,38 @@ class KeychainBackend(ABC):
         """
         ...
 
+    async def has_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> bool:
+        """Whether an item exists. The default reads the secret (Linux/Windows).
+
+        macOS overrides this with an attributes-only lookup so presence never
+        reads the password or raises an ACL prompt (TD-4838).
+        """
+        try:
+            await self.get_secret(account, service)
+        except KeychainError:
+            return False
+        return True
+
 
 class MacOSKeychain(KeychainBackend):
-    """macOS keychain via the `security` CLI."""
+    """macOS keychain via the `security` CLI, with trust `security` can read."""
 
     async def get_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> str:
-        proc = await _spawn_cli(
-            "security",
-            "find-generic-password",
-            "-a",
-            account,
-            "-s",
-            service,
-            "-w",
-        )
-        stdout, stderr = await _await_cli(proc)
-        if proc.returncode != 0:
-            stderr_text = stderr.decode().strip()
-            if "could not be found" in stderr_text or "The specified item" in stderr_text:
-                raise KeychainError(
-                    f"API key not found in keychain. "
-                    f"Run: security add-generic-password -a '{account}' -s '{service}' -w"
-                )
-            raise _classify_cli_failure(stderr_text, "Failed to read keychain")
-        return stdout.decode().strip()
+        from . import keychain_macos
+
+        return await keychain_macos.read_secret(account, service)
 
     async def set_secret(
         self, account: str, secret: str, service: str = "com.thatsimpletech.tstdesk"
     ) -> None:
-        # First try to delete any existing entry
-        with contextlib.suppress(KeychainError):
-            await self.delete_secret(account, service)
-
-        # TD-4813: the write goes through the Security framework, not the CLI.
-        # `add-generic-password -w <secret>` puts the key in argv, where any
-        # same-user process can read it with ps for the lifetime of the call;
-        # SecItemAdd passes it as in-memory CFData instead. Reads and deletes
-        # stay on the CLI — their argv carries only names, not secrets.
         from . import keychain_macos
 
-        await asyncio.to_thread(keychain_macos._sec_add, service, account, secret)
+        await keychain_macos.write_secret(account, secret, service)
+
+    async def has_secret(self, account: str, service: str = "com.thatsimpletech.tstdesk") -> bool:
+        from . import keychain_macos
+
+        return await keychain_macos.secret_exists(account, service)
 
     async def delete_secret(
         self, account: str, service: str = "com.thatsimpletech.tstdesk"
@@ -312,6 +306,45 @@ def _get_backend() -> KeychainBackend:
 # ── Public API ─────────────────────────────────────────────────────────
 
 
+def _reject_api_key_value(secret: str) -> None:
+    """Refuse a value ``security find-generic-password -w`` cannot echo.
+
+    That flag prints any byte outside printable ASCII (0x20-0x7E) as hex.
+    A real key can be all hex, so the read path must not decode it. An
+    empty or whitespace-only value would leave the provider as
+    ``Authorization: Bearer ``. The message never includes the secret.
+    """
+    if "\n" in secret or "\x00" in secret:
+        raise KeychainError("A keychain value cannot contain a newline or NUL.")
+    if not secret.strip():
+        raise KeychainError("API key is empty")
+    if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in secret):
+        raise KeychainError("API keys must be printable ASCII")
+
+
+def _require_api_key_value(value: str, name: str) -> str:
+    """Treat an empty or whitespace-only secret as missing.
+
+    ``name`` is the provider id or the keychain account. It is not the secret.
+    """
+    if value.strip():
+        return value
+    raise KeychainError(
+        f"the stored API key for '{name}' is empty — re-save it in Settings → API keys"
+    )
+
+
+async def api_key_is_stored(provider_name: str = "openrouter") -> bool:
+    """Whether ``tst-{provider_name}`` exists, without reading the secret.
+
+    A full read prompts when the item's ACL trusts only an older ``tstd``
+    binary, which made a saved key look missing (TD-4838). Callers that
+    need the value still use :func:`get_api_key`.
+    """
+    backend = _get_backend()
+    return await backend.has_secret(f"tst-{provider_name}")
+
+
 async def get_api_key(provider_name: str = "openrouter") -> str:
     """Retrieve an API key from the OS keychain.
 
@@ -325,10 +358,13 @@ async def get_api_key(provider_name: str = "openrouter") -> str:
         The API key string.
 
     Raises:
-        KeychainError: If the key is not found or retrieval fails.
+        KeychainError: If the key is not found, empty, or retrieval fails.
+            An empty or whitespace-only item uses the not-found family so it
+            is never returned as a bearer token.
     """
     backend = _get_backend()
-    return await backend.get_secret(f"tst-{provider_name}")
+    value = await backend.get_secret(f"tst-{provider_name}")
+    return _require_api_key_value(value, provider_name)
 
 
 async def store_api_key(api_key: str, provider_name: str = "openrouter") -> None:
@@ -342,8 +378,10 @@ async def store_api_key(api_key: str, provider_name: str = "openrouter") -> None
         provider_name: The provider name (e.g. ``openrouter``, ``openai``).
 
     Raises:
-        KeychainError: If storage fails.
+        KeychainError: If the value is empty, not printable ASCII, or storage fails.
+            The message does not include the secret.
     """
+    _reject_api_key_value(api_key)
     backend = _get_backend()
     await backend.set_secret(f"tst-{provider_name}", api_key)
 

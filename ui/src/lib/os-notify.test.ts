@@ -196,6 +196,7 @@ function jobRow(over: Partial<JobEntry> & Pick<JobEntry, "id">): JobEntry {
 		next_run: null,
 		deliver_to: "window",
 		paused: false,
+		running: false,
 		last_run: null,
 		last_status: null,
 		last_summary: null,
@@ -214,6 +215,14 @@ const RAN_ONCE = jobRow({
 	last_status: "ok",
 	last_summary: "3 new messages, none urgent",
 });
+
+function waitingJob(): JobEntry {
+	return {
+		...RAN_ONCE,
+		last_status: "waiting",
+		last_summary: "Run `echo hi`",
+	};
+}
 
 describe("scheduledNotices", () => {
 	it("says nothing about a job it has not seen before", () => {
@@ -244,6 +253,71 @@ describe("scheduledNotices", () => {
 			title: "Scheduled job failed",
 			body: "workspace is gone",
 		});
+	});
+
+	it("holds a window notice while a retry is still armed", () => {
+		const before = runStamps([jobRow({ id: "j1" })]);
+		const mid = {
+			...RAN_ONCE,
+			last_status: "failed",
+			last_summary: "attempt 1 of 2: provider down",
+			attempt: 1,
+		} as JobEntry;
+		expect(scheduledNotices(before, [mid])).toEqual([]);
+		const done = {
+			...RAN_ONCE,
+			last_run: "2026-08-21T18:10:00+00:00",
+			last_summary: "attempt 2 of 2: digest ready",
+			attempt: 0,
+		} as JobEntry;
+		expect(scheduledNotices(runStamps([mid]), [done])).toEqual([
+			{
+				title: "Scheduled job ran",
+				body: "attempt 2 of 2: digest ready",
+				kind: "scheduled",
+			},
+		]);
+	});
+
+	it("marks a skipped slot as missed, not as a run or a failure", () => {
+		const before = runStamps([jobRow({ id: "j1" })]);
+		const missed = {
+			...RAN_ONCE,
+			last_status: "missed",
+			last_summary: "Skipped the 7:45 AM run — 10 h late",
+		} as JobEntry;
+		expect(scheduledNotices(before, [missed])[0]).toMatchObject({
+			title: "Scheduled job missed",
+			body: "Skipped the 7:45 AM run — 10 h late",
+		});
+	});
+
+	it("announces a parked approval, then the outcome, on the same last_run", () => {
+		// Settling the card does not move last_run. Status and summary do.
+		expect(scheduledNotices(new Map(), [waitingJob()])).toEqual([]);
+		const before = runStamps([jobRow({ id: "j1" })]);
+		expect(scheduledNotices(before, [waitingJob()])).toEqual([
+			{
+				title: "Scheduled job is waiting for approval",
+				body: "Run `echo hi`",
+				kind: "scheduled",
+			},
+		]);
+		const done = {
+			...waitingJob(),
+			last_status: "ok",
+			last_summary: "all done",
+		} as JobEntry;
+		expect(scheduledNotices(runStamps([waitingJob()]), [done])).toEqual([
+			{
+				title: "Scheduled job ran",
+				body: "all done",
+				kind: "scheduled",
+			},
+		]);
+		expect(scheduledNotices(runStamps([done]), [done])).toEqual([]);
+		const mid = { ...waitingJob(), attempt: 1 } as JobEntry;
+		expect(scheduledNotices(before, [mid])).toEqual([]);
 	});
 
 	it("leaves slack and ntfy alone — they already delivered themselves", () => {

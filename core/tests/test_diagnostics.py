@@ -21,7 +21,6 @@ from websockets.asyncio.client import connect
 
 from tstd.config import cached_config
 from tstd.daemon import Daemon
-from tstd.keychain import KeychainError
 from tstd.policy import save_approved_imports
 from tstd.protocol import PROTOCOL_VERSION
 from tstd.provider import ProviderError
@@ -81,15 +80,10 @@ def _row(checks: list[dict[str, Any]], name: str) -> dict[str, Any]:
 
 
 class FakeKeychain:
-    """In-memory stand-in for the get/store API-key helpers."""
+    """In-memory stand-in for the store helper. Presence reads ``stored``."""
 
     def __init__(self) -> None:
         self.stored: dict[str, str] = {}
-
-    async def get(self, provider_name: str = "openrouter") -> str:
-        if provider_name not in self.stored:
-            raise KeychainError(f"API key not found in keychain for {provider_name!r}.")
-        return self.stored[provider_name]
 
     async def store(self, api_key: str, provider_name: str = "openrouter") -> None:
         self.stored[provider_name] = api_key
@@ -127,13 +121,13 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def fakes(monkeypatch: pytest.MonkeyPatch) -> FakeKeychain:
     fk = FakeKeychain()
 
-    async def _get(provider_name: str = "openrouter") -> str:
-        return await fk.get(provider_name)
-
     async def _store(api_key: str, provider_name: str = "openrouter") -> None:
         await fk.store(api_key, provider_name)
 
-    monkeypatch.setattr("tstd.daemon.get_api_key", _get)
+    async def _present(provider_name: str = "openrouter") -> bool:
+        return provider_name in fk.stored
+
+    monkeypatch.setattr("tstd.daemon.api_key_is_stored", _present)
     monkeypatch.setattr("tstd.daemon.store_api_key", _store)
     monkeypatch.setattr("tstd.daemon.ProviderClient", FakeProviderClient)
     FakeProviderClient.reset()
