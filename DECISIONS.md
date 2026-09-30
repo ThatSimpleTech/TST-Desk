@@ -11777,9 +11777,16 @@ runs before the loop fixture tears down.
 
 **Decision:** On Linux, `waitid` with `WNOWAIT` reports that the
 child has exited without reaping it, so `ThreadedChildWatcher` can
-still `waitpid`. CPython 3.11 and 3.12 on macOS do not expose
-`os.waitid`. Those builds use the transport returncode and
-`Popen.poll`.
+still `waitpid`. A returned status means that. `None` means the
+child has not exited. `ChildProcessError` (ECHILD) means the pid is
+not our child, or the status was already collected. The caller then
+uses the transport returncode and `Popen.poll`. That is also the
+path when `os.waitid` is missing. CPython 3.11 and 3.12 on macOS do
+not expose it. `_exited_unreaped` takes the waitid callable, and
+tests replace `_platform_waitid`, so the missing-waitid branch and a
+fake Linux `waitid` both run on every platform. The fake never
+consults a real pid. Corrected 2026-09-30 after ubuntu CI on
+3461071.
 
 **Rationale:** On the Linux runner the in-process subsystem awaits
 finished before `asyncio.to_thread` finished reading the memory
@@ -11793,10 +11800,16 @@ Python 3.11 delivers the exit with `call_soon_threadsafe(call_soon,
 _process_exited)`, one turn later than 3.12. A function-scoped test
 loop stops before that turn, the pipes are already closed, and
 `__del__` warns on returncode -9. Closing in the tool, while the
-loop can still run, does not depend on that turn.
+loop can still run, does not depend on that turn. Ubuntu CI on
+3461071 then failed the two retain tests. macOS CPython 3.11 has no
+`os.waitid`, so this machine never entered that branch. On Linux,
+`waitid` of the tests' parked pid raises `ChildProcessError`. The
+first cut treated that as an unreaped exit, closed the live leader,
+and never started the watcher.
 
 **Rejected:** Sleeping, retrying, or filtering the warning. Skipping
 either test. Awaiting every distill task until the provider returns.
 Cancelling local prep the way a socket read is cancelled. `close()`
 on a leader the OS refused to kill. `Popen.poll` as the only death
-check on Linux, which races the watcher's `waitpid`.
+check on Linux, which races the watcher's `waitpid`. Treating
+`ChildProcessError` as an unreaped exit.
