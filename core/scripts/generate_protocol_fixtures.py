@@ -64,6 +64,7 @@ from tstd.protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    EmailTestResult,
     EndSession,
     Error,
     ExportUsage,
@@ -150,6 +151,7 @@ from tstd.protocol import (
     SetCuIndicators,
     SetCuKill,
     SetCuPolicy,
+    SetEmailNotify,
     SetEngine,
     SetGrokMode,
     SetJudgments,
@@ -171,6 +173,7 @@ from tstd.protocol import (
     SkillStackEntry,
     StartAutonomy,
     SteeringReloaded,
+    TestEmail,
     TierState,
     TierSwitched,
     ToolCall,
@@ -217,6 +220,16 @@ FIXTURES = {
     "set_coworker": SetCoworker(enabled=True),
     "set_voice": SetVoice(enabled=True),
     "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
+    "set_email_notify": SetEmailNotify(
+        enabled=True,
+        host="smtp.example.com",
+        port=587,
+        security="starttls",
+        username="desk",
+        from_address="desk@example.com",
+        password=None,
+    ),
+    "test_email": TestEmail(to="owner@example.com"),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
     "set_cu_policy": SetCuPolicy(
         enabled=True,
@@ -1109,6 +1122,9 @@ FIXTURES = {
         sessions=[GrokSessionEntry(id="abc", title="Fix login", cwd="/tmp/proj", updated_at="1")]
     ),
     "transcript": Transcript(ok=True, text="hello from the mic", detail=""),
+    "email_test_result": EmailTestResult(
+        ok=False, error_class="SMTPException", message="auth failed"
+    ),
     "grok_extensions": GrokExtensions(
         items=[GrokExtension(kind="skill", name="review", detail="user")]
     ),

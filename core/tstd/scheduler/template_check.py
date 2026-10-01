@@ -20,6 +20,7 @@ from .models import (
     JobError,
     JobValidationError,
     normalize_cadence,
+    normalize_email_address,
     normalize_next_run,
     normalize_workspace,
     reject_secrets,
@@ -38,7 +39,7 @@ _TOMORROW = re.compile(
     r"^tomorrow at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?$",
     re.IGNORECASE,
 )
-_DELIVER = ("window", "slack", "ntfy")
+_DELIVER = ("window", "slack", "ntfy", "email")
 _RULE_HINT = "next_run must be an ISO-8601 datetime or 'tomorrow at 9:00'"
 
 
@@ -67,6 +68,7 @@ class TemplateDraft:
     preset: str | None = None
     engine: str | None = None
     workspace: str | None = None
+    email_to: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,7 @@ class TemplateView:
     preset: str | None
     engine: EngineKind | None
     workspace: str | None
+    email_to: str | None = None
 
 
 def name_limit() -> int:
@@ -163,7 +166,13 @@ def validate_template(
         next_run = normalize_rule(next_text)
     deliver = draft.deliver_to or "window"
     if deliver not in _DELIVER:
-        raise JobValidationError("deliver_to must be window, slack, or ntfy")
+        raise JobValidationError("deliver_to must be window, slack, ntfy, or email")
+    try:
+        email_to = normalize_email_address(draft.email_to)
+    except ValueError as exc:
+        raise JobValidationError(f"Email address: {exc}") from None
+    if deliver == "email" and email_to is None:
+        raise JobValidationError("email address is required")
     try:
         grace = parse_grace(draft.grace)
     except GraceError as exc:
@@ -214,6 +223,7 @@ def validate_template(
         preset=preset,
         engine=engine,
         workspace=workspace,
+        email_to=email_to,
     )
 
 

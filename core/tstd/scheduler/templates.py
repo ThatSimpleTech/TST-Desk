@@ -242,6 +242,7 @@ def _row_view(entry: object) -> TemplateView | None:
                 preset=_as_text(entry.get("preset")),
                 engine=_as_text(entry.get("engine")),
                 workspace=_as_text(entry.get("workspace")),
+                email_to=_as_text(entry.get("email_to")),
             ),
             template_id=raw_id,
             builtin=False,

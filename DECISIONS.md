@@ -11854,3 +11854,52 @@ Widening `TurnFn`. A protocol version bump. A config minimum of 60
 seconds, which would make a short test budget impossible; the per-job
 bound stays 1-60 minutes, and a config under a minute still says
 "1 minute" on the receipt.
+
+## TD-3820 — Email as a scheduled-job delivery channel
+
+**Decision:** `notify.email` is a seventh notify child (`enabled`, `host`,
+`port`, `security` of `starttls` or `tls`, `username`, `from_address`,
+`timeout_seconds` default 30). The password is the keychain account
+`tst-smtp-password`, written through `backend.set_secret`. `smtp-password`
+is a reserved credential id so a named key cannot collide with that
+account. A `password` key in yaml is dropped and a static warning is
+logged; the value is not in the warning. An empty password on save
+leaves the stored item alone.
+
+`send` raises `EmailNotifyError` instead of swallowing, so the scheduler
+can stamp delivery. Slack, ntfy, Discord, and Telegram stay swallow-on-failure.
+TLS is required before AUTH. Production uses `ssl.create_default_context`.
+`ssl_context` on `send` is a test seam, not a config key. The log records
+the recipient domain and the error class. It does not record the password,
+the message body, or the SMTP text.
+
+Jobs have no name. The subject is the first 60 characters of the
+instruction after collapsing whitespace, an em dash, and the local
+calendar date. The date is the job's zone when it is set and known,
+otherwise the machine zone. An empty instruction is "Scheduled job".
+The body is the assistant text after the last tool call. An empty
+suffix, or a turn with no tool call, uses the full assistant text. The
+receipt stays the capped summary. The message is multipart: plain text
+plus a small HTML rendering of headings, lists, and links, with no new
+dependency.
+
+`deliver` stays `(channel, summary)`. A context variable bound by the
+daemon routes email. When it is unset, email falls through to `deliver`
+so existing fakes keep working. Delivery status (`ok` or `failed`, plus
+an error) is separate from the run's `last_status`. `record_run` clears
+it. The stamp rewrites the history line matched by `started_at`, then
+updates the job row. A failed send does not stop a follow-on chain.
+`setup_state.email` carries the form and `password_stored`. It never
+carries the password. There is no protocol version bump.
+
+**Rationale:** A daily research job needs the report in a mailbox, and
+the report is the last answer, not the "let me search" narration or the
+2,000-character receipt. The password cannot live beside the host in
+yaml. Raising from email, and only email, is what lets a failed send
+show up as delivery failed while the run itself stays ok or failed on
+its own terms.
+
+**Rejected:** A new dependency for Markdown. Putting the password in
+config or on `setup_state`. Logging the SMTP dialogue. Widening
+`deliver` or `TurnFn`. Treating a mail failure as a failed run. Using
+the template name as the subject. Bumping the protocol version.

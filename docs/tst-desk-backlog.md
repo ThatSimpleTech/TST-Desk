@@ -6460,6 +6460,39 @@ files, vitest 1456, svelte-check 724 files 0 errors 0 warnings.
 
 ---
 
+### TD-3820 — Email as a scheduled-job delivery channel
+**Size:** 3 · **Depends on:** TD-3801, TD-3802, TD-4707, TD-3807
+
+**Acceptance criteria:**
+- [x] `notify.email` sends over STARTTLS or implicit TLS with the stdlib.
+      The password lives only in the keychain account `tst-smtp-password`.
+      A send is refused when TLS is not established. Logs record the
+      recipient domain, never the password and never the message body
+- [x] A job may set `deliver_to` to `email` with one validated `email_to`.
+      The protocol, job edit, templates, and the Scheduled pane all carry it.
+      Deliver to → Email reveals the address field
+- [x] The message body is the assistant text after the last tool call, or
+      the full turn when there is no tool call. The subject is the first
+      60 characters of the instruction, an em dash, and the local date.
+      The message is plain text plus a minimal HTML rendering
+- [x] Settings → Email saves host, port, security, username, and from.
+      The password field writes the keychain. Send test email reports the
+      SMTP outcome. A failure shows the error class and message, with no
+      secret
+- [x] A failed send marks that run's delivery as failed on the job and in
+      history. The run's own ok or failed status stays what the turn did
+
+Done (2026-09-29): a scheduled job can mail its report. The body is the
+final assistant message, the password stays in the keychain, and a mail
+failure is a delivery failure rather than a change to the run's status.
+Settings can save the SMTP form and send a test. Class B entry in
+DECISIONS.md.
+
+Suite: 4157 passed / 8 skipped, ruff + `mypy --strict` clean over 186
+files, vitest 1460, svelte-check 727 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone

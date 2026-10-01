@@ -58,6 +58,7 @@ def apply_job_edit(
     then: str | None = None,
     skip_calendar: str | None = None,
     skip_match: str | None = None,
+    email_to: str | None = None,
 ) -> Job:
     """Return the job to persist. Raises ``JobValidationError``; does not write."""
     new_workspace = _workspace_for_edit(existing, workspace, known_workspaces)
@@ -76,6 +77,8 @@ def apply_job_edit(
     # Pause omits the calendar too. None keeps it; "" clears it (TD-3818).
     new_calendar = _merge_cleared(skip_calendar, existing.skip_calendar)
     new_match = _merge_cleared(skip_match, existing.skip_match)
+    # Pause omits the address. None keeps it; "" clears it (TD-3820).
+    new_email = _merge_cleared(email_to, existing.email_to)
     # The stored slot was computed from the old cadence and zone. When either
     # changes and the client did not send a replacement time, drop it so the
     # runner re-arms instead of firing the stale instant.
@@ -119,6 +122,7 @@ def apply_job_edit(
             cadence=new_cadence,
             next_run=new_next,
             deliver_to=deliver_to or existing.deliver_to,
+            email_to=new_email,
             paused=paused,
             timezone=new_timezone,
             preset=new_preset,
@@ -139,6 +143,8 @@ def apply_job_edit(
             last_status=existing.last_status,
             last_summary=existing.last_summary,
             last_session_id=existing.last_session_id,
+            last_delivery=existing.last_delivery,
+            last_delivery_error=existing.last_delivery_error,
             # Pause is a save that only flips ``paused``. Dropping the
             # park link here would leave the approval session with no
             # job to settle into, and the next tick would start another.

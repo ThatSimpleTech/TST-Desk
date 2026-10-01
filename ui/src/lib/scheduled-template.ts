@@ -75,6 +75,7 @@ export function draftFromTemplate(
 		cadence: useCadence ? cadence : "",
 		next_run: useCadence || next === "" ? "" : resolveTemplateNextRun(next, now),
 		deliver_to: template.deliver_to,
+		email_to: template.email_to ?? "",
 		paused: false,
 		preset: template.preset ?? "",
 		engine: template.engine ?? "",
@@ -131,6 +132,10 @@ export function saveTemplateFromDraft(name: string, draft: JobDraftFields): Save
 	}
 	const maxRun = draft.max_run.trim();
 	if (maxRun !== "") payload.max_run = maxRun;
+	if (draft.deliver_to === "email") {
+		const address = draft.email_to.trim();
+		if (address !== "") payload.email_to = address;
+	}
 	return payload;
 }
 

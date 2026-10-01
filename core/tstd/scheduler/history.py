@@ -25,7 +25,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from ..logging import get_logger
-from .models import JobValidationError, RunStatus, normalize_next_run, normalize_summary
+from .models import (
+    DeliveryStatus,
+    JobValidationError,
+    RunStatus,
+    normalize_next_run,
+    normalize_summary,
+)
 from .schedule import as_utc
 
 log = get_logger("tstd.scheduler.history")
@@ -79,6 +85,9 @@ class JobRun(BaseModel):
     # Set on a chained fire: which job's ok run started this one (TD-3817).
     # The summary stays the turn's text, so the parent is not lost in it.
     note: str | None = None
+    # Mail outcome for this fire (TD-3820). Null unless the channel is email.
+    delivery: DeliveryStatus | None = None
+    delivery_error: str | None = None
 
     @field_validator("started_at")
     @classmethod
@@ -92,7 +101,7 @@ class JobRun(BaseModel):
             return None
         return normalize_next_run(value)
 
-    @field_validator("summary")
+    @field_validator("summary", "delivery_error")
     @classmethod
     def _summary_is_safe(cls, value: str | None) -> str | None:
         # model_copy does not re-validate, and neither does a hand-edited
@@ -181,6 +190,37 @@ def append_run(
         runs.append(record)
         _write_capped(path, runs)
     return record
+
+
+def set_run_delivery(
+    data_dir: str | Path,
+    job_id: str,
+    started_at: str,
+    delivery: DeliveryStatus,
+    error: str | None,
+) -> None:
+    """Stamp mail outcome on the line that started at *started_at*.
+
+    Match the stamp, not "the last line": a park watch can append while
+    this rewrite runs. The run's own status is left as it was.
+    """
+    path = history_path(data_dir, job_id)
+    want = _norm_stamp(started_at)
+    if want is None:
+        return
+    safe = normalize_summary(error) if error else None
+    with _history_lock(path):
+        runs = _read_runs(path)
+        index: int | None = None
+        for i, run in enumerate(runs):
+            if _norm_stamp(run.started_at) == want:
+                index = i
+        if index is None:
+            return
+        runs[index] = runs[index].model_copy(
+            update={"delivery": delivery, "delivery_error": safe},
+        )
+        _write_runs(path, runs)
 
 
 def close_waiting_run(

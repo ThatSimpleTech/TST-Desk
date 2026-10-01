@@ -16,6 +16,8 @@ export interface JobDraftFields {
 	cadence: string;
 	next_run: string;
 	deliver_to: DeliverTo;
+	/** One address when deliver_to is email. `""` is none. */
+	email_to: string;
 	paused: boolean;
 	/** Catalog preset name. `""` means use whatever the window is using. */
 	preset: string;
@@ -79,6 +81,7 @@ export function emptyDraft(workspace: string | null): JobDraftFields {
 		cadence: "weekdays at 9:00",
 		next_run: "",
 		deliver_to: "window",
+		email_to: "",
 		paused: false,
 		preset: "",
 		engine: "",
@@ -220,7 +223,7 @@ export function jobWhen(job: JobEntry, timeZone?: string): string {
 export function jobLastRun(job: JobEntry, timeZone?: string): string {
 	if (!job.last_run) return "Never run";
 	const when = formatLocal(job.last_run, timeZone);
-	return `${outcomeWord(job.last_status)} ${when}`;
+	return `${outcomeWord(job.last_status)} ${when}${deliverySuffix(job.last_delivery, job.last_delivery_error)}`;
 }
 
 /** Row status. An in-flight turn replaces the previous receipt until it lands. */
@@ -268,13 +271,24 @@ export function jobRunLabel(run: JobRunEntry, timeZone?: string): string {
 	const when = formatLocal(run.started_at, timeZone);
 	const outcome = outcomeWord(run.status);
 	const attempt = attemptSuffix(run);
-	if (run.trigger === "manual") return `${outcome} ${when} · manual${attempt}`;
-	// Not the slot, and not Run now. The note names the job that started this one.
-	if (run.trigger === "chained") {
+	let label: string;
+	if (run.trigger === "manual") label = `${outcome} ${when} · manual${attempt}`;
+	else if (run.trigger === "chained") {
+		// Not the slot, and not Run now. The note names the job that started this one.
 		const note = run.note?.trim() ? ` · ${run.note.trim()}` : "";
-		return `${outcome} ${when} · chained${note}${attempt}`;
-	}
-	return `${outcome} ${when}${attempt}`;
+		label = `${outcome} ${when} · chained${note}${attempt}`;
+	} else label = `${outcome} ${when}${attempt}`;
+	return label + deliverySuffix(run.delivery, run.delivery_error);
+}
+
+/** Delivery is separate from the run. Only a failed send is worth a suffix. */
+function deliverySuffix(
+	delivery: "ok" | "failed" | null | undefined,
+	error: string | null | undefined,
+): string {
+	if (delivery !== "failed") return "";
+	const detail = (error ?? "").trim();
+	return detail !== "" ? ` · delivery failed (${detail})` : " · delivery failed";
 }
 
 /** History names the try only when the job retries. Run now has no number. */
@@ -332,6 +346,8 @@ export function saveFromDraft(
 	// Blank is the configured limit, the same as omitting the field on create.
 	const maxRun = draft.max_run.trim();
 	if (maxRun !== "") payload.max_run = maxRun;
+	// Only an email job names an address. A window create must not grow a field.
+	if (draft.deliver_to === "email") payload.email_to = draft.email_to.trim();
 	return payload;
 }
 
@@ -395,6 +411,7 @@ export function draftFromJob(job: JobEntry): JobDraftFields {
 		cadence: recurring ? job.cadence ?? "" : "",
 		next_run: recurring ? "" : (job.next_run ?? ""),
 		deliver_to: job.deliver_to,
+		email_to: job.email_to ?? "",
 		paused: job.paused,
 		preset: job.preset ?? "",
 		engine: job.engine ?? "",
@@ -474,5 +491,8 @@ export function saveFromEdit(
 	// Always sent. `""` clears a limit back to the config; omitting it
 	// would keep the stored one, which is Pause, not Save.
 	payload.max_run = draft.max_run.trim();
+	// Always sent. `""` clears an address; omitting it would keep the stored
+	// one, which is Pause, not Save. A non-email channel clears it too.
+	payload.email_to = draft.deliver_to === "email" ? draft.email_to.trim() : "";
 	return payload;
 }

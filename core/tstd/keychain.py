@@ -499,6 +499,36 @@ async def delete_telegram_bot_url() -> None:
     await backend.delete_secret(TELEGRAM_BOT_ACCOUNT)
 
 
+SMTP_PASSWORD_ACCOUNT = "tst-smtp-password"
+
+
+async def get_smtp_password() -> str:
+    """Retrieve the SMTP password from the OS keychain.
+
+    Stored under account ``tst-smtp-password``. Callers must not write it
+    to config, logs, or the audit database.
+    """
+    backend = _get_backend()
+    return await backend.get_secret(SMTP_PASSWORD_ACCOUNT)
+
+
+async def store_smtp_password(password: str) -> None:
+    """Store the SMTP password. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(password)
+    backend = _get_backend()
+    await backend.set_secret(SMTP_PASSWORD_ACCOUNT, password)
+
+
+async def smtp_password_is_stored() -> bool:
+    """Whether the SMTP password exists, without reading it.
+
+    A full read prompts when the item's ACL trusts only an older binary
+    (TD-4838). Settings only needs presence.
+    """
+    backend = _get_backend()
+    return await backend.has_secret(SMTP_PASSWORD_ACCOUNT)
+
+
 def has_keychain_backend() -> bool:
     """Check if a keychain backend is available for this platform."""
     try:

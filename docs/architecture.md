@@ -309,6 +309,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
 | `set_voice` | — | Turn hold-to-talk dictation on or off. Machine-wide; persists `{user_data_dir}/voice.yaml`. Default off. Acked with `setup_state` (TD-4701). |
 | `transcribe` | — | Hold-to-talk audio. POSTs a clip to `voice.base_url` or `speech.base_url`. Refused when dictation is off or no endpoint is configured. Acked with `transcript`. Not a tool (TD-4701). |
+| `set_email_notify` | — | Save SMTP settings for scheduled-job email (TD-3820). `password` is written to the keychain account `tst-smtp-password` and is not stored in config. Empty or omitted leaves the stored password alone. Acked with `setup_state`. |
+| `test_email` | — | Send one short test to `to` using the saved SMTP settings (TD-3820). Acked with `email_test_result`. |
 | `set_cu_indicators` | — | Computer-use glow, agent cursor, and real-display overlay. Machine-wide; persists `{user_data_dir}/cu-indicators.yaml`. Acked with `setup_state` (TD-3402). |
 | `set_workspace_pin` | — | Pin or unpin a workspace on the Projects list. Machine-wide. Acked with `setup_state` (TD-2806). |
 | `resume` | yes | Resume a session paused at a declared cap, after the cap was raised. |
@@ -426,7 +428,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server` / `set_judgments`. `remote_bind` is the bound Tailscale address, never a token. Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server` / `set_judgments`. `remote_bind` is the bound Tailscale address, never a token. Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). `email` is the SMTP form (enabled, host, port, security, username, from_address, password_stored) for TD-3820; the password never appears. |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
@@ -455,6 +457,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `grok_session_list` | connection | TUI sessions under `~/.grok/sessions`. |
 | `grok_extensions` | connection | Read-only MCP / skills / plugins from `~/.grok`. Never secrets. |
 | `transcript` | connection | Reply to `transcribe`: `ok`, `text` on success, `error` copy or a short `detail` code on failure. Never a URL (TD-4701). |
+| `email_test_result` | connection | Reply to `test_email`: `ok`, and on failure `error_class` plus `message`. The password and the message body are not included (TD-3820). |
 
 ### Adding a message
 
