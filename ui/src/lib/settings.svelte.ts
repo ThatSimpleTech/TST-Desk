@@ -21,6 +21,7 @@ export type SettingsSection =
 	| "policy"
 	| "mcp"
 	| "key"
+	| "email"
 	| "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
@@ -30,6 +31,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"policy",
 	"mcp",
 	"key",
+	"email",
 	"about",
 ] as const;
 
@@ -118,6 +120,18 @@ export const settings = $state({
 	/** Hold-to-talk (TD-4701). From setup_state; the URL never arrives. */
 	speechEnabled: false,
 	speechReady: false,
+	/** SMTP (TD-3820). From setup_state. The password is never stored here. */
+	emailEnabled: false,
+	emailHost: "",
+	emailPort: 587,
+	emailSecurity: "starttls" as "starttls" | "tls",
+	emailUsername: "",
+	emailFrom: "",
+	emailPasswordStored: false,
+	/** Last test_email result. Not cleared by setup_state. */
+	emailTestOk: null as boolean | null,
+	emailTestErrorClass: "",
+	emailTestMessage: "",
 });
 
 let started = false;
@@ -181,6 +195,16 @@ export function resetSettings(): void {
 	settings.mcpServers = [];
 	settings.speechEnabled = false;
 	settings.speechReady = false;
+	settings.emailEnabled = false;
+	settings.emailHost = "";
+	settings.emailPort = 587;
+	settings.emailSecurity = "starttls";
+	settings.emailUsername = "";
+	settings.emailFrom = "";
+	settings.emailPasswordStored = false;
+	settings.emailTestOk = null;
+	settings.emailTestErrorClass = "";
+	settings.emailTestMessage = "";
 	started = false;
 }
 
@@ -235,6 +259,20 @@ function reduce(event: DaemonEventUnion): void {
 		}));
 		settings.speechEnabled = event.speech_enabled ?? false;
 		settings.speechReady = event.speech_ready ?? false;
+		const email = event.email;
+		settings.emailEnabled = email?.enabled ?? false;
+		settings.emailHost = email?.host ?? "";
+		settings.emailPort = email?.port ?? 587;
+		settings.emailSecurity = email?.security === "tls" ? "tls" : "starttls";
+		settings.emailUsername = email?.username ?? "";
+		settings.emailFrom = email?.from_address ?? "";
+		settings.emailPasswordStored = email?.password_stored ?? false;
+		return;
+	}
+	if (event.type === "email_test_result") {
+		settings.emailTestOk = event.ok ?? false;
+		settings.emailTestErrorClass = event.error_class ?? "";
+		settings.emailTestMessage = event.message ?? "";
 		return;
 	}
 	if (event.type === "policy_rules") {
@@ -532,4 +570,33 @@ export function setMcpServerEnabled(id: string, enabled: boolean): void {
 export function deleteMcpServer(id: string): void {
 	if (id.trim() === "") return;
 	sendToDaemon({ type: "delete_mcp_server", id });
+}
+
+// ── Email (TD-3820) ──────────────────────────────────────────────────
+
+/** Persist SMTP settings. An empty password leaves the keychain item alone. */
+export function saveEmailNotify(input: {
+	enabled: boolean;
+	host: string;
+	port: number;
+	security: "starttls" | "tls";
+	username: string;
+	from_address: string;
+	password: string | null;
+}): void {
+	sendToDaemon({
+		type: "set_email_notify",
+		enabled: input.enabled,
+		host: input.host,
+		port: input.port,
+		security: input.security,
+		username: input.username,
+		from_address: input.from_address,
+		password: input.password,
+	});
+}
+
+/** Send one short test using the saved config and the keychain password. */
+export function sendTestEmail(to: string): void {
+	sendToDaemon({ type: "test_email", to });
 }

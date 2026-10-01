@@ -36,8 +36,9 @@ from .retry import (
     parse_retry_delay,
 )
 
-DeliverTo = Literal["window", "slack", "ntfy"]
+DeliverTo = Literal["window", "slack", "ntfy", "email"]
 RunStatus = Literal["ok", "failed", "missed", "waiting", "skipped"]
+DeliveryStatus = Literal["ok", "failed"]
 
 #: A run summary is a receipt, not a transcript. Anything longer is cut so
 #: jobs.json cannot grow without bound on a job that fires every minute.
@@ -50,6 +51,7 @@ _INTERVAL = re.compile(
     r"^every\s+([1-9]\d*)\s+(minutes?|hours?|days?)$",
     re.IGNORECASE,
 )
+_EMAIL = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 # Inclusive bounds per cron field. Day-of-week allows 7 because Sunday is
 # both 0 and 7. Checked at save time so a typo is refused with the form still
 # open, instead of failing inside the runner's next-fire search.
@@ -66,6 +68,7 @@ _FIELD_LABELS = {
     "cadence": "Cadence",
     "next_run": "Next run",
     "deliver_to": "Deliver to",
+    "email_to": "Email address",
     "timezone": "Time zone",
     "preset": "Preset",
     "engine": "Engine",
@@ -106,6 +109,8 @@ class JobDraft(BaseModel):
     cadence: str | None = None
     next_run: str | None = None
     deliver_to: DeliverTo | None = None
+    # One address when ``deliver_to`` is email. Blank is none.
+    email_to: str | None = None
     paused: bool = False
     timezone: str | None = None
     # Catalog name and engine kind (TD-3812). Blank becomes None in ``Job``.
@@ -149,6 +154,8 @@ class Job(BaseModel):
     cadence: str | None = None
     next_run: str | None = None
     deliver_to: DeliverTo
+    # Required when ``deliver_to`` is email. One address, no display name.
+    email_to: str | None = None
     paused: bool = False
     # IANA name the cron cadence is read in. None is UTC, which is what every
     # job saved before this field existed already means.
@@ -198,6 +205,11 @@ class Job(BaseModel):
     last_status: RunStatus | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
+    # Mail outcome for the last fire (TD-3820). Separate from ``last_status``
+    # so a rejected SMTP session does not turn a finished run into a failure.
+    # None on window, slack, and ntfy, and until the first email send.
+    last_delivery: DeliveryStatus | None = None
+    last_delivery_error: str | None = None
     # The session parked on an approval card, and the history line that
     # records it (TD-3815). Disk only: a restart has to find the run
     # after the process that was waiting is gone. The pane uses
@@ -379,7 +391,12 @@ class Job(BaseModel):
             return None
         return normalize_next_run(value)
 
-    @field_validator("last_summary")
+    @field_validator("email_to")
+    @classmethod
+    def _one_address(cls, value: str | None) -> str | None:
+        return normalize_email_address(value)
+
+    @field_validator("last_summary", "last_delivery_error")
     @classmethod
     def _last_summary_is_safe(cls, value: str | None) -> str | None:
         return normalize_summary(value)
@@ -407,6 +424,8 @@ class Job(BaseModel):
             delay = None
         if delay != self.retry_delay:
             self.retry_delay = delay
+        if self.deliver_to == "email" and not self.email_to:
+            raise ValueError("email address is required")
         return self
 
 
@@ -414,6 +433,18 @@ def reject_secrets(text: str, field: str) -> None:
     """Refuse secret-shaped text so jobs.json never holds a key."""
     if redact_secrets(text) != text:
         raise JobValidationError(f"{field} must not contain secrets")
+
+
+def normalize_email_address(raw: str | None) -> str | None:
+    """One address, or None when blank. Commas and display names are refused."""
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    if not _EMAIL.fullmatch(text):
+        raise ValueError("must be one email address")
+    return text
 
 
 def normalize_workspace(raw: str) -> str:
@@ -566,6 +597,7 @@ def validate_draft(draft: JobDraft) -> Job:
             cadence=draft.cadence,
             next_run=draft.next_run,
             deliver_to=draft.deliver_to or "window",
+            email_to=draft.email_to,
             paused=draft.paused,
             timezone=draft.timezone,
             preset=draft.preset,

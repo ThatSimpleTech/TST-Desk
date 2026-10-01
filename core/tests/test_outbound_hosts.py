@@ -294,6 +294,7 @@ _OUTBOUND_CAPABLE = {
     "notify/telegram.py": (
         "telegram sendMessage; destination host is notify.telegram.host from config"
     ),
+    "notify/email.py": ("SMTP report delivery; destination host is notify.email.host from config"),
     "speech.py": ("hold-to-talk transcriptions; destination is speech.base_url from config"),
     "mcp/http.py": (
         "user-listed MCP HTTP client; destination is mcp.servers.<id>.url "

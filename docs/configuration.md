@@ -95,8 +95,8 @@ item is treated as missing.
 | `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. Settings → API keys Host writes this; empty removes it. |
 
 Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook`,
-`ntfy-topic`, `discord-webhook`, and `telegram-bot` are reserved for
-other keychain accounts.
+`ntfy-topic`, `discord-webhook`, `telegram-bot`, and `smtp-password` are
+reserved for other keychain accounts.
 
 <!-- verify: model -->
 ```yaml
@@ -256,6 +256,7 @@ the keychain URL's host must match it or the send is dropped.
 | `ntfy` | mapping | see below | ntfy topic POST. |
 | `discord` | mapping | see below | Discord incoming webhook. |
 | `telegram` | mapping | see below | Telegram Bot API `sendMessage`. |
+| `email` | mapping | see below | SMTP report for a scheduled job (TD-3820). |
 
 #### `notify.slack`
 
@@ -284,6 +285,26 @@ Same keys as Slack. Store the webhook URL in the keychain as
 Same keys as Slack. Store `https://<host>/bot<token>/sendMessage?chat_id=<id>`
 in the keychain as `tst-telegram-bot`. `chat_id` is a query parameter on
 that secret URL, not a yaml field. Set `host` to that URL's hostname.
+
+#### `notify.email`
+
+SMTP for a job whose `deliver_to` is `email` (TD-3820). STARTTLS (port
+587) or implicit TLS (port 465). A server that will not negotiate TLS
+is refused before AUTH. The password is the keychain account
+`tst-smtp-password`, never a yaml key. A `password` key in this file is
+dropped. The log records the recipient domain only, never the password
+and never the message body. `host` is the only host this channel may
+reach.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | When false, a job set to email does not send. |
+| `host` | string | *empty* | SMTP hostname. Empty refuses the send. |
+| `port` | int 1–65535 | `587` | SMTP port. 587 with `starttls`, 465 with `tls`. |
+| `security` | `starttls` or `tls` | `starttls` | `starttls` upgrades on port 587. `tls` is implicit TLS. |
+| `username` | string | *empty* | SMTP AUTH username. Empty refuses the send. |
+| `from_address` | string | *empty* | One mailbox address in the From header. |
+| `timeout_seconds` | float > 0 | `30` | How long the SMTP conversation may run. |
 
 ### `speech`
 
@@ -568,6 +589,14 @@ notify:
     enabled: false
     host: ""
     timeout_seconds: 5
+  email:
+    enabled: false
+    host: ""
+    port: 587
+    security: starttls
+    username: ""
+    from_address: ""
+    timeout_seconds: 30
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21

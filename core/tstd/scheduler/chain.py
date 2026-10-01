@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..logging import get_logger
+from .email_delivery import deliver_job
 from .history import append_run
 from .models import Job, JobValidationError
 from .park import ParkHook, park_run
@@ -167,7 +168,7 @@ async def _run_linked(
         session_id=result.session_id,
     )
     await asyncio.to_thread(save_job, data_dir, stamped)
-    await asyncio.to_thread(
+    recorded = await asyncio.to_thread(
         append_run,
         data_dir,
         fresh.id,
@@ -179,7 +180,16 @@ async def _run_linked(
         session_id=result.session_id,
         note=note,
     )
-    await deliver(fresh.deliver_to, result.summary)
+    await deliver_job(
+        deliver,
+        data_dir,
+        fresh,
+        fresh.deliver_to,
+        result.summary,
+        now,
+        body=result.report,
+        started_at=recorded.started_at,
+    )
     if result.ok:
         log.info(
             "scheduled chain continued",
@@ -211,7 +221,7 @@ async def _record_miss(
         return
     stamped = record_run(fresh, now, status="missed", summary=reason, session_id=None)
     await asyncio.to_thread(save_job, data_dir, stamped)
-    await asyncio.to_thread(
+    recorded = await asyncio.to_thread(
         append_run,
         data_dir,
         fresh.id,
@@ -227,4 +237,13 @@ async def _record_miss(
         "scheduled chain missed",
         extra={"extra_fields": {"job_id": fresh.id, "reason": reason}},
     )
-    await deliver(fresh.deliver_to, reason)
+    await deliver_job(
+        deliver,
+        data_dir,
+        fresh,
+        fresh.deliver_to,
+        reason,
+        now,
+        body=reason,
+        started_at=recorded.started_at,
+    )

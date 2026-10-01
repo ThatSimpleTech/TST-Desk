@@ -987,6 +987,8 @@ describe("All fixtures have required shape", () => {
       "delete_job_template",
       "get_session_job_source",
       "transcribe",
+      "set_email_notify",
+      "test_email",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -1022,6 +1024,7 @@ describe("All fixtures have required shape", () => {
       "grok_session_list",
       "grok_extensions",
       "transcript",
+      "email_test_result",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

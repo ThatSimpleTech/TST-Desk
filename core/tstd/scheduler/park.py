@@ -20,13 +20,14 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from ..logging import get_logger
 from ..protocol import ApprovalRequest, ToolResult, TurnComplete
 from ..session import Session
+from .email_delivery import deliver_job
 from .grace import _clock
 from .history import RunTrigger, append_run, close_waiting_run
 from .models import DeliverTo, Job, normalize_next_run, normalize_summary
@@ -167,7 +168,17 @@ async def park_run(
         "scheduled run parked for approval",
         extra={"extra_fields": {"job_id": job.id, "summary_len": len(text)}},
     )
-    await deliver(job.deliver_to, waiting_line(job.timezone, scheduled_for, text))
+    notice = waiting_line(job.timezone, scheduled_for, text)
+    await deliver_job(
+        deliver,
+        data_dir,
+        job,
+        job.deliver_to,
+        notice,
+        now,
+        body=notice,
+        started_at=stamp,
+    )
     return stamp
 
 
@@ -195,7 +206,7 @@ async def skip_if_parked(
     if saved is None or not found:
         return False
     slot, channel = found[-1]
-    await asyncio.to_thread(
+    recorded = await asyncio.to_thread(
         append_run,
         data_dir,
         job.id,
@@ -210,7 +221,16 @@ async def skip_if_parked(
         "scheduled slot missed, previous run still waiting",
         extra={"extra_fields": {"job_id": job.id}},
     )
-    await deliver(channel, PARKED_MISS)
+    await deliver_job(
+        deliver,
+        data_dir,
+        job,
+        channel,
+        PARKED_MISS,
+        now,
+        body=PARKED_MISS,
+        started_at=recorded.started_at,
+    )
     return True
 
 
@@ -375,7 +395,17 @@ async def _settle(
         scheduled_for=scheduled_for,
     )
     if disk.deliver and disk.channel is not None:
-        await deliver(disk.channel, disk.summary)
+        await deliver_job(
+            deliver,
+            data_dir,
+            None,
+            disk.channel,
+            disk.summary,
+            datetime.now(UTC),
+            body=disk.summary,
+            started_at=started_at,
+            job_id=job_id,
+        )
     return disk.saved
 
 

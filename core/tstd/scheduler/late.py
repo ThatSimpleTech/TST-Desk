@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..logging import get_logger
+from .email_delivery import deliver_job
 from .grace import past_grace, skip_line
 from .history import append_run
 from .models import DeliverTo, Job
@@ -57,7 +58,7 @@ async def skip_if_late(
         "scheduled slot skipped, past grace",
         extra={"extra_fields": {"job_id": job.id}},
     )
-    await asyncio.to_thread(
+    recorded = await asyncio.to_thread(
         append_run,
         data_dir,
         job.id,
@@ -68,5 +69,14 @@ async def skip_if_late(
         summary=line,
         session_id=None,
     )
-    await deliver(job.deliver_to, line)
+    await deliver_job(
+        deliver,
+        data_dir,
+        job,
+        job.deliver_to,
+        line,
+        now,
+        body=line,
+        started_at=recorded.started_at,
+    )
     return True

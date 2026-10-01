@@ -318,4 +318,15 @@ class TestConfig:
         """Spec §8: extras are sibling modules, not a 20-platform gateway."""
         notify_dir = Path(__file__).resolve().parent.parent / "tstd" / "notify"
         names = {path.name for path in notify_dir.iterdir() if path.suffix == ".py"}
-        assert names == {"__init__.py", "slack.py", "ntfy.py", "discord.py", "telegram.py"}
+        # email.py is another sibling send(). email_config / email_settings
+        # write the form and the keychain; they are not a gateway.
+        assert names == {
+            "__init__.py",
+            "slack.py",
+            "ntfy.py",
+            "discord.py",
+            "telegram.py",
+            "email.py",
+            "email_config.py",
+            "email_settings.py",
+        }

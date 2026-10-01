@@ -514,6 +514,25 @@ export interface Transcribe extends ClientMessage {
   mime?: string;
 }
 
+/** Save SMTP settings (TD-3820). Acked with setup_state. password is keychain-only. */
+export interface SetEmailNotify extends ClientMessage {
+  type: "set_email_notify";
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  security?: "starttls" | "tls";
+  username?: string;
+  from_address?: string;
+  /** Written to the keychain. Null or "" leaves the stored password alone. */
+  password?: string | null;
+}
+
+/** Send one short test (TD-3820). Acked with email_test_result. */
+export interface TestEmail extends ClientMessage {
+  type: "test_email";
+  to?: string;
+}
+
 export interface SetGrokMode extends ClientMessage {
   type: "set_grok_mode";
   session_id: string;
@@ -622,7 +641,9 @@ export interface SaveJob extends ClientMessage {
   cadence?: string | null;
   /** On an update, omitted keeps the stored value and `""` clears it. */
   next_run?: string | null;
-  deliver_to?: "window" | "slack" | "ntfy" | null;
+  deliver_to?: "window" | "slack" | "ntfy" | "email" | null;
+  /** One address when deliver_to is email (TD-3820). On an edit, omitted keeps it and "" clears it. */
+  email_to?: string | null;
   paused?: boolean;
   /** IANA zone the cadence is evaluated in, e.g. `America/Chicago`.
    *  Omitted on an edit keeps the job's zone. Absent or null on create is legacy UTC. */
@@ -703,7 +724,9 @@ export interface SaveJobTemplate extends ClientMessage {
   instruction?: string;
   cadence?: string | null;
   next_run?: string | null;
-  deliver_to?: "window" | "slack" | "ntfy" | null;
+  deliver_to?: "window" | "slack" | "ntfy" | "email" | null;
+  /** One address when deliver_to is email (TD-3820). Omitted on a non-email template. */
+  email_to?: string | null;
   grace?: string | number | null;
   retries?: number | null;
   retry_delay?: string | number | null;
@@ -817,7 +840,9 @@ export type ClientMessageUnion =
   | SaveJobTemplate
   | DeleteJobTemplate
   | GetSessionJobSource
-  | Transcribe;
+  | Transcribe
+  | SetEmailNotify
+  | TestEmail;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -1306,6 +1331,19 @@ export interface SetupState extends DaemonEvent {
   // TD-4701: hold-to-talk. Additive, default off. The URL never arrives.
   speech_enabled?: boolean;
   speech_ready?: boolean;
+  /** SMTP settings (TD-3820). Additive. Never includes the password. */
+  email?: EmailNotifyState;
+}
+
+/** SMTP form on setup_state. password_stored is presence only. */
+export interface EmailNotifyState {
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  security?: "starttls" | "tls";
+  username?: string;
+  from_address?: string;
+  password_stored?: boolean;
 }
 
 export interface McpServerSummary {
@@ -1546,7 +1584,9 @@ export interface JobEntry {
   instruction: string;
   cadence: string | null;
   next_run: string | null;
-  deliver_to: "window" | "slack" | "ntfy";
+  deliver_to: "window" | "slack" | "ntfy" | "email";
+  /** One address when deliver_to is email (TD-3820). */
+  email_to?: string | null;
   paused: boolean;
   /** IANA zone the cadence is evaluated in. Absent or null is legacy UTC. */
   timezone?: string | null;
@@ -1579,6 +1619,9 @@ export interface JobEntry {
   last_status: "ok" | "failed" | "missed" | "waiting" | "skipped" | null;
   last_summary: string | null;
   last_session_id: string | null;
+  /** Mail outcome of the last fire. Null unless that fire was email (TD-3820). */
+  last_delivery?: "ok" | "failed" | null;
+  last_delivery_error?: string | null;
   /** True while a turn for this job is in flight (TD-3809). Not stored. */
   running: boolean;
 }
@@ -1608,6 +1651,9 @@ export interface JobRunEntry {
   attempts?: number | null;
   /** Names the parent of a chained fire (TD-3817). Null on a slot and on Run now. */
   note?: string | null;
+  /** Mail outcome for this fire (TD-3820). Null unless the channel is email. */
+  delivery?: "ok" | "failed" | null;
+  delivery_error?: string | null;
 }
 
 /** Response to list_job_runs (TD-3811). Connection-scoped. Newest first. */
@@ -1690,7 +1736,8 @@ export interface JobDraftReply extends DaemonEvent {
   instruction?: string | null;
   cadence?: string | null;
   next_run?: string | null;
-  deliver_to?: "window" | "slack" | "ntfy" | null;
+  deliver_to?: "window" | "slack" | "ntfy" | "email" | null;
+  email_to?: string | null;
   paused?: boolean;
 }
 
@@ -1702,7 +1749,8 @@ export interface JobTemplateEntry {
   instruction: string;
   cadence: string | null;
   next_run: string | null;
-  deliver_to: "window" | "slack" | "ntfy";
+  deliver_to: "window" | "slack" | "ntfy" | "email";
+  email_to?: string | null;
   grace: number | null;
   retries: number;
   retry_delay: number | null;
@@ -1736,6 +1784,14 @@ export interface Transcript extends DaemonEvent {
   text?: string;
   detail?: string;
   error?: string | null;
+}
+
+/** Reply to test_email (TD-3820). Connection-scoped. message never includes the password. */
+export interface EmailTestResult extends DaemonEvent {
+  type: "email_test_result";
+  ok?: boolean;
+  error_class?: string;
+  message?: string;
 }
 
 export type DaemonEventUnion =
@@ -1798,4 +1854,5 @@ export type DaemonEventUnion =
   | GrokPreview
   | GrokSessionList
   | GrokExtensions
-  | Transcript;
+  | Transcript
+  | EmailTestResult;

@@ -20,7 +20,8 @@ from ..logging import get_logger
 from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
 from .calendar import begin_tick, consider_calendar, note_unreadable, skip_for_calendar
-from .history import append_run
+from .email_delivery import deliver_job, final_assistant_text
+from .history import JobRun, append_run
 from .late import skip_if_late
 from .limit import MAX_RUN_ERROR_CODE, run_limit_seconds, stop_summary
 from .models import DeliverTo, Job
@@ -62,6 +63,10 @@ class TurnResult:
     # The session is on an approval card. Not a failure, and not a retry:
     # the runner returns without waiting out the turn budget (TD-3815).
     waiting: bool = False
+    # Assistant text after the last tool call (TD-3820). None on a fake
+    # that returned a string, and on a turn that produced no assistant
+    # text. Email uses this; the receipt stays ``summary``.
+    report: str | None = None
 
 
 TurnFn = Callable[[Path, str], Awaitable["str | TurnResult"]]
@@ -277,7 +282,7 @@ async def run_manual_job(
         await asyncio.to_thread(save_job, data_dir, stamped)
         # A job deleted during the turn is not written back, and neither is
         # a history line for it — delete already removed the file.
-        await _remember_run(
+        remembered = await _remember_run(
             data_dir,
             fresh.id,
             now,
@@ -287,8 +292,18 @@ async def run_manual_job(
         )
         linked = stamped
     else:
+        remembered = None
         linked = None
-    await deliver(channel, result.summary)
+    await deliver_job(
+        deliver,
+        data_dir,
+        fresh,
+        channel,
+        result.summary,
+        now,
+        body=result.report,
+        started_at=None if remembered is None else remembered.started_at,
+    )
     if linked is not None and result.ok:
         await _start_chain(
             data_dir,
@@ -376,7 +391,7 @@ async def _run_one(
         session_id=result.session_id,
     )
     await asyncio.to_thread(save_job, data_dir, stamped)
-    await _remember_run(
+    remembered = await _remember_run(
         data_dir,
         job.id,
         now,
@@ -392,7 +407,16 @@ async def _run_one(
             extra={"extra_fields": {"job_id": job.id, "attempt": settled.attempt}},
         )
         return
-    await deliver(job.deliver_to, settled.receipt)
+    await deliver_job(
+        deliver,
+        data_dir,
+        stamped,
+        job.deliver_to,
+        settled.receipt,
+        now,
+        body=result.report,
+        started_at=remembered.started_at,
+    )
     if result.ok:
         await _start_chain(
             data_dir,
@@ -475,10 +499,10 @@ async def _remember_run(
     scheduled_for: str | None,
     attempt: int | None = None,
     attempts: int | None = None,
-) -> None:
+) -> JobRun:
     """Append the fire off the event loop. ``last_*`` stays the row summary."""
     status: Literal["ok", "failed"] = "ok" if result.ok else "failed"
-    await asyncio.to_thread(
+    return await asyncio.to_thread(
         append_run,
         data_dir,
         job_id,
@@ -589,7 +613,14 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
             waiting=True,
         )
     summary, failed, code = turn_outcome(session)
-    return TurnResult(summary, ok=not failed, session_id=session_id, error_code=code)
+    report = final_assistant_text(session.event_log.all_events) or None
+    return TurnResult(
+        summary,
+        ok=not failed,
+        session_id=session_id,
+        error_code=code,
+        report=report,
+    )
 
 
 async def _stop_over_limit(host: SessionHost, session_id: str, session: Session) -> None:

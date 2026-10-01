@@ -84,6 +84,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "grok_session_list",
   "grok_extensions",
   "transcript", // TD-4701
+  "email_test_result", // TD-3820
 ]);
 
 /**

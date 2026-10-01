@@ -320,8 +320,10 @@ mcp:
 # Slack incoming webhook (TD-3801), ntfy (TD-3802), Discord and Telegram
 # (TD-4707). Off by default. Slack is the default channel. Destination
 # URLs are keychain secrets (tst-slack-webhook, tst-ntfy-topic,
-# tst-discord-webhook, tst-telegram-bot), never this file. host is the
-# only destination send() may reach — set it to the URL's hostname when
+# tst-discord-webhook, tst-telegram-bot), never this file. SMTP
+# (TD-3820) is notify.email; its password is tst-smtp-password in the
+# keychain, never a yaml key. host is the only destination send() may
+# reach — set it to the URL's hostname, or the SMTP hostname, when
 # you enable a channel. There is no 20-platform gateway.
 notify:
   slack:
@@ -340,6 +342,14 @@ notify:
     enabled: false
     host: ""
     timeout_seconds: 5
+  email:
+    enabled: false
+    host: ""
+    port: 587
+    security: starttls
+    username: ""
+    from_address: ""
+    timeout_seconds: 30
 
 # Agent engine. native is the TST 3-tier OpenAI-compatible loop.
 # grok spawns the installed Grok Build CLI over ACP — the CLI remains
