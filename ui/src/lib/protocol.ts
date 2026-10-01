@@ -645,9 +645,21 @@ export interface SaveJob extends ClientMessage {
    *  edit, omitted keeps the stored delay and `""` means the 10-minute
    *  default when `retries` is at least 1. Ignored when retries is 0. */
   retry_delay?: string | number | null;
+  /** Another job's id, started once after this one ends ok (TD-3817).
+   *  On an edit, omitted keeps the stored id and `""` clears it. Omitted
+   *  on create means no follow-on. A cycle is refused at save. */
+  then?: string | null;
+  /** Absolute path of a local .ics file (TD-3818). On an edit, omitted
+   *  keeps the stored path and `""` clears it. Omitted on create means
+   *  no calendar. The file must exist when the path is set or changed. */
+  skip_calendar?: string | null;
+  /** Case-insensitive substring, or several joined by `|`. Blank matches
+   *  every event. On an edit, omitted keeps the stored list and `""`
+   *  clears it. Omitted on create means every event. */
+  skip_match?: string | null;
 }
 
-/** Remove a scheduled job by id (TD-3805). */
+/** Remove a scheduled job by id (TD-3805). Also clears `then` on jobs that pointed at it (TD-3817). */
 export interface DeleteJob extends ClientMessage {
   type: "delete_job";
   job_id: string;
@@ -672,6 +684,39 @@ export interface RunJob extends ClientMessage {
 export interface ListJobRuns extends ClientMessage {
   type: "list_job_runs";
   job_id: string;
+}
+
+/** List built-in and user job templates (TD-3816). Connection-scoped. */
+export interface ListJobTemplates extends ClientMessage {
+  type: "list_job_templates";
+}
+
+/** Store the current job form as a new template (TD-3816). Does not create a job. */
+export interface SaveJobTemplate extends ClientMessage {
+  type: "save_job_template";
+  name: string;
+  instruction?: string;
+  cadence?: string | null;
+  next_run?: string | null;
+  deliver_to?: "window" | "slack" | "ntfy" | null;
+  grace?: string | number | null;
+  retries?: number | null;
+  retry_delay?: string | number | null;
+  preset?: string | null;
+  engine?: "" | "native" | "grok" | null;
+  workspace?: string | null;
+}
+
+/** Remove a user job template (TD-3816). Built-ins cannot be deleted. */
+export interface DeleteJobTemplate extends ClientMessage {
+  type: "delete_job_template";
+  template_id: string;
+}
+
+/** Read one chat into a job draft (TD-3816). Does not create a job. */
+export interface GetSessionJobSource extends ClientMessage {
+  type: "get_session_job_source";
+  session_id: string;
 }
 
 export type ClientMessageUnion =
@@ -761,6 +806,10 @@ export type ClientMessageUnion =
   | ParseJob
   | RunJob
   | ListJobRuns
+  | ListJobTemplates
+  | SaveJobTemplate
+  | DeleteJobTemplate
+  | GetSessionJobSource
   | Transcribe;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
@@ -1507,11 +1556,18 @@ export interface JobEntry {
   /** Tries already used for the slot in progress. Above 0, a retry is waiting
    *  and the window does not notify until the slot finishes. */
   attempt?: number | null;
+  /** Another job's id, started once after this one ends ok (TD-3817). Null means none. */
+  then?: string | null;
+  /** Local .ics that can block a regular slot (TD-3818). Null means none. */
+  skip_calendar?: string | null;
+  /** Substrings joined by `|`. Null or blank matches every event. */
+  skip_match?: string | null;
   /** The last fire's receipt (TD-3807). Null until the job has run once.
    *  `missed` is a slot skipped for lateness, not a failed turn (TD-3813).
-   *  `waiting` is a run parked on an approval card (TD-3815). */
+   *  `waiting` is a run parked on an approval card (TD-3815).
+   *  `skipped` is a regular slot blocked by a local calendar (TD-3818). */
   last_run: string | null;
-  last_status: "ok" | "failed" | "missed" | "waiting" | null;
+  last_status: "ok" | "failed" | "missed" | "waiting" | "skipped" | null;
   last_summary: string | null;
   last_session_id: string | null;
   /** True while a turn for this job is in flight (TD-3809). Not stored. */
@@ -1524,20 +1580,25 @@ export interface JobList extends DaemonEvent {
   jobs: JobEntry[];
 }
 
-/** One fire on job_runs (TD-3811). `scheduled_for` is null for Run now. */
+/** One fire on job_runs (TD-3811). `scheduled_for` is null for Run now and for a chained fire. */
 export interface JobRunEntry {
   started_at: string;
   scheduled_for: string | null;
-  trigger: "schedule" | "manual";
+  /** `chained` is a fire started because another job ended ok (TD-3817). */
+  trigger: "schedule" | "manual" | "chained";
   /** `missed` is a slot skipped for lateness (TD-3813).
-   *  `waiting` is a run parked on an approval card (TD-3815). */
-  status: "ok" | "failed" | "missed" | "waiting";
+   *  `waiting` is a run parked on an approval card (TD-3815).
+   *  `skipped` is a regular slot blocked by a local calendar (TD-3818).
+   *  Its summary is `calendar`, not the event title. */
+  status: "ok" | "failed" | "missed" | "waiting" | "skipped";
   summary: string | null;
   session_id: string | null;
   /** 1-based try when the job retries (TD-3814). Null on Run now and when retries is 0. */
   attempt?: number | null;
   /** Budget for the slot, `retries + 1`. Null alongside `attempt`. */
   attempts?: number | null;
+  /** Names the parent of a chained fire (TD-3817). Null on a slot and on Run now. */
+  note?: string | null;
 }
 
 /** Response to list_job_runs (TD-3811). Connection-scoped. Newest first. */
@@ -1624,6 +1685,39 @@ export interface JobDraftReply extends DaemonEvent {
   paused?: boolean;
 }
 
+/** One template on job_templates (TD-3816). Cadence is the phrase, not cron. */
+export interface JobTemplateEntry {
+  id: string;
+  name: string;
+  builtin: boolean;
+  instruction: string;
+  cadence: string | null;
+  next_run: string | null;
+  deliver_to: "window" | "slack" | "ntfy";
+  grace: number | null;
+  retries: number;
+  retry_delay: number | null;
+  preset: string | null;
+  engine: "native" | "grok" | null;
+  workspace: string | null;
+}
+
+/** Response to list / save / delete template (TD-3816). Connection-scoped. */
+export interface JobTemplates extends DaemonEvent {
+  type: "job_templates";
+  templates: JobTemplateEntry[];
+}
+
+/** Response to get_session_job_source (TD-3816). Connection-scoped. Not saved. */
+export interface SessionJobSource extends DaemonEvent {
+  type: "session_job_source";
+  session_id: string;
+  workspace: string;
+  preset: string | null;
+  engine: "native" | "grok" | null;
+  instruction: string;
+}
+
 /** Reply to transcribe (TD-4701). Connection-scoped. detail is a code, never a URL. */
 export interface Transcript extends DaemonEvent {
   type: "transcript";
@@ -1685,6 +1779,8 @@ export type DaemonEventUnion =
   | JobList
   | JobRuns
   | JobDraftReply
+  | JobTemplates
+  | SessionJobSource
   | GrokCommands
   | GrokPlan
   | GrokMode

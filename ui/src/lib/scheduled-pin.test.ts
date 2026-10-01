@@ -122,6 +122,9 @@ describe("pin on the wire", () => {
 				engine: "",
 				grace: "",
 				retries: "",
+				then: "",
+				skip_calendar: "",
+				skip_match: "",
 			},
 			"UTC",
 		);
@@ -140,6 +143,9 @@ describe("pin on the wire", () => {
 				engine: "grok",
 				grace: "",
 				retries: "",
+				then: "",
+				skip_calendar: "",
+				skip_match: "",
 			},
 			"UTC",
 		);

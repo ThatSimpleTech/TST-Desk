@@ -75,6 +75,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "job_list", // TD-3805
   "job_runs", // TD-3811
   "job_draft", // TD-3803
+  "job_templates", // TD-3816
+  "session_job_source", // TD-3816
   "grok_commands",
   "grok_plan",
   "grok_mode",

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -19,6 +19,7 @@ from ..config import ModelConfig
 from ..logging import get_logger
 from ..protocol import AssistantDelta, TurnComplete
 from ..session import Session
+from .calendar import begin_tick, consider_calendar, note_unreadable, skip_for_calendar
 from .history import append_run
 from .late import skip_if_late
 from .models import DeliverTo, Job
@@ -183,6 +184,9 @@ async def run_due_jobs(
     is left due: the tick must not wait, or one manual turn would hold
     every other job (and shutdown) until it returned.
     """
+    # One read of each calendar for this tick, even if the file changes
+    # while the jobs run. The next tick looks at the mtime again.
+    begin_tick()
     now_utc = as_utc(now)
     jobs = await asyncio.to_thread(list_jobs, data_dir)
     for job in jobs:
@@ -195,7 +199,15 @@ async def run_due_jobs(
         if in_flight is not None and not in_flight.claim(job.id):
             continue
         try:
-            await _run_one(data_dir, job, now_utc, run_turn, deliver, on_parked=on_parked)
+            await _run_one(
+                data_dir,
+                job,
+                now_utc,
+                run_turn,
+                deliver,
+                on_parked=on_parked,
+                in_flight=in_flight,
+            )
         finally:
             if in_flight is not None:
                 in_flight.release(job.id)
@@ -225,6 +237,7 @@ async def run_manual_job(
     run_turn: TurnFn,
     deliver: Deliver,
     on_parked: ParkHook | None = None,
+    in_flight: InFlight | None = None,
 ) -> None:
     """One explicit fire. Receipt and delivery, without touching the schedule.
 
@@ -273,7 +286,20 @@ async def run_manual_job(
             trigger="manual",
             scheduled_for=None,
         )
+        linked = stamped
+    else:
+        linked = None
     await deliver(channel, result.summary)
+    if linked is not None and result.ok:
+        await _start_chain(
+            data_dir,
+            linked,
+            now,
+            run_turn=run_turn,
+            deliver=deliver,
+            in_flight=in_flight,
+            on_parked=on_parked,
+        )
 
 
 async def _run_one(
@@ -284,6 +310,7 @@ async def _run_one(
     deliver: Deliver,
     *,
     on_parked: ParkHook | None = None,
+    in_flight: InFlight | None = None,
 ) -> None:
     # A parked approval still owns the previous session. The next slot
     # is missed before grace, which would otherwise describe the same
@@ -299,7 +326,17 @@ async def _run_one(
     # Run now never enters this function, so asking for a run cannot skip.
     if job.attempt == 0 and await skip_if_late(data_dir, job, now, deliver):
         return
+    # The calendar is the regular slot only. A retry is that slot's later
+    # try, and Run now never enters this function. A blocked day is not an
+    # ok end, so the follow-on does not start. An unreadable file is not
+    # a block: the turn still runs, and the receipt says so once.
+    verdict = await consider_calendar(job)
+    if job.attempt == 0 and verdict == "skip":
+        await skip_for_calendar(data_dir, job, now)
+        return
     result = await _turn_result(job, run_turn)
+    if verdict == "unreadable":
+        result = replace(result, summary=note_unreadable(result.summary))
     if result.waiting and result.session_id:
         # Not settle_scheduled: a waiting card is not a failure, so it
         # must not arm a retry, and the slot still advances once.
@@ -357,6 +394,16 @@ async def _run_one(
         )
         return
     await deliver(job.deliver_to, settled.receipt)
+    if result.ok:
+        await _start_chain(
+            data_dir,
+            stamped,
+            now,
+            run_turn=run_turn,
+            deliver=deliver,
+            in_flight=in_flight,
+            on_parked=on_parked,
+        )
 
 
 async def _park_and_arm(
@@ -388,6 +435,35 @@ async def _park_and_arm(
     )
     if on_parked is not None:
         on_parked(job.id, session_id, started)
+
+
+async def _start_chain(
+    data_dir: Path,
+    parent: Job,
+    now: datetime,
+    *,
+    run_turn: TurnFn,
+    deliver: Deliver,
+    in_flight: InFlight | None,
+    on_parked: ParkHook | None,
+) -> None:
+    """After an ok fire, start ``then`` if the job has one.
+
+    Imported here so loading the runner does not load the chain, which
+    imports this module for the turn.
+    """
+    from .chain import follow_chain
+
+    await follow_chain(
+        data_dir,
+        parent,
+        now,
+        depth=0,
+        run_turn=run_turn,
+        deliver=deliver,
+        in_flight=in_flight,
+        on_parked=on_parked,
+    )
 
 
 async def _remember_run(

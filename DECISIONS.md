@@ -11444,6 +11444,306 @@ task. Calling `request_shutdown` and relying on the runtime to poll.
 Giving the daemon and the embeddings sidecar 3 seconds each. SIGKILL
 as soon as Exit arrives when no in-app quit is in progress.
 
+## TD-3816 — Job templates and schedule this chat (Class B)
+
+2026-09-29.
+
+**Decision:** User templates live at `{data_dir}/scheduler/templates.json`,
+the same data dir as jobs (TD-4843). Built-ins are data in code and are
+merged in when the list is read. A file row whose id is a built-in id
+is dropped, so the file cannot replace "Weekday morning digest".
+
+**Rationale:** The useful instruction is one the user already wrote.
+Shipping two shapes in code means a fresh data dir still has something
+to start from, and a user template follows `--data-dir` the way jobs do.
+
+**Alternative rejected:** A template directory of markdown files. Putting
+built-ins in the json file, which a save could then overwrite.
+
+**Decision:** A template stores the cadence phrase, or a next-run rule
+(`tomorrow at 9:00`, or an ISO instant). The phrase is validated with
+the job parsers and is not rewritten to cron. The pane resolves
+`tomorrow at H:MM` to a local ISO instant when the user applies the
+template, so the stored rule does not go stale.
+
+**Rationale:** The form is the phrase the user would type. Storing cron
+would show `45 7 * * 1-5` the next time they started from the template.
+Resolving "tomorrow" at save time would mean the reminder is the wrong
+day the next morning.
+
+**Alternative rejected:** Rewriting template cadences to cron. Resolving
+"tomorrow" in the daemon at save time.
+
+**Decision:** A template may omit the instruction and the workspace. A
+job still may not. A workspace, when set, is resolved like a job name
+and then must be an absolute path with no secrets. The folder is not
+required to exist until a job is created. A preset is checked against
+the catalog on save only. Grace and retries are stored like jobs
+(seconds, a count, and the 10-minute default delay).
+
+**Rationale:** The weekday digest ships with a blank instruction on
+purpose. Requiring a folder would refuse a template for a project the
+user has not created yet. Re-checking the catalog on load would hide a
+template whose preset was removed.
+
+**Alternative rejected:** Requiring a workspace on every template.
+Calling `require_folder` at template save. Re-checking presets when the
+file is read.
+
+**Decision:** Schedule this chat is a rail-row action, after Rename.
+`get_session_job_source` answers with `session_job_source`. `session_list`
+has no engine and no full first user message, so this is the smallest
+read. The instruction is the earliest remaining `user_turn` display
+text, then the conversation. A live pin wins over the stored record.
+The verb does not create a job. A trimmed log can only yield the
+earliest turn that is still there.
+
+**Rationale:** The title is a 60-character first line and can be renamed.
+Putting the transcript on `session_list` would ship every first message
+to every window on every list refresh.
+
+**Alternative rejected:** Stuffing the first message and the engine onto
+`session_list`. Using the session title as the instruction.
+
+**Decision:** Deleting or overwriting a built-in is `template_builtin`
+and does not rewrite the list as success. Save as template is create-only
+(a new id). The pane has no template delete control. Delete is a protocol
+verb covered by the Python tests. No `PROTOCOL_VERSION` bump. No new
+config key.
+
+**Rationale:** The client must not be able to replace a built-in by id.
+An update-by-id would need a second form the story does not ask for.
+The wire change is additive, same as TD-3812 through TD-3815.
+
+**Alternative rejected:** Update-by-id. A delete button on the pane.
+Bumping `PROTOCOL_VERSION` for two new events.
+
+## TD-3817 — Run one job after another succeeds (Class B)
+
+2026-09-29.
+
+**Decision:** `then` is another job's id. It is checked for a missing id
+and for a cycle only when the user saves. `save_job` itself does not
+check, so a receipt can still be written if the follow-on disappeared
+between the read and the write. Pause omits the field and is not
+checked, so a hand-edited loop can still be paused. The model accepts
+any single path segment, including one that is not in the file, so an
+older `jobs.json` and a dangling link still load.
+
+**Rationale:** The runner stamps a receipt under the same save the user
+uses to pause. A cycle check there would refuse the stamp, or refuse
+the pause. The pane is the place that can show the error and leave the
+previous row in place.
+
+**Alternative rejected:** Checking the link every time the row is
+written. Refusing to load a jobs file that contains a cycle.
+
+**Decision:** Deleting a job clears `then` on every job that pointed at
+that id, under the same store lock as the delete. The next `job_list`
+is the only notice. A job the deleted row itself pointed at is left
+alone.
+
+**Rationale:** A follow-on that names a missing id would fail the next
+user save, and the row would keep offering a job that is gone. The
+client already replaces its list from `job_list`.
+
+**Alternative rejected:** Leaving the dangling id until the next edit.
+A new event for "your link was cleared".
+
+**Decision:** One ok end — a scheduled success, a success on a later
+try, or Run now — starts `then` once, immediately. The child's cadence
+and `next_run` stay where they are. The history trigger is `chained`,
+`scheduled_for` is null, and `note` is `after <parent id>`. The turn
+summary is not prefixed with that note. The child's retry and grace
+belong to its own slot, so this fire does not retry and is not skipped
+for lateness. A later ok end of the parent starts the child again.
+A child that is also due can still run its own slot on a later tick,
+or on the same tick if it was already due, because the schedule did
+not move.
+
+**Rationale:** The point of the link is "when the digest works, draft
+the follow-up", not "move the follow-up onto the digest's clock".
+Run now is the existing fire that does not touch the schedule, so the
+chain uses that shape. The note is separate so the draft's own summary
+stays the summary.
+
+**Alternative rejected:** Rewriting the child's `next_run` to now.
+Putting the parent id in the summary. Treating a chained failure as a
+retry of the child's slot. Firing the child only the first time the
+parent ever succeeds.
+
+**Decision:** The runtime walk stops after five follow-on starts. A
+longer chain still saves. The sixth job is not started and is not
+recorded as missed. A cycle is refused at save with the loop joined by
+` → ` (`A → B → A`). A loop that sits downstream of the job being
+saved is reported as that loop, not the whole path from the job.
+
+**Rationale:** An acyclic chain of six is a real schedule. Walking it
+inside the tick would hold every other job until the last turn
+returned. Five is enough for "digest, then draft, then file" and still
+bounded. Recording a miss for the job that did not start would look
+like that job failed a slot it never had.
+
+**Alternative rejected:** A depth of one. Refusing to save a chain
+longer than five. Writing a missed line for the job past the cap.
+
+**Decision:** A failed, missed, or parked parent does not start its
+child. Settling a parked approval to ok later does not start it
+either. A paused child, or a child the in-flight guard already holds,
+records one `missed` history line with summary `paused` or
+`already running`, delivers that reason once, and does not move the
+child's schedule. The same guard Run now uses is passed into the
+chain. The parent stays claimed until the walk returns, so a
+hand-edited cycle stops on `already running` instead of re-entering.
+
+**Rationale:** The follow-on means the parent succeeded. A skip, a
+failure, and a card waiting on the user are not that. The miss reasons
+match the words the story names, and delivery matches a grace skip so
+the channel is not silent. The guard is the one TD-3809 already uses,
+not a second set.
+
+**Alternative rejected:** Chaining when a parked run is later approved.
+Starting a second copy of a child that is already running. A separate
+in-flight set for chained fires.
+
+**Decision:** On edit, omitted `then` keeps the stored id and `""`
+clears it, same as grace. Templates do not store `then`. Applying one
+clears the draft field. No `PROTOCOL_VERSION` bump and no new config
+key. The row meta shows `→` and the child's instruction (the id if the
+list does not have that job).
+
+**Rationale:** Pause is a save that must not wipe the link, and Save
+is the verb that can clear it. A template has no follow-on to restore.
+The wire change is additive, same as TD-3812 through TD-3816.
+
+**Alternative rejected:** Bumping `PROTOCOL_VERSION`. A config key for
+the depth cap. Showing the raw id on the row when the instruction is
+already in the list.
+
+## TD-3818 — Skip a scheduled run on days blocked in a local calendar file (Class B)
+
+2026-09-29.
+
+**Decision:** The calendar is a local `.ics` path on the job
+(`skip_calendar`) plus an optional match list (`skip_match`). Parsing
+is a small reader in `scheduler/ics.py`, `ics_lines.py`, and
+`ics_recur.py`. No new dependency.
+
+**Rationale:** A weekday job still fires on a holiday. Fetching a
+calendar would be a network call the user did not initiate.
+`recurring-ical-events` is LGPL, which this repo does not take.
+`icalendar` is BSD and would still leave recurrence to us, so the
+reader covers the events the story names and nothing else.
+
+**Alternative rejected:** An HTTP subscription. Adding `icalendar`.
+Adding the LGPL recurrence package.
+
+**Decision:** A regular slot whose local date, in the job's time zone,
+falls inside a matching event is `skipped`. That status is distinct
+from `missed`. The history summary is the word `calendar`. The event
+title is not stored, logged, or delivered. The channel and the OS
+notice stay quiet. The slot advances, and a one-shot is spent the same
+way a miss spends it. `RunStatus` on the job, the history line, and
+both protocol copies include `skipped`.
+
+**Rationale:** A holiday is expected. `missed` already means the slot
+was late, and that path delivers a line. Reusing it would notify the
+user for a day they asked to skip, and it would put the event title
+on a receipt.
+
+**Alternative rejected:** Recording `missed` with the event title.
+Delivering "skipped for Christmas". A new daemon event for the skip.
+
+**Decision:** An unreadable file, a file over 2 MiB, or a file that
+disappeared does not skip the job. The turn runs, and the receipt
+gains `calendar unreadable` once, joined with an em dash when the
+summary is not empty. An empty `VCALENDAR` is readable and blocks
+nothing. A sibling event that fails to parse is dropped; if every
+event fails, or a `VEVENT` is opened and never closed with no
+completed event beside it, the file is unreadable.
+
+**Rationale:** A broken export should not silently cancel the digest.
+The note has to survive the summary cap, so the room is reserved
+before the cut. The title still stays out of the log: the line names
+the job id only.
+
+**Alternative rejected:** Treating a broken file as a skip. Failing
+the whole file because one event is bad. Logging the parse error.
+
+**Decision:** The path follows the workspace rules: no secret-shaped
+text, no `://`, absolute after `expanduser`, `normpath` without
+resolving links, and a `.ics` suffix. It must exist when the user
+sets it or changes it. Pause omits the field, and an unchanged path
+can be saved after the file is gone. At run time a missing file is
+unreadable and the job runs with the note. `skip_match` is a
+case-insensitive substring of `|` segments, stored with blanks
+dropped and case kept. Blank matches every event.
+
+**Rationale:** The same path checks the workspace already uses, so a
+calendar cannot be a URL or a key. Requiring the file on every pause
+would refuse Pause after the user moved the file. Matching is a
+substring so `holiday` hits `Company Holiday` without a second
+grammar.
+
+**Alternative rejected:** Resolving symlinks. Re-checking existence on
+Pause. A regex match list. Folding the stored match to lowercase.
+
+**Decision:** Each tick reads a path at most once, even if the mtime
+changes mid-tick. The cache key is the normalized path and
+`st_mtime_ns`. A missing file is not stored as a permanent hit. The
+tick is sequential, so the read holds the cache lock off the event
+loop.
+
+**Rationale:** Two jobs can name the same holiday file. Reading it
+twice per minute, or once per retry inside the same tick, does not
+change the answer. Keeping a missing path cached forever would hide
+the file when it comes back.
+
+**Alternative rejected:** Reading on every job. Caching a missing file
+until restart. Watching the file with a daemon thread.
+
+**Decision:** An all-day event covers `DTSTART <= local date < DTEND`
+in the job's zone (`UTC` when the job has none). A missing or inverted
+all-day end is one day. A timed event matches when the slot instant
+is inside `[DTSTART, DTEND)`. A missing timed end matches only that
+instant. Floating times use the job zone. `Z` is UTC. `TZID` is
+`ZoneInfo`, and a product-path prefix falls back to the last two
+segments. `RRULE` supports `DAILY`, `WEEKLY`, and `YEARLY` with
+`COUNT`, `UNTIL`, `BYDAY`, and `INTERVAL`. Another `FREQ`, or a bad
+`INTERVAL` / `COUNT` / `UNTIL`, keeps the first instance only. The
+walk stops at 20 000 steps and then fails open. `EXDATE`, `RDATE`,
+and numeric offsets are ignored.
+
+**Rationale:** Christmas all day in Chicago is still the 25th at
+23:30 local, which is already the 26th in UTC. Using the UTC date
+would run the job on the holiday evening. Timed PTO ends at 17:00,
+so the end instant itself runs. Recurrence has to be bounded or a
+`COUNT` walk from year 2000 would scan the whole calendar on every
+tick; past the cap the job runs.
+
+**Alternative rejected:** Comparing all-day events to the UTC date.
+Treating `DTEND` as inclusive. Expanding `MONTHLY`. Failing the job
+when the walk hits the cap.
+
+**Decision:** Only a regular slot consults the block. Run now, a
+retry (`attempt > 0`), and a chained fire do not skip. Grace and an
+open park are decided first, so a late holiday is `missed` and
+delivered, and the file is not read. A blocked parent does not start
+`then`. An unreadable file is still noted on a retry's receipt.
+Templates do not store the calendar. Applying one clears the draft
+fields. No `PROTOCOL_VERSION` bump and no new config key. The wire
+fields are additive on `SaveJob` and `JobEntry`.
+
+**Rationale:** Run now is the user asking for the job. A retry is the
+slot's later try, not a new day. Grace already owns "this slot is too
+late". A template has no file to restore, and Pause must not demand
+the file still exist. The status literal and two optional fields do
+not break an older client the way a version bump would.
+
+**Alternative rejected:** Skipping Run now. Checking the calendar
+before grace. Storing the path on a template. Bumping
+`PROTOCOL_VERSION`.
+
 ## TD-4851 — Ready quit-distill is kept; dead transports are closed (Class B)
 
 2026-09-29.

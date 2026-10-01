@@ -1,4 +1,4 @@
-// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814).
+// Scheduled rail helpers (TD-3805, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814, TD-3817, TD-3818).
 //
 // Draft fields the pane sends on `save_job` — not a natural-language
 // parse. Pause is the same verb with `paused` flipped. Edit is the same
@@ -24,6 +24,12 @@ export interface JobDraftFields {
 	grace: string;
 	/** `""` is no retries. `"1"` `"2"` `"3"` are extra tries after the first. */
 	retries: string;
+	/** Another job's id, or `""` for no follow-on (TD-3817). */
+	then: string;
+	/** Absolute path of a local .ics file, or `""` for none (TD-3818). */
+	skip_calendar: string;
+	/** Substrings joined by `|`. `""` matches every event. */
+	skip_match: string;
 }
 
 /** If late. `seconds` is what the daemon stores; the wire value is the phrase. */
@@ -95,6 +101,9 @@ export function emptyDraft(workspace: string | null): JobDraftFields {
 		engine: "",
 		grace: "",
 		retries: "",
+		then: "",
+		skip_calendar: "",
+		skip_match: "",
 	};
 }
 
@@ -189,8 +198,8 @@ export function viewerTimeZone(): string | undefined {
 	}
 }
 
-/** Row meta: when it next fires, the cadence in words if that adds anything, and where it delivers. */
-export function jobMeta(job: JobEntry, timeZone?: string): string {
+/** Row meta: when it next fires, the cadence in words if that adds anything, where it delivers, and the job that runs after a success. */
+export function jobMeta(job: JobEntry, timeZone?: string, jobs?: readonly JobEntry[]): string {
 	const when = jobWhen(job, timeZone);
 	const words = job.cadence ? humanizeCadence(job.cadence, job.timezone) : null;
 	// With no next run, jobWhen already fell back to the raw cadence; show
@@ -200,7 +209,15 @@ export function jobMeta(job: JobEntry, timeZone?: string): string {
 	parts.push(job.deliver_to);
 	if (job.preset) parts.push(job.preset);
 	if (job.engine) parts.push(job.engine);
+	// The row stores an id. The instruction is on the list the pane already has.
+	if (job.then) parts.push(`→ ${childLabel(job.then, jobs)}`);
 	return parts.join(" · ");
+}
+
+function childLabel(id: string, jobs: readonly JobEntry[] | undefined): string {
+	const child = jobs?.find((row) => row.id === id);
+	const instruction = child?.instruction.trim() ?? "";
+	return instruction !== "" ? instruction : id;
 }
 
 export function jobWhen(job: JobEntry, timeZone?: string): string {
@@ -243,24 +260,36 @@ export function jobWaiting(job: JobEntry): boolean {
 	return job.last_status === "waiting";
 }
 
+/** True when the last regular slot was blocked by a local calendar. */
+export function jobSkipped(job: JobEntry): boolean {
+	return job.last_status === "skipped";
+}
+
 function outcomeWord(status: JobEntry["last_status"] | JobRunEntry["status"]): string {
 	if (status === "failed") return "Failed";
 	if (status === "missed") return "Missed";
 	if (status === "waiting") return "Waiting for approval";
+	if (status === "skipped") return "Skipped (calendar)";
 	return "Ran";
 }
 
 /**
- * One history row: local time, Ran, Failed, Missed, or Waiting for
- * approval, and "manual" only when the fire was Run now. A scheduled
- * fire is the default, so naming it adds nothing. Missed is a skipped
- * slot, and waiting is an approval card, not a failed turn.
+ * One history row: local time, Ran, Failed, Missed, Waiting for
+ * approval, or Skipped (calendar), and "manual" only when the fire was
+ * Run now. A scheduled fire is the default, so naming it adds nothing.
+ * Missed is a late slot. Waiting is an approval card. Skipped is a day
+ * blocked on a local calendar. None of those is a failed turn.
  */
 export function jobRunLabel(run: JobRunEntry, timeZone?: string): string {
 	const when = formatLocal(run.started_at, timeZone);
 	const outcome = outcomeWord(run.status);
 	const attempt = attemptSuffix(run);
 	if (run.trigger === "manual") return `${outcome} ${when} · manual${attempt}`;
+	// Not the slot, and not Run now. The note names the job that started this one.
+	if (run.trigger === "chained") {
+		const note = run.note?.trim() ? ` · ${run.note.trim()}` : "";
+		return `${outcome} ${when} · chained${note}${attempt}`;
+	}
 	return `${outcome} ${when}${attempt}`;
 }
 
@@ -308,6 +337,14 @@ export function saveFromDraft(
 		payload.retries = retries;
 		payload.retry_delay = RETRY_DELAY;
 	}
+	// Blank is no follow-on, the same as omitting the field on create.
+	const follow = draft.then.trim();
+	if (follow !== "") payload.then = follow;
+	// Blank is no calendar, the same as omitting the field on create.
+	const calendar = draft.skip_calendar.trim();
+	if (calendar !== "") payload.skip_calendar = calendar;
+	const match = draft.skip_match.trim();
+	if (match !== "") payload.skip_match = match;
 	return payload;
 }
 
@@ -324,7 +361,8 @@ function retryCount(raw: string): number | undefined {
  *
  * Preset and engine are omitted on purpose. Pause must not resend them:
  * a catalog name that has since been removed would fail the save, and
- * the job could not be paused.
+ * the job could not be paused. The calendar path is omitted for the
+ * same reason: Pause must not clear it or demand the file still exist.
  */
 export function saveFromJob(job: JobEntry, paused: boolean): SaveJob {
 	return {
@@ -375,6 +413,9 @@ export function draftFromJob(job: JobEntry): JobDraftFields {
 		engine: job.engine ?? "",
 		grace: graceDraftValue(job.grace),
 		retries: retriesDraftValue(job.retries),
+		then: job.then ?? "",
+		skip_calendar: job.skip_calendar ?? "",
+		skip_match: job.skip_match ?? "",
 	};
 }
 
@@ -435,5 +476,12 @@ export function saveFromEdit(
 		payload.retries = retries;
 		payload.retry_delay = RETRY_DELAY;
 	}
+	// Always sent. `""` clears a follow-on; omitting it would keep the
+	// stored one, which is Pause, not Save.
+	payload.then = draft.then.trim();
+	// Always sent. `""` clears a calendar; omitting it would keep the
+	// stored path, which is Pause, not Save.
+	payload.skip_calendar = draft.skip_calendar.trim();
+	payload.skip_match = draft.skip_match.trim();
 	return payload;
 }

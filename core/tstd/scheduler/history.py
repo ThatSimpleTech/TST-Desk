@@ -34,7 +34,7 @@ log = get_logger("tstd.scheduler.history")
 # enough to see what changed; the row's last_* is the newest either way.
 HISTORY_CAP = 50
 
-RunTrigger = Literal["schedule", "manual"]
+RunTrigger = Literal["schedule", "manual", "chained"]
 
 _HISTORY_DIR = "history"
 # One lock per file. Append and an in-place settle both rewrite the
@@ -76,6 +76,9 @@ class JobRun(BaseModel):
     # attempt of the slot.
     attempt: int | None = None
     attempts: int | None = None
+    # Set on a chained fire: which job's ok run started this one (TD-3817).
+    # The summary stays the turn's text, so the parent is not lost in it.
+    note: str | None = None
 
     @field_validator("started_at")
     @classmethod
@@ -104,6 +107,11 @@ class JobRun(BaseModel):
             return None
         text = value.strip()
         return text or None
+
+    @field_validator("note")
+    @classmethod
+    def _note_is_safe(cls, value: str | None) -> str | None:
+        return normalize_summary(value)
 
     @field_validator("attempt", "attempts")
     @classmethod
@@ -147,6 +155,7 @@ def append_run(
     session_id: str | None,
     attempt: int | None = None,
     attempts: int | None = None,
+    note: str | None = None,
 ) -> JobRun:
     """Append one run and drop the oldest past the cap.
 
@@ -165,6 +174,7 @@ def append_run(
         session_id=session_id,
         attempt=attempt,
         attempts=attempts,
+        note=note,
     )
     with _history_lock(path):
         runs = _read_runs(path)
@@ -183,6 +193,7 @@ def close_waiting_run(
     summary: str | None,
     trigger: RunTrigger,
     scheduled_for: str | None,
+    note: str | None = None,
 ) -> HistoryClose:
     """Rewrite the parked line, or append one if it was never written.
 
@@ -202,6 +213,7 @@ def close_waiting_run(
                 status=status,
                 summary=summary,
                 session_id=session_id,
+                note=note,
             )
             runs.append(record)
             _write_capped(path, runs)
@@ -218,6 +230,9 @@ def close_waiting_run(
             session_id=current.session_id,
             attempt=current.attempt,
             attempts=current.attempts,
+            # The parent note was written when the run parked. Settling
+            # the line must not drop it.
+            note=current.note,
         )
         runs[index] = record
         _write_runs(path, runs)

@@ -1316,7 +1316,10 @@
     "engine": "native",
     "grace": "2 hours",
     "retries": 2,
-    "retry_delay": "10 minutes"
+    "retry_delay": "10 minutes",
+    "then": "job-2",
+    "skip_calendar": "/home/user/holidays.ics",
+    "skip_match": "holiday|PTO|OOO"
   },
   "delete_job": {
     "type": "delete_job",
@@ -1333,6 +1336,31 @@
   "list_job_runs": {
     "type": "list_job_runs",
     "job_id": "job-1"
+  },
+  "list_job_templates": {
+    "type": "list_job_templates"
+  },
+  "save_job_template": {
+    "type": "save_job_template",
+    "name": "Inbox digest",
+    "instruction": "summarize the inbox",
+    "cadence": "weekdays at 7:45",
+    "next_run": null,
+    "deliver_to": "window",
+    "grace": "2 hours",
+    "retries": 1,
+    "retry_delay": "10 minutes",
+    "preset": "vllm",
+    "engine": "native",
+    "workspace": "/home/user/project"
+  },
+  "delete_job_template": {
+    "type": "delete_job_template",
+    "template_id": "tmpl-1"
+  },
+  "get_session_job_source": {
+    "type": "get_session_job_source",
+    "session_id": "sess-1"
   },
   "job_list": {
     "type": "job_list",
@@ -1353,6 +1381,9 @@
         "retries": 2,
         "retry_delay": 600,
         "attempt": 0,
+        "then": "job-2",
+        "skip_calendar": "/home/user/holidays.ics",
+        "skip_match": "holiday|PTO|OOO",
         "last_run": "2026-08-21T15:00:00+00:00",
         "last_status": "ok",
         "last_summary": "3 threads need a reply",
@@ -1374,7 +1405,8 @@
         "summary": "3 threads need a reply",
         "session_id": "sess-1",
         "attempt": 2,
-        "attempts": 3
+        "attempts": 3,
+        "note": null
       },
       {
         "started_at": "2026-08-21T22:45:00+00:00",
@@ -1384,7 +1416,8 @@
         "summary": "Skipped the 7:45 AM run \u2014 10 h late",
         "session_id": null,
         "attempt": null,
-        "attempts": null
+        "attempts": null,
+        "note": null
       },
       {
         "started_at": "2026-08-21T23:00:00+00:00",
@@ -1394,9 +1427,77 @@
         "summary": "Run `echo hi`",
         "session_id": "sess-park",
         "attempt": null,
-        "attempts": null
+        "attempts": null,
+        "note": null
+      },
+      {
+        "started_at": "2026-08-21T23:30:00+00:00",
+        "scheduled_for": null,
+        "trigger": "chained",
+        "status": "ok",
+        "summary": "draft ready",
+        "session_id": "sess-chain",
+        "attempt": null,
+        "attempts": null,
+        "note": "after job-1"
+      },
+      {
+        "started_at": "2026-12-25T15:00:00+00:00",
+        "scheduled_for": "2026-12-25T13:00:00+00:00",
+        "trigger": "schedule",
+        "status": "skipped",
+        "summary": "calendar",
+        "session_id": null,
+        "attempt": null,
+        "attempts": null,
+        "note": null
       }
     ]
+  },
+  "job_templates": {
+    "type": "job_templates",
+    "seq": 1,
+    "templates": [
+      {
+        "id": "weekday-morning-digest",
+        "name": "Weekday morning digest",
+        "builtin": true,
+        "instruction": "",
+        "cadence": "weekdays at 7:45",
+        "next_run": null,
+        "deliver_to": "window",
+        "grace": 7200,
+        "retries": 1,
+        "retry_delay": 600,
+        "preset": null,
+        "engine": null,
+        "workspace": null
+      },
+      {
+        "id": "tmpl-1",
+        "name": "Inbox digest",
+        "builtin": false,
+        "instruction": "summarize the inbox",
+        "cadence": null,
+        "next_run": "tomorrow at 9:00",
+        "deliver_to": "window",
+        "grace": null,
+        "retries": 0,
+        "retry_delay": null,
+        "preset": "vllm",
+        "engine": "native",
+        "workspace": "/home/user/project"
+      }
+    ]
+  },
+  "session_job_source": {
+    "type": "session_job_source",
+    "seq": 1,
+    "session_id": "sess-1",
+    "workspace": "/home/user/project",
+    "preset": "vllm",
+    "engine": "grok",
+    "instruction": "summarize the inbox"
   },
   "job_draft": {
     "type": "job_draft",

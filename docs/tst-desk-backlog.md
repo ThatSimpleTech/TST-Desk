@@ -6323,6 +6323,112 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 
 ---
 
+### TD-3816 — Job templates, and "Schedule this chat"
+**Size:** 3 · **Depends on:** TD-3808, TD-3809, TD-3810, TD-3811, TD-3812, TD-3813, TD-3814, TD-3815
+
+**Acceptance criteria:**
+- [x] Two built-in templates ship in code, with no model names or URLs:
+      "Weekday morning digest" (cadence `weekdays at 7:45`, grace 2 h,
+      retries 1, deliver to window, instruction empty) and "One-shot
+      reminder" (next run tomorrow at 9:00 local)
+- [x] User templates persist in `{data_dir}/scheduler/templates.json`:
+      name, instruction, cadence or next-run rule, grace, retries/delay,
+      deliver_to, preset, engine, optional workspace
+- [x] Validation uses the job rules for secret-shaped instructions and
+      catalog presets. A bad draft is `template_invalid` and nothing is
+      written
+- [x] `list_job_templates`, `save_job_template`, and `delete_job_template`
+      answer with `job_templates`. Built-in templates cannot be deleted
+- [x] The Scheduled pane has Start from template, which fills the draft
+      and does not save a job, and Save as template, which stores the
+      current form under a name
+- [x] Schedule this chat on the session row menu opens Scheduled with
+      the draft prefilled from that session's workspace, preset, engine,
+      and first user message
+
+Done (2026-09-29): a job form started blank, so a chat that already
+worked had to be retyped. The daemon ships two templates and stores the
+user's own under the data dir. The Scheduled pane can start from one or
+save the form as one, without creating a job until Create. The session
+menu's Schedule this chat opens that pane with the workspace, preset,
+engine, and first message filled in. Class B entry in DECISIONS.md.
+
+Suite: 3996 passed / 8 skipped, ruff + `mypy --strict` clean over 175
+files, vitest 1442, svelte-check 717 files 0 errors 0 warnings.
+
+---
+
+### TD-3817 — Run one job after another succeeds
+**Size:** 3 · **Depends on:** TD-3809, TD-3811, TD-3814
+
+**Acceptance criteria:**
+- [x] A job may set optional `then` to another job's id. After a run
+      ends ok — a scheduled success, a success on a later try, or Run
+      now — that job starts once, immediately, with history trigger
+      `chained` and a note naming the parent. The child's cadence and
+      next run stay where they are
+- [x] A cycle is refused at save (`A → B → A`). A chain longer than
+      one link is allowed. A run stops after five follow-ons
+- [x] A failed, missed, or parked parent does not start its child. A
+      child that is paused or already running records `missed`
+      (`paused`, `already running`) and is not started twice
+- [x] Deleting a job clears `then` on jobs that pointed at it, and
+      `job_list` shows that. An omitted `then` on edit keeps the stored
+      id and `""` clears it. Pause on the child records the chained
+      start as missed
+- [x] The job form has Then run, listing the other jobs. The row shows
+      `→` and the child. History shows chained runs
+
+Done (2026-09-29): two jobs no longer have to guess clock times so the
+second starts after the first. A job can name the one to run once it
+ends ok. The follow-on keeps its own schedule. The save refuses a
+cycle, and one fire walks at most five links. A failure, a skipped
+slot, and a run parked on an approval card do not continue. A paused
+or already-running follow-on is recorded missed. Deleting a job clears
+the links that named it. Class B entry in DECISIONS.md.
+
+Suite: 4015 passed / 8 skipped, ruff + `mypy --strict` clean over 176
+files, vitest 1445, svelte-check 719 files 0 errors 0 warnings.
+
+---
+
+### TD-3818 — Skip a scheduled run on days blocked in a local calendar file
+**Size:** 3 · **Depends on:** TD-3813
+
+**Acceptance criteria:**
+- [x] A job may set optional `skip_calendar`, an absolute path to a
+      local `.ics` under the same path rules as a workspace. The file
+      must exist when the path is set or changed. Optional `skip_match`
+      is a case-insensitive substring, or several joined by `|`. Blank
+      matches every event
+- [x] On a regular slot, when the slot's local date in the job's time
+      zone falls inside a matching event (all-day by date; timed when
+      the slot instant falls within it), the runner does not start a
+      session. It advances the slot, records `skipped` (distinct from
+      `missed`), delivers nothing, and the reason is `calendar`
+- [x] Run now, a chained fire, and a retry do not skip for the
+      calendar. An unreadable file still runs, and the receipt notes
+      `calendar unreadable` once. The file is read at most once per tick
+- [x] The reader covers `VEVENT` with `DTSTART` / `DTEND` (`DATE` and
+      `DATE-TIME`, `TZID` and UTC), `SUMMARY`, and `RRULE`
+      `DAILY` / `WEEKLY` / `YEARLY` with `COUNT`, `UNTIL`, and `BYDAY`.
+      Nothing is fetched
+- [x] The pane has Skip days in calendar, a native `.ics` picker, and
+      Only events matching. The row and the history show
+      "Skipped (calendar)"
+
+Done (2026-09-29): a weekday job can name a local calendar and skip
+the slot when a matching event covers that local day. The receipt is
+the word `calendar`. The event title is not stored or delivered, and
+the window stays quiet. Run now, a retry, and a follow-on still run.
+A file that cannot be read does not cancel the job; the receipt notes
+that once. The parser is internal. Class B entry in DECISIONS.md.
+
+Suite: 4073 passed / 8 skipped, ruff + `mypy --strict` clean over 181
+files, vitest 1452, svelte-check 721 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
@@ -7581,12 +7687,12 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 | **Total v0.1 + v0.2** | **27** | **203** | **573** |
 | M5 Cowork (v0.3) | E29–E32, E48 | 50 | 130 |
 | M6 Computer use (v0.4) | E20, E33–E34 | 13 | 68 |
-| M7 Remote (v0.5) | E36–E38 | 20 | 72 |
+| M7 Remote (v0.5) | E36–E38 | 23 | 81 |
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
 | Later | E47, E49 | 23 | 83 |
-| **Total planned** | **48** | **336** | **1056** |
+| **Total planned** | **48** | **339** | **1065** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.

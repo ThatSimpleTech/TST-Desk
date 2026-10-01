@@ -199,6 +199,7 @@ from .protocol import (
     DeleteApiKey,
     DeleteCredential,
     DeleteJob,
+    DeleteJobTemplate,
     DeleteMcpServer,
     DeleteSession,
     Deny,
@@ -215,6 +216,7 @@ from .protocol import (
     ForkFrom,
     GetCharter,
     GetInstructionStack,
+    GetSessionJobSource,
     GetSetupState,
     GetUsage,
     GrokExtension,
@@ -230,6 +232,8 @@ from .protocol import (
     JobList,
     JobRunEntry,
     JobRuns,
+    JobTemplateEntry,
+    JobTemplates,
     ListArtifacts,
     ListCommands,
     ListGrokExtensions,
@@ -237,6 +241,7 @@ from .protocol import (
     ListInstructions,
     ListJobRuns,
     ListJobs,
+    ListJobTemplates,
     ListMemory,
     ListPins,
     ListPolicyRules,
@@ -267,7 +272,9 @@ from .protocol import (
     RunVerify,
     SaveCharter,
     SaveJob,
+    SaveJobTemplate,
     SaveMemory,
+    SessionJobSource,
     SessionList,
     SessionSummary,
     SetApiKey,
@@ -338,6 +345,9 @@ from .remote_attach import (
     save_remote_attach,
 )
 from .router import TIER_NAMES, TierRouter
+from .scheduler.calendar_path import CalendarPathError, require_calendar_file
+from .scheduler.chain import require_chain
+from .scheduler.chat_source import SessionScheduleSource, session_schedule_source
 from .scheduler.edit import apply_job_edit
 from .scheduler.history import JobRun, list_runs
 from .scheduler.models import (
@@ -361,6 +371,14 @@ from .scheduler.runner import (
 )
 from .scheduler.runner import SendFn as NotifySendFn
 from .scheduler.store import delete_job, get_job, list_jobs, save_job
+from .scheduler.templates import (
+    TemplateDraft,
+    TemplateError,
+    TemplateView,
+    delete_template,
+    list_templates,
+    save_template,
+)
 from .scheduler.workspace import require_folder, resolve_workspace_name
 from .session import (
     TERMINAL_STATES,
@@ -673,6 +691,9 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         retries=job.retries,
         retry_delay=job.retry_delay,
         attempt=job.attempt,
+        then=job.then,
+        skip_calendar=job.skip_calendar,
+        skip_match=job.skip_match,
         last_run=job.last_run,
         last_status=job.last_status,
         last_summary=job.last_summary,
@@ -695,9 +716,34 @@ def _job_runs_event(job_id: str, runs: list[JobRun]) -> str:
                 session_id=run.session_id,
                 attempt=run.attempt,
                 attempts=run.attempts,
+                note=run.note,
             )
             for run in runs
         ],
+    ).model_dump_json()
+
+
+def _job_templates_event(views: list[TemplateView]) -> str:
+    """Wire shape for built-in and user templates. Built-ins are listed first."""
+    return JobTemplates(
+        templates=[
+            JobTemplateEntry(
+                id=view.id,
+                name=view.name,
+                builtin=view.builtin,
+                instruction=view.instruction,
+                cadence=view.cadence,
+                next_run=view.next_run,
+                deliver_to=view.deliver_to,
+                grace=view.grace,
+                retries=view.retries,
+                retry_delay=view.retry_delay,
+                preset=view.preset,
+                engine=view.engine,
+                workspace=view.workspace,
+            )
+            for view in views
+        ]
     ).model_dump_json()
 
 
@@ -2518,6 +2564,18 @@ class Daemon:
         if isinstance(msg, ListJobRuns):
             return await self._handle_list_job_runs(msg)
 
+        if isinstance(msg, ListJobTemplates):
+            return await self._handle_list_job_templates()
+
+        if isinstance(msg, SaveJobTemplate):
+            return await self._handle_save_job_template(msg)
+
+        if isinstance(msg, DeleteJobTemplate):
+            return await self._handle_delete_job_template(msg)
+
+        if isinstance(msg, GetSessionJobSource):
+            return await self._handle_get_session_job_source(msg)
+
         # ── Onboarding (TD-1101 first-run wizard) ────────────────────
         if isinstance(msg, GetSetupState):
             return (await self._setup_state_event()).model_dump_json()
@@ -3549,6 +3607,77 @@ class Daemon:
         runs = await asyncio.to_thread(list_runs, self.data_dir, job.id)
         return _job_runs_event(job.id, runs)
 
+    async def _handle_list_job_templates(self) -> str:
+        views = await asyncio.to_thread(list_templates, self.data_dir)
+        return _job_templates_event(views)
+
+    async def _handle_save_job_template(self, msg: SaveJobTemplate) -> str:
+        try:
+            views = await asyncio.to_thread(self._save_job_template, msg)
+        except JobValidationError as exc:
+            return build_error("template_invalid", str(exc))
+        return _job_templates_event(views)
+
+    async def _handle_delete_job_template(self, msg: DeleteJobTemplate) -> str:
+        try:
+            views = await asyncio.to_thread(delete_template, self.data_dir, msg.template_id)
+        except TemplateError as exc:
+            return build_error(exc.code, exc.message)
+        return _job_templates_event(views)
+
+    async def _handle_get_session_job_source(self, msg: GetSessionJobSource) -> str:
+        """Fill a draft from a chat. Does not save a job or log the text."""
+        source = await asyncio.to_thread(self._read_session_job_source, msg.session_id)
+        if source is None:
+            return build_error("session_not_found", f"Session {msg.session_id!r} not found")
+        return SessionJobSource(
+            session_id=source.session_id,
+            workspace=source.workspace,
+            preset=source.preset,
+            engine=source.engine,
+            instruction=source.instruction,
+        ).model_dump_json()
+
+    def _save_job_template(self, msg: SaveJobTemplate) -> list[TemplateView]:
+        return save_template(
+            self.data_dir,
+            TemplateDraft(
+                name=msg.name,
+                instruction=msg.instruction,
+                cadence=msg.cadence,
+                next_run=msg.next_run,
+                deliver_to=msg.deliver_to,
+                grace=msg.grace,
+                retries=msg.retries,
+                retry_delay=msg.retry_delay,
+                preset=msg.preset,
+                engine=msg.engine,
+                workspace=msg.workspace,
+            ),
+            self.config.presets,
+            self._known_workspaces(),
+        )
+
+    def _read_session_job_source(self, session_id: str) -> SessionScheduleSource | None:
+        """Sync on purpose: the handler calls this from ``asyncio.to_thread``."""
+        record = self._session_store.get(session_id)
+        if record is None:
+            stored_workspace = None
+            stored_preset = ""
+            stored_engine = None
+        else:
+            stored_workspace = record.workspace_path
+            stored_preset = record.preset
+            stored_engine = record.engine
+        return session_schedule_source(
+            self.data_dir,
+            session_id,
+            stored_workspace=stored_workspace,
+            stored_preset=stored_preset,
+            stored_engine=stored_engine,
+            live=self.session_registry.get(session_id),
+        )
+
     async def _handle_run_job(self, msg: RunJob) -> str:
         """Start one job and answer before the turn does (TD-3809).
 
@@ -3577,6 +3706,7 @@ class Daemon:
                 run_turn=self._scheduled_run_turn,
                 deliver=self._scheduler_deliver,
                 on_parked=self._arm_park_watch,
+                in_flight=self._in_flight,
             )
         except Exception:
             log.exception(
@@ -3597,26 +3727,31 @@ class Daemon:
         """Persist a draft or an update. Does not run the job."""
         existing = get_job(self.data_dir, msg.id) if msg.id else None
         if existing is not None:
-            return save_job(
-                self.data_dir,
-                apply_job_edit(
-                    existing,
-                    workspace=msg.workspace,
-                    instruction=msg.instruction,
-                    cadence=msg.cadence,
-                    next_run=msg.next_run,
-                    deliver_to=msg.deliver_to,
-                    paused=msg.paused,
-                    timezone=msg.timezone,
-                    known_workspaces=self._known_workspaces(),
-                    preset=msg.preset,
-                    engine=msg.engine,
-                    known_presets=self.config.presets,
-                    grace=msg.grace,
-                    retries=msg.retries,
-                    retry_delay=msg.retry_delay,
-                ),
+            job = apply_job_edit(
+                existing,
+                workspace=msg.workspace,
+                instruction=msg.instruction,
+                cadence=msg.cadence,
+                next_run=msg.next_run,
+                deliver_to=msg.deliver_to,
+                paused=msg.paused,
+                timezone=msg.timezone,
+                known_workspaces=self._known_workspaces(),
+                preset=msg.preset,
+                engine=msg.engine,
+                known_presets=self.config.presets,
+                grace=msg.grace,
+                retries=msg.retries,
+                retry_delay=msg.retry_delay,
+                then=msg.then,
+                skip_calendar=msg.skip_calendar,
+                skip_match=msg.skip_match,
             )
+            # Pause omits ``then``. Checking a link it did not send would
+            # refuse to pause a row whose file was hand-edited into a loop.
+            if msg.then is not None:
+                require_chain(list_jobs(self.data_dir), job)
+            return save_job(self.data_dir, job)
         job = validate_draft(
             JobDraft(
                 id=msg.id,
@@ -3632,6 +3767,9 @@ class Daemon:
                 grace=msg.grace,
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
+                then=msg.then,
+                skip_calendar=msg.skip_calendar,
+                skip_match=msg.skip_match,
             )
         )
         # Create only: an existing job whose folder moved must stay editable
@@ -3640,6 +3778,12 @@ class Daemon:
         # so a bad preset is the sentence the user sees.
         require_known_preset(job.preset, self.config.presets)
         require_folder(job.workspace)
+        if job.skip_calendar is not None:
+            try:
+                require_calendar_file(job.skip_calendar)
+            except CalendarPathError as exc:
+                raise JobValidationError(str(exc)) from None
+        require_chain(list_jobs(self.data_dir), job)
         return save_job(self.data_dir, job)
 
     def _known_workspaces(self) -> set[str]:
