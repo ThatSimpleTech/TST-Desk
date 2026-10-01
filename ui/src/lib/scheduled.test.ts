@@ -229,7 +229,7 @@ describe("workspaceSuggestions", () => {
 describe("scheduled store", () => {
 	it("lists jobs from job_list", () => {
 		refreshJobs();
-		expect(mocks.sent).toEqual([{ type: "list_jobs" }]);
+		expect(mocks.sent).toEqual([{ type: "list_jobs" }, { type: "list_job_templates" }]);
 		emit({
 			type: "job_list",
 			seq: 1,

@@ -1057,12 +1057,26 @@ class SaveJob(ClientMessage):
     # when retries is at least 1. Omitted on create with retries set is
     # that default. Ignored when retries is 0.
     retry_delay: str | int | None = None
+    # Another job's id to start once after this one ends ok (TD-3817).
+    # On an edit, None keeps the stored id and "" clears it. Omitted on
+    # create means no follow-on. A cycle is refused at save. The child's
+    # own schedule is not moved when it is started this way.
+    then: str | None = None
+    # Absolute path of a local .ics file (TD-3818). On an edit, None keeps
+    # the stored path and "" clears it. Omitted on create means no calendar.
+    # The file must exist when the path is set or changed. Pause omits it.
+    skip_calendar: str | None = None
+    # Case-insensitive substring, or several joined by "|". Blank matches
+    # every event. On an edit, None keeps the stored list and "" clears it
+    # back to every event. Omitted on create means every event.
+    skip_match: str | None = None
 
 
 class DeleteJob(ClientMessage):
     """Remove a scheduled job by id (TD-3805).
 
-    Also removes that job's run history (TD-3811). Acked with ``job_list``.
+    Also removes that job's run history (TD-3811) and clears ``then`` on
+    any job that pointed at this id (TD-3817). Acked with ``job_list``.
     Unknown id is a typed error. Does not run anything.
     """
 
@@ -1108,6 +1122,63 @@ class ListJobRuns(ClientMessage):
 
     type: Literal["list_job_runs"] = "list_job_runs"
     job_id: str = Field(min_length=1)
+
+
+class ListJobTemplates(ClientMessage):
+    """List built-in and user job templates (TD-3816).
+
+    Connection-scoped. The daemon answers with ``job_templates``. Does not
+    create a job or a template file.
+    """
+
+    type: Literal["list_job_templates"] = "list_job_templates"
+
+
+class SaveJobTemplate(ClientMessage):
+    """Store the current job form as a new template (TD-3816).
+
+    Create only. The daemon assigns the id, so a client cannot overwrite a
+    built-in. An empty instruction is allowed: the weekday digest ships that
+    way. Acked with ``job_templates``. Does not create a job. ``name`` is
+    not ``min_length`` here — an empty or secret-shaped name is refused by
+    the template check, whose message does not echo the text.
+    """
+
+    type: Literal["save_job_template"] = "save_job_template"
+    name: str = ""
+    instruction: str = ""
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    grace: str | int | None = None
+    retries: int | None = None
+    retry_delay: str | int | None = None
+    preset: str | None = None
+    engine: str | None = None
+    workspace: str | None = None
+
+
+class DeleteJobTemplate(ClientMessage):
+    """Remove a user job template (TD-3816).
+
+    Built-ins answer ``template_builtin`` and are not removed. Unknown id
+    is ``template_not_found``. Acked with ``job_templates``.
+    """
+
+    type: Literal["delete_job_template"] = "delete_job_template"
+    template_id: str = ""
+
+
+class GetSessionJobSource(ClientMessage):
+    """Read one chat into a job draft (TD-3816).
+
+    Connection-scoped. The daemon answers with ``session_job_source``.
+    ``session_list`` has no engine and no full first message, so this is
+    the read. It does not create a job. Unknown id is ``session_not_found``.
+    """
+
+    type: Literal["get_session_job_source"] = "get_session_job_source"
+    session_id: str = ""
 
 
 class Transcribe(ClientMessage):
@@ -2328,11 +2399,20 @@ class JobEntry(BaseModel):
     retries: int = 0
     retry_delay: int | None = None
     attempt: int = 0
+    # Another job's id, started once after this one ends ok (TD-3817).
+    # None means this job stands alone. The child's schedule is separate.
+    then: str | None = None
+    # Local .ics that can block a regular slot, and the match list
+    # (TD-3818). None means the slot is not blocked by a calendar.
+    skip_calendar: str | None = None
+    skip_match: str | None = None
     last_run: str | None = None
     # ``waiting`` is a run parked on an approval card (TD-3815). It is
     # not a failure and it is not retried. The same receipt becomes
     # ``ok`` or ``failed`` when that session finishes.
-    last_status: Literal["ok", "failed", "missed", "waiting"] | None = None
+    # ``skipped`` is a regular slot blocked by a local calendar (TD-3818).
+    # It is not ``missed`` (that one was late) and nothing is delivered.
+    last_status: Literal["ok", "failed", "missed", "waiting", "skipped"] | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
     # Not persisted. It mirrors the daemon's in-flight set, so a restart
@@ -2359,19 +2439,25 @@ class JobRunEntry(BaseModel):
     ``JobEntry.last_summary``. ``missed`` is a slot skipped for lateness,
     not a turn that failed (TD-3813). ``waiting`` is a run parked on an
     approval card; the same line is updated when that turn finishes
-    (TD-3815).
+    (TD-3815). ``skipped`` is a regular slot blocked by a local calendar
+    (TD-3818). Its summary is ``calendar``, not the event title.
     """
 
     started_at: str
     scheduled_for: str | None = None
-    trigger: Literal["schedule", "manual"]
-    status: Literal["ok", "failed", "missed", "waiting"]
+    # ``chained`` is a fire started because another job ended ok (TD-3817).
+    # ``scheduled_for`` is null, the same as Run now: this was not a slot.
+    trigger: Literal["schedule", "manual", "chained"]
+    status: Literal["ok", "failed", "missed", "waiting", "skipped"]
     summary: str | None = None
     session_id: str | None = None
     # 1-based try and the budget (retries + 1) when the job retries
     # (TD-3814). Null on a job that does not retry, and on Run now.
     attempt: int | None = None
     attempts: int | None = None
+    # Names the job whose ok run started a chained fire (TD-3817). Null
+    # on a scheduled slot and on Run now.
+    note: str | None = None
 
 
 class JobRuns(DaemonEvent):
@@ -2400,6 +2486,55 @@ class JobDraftReply(DaemonEvent):
     next_run: str | None = None
     deliver_to: Literal["window", "slack", "ntfy"] | None = None
     paused: bool = False
+
+
+class JobTemplateEntry(BaseModel):
+    """One template on ``job_templates`` (TD-3816).
+
+    ``cadence`` is the phrase, not cron. ``next_run`` is an ISO instant or
+    the rule ``tomorrow at H:MM``. ``builtin`` rows are not in the file.
+    """
+
+    id: str
+    name: str
+    builtin: bool = False
+    instruction: str = ""
+    cadence: str | None = None
+    next_run: str | None = None
+    deliver_to: Literal["window", "slack", "ntfy"]
+    grace: int | None = None
+    retries: int = 0
+    retry_delay: int | None = None
+    preset: str | None = None
+    engine: Literal["native", "grok"] | None = None
+    workspace: str | None = None
+
+
+class JobTemplates(DaemonEvent):
+    """Response to list / save / delete template (TD-3816).
+
+    Connection-scoped. Seq is fixed at 1 so it cannot rewind attach.
+    """
+
+    type: Literal["job_templates"] = "job_templates"
+    seq: int = 1
+    templates: list[JobTemplateEntry] = Field(default_factory=list)
+
+
+class SessionJobSource(DaemonEvent):
+    """Response to ``get_session_job_source`` (TD-3816).
+
+    Connection-scoped. Seq is fixed at 1. ``instruction`` is the earliest
+    remaining user message, and may be empty. This event does not save a job.
+    """
+
+    type: Literal["session_job_source"] = "session_job_source"
+    seq: int = 1
+    session_id: str
+    workspace: str
+    preset: str | None = None
+    engine: Literal["native", "grok"] | None = None
+    instruction: str = ""
 
 
 class Transcript(DaemonEvent):
@@ -2505,6 +2640,10 @@ ClientMessageT = Annotated[
     | ParseJob
     | RunJob
     | ListJobRuns
+    | ListJobTemplates
+    | SaveJobTemplate
+    | DeleteJobTemplate
+    | GetSessionJobSource
     | Transcribe,
     Field(discriminator="type"),
 ]
@@ -2562,6 +2701,8 @@ DaemonEventT = Annotated[
     | JobList
     | JobRuns
     | JobDraftReply
+    | JobTemplates
+    | SessionJobSource
     | GrokCommands
     | GrokPlan
     | GrokMode
@@ -2663,6 +2804,10 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "parse_job",
         "run_job",
         "list_job_runs",
+        "list_job_templates",
+        "save_job_template",
+        "delete_job_template",
+        "get_session_job_source",
         "transcribe",
     }
 )
@@ -2720,6 +2865,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "job_list",
         "job_runs",
         "job_draft",
+        "job_templates",
+        "session_job_source",
         "grok_commands",
         "grok_plan",
         "grok_mode",

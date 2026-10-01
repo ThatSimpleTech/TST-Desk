@@ -35,6 +35,7 @@
 		requestDelete,
 		requestMove,
 		requestRename,
+		scheduleThisChat,
 		setArchived,
 		setStarred,
 		toggleRowMenu
@@ -85,6 +86,7 @@
 		if (id === 'star') setStarred(row.sessionId, true);
 		else if (id === 'unstar') setStarred(row.sessionId, false);
 		else if (id === 'rename') requestRename(row.sessionId);
+		else if (id === 'schedule') scheduleThisChat(row.sessionId);
 		else if (id === 'archive') setArchived(row.sessionId, true);
 		else if (id === 'unarchive') setArchived(row.sessionId, false);
 		else if (id === 'move') requestMove(row.sessionId);
