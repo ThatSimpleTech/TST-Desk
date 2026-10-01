@@ -39,6 +39,7 @@
 	import EmptyState from './EmptyState.svelte';
 	import ScheduledCalendarField from './ScheduledCalendarField.svelte';
 	import ScheduledGraceField from './ScheduledGraceField.svelte';
+	import ScheduledMaxRunField from './ScheduledMaxRunField.svelte';
 	import ScheduledHistory from './ScheduledHistory.svelte';
 	import ScheduledRetriesField from './ScheduledRetriesField.svelte';
 	import ScheduledThenField from './ScheduledThenField.svelte';
@@ -215,6 +216,7 @@
 		</label>
 		<ScheduledGraceField />
 		<ScheduledRetriesField />
+		<ScheduledMaxRunField />
 		<ScheduledThenField />
 		<ScheduledCalendarField />
 		<ScheduledPinFields />

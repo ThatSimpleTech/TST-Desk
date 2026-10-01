@@ -1317,6 +1317,7 @@
     "grace": "2 hours",
     "retries": 2,
     "retry_delay": "10 minutes",
+    "max_run": "20 minutes",
     "then": "job-2",
     "skip_calendar": "/home/user/holidays.ics",
     "skip_match": "holiday|PTO|OOO"
@@ -1350,6 +1351,7 @@
     "grace": "2 hours",
     "retries": 1,
     "retry_delay": "10 minutes",
+    "max_run": "20 minutes",
     "preset": "vllm",
     "engine": "native",
     "workspace": "/home/user/project"
@@ -1381,6 +1383,7 @@
         "retries": 2,
         "retry_delay": 600,
         "attempt": 0,
+        "max_run": 1200,
         "then": "job-2",
         "skip_calendar": "/home/user/holidays.ics",
         "skip_match": "holiday|PTO|OOO",
@@ -1469,6 +1472,7 @@
         "grace": 7200,
         "retries": 1,
         "retry_delay": 600,
+        "max_run": null,
         "preset": null,
         "engine": null,
         "workspace": null
@@ -1484,6 +1488,7 @@
         "grace": null,
         "retries": 0,
         "retry_delay": null,
+        "max_run": 1200,
         "preset": "vllm",
         "engine": "native",
         "workspace": "/home/user/project"

@@ -924,6 +924,8 @@ FIXTURES = {
         # TD-3814: a count and a phrase, not nulls.
         retries=2,
         retry_delay="10 minutes",
+        # TD-3819: a phrase, not null — the job stores the seconds.
+        max_run="20 minutes",
         # TD-3817: a real follow-on id, not null.
         then="job-2",
         # TD-3818: a real local calendar, not nulls.
@@ -943,6 +945,7 @@ FIXTURES = {
         grace="2 hours",
         retries=1,
         retry_delay="10 minutes",
+        max_run="20 minutes",
         preset="vllm",
         engine="native",
         workspace="/home/user/project",
@@ -964,6 +967,7 @@ FIXTURES = {
                 retries=2,
                 retry_delay=600,
                 attempt=0,
+                max_run=1200,
                 then="job-2",
                 skip_calendar="/home/user/holidays.ics",
                 skip_match="holiday|PTO|OOO",
@@ -1038,6 +1042,7 @@ FIXTURES = {
                 grace=7200,
                 retries=1,
                 retry_delay=600,
+                max_run=None,
                 preset=None,
                 engine=None,
                 workspace=None,
@@ -1053,6 +1058,7 @@ FIXTURES = {
                 grace=None,
                 retries=0,
                 retry_delay=None,
+                max_run=1200,
                 preset="vllm",
                 engine="native",
                 workspace="/home/user/project",
