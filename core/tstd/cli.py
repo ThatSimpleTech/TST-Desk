@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -28,15 +29,12 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from .cli_approvals import prompt_approval
+from .config import DEFAULT_MAX_RUN_SECONDS
 from .logging import user_data_dir
 from .protocol import PROTOCOL_VERSION
 from .provider import RetryConfig, worst_case_retry_seconds
 from .ws import read_port_file
 
-# A healthy mock turn finishes in milliseconds; a live one should not
-# sit here forever. Long enough for a slow first token, short enough
-# that a hung provider fails the command.
-_TURN_TIMEOUT_SECS = 120.0
 _PORT_FILE_TIMEOUT_SECS = 15.0
 
 
@@ -75,6 +73,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="user message for this turn",
     )
+    run_p.add_argument(
+        "--timeout",
+        type=_positive_seconds,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "base seconds to wait for the turn "
+            "(default: scheduler.max_run_seconds); provider retries are added"
+        ),
+    )
     _add_data_dir(run_p)
     attach_p = sub.add_parser(
         "attach",
@@ -90,6 +98,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     _add_data_dir(attach_p)
     return parser.parse_args(argv)
+
+
+def _positive_seconds(raw: str) -> float:
+    """``--timeout`` value. Non-finite and non-positive are a usage error."""
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("timeout must be a number of seconds") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError("timeout must be a number of seconds greater than zero")
+    return value
 
 
 def hello_message(token: str) -> dict[str, Any]:
@@ -234,7 +253,13 @@ def _finish_assistant_line(printed: bool) -> None:
         sys.stdout.flush()
 
 
-async def _run_session(ws: Any, workspace: Path, message: str, data_dir: Path | None = None) -> int:
+async def _run_session(
+    ws: Any,
+    workspace: Path,
+    message: str,
+    data_dir: Path | None = None,
+    budget: float | None = None,
+) -> int:
     ack = await _recv_event(ws, 10.0)
     if ack.get("type") != "hello_ack":
         if ack.get("type") == "error":
@@ -258,24 +283,29 @@ async def _run_session(ws: Any, workspace: Path, message: str, data_dir: Path | 
         ws,
         {"type": "user_message", "session_id": session_id, "content": message},
     )
-    return await _stream_turn(ws, session_id, data_dir)
+    return await _stream_turn(ws, session_id, data_dir, budget)
 
 
-def _turn_timeout_secs(data_dir: Path | None = None) -> float:
+def _turn_timeout_secs(data_dir: Path | None = None, budget: float | None = None) -> float:
     """How long to wait on a turn, given what the daemon may spend retrying.
 
-    The base allowance covers a slow first token. On top of it goes the
-    daemon's whole retry budget: raising ``provider_retry.max_retries`` moves
-    the moment a turn can legitimately still be working, and a fixed deadline
-    here would report "timed out" while the daemon was mid-backoff — blaming
-    the turn for patience the config asked for. A config that cannot be read
-    falls back to the base allowance rather than failing the command.
+    The base is ``--timeout`` when the command passed one, otherwise
+    ``scheduler.max_run_seconds``. On top of it goes the daemon's whole
+    retry budget: raising ``provider_retry.max_retries`` moves the moment
+    a turn can legitimately still be working, and a fixed deadline here
+    would report "timed out" while the daemon was mid-backoff. A config
+    that cannot be read falls back to the base without that add-on rather
+    than failing the command.
     """
+    base = budget
     try:
         from .config import config_yaml_path, load_config
 
-        retry = load_config(config_yaml_path(data_dir)).provider_retry
-        return _TURN_TIMEOUT_SECS + worst_case_retry_seconds(
+        loaded = load_config(config_yaml_path(data_dir))
+        if base is None:
+            base = float(loaded.scheduler.max_run_seconds)
+        retry = loaded.provider_retry
+        return base + worst_case_retry_seconds(
             RetryConfig(
                 max_retries=retry.max_retries,
                 initial_delay=retry.initial_delay,
@@ -283,12 +313,19 @@ def _turn_timeout_secs(data_dir: Path | None = None) -> float:
             )
         )
     except Exception:  # a bad config must not break the command outright
-        return _TURN_TIMEOUT_SECS
+        if base is None:
+            base = float(DEFAULT_MAX_RUN_SECONDS)
+        return base
 
 
-async def _stream_turn(ws: Any, session_id: str, data_dir: Path | None = None) -> int:
+async def _stream_turn(
+    ws: Any,
+    session_id: str,
+    data_dir: Path | None = None,
+    budget: float | None = None,
+) -> int:
     printed = False
-    deadline = time.monotonic() + _turn_timeout_secs(data_dir)
+    deadline = time.monotonic() + _turn_timeout_secs(data_dir, budget)
     while time.monotonic() < deadline:
         remaining = max(0.1, deadline - time.monotonic())
         try:
@@ -324,13 +361,19 @@ async def _stream_turn(ws: Any, session_id: str, data_dir: Path | None = None) -
     return 1
 
 
-async def run_turn(workspace: Path, message: str, data_dir: Path) -> int:
+async def run_turn(
+    workspace: Path,
+    message: str,
+    data_dir: Path,
+    *,
+    budget: float | None = None,
+) -> int:
     """Connect, open the workspace, send one turn, print the reply."""
     info = await resolve_daemon(data_dir)
     try:
         async with connect(f"ws://127.0.0.1:{info['port']}") as ws:
             await _send(ws, hello_message(str(info["token"])))
-            return await _run_session(ws, workspace, message, data_dir)
+            return await _run_session(ws, workspace, message, data_dir, budget)
     except OSError as e:
         raise CliError(f"could not connect to daemon: {e}") from e
     except TimeoutError as e:
@@ -429,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "run":
             workspace = args.workspace.expanduser().resolve()
-            return asyncio.run(run_turn(workspace, args.message, data_dir))
+            return asyncio.run(run_turn(workspace, args.message, data_dir, budget=args.timeout))
         if args.command == "attach":
             return asyncio.run(attach_session(args.session_id, data_dir, args.from_seq))
         print(f"unknown command: {args.command}", file=sys.stderr)

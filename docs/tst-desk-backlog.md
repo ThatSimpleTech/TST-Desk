@@ -6429,6 +6429,37 @@ files, vitest 1452, svelte-check 721 files 0 errors 0 warnings.
 
 ---
 
+### TD-3819 — Scheduled runs get a realistic, configurable time limit
+**Size:** 2 · **Depends on:** TD-3815
+
+**Acceptance criteria:**
+- [x] `scheduler.max_run_seconds` (default 900) replaces the 120 second
+      waiter for a scheduled turn. It is documented in
+      `docs/configuration.md` and shipped in `config.yaml`. A job may
+      set `max_run` as a duration phrase or seconds, from 1 to 60
+      minutes, and that limit wins. On an edit, omitted keeps it and
+      `""` clears it so the job uses the config. A template may carry it
+- [x] When the limit expires, the turn is cancelled and the receipt
+      says `stopped after N minutes (max run time)`. That reason is not
+      transient, so TD-3814 does not retry it
+- [x] `tst run` takes `--timeout` in seconds. The default base is
+      `scheduler.max_run_seconds`. The provider retry allowance is still
+      added when the config can be read
+- [x] The job form has a Max run time select: Default, 5, 10, 15, 30,
+      and 60 min
+
+Done (2026-09-29): a scheduled turn runs until its own limit, or until
+`scheduler.max_run_seconds` (15 minutes) when the job does not set one.
+Hitting the limit cancels the session and records a max-run stop, which
+is not retried. `tst run --timeout` replaces the base for one command
+and still leaves room for provider retries. The pane's select sends the
+same duration phrases grace already uses. Class B entry in DECISIONS.md.
+
+Suite: 4129 passed / 8 skipped, ruff + `mypy --strict` clean over 182
+files, vitest 1456, svelte-check 724 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone

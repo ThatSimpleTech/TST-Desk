@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import cast
 
 from .grace import GraceError, parse_grace
+from .limit import MaxRunError, parse_max_run
 from .models import (
     DeliverTo,
     JobError,
@@ -62,6 +63,7 @@ class TemplateDraft:
     grace: str | int | None = None
     retries: str | int | None = None
     retry_delay: str | int | None = None
+    max_run: str | int | None = None
     preset: str | None = None
     engine: str | None = None
     workspace: str | None = None
@@ -81,6 +83,7 @@ class TemplateView:
     grace: int | None
     retries: int
     retry_delay: int | None
+    max_run: int | None
     preset: str | None
     engine: EngineKind | None
     workspace: str | None
@@ -173,6 +176,10 @@ def validate_template(
         delay = parse_retry_delay(draft.retry_delay)
     except RetryError as exc:
         raise JobValidationError(f"Retry delay: {exc}") from None
+    try:
+        max_run = parse_max_run(draft.max_run)
+    except MaxRunError as exc:
+        raise JobValidationError(f"Max run: {exc}") from None
     if retries > 0 and delay is None:
         delay = DEFAULT_RETRY_DELAY_SECONDS
     elif retries == 0:
@@ -203,6 +210,7 @@ def validate_template(
         grace=grace,
         retries=retries,
         retry_delay=delay,
+        max_run=max_run,
         preset=preset,
         engine=engine,
         workspace=workspace,

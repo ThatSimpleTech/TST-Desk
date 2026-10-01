@@ -11813,3 +11813,44 @@ Cancelling local prep the way a socket read is cancelled. `close()`
 on a leader the OS refused to kill. `Popen.poll` as the only death
 check on Linux, which races the watcher's `waitpid`. Treating
 `ChildProcessError` as an unreaped exit.
+
+## TD-3819 — Scheduled runs get a configurable time limit
+
+**Decision:** `scheduler.max_run_seconds` (default 900, greater than 0
+and at most 3600) is the base wait for a scheduled turn and for
+`tst run`. A job may set `max_run`, stored as seconds from 60 to 3600,
+as a duration phrase or an int. None means the config. On an edit,
+omitted keeps the stored limit and `""` clears it, the same as grace.
+Templates may store it. Built-ins leave it unset. The budget rides on
+the task-local `ScheduledPin` so `TurnFn` stays `(workspace, instruction)`.
+
+When the budget expires, the runner cancels the session through the
+registry and records `stopped after N minutes (max run time)` with
+error code `max_run`. The receipt rounds the budget up to whole
+minutes, minimum 1. The retry table marks that code and that phrase
+non-transient, ahead of the "timed out" rule. A provider `timeout`
+stays transient. The old `timed out waiting for turn_complete` receipt
+is no longer what the runner writes.
+
+`tst run --timeout` replaces the base for one command. The provider
+retry allowance is still added when the config can be read. An
+unreadable config falls back to 900 with no retry add-on. The flag
+must be finite and greater than 0. There is no protocol version bump:
+`max_run` is an additive field on `SaveJob`, `JobEntry`,
+`SaveJobTemplate`, and `JobTemplateEntry`. Run now uses the same limit
+because it is the same turn. It still does not retry.
+
+**Rationale:** A research job makes many tool calls and needs several
+minutes. Stopping the waiter at 120 seconds left the turn running and
+recorded a timeout, which the retry table then tried again. Retrying a
+job that is simply too long burns the slot the same way. Cancelling
+the session frees it. One config key covers scheduled runs and
+`tst run`, and a per-job override covers the long ones without raising
+the default for everything else.
+
+**Rejected:** Leaving the turn running after the waiter gives up.
+Treating the stop as a transient timeout. A separate CLI config key.
+Widening `TurnFn`. A protocol version bump. A config minimum of 60
+seconds, which would make a short test budget impossible; the per-job
+bound stays 1-60 minutes, and a config under a minute still says
+"1 minute" on the receipt.

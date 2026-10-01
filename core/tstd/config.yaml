@@ -259,6 +259,15 @@ provider_retry:
   initial_delay: 1.0
   max_delay: 60.0
 
+# How long one scheduled turn may run (TD-3819), and the base wait for
+# `tst run`. A research job makes many tool calls and needs minutes;
+# 120 seconds recorded that as a timeout and then retried it. 900 is
+# 15 minutes. A job can set its own limit from 1 to 60 minutes.
+# `tst run --timeout` replaces this base for one command. The provider
+# retry allowance is still added on top.
+scheduler:
+  max_run_seconds: 900
+
 # Desktop computer-use (TD-3301). Empty command is mock-only — no sidecar,
 # no pointer motion. A non-empty command is argv for mcp/tst-cu-mcp over
 # stdio (no socket). The daemon owns the child.

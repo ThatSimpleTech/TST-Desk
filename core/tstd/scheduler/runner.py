@@ -22,6 +22,7 @@ from ..session import Session
 from .calendar import begin_tick, consider_calendar, note_unreadable, skip_for_calendar
 from .history import append_run
 from .late import skip_if_late
+from .limit import MAX_RUN_ERROR_CODE, run_limit_seconds, stop_summary
 from .models import DeliverTo, Job
 from .park import (
     ParkHook,
@@ -41,8 +42,6 @@ from .schedule import arm_cadence_job, as_utc, due_jobs, record_run
 from .store import get_job, list_jobs, save_job
 
 log = get_logger("tstd.scheduler.runner")
-
-_TURN_TIMEOUT_SECS = 120.0
 
 
 @dataclass(frozen=True)
@@ -561,9 +560,28 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
             f"session {session_id} was not registered", ok=False, session_id=session_id
         )
     await session.add_user_message(message)
-    # Read at call time so a test can shorten the budget. An approval
-    # returns before the budget; anything else still waits it out.
-    if await await_turn_or_approval(session, _TURN_TIMEOUT_SECS):
+    # The job's own limit wins. Otherwise the config. An approval returns
+    # before the budget; hitting it cancels the turn instead of leaving
+    # the loop running after the waiter has given up.
+    budget = run_limit_seconds(
+        current_scheduled_pin().max_run,
+        float(host.config.scheduler.max_run_seconds),
+    )
+    try:
+        parked = await await_turn_or_approval(session, budget)
+    except TimeoutError:
+        await _stop_over_limit(host, session_id, session)
+        log.info(
+            "scheduled run stopped at max run time",
+            extra={"extra_fields": {"session_id": session_id, "limit_seconds": budget}},
+        )
+        return TurnResult(
+            stop_summary(budget),
+            ok=False,
+            session_id=session_id,
+            error_code=MAX_RUN_ERROR_CODE,
+        )
+    if parked:
         return TurnResult(
             pending_tool_summary(session),
             ok=True,
@@ -572,6 +590,20 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
         )
     summary, failed, code = turn_outcome(session)
     return TurnResult(summary, ok=not failed, session_id=session_id, error_code=code)
+
+
+async def _stop_over_limit(host: SessionHost, session_id: str, session: Session) -> None:
+    """Cancel the session the limit cut, including its loop task.
+
+    ``session.cancel`` alone sets the flag. The runner task is what is
+    still inside the provider call, so the registry cancel is the one
+    that actually stops it. A host with no registry still flags the session.
+    """
+    cancel = getattr(host.session_registry, "cancel", None)
+    if cancel is not None:
+        await cancel(session_id)
+        return
+    await session.cancel()
 
 
 def turn_summary(session: Session) -> str:

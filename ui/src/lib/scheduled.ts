@@ -6,6 +6,7 @@
 // schedule.
 
 import type { JobEntry, JobRunEntry, SaveJob } from "./protocol";
+import { durationPhrase, maxRunDraftValue } from "./scheduled-max-run";
 
 export type DeliverTo = JobEntry["deliver_to"];
 
@@ -30,6 +31,8 @@ export interface JobDraftFields {
 	skip_calendar: string;
 	/** Substrings joined by `|`. `""` matches every event. */
 	skip_match: string;
+	/** Phrase sent as `max_run`, or `""` for the configured limit (TD-3819). */
+	max_run: string;
 }
 
 /** If late. `seconds` is what the daemon stores; the wire value is the phrase. */
@@ -57,32 +60,12 @@ export function retriesDraftValue(count: number | null | undefined): string {
 	return String(count);
 }
 
-const _MINUTE = 60;
-const _HOUR = 3600;
-const _DAY = 86400;
-
 /** Draft value for a stored grace. Unknown counts still round-trip on Save. */
 export function graceDraftValue(seconds: number | null | undefined): string {
 	if (seconds == null) return "";
 	const known = GRACE_CHOICES.find((choice) => choice.seconds === seconds);
 	if (known !== undefined) return known.value;
-	return graceWire(seconds);
-}
-
-function graceWire(seconds: number): string {
-	if (seconds > 0 && seconds % _DAY === 0) {
-		const count = seconds / _DAY;
-		return `${count} ${count === 1 ? "day" : "days"}`;
-	}
-	if (seconds > 0 && seconds % _HOUR === 0) {
-		const count = seconds / _HOUR;
-		return `${count} ${count === 1 ? "hour" : "hours"}`;
-	}
-	if (seconds > 0 && seconds % _MINUTE === 0) {
-		const count = seconds / _MINUTE;
-		return `${count} ${count === 1 ? "minute" : "minutes"}`;
-	}
-	return String(seconds);
+	return durationPhrase(seconds);
 }
 
 export function jobsEmptyCopy(): string {
@@ -104,6 +87,7 @@ export function emptyDraft(workspace: string | null): JobDraftFields {
 		then: "",
 		skip_calendar: "",
 		skip_match: "",
+		max_run: "",
 	};
 }
 
@@ -345,6 +329,9 @@ export function saveFromDraft(
 	if (calendar !== "") payload.skip_calendar = calendar;
 	const match = draft.skip_match.trim();
 	if (match !== "") payload.skip_match = match;
+	// Blank is the configured limit, the same as omitting the field on create.
+	const maxRun = draft.max_run.trim();
+	if (maxRun !== "") payload.max_run = maxRun;
 	return payload;
 }
 
@@ -416,6 +403,7 @@ export function draftFromJob(job: JobEntry): JobDraftFields {
 		then: job.then ?? "",
 		skip_calendar: job.skip_calendar ?? "",
 		skip_match: job.skip_match ?? "",
+		max_run: maxRunDraftValue(job.max_run),
 	};
 }
 
@@ -483,5 +471,8 @@ export function saveFromEdit(
 	// stored path, which is Pause, not Save.
 	payload.skip_calendar = draft.skip_calendar.trim();
 	payload.skip_match = draft.skip_match.trim();
+	// Always sent. `""` clears a limit back to the config; omitting it
+	// would keep the stored one, which is Pause, not Save.
+	payload.max_run = draft.max_run.trim();
 	return payload;
 }

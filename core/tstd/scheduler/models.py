@@ -26,6 +26,7 @@ from pydantic import (
 from ..logging import redact_secrets
 from .calendar_path import CalendarPathError, normalize_skip_calendar, normalize_skip_match
 from .grace import GraceError, parse_grace
+from .limit import MaxRunError, parse_max_run
 from .phrases import expand_alias, phrase_to_cron
 from .pin import normalize_engine, normalize_preset
 from .retry import (
@@ -71,6 +72,7 @@ _FIELD_LABELS = {
     "grace": "If late",
     "retries": "Retries",
     "retry_delay": "Retry delay",
+    "max_run": "Max run",
     "then": "Then",
     "skip_calendar": "Skip calendar",
     "skip_match": "Only events matching",
@@ -116,6 +118,9 @@ class JobDraft(BaseModel):
     # 10-minute default once retries is at least 1.
     retries: int | None = None
     retry_delay: str | int | None = None
+    # Phrase ("20 minutes") or seconds. Blank uses the config limit.
+    # ``Job`` stores seconds, from 1 to 60 minutes (TD-3819).
+    max_run: str | int | None = None
     # Another job's id, run once after this one ends ok (TD-3817). Blank
     # is no follow-on. The cycle check needs the other jobs, so it is not
     # done here.
@@ -165,6 +170,9 @@ class Job(BaseModel):
     # delay becomes 10 minutes in the model validator.
     retries: int = 0
     retry_delay: int | None = None
+    # Seconds this job's turn may run (TD-3819). None uses
+    # ``scheduler.max_run_seconds``. The phrase is not stored.
+    max_run: int | None = None
     # Tries already used for the slot in progress. 0 means the next fire
     # is the regular slot (grace applies). Above 0, ``next_run`` is the
     # retry instant and ``resume_at`` is the regular slot to restore.
@@ -272,6 +280,16 @@ class Job(BaseModel):
         try:
             return parse_retry_delay(value)
         except RetryError as exc:
+            raise ValueError(str(exc)) from None
+
+    @field_validator("max_run", mode="before")
+    @classmethod
+    def _max_run_seconds(cls, value: object) -> int | None:
+        # The annotation is the stored seconds. The phrase is accepted
+        # here so a hand-edited jobs.json and a save both land as one int.
+        try:
+            return parse_max_run(value)
+        except MaxRunError as exc:
             raise ValueError(str(exc)) from None
 
     @field_validator("attempt", mode="before")
@@ -559,6 +577,7 @@ def validate_draft(draft: JobDraft) -> Job:
             grace=cast(int | None, draft.grace),
             retries=0 if draft.retries is None else draft.retries,
             retry_delay=cast(int | None, draft.retry_delay),
+            max_run=cast(int | None, draft.max_run),
             then=draft.then,
             skip_calendar=draft.skip_calendar,
             skip_match=draft.skip_match,

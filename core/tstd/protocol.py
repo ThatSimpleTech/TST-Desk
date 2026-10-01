@@ -1057,6 +1057,11 @@ class SaveJob(ClientMessage):
     # when retries is at least 1. Omitted on create with retries set is
     # that default. Ignored when retries is 0.
     retry_delay: str | int | None = None
+    # How long this job's turn may run (TD-3819). A phrase ("20 minutes")
+    # or a number of seconds, stored as seconds, from 1 to 60 minutes.
+    # On an edit, None keeps the stored limit and "" clears it so the
+    # job uses scheduler.max_run_seconds. Omitted on create means that too.
+    max_run: str | int | None = None
     # Another job's id to start once after this one ends ok (TD-3817).
     # On an edit, None keeps the stored id and "" clears it. Omitted on
     # create means no follow-on. A cycle is refused at save. The child's
@@ -1153,6 +1158,8 @@ class SaveJobTemplate(ClientMessage):
     grace: str | int | None = None
     retries: int | None = None
     retry_delay: str | int | None = None
+    # Same phrases as a job. Omitted means the config limit (TD-3819).
+    max_run: str | int | None = None
     preset: str | None = None
     engine: str | None = None
     workspace: str | None = None
@@ -2399,6 +2406,9 @@ class JobEntry(BaseModel):
     retries: int = 0
     retry_delay: int | None = None
     attempt: int = 0
+    # Seconds this job's turn may run. None uses scheduler.max_run_seconds
+    # (TD-3819). The phrase is not on this event.
+    max_run: int | None = None
     # Another job's id, started once after this one ends ok (TD-3817).
     # None means this job stands alone. The child's schedule is separate.
     then: str | None = None
@@ -2505,6 +2515,8 @@ class JobTemplateEntry(BaseModel):
     grace: int | None = None
     retries: int = 0
     retry_delay: int | None = None
+    # Seconds, or null to use scheduler.max_run_seconds (TD-3819).
+    max_run: int | None = None
     preset: str | None = None
     engine: Literal["native", "grok"] | None = None
     workspace: str | None = None

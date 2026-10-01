@@ -345,6 +345,10 @@ class SteeringConfig(BaseModel):
 
 DEFAULT_LOG_MAX_EVENTS = 10000
 
+# 15 minutes. A research turn makes many tool calls; 120 seconds recorded
+# it as a timeout, and the retry table then tried the same job again.
+DEFAULT_MAX_RUN_SECONDS = 900
+
 
 class ProviderRetryConfig(BaseModel):
     """How long to keep trying a retryable provider failure (429, 5xx).
@@ -365,6 +369,19 @@ class ProviderRetryConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=20)
     initial_delay: float = Field(default=1.0, gt=0)
     max_delay: float = Field(default=60.0, gt=0)
+
+
+class SchedulerConfig(BaseModel):
+    """How long one turn may run before it is stopped (TD-3819).
+
+    Scheduled runs and ``tst run`` both start from this. A job may name
+    its own limit, from 1 to 60 minutes. ``tst run --timeout`` replaces
+    this base for one command and still adds the provider retry allowance.
+    Above an hour is refused: an unattended slot that needs longer is the
+    wrong shape, and the receipt is in minutes of this budget.
+    """
+
+    max_run_seconds: float = Field(default=DEFAULT_MAX_RUN_SECONDS, gt=0, le=60 * 60)
 
 
 class SessionConfig(BaseModel):
@@ -777,6 +794,7 @@ class ModelConfig(BaseModel):
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
+    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     judgments: JudgmentsConfig = Field(default_factory=JudgmentsConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
@@ -956,6 +974,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "project_context",
         "steering",
         "session",
+        "scheduler",
         "computer_use",
         "remote",
         "notify",

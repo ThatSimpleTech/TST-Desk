@@ -1,11 +1,13 @@
 """Park a scheduled run that is waiting on an approval card (TD-3815).
 
-The runner used to sit in ``_TURN_TIMEOUT_SECS`` until the turn ended,
-then record a timeout. That string is transient, so the next try opened
-another session onto the same card. Parking returns as soon as the
-session is ``awaiting_approval``, advances the slot the way a finished
-fire does, and lets one background watch settle the same history line
-when the user answers — or a restart, if the process is gone first.
+The runner used to sit until the turn budget ended, then record a
+timeout. That string is transient, so the next try opened another
+session onto the same card. Parking returns as soon as the session is
+``awaiting_approval``, advances the slot the way a finished fire does,
+and lets one background watch settle the same history line when the
+user answers — or a restart, if the process is gone first. A budget
+that does expire is a max-run stop: the runner cancels the turn and
+does not retry it.
 
 The watch is cancelled on shutdown without settling. The row stays
 parked on disk so the next start can close it. Cancelling the session
@@ -68,11 +70,10 @@ async def await_turn_or_approval(session: Session, budget: float) -> bool:
     """True when the session is parked on an approval card.
 
     A finished turn returns False so the caller reads the outcome.
-    ``budget`` is the runner's turn budget, passed in so a test can
-    shorten it without this module binding the constant at import.
-    Exceeding it raises the same ``TimeoutError`` the runner already
-    maps to a transient retry. A turn that never asks for approval
-    still uses that budget.
+    ``budget`` is the runner's turn budget. Exceeding it raises
+    ``TimeoutError``. The runner cancels that turn and records a
+    max-run stop, which is not a transient retry. A turn that never
+    asks for approval still uses that budget.
     """
     deadline = time.monotonic() + budget
     seen = session.event_log.last_seq

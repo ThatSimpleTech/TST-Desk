@@ -393,6 +393,16 @@ minute. `max_retries: 8` is roughly three minutes of patience.
 | `initial_delay` | float > 0 | `1.0` | Base delay before the first retry, in seconds. Each subsequent wait doubles. |
 | `max_delay` | float > 0 | `60.0` | Ceiling on any single wait, in seconds. Bounds the worst case when `max_retries` is high. |
 
+### `scheduler`
+
+How long one scheduled turn may run before the daemon cancels it (TD-3819). The same number is the base wait for `tst run`. A job can set its own limit, from 1 to 60 minutes, on the Scheduled form. When the limit expires the turn is cancelled and the receipt says `stopped after N minutes (max run time)`. That reason is not retried.
+
+`tst run --timeout SECONDS` replaces this base for one command. The provider retry allowance is still added when the config can be read, the same as before.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_run_seconds` | number > 0, at most 3600 | `900` | Seconds one turn may run when the job does not set its own limit. 900 is 15 minutes. The receipt rounds the budget up to whole minutes. |
+
 ### `remote`
 
 Opt-in bind on a Tailscale address (TD-3601). Empty is off: the daemon
@@ -529,6 +539,8 @@ provider_retry:
   max_retries: 3
   initial_delay: 1.0
   max_delay: 60.0
+scheduler:
+  max_run_seconds: 900
 computer_use:
   command: ""
   browser: mock

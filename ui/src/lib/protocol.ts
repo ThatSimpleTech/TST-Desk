@@ -645,6 +645,11 @@ export interface SaveJob extends ClientMessage {
    *  edit, omitted keeps the stored delay and `""` means the 10-minute
    *  default when `retries` is at least 1. Ignored when retries is 0. */
   retry_delay?: string | number | null;
+  /** How long this job's turn may run (TD-3819). A phrase ("20 minutes")
+   *  or seconds, stored as seconds, from 1 to 60 minutes. On an edit,
+   *  omitted keeps the stored limit and `""` clears it so the job uses
+   *  `scheduler.max_run_seconds`. Omitted on create means that too. */
+  max_run?: string | number | null;
   /** Another job's id, started once after this one ends ok (TD-3817).
    *  On an edit, omitted keeps the stored id and `""` clears it. Omitted
    *  on create means no follow-on. A cycle is refused at save. */
@@ -702,6 +707,8 @@ export interface SaveJobTemplate extends ClientMessage {
   grace?: string | number | null;
   retries?: number | null;
   retry_delay?: string | number | null;
+  /** Same phrases as a job. Omitted means the configured limit (TD-3819). */
+  max_run?: string | number | null;
   preset?: string | null;
   engine?: "" | "native" | "grok" | null;
   workspace?: string | null;
@@ -1556,6 +1563,8 @@ export interface JobEntry {
   /** Tries already used for the slot in progress. Above 0, a retry is waiting
    *  and the window does not notify until the slot finishes. */
   attempt?: number | null;
+  /** Seconds this job's turn may run. Absent or null uses `scheduler.max_run_seconds` (TD-3819). */
+  max_run?: number | null;
   /** Another job's id, started once after this one ends ok (TD-3817). Null means none. */
   then?: string | null;
   /** Local .ics that can block a regular slot (TD-3818). Null means none. */
@@ -1697,6 +1706,8 @@ export interface JobTemplateEntry {
   grace: number | null;
   retries: number;
   retry_delay: number | null;
+  /** Seconds, or null to use `scheduler.max_run_seconds` (TD-3819). */
+  max_run?: number | null;
   preset: string | null;
   engine: "native" | "grok" | null;
   workspace: string | null;

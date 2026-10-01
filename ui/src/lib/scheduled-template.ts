@@ -18,6 +18,7 @@ import {
 	retriesDraftValue,
 	type JobDraftFields,
 } from "./scheduled";
+import { maxRunDraftValue } from "./scheduled-max-run";
 
 export interface TemplateFlags {
 	templateSavePending: boolean;
@@ -79,6 +80,7 @@ export function draftFromTemplate(
 		engine: template.engine ?? "",
 		grace: graceDraftValue(template.grace),
 		retries: retriesDraftValue(template.retries),
+		max_run: maxRunDraftValue(template.max_run),
 		// A template does not name a follow-on or a calendar. Leaving the
 		// previous choice would create a link, or skip days, the template
 		// never had.
@@ -127,6 +129,8 @@ export function saveTemplateFromDraft(name: string, draft: JobDraftFields): Save
 		payload.retries = retries;
 		payload.retry_delay = RETRY_DELAY;
 	}
+	const maxRun = draft.max_run.trim();
+	if (maxRun !== "") payload.max_run = maxRun;
 	return payload;
 }
 
