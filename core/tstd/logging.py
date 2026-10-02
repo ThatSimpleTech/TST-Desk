@@ -28,6 +28,10 @@ SECRET_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"(sk-[a-zA-Z0-9][a-zA-Z0-9_-]{15,})"),
     re.compile(r"(github_pat_[a-zA-Z0-9_]{36,})"),  # GitHub fine-grained PAT
     re.compile(r"(ghp_[a-zA-Z0-9]{36,})"),  # GitHub classic PAT
+    re.compile(r"(ghu_[A-Za-z0-9_]{20,})"),  # GitHub user-to-server token
+    re.compile(r"(ghr_[A-Za-z0-9_]{20,})"),  # GitHub refresh token
+    re.compile(r"(gho_[A-Za-z0-9_]{20,})"),  # GitHub OAuth token
+    re.compile(r"(ghs_[A-Za-z0-9_]{20,})"),  # GitHub server token
     re.compile(r"(AKIA[0-9A-Z]{16})"),  # AWS access key
     re.compile(r"(-----BEGIN\s+(RSA |EC |DSA |OPENSSH )?PRIVATE KEY)"),  # Private key
 ]

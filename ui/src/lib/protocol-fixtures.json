@@ -111,6 +111,12 @@
     "type": "test_email",
     "to": "owner@example.com"
   },
+  "github_connect": {
+    "type": "github_connect"
+  },
+  "github_disconnect": {
+    "type": "github_disconnect"
+  },
   "set_cu_indicators": {
     "type": "set_cu_indicators",
     "glow": true,
@@ -1174,6 +1180,15 @@
       "username": "",
       "from_address": "",
       "password_stored": false
+    },
+    "github": {
+      "enabled": false,
+      "connected": false,
+      "phase": "off",
+      "user_code": "",
+      "verification_uri": "",
+      "login": null,
+      "message": ""
     }
   },
   "pairing_code": {
@@ -1812,6 +1827,17 @@
     "ok": false,
     "error_class": "SMTPException",
     "message": "auth failed"
+  },
+  "github_status": {
+    "type": "github_status",
+    "seq": 1,
+    "enabled": true,
+    "connected": false,
+    "phase": "pending",
+    "user_code": "ABCD-1234",
+    "verification_uri": "https://example.test/login/device",
+    "login": null,
+    "message": ""
   },
   "grok_extensions": {
     "type": "grok_extensions",

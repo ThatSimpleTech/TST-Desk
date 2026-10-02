@@ -47,7 +47,14 @@ DEFAULT_PRESET = "tst-default"
 # Implicit keychain account for an unbound remote tier (TD-1717).
 DEFAULT_CREDENTIAL_ID = "openrouter"
 RESERVED_CREDENTIAL_IDS = frozenset(
-    {"slack-webhook", "ntfy-topic", "discord-webhook", "telegram-bot", "smtp-password"}
+    {
+        "slack-webhook",
+        "ntfy-topic",
+        "discord-webhook",
+        "telegram-bot",
+        "smtp-password",
+        "github-oauth",
+    }
 )
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # A second OpenRouter key slugifies to openrouter-2 (TD-1718). Same host.
@@ -641,6 +648,53 @@ class EmailNotifyConfig(BaseModel):
         return value.strip()
 
 
+def _github_host(value: str) -> str:
+    """Bare hostname from config. Empty stays empty so the connector stays off."""
+    cleaned = value.strip().lower()
+    if not cleaned:
+        return ""
+    if "://" in cleaned or "/" in cleaned or "@" in cleaned or any(ch.isspace() for ch in cleaned):
+        raise ValueError("connectors.github host must be a bare hostname")
+    return cleaned
+
+
+class GithubConnectorConfig(BaseModel):
+    """GitHub App device flow. Off until a client id and both hosts are set.
+
+    Host defaults are empty here. The shipped ``config.yaml`` names the
+    public hosts. Tokens are not fields of this model (TD-4852).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str = ""
+    api_host: str = ""
+    web_host: str = ""
+    timeout_seconds: float = Field(default=20.0, gt=0)
+
+    @field_validator("client_id")
+    @classmethod
+    def _strip_client_id(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("api_host", "web_host")
+    @classmethod
+    def _host(cls, value: str) -> str:
+        return _github_host(value)
+
+    def enabled(self) -> bool:
+        """False when the user has not named an App or a host."""
+        return bool(self.client_id and self.api_host and self.web_host)
+
+
+class ConnectorsConfig(BaseModel):
+    """Outbound account connectors. Each one is off until configured."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    github: GithubConnectorConfig = Field(default_factory=GithubConnectorConfig)
+
+
 class NotifyConfig(BaseModel):
     """Outbound notification channels. Slack is the default; no gateway."""
 
@@ -970,6 +1024,7 @@ class ModelConfig(BaseModel):
     judgments: JudgmentsConfig = Field(default_factory=JudgmentsConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
+    connectors: ConnectorsConfig = Field(default_factory=ConnectorsConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
     engine: EngineConfig = Field(default_factory=EngineConfig)

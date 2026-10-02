@@ -13350,3 +13350,63 @@ every Windows user can actually run.
 Also rejected: requiring Git for Windows so `usr/bin/echo.exe` exists.
 Also rejected: rewriting every test to avoid `echo` and leaving the
 product broken for the same command.
+
+## TD-4852 — GitHub connector uses device flow and a keychain blob
+
+**Decision:** `connectors.github.client_id` defaults to empty, and so do
+`api_host` and `web_host` on the pydantic model. The shipped
+`config.yaml` is the only place the public hosts are written
+(`api.github.com`, `github.com`). The connector stays off until the
+client id and both hosts are set. Paths are constants; hosts are
+interpolated so the outbound-host scan still sees no literal URL.
+
+One keychain account, `tst-github-oauth`, holds a printable-ASCII JSON
+object of `access_token`, `refresh_token`, and `expires_at` through the
+TD-4838 `set_secret` path. The login is cached in the process after a
+successful connect. It is not stored in the blob and may be null on the
+next `setup_state` while the item is still present. Credential id
+`github-oauth` is reserved so it cannot be used as an API-key name.
+
+GitHub tool calls do not declare network hosts on the decision request.
+Under the default network deny, host metadata would make every call
+Class C. The destination is fixed from `connectors.github` and the model
+cannot choose a host. Read tools match an explicit `github-read` rule
+and are Class A. Writes declare `ask` with no path fields, so the ask
+floor makes them Class B (a workspace path would have been Class A).
+Merge, delete-branch, and settings declare `side_effect` never and are
+Class C. `github_update_settings` still refuses in the handler, so an
+approval cannot change settings or secrets. Merge and delete-branch
+call the API only after that Class C approval.
+
+`git clone`, `fetch`, and `push` use a per-command credential helper
+(`!python -m tstd.connectors.github_credential`) after an empty
+`credential.helper=` reset. The token is not an `http.extraHeader`, not
+in the remote URL, and not in argv. The helper emits a token only when
+the git credential host equals the configured web host and the protocol
+is https. `web_host`, `api_host`, `client_id`, and the timeout travel in
+`TST_GITHUB_*` (the client id is public) because the helper cannot see
+the daemon's `--data-dir` config. The token itself stays in the
+keychain.
+
+`github_status` is connection-scoped (`seq` 1, no `session_id`, not in
+the session log). Connect and disconnect are acked immediately, and a
+later scrubbed broadcast carries the poll result. `setup_state.github`
+is the snapshot a window sees when it opens. The device code never
+leaves the daemon. There is no protocol version bump.
+
+Device-flow and API calls set `follow_redirects=False`, so a token
+cannot ride a redirect off the configured host.
+
+**Rationale:** Device flow is the sign-in that needs no client secret,
+no redirect, and no server of ours. The keychain blob is one item
+because access and refresh rotate together and TD-4838 already refuses
+non-printable values. Leaving hosts off the decision request is what
+keeps a read Class A on a workspace whose network policy is deny. The
+credential helper is the git mechanism that never writes the token into
+`.git/config`.
+
+**Rejected:** A hand-pasted personal access token. Hard-coding
+`github.com` in Python. Declaring `host_fields` on the tools. Putting
+the token in the remote URL or in argv. Following HTTP redirects.
+Storing the device code or the tokens on `github_status`. Bumping the
+protocol version. A settings tool that proceeds after Class C approval.

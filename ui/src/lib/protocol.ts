@@ -628,6 +628,16 @@ export interface TestEmail extends ClientMessage {
   to?: string;
 }
 
+/** Start GitHub device flow (TD-4852). Acked with github_status. */
+export interface GithubConnect extends ClientMessage {
+  type: "github_connect";
+}
+
+/** Delete the GitHub keychain item (TD-4852). Acked with github_status. */
+export interface GithubDisconnect extends ClientMessage {
+  type: "github_disconnect";
+}
+
 export interface SetGrokMode extends ClientMessage {
   type: "set_grok_mode";
   session_id: string;
@@ -959,7 +969,9 @@ export type ClientMessageUnion =
   | GetSessionJobSource
   | Transcribe
   | SetEmailNotify
-  | TestEmail;
+  | TestEmail
+  | GithubConnect
+  | GithubDisconnect;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -1476,6 +1488,21 @@ export interface SetupState extends DaemonEvent {
   remote_devices?: RemoteDeviceSummary[];
   /** SMTP settings (TD-3820). Additive. Never includes the password. */
   email?: EmailNotifyState;
+  /** GitHub connector (TD-4852). Additive. Never a token or device code. */
+  github?: GithubConnectorState;
+}
+
+export type GithubPhase = "off" | "idle" | "pending" | "connected" | "expired" | "denied" | "error";
+
+/** GitHub sign-in as Settings may show it. */
+export interface GithubConnectorState {
+  enabled?: boolean;
+  connected?: boolean;
+  phase?: GithubPhase;
+  user_code?: string;
+  verification_uri?: string;
+  login?: string | null;
+  message?: string;
 }
 
 /** SMTP form on setup_state. password_stored is presence only. */
@@ -2049,6 +2076,18 @@ export interface EmailTestResult extends DaemonEvent {
   message?: string;
 }
 
+/** GitHub connector snapshot (TD-4852). Connection-scoped. No token, no device code. */
+export interface GithubStatus extends DaemonEvent {
+  type: "github_status";
+  enabled?: boolean;
+  connected?: boolean;
+  phase?: GithubPhase;
+  user_code?: string;
+  verification_uri?: string;
+  login?: string | null;
+  message?: string;
+}
+
 export type DaemonEventUnion =
   | Ready
   | SessionState
@@ -2114,4 +2153,5 @@ export type DaemonEventUnion =
   | GrokSessionList
   | GrokExtensions
   | Transcript
-  | EmailTestResult;
+  | EmailTestResult
+  | GithubStatus;

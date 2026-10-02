@@ -13,7 +13,12 @@
 import { isBridged } from "./bridged-id";
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { reducePairing } from "./pair-device.svelte.js";
-import type { DaemonEventUnion, PolicyRuleSummary, RemoteDeviceSummary } from "./protocol";
+import type {
+	DaemonEventUnion,
+	GithubPhase,
+	PolicyRuleSummary,
+	RemoteDeviceSummary,
+} from "./protocol";
 
 export type SettingsSection =
 	| "appearance"
@@ -26,6 +31,7 @@ export type SettingsSection =
 	| "mcp"
 	| "key"
 	| "email"
+	| "github"
 	| "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
@@ -38,6 +44,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"mcp",
 	"key",
 	"email",
+	"github",
 	"about",
 ] as const;
 
@@ -141,6 +148,14 @@ export const settings = $state({
 	emailTestOk: null as boolean | null,
 	emailTestErrorClass: "",
 	emailTestMessage: "",
+	/** GitHub connector (TD-4852). From setup_state and github_status. */
+	githubEnabled: false,
+	githubConnected: false,
+	githubPhase: "off" as GithubPhase,
+	githubUserCode: "",
+	githubVerificationUri: "",
+	githubLogin: null as string | null,
+	githubMessage: "",
 });
 
 let started = false;
@@ -216,7 +231,45 @@ export function resetSettings(): void {
 	settings.emailTestOk = null;
 	settings.emailTestErrorClass = "";
 	settings.emailTestMessage = "";
+	settings.githubEnabled = false;
+	settings.githubConnected = false;
+	settings.githubPhase = "off";
+	settings.githubUserCode = "";
+	settings.githubVerificationUri = "";
+	settings.githubLogin = null;
+	settings.githubMessage = "";
 	started = false;
+}
+
+const GITHUB_PHASES: readonly GithubPhase[] = [
+	"off",
+	"idle",
+	"pending",
+	"connected",
+	"expired",
+	"denied",
+	"error",
+];
+
+function applyGithub(github: {
+	enabled?: boolean;
+	connected?: boolean;
+	phase?: string;
+	user_code?: string;
+	verification_uri?: string;
+	login?: string | null;
+	message?: string;
+} | undefined): void {
+	settings.githubEnabled = github?.enabled ?? false;
+	settings.githubConnected = github?.connected ?? false;
+	const phase = github?.phase;
+	settings.githubPhase = GITHUB_PHASES.includes(phase as GithubPhase)
+		? (phase as GithubPhase)
+		: "off";
+	settings.githubUserCode = github?.user_code ?? "";
+	settings.githubVerificationUri = github?.verification_uri ?? "";
+	settings.githubLogin = github?.login ?? null;
+	settings.githubMessage = github?.message ?? "";
 }
 
 function reduce(event: DaemonEventUnion): void {
@@ -281,6 +334,11 @@ function reduce(event: DaemonEventUnion): void {
 		settings.emailUsername = email?.username ?? "";
 		settings.emailFrom = email?.from_address ?? "";
 		settings.emailPasswordStored = email?.password_stored ?? false;
+		applyGithub(event.github);
+		return;
+	}
+	if (event.type === "github_status") {
+		applyGithub(event);
 		return;
 	}
 	if (event.type === "email_test_result") {
@@ -622,4 +680,14 @@ export function saveEmailNotify(input: {
 /** Send one short test using the saved config and the keychain password. */
 export function sendTestEmail(to: string): void {
 	sendToDaemon({ type: "test_email", to });
+}
+
+/** Start GitHub device flow. The daemon answers with github_status. */
+export function connectGithub(): void {
+	sendToDaemon({ type: "github_connect" });
+}
+
+/** Delete the GitHub keychain item. */
+export function disconnectGithub(): void {
+	sendToDaemon({ type: "github_disconnect" });
 }

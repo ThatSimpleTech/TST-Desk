@@ -531,5 +531,9 @@ def create_registry(
     register_skill_tools(registry)
     register_delegate_tools(registry)
     register_send_file_tool(registry)
+    # Before plugins so a plugin cannot take a GitHub tool name (TD-4852).
+    from ..connectors.github_tools import register_github_tools
+
+    register_github_tools(registry)
     load_plugins(registry)
     return registry

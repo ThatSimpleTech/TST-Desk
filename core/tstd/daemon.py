@@ -77,6 +77,7 @@ from .config_write import (
     save_tier_credential,
     save_tier_slug,
 )
+from .connectors.github_session import GithubCoordinator
 from .console_shutdown import (
     install_windows_console_shutdown,
     remove_windows_console_shutdown,
@@ -229,6 +230,10 @@ from .protocol import (
     GetSessionJobSource,
     GetSetupState,
     GetUsage,
+    GithubConnect,
+    GithubConnectorState,
+    GithubDisconnect,
+    GithubStatus,
     GrokExtension,
     GrokExtensions,
     GrokMode,
@@ -987,6 +992,7 @@ class Daemon:
         # User-listed MCP servers (TD-4401). Handshake is lazy; a dead
         # server is a doctor row, never a failed Daemon.run.
         self._mcp = McpSupervisor(self.config.mcp)
+        self._github: GithubCoordinator | None = None
         self._notify_send = notify_send if notify_send is not None else self._channel_notify
         self._scheduler_tick = scheduler_tick
         # TD-3807: default the hook instead of leaving it None. The real
@@ -1169,7 +1175,23 @@ class Daemon:
             speech_enabled=self.config.speech.enabled,
             speech_ready=self.config.speech.enabled and bool(self.config.speech.base_url),
             email=await self._email_notify_state(),
+            github=await self._github_connector_state(),
         )
+
+    def _github_coordinator(self) -> GithubCoordinator:
+        if self._github is None:
+            self._github = GithubCoordinator(lambda: self.config, self._broadcast_github_status)
+        return self._github
+
+    async def _broadcast_github_status(self, event: GithubStatus) -> None:
+        await self.ws_server.broadcast(scrub_wire_json(event.model_dump_json()))
+
+    async def _github_connector_state(self) -> GithubConnectorState:
+        if self._github is not None:
+            return await self._github.snapshot()
+        from .connectors.github_session import state_from_config
+
+        return await state_from_config(self.config)
 
     async def _email_notify_state(self) -> EmailNotifyState:
         """SMTP form values plus a presence probe. The password stays put."""
@@ -1828,6 +1850,8 @@ class Daemon:
 
     async def _shutdown_subsystems(self, phases: ShutdownPhases) -> None:
         """Close sockets, sessions, and writers. Does not wait on the provider."""
+        if self._github is not None:
+            await phases.run("github", self._github.aclose())
         if self._cu_server is not None:
             from .cu_host import stop_cu_socket
 
@@ -2753,6 +2777,12 @@ class Daemon:
 
         if isinstance(msg, TestEmail):
             return await self._handle_test_email(msg)
+
+        if isinstance(msg, GithubConnect):
+            return await self._github_coordinator().connect_json()
+
+        if isinstance(msg, GithubDisconnect):
+            return await self._github_coordinator().disconnect_json()
 
         if isinstance(msg, SetJudgments):
             # TD-708 (dev): persist the judgments block; running sessions

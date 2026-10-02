@@ -54,7 +54,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M8 — Local remainder (v0.6)** | E39 | EZER/vLLM path. UI-TARS grounding. Floor already shipped as M1.5 |
 | **M9 — Autonomy (v0.7)** | E40–E43 | Charter, unattended runner, drift checks, circuit breakers, hard-required container, wake-up |
 | **M10 — Extensibility (v0.8)** | E44–E46 | MCP through the classifier. Slash + `SKILL.md`. One-level subagent. Plan lock |
-| **Later** | E47, E49 | Voice, tray, updater, vision; Wayland CU; signing; aarch64; CI recovery. Unversioned; do not pull forward |
+| **Later** | E47, E49, E53 | Voice, tray, updater, vision; Wayland CU; signing; aarch64; CI recovery; connectors. Unversioned; do not pull forward |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -7829,8 +7829,8 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 23 | 83 |
-| **Total planned** | **48** | **339** | **1065** |
+| Later | E47, E49, E53 | 24 | 88 |
+| **Total planned** | **49** | **340** | **1070** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -9245,3 +9245,52 @@ Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over
 - [ ] The file bridge refuses calls without the page key
 - [ ] versionCode 11 / 0.1.10, installs over 0.1.9 with the same keystore
 - [ ] Live: the agent on EZER sends an APK and the Pixel's installer opens
+
+## Epic E53 — Connectors
+
+Owner-approved scope 2026-10-02. A connector is a local sign-in to a
+service the user already has. There is no TST Desk server and no secret
+in config. Unversioned with E47 and E49. Do not pull forward.
+
+---
+
+### TD-4852 — GitHub connector: device-flow sign-in and repo tools
+**Size:** 5 · **Depends on:** TD-4838
+
+Users connect GitHub without SSH keys or a hand-made token. Sign-in is
+GitHub's OAuth device flow for a GitHub App: no client secret and no
+redirect.
+
+**Acceptance criteria:**
+- [x] `connectors.github.client_id` is empty by default. When it or either
+      host is empty, Settings explains how to set a client id and the
+      connector is off. `api_host` and `web_host` come from config
+      (`test_outbound_hosts`). No id, URL, or slug is hard-coded in Python
+- [x] Connect posts the device-code endpoint, shows the user code and
+      verification URL (Connect GitHub, Copy code, Open browser), and polls
+      the token endpoint on the interval, including `slow_down`. Access and
+      refresh tokens are stored only in the OS keychain (TD-4838). They
+      refresh before expiry. Disconnect deletes them. Tokens are never logged
+- [x] Tools register through the tool registry and the decision classifier.
+      Class A: list repos the app can see, get file and tree, list and read
+      issues and pull requests, pull-request checks. Class B unless policy
+      allows: create a branch, commit through the contents API, open a pull
+      request, comment, create an issue. Class C: merge, delete a branch,
+      and anything that touches settings or secrets
+- [x] `git clone`, `fetch`, and `push` over HTTPS pass the token through a
+      per-command credential helper. The token is not written to `.git/config`
+      or a remote URL, and it is not placed on argv
+- [x] Tests cover the device-flow state machine against a fake GitHub server
+      (pending, slow_down, expired, success), a mocked keychain, refresh,
+      the classification table, the absence of the token in logs, protocol
+      parity, and the Settings section
+
+Done (2026-09-29): Settings starts device flow and shows the user code.
+The device code stays in the daemon. Access and refresh tokens live in
+the keychain account `tst-github-oauth` and refresh on their own.
+Disconnect deletes that item. Seventeen tools are classified A, B, or C,
+and git talks to the configured web host through a one-shot credential
+helper. The connector epic is E53, because E50–E52 are the Android shell, the progress guard, and sent files. Class B entry in DECISIONS.md.
+
+Suite: 4229 passed / 8 skipped, ruff + `mypy --strict` clean over 201
+files, vitest 1464, svelte-check 729 files 0 errors 0 warnings.

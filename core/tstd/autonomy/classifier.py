@@ -38,6 +38,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from ..connectors.github_classify import GITHUB_READ_TOOLS
 from .charter import CHARTER_RELATIVE_PARTS
 
 # ── Decision classes (spec §12.2) ─────────────────────────────────────
@@ -652,6 +653,15 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="send_file of in-workspace files",
         decision_class=DecisionClass.A,
         match=_rule_send_file,
+    ),
+    # GitHub reads have no path or host metadata. A host on the request
+    # would be Class C under the default network deny, and a path would
+    # be Class A via in-workspace-edit. The grant is the tool name.
+    Rule(
+        id="github-read",
+        description="GitHub read tools are class A",
+        decision_class=DecisionClass.A,
+        match=lambda req, _b: req.tool_name in GITHUB_READ_TOOLS,
     ),
     # The ask floor is terminal by design (TD-4808): every specific grant
     # above — memory writes, in-workspace edits, desktop capture — keeps

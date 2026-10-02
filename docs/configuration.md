@@ -316,6 +316,31 @@ are left out. Send test email uses a short sample of that layout.
 | `from_address` | string | *empty* | One mailbox address in the From header. |
 | `timeout_seconds` | float > 0 | `30` | How long the SMTP conversation may run. |
 
+### `connectors`
+
+Outbound accounts. Each connector is off until its keys are set. There
+is no hosted relay.
+
+#### `connectors.github`
+
+GitHub App device flow (TD-4852). No client secret and no callback URL.
+`client_id` is the App's public client id. Empty means the connector is
+off and Settings explains how to create the App. The access token and
+the refresh token live in the OS keychain as `tst-github-oauth`, never
+in this file and never in a log. Pydantic leaves the hosts empty; the
+shipped `config.yaml` sets the public hosts `api.github.com` and
+`github.com`. A missing host keeps the connector off, the same as a
+missing client id.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `connectors` | mapping | `{}` | Named account connectors. |
+| `github` | mapping | empty | The GitHub App connector. |
+| `client_id` | string | *empty* | Public GitHub App client id. Empty turns the connector off. |
+| `api_host` | string | *empty* | REST hostname. The shipped file sets `api.github.com`. |
+| `web_host` | string | *empty* | Device-flow hostname. The shipped file sets `github.com`. |
+| `timeout_seconds` | float > 0 | `20` | How long one GitHub HTTP call may run. |
+
 ### `speech`
 
 Hold-to-talk dictation (TD-4701). Off by default. There is no cloud

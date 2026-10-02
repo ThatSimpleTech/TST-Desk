@@ -1399,6 +1399,22 @@ class TestEmail(ClientMessage):
     to: str = ""
 
 
+class GithubConnect(ClientMessage):
+    """Start GitHub device flow (TD-4852). Acked with ``github_status``.
+
+    The device code stays in the daemon. The reply carries the user code
+    and the verification URL only.
+    """
+
+    type: Literal["github_connect"] = "github_connect"
+
+
+class GithubDisconnect(ClientMessage):
+    """Delete the GitHub keychain item (TD-4852). Acked with ``github_status``."""
+
+    type: Literal["github_disconnect"] = "github_disconnect"
+
+
 # ── Daemon → Client ────────────────────────────────────────────────────
 
 
@@ -2112,6 +2128,21 @@ class EmailNotifyState(BaseModel):
     password_stored: bool = False
 
 
+GithubPhase = Literal["off", "idle", "pending", "connected", "expired", "denied", "error"]
+
+
+class GithubConnectorState(BaseModel):
+    """GitHub sign-in as Settings may show it. Never a token or device code."""
+
+    enabled: bool = False
+    connected: bool = False
+    phase: GithubPhase = "off"
+    user_code: str = ""
+    verification_uri: str = ""
+    login: str | None = None
+    message: str = ""
+
+
 class SetupState(DaemonEvent):
     """Response to ``get_setup_state``; also the ack for ``set_api_key`` and
     ``set_preset`` (TD-1101).
@@ -2207,6 +2238,8 @@ class SetupState(DaemonEvent):
     # TD-3820: SMTP settings. Additive. ``password_stored`` is a presence
     # probe — the password itself never leaves the keychain.
     email: EmailNotifyState = Field(default_factory=EmailNotifyState)
+    # TD-4852: GitHub connector. Additive. No token, no device code.
+    github: GithubConnectorState = Field(default_factory=GithubConnectorState)
 
 
 class PairingCode(DaemonEvent):
@@ -2960,6 +2993,24 @@ class EmailTestResult(DaemonEvent):
     message: str = ""
 
 
+class GithubStatus(DaemonEvent):
+    """GitHub connector snapshot (TD-4852). Connection-scoped.
+
+    Seq is fixed at 1 so it cannot rewind a session attach. The same
+    shape rides on ``setup_state.github`` for a window that opens later.
+    """
+
+    type: Literal["github_status"] = "github_status"
+    seq: int = 1
+    enabled: bool = False
+    connected: bool = False
+    phase: GithubPhase = "off"
+    user_code: str = ""
+    verification_uri: str = ""
+    login: str | None = None
+    message: str = ""
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -3066,7 +3117,9 @@ ClientMessageT = Annotated[
     | GetSessionJobSource
     | Transcribe
     | SetEmailNotify
-    | TestEmail,
+    | TestEmail
+    | GithubConnect
+    | GithubDisconnect,
     Field(discriminator="type"),
 ]
 
@@ -3131,6 +3184,7 @@ DaemonEventT = Annotated[
     | JobTemplates
     | SessionJobSource
     | EmailTestResult
+    | GithubStatus
     | GrokCommands
     | GrokPlan
     | GrokMode
@@ -3251,6 +3305,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "transcribe",
         "set_email_notify",
         "test_email",
+        "github_connect",
+        "github_disconnect",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -3322,6 +3378,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "grok_extensions",
         "transcript",
         "email_test_result",
+        "github_status",
     }
 )
 

@@ -576,6 +576,44 @@ async def store_smtp_password(password: str) -> None:
     await backend.set_secret(SMTP_PASSWORD_ACCOUNT, password)
 
 
+GITHUB_OAUTH_ACCOUNT = "tst-github-oauth"
+
+
+async def get_github_oauth() -> str:
+    """Read the GitHub token blob. Callers must not log it."""
+    backend = _get_backend()
+    return await backend.get_secret(GITHUB_OAUTH_ACCOUNT)
+
+
+async def store_github_oauth(blob: str) -> None:
+    """Store the GitHub token blob. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(blob)
+    backend = _get_backend()
+    await backend.set_secret(GITHUB_OAUTH_ACCOUNT, blob)
+
+
+async def delete_github_oauth() -> None:
+    """Delete the GitHub sign-in. A missing item is success.
+
+    The macOS backend treats a missing item as already gone. A test double
+    may raise instead. If the item is still there, the error is fixed text
+    so a backend message cannot carry the blob.
+    """
+    backend = _get_backend()
+    try:
+        await backend.delete_secret(GITHUB_OAUTH_ACCOUNT)
+    except KeychainError:
+        if not await backend.has_secret(GITHUB_OAUTH_ACCOUNT):
+            return
+        raise KeychainError("Could not delete the GitHub sign-in.") from None
+
+
+async def github_oauth_is_stored() -> bool:
+    """Whether a GitHub sign-in exists, without reading the blob."""
+    backend = _get_backend()
+    return await backend.has_secret(GITHUB_OAUTH_ACCOUNT)
+
+
 async def smtp_password_is_stored() -> bool:
     """Whether the SMTP password exists, without reading it.
 

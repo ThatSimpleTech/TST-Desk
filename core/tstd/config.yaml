@@ -409,3 +409,14 @@ judgments:
   typesafe_base_url: "https://api.typesafe.ai"
   typesafe_model: "jev-latest"
   typesafe_credential: "typesafe"
+
+# GitHub App device flow (TD-4852). Off until client_id is set. There is
+# no client secret and no callback URL. Tokens live in the OS keychain
+# under tst-github-oauth, never in this file. Hosts are public and live
+# here so the daemon does not hard-code them.
+connectors:
+  github:
+    client_id: ""
+    api_host: api.github.com
+    web_host: github.com
+    timeout_seconds: 20

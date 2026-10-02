@@ -83,6 +83,9 @@ from tstd.protocol import (
     GetSessionJobSource,
     GetSetupState,
     GetUsage,
+    GithubConnect,
+    GithubDisconnect,
+    GithubStatus,
     GrokCommand,
     GrokCommands,
     GrokExtension,
@@ -258,6 +261,8 @@ FIXTURES = {
         password=None,
     ),
     "test_email": TestEmail(to="owner@example.com"),
+    "github_connect": GithubConnect(),
+    "github_disconnect": GithubDisconnect(),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
     "set_cu_policy": SetCuPolicy(
         enabled=True,
@@ -1250,6 +1255,15 @@ FIXTURES = {
     "transcript": Transcript(ok=True, text="hello from the mic", detail=""),
     "email_test_result": EmailTestResult(
         ok=False, error_class="SMTPException", message="auth failed"
+    ),
+    "github_status": GithubStatus(
+        enabled=True,
+        connected=False,
+        phase="pending",
+        user_code="ABCD-1234",
+        verification_uri="https://example.test/login/device",
+        login=None,
+        message="",
     ),
     "grok_extensions": GrokExtensions(
         items=[GrokExtension(kind="skill", name="review", detail="user")]
