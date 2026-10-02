@@ -14,7 +14,7 @@ import pytest
 from tests.test_email_notify import FakeSmtp, _cert, _client_ctx, _server_ctx
 from tests.test_loop import make_config
 from tstd.config import EmailNotifyConfig
-from tstd.notify.email import EmailNotifyError, email_subject, send
+from tstd.notify.email import EmailNotifyError, report_chrome, send
 from tstd.scheduler.edit import apply_job_edit
 from tstd.scheduler.email_delivery import bind_email_sender, reset_email_sender
 from tstd.scheduler.history import list_runs
@@ -101,11 +101,22 @@ async def test_the_mail_is_the_final_report_not_the_receipt(
     config = _config(server.port)
 
     async def sender(current: Job, body: str, when: datetime) -> None:
+        chrome = report_chrome(
+            current.instruction,
+            when,
+            current.timezone,
+            current.preset,
+            config.active_preset,
+        )
         await send(
             config,
             body,
             to=current.email_to or "",
-            subject=email_subject(current.instruction, when, current.timezone),
+            subject=chrome.subject,
+            title=chrome.title,
+            when=chrome.when,
+            timezone_name=chrome.timezone_name,
+            preset=chrome.preset,
             ssl_context=_client_ctx(),
         )
 
@@ -133,9 +144,14 @@ async def test_the_mail_is_the_final_report_not_the_receipt(
     message = message_from_bytes(server.data, policy=email_default)
     assert message["subject"] == "Morning brief — 2026-10-01"
     plain = message.get_body(preferencelist=("plain",))
+    html = message.get_body(preferencelist=("html",))
     assert plain is not None
     assert plain.get_content().strip() == "FINAL-REPORT-TOKEN"
     assert "let me search" not in plain.get_content()
+    assert html is not None
+    page = html.get_content()
+    assert "Sent by TST Desk · Morning brief · ran 11:00 PM on test" in page
+    assert "October 1, 2026" in page
     runs = list_runs(tmp_path, "research")
     assert runs[0].status == "ok"
     assert runs[0].delivery == "ok"

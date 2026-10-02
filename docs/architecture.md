@@ -310,7 +310,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_voice` | — | Turn hold-to-talk dictation on or off. Machine-wide; persists `{user_data_dir}/voice.yaml`. Default off. Acked with `setup_state` (TD-4701). |
 | `transcribe` | — | Hold-to-talk audio. POSTs a clip to `voice.base_url` or `speech.base_url`. Refused when dictation is off or no endpoint is configured. Acked with `transcript`. Not a tool (TD-4701). |
 | `set_email_notify` | — | Save SMTP settings for scheduled-job email (TD-3820). `password` is written to the keychain account `tst-smtp-password` and is not stored in config. Empty or omitted leaves the stored password alone. Acked with `setup_state`. |
-| `test_email` | — | Send one short test to `to` using the saved SMTP settings (TD-3820). Acked with `email_test_result`. |
+| `test_email` | — | Send one short sample report to `to` using the saved SMTP settings (TD-3820, TD-3821). The sample uses the same newsletter renderer as a scheduled report. Acked with `email_test_result`. |
 | `set_cu_indicators` | — | Computer-use glow, agent cursor, and real-display overlay. Machine-wide; persists `{user_data_dir}/cu-indicators.yaml`. Acked with `setup_state` (TD-3402). |
 | `set_workspace_pin` | — | Pin or unpin a workspace on the Projects list. Machine-wide. Acked with `setup_state` (TD-2806). |
 | `resume` | yes | Resume a session paused at a declared cap, after the cap was raised. |

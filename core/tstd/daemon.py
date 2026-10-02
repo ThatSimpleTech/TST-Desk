@@ -1823,13 +1823,20 @@ class Daemon:
 
     async def _send_job_email(self, job: Job, body: str, when: datetime) -> None:
         """SMTP for one scheduled report. Bound for the tick and for Run now."""
-        from .notify.email import email_subject, send
+        from .notify.email import report_chrome, send
 
+        chrome = report_chrome(
+            job.instruction, when, job.timezone, job.preset, self.config.active_preset
+        )
         await send(
             self.config,
             body,
             to=job.email_to or "",
-            subject=email_subject(job.instruction, when, job.timezone),
+            subject=chrome.subject,
+            title=chrome.title,
+            when=chrome.when,
+            timezone_name=chrome.timezone_name,
+            preset=chrome.preset,
         )
 
     async def run_due_jobs(self, now: datetime | None = None) -> list[str]:

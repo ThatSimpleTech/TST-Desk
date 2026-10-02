@@ -1,10 +1,14 @@
-"""SMTP delivery for a scheduled job's report (TD-3820).
+"""SMTP delivery for a scheduled job's report (TD-3820, TD-3821).
 
 Same shape as the other notifiers: ``send(config, message)``. The only
 host it may reach is ``notify.email.host``. The password is a keychain
 secret (account ``tst-smtp-password``) and is never written to config,
 logs, or the audit database. The message body is not logged either —
 only the recipient's domain, so a report cannot land in a log file.
+
+The message is multipart: the report Markdown as plain text, and the
+same Markdown as a newsletter. The model text is untrusted; the HTML
+renderer escapes it.
 
 STARTTLS (port 587) and implicit TLS (port 465) are the only modes.
 A server that will not negotiate TLS is refused before AUTH.
@@ -14,16 +18,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import html
 import re
 import smtplib
 import ssl
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from email.message import EmailMessage
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 from ..logging import get_logger
+from .email_html import local_when, render_report_html
 
 if TYPE_CHECKING:
     from ..config import ModelConfig
@@ -31,9 +35,6 @@ if TYPE_CHECKING:
 log = get_logger("tstd.notify.email")
 
 _ADDRESS = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
-_HEADING = re.compile(r"^(#{1,3})\s+(.*)$")
-_BULLET = re.compile(r"^[-*]\s+(.*)$")
-_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+|mailto:[^\s)]+)\)")
 _PUBLIC_LIMIT = 300
 
 
@@ -46,70 +47,53 @@ class EmailNotifyError(Exception):
         super().__init__(f"{error_class}: {message}")
 
 
+@dataclass(frozen=True)
+class ReportChrome:
+    """Subject line plus the header and footer of one report."""
+
+    subject: str
+    title: str
+    when: datetime
+    timezone_name: str | None
+    preset: str
+
+
+def job_title(instruction: str) -> str:
+    """First 60 characters of the instruction. Jobs have no display name."""
+    label = " ".join(instruction.split())
+    return label[:60] if label else "Scheduled job"
+
+
 def email_subject(instruction: str, when: datetime, timezone_name: str | None) -> str:
     """``<first 60 chars of the instruction> — <local date>``.
 
-    Jobs have no display name. The date is the job's zone when it has
-    one, otherwise the machine's local zone.
+    The date is the job's zone when it has one, otherwise the machine's
+    local zone.
     """
-    label = " ".join(instruction.split())
-    label = label[:60] if label else "Scheduled job"
-    local = _local_when(when, timezone_name)
-    return f"{label} — {local.date().isoformat()}"
+    local = local_when(when, timezone_name)
+    return f"{job_title(instruction)} — {local.date().isoformat()}"
 
 
-def _local_when(when: datetime, timezone_name: str | None) -> datetime:
-    if timezone_name:
-        try:
-            return when.astimezone(ZoneInfo(timezone_name))
-        except (KeyError, ValueError, OSError):
-            pass
-    return when.astimezone()
+def report_chrome(
+    instruction: str,
+    when: datetime,
+    timezone_name: str | None,
+    preset: str | None,
+    active_preset: str,
+) -> ReportChrome:
+    """Header and footer for one fire.
 
-
-def render_minimal_html(markdown: str) -> str:
-    """Headings, lists, and links. No dependency, so no other Markdown."""
-    blocks: list[str] = []
-    items: list[str] = []
-
-    def close_list() -> None:
-        if items:
-            blocks.append("<ul>" + "".join(f"<li>{item}</li>" for item in items) + "</ul>")
-            items.clear()
-
-    for raw in markdown.splitlines():
-        line = raw.strip()
-        if not line:
-            close_list()
-            continue
-        heading = _HEADING.match(line)
-        if heading is not None:
-            close_list()
-            level = len(heading.group(1))
-            blocks.append(f"<h{level}>{_inline(heading.group(2))}</h{level}>")
-            continue
-        bullet = _BULLET.match(line)
-        if bullet is not None:
-            items.append(_inline(bullet.group(1)))
-            continue
-        close_list()
-        blocks.append(f"<p>{_inline(line)}</p>")
-    close_list()
-    body = "".join(blocks) if blocks else f"<p>{_inline(markdown)}</p>"
-    return f"<html><body>{body}</body></html>"
-
-
-def _inline(text: str) -> str:
-    parts: list[str] = []
-    cursor = 0
-    for match in _LINK.finditer(text):
-        parts.append(html.escape(text[cursor : match.start()]))
-        label = html.escape(match.group(1))
-        href = html.escape(match.group(2), quote=True)
-        parts.append(f'<a href="{href}">{label}</a>')
-        cursor = match.end()
-    parts.append(html.escape(text[cursor:]))
-    return "".join(parts)
+    A job with no pin ran on the window's active preset. The footer
+    names that preset.
+    """
+    chosen = preset.strip() if preset and preset.strip() else active_preset
+    return ReportChrome(
+        subject=email_subject(instruction, when, timezone_name),
+        title=job_title(instruction),
+        when=when,
+        timezone_name=timezone_name,
+        preset=chosen,
+    )
 
 
 async def send(
@@ -119,11 +103,17 @@ async def send(
     to: str,
     subject: str,
     ssl_context: ssl.SSLContext | None = None,
+    title: str | None = None,
+    when: datetime | None = None,
+    timezone_name: str | None = None,
+    preset: str | None = None,
 ) -> None:
     """Send *message* to one address. Raises ``EmailNotifyError`` on failure.
 
     ``ssl_context`` is a test seam. Production uses the default context,
-    which verifies the server certificate.
+    which verifies the server certificate. The HTML part uses *title*,
+    *when*, and *preset*; omitted values fall back to a generic label,
+    the current time, and the active preset.
     """
     email_cfg = config.notify.email
     _require_ready(
@@ -133,6 +123,13 @@ async def send(
     if not password:
         raise EmailNotifyError("KeychainError", "SMTP password is not in the keychain")
     domain = _domain(to)
+    html_body = render_report_html(
+        message,
+        title=title.strip() if title and title.strip() else "Scheduled job",
+        when=when if when is not None else datetime.now(UTC),
+        timezone_name=timezone_name,
+        preset=preset.strip() if preset and preset.strip() else config.active_preset,
+    )
     try:
         await asyncio.to_thread(
             _smtp_send,
@@ -144,6 +141,7 @@ async def send(
             to=to.strip(),
             subject=subject,
             body=message,
+            html_body=html_body,
             password=password,
             timeout=email_cfg.timeout_seconds,
             ssl_context=ssl_context,
@@ -197,6 +195,7 @@ def _smtp_send(
     to: str,
     subject: str,
     body: str,
+    html_body: str,
     password: str,
     timeout: float,
     ssl_context: ssl.SSLContext | None,
@@ -217,13 +216,13 @@ def _smtp_send(
             client.ehlo()
             _require_tls(client)
         client.login(username, password)
-        client.send_message(_message(from_address, to, subject, body))
+        client.send_message(_message(from_address, to, subject, body, html_body))
         client.quit()
         client = None
     except EmailNotifyError:
         raise
     except Exception as exc:
-        error_class, text = _public_error(exc, password, body)
+        error_class, text = _public_error(exc, password, body, html_body)
         raise EmailNotifyError(error_class, text) from None
     finally:
         if client is not None:
@@ -237,21 +236,25 @@ def _require_tls(client: smtplib.SMTP) -> None:
         raise EmailNotifyError("SMTPException", "TLS was not established")
 
 
-def _message(from_address: str, to: str, subject: str, body: str) -> EmailMessage:
+def _message(from_address: str, to: str, subject: str, body: str, html_body: str) -> EmailMessage:
     message = EmailMessage()
     message["From"] = from_address
     message["To"] = to
     message["Subject"] = subject
     message.set_content(body)
-    message.add_alternative(render_minimal_html(body), subtype="html")
+    message.add_alternative(html_body, subtype="html")
     return message
 
 
-def _public_error(exc: BaseException, password: str, body: str) -> tuple[str, str]:
+def _public_error(exc: BaseException, password: str, body: str, html_body: str) -> tuple[str, str]:
     """SMTP text can echo the AUTH secret or the report. Neither leaves this function."""
     text = str(exc)
     if password:
         text = text.replace(password, "[redacted]")
+    # The HTML document is the longer form of the same report. Replace it
+    # before the plain body so a quoted copy of the whole message goes first.
+    if html_body:
+        text = text.replace(html_body, "[redacted]")
     if body:
         text = text.replace(body, "[redacted]")
     text = " ".join(text.split())

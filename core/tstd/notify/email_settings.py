@@ -1,13 +1,15 @@
-"""Settings verbs for SMTP (TD-3820).
+"""Settings verbs for SMTP (TD-3820, TD-3821).
 
 Save writes ``notify.email`` and, when a password was typed, the
 keychain. An empty password leaves the stored secret alone. Test sends
-one short message to a typed address and reports the SMTP class.
+one short sample report through the same newsletter renderer a scheduled
+job uses, and reports the SMTP class.
 """
 
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -17,7 +19,22 @@ from ..protocol import EmailTestResult, SetEmailNotify
 from .email import EmailNotifyError, send
 from .email_config import save_email_notify
 
-_TEST_BODY = "This is a test email from TST Desk."
+# A miniature digest, so the owner sees the column, a table, and a link
+# rather than a one-line plain-text ping.
+_TEST_BODY = """\
+# Sample report
+
+This is a short sample of how a scheduled report will look.
+
+- Headings, lists, and links stay in the column
+- [An example](http://localhost/sample)
+
+| Topic | Note |
+| --- | --- |
+| Delivery | Email |
+
+> Sent so you can check the layout.
+"""
 _TEST_SUBJECT = "TST Desk test"
 
 
@@ -44,9 +61,17 @@ async def apply_email_notify(config: ModelConfig, msg: SetEmailNotify, path: Pat
 
 
 async def send_test_email(config: ModelConfig, to: str) -> EmailTestResult:
-    """One short message. The result is safe to put on the wire."""
+    """One short sample report. The result is safe to put on the wire."""
     try:
-        await send(config, _TEST_BODY, to=to, subject=_TEST_SUBJECT)
+        await send(
+            config,
+            _TEST_BODY,
+            to=to,
+            subject=_TEST_SUBJECT,
+            title=_TEST_SUBJECT,
+            when=datetime.now(UTC),
+            preset=config.active_preset,
+        )
     except EmailNotifyError as exc:
         return EmailTestResult(ok=False, error_class=exc.error_class, message=exc.message)
     return EmailTestResult(ok=True, message="Sent")

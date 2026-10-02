@@ -22,8 +22,9 @@ import pytest
 from tests.test_loop import make_config
 from tstd.config import EmailNotifyConfig
 from tstd.keychain import KeychainError
-from tstd.notify.email import EmailNotifyError, email_subject, render_minimal_html, send
+from tstd.notify.email import EmailNotifyError, email_subject, send
 from tstd.notify.email_config import save_email_notify
+from tstd.notify.email_html import render_report_html
 from tstd.notify.email_settings import apply_email_notify
 from tstd.protocol import AssistantDelta, SetEmailNotify, ToolCall
 from tstd.scheduler.email_delivery import final_assistant_text
@@ -255,11 +256,19 @@ class TestSubjectAndReport:
         assert final_assistant_text(events) == "only narration"
 
     def test_html_renders_heading_list_and_link(self) -> None:
-        html = render_minimal_html(_BODY)
-        assert "<h1>Findings</h1>" in html
-        assert "<li>one</li>" in html
-        assert 'href="https://example.com/n"' in html
-        assert "FINAL-REPORT-TOKEN" in html
+        # The newsletter puts inline styles on the tags. The old exact
+        # `<h1>Findings</h1>` string was the minimal renderer this replaced.
+        page = render_report_html(
+            _BODY,
+            title="Morning brief",
+            when=datetime(2026, 10, 2, 4, 0, tzinfo=UTC),
+            timezone_name="America/Chicago",
+            preset="grok",
+        )
+        assert "<h1" in page and "Findings" in page
+        assert "<li" in page and ">one</li>" in page
+        assert 'href="https://example.com/n"' in page
+        assert "FINAL-REPORT-TOKEN" in page
 
 
 class TestSmtp:
