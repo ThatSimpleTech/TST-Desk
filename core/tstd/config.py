@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from .logging import user_data_dir
+from .logging import get_logger, user_data_dir
 
 TierName = Literal["brain", "worker", "validator"]
 TIER_NAMES: tuple[TierName, ...] = ("brain", "worker", "validator")
@@ -37,7 +37,7 @@ DEFAULT_PRESET = "tst-default"
 # Implicit keychain account for an unbound remote tier (TD-1717).
 DEFAULT_CREDENTIAL_ID = "openrouter"
 RESERVED_CREDENTIAL_IDS = frozenset(
-    {"slack-webhook", "ntfy-topic", "discord-webhook", "telegram-bot"}
+    {"slack-webhook", "ntfy-topic", "discord-webhook", "telegram-bot", "smtp-password"}
 )
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # A second OpenRouter key slugifies to openrouter-2 (TD-1718). Same host.
@@ -345,6 +345,10 @@ class SteeringConfig(BaseModel):
 
 DEFAULT_LOG_MAX_EVENTS = 10000
 
+# 15 minutes. A research turn makes many tool calls; 120 seconds recorded
+# it as a timeout, and the retry table then tried the same job again.
+DEFAULT_MAX_RUN_SECONDS = 900
+
 
 class ProviderRetryConfig(BaseModel):
     """How long to keep trying a retryable provider failure (429, 5xx).
@@ -365,6 +369,19 @@ class ProviderRetryConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=20)
     initial_delay: float = Field(default=1.0, gt=0)
     max_delay: float = Field(default=60.0, gt=0)
+
+
+class SchedulerConfig(BaseModel):
+    """How long one turn may run before it is stopped (TD-3819).
+
+    Scheduled runs and ``tst run`` both start from this. A job may name
+    its own limit, from 1 to 60 minutes. ``tst run --timeout`` replaces
+    this base for one command and still adds the provider retry allowance.
+    Above an hour is refused: an unattended slot that needs longer is the
+    wrong shape, and the receipt is in minutes of this budget.
+    """
+
+    max_run_seconds: float = Field(default=DEFAULT_MAX_RUN_SECONDS, gt=0, le=60 * 60)
 
 
 class SessionConfig(BaseModel):
@@ -466,6 +483,43 @@ class TelegramNotifyConfig(BaseModel):
     timeout_seconds: float = Field(default=5.0, gt=0)
 
 
+_config_log = get_logger("tstd.config")
+
+
+class EmailNotifyConfig(BaseModel):
+    """SMTP report delivery (TD-3820). Off by default.
+
+    ``host`` is the only host ``tstd.notify.email.send`` may reach. The
+    password is a keychain secret (account ``tst-smtp-password``), never
+    this file. A ``password`` key in yaml is dropped and never stored.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    port: int = Field(default=587, ge=1, le=65535)
+    security: Literal["starttls", "tls"] = "starttls"
+    username: str = ""
+    from_address: str = ""
+    timeout_seconds: float = Field(default=30.0, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_password(cls, data: object) -> object:
+        if isinstance(data, dict) and "password" in data:
+            # The value must not appear in the warning or in a later
+            # validation error that echoes the input.
+            _config_log.warning(
+                "notify.email.password ignored; the SMTP password lives in the keychain"
+            )
+            return {key: value for key, value in data.items() if key != "password"}
+        return data
+
+    @field_validator("host", "username", "from_address")
+    @classmethod
+    def _strip_text(cls, value: str) -> str:
+        return value.strip()
+
+
 class NotifyConfig(BaseModel):
     """Outbound notification channels. Slack is the default; no gateway."""
 
@@ -473,6 +527,7 @@ class NotifyConfig(BaseModel):
     ntfy: NtfyNotifyConfig = Field(default_factory=NtfyNotifyConfig)
     discord: DiscordNotifyConfig = Field(default_factory=DiscordNotifyConfig)
     telegram: TelegramNotifyConfig = Field(default_factory=TelegramNotifyConfig)
+    email: EmailNotifyConfig = Field(default_factory=EmailNotifyConfig)
 
 
 class SpeechConfig(BaseModel):
@@ -777,6 +832,7 @@ class ModelConfig(BaseModel):
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
+    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     judgments: JudgmentsConfig = Field(default_factory=JudgmentsConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
@@ -956,6 +1012,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "project_context",
         "steering",
         "session",
+        "scheduler",
         "computer_use",
         "remote",
         "notify",

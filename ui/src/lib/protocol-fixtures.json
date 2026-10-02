@@ -94,6 +94,20 @@
     "audio_b64": "AAAA",
     "mime": "audio/webm"
   },
+  "set_email_notify": {
+    "type": "set_email_notify",
+    "enabled": true,
+    "host": "smtp.example.com",
+    "port": 587,
+    "security": "starttls",
+    "username": "desk",
+    "from_address": "desk@example.com",
+    "password": null
+  },
+  "test_email": {
+    "type": "test_email",
+    "to": "owner@example.com"
+  },
   "set_cu_indicators": {
     "type": "set_cu_indicators",
     "glow": true,
@@ -1072,7 +1086,16 @@
       }
     ],
     "speech_enabled": false,
-    "speech_ready": false
+    "speech_ready": false,
+    "email": {
+      "enabled": false,
+      "host": "",
+      "port": 587,
+      "security": "starttls",
+      "username": "",
+      "from_address": "",
+      "password_stored": false
+    }
   },
   "api_key_validated": {
     "type": "api_key_validated",
@@ -1317,9 +1340,11 @@
     "grace": "2 hours",
     "retries": 2,
     "retry_delay": "10 minutes",
+    "max_run": "20 minutes",
     "then": "job-2",
     "skip_calendar": "/home/user/holidays.ics",
-    "skip_match": "holiday|PTO|OOO"
+    "skip_match": "holiday|PTO|OOO",
+    "email_to": null
   },
   "delete_job": {
     "type": "delete_job",
@@ -1350,9 +1375,11 @@
     "grace": "2 hours",
     "retries": 1,
     "retry_delay": "10 minutes",
+    "max_run": "20 minutes",
     "preset": "vllm",
     "engine": "native",
-    "workspace": "/home/user/project"
+    "workspace": "/home/user/project",
+    "email_to": null
   },
   "delete_job_template": {
     "type": "delete_job_template",
@@ -1381,6 +1408,7 @@
         "retries": 2,
         "retry_delay": 600,
         "attempt": 0,
+        "max_run": 1200,
         "then": "job-2",
         "skip_calendar": "/home/user/holidays.ics",
         "skip_match": "holiday|PTO|OOO",
@@ -1388,6 +1416,9 @@
         "last_status": "ok",
         "last_summary": "3 threads need a reply",
         "last_session_id": "sess-1",
+        "email_to": null,
+        "last_delivery": null,
+        "last_delivery_error": null,
         "running": false
       }
     ]
@@ -1406,7 +1437,9 @@
         "session_id": "sess-1",
         "attempt": 2,
         "attempts": 3,
-        "note": null
+        "note": null,
+        "delivery": null,
+        "delivery_error": null
       },
       {
         "started_at": "2026-08-21T22:45:00+00:00",
@@ -1417,7 +1450,9 @@
         "session_id": null,
         "attempt": null,
         "attempts": null,
-        "note": null
+        "note": null,
+        "delivery": null,
+        "delivery_error": null
       },
       {
         "started_at": "2026-08-21T23:00:00+00:00",
@@ -1428,7 +1463,9 @@
         "session_id": "sess-park",
         "attempt": null,
         "attempts": null,
-        "note": null
+        "note": null,
+        "delivery": null,
+        "delivery_error": null
       },
       {
         "started_at": "2026-08-21T23:30:00+00:00",
@@ -1439,7 +1476,9 @@
         "session_id": "sess-chain",
         "attempt": null,
         "attempts": null,
-        "note": "after job-1"
+        "note": "after job-1",
+        "delivery": null,
+        "delivery_error": null
       },
       {
         "started_at": "2026-12-25T15:00:00+00:00",
@@ -1450,7 +1489,9 @@
         "session_id": null,
         "attempt": null,
         "attempts": null,
-        "note": null
+        "note": null,
+        "delivery": null,
+        "delivery_error": null
       }
     ]
   },
@@ -1469,9 +1510,11 @@
         "grace": 7200,
         "retries": 1,
         "retry_delay": 600,
+        "max_run": null,
         "preset": null,
         "engine": null,
-        "workspace": null
+        "workspace": null,
+        "email_to": null
       },
       {
         "id": "tmpl-1",
@@ -1484,9 +1527,11 @@
         "grace": null,
         "retries": 0,
         "retry_delay": null,
+        "max_run": 1200,
         "preset": "vllm",
         "engine": "native",
-        "workspace": "/home/user/project"
+        "workspace": "/home/user/project",
+        "email_to": null
       }
     ]
   },
@@ -1509,6 +1554,7 @@
     "cadence": "every 2 hours",
     "next_run": null,
     "deliver_to": "slack",
+    "email_to": null,
     "paused": false
   },
   "grok_commands": {
@@ -1574,6 +1620,13 @@
     "text": "hello from the mic",
     "detail": "",
     "error": null
+  },
+  "email_test_result": {
+    "type": "email_test_result",
+    "seq": 1,
+    "ok": false,
+    "error_class": "SMTPException",
+    "message": "auth failed"
   },
   "grok_extensions": {
     "type": "grok_extensions",

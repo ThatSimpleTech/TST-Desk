@@ -95,8 +95,8 @@ item is treated as missing.
 | `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. Settings → API keys Host writes this; empty removes it. |
 
 Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook`,
-`ntfy-topic`, `discord-webhook`, and `telegram-bot` are reserved for
-other keychain accounts.
+`ntfy-topic`, `discord-webhook`, `telegram-bot`, and `smtp-password` are
+reserved for other keychain accounts.
 
 <!-- verify: model -->
 ```yaml
@@ -256,6 +256,7 @@ the keychain URL's host must match it or the send is dropped.
 | `ntfy` | mapping | see below | ntfy topic POST. |
 | `discord` | mapping | see below | Discord incoming webhook. |
 | `telegram` | mapping | see below | Telegram Bot API `sendMessage`. |
+| `email` | mapping | see below | SMTP report for a scheduled job (TD-3820). |
 
 #### `notify.slack`
 
@@ -284,6 +285,36 @@ Same keys as Slack. Store the webhook URL in the keychain as
 Same keys as Slack. Store `https://<host>/bot<token>/sendMessage?chat_id=<id>`
 in the keychain as `tst-telegram-bot`. `chat_id` is a query parameter on
 that secret URL, not a yaml field. Set `host` to that URL's hostname.
+
+#### `notify.email`
+
+SMTP for a job whose `deliver_to` is `email` (TD-3820). STARTTLS (port
+587) or implicit TLS (port 465). A server that will not negotiate TLS
+is refused before AUTH. The password is the keychain account
+`tst-smtp-password`, never a yaml key. A `password` key in this file is
+dropped. The log records the recipient domain only, never the password
+and never the message body. `host` is the only host this channel may
+reach.
+
+The message is multipart (TD-3821). The plain part is the report
+Markdown. The HTML part is that same Markdown in one centred column
+(max-width 680px, inline styles only): a header with the job title and
+the local date, the report, and a footer
+`Sent by TST Desk · <title> · ran <local time> on <preset>`. The job has
+no display name, so the title is the same 60-character instruction
+label as the subject. A job with no preset names the active preset.
+HTML in the report is escaped, links are http or https only, and images
+are left out. Send test email uses a short sample of that layout.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | When false, a job set to email does not send. |
+| `host` | string | *empty* | SMTP hostname. Empty refuses the send. |
+| `port` | int 1–65535 | `587` | SMTP port. 587 with `starttls`, 465 with `tls`. |
+| `security` | `starttls` or `tls` | `starttls` | `starttls` upgrades on port 587. `tls` is implicit TLS. |
+| `username` | string | *empty* | SMTP AUTH username. Empty refuses the send. |
+| `from_address` | string | *empty* | One mailbox address in the From header. |
+| `timeout_seconds` | float > 0 | `30` | How long the SMTP conversation may run. |
 
 ### `speech`
 
@@ -392,6 +423,16 @@ minute. `max_retries: 8` is roughly three minutes of patience.
 | `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn. |
 | `initial_delay` | float > 0 | `1.0` | Base delay before the first retry, in seconds. Each subsequent wait doubles. |
 | `max_delay` | float > 0 | `60.0` | Ceiling on any single wait, in seconds. Bounds the worst case when `max_retries` is high. |
+
+### `scheduler`
+
+How long one scheduled turn may run before the daemon cancels it (TD-3819). The same number is the base wait for `tst run`. A job can set its own limit, from 1 to 60 minutes, on the Scheduled form. When the limit expires the turn is cancelled and the receipt says `stopped after N minutes (max run time)`. That reason is not retried.
+
+`tst run --timeout SECONDS` replaces this base for one command. The provider retry allowance is still added when the config can be read, the same as before.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_run_seconds` | number > 0, at most 3600 | `900` | Seconds one turn may run when the job does not set its own limit. 900 is 15 minutes. The receipt rounds the budget up to whole minutes. |
 
 ### `remote`
 
@@ -529,6 +570,8 @@ provider_retry:
   max_retries: 3
   initial_delay: 1.0
   max_delay: 60.0
+scheduler:
+  max_run_seconds: 900
 computer_use:
   command: ""
   browser: mock
@@ -556,6 +599,14 @@ notify:
     enabled: false
     host: ""
     timeout_seconds: 5
+  email:
+    enabled: false
+    host: ""
+    port: 587
+    security: starttls
+    username: ""
+    from_address: ""
+    timeout_seconds: 30
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21

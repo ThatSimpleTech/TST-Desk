@@ -57,6 +57,11 @@ _REASONS: list[tuple[str | None, bool]] = [
     ("429", True),
     ("http_429", True),
     ("scheduled run failed: timed out waiting for turn_complete", True),
+    ("max_run", False),
+    ("stopped after 15 minutes (max run time)", False),
+    ("stopped after 1 minute (max run time)", False),
+    # The mark wins even when the sentence also says timed out.
+    ("timed out (max run time)", False),
     ("connection refused", True),
     ("Connection reset by peer", True),
     ("ConnectError: failed", True),

@@ -15,8 +15,6 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from tests.test_loop import make_config
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
@@ -83,13 +81,11 @@ def _card(session: Session) -> ApprovalRequest:
 
 async def _fire(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     *,
     steps: tuple[str, ...] = ("tool", "stream"),
     budget: float = 15,
     **over: object,
 ) -> tuple[Daemon, Path, MockProvider, float]:
-    monkeypatch.setattr("tstd.scheduler.runner._TURN_TIMEOUT_SECS", budget)
     provider = _provider(*steps)
     data = tmp_path / "data"
     data.mkdir()
@@ -98,6 +94,9 @@ async def _fire(
     save_job(data, _job(workspace, **over))
     daemon = Daemon(data_dir=data, provider=provider)
     daemon.config = make_config()
+    # The waiter used to be a fixed 120s. The budget is the config now,
+    # so a park test can still bound a turn that never asks.
+    daemon.config.scheduler.max_run_seconds = budget
     started = time.monotonic()
     try:
         await asyncio.wait_for(daemon.run_due_jobs(_NOW), timeout=20)
@@ -129,11 +128,9 @@ async def _answer(daemon: Daemon, session: Session, approved: bool) -> None:
     await asyncio.wait_for(watchers[0], timeout=10)
 
 
-async def test_an_approval_parks_without_the_turn_timeout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_an_approval_parks_without_the_turn_timeout(tmp_path: Path) -> None:
     """The card is not a timeout, and a retry must not open another session."""
-    daemon, data, provider, elapsed = await _fire(tmp_path, monkeypatch)
+    daemon, data, provider, elapsed = await _fire(tmp_path)
     try:
         assert elapsed < 8
         job = _stored(data)
@@ -181,10 +178,8 @@ async def test_an_approval_parks_without_the_turn_timeout(
         await daemon._shutdown()
 
 
-async def test_a_denial_fails_the_parked_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    daemon, data, _provider, _elapsed = await _fire(tmp_path, monkeypatch)
+async def test_a_denial_fails_the_parked_run(tmp_path: Path) -> None:
+    daemon, data, _provider, _elapsed = await _fire(tmp_path)
     try:
         await _answer(daemon, _session(daemon, data), False)
         job = _stored(data)
@@ -203,10 +198,8 @@ async def test_a_denial_fails_the_parked_run(
         await daemon._shutdown()
 
 
-async def test_cancelling_the_session_is_an_unanswered_approval(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    daemon, data, _provider, _elapsed = await _fire(tmp_path, monkeypatch)
+async def test_cancelling_the_session_is_an_unanswered_approval(tmp_path: Path) -> None:
+    daemon, data, _provider, _elapsed = await _fire(tmp_path)
     try:
         await _session(daemon, data).cancel()
         await asyncio.wait_for(_watchers(daemon)[0], timeout=10)
@@ -221,11 +214,9 @@ async def test_cancelling_the_session_is_an_unanswered_approval(
         await daemon._shutdown()
 
 
-async def test_a_restart_closes_a_park_the_watcher_left_behind(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_a_restart_closes_a_park_the_watcher_left_behind(tmp_path: Path) -> None:
     """Cancelling the watch is process shutdown. The next start still closes it."""
-    daemon, data, _provider, _elapsed = await _fire(tmp_path, monkeypatch)
+    daemon, data, _provider, _elapsed = await _fire(tmp_path)
     daemon2: Daemon | None = None
     try:
         watcher = _watchers(daemon)[0]
@@ -262,10 +253,8 @@ async def test_a_restart_closes_a_park_the_watcher_left_behind(
         await daemon._shutdown()
 
 
-async def test_the_next_slot_is_missed_while_the_previous_run_is_parked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    daemon, data, provider, _elapsed = await _fire(tmp_path, monkeypatch)
+async def test_the_next_slot_is_missed_while_the_previous_run_is_parked(tmp_path: Path) -> None:
+    daemon, data, provider, _elapsed = await _fire(tmp_path)
     try:
         calls = len(provider.calls)
         when = datetime(2026, 8, 21, 19, 0, tzinfo=UTC)
@@ -303,10 +292,7 @@ async def test_the_next_slot_is_missed_while_the_previous_run_is_parked(
         await daemon._shutdown()
 
 
-async def test_run_now_parks_without_moving_the_schedule(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("tstd.scheduler.runner._TURN_TIMEOUT_SECS", 15)
+async def test_run_now_parks_without_moving_the_schedule(tmp_path: Path) -> None:
     provider = _provider("tool", "stream")
     data = tmp_path / "data"
     data.mkdir()
@@ -325,6 +311,7 @@ async def test_run_now_parks_without_moving_the_schedule(
     )
     daemon = Daemon(data_dir=data, provider=provider)
     daemon.config = make_config()
+    daemon.config.scheduler.max_run_seconds = 15
     try:
         before = {id(task) for task in daemon._tasks}
         raw = await daemon._handle_message(json.dumps({"type": "run_job", "job_id": "inbox"}), None)
@@ -353,10 +340,8 @@ async def test_run_now_parks_without_moving_the_schedule(
         await daemon._shutdown()
 
 
-async def test_an_older_watcher_does_not_clear_a_newer_park(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    daemon, data, _provider, _elapsed = await _fire(tmp_path, monkeypatch, steps=("tool", "tool"))
+async def test_an_older_watcher_does_not_clear_a_newer_park(tmp_path: Path) -> None:
+    daemon, data, _provider, _elapsed = await _fire(tmp_path, steps=("tool", "tool"))
     try:
         first = _session(daemon, data)
         first_id = first.id
@@ -673,10 +658,14 @@ def test_a_miss_cannot_restore_a_park_the_watch_cleared(tmp_path: Path) -> None:
     assert job.next_run == _SLOT
 
 
-async def test_a_turn_that_never_asks_still_times_out(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("tstd.scheduler.runner._TURN_TIMEOUT_SECS", 0.4)
+async def test_a_turn_that_never_asks_stops_at_the_run_limit(tmp_path: Path) -> None:
+    """A turn that outlives the config is cancelled, not retried.
+
+    The old waiter recorded ``timed out waiting for turn_complete`` and
+    left the loop running. That reason was transient, so a job that was
+    simply too long burned the retry slot the same way. The receipt now
+    names the max run time, and the session is stopped.
+    """
     provider = MockProvider(default=Script(kind="stream", content="digest ready", chunk_delay=30))
     data = tmp_path / "data"
     data.mkdir()
@@ -685,17 +674,32 @@ async def test_a_turn_that_never_asks_still_times_out(
     save_job(data, _job(workspace, retries=1))
     daemon = Daemon(data_dir=data, provider=provider)
     daemon.config = make_config()
+    daemon.config.scheduler.max_run_seconds = 0.4
     started = time.monotonic()
     try:
         await asyncio.wait_for(daemon.run_due_jobs(_NOW), timeout=5)
         assert time.monotonic() - started < 3
         job = _stored(data)
         assert job.last_status == "failed"
-        assert job.attempt == 1
-        assert job.next_run == _RETRY
-        assert job.resume_at == _AFTER
+        assert job.attempt == 0
+        assert job.resume_at is None
+        assert job.next_run == _AFTER
         assert job.parked_session_id is None
-        assert "timed out" in (job.last_summary or "")
-        assert daemon._scheduler_deliver.records == []
+        assert job.last_summary is not None
+        assert "max run time" in job.last_summary
+        assert "timed out" not in job.last_summary
+        assert job.last_session_id
+        session = daemon.session_registry.get(job.last_session_id)
+        assert isinstance(session, Session)
+        assert session.state == "cancelled"
+        runner = daemon.session_registry.get_runner(job.last_session_id)
+        assert runner is None or not runner.is_running
+        assert len(daemon._scheduler_deliver.records) == 1
+        assert "max run time" in daemon._scheduler_deliver.records[0][1]
+        runs = list_runs(data, "inbox")
+        assert len(runs) == 1
+        assert runs[0].status == "failed"
+        assert runs[0].summary is not None
+        assert "max run time" in runs[0].summary
     finally:
         await daemon._shutdown()

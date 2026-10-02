@@ -64,6 +64,7 @@ from tstd.protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    EmailTestResult,
     EndSession,
     Error,
     ExportUsage,
@@ -150,6 +151,7 @@ from tstd.protocol import (
     SetCuIndicators,
     SetCuKill,
     SetCuPolicy,
+    SetEmailNotify,
     SetEngine,
     SetGrokMode,
     SetJudgments,
@@ -171,6 +173,7 @@ from tstd.protocol import (
     SkillStackEntry,
     StartAutonomy,
     SteeringReloaded,
+    TestEmail,
     TierState,
     TierSwitched,
     ToolCall,
@@ -217,6 +220,16 @@ FIXTURES = {
     "set_coworker": SetCoworker(enabled=True),
     "set_voice": SetVoice(enabled=True),
     "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
+    "set_email_notify": SetEmailNotify(
+        enabled=True,
+        host="smtp.example.com",
+        port=587,
+        security="starttls",
+        username="desk",
+        from_address="desk@example.com",
+        password=None,
+    ),
+    "test_email": TestEmail(to="owner@example.com"),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
     "set_cu_policy": SetCuPolicy(
         enabled=True,
@@ -924,6 +937,8 @@ FIXTURES = {
         # TD-3814: a count and a phrase, not nulls.
         retries=2,
         retry_delay="10 minutes",
+        # TD-3819: a phrase, not null — the job stores the seconds.
+        max_run="20 minutes",
         # TD-3817: a real follow-on id, not null.
         then="job-2",
         # TD-3818: a real local calendar, not nulls.
@@ -943,6 +958,7 @@ FIXTURES = {
         grace="2 hours",
         retries=1,
         retry_delay="10 minutes",
+        max_run="20 minutes",
         preset="vllm",
         engine="native",
         workspace="/home/user/project",
@@ -964,6 +980,7 @@ FIXTURES = {
                 retries=2,
                 retry_delay=600,
                 attempt=0,
+                max_run=1200,
                 then="job-2",
                 skip_calendar="/home/user/holidays.ics",
                 skip_match="holiday|PTO|OOO",
@@ -1038,6 +1055,7 @@ FIXTURES = {
                 grace=7200,
                 retries=1,
                 retry_delay=600,
+                max_run=None,
                 preset=None,
                 engine=None,
                 workspace=None,
@@ -1053,6 +1071,7 @@ FIXTURES = {
                 grace=None,
                 retries=0,
                 retry_delay=None,
+                max_run=1200,
                 preset="vllm",
                 engine="native",
                 workspace="/home/user/project",
@@ -1103,6 +1122,9 @@ FIXTURES = {
         sessions=[GrokSessionEntry(id="abc", title="Fix login", cwd="/tmp/proj", updated_at="1")]
     ),
     "transcript": Transcript(ok=True, text="hello from the mic", detail=""),
+    "email_test_result": EmailTestResult(
+        ok=False, error_class="SMTPException", message="auth failed"
+    ),
     "grok_extensions": GrokExtensions(
         items=[GrokExtension(kind="skill", name="review", detail="user")]
     ),

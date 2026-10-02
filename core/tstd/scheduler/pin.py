@@ -34,10 +34,16 @@ EngineKind = Literal["native", "grok"]
 
 @dataclass(frozen=True)
 class ScheduledPin:
-    """The pin bound for one fire. Both empty means use the window's current."""
+    """The pin bound for one fire. Both empty means use the window's current.
+
+    ``max_run`` is the job's own turn limit in seconds, or None to use
+    the config. It rides here so the turn callback stays
+    ``(workspace, instruction)`` (TD-3819).
+    """
 
     preset: str | None = None
     engine: EngineKind | None = None
+    max_run: int | None = None
 
 
 # None, not a shared ScheduledPin(): ContextVar defaults must not be a
@@ -47,7 +53,7 @@ _PIN: ContextVar[ScheduledPin | None] = ContextVar("tstd_scheduled_pin", default
 
 def bind_scheduled_pin(job: Job) -> Token[ScheduledPin | None]:
     """Bind *job*'s pin for the current task. Reset with the token."""
-    return _PIN.set(ScheduledPin(preset=job.preset, engine=job.engine))
+    return _PIN.set(ScheduledPin(preset=job.preset, engine=job.engine, max_run=job.max_run))
 
 
 def reset_scheduled_pin(token: Token[ScheduledPin | None]) -> None:

@@ -125,6 +125,8 @@ describe("pin on the wire", () => {
 				then: "",
 				skip_calendar: "",
 				skip_match: "",
+				max_run: "",
+				email_to: "",
 			},
 			"UTC",
 		);
@@ -146,6 +148,8 @@ describe("pin on the wire", () => {
 				then: "",
 				skip_calendar: "",
 				skip_match: "",
+				max_run: "",
+				email_to: "",
 			},
 			"UTC",
 		);

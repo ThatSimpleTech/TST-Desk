@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 from .grace import GraceError, parse_grace
+from .limit import MAX_RUN_ERROR_CODE, MAX_RUN_MARK
 
 if TYPE_CHECKING:
     from .models import Job
@@ -57,6 +58,10 @@ TRANSIENT_RULES: tuple[tuple[Literal["exact", "prefix", "contains", "http"], str
     ("prefix", "workspace is not a directory", False),
     ("prefix", "preset '", False),
     ("contains", "no longer exists", False),
+    # Before "timed out". A job that simply ran out of its own limit
+    # must not be tried again; the slot would burn the same way.
+    ("exact", MAX_RUN_ERROR_CODE, False),
+    ("contains", MAX_RUN_MARK, False),
     ("contains", "timed out", True),
     ("contains", "timeout", True),
     ("contains", "connection error", True),

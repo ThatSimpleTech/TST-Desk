@@ -17,10 +17,14 @@ from .phrases import find_phrase
 
 _FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
 _KV = re.compile(
-    r"^(id|workspace|instruction|cadence|next_run|deliver_to|paused):\s*(.+?)\s*$",
+    r"^(id|workspace|instruction|cadence|next_run|deliver_to|email_to|paused):\s*(.+?)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
-_DELIVER = re.compile(r"\b(?:deliver(?:\s+to)?|via)\s+(window|slack|ntfy)\b", re.IGNORECASE)
+_DELIVER = re.compile(
+    r"\b(?:deliver(?:\s+to)?|via)\s+(window|slack|ntfy|email)"
+    r"(?:\s+([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}))?",
+    re.IGNORECASE,
+)
 _INTERVAL = re.compile(r"\bevery\s+[1-9]\d*\s+(?:minutes?|hours?|days?)\b", re.IGNORECASE)
 _CRON_PREFIX = re.compile(r"\bcron:\s*([^\n]+)", re.IGNORECASE)
 _CRON_FIELD = re.compile(
@@ -85,6 +89,7 @@ def _draft_from_key_values(text: str) -> JobDraft:
         cadence=fields.get("cadence"),
         next_run=fields.get("next_run"),
         deliver_to=_deliver_to(fields.get("deliver_to")),
+        email_to=fields.get("email_to"),
         paused=_as_bool(fields.get("paused"), default=False),
     )
 
@@ -92,7 +97,7 @@ def _draft_from_key_values(text: str) -> JobDraft:
 def _draft_from_natural_language(text: str) -> JobDraft:
     spans: list[tuple[int, int]] = []
     workspace = _take(_WORKSPACE_KV, text, spans) or _take(_IN_PATH, text, spans)
-    deliver = _deliver_to(_take(_DELIVER, text, spans))
+    deliver, email_to = _take_deliver(text, spans)
     cadence = _take(_INTERVAL, text, spans)
     if cadence is None:
         prefixed = _CRON_PREFIX.search(text)
@@ -114,6 +119,7 @@ def _draft_from_natural_language(text: str) -> JobDraft:
         cadence=cadence,
         next_run=next_run,
         deliver_to=deliver,
+        email_to=email_to,
         paused=paused,
     )
 
@@ -159,6 +165,14 @@ def _remainder(text: str, spans: list[tuple[int, int]]) -> str:
     leftover = leftover.strip(" ,.;")
     leftover = re.sub(r"\s+\b(?:and|then|to)\s*$", "", leftover, flags=re.IGNORECASE)
     return leftover.strip(" ,.;")
+
+
+def _take_deliver(text: str, spans: list[tuple[int, int]]) -> tuple[DeliverTo | None, str | None]:
+    match = _DELIVER.search(text)
+    if match is None:
+        return None, None
+    spans.append(match.span())
+    return _deliver_to(match.group(1)), match.group(2)
 
 
 def _deliver_to(raw: str | None) -> DeliverTo | None:

@@ -1028,7 +1028,7 @@ class SaveJob(ClientMessage):
     # On an update, None keeps the stored value and "" clears it (TD-3810).
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    deliver_to: Literal["window", "slack", "ntfy", "email"] | None = None
     paused: bool = False
     # IANA name ("America/Chicago") a cron cadence is read in. Omitted on an
     # edit keeps the job's current zone; None on create means UTC. The pane
@@ -1057,6 +1057,11 @@ class SaveJob(ClientMessage):
     # when retries is at least 1. Omitted on create with retries set is
     # that default. Ignored when retries is 0.
     retry_delay: str | int | None = None
+    # How long this job's turn may run (TD-3819). A phrase ("20 minutes")
+    # or a number of seconds, stored as seconds, from 1 to 60 minutes.
+    # On an edit, None keeps the stored limit and "" clears it so the
+    # job uses scheduler.max_run_seconds. Omitted on create means that too.
+    max_run: str | int | None = None
     # Another job's id to start once after this one ends ok (TD-3817).
     # On an edit, None keeps the stored id and "" clears it. Omitted on
     # create means no follow-on. A cycle is refused at save. The child's
@@ -1070,6 +1075,10 @@ class SaveJob(ClientMessage):
     # every event. On an edit, None keeps the stored list and "" clears it
     # back to every event. Omitted on create means every event.
     skip_match: str | None = None
+    # One address when ``deliver_to`` is email (TD-3820). On an edit, None
+    # keeps the stored address and "" clears it. Omitted on create with
+    # another channel means none. Pause omits it.
+    email_to: str | None = None
 
 
 class DeleteJob(ClientMessage):
@@ -1149,13 +1158,17 @@ class SaveJobTemplate(ClientMessage):
     instruction: str = ""
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    deliver_to: Literal["window", "slack", "ntfy", "email"] | None = None
     grace: str | int | None = None
     retries: int | None = None
     retry_delay: str | int | None = None
+    # Same phrases as a job. Omitted means the config limit (TD-3819).
+    max_run: str | int | None = None
     preset: str | None = None
     engine: str | None = None
     workspace: str | None = None
+    # One address when ``deliver_to`` is email (TD-3820). Omitted means none.
+    email_to: str | None = None
 
 
 class DeleteJobTemplate(ClientMessage):
@@ -1193,6 +1206,30 @@ class Transcribe(ClientMessage):
     type: Literal["transcribe"] = "transcribe"
     audio_b64: str = Field(min_length=1, max_length=2_800_000)
     mime: str = Field(default="audio/webm", min_length=1, max_length=128)
+
+
+class SetEmailNotify(ClientMessage):
+    """Save SMTP settings (TD-3820). Acked with ``setup_state``.
+
+    ``password`` is written to the keychain and never stored on
+    ``setup_state``. None or "" leaves the stored password alone.
+    """
+
+    type: Literal["set_email_notify"] = "set_email_notify"
+    enabled: bool = False
+    host: str = ""
+    port: int = 587
+    security: Literal["starttls", "tls"] = "starttls"
+    username: str = ""
+    from_address: str = ""
+    password: str | None = None
+
+
+class TestEmail(ClientMessage):
+    """Send one short test to ``to`` (TD-3820). Acked with ``email_test_result``."""
+
+    type: Literal["test_email"] = "test_email"
+    to: str = ""
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────
@@ -1875,6 +1912,18 @@ class McpServerSummary(BaseModel):
     enabled: bool = True
 
 
+class EmailNotifyState(BaseModel):
+    """SMTP settings on ``setup_state``. Never a password."""
+
+    enabled: bool = False
+    host: str = ""
+    port: int = 587
+    security: Literal["starttls", "tls"] = "starttls"
+    username: str = ""
+    from_address: str = ""
+    password_stored: bool = False
+
+
 class SetupState(DaemonEvent):
     """Response to ``get_setup_state``; also the ack for ``set_api_key`` and
     ``set_preset`` (TD-1101).
@@ -1963,6 +2012,9 @@ class SetupState(DaemonEvent):
     # the daemon. An older client ignores both fields.
     speech_enabled: bool = False
     speech_ready: bool = False
+    # TD-3820: SMTP settings. Additive. ``password_stored`` is a presence
+    # probe — the password itself never leaves the keychain.
+    email: EmailNotifyState = Field(default_factory=EmailNotifyState)
 
 
 class GrokCommand(BaseModel):
@@ -2383,7 +2435,7 @@ class JobEntry(BaseModel):
     instruction: str
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"]
+    deliver_to: Literal["window", "slack", "ntfy", "email"]
     paused: bool = False
     timezone: str | None = None
     # None means the run uses the window's current preset and engine.
@@ -2399,6 +2451,9 @@ class JobEntry(BaseModel):
     retries: int = 0
     retry_delay: int | None = None
     attempt: int = 0
+    # Seconds this job's turn may run. None uses scheduler.max_run_seconds
+    # (TD-3819). The phrase is not on this event.
+    max_run: int | None = None
     # Another job's id, started once after this one ends ok (TD-3817).
     # None means this job stands alone. The child's schedule is separate.
     then: str | None = None
@@ -2415,6 +2470,12 @@ class JobEntry(BaseModel):
     last_status: Literal["ok", "failed", "missed", "waiting", "skipped"] | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
+    # One address when ``deliver_to`` is email (TD-3820).
+    email_to: str | None = None
+    # Mail outcome of the last fire. Null unless that fire was email.
+    # Separate from ``last_status``.
+    last_delivery: Literal["ok", "failed"] | None = None
+    last_delivery_error: str | None = None
     # Not persisted. It mirrors the daemon's in-flight set, so a restart
     # cannot show a turn that is no longer happening (TD-3809).
     running: bool = False
@@ -2458,6 +2519,9 @@ class JobRunEntry(BaseModel):
     # Names the job whose ok run started a chained fire (TD-3817). Null
     # on a scheduled slot and on Run now.
     note: str | None = None
+    # Mail outcome for this fire (TD-3820). Null unless the channel is email.
+    delivery: Literal["ok", "failed"] | None = None
+    delivery_error: str | None = None
 
 
 class JobRuns(DaemonEvent):
@@ -2484,7 +2548,8 @@ class JobDraftReply(DaemonEvent):
     instruction: str | None = None
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    deliver_to: Literal["window", "slack", "ntfy", "email"] | None = None
+    email_to: str | None = None
     paused: bool = False
 
 
@@ -2501,13 +2566,16 @@ class JobTemplateEntry(BaseModel):
     instruction: str = ""
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"]
+    deliver_to: Literal["window", "slack", "ntfy", "email"]
     grace: int | None = None
     retries: int = 0
     retry_delay: int | None = None
+    # Seconds, or null to use scheduler.max_run_seconds (TD-3819).
+    max_run: int | None = None
     preset: str | None = None
     engine: Literal["native", "grok"] | None = None
     workspace: str | None = None
+    email_to: str | None = None
 
 
 class JobTemplates(DaemonEvent):
@@ -2550,6 +2618,20 @@ class Transcript(DaemonEvent):
     text: str = ""
     detail: str = ""
     error: str | None = None
+
+
+class EmailTestResult(DaemonEvent):
+    """Reply to ``test_email`` (TD-3820). Connection-scoped.
+
+    ``error_class`` is the SMTP exception name. ``message`` is the public
+    text, already stripped of the password and the message body.
+    """
+
+    type: Literal["email_test_result"] = "email_test_result"
+    seq: int = 1
+    ok: bool = False
+    error_class: str = ""
+    message: str = ""
 
 
 # ── Discriminated unions ───────────────────────────────────────────────
@@ -2644,7 +2726,9 @@ ClientMessageT = Annotated[
     | SaveJobTemplate
     | DeleteJobTemplate
     | GetSessionJobSource
-    | Transcribe,
+    | Transcribe
+    | SetEmailNotify
+    | TestEmail,
     Field(discriminator="type"),
 ]
 
@@ -2703,6 +2787,7 @@ DaemonEventT = Annotated[
     | JobDraftReply
     | JobTemplates
     | SessionJobSource
+    | EmailTestResult
     | GrokCommands
     | GrokPlan
     | GrokMode
@@ -2809,6 +2894,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "delete_job_template",
         "get_session_job_source",
         "transcribe",
+        "set_email_notify",
+        "test_email",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -2874,6 +2961,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "grok_session_list",
         "grok_extensions",
         "transcript",
+        "email_test_result",
     }
 )
 

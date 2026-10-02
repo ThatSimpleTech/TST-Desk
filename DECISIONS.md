@@ -11813,3 +11813,137 @@ Cancelling local prep the way a socket read is cancelled. `close()`
 on a leader the OS refused to kill. `Popen.poll` as the only death
 check on Linux, which races the watcher's `waitpid`. Treating
 `ChildProcessError` as an unreaped exit.
+
+## TD-3819 — Scheduled runs get a configurable time limit
+
+**Decision:** `scheduler.max_run_seconds` (default 900, greater than 0
+and at most 3600) is the base wait for a scheduled turn and for
+`tst run`. A job may set `max_run`, stored as seconds from 60 to 3600,
+as a duration phrase or an int. None means the config. On an edit,
+omitted keeps the stored limit and `""` clears it, the same as grace.
+Templates may store it. Built-ins leave it unset. The budget rides on
+the task-local `ScheduledPin` so `TurnFn` stays `(workspace, instruction)`.
+
+When the budget expires, the runner cancels the session through the
+registry and records `stopped after N minutes (max run time)` with
+error code `max_run`. The receipt rounds the budget up to whole
+minutes, minimum 1. The retry table marks that code and that phrase
+non-transient, ahead of the "timed out" rule. A provider `timeout`
+stays transient. The old `timed out waiting for turn_complete` receipt
+is no longer what the runner writes.
+
+`tst run --timeout` replaces the base for one command. The provider
+retry allowance is still added when the config can be read. An
+unreadable config falls back to 900 with no retry add-on. The flag
+must be finite and greater than 0. There is no protocol version bump:
+`max_run` is an additive field on `SaveJob`, `JobEntry`,
+`SaveJobTemplate`, and `JobTemplateEntry`. Run now uses the same limit
+because it is the same turn. It still does not retry.
+
+**Rationale:** A research job makes many tool calls and needs several
+minutes. Stopping the waiter at 120 seconds left the turn running and
+recorded a timeout, which the retry table then tried again. Retrying a
+job that is simply too long burns the slot the same way. Cancelling
+the session frees it. One config key covers scheduled runs and
+`tst run`, and a per-job override covers the long ones without raising
+the default for everything else.
+
+**Rejected:** Leaving the turn running after the waiter gives up.
+Treating the stop as a transient timeout. A separate CLI config key.
+Widening `TurnFn`. A protocol version bump. A config minimum of 60
+seconds, which would make a short test budget impossible; the per-job
+bound stays 1-60 minutes, and a config under a minute still says
+"1 minute" on the receipt.
+
+## TD-3820 — Email as a scheduled-job delivery channel
+
+**Decision:** `notify.email` is a seventh notify child (`enabled`, `host`,
+`port`, `security` of `starttls` or `tls`, `username`, `from_address`,
+`timeout_seconds` default 30). The password is the keychain account
+`tst-smtp-password`, written through `backend.set_secret`. `smtp-password`
+is a reserved credential id so a named key cannot collide with that
+account. A `password` key in yaml is dropped and a static warning is
+logged; the value is not in the warning. An empty password on save
+leaves the stored item alone.
+
+`send` raises `EmailNotifyError` instead of swallowing, so the scheduler
+can stamp delivery. Slack, ntfy, Discord, and Telegram stay swallow-on-failure.
+TLS is required before AUTH. Production uses `ssl.create_default_context`.
+`ssl_context` on `send` is a test seam, not a config key. The log records
+the recipient domain and the error class. It does not record the password,
+the message body, or the SMTP text.
+
+Jobs have no name. The subject is the first 60 characters of the
+instruction after collapsing whitespace, an em dash, and the local
+calendar date. The date is the job's zone when it is set and known,
+otherwise the machine zone. An empty instruction is "Scheduled job".
+The body is the assistant text after the last tool call. An empty
+suffix, or a turn with no tool call, uses the full assistant text. The
+receipt stays the capped summary. The message is multipart: plain text
+plus a small HTML rendering of headings, lists, and links, with no new
+dependency.
+
+`deliver` stays `(channel, summary)`. A context variable bound by the
+daemon routes email. When it is unset, email falls through to `deliver`
+so existing fakes keep working. Delivery status (`ok` or `failed`, plus
+an error) is separate from the run's `last_status`. `record_run` clears
+it. The stamp rewrites the history line matched by `started_at`, then
+updates the job row. A failed send does not stop a follow-on chain.
+`setup_state.email` carries the form and `password_stored`. It never
+carries the password. There is no protocol version bump.
+
+**Rationale:** A daily research job needs the report in a mailbox, and
+the report is the last answer, not the "let me search" narration or the
+2,000-character receipt. The password cannot live beside the host in
+yaml. Raising from email, and only email, is what lets a failed send
+show up as delivery failed while the run itself stays ok or failed on
+its own terms.
+
+**Rejected:** A new dependency for Markdown. Putting the password in
+config or on `setup_state`. Logging the SMTP dialogue. Widening
+`deliver` or `TurnFn`. Treating a mail failure as a failed run. Using
+the template name as the subject. Bumping the protocol version.
+
+## TD-3821 — Scheduled-job report emails look like a designed newsletter
+
+**Decision:** The HTML part is an internal Markdown subset
+(`email_markdown` for blocks, `email_inline` for emphasis, code, and
+links). `markdown` and `mistune` are both BSD and would have been
+allowed. A renderer we control is how raw HTML stays text.
+
+The message stays multipart/alternative. The plain part is the report
+Markdown. The HTML part is one centred column, max-width 680px, with
+inline styles only. Gmail drops a `<style>` block. Colours are the
+`PALETTE` dict in `email_markdown.py` and nowhere else. The link blue
+is a mid value so it stays readable on the white card and after Gmail's
+dark theme inverts that card. The header is the job title and the local
+date. The footer is `Sent by TST Desk · <title> · ran <local time> on
+<preset>`.
+
+Jobs still have no display name. The title is the same 60-character
+instruction label as the subject. The footer preset is the job's pin,
+or the active preset when the job has none. If both are blank the
+renderer says `current`.
+
+Model text is escaped. Links are http or https only, so `javascript:`,
+`data:`, and `mailto:` render as the label with no anchor. Images,
+including Markdown images and a raw `<img>`, are not emitted. Nothing
+in the report becomes a style block, a class, or an event attribute.
+
+Send test email sends a short sample report through that renderer. The
+subject and the header are `TST Desk test`. The footer names the active
+preset. The sample's one link is `http://localhost/sample`, because a
+remote host literal in the source is refused. `send` takes optional `title`, `when`, `timezone_name`, and
+`preset`. Omitted, the title is "Scheduled job", the time is now, and
+the preset is the active one. No protocol change. An SMTP error is
+redacted against both the plain body and the HTML document.
+
+**Rationale:** A daily digest has to be readable in a mail client, and
+the text is model output. Escaping it in our own parser is the whole
+point of not taking a library that might pass a tag through. The title
+matches the subject because there is still no job name.
+
+**Rejected:** Adding `markdown` or `mistune`. Allowing `mailto:` links.
+Rendering https images from cited sources. A `<style>` block with a
+dark-mode query. Using the template name as the title. Bumping the
+protocol version.
