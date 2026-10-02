@@ -11903,3 +11903,47 @@ its own terms.
 config or on `setup_state`. Logging the SMTP dialogue. Widening
 `deliver` or `TurnFn`. Treating a mail failure as a failed run. Using
 the template name as the subject. Bumping the protocol version.
+
+## TD-3821 — Scheduled-job report emails look like a designed newsletter
+
+**Decision:** The HTML part is an internal Markdown subset
+(`email_markdown` for blocks, `email_inline` for emphasis, code, and
+links). `markdown` and `mistune` are both BSD and would have been
+allowed. A renderer we control is how raw HTML stays text.
+
+The message stays multipart/alternative. The plain part is the report
+Markdown. The HTML part is one centred column, max-width 680px, with
+inline styles only. Gmail drops a `<style>` block. Colours are the
+`PALETTE` dict in `email_markdown.py` and nowhere else. The link blue
+is a mid value so it stays readable on the white card and after Gmail's
+dark theme inverts that card. The header is the job title and the local
+date. The footer is `Sent by TST Desk · <title> · ran <local time> on
+<preset>`.
+
+Jobs still have no display name. The title is the same 60-character
+instruction label as the subject. The footer preset is the job's pin,
+or the active preset when the job has none. If both are blank the
+renderer says `current`.
+
+Model text is escaped. Links are http or https only, so `javascript:`,
+`data:`, and `mailto:` render as the label with no anchor. Images,
+including Markdown images and a raw `<img>`, are not emitted. Nothing
+in the report becomes a style block, a class, or an event attribute.
+
+Send test email sends a short sample report through that renderer. The
+subject and the header are `TST Desk test`. The footer names the active
+preset. The sample's one link is `http://localhost/sample`, because a
+remote host literal in the source is refused. `send` takes optional `title`, `when`, `timezone_name`, and
+`preset`. Omitted, the title is "Scheduled job", the time is now, and
+the preset is the active one. No protocol change. An SMTP error is
+redacted against both the plain body and the HTML document.
+
+**Rationale:** A daily digest has to be readable in a mail client, and
+the text is model output. Escaping it in our own parser is the whole
+point of not taking a library that might pass a tag through. The title
+matches the subject because there is still no job name.
+
+**Rejected:** Adding `markdown` or `mistune`. Allowing `mailto:` links.
+Rendering https images from cited sources. A `<style>` block with a
+dark-mode query. Using the template name as the title. Bumping the
+protocol version.

@@ -6493,6 +6493,37 @@ files, vitest 1460, svelte-check 727 files 0 errors 0 warnings.
 
 ---
 
+### TD-3821 — Scheduled-job report emails look like a designed newsletter
+**Size:** 2 · **Depends on:** TD-3820
+
+**Acceptance criteria:**
+- [x] The report Markdown renders to email-safe HTML: headings,
+      paragraphs, bold and italic, links, bullet and numbered lists,
+      tables, inline code, code blocks, and blockquotes. Styles are
+      inline. The column is centred at max-width 680px, with a system
+      font, a header band (job title and local date), and a footer
+      `Sent by TST Desk · <job title> · ran <local time> on <preset>`
+- [x] Model output is escaped. Links are http or https only. Images,
+      scripts, style blocks, and event attributes in the report do not
+      become live HTML
+- [x] The message stays multipart/alternative. The plain part is the
+      same Markdown
+- [x] Settings → Send test email sends a short sample report through
+      the same renderer
+
+Done (2026-09-29): a scheduled report arrives as a one-column
+newsletter. The plain part is still the Markdown. The HTML escapes the
+model text, keeps http and https links, and drops images. The header
+is the same 60-character instruction label as the subject, and the
+footer names that label, the local time, and the preset. Send test
+email uses a short sample of the same layout. Class B entry in
+DECISIONS.md.
+
+Suite: 4178 passed / 8 skipped, ruff + `mypy --strict` clean over 189
+files, vitest 1460, svelte-check 727 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone

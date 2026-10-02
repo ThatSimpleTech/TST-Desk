@@ -296,6 +296,16 @@ dropped. The log records the recipient domain only, never the password
 and never the message body. `host` is the only host this channel may
 reach.
 
+The message is multipart (TD-3821). The plain part is the report
+Markdown. The HTML part is that same Markdown in one centred column
+(max-width 680px, inline styles only): a header with the job title and
+the local date, the report, and a footer
+`Sent by TST Desk · <title> · ran <local time> on <preset>`. The job has
+no display name, so the title is the same 60-character instruction
+label as the subject. A job with no preset names the active preset.
+HTML in the report is escaped, links are http or https only, and images
+are left out. Send test email uses a short sample of that layout.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `enabled` | bool | `false` | When false, a job set to email does not send. |

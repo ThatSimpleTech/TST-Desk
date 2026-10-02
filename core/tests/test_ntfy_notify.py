@@ -319,7 +319,8 @@ class TestConfig:
         notify_dir = Path(__file__).resolve().parent.parent / "tstd" / "notify"
         names = {path.name for path in notify_dir.iterdir() if path.suffix == ".py"}
         # email.py is another sibling send(). email_config / email_settings
-        # write the form and the keychain; they are not a gateway.
+        # write the form and the keychain. email_html / email_markdown /
+        # email_inline render the report. None of those is a gateway.
         assert names == {
             "__init__.py",
             "slack.py",
@@ -328,5 +329,8 @@ class TestConfig:
             "telegram.py",
             "email.py",
             "email_config.py",
+            "email_html.py",
+            "email_inline.py",
+            "email_markdown.py",
             "email_settings.py",
         }
