@@ -7829,8 +7829,8 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49, E53 | 24 | 88 |
-| **Total planned** | **49** | **340** | **1070** |
+| Later | E47, E49, E53 | 25 | 91 |
+| **Total planned** | **49** | **341** | **1073** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -9294,3 +9294,41 @@ helper. The connector epic is E53, because E50–E52 are the Android shell, the 
 
 Suite: 4229 passed / 8 skipped, ruff + `mypy --strict` clean over 201
 files, vitest 1464, svelte-check 729 files 0 errors 0 warnings.
+
+---
+
+### TD-4853 — Sign in with Microsoft for email delivery
+**Size:** 3 · **Depends on:** TD-3820, TD-3821
+
+Outlook and Microsoft 365 users send a scheduled job's email by signing
+in. This path has no SMTP password.
+
+**Acceptance criteria:**
+- [x] `connectors.microsoft.client_id` and `connectors.microsoft.tenant`
+      (default `common`). An empty client id hides the Microsoft method
+      and shows how to register a public client. `login_host` and
+      `graph_host` come from config. No host is hard-coded in Python
+- [x] OAuth 2.0 authorization code with PKCE for a public client. The
+      redirect is `http://127.0.0.1:<ephemeral port>`, the listener binds
+      127.0.0.1 only, and it closes after one authorization request or a
+      timeout. Scopes are `offline_access Mail.Send User.Read`. Tokens
+      live in the keychain, refresh on their own, and Disconnect deletes
+      them
+- [x] A job's email goes through SMTP (TD-3820) or Microsoft Graph
+      `POST /me/sendMail` with the TD-3821 HTML and text body. Settings →
+      Email chooses the method. Send test email works for both
+- [x] Tests cover PKCE and state verification, a loopback listener that
+      binds 127.0.0.1 and handles one request, token refresh, Graph send
+      against a fake server, failure messages without secrets, protocol
+      parity, and the Settings section
+
+Done (2026-09-29): Settings → Email can send through Microsoft Graph
+after a loopback sign-in. The access and refresh tokens live in the
+keychain account `tst-microsoft-oauth` and refresh on their own.
+Disconnect deletes that item. The Graph request is the same plain-text
+and HTML report SMTP already sends. The Later row is 25 stories / 91
+points, and the planned total is 341 / 1073. Class B entry in
+DECISIONS.md.
+
+Suite: 4259 passed / 8 skipped, ruff + `mypy --strict` clean over 210
+files, vitest 1466, svelte-check 730 files 0 errors 0 warnings.

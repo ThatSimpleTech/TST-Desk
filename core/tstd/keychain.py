@@ -614,6 +614,42 @@ async def github_oauth_is_stored() -> bool:
     return await backend.has_secret(GITHUB_OAUTH_ACCOUNT)
 
 
+MICROSOFT_OAUTH_ACCOUNT = "tst-microsoft-oauth"
+
+
+async def get_microsoft_oauth() -> str:
+    """Read the Microsoft token blob. Callers must not log it."""
+    backend = _get_backend()
+    return await backend.get_secret(MICROSOFT_OAUTH_ACCOUNT)
+
+
+async def store_microsoft_oauth(blob: str) -> None:
+    """Store the Microsoft token blob. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(blob)
+    backend = _get_backend()
+    await backend.set_secret(MICROSOFT_OAUTH_ACCOUNT, blob)
+
+
+async def delete_microsoft_oauth() -> None:
+    """Delete the Microsoft sign-in. A missing item is success.
+
+    A backend message is not re-raised: it can carry the blob.
+    """
+    backend = _get_backend()
+    try:
+        await backend.delete_secret(MICROSOFT_OAUTH_ACCOUNT)
+    except KeychainError:
+        if not await backend.has_secret(MICROSOFT_OAUTH_ACCOUNT):
+            return
+        raise KeychainError("Could not delete the Microsoft sign-in.") from None
+
+
+async def microsoft_oauth_is_stored() -> bool:
+    """Whether a Microsoft sign-in exists, without reading the blob."""
+    backend = _get_backend()
+    return await backend.has_secret(MICROSOFT_OAUTH_ACCOUNT)
+
+
 async def smtp_password_is_stored() -> bool:
     """Whether the SMTP password exists, without reading it.
 

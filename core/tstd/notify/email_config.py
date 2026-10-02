@@ -41,6 +41,7 @@ def _email_block(email: EmailNotifyConfig) -> list[str]:
     return [
         "  email:",
         f"    enabled: {'true' if email.enabled else 'false'}",
+        f"    method: {email.method}",
         f"    host: {json.dumps(email.host)}",
         f"    port: {email.port}",
         f"    security: {email.security}",

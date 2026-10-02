@@ -358,6 +358,8 @@ notify:
     timeout_seconds: 5
   email:
     enabled: false
+    # smtp (TD-3820) or microsoft (TD-4853, Graph sendMail after sign-in).
+    method: smtp
     host: ""
     port: 587
     security: starttls
@@ -420,3 +422,15 @@ connectors:
     api_host: api.github.com
     web_host: github.com
     timeout_seconds: 20
+  # Microsoft sign-in for scheduled-job email (TD-4853). Off until
+  # client_id is set. Public client: no secret. Redirect is an ephemeral
+  # 127.0.0.1 port. Tokens live in the OS keychain under
+  # tst-microsoft-oauth, never in this file. Hosts are public and live
+  # here so the daemon does not hard-code them.
+  microsoft:
+    client_id: ""
+    tenant: common
+    login_host: login.microsoftonline.com
+    graph_host: graph.microsoft.com
+    timeout_seconds: 20
+    sign_in_timeout_seconds: 300

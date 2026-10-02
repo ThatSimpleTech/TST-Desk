@@ -54,6 +54,7 @@ RESERVED_CREDENTIAL_IDS = frozenset(
         "telegram-bot",
         "smtp-password",
         "github-oauth",
+        "microsoft-oauth",
     }
 )
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
@@ -623,6 +624,8 @@ class EmailNotifyConfig(BaseModel):
     """
 
     enabled: bool = False
+    # smtp keeps TD-3820. microsoft sends the same report through Graph (TD-4853).
+    method: Literal["smtp", "microsoft"] = "smtp"
     host: str = ""
     port: int = Field(default=587, ge=1, le=65535)
     security: Literal["starttls", "tls"] = "starttls"
@@ -648,14 +651,28 @@ class EmailNotifyConfig(BaseModel):
         return value.strip()
 
 
-def _github_host(value: str) -> str:
+def _bare_host(value: str, label: str) -> str:
     """Bare hostname from config. Empty stays empty so the connector stays off."""
     cleaned = value.strip().lower()
     if not cleaned:
         return ""
     if "://" in cleaned or "/" in cleaned or "@" in cleaned or any(ch.isspace() for ch in cleaned):
-        raise ValueError("connectors.github host must be a bare hostname")
+        raise ValueError(f"{label} must be a bare hostname")
     return cleaned
+
+
+def _github_host(value: str) -> str:
+    return _bare_host(value, "connectors.github host")
+
+
+# common / organizations / consumers, a tenant GUID, or a domain. No slash:
+# the value is one path segment on the login host.
+_MICROSOFT_TENANT = re.compile(
+    r"^(?:common|organizations|consumers|"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)$"
+)
 
 
 class GithubConnectorConfig(BaseModel):
@@ -687,12 +704,55 @@ class GithubConnectorConfig(BaseModel):
         return bool(self.client_id and self.api_host and self.web_host)
 
 
+class MicrosoftConnectorConfig(BaseModel):
+    """Microsoft identity platform, public client, auth code + PKCE (TD-4853).
+
+    Off until a client id and both hosts are set. ``tenant`` defaults to
+    ``common``. Host defaults are empty here. The shipped ``config.yaml``
+    names the public hosts. Tokens are not fields of this model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str = ""
+    tenant: str = "common"
+    login_host: str = ""
+    graph_host: str = ""
+    timeout_seconds: float = Field(default=20.0, gt=0)
+    sign_in_timeout_seconds: float = Field(default=300.0, gt=0)
+
+    @field_validator("client_id")
+    @classmethod
+    def _strip_client_id(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("tenant")
+    @classmethod
+    def _tenant(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            return "common"
+        if not _MICROSOFT_TENANT.fullmatch(cleaned):
+            raise ValueError("connectors.microsoft.tenant is not a tenant id or alias")
+        return cleaned
+
+    @field_validator("login_host", "graph_host")
+    @classmethod
+    def _host(cls, value: str) -> str:
+        return _bare_host(value, "connectors.microsoft host")
+
+    def enabled(self) -> bool:
+        """False when the user has not named an app registration or a host."""
+        return bool(self.client_id and self.login_host and self.graph_host and self.tenant)
+
+
 class ConnectorsConfig(BaseModel):
     """Outbound account connectors. Each one is off until configured."""
 
     model_config = ConfigDict(extra="forbid")
 
     github: GithubConnectorConfig = Field(default_factory=GithubConnectorConfig)
+    microsoft: MicrosoftConnectorConfig = Field(default_factory=MicrosoftConnectorConfig)
 
 
 class NotifyConfig(BaseModel):

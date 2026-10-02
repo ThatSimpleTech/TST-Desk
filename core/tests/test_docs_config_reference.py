@@ -64,6 +64,7 @@ from tstd.config import (
     JudgmentsConfig,
     McpConfig,
     McpServerConfig,
+    MicrosoftConnectorConfig,
     ModelConfig,
     NotifyConfig,
     NtfyNotifyConfig,
@@ -237,6 +238,7 @@ _TELEGRAM_NOTIFY_FIELDS = frozenset(TelegramNotifyConfig.model_fields)
 _EMAIL_NOTIFY_FIELDS = frozenset(EmailNotifyConfig.model_fields)
 _CONNECTORS_FIELDS = frozenset(ConnectorsConfig.model_fields)
 _GITHUB_CONNECTOR_FIELDS = frozenset(GithubConnectorConfig.model_fields)
+_MICROSOFT_CONNECTOR_FIELDS = frozenset(MicrosoftConnectorConfig.model_fields)
 _SPEECH_FIELDS = frozenset(SpeechConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
 _CREDENTIAL_FIELDS = frozenset(CredentialConfig.model_fields)
@@ -344,6 +346,12 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                     _GITHUB_CONNECTOR_FIELDS,
                     f"{where} connectors.github",
                 )
+            if "microsoft" in data["connectors"]:
+                _check_keys(
+                    data["connectors"]["microsoft"],
+                    _MICROSOFT_CONNECTOR_FIELDS,
+                    f"{where} connectors.microsoft",
+                )
         if "speech" in data:
             _check_keys(data["speech"], _SPEECH_FIELDS, f"{where} speech")
         if "autonomy" in data:
@@ -396,6 +404,7 @@ def test_every_config_key_is_documented() -> None:
         | _EMAIL_NOTIFY_FIELDS
         | _CONNECTORS_FIELDS
         | _GITHUB_CONNECTOR_FIELDS
+        | _MICROSOFT_CONNECTOR_FIELDS
         | _SPEECH_FIELDS
         | _PRESET_FIELDS
         | _CREDENTIAL_FIELDS

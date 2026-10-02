@@ -1,9 +1,20 @@
 <script lang="ts">
-	// SMTP settings (TD-3820). The password is typed here and sent once.
-	// The daemon stores it in the keychain and never echoes it back.
-	import { settings, saveEmailNotify, sendTestEmail } from '../settings.svelte.js';
+	// Email delivery (TD-3820, TD-4853). SMTP keeps the password in the
+	// keychain. Microsoft sign-in stores tokens there too; this form never
+	// sees them. SMTP fields stay in component state when that method is hidden.
+	import {
+		connectMicrosoft,
+		disconnectMicrosoft,
+		saveEmailNotify,
+		sendTestEmail,
+		settings,
+	} from '../settings.svelte.js';
+
+	const OFF =
+		'Microsoft sign-in is off until config.yaml sets connectors.microsoft.client_id. Register a public client with no secret, allow a loopback redirect on 127.0.0.1, grant offline_access, Mail.Send, and User.Read, and paste the client id. Hosts are connectors.microsoft.login_host and connectors.microsoft.graph_host. Tenant defaults to common.';
 
 	let enabled = $state(false);
+	let method = $state<'smtp' | 'microsoft'>('smtp');
 	let host = $state('');
 	let port = $state('587');
 	let security = $state<'starttls' | 'tls'>('starttls');
@@ -16,6 +27,7 @@
 	// setup_state must not put a secret back into the input.
 	$effect(() => {
 		enabled = settings.emailEnabled;
+		method = settings.emailMethod;
 		host = settings.emailHost;
 		port = String(settings.emailPort);
 		security = settings.emailSecurity;
@@ -23,10 +35,15 @@
 		fromAddress = settings.emailFrom;
 	});
 
+	const signedIn = $derived(
+		settings.microsoftAccount ? `Signed in as ${settings.microsoftAccount}` : 'Connected',
+	);
+
 	function save(): void {
 		const parsed = Number(port);
 		saveEmailNotify({
 			enabled,
+			method,
 			host: host.trim(),
 			port: Number.isInteger(parsed) && parsed >= 1 ? parsed : 587,
 			security,
@@ -43,10 +60,14 @@
 </script>
 
 <p class="hint">
-	Scheduled jobs can mail their report. The password is stored in the OS keychain, not in
-	config.yaml.
-	{#if settings.emailPasswordStored}
-		A password is already stored. Leave the field blank to keep it.
+	Scheduled jobs can mail their report.
+	{#if method === 'smtp'}
+		The password is stored in the OS keychain, not in config.yaml.
+		{#if settings.emailPasswordStored}
+			A password is already stored. Leave the field blank to keep it.
+		{/if}
+	{:else}
+		Microsoft sign-in stores tokens in the OS keychain, not in config.yaml.
 	{/if}
 </p>
 
@@ -62,39 +83,84 @@
 	>
 </div>
 
-<label class="field">
-	<span class="field-name">Host</span>
-	<input class="input" type="text" bind:value={host} placeholder="smtp.example.com" />
-</label>
-<label class="field">
-	<span class="field-name">Port</span>
-	<input class="input" type="text" bind:value={port} />
-</label>
-<label class="field">
-	<span class="field-name">Security</span>
-	<select class="input" bind:value={security}>
-		<option value="starttls">STARTTLS</option>
-		<option value="tls">TLS</option>
-	</select>
-</label>
-<label class="field">
-	<span class="field-name">Username</span>
-	<input class="input" type="text" bind:value={username} />
-</label>
+<div class="keep">
+	<p class="keep-title">Method</p>
+	<div class="choices">
+		<button
+			class="choice"
+			class:choice--active={method === 'smtp'}
+			type="button"
+			onclick={() => (method = 'smtp')}>SMTP</button
+		>
+		{#if settings.microsoftEnabled}
+			<button
+				class="choice"
+				class:choice--active={method === 'microsoft'}
+				type="button"
+				onclick={() => (method = 'microsoft')}>Microsoft</button
+			>
+		{/if}
+	</div>
+</div>
+
+{#if !settings.microsoftEnabled}
+	<p class="hint">{OFF}</p>
+{/if}
+
+{#if method === 'smtp'}
+	<label class="field">
+		<span class="field-name">Host</span>
+		<input class="input" type="text" bind:value={host} placeholder="smtp.example.com" />
+	</label>
+	<label class="field">
+		<span class="field-name">Port</span>
+		<input class="input" type="text" bind:value={port} />
+	</label>
+	<label class="field">
+		<span class="field-name">Security</span>
+		<select class="input" bind:value={security}>
+			<option value="starttls">STARTTLS</option>
+			<option value="tls">TLS</option>
+		</select>
+	</label>
+	<label class="field">
+		<span class="field-name">Username</span>
+		<input class="input" type="text" bind:value={username} />
+	</label>
+{/if}
+
 <label class="field">
 	<span class="field-name">From</span>
 	<input class="input" type="text" bind:value={fromAddress} placeholder="desk@example.com" />
 </label>
-<label class="field">
-	<span class="field-name">Password</span>
-	<input
-		class="input"
-		type="password"
-		bind:value={password}
-		autocomplete="new-password"
-		placeholder={settings.emailPasswordStored ? 'Stored in the keychain' : 'Keychain only'}
-	/>
-</label>
+
+{#if method === 'smtp'}
+	<label class="field">
+		<span class="field-name">Password</span>
+		<input
+			class="input"
+			type="password"
+			bind:value={password}
+			autocomplete="new-password"
+			placeholder={settings.emailPasswordStored ? 'Stored in the keychain' : 'Keychain only'}
+		/>
+	</label>
+{:else if settings.microsoftEnabled}
+	{#if settings.microsoftMessage}
+		<p class="hint">{settings.microsoftMessage}</p>
+	{/if}
+	{#if settings.microsoftPhase === 'connected'}
+		<p class="ok">{signedIn}</p>
+	{/if}
+	<div class="actions">
+		{#if settings.microsoftPhase !== 'connected'}
+			<button class="btn" type="button" onclick={connectMicrosoft}>Sign in with Microsoft</button>
+		{/if}
+		{#if settings.microsoftConnected || settings.microsoftPhase === 'pending'}
+			<button class="btn btn--quiet" type="button" onclick={disconnectMicrosoft}>Disconnect</button>
+		{/if}
+	</div>
+{/if}
 
 <div class="actions">
 	<button class="btn" type="button" onclick={save}>Save</button>
@@ -132,6 +198,11 @@
 		font-size: var(--text-sm);
 		color: var(--color-ink);
 		margin: 0;
+	}
+
+	.choices {
+		display: flex;
+		gap: var(--space-2);
 	}
 
 	.field {
@@ -174,6 +245,9 @@
 	}
 
 	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
 		margin-top: var(--space-3);
 	}
 
@@ -185,6 +259,12 @@
 		border-radius: var(--radius-sm);
 		padding: var(--space-2) var(--space-3);
 		cursor: pointer;
+	}
+
+	.btn--quiet {
+		color: var(--color-ink);
+		background: var(--color-ground);
+		border: 1px solid var(--color-hairline);
 	}
 
 	.ok {

@@ -43,6 +43,7 @@ async def apply_email_notify(config: ModelConfig, msg: SetEmailNotify, path: Pat
     try:
         email = EmailNotifyConfig(
             enabled=msg.enabled,
+            method=msg.method,
             host=msg.host,
             port=msg.port,
             security=msg.security,

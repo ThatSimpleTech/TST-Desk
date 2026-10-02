@@ -132,6 +132,9 @@ from tstd.protocol import (
     MemoryFiles,
     MemoryProposal,
     MemoryReject,
+    MicrosoftConnect,
+    MicrosoftDisconnect,
+    MicrosoftStatus,
     MoveSession,
     OpenArtifact,
     OpenInTerminal,
@@ -253,6 +256,7 @@ FIXTURES = {
     "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
     "set_email_notify": SetEmailNotify(
         enabled=True,
+        method="smtp",
         host="smtp.example.com",
         port=587,
         security="starttls",
@@ -263,6 +267,8 @@ FIXTURES = {
     "test_email": TestEmail(to="owner@example.com"),
     "github_connect": GithubConnect(),
     "github_disconnect": GithubDisconnect(),
+    "microsoft_connect": MicrosoftConnect(),
+    "microsoft_disconnect": MicrosoftDisconnect(),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
     "set_cu_policy": SetCuPolicy(
         enabled=True,
@@ -1263,6 +1269,13 @@ FIXTURES = {
         user_code="ABCD-1234",
         verification_uri="https://example.test/login/device",
         login=None,
+        message="",
+    ),
+    "microsoft_status": MicrosoftStatus(
+        enabled=True,
+        connected=True,
+        phase="connected",
+        account="owner@example.com",
         message="",
     ),
     "grok_extensions": GrokExtensions(

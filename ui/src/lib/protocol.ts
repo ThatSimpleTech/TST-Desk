@@ -613,6 +613,8 @@ export interface Transcribe extends ClientMessage {
 export interface SetEmailNotify extends ClientMessage {
   type: "set_email_notify";
   enabled?: boolean;
+  /** smtp or microsoft (TD-4853). Omitted means smtp. */
+  method?: "smtp" | "microsoft";
   host?: string;
   port?: number;
   security?: "starttls" | "tls";
@@ -636,6 +638,16 @@ export interface GithubConnect extends ClientMessage {
 /** Delete the GitHub keychain item (TD-4852). Acked with github_status. */
 export interface GithubDisconnect extends ClientMessage {
   type: "github_disconnect";
+}
+
+/** Start Microsoft sign-in (TD-4853). Acked with microsoft_status. */
+export interface MicrosoftConnect extends ClientMessage {
+  type: "microsoft_connect";
+}
+
+/** Delete the Microsoft keychain item (TD-4853). Acked with microsoft_status. */
+export interface MicrosoftDisconnect extends ClientMessage {
+  type: "microsoft_disconnect";
 }
 
 export interface SetGrokMode extends ClientMessage {
@@ -971,7 +983,9 @@ export type ClientMessageUnion =
   | SetEmailNotify
   | TestEmail
   | GithubConnect
-  | GithubDisconnect;
+  | GithubDisconnect
+  | MicrosoftConnect
+  | MicrosoftDisconnect;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -1490,6 +1504,8 @@ export interface SetupState extends DaemonEvent {
   email?: EmailNotifyState;
   /** GitHub connector (TD-4852). Additive. Never a token or device code. */
   github?: GithubConnectorState;
+  /** Microsoft sign-in (TD-4853). Additive. Never a token or auth code. */
+  microsoft?: MicrosoftConnectorState;
 }
 
 export type GithubPhase = "off" | "idle" | "pending" | "connected" | "expired" | "denied" | "error";
@@ -1505,9 +1521,28 @@ export interface GithubConnectorState {
   message?: string;
 }
 
-/** SMTP form on setup_state. password_stored is presence only. */
+export type MicrosoftPhase =
+  | "off"
+  | "idle"
+  | "pending"
+  | "connected"
+  | "denied"
+  | "error"
+  | "expired";
+
+/** Microsoft sign-in as Settings may show it. Never a token or auth code. */
+export interface MicrosoftConnectorState {
+  enabled?: boolean;
+  connected?: boolean;
+  phase?: MicrosoftPhase;
+  account?: string | null;
+  message?: string;
+}
+
+/** Mail form on setup_state. password_stored is presence only. */
 export interface EmailNotifyState {
   enabled?: boolean;
+  method?: "smtp" | "microsoft";
   host?: string;
   port?: number;
   security?: "starttls" | "tls";
@@ -2088,6 +2123,16 @@ export interface GithubStatus extends DaemonEvent {
   message?: string;
 }
 
+/** Microsoft connector snapshot (TD-4853). Connection-scoped. No token, no auth code. */
+export interface MicrosoftStatus extends DaemonEvent {
+  type: "microsoft_status";
+  enabled?: boolean;
+  connected?: boolean;
+  phase?: MicrosoftPhase;
+  account?: string | null;
+  message?: string;
+}
+
 export type DaemonEventUnion =
   | Ready
   | SessionState
@@ -2154,4 +2199,5 @@ export type DaemonEventUnion =
   | GrokExtensions
   | Transcript
   | EmailTestResult
-  | GithubStatus;
+  | GithubStatus
+  | MicrosoftStatus;

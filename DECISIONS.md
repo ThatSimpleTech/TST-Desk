@@ -13410,3 +13410,56 @@ credential helper is the git mechanism that never writes the token into
 the token in the remote URL or in argv. Following HTTP redirects.
 Storing the device code or the tokens on `github_status`. Bumping the
 protocol version. A settings tool that proceeds after Class C approval.
+
+## TD-4853 — Microsoft mail uses auth code, PKCE, and a keychain blob
+
+**Decision:** `connectors.microsoft.client_id` defaults to empty, and so
+do `login_host` and `graph_host` on the pydantic model. `tenant`
+defaults to `common`. The shipped `config.yaml` is the only place the
+public login and Graph hosts are written. The connector stays off until
+the client id, both hosts, and the tenant are set. Paths are constants;
+hosts are interpolated.
+
+Sign-in is the authorization-code grant with PKCE S256 for a public
+client. There is no client secret. The redirect URI is
+`http://127.0.0.1:<ephemeral port>` with no path. The listener binds
+`127.0.0.1` and is closed after the authorization response or
+`sign_in_timeout_seconds` (default 300). That wait is separate from the
+HTTP `timeout_seconds` (default 20). A request that is not the redirect,
+such as a favicon, does not consume the one authorization response.
+After four such requests the listener fails closed. Scopes are
+`offline_access Mail.Send User.Read`.
+
+One keychain account, `tst-microsoft-oauth`, holds a printable-ASCII
+JSON object of `access_token`, `refresh_token`, and `expires_at`. The
+mailbox address is process memory after `/me`, not a field of the blob.
+Credential id `microsoft-oauth` is reserved. Refresh runs inside a
+60-second skew and once more if Graph returns 401. Disconnect deletes
+the item.
+
+`notify.email.method` is `smtp` (the default, so an old client stays on
+SMTP) or `microsoft`. Graph's JSON `sendMail` is one body part, so the
+daemon posts the TD-3821 multipart message as base64 to
+`/v1.0/me/sendMail`. From is `notify.email.from_address` when that is
+one address, otherwise the signed-in mailbox. A delivery failure stays
+the existing email delivery error. It does not fail the job run.
+
+`microsoft_status` is connection-scoped (`seq` 1, no `session_id`).
+Connect and disconnect are acked on the requesting socket and
+broadcast. The status carries a phase and, once signed in, the mailbox.
+It never carries a token or an authorization code. `setup_state.microsoft`
+is the snapshot a newly opened window sees. There is no protocol version
+bump. Token and Graph calls set `follow_redirects=False`.
+
+**Rationale:** Authorization code plus PKCE is the sign-in that lets a
+public desktop client send as the user without an SMTP password or a
+client secret. The loopback port is the redirect a desktop app can
+receive without a server of ours. MIME keeps both report parts, which a
+JSON `sendMail` body would drop. The keychain blob matches the GitHub
+connector and the TD-4838 secret rules.
+
+**Rejected:** Hard-coding the public hosts in Python. A client secret. A
+JSON `sendMail` body that keeps only the HTML part. Putting tokens or
+the mailbox in yaml or on `microsoft_status`. Logging `error_description`
+or a Graph response body. Following redirects. Bumping the protocol
+version. Treating a mail failure as a failed job run.

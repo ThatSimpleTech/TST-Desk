@@ -1384,6 +1384,7 @@ class SetEmailNotify(ClientMessage):
 
     type: Literal["set_email_notify"] = "set_email_notify"
     enabled: bool = False
+    method: Literal["smtp", "microsoft"] = "smtp"
     host: str = ""
     port: int = 587
     security: Literal["starttls", "tls"] = "starttls"
@@ -1413,6 +1414,22 @@ class GithubDisconnect(ClientMessage):
     """Delete the GitHub keychain item (TD-4852). Acked with ``github_status``."""
 
     type: Literal["github_disconnect"] = "github_disconnect"
+
+
+class MicrosoftConnect(ClientMessage):
+    """Start Microsoft sign-in (TD-4853). Acked with ``microsoft_status``.
+
+    The daemon opens the browser and listens on 127.0.0.1. The code, the
+    verifier, and the tokens stay in the daemon.
+    """
+
+    type: Literal["microsoft_connect"] = "microsoft_connect"
+
+
+class MicrosoftDisconnect(ClientMessage):
+    """Delete the Microsoft keychain item (TD-4853). Acked with ``microsoft_status``."""
+
+    type: Literal["microsoft_disconnect"] = "microsoft_disconnect"
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────
@@ -2117,9 +2134,10 @@ class RemoteDeviceSummary(BaseModel):
 
 
 class EmailNotifyState(BaseModel):
-    """SMTP settings on ``setup_state``. Never a password."""
+    """Email settings on ``setup_state``. Never a password or a token."""
 
     enabled: bool = False
+    method: Literal["smtp", "microsoft"] = "smtp"
     host: str = ""
     port: int = 587
     security: Literal["starttls", "tls"] = "starttls"
@@ -2140,6 +2158,19 @@ class GithubConnectorState(BaseModel):
     user_code: str = ""
     verification_uri: str = ""
     login: str | None = None
+    message: str = ""
+
+
+MicrosoftPhase = Literal["off", "idle", "pending", "connected", "denied", "error", "expired"]
+
+
+class MicrosoftConnectorState(BaseModel):
+    """Microsoft sign-in as Settings may show it. Never a token or auth code."""
+
+    enabled: bool = False
+    connected: bool = False
+    phase: MicrosoftPhase = "off"
+    account: str | None = None
     message: str = ""
 
 
@@ -2240,6 +2271,8 @@ class SetupState(DaemonEvent):
     email: EmailNotifyState = Field(default_factory=EmailNotifyState)
     # TD-4852: GitHub connector. Additive. No token, no device code.
     github: GithubConnectorState = Field(default_factory=GithubConnectorState)
+    # TD-4853: Microsoft sign-in for email. Additive. No token, no auth code.
+    microsoft: MicrosoftConnectorState = Field(default_factory=MicrosoftConnectorState)
 
 
 class PairingCode(DaemonEvent):
@@ -3011,6 +3044,23 @@ class GithubStatus(DaemonEvent):
     message: str = ""
 
 
+class MicrosoftStatus(DaemonEvent):
+    """Microsoft connector snapshot (TD-4853). Connection-scoped.
+
+    Seq is fixed at 1 so it cannot rewind a session attach. The same
+    shape rides on ``setup_state.microsoft``. ``account`` is the mailbox,
+    not a token.
+    """
+
+    type: Literal["microsoft_status"] = "microsoft_status"
+    seq: int = 1
+    enabled: bool = False
+    connected: bool = False
+    phase: MicrosoftPhase = "off"
+    account: str | None = None
+    message: str = ""
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -3119,7 +3169,9 @@ ClientMessageT = Annotated[
     | SetEmailNotify
     | TestEmail
     | GithubConnect
-    | GithubDisconnect,
+    | GithubDisconnect
+    | MicrosoftConnect
+    | MicrosoftDisconnect,
     Field(discriminator="type"),
 ]
 
@@ -3185,6 +3237,7 @@ DaemonEventT = Annotated[
     | SessionJobSource
     | EmailTestResult
     | GithubStatus
+    | MicrosoftStatus
     | GrokCommands
     | GrokPlan
     | GrokMode
@@ -3307,6 +3360,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "test_email",
         "github_connect",
         "github_disconnect",
+        "microsoft_connect",
+        "microsoft_disconnect",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -3379,6 +3434,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "transcript",
         "email_test_result",
         "github_status",
+        "microsoft_status",
     }
 )
 

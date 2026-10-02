@@ -313,7 +313,8 @@ are left out. Send test email uses a short sample of that layout.
 | `port` | int 1–65535 | `587` | SMTP port. 587 with `starttls`, 465 with `tls`. |
 | `security` | `starttls` or `tls` | `starttls` | `starttls` upgrades on port 587. `tls` is implicit TLS. |
 | `username` | string | *empty* | SMTP AUTH username. Empty refuses the send. |
-| `from_address` | string | *empty* | One mailbox address in the From header. |
+| `method` | `smtp` or `microsoft` | `smtp` | `smtp` uses the fields below. `microsoft` sends the same report through Graph after Settings → Email signs in (TD-4853). |
+| `from_address` | string | *empty* | One mailbox address in the From header. Graph uses it when it is an address; otherwise the signed-in mailbox. |
 | `timeout_seconds` | float > 0 | `30` | How long the SMTP conversation may run. |
 
 ### `connectors`
@@ -340,6 +341,30 @@ missing client id.
 | `api_host` | string | *empty* | REST hostname. The shipped file sets `api.github.com`. |
 | `web_host` | string | *empty* | Device-flow hostname. The shipped file sets `github.com`. |
 | `timeout_seconds` | float > 0 | `20` | How long one GitHub HTTP call may run. |
+
+#### `connectors.microsoft`
+
+Microsoft sign-in for scheduled-job email (TD-4853). A public client:
+authorization code with PKCE, no client secret. The daemon listens on
+`127.0.0.1` and an ephemeral port, then closes after one redirect or
+`sign_in_timeout_seconds`. Register that loopback redirect on the app
+(mobile and desktop). Scopes are `offline_access`, `Mail.Send`, and
+`User.Read`. Empty `client_id` hides the Microsoft method in Settings
+and shows how to set one. Tokens live in the OS keychain as
+`tst-microsoft-oauth`, never in this file and never in a log. Pydantic
+leaves the hosts empty; the shipped `config.yaml` sets the public
+hosts. A missing host keeps the connector off, the same as a missing
+client id. `tenant` defaults to `common`.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `microsoft` | mapping | empty | The Microsoft mail connector. |
+| `client_id` | string | *empty* | Public client id of the app registration. Empty turns the connector off. |
+| `tenant` | string | `common` | Tenant path segment: `common`, `organizations`, `consumers`, a GUID, or a domain. |
+| `login_host` | string | *empty* | Authorization hostname. The shipped file sets the public login host. |
+| `graph_host` | string | *empty* | Graph hostname. The shipped file sets the public Graph host. |
+| `timeout_seconds` | float > 0 | `20` | How long one token or Graph call may run. |
+| `sign_in_timeout_seconds` | float > 0 | `300` | How long the loopback listener waits for the redirect. |
 
 ### `speech`
 

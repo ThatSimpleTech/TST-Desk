@@ -78,6 +78,7 @@ from .config_write import (
     save_tier_slug,
 )
 from .connectors.github_session import GithubCoordinator
+from .connectors.microsoft_session import MicrosoftCoordinator
 from .console_shutdown import (
     install_windows_console_shutdown,
     remove_windows_console_shutdown,
@@ -268,6 +269,10 @@ from .protocol import (
     MemoryFileEntry,
     MemoryFiles,
     MemoryReject,
+    MicrosoftConnect,
+    MicrosoftConnectorState,
+    MicrosoftDisconnect,
+    MicrosoftStatus,
     MoveSession,
     NewSession,
     OpenArtifact,
@@ -993,6 +998,7 @@ class Daemon:
         # server is a doctor row, never a failed Daemon.run.
         self._mcp = McpSupervisor(self.config.mcp)
         self._github: GithubCoordinator | None = None
+        self._microsoft: MicrosoftCoordinator | None = None
         self._notify_send = notify_send if notify_send is not None else self._channel_notify
         self._scheduler_tick = scheduler_tick
         # TD-3807: default the hook instead of leaving it None. The real
@@ -1176,6 +1182,7 @@ class Daemon:
             speech_ready=self.config.speech.enabled and bool(self.config.speech.base_url),
             email=await self._email_notify_state(),
             github=await self._github_connector_state(),
+            microsoft=await self._microsoft_connector_state(),
         )
 
     def _github_coordinator(self) -> GithubCoordinator:
@@ -1193,6 +1200,23 @@ class Daemon:
 
         return await state_from_config(self.config)
 
+    def _microsoft_coordinator(self) -> MicrosoftCoordinator:
+        if self._microsoft is None:
+            self._microsoft = MicrosoftCoordinator(
+                lambda: self.config, self._broadcast_microsoft_status
+            )
+        return self._microsoft
+
+    async def _broadcast_microsoft_status(self, event: MicrosoftStatus) -> None:
+        await self.ws_server.broadcast(scrub_wire_json(event.model_dump_json()))
+
+    async def _microsoft_connector_state(self) -> MicrosoftConnectorState:
+        if self._microsoft is not None:
+            return await self._microsoft.snapshot()
+        from .connectors.microsoft_session import state_from_config as microsoft_state
+
+        return await microsoft_state(self.config)
+
     async def _email_notify_state(self) -> EmailNotifyState:
         """SMTP form values plus a presence probe. The password stays put."""
         from .keychain import KeychainError, smtp_password_is_stored
@@ -1204,6 +1228,7 @@ class Daemon:
             stored = False
         return EmailNotifyState(
             enabled=email.enabled,
+            method=email.method,
             host=email.host,
             port=email.port,
             security=email.security,
@@ -1852,6 +1877,8 @@ class Daemon:
         """Close sockets, sessions, and writers. Does not wait on the provider."""
         if self._github is not None:
             await phases.run("github", self._github.aclose())
+        if self._microsoft is not None:
+            await phases.run("microsoft", self._microsoft.aclose())
         if self._cu_server is not None:
             from .cu_host import stop_cu_socket
 
@@ -2783,6 +2810,12 @@ class Daemon:
 
         if isinstance(msg, GithubDisconnect):
             return await self._github_coordinator().disconnect_json()
+
+        if isinstance(msg, MicrosoftConnect):
+            return await self._microsoft_coordinator().connect_json()
+
+        if isinstance(msg, MicrosoftDisconnect):
+            return await self._microsoft_coordinator().disconnect_json()
 
         if isinstance(msg, SetJudgments):
             # TD-708 (dev): persist the judgments block; running sessions

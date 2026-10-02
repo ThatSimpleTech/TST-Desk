@@ -1,10 +1,11 @@
-"""SMTP delivery for a scheduled job's report (TD-3820, TD-3821).
+"""Delivery for a scheduled job's report (TD-3820, TD-3821, TD-4853).
 
-Same shape as the other notifiers: ``send(config, message)``. The only
-host it may reach is ``notify.email.host``. The password is a keychain
-secret (account ``tst-smtp-password``) and is never written to config,
-logs, or the audit database. The message body is not logged either —
-only the recipient's domain, so a report cannot land in a log file.
+Same shape as the other notifiers: ``send(config, message)``. SMTP's only
+host is ``notify.email.host``. Microsoft Graph's only host is
+``connectors.microsoft.graph_host``. The password and the OAuth tokens
+are keychain secrets and are never written to config, logs, or the audit
+database. The message body is not logged either — only the recipient's
+domain, so a report cannot land in a log file.
 
 The message is multipart: the report Markdown as plain text, and the
 same Markdown as a newsletter. The model text is untrusted; the HTML
@@ -108,21 +109,20 @@ async def send(
     when: datetime | None = None,
     timezone_name: str | None = None,
     preset: str | None = None,
+    token_store: object | None = None,
+    transport: object | None = None,
 ) -> None:
     """Send *message* to one address. Raises ``EmailNotifyError`` on failure.
 
-    ``ssl_context`` is a test seam. Production uses the default context,
-    which verifies the server certificate. The HTML part uses *title*,
+    ``ssl_context`` is a test seam for SMTP. ``token_store`` and
+    ``transport`` are test seams for Microsoft Graph. Production uses the
+    keychain and the default TLS context. The HTML part uses *title*,
     *when*, and *preset*; omitted values fall back to a generic label,
     the current time, and the active preset.
+
+    ``notify.email.method`` picks SMTP or Microsoft Graph. Both send the
+    same plain text and the same HTML.
     """
-    email_cfg = config.notify.email
-    _require_ready(
-        email_cfg.enabled, email_cfg.host, email_cfg.username, email_cfg.from_address, to
-    )
-    password = await _load_password()
-    if not password:
-        raise EmailNotifyError("KeychainError", "SMTP password is not in the keychain")
     domain = _domain(to)
     html_body = render_report_html(
         message,
@@ -132,20 +132,18 @@ async def send(
         preset=preset.strip() if preset and preset.strip() else config.active_preset,
     )
     try:
-        await asyncio.to_thread(
-            _smtp_send,
-            host=email_cfg.host.strip(),
-            port=email_cfg.port,
-            security=email_cfg.security,
-            username=email_cfg.username.strip(),
-            from_address=email_cfg.from_address.strip(),
-            to=to.strip(),
+        # Local import: email_transport imports smtp_deliver from this module.
+        from .email_transport import deliver_report
+
+        await deliver_report(
+            config,
+            to=to,
             subject=subject,
             body=message,
             html_body=html_body,
-            password=password,
-            timeout=email_cfg.timeout_seconds,
             ssl_context=ssl_context,
+            token_store=token_store,
+            transport=transport,
         )
     except EmailNotifyError as exc:
         log.warning(
@@ -154,6 +152,48 @@ async def send(
         )
         raise
     log.info("email notify sent", extra={"extra_fields": {"domain": domain}})
+
+
+async def smtp_deliver(
+    config: ModelConfig,
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    html_body: str,
+    ssl_context: ssl.SSLContext | None = None,
+) -> None:
+    """SMTP half of :func:`send`. Raises ``EmailNotifyError``."""
+    email_cfg = config.notify.email
+    _require_ready(
+        email_cfg.enabled, email_cfg.host, email_cfg.username, email_cfg.from_address, to
+    )
+    password = await _load_password()
+    if not password:
+        raise EmailNotifyError("KeychainError", "SMTP password is not in the keychain")
+    await asyncio.to_thread(
+        _smtp_send,
+        host=email_cfg.host.strip(),
+        port=email_cfg.port,
+        security=email_cfg.security,
+        username=email_cfg.username.strip(),
+        from_address=email_cfg.from_address.strip(),
+        to=to.strip(),
+        subject=subject,
+        body=body,
+        html_body=html_body,
+        password=password,
+        timeout=email_cfg.timeout_seconds,
+        ssl_context=ssl_context,
+    )
+
+
+def require_graph_ready(enabled: bool, to: str) -> None:
+    """Shared refusal for a Graph send that is off or has no recipient."""
+    if not enabled:
+        raise EmailNotifyError("EmailNotifyError", "email notify is disabled")
+    if not _ADDRESS.fullmatch(to.strip()):
+        raise EmailNotifyError("EmailNotifyError", "recipient is not one email address")
 
 
 def _require_ready(enabled: bool, host: str, username: str, from_address: str, to: str) -> None:
@@ -217,7 +257,7 @@ def _smtp_send(
             client.ehlo()
             _require_tls(client)
         client.login(username, password)
-        client.send_message(_message(from_address, to, subject, body, html_body))
+        client.send_message(report_message(from_address, to, subject, body, html_body))
         client.quit()
         client = None
     except EmailNotifyError:
@@ -237,7 +277,9 @@ def _require_tls(client: smtplib.SMTP) -> None:
         raise EmailNotifyError("SMTPException", "TLS was not established")
 
 
-def _message(from_address: str, to: str, subject: str, body: str, html_body: str) -> EmailMessage:
+def report_message(
+    from_address: str, to: str, subject: str, body: str, html_body: str
+) -> EmailMessage:
     message = EmailMessage()
     message["From"] = from_address
     message["To"] = to
