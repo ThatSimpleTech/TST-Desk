@@ -86,6 +86,9 @@ from tstd.protocol import (
     GithubConnect,
     GithubDisconnect,
     GithubStatus,
+    GoogleConnect,
+    GoogleDisconnect,
+    GoogleStatus,
     GrokCommand,
     GrokCommands,
     GrokExtension,
@@ -269,6 +272,8 @@ FIXTURES = {
     "github_disconnect": GithubDisconnect(),
     "microsoft_connect": MicrosoftConnect(),
     "microsoft_disconnect": MicrosoftDisconnect(),
+    "google_connect": GoogleConnect(),
+    "google_disconnect": GoogleDisconnect(),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
     "set_cu_policy": SetCuPolicy(
         enabled=True,
@@ -1277,6 +1282,14 @@ FIXTURES = {
         phase="connected",
         account="owner@example.com",
         message="",
+    ),
+    "google_status": GoogleStatus(
+        enabled=True,
+        connected=True,
+        phase="connected",
+        account="owner@example.com",
+        message="",
+        client_secret_stored=True,
     ),
     "grok_extensions": GrokExtensions(
         items=[GrokExtension(kind="skill", name="review", detail="user")]

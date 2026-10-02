@@ -609,12 +609,12 @@ export interface Transcribe extends ClientMessage {
   mime?: string;
 }
 
-/** Save SMTP settings (TD-3820). Acked with setup_state. password is keychain-only. */
+/** Save email settings (TD-3820, TD-4854). Acked with setup_state. Secrets are keychain-only. */
 export interface SetEmailNotify extends ClientMessage {
   type: "set_email_notify";
   enabled?: boolean;
-  /** smtp or microsoft (TD-4853). Omitted means smtp. */
-  method?: "smtp" | "microsoft";
+  /** smtp, microsoft, or google (TD-4853, TD-4854). Omitted means smtp. */
+  method?: "smtp" | "microsoft" | "google";
   host?: string;
   port?: number;
   security?: "starttls" | "tls";
@@ -622,6 +622,8 @@ export interface SetEmailNotify extends ClientMessage {
   from_address?: string;
   /** Written to the keychain. Null or "" leaves the stored password alone. */
   password?: string | null;
+  /** Desktop client secret. Null or "" leaves the stored secret alone. Never echoed. */
+  google_client_secret?: string | null;
 }
 
 /** Send one short test (TD-3820). Acked with email_test_result. */
@@ -648,6 +650,16 @@ export interface MicrosoftConnect extends ClientMessage {
 /** Delete the Microsoft keychain item (TD-4853). Acked with microsoft_status. */
 export interface MicrosoftDisconnect extends ClientMessage {
   type: "microsoft_disconnect";
+}
+
+/** Start Google sign-in (TD-4854). Acked with google_status. */
+export interface GoogleConnect extends ClientMessage {
+  type: "google_connect";
+}
+
+/** Delete the Google token keychain item (TD-4854). Acked with google_status. */
+export interface GoogleDisconnect extends ClientMessage {
+  type: "google_disconnect";
 }
 
 export interface SetGrokMode extends ClientMessage {
@@ -985,7 +997,9 @@ export type ClientMessageUnion =
   | GithubConnect
   | GithubDisconnect
   | MicrosoftConnect
-  | MicrosoftDisconnect;
+  | MicrosoftDisconnect
+  | GoogleConnect
+  | GoogleDisconnect;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -1506,6 +1520,8 @@ export interface SetupState extends DaemonEvent {
   github?: GithubConnectorState;
   /** Microsoft sign-in (TD-4853). Additive. Never a token or auth code. */
   microsoft?: MicrosoftConnectorState;
+  /** Google sign-in (TD-4854). Additive. Never a token, secret, or auth code. */
+  google?: GoogleConnectorState;
 }
 
 export type GithubPhase = "off" | "idle" | "pending" | "connected" | "expired" | "denied" | "error";
@@ -1539,10 +1555,30 @@ export interface MicrosoftConnectorState {
   message?: string;
 }
 
+export type GooglePhase =
+  | "off"
+  | "idle"
+  | "pending"
+  | "connected"
+  | "denied"
+  | "error"
+  | "expired";
+
+/** Google sign-in as Settings may show it. Never a token, secret, or auth code. */
+export interface GoogleConnectorState {
+  enabled?: boolean;
+  connected?: boolean;
+  phase?: GooglePhase;
+  account?: string | null;
+  message?: string;
+  /** Presence probe for the desktop client secret. */
+  client_secret_stored?: boolean;
+}
+
 /** Mail form on setup_state. password_stored is presence only. */
 export interface EmailNotifyState {
   enabled?: boolean;
-  method?: "smtp" | "microsoft";
+  method?: "smtp" | "microsoft" | "google";
   host?: string;
   port?: number;
   security?: "starttls" | "tls";
@@ -2133,6 +2169,17 @@ export interface MicrosoftStatus extends DaemonEvent {
   message?: string;
 }
 
+/** Google connector snapshot (TD-4854). Connection-scoped. No token, no secret, no auth code. */
+export interface GoogleStatus extends DaemonEvent {
+  type: "google_status";
+  enabled?: boolean;
+  connected?: boolean;
+  phase?: GooglePhase;
+  account?: string | null;
+  message?: string;
+  client_secret_stored?: boolean;
+}
+
 export type DaemonEventUnion =
   | Ready
   | SessionState
@@ -2200,4 +2247,5 @@ export type DaemonEventUnion =
   | Transcript
   | EmailTestResult
   | GithubStatus
-  | MicrosoftStatus;
+  | MicrosoftStatus
+  | GoogleStatus;

@@ -105,6 +105,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "email_test_result", // TD-3820
   "github_status", // TD-4852
   "microsoft_status", // TD-4853
+  "google_status", // TD-4854
 ]);
 
 /**

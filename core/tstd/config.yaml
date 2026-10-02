@@ -434,3 +434,17 @@ connectors:
     graph_host: graph.microsoft.com
     timeout_seconds: 20
     sign_in_timeout_seconds: 300
+  # Google sign-in for scheduled-job email (TD-4854). Off until client_id
+  # is set. The desktop client secret is not confidential, and it still
+  # lives in the OS keychain under tst-google-client-secret, never in
+  # this file. Tokens live under tst-google-oauth. Redirect is an
+  # ephemeral 127.0.0.1 port. Hosts are public and live here so the
+  # daemon does not hard-code them.
+  google:
+    client_id: ""
+    auth_host: accounts.google.com
+    token_host: oauth2.googleapis.com
+    userinfo_host: openidconnect.googleapis.com
+    gmail_host: gmail.googleapis.com
+    timeout_seconds: 20
+    sign_in_timeout_seconds: 300

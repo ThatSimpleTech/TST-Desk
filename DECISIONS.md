@@ -13463,3 +13463,70 @@ JSON `sendMail` body that keeps only the HTML part. Putting tokens or
 the mailbox in yaml or on `microsoft_status`. Logging `error_description`
 or a Graph response body. Following redirects. Bumping the protocol
 version. Treating a mail failure as a failed job run.
+
+## TD-4854 — Google mail uses the installed-app flow and a keychain secret
+
+**Decision:** `connectors.google.client_id` defaults to empty, and so do
+`auth_host`, `token_host`, `userinfo_host`, and `gmail_host` on the
+pydantic model. The shipped `config.yaml` is the only place the public
+hosts are written. The connector stays off until the client id and all
+four hosts are set. Paths (`/o/oauth2/v2/auth`, `/token`, `/v1/userinfo`,
+`/gmail/v1/users/me/messages/send`) are constants.
+
+Google does not treat a Desktop client's secret as confidential. It
+still lives in the keychain, as `tst-google-client-secret`, entered in
+Settings. A `client_secret` key in yaml is dropped and the value is not
+logged. Tokens live in a separate account, `tst-google-oauth`: a
+printable-ASCII JSON object of `access_token`, `refresh_token`, and
+`expires_at`. The mailbox is not in that blob. Disconnect deletes the
+tokens and leaves the client secret. Credential ids `google-oauth` and
+`google-client-secret` are reserved.
+
+Sign-in reuses TD-4853's loopback listener and PKCE. The redirect is
+`http://127.0.0.1:<ephemeral port>`. The scope is `openid`, `email`, and
+the `gmail.send` scope URL. That URL is an identifier, not a host the
+daemon dials; the scope host is interpolated so the source has no remote
+URL literal. The browser URL sets `access_type=offline` and
+`prompt=consent` so Google returns a refresh token, and it does not
+carry the client secret. The token request does. A code exchange that
+returns no refresh token is not saved. Userinfo supplies the account
+address; the id token's email is only a sign-in fallback and is not
+stored.
+
+`invalid_grant` sets a process-local expired flag and tells every live
+coordinator. The keychain item stays until Disconnect or a new sign-in.
+The sentence names an unverified app and a client still in testing, and
+says to reconnect. A later successful refresh clears the flag.
+`setup_state` reads the flag without reading the token blob. The daemon
+builds the coordinator before the scheduler so a job send can mark the
+connection expired.
+
+Gmail `users.messages.send` takes the TD-3821 multipart message as
+unpadded base64url in a JSON `raw` field. Success is HTTP 200 only. A
+401 refreshes once. From is `notify.email.from_address` when that is one
+address, otherwise the userinfo email. `notify.email.method` gains
+`google`; the default stays `smtp`. A delivery failure stays the
+existing email error and does not fail the job run.
+
+`google_status` is connection-scoped (`seq` 1, no `session_id`). It
+carries `client_secret_stored` as a presence probe. Connect and
+disconnect are acked and broadcast. There is no protocol version bump.
+Token, userinfo, and Gmail calls set `follow_redirects=False`.
+`error_description` and response bodies are not logged.
+
+**Rationale:** Installed-app auth code plus PKCE is the sign-in that
+lets Gmail send without an app password. The client secret is not
+confidential, and it is still a secret this app keeps out of yaml and
+logs. A separate keychain item is what lets Disconnect drop the grant
+without making the user type the secret again. `invalid_grant` is how
+Google ends a testing-mode or unverified-app grant, so the phase has to
+change even though the blob is still present. The raw MIME field keeps
+both report parts.
+
+**Rejected:** Hard-coding the dialed hosts in Python. Putting the client
+secret in `config.yaml`. Deleting the secret on Disconnect. Deleting the
+tokens on `invalid_grant`. Storing the id token or the mailbox in the
+blob. A Graph-style JSON body instead of the RFC 2822 message. Treating
+HTTP 202 as success. Following redirects. Logging `error_description`
+or a Gmail response body. Bumping the protocol version. A second
+loopback listener.

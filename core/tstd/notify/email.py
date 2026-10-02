@@ -1,11 +1,12 @@
-"""Delivery for a scheduled job's report (TD-3820, TD-3821, TD-4853).
+"""Delivery for a scheduled job's report (TD-3820, TD-3821, TD-4853, TD-4854).
 
 Same shape as the other notifiers: ``send(config, message)``. SMTP's only
 host is ``notify.email.host``. Microsoft Graph's only host is
-``connectors.microsoft.graph_host``. The password and the OAuth tokens
-are keychain secrets and are never written to config, logs, or the audit
-database. The message body is not logged either — only the recipient's
-domain, so a report cannot land in a log file.
+``connectors.microsoft.graph_host``. Gmail's only host is
+``connectors.google.gmail_host``. The password, the desktop client secret,
+and the OAuth tokens are keychain secrets and are never written to config,
+logs, or the audit database. The message body is not logged either — only
+the recipient's domain, so a report cannot land in a log file.
 
 The message is multipart: the report Markdown as plain text, and the
 same Markdown as a newsletter. The model text is untrusted; the HTML
@@ -111,17 +112,18 @@ async def send(
     preset: str | None = None,
     token_store: object | None = None,
     transport: object | None = None,
+    secret_store: object | None = None,
 ) -> None:
     """Send *message* to one address. Raises ``EmailNotifyError`` on failure.
 
-    ``ssl_context`` is a test seam for SMTP. ``token_store`` and
-    ``transport`` are test seams for Microsoft Graph. Production uses the
-    keychain and the default TLS context. The HTML part uses *title*,
-    *when*, and *preset*; omitted values fall back to a generic label,
-    the current time, and the active preset.
+    ``ssl_context`` is a test seam for SMTP. ``token_store``,
+    ``secret_store``, and ``transport`` are test seams for Graph and Gmail.
+    Production uses the keychain and the default TLS context. The HTML
+    part uses *title*, *when*, and *preset*; omitted values fall back to
+    a generic label, the current time, and the active preset.
 
-    ``notify.email.method`` picks SMTP or Microsoft Graph. Both send the
-    same plain text and the same HTML.
+    ``notify.email.method`` picks SMTP, Microsoft Graph, or Gmail. All
+    three send the same plain text and the same HTML.
     """
     domain = _domain(to)
     html_body = render_report_html(
@@ -144,6 +146,7 @@ async def send(
             ssl_context=ssl_context,
             token_store=token_store,
             transport=transport,
+            secret_store=secret_store,
         )
     except EmailNotifyError as exc:
         log.warning(
@@ -189,7 +192,7 @@ async def smtp_deliver(
 
 
 def require_graph_ready(enabled: bool, to: str) -> None:
-    """Shared refusal for a Graph send that is off or has no recipient."""
+    """Shared refusal for a Graph or Gmail send that is off or has no recipient."""
     if not enabled:
         raise EmailNotifyError("EmailNotifyError", "email notify is disabled")
     if not _ADDRESS.fullmatch(to.strip()):

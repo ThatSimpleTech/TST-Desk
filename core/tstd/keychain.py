@@ -650,6 +650,63 @@ async def microsoft_oauth_is_stored() -> bool:
     return await backend.has_secret(MICROSOFT_OAUTH_ACCOUNT)
 
 
+GOOGLE_OAUTH_ACCOUNT = "tst-google-oauth"
+GOOGLE_CLIENT_SECRET_ACCOUNT = "tst-google-client-secret"
+
+
+async def get_google_oauth() -> str:
+    """Read the Google token blob. Callers must not log it."""
+    backend = _get_backend()
+    return await backend.get_secret(GOOGLE_OAUTH_ACCOUNT)
+
+
+async def store_google_oauth(blob: str) -> None:
+    """Store the Google token blob. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(blob)
+    backend = _get_backend()
+    await backend.set_secret(GOOGLE_OAUTH_ACCOUNT, blob)
+
+
+async def delete_google_oauth() -> None:
+    """Delete the Google sign-in. A missing item is success.
+
+    A backend message is not re-raised: it can carry the blob. The
+    desktop client secret is a different account and is left in place.
+    """
+    backend = _get_backend()
+    try:
+        await backend.delete_secret(GOOGLE_OAUTH_ACCOUNT)
+    except KeychainError:
+        if not await backend.has_secret(GOOGLE_OAUTH_ACCOUNT):
+            return
+        raise KeychainError("Could not delete the Google sign-in.") from None
+
+
+async def google_oauth_is_stored() -> bool:
+    """Whether a Google sign-in exists, without reading the blob."""
+    backend = _get_backend()
+    return await backend.has_secret(GOOGLE_OAUTH_ACCOUNT)
+
+
+async def get_google_client_secret() -> str:
+    """Read the desktop client secret. Callers must not log it."""
+    backend = _get_backend()
+    return await backend.get_secret(GOOGLE_CLIENT_SECRET_ACCOUNT)
+
+
+async def store_google_client_secret(secret: str) -> None:
+    """Store the desktop client secret. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(secret)
+    backend = _get_backend()
+    await backend.set_secret(GOOGLE_CLIENT_SECRET_ACCOUNT, secret)
+
+
+async def google_client_secret_is_stored() -> bool:
+    """Whether the desktop client secret exists, without reading it."""
+    backend = _get_backend()
+    return await backend.has_secret(GOOGLE_CLIENT_SECRET_ACCOUNT)
+
+
 async def smtp_password_is_stored() -> bool:
     """Whether the SMTP password exists, without reading it.
 

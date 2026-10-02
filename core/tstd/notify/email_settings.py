@@ -1,9 +1,9 @@
-"""Settings verbs for SMTP (TD-3820, TD-3821).
+"""Settings verbs for email (TD-3820, TD-3821, TD-4854).
 
-Save writes ``notify.email`` and, when a password was typed, the
-keychain. An empty password leaves the stored secret alone. Test sends
-one short sample report through the same newsletter renderer a scheduled
-job uses, and reports the SMTP class.
+Save writes ``notify.email`` and, when a password or a Google client
+secret was typed, the keychain. An empty value leaves the stored secret
+alone. Test sends one short sample report through the same newsletter
+renderer a scheduled job uses.
 """
 
 from __future__ import annotations
@@ -57,6 +57,10 @@ async def apply_email_notify(config: ModelConfig, msg: SetEmailNotify, path: Pat
     # the in-memory config the settings form is about to re-read.
     if msg.password:
         await _store_password(msg.password)
+    # Same order as the SMTP password: a keychain refusal must not leave
+    # the yaml (which has no secret field) ahead of a secret that did not land.
+    if msg.google_client_secret:
+        await _store_google_secret(msg.google_client_secret)
     await asyncio.to_thread(save_email_notify, email, path)
     config.notify.email = email
 
@@ -85,4 +89,14 @@ async def _store_password(password: str) -> None:
         await store_smtp_password(password)
     except KeychainError as exc:
         text = str(exc).replace(password, "[redacted]")
+        raise EmailNotifyError("KeychainError", text) from None
+
+
+async def _store_google_secret(secret: str) -> None:
+    from ..keychain import KeychainError, store_google_client_secret
+
+    try:
+        await store_google_client_secret(secret)
+    except KeychainError as exc:
+        text = str(exc).replace(secret, "[redacted]")
         raise EmailNotifyError("KeychainError", text) from None

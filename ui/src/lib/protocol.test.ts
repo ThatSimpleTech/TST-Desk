@@ -995,6 +995,8 @@ describe("All fixtures have required shape", () => {
       "github_disconnect",
       "microsoft_connect",
       "microsoft_disconnect",
+      "google_connect",
+      "google_disconnect",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -1033,6 +1035,7 @@ describe("All fixtures have required shape", () => {
       "email_test_result",
       "github_status",
       "microsoft_status",
+      "google_status",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;

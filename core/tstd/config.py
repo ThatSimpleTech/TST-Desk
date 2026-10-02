@@ -55,6 +55,8 @@ RESERVED_CREDENTIAL_IDS = frozenset(
         "smtp-password",
         "github-oauth",
         "microsoft-oauth",
+        "google-oauth",
+        "google-client-secret",
     }
 )
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
@@ -624,8 +626,9 @@ class EmailNotifyConfig(BaseModel):
     """
 
     enabled: bool = False
-    # smtp keeps TD-3820. microsoft sends the same report through Graph (TD-4853).
-    method: Literal["smtp", "microsoft"] = "smtp"
+    # smtp keeps TD-3820. microsoft sends through Graph (TD-4853).
+    # google sends through Gmail after Settings signs in (TD-4854).
+    method: Literal["smtp", "microsoft", "google"] = "smtp"
     host: str = ""
     port: int = Field(default=587, ge=1, le=65535)
     security: Literal["starttls", "tls"] = "starttls"
@@ -746,6 +749,57 @@ class MicrosoftConnectorConfig(BaseModel):
         return bool(self.client_id and self.login_host and self.graph_host and self.tenant)
 
 
+class GoogleConnectorConfig(BaseModel):
+    """Google installed-app sign-in for Gmail send (TD-4854).
+
+    Off until a client id and every host are set. The desktop client
+    secret is not a field: Google does not treat it as confidential, and
+    it still lives in the keychain. A ``client_secret`` key in yaml is
+    dropped. Host defaults are empty here. The shipped ``config.yaml``
+    names the public hosts.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str = ""
+    auth_host: str = ""
+    token_host: str = ""
+    userinfo_host: str = ""
+    gmail_host: str = ""
+    timeout_seconds: float = Field(default=20.0, gt=0)
+    sign_in_timeout_seconds: float = Field(default=300.0, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_client_secret(cls, data: object) -> object:
+        if isinstance(data, dict) and "client_secret" in data:
+            _config_log.warning(
+                "connectors.google.client_secret ignored; the client secret lives in the keychain"
+            )
+            return {key: value for key, value in data.items() if key != "client_secret"}
+        return data
+
+    @field_validator("client_id")
+    @classmethod
+    def _strip_client_id(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("auth_host", "token_host", "userinfo_host", "gmail_host")
+    @classmethod
+    def _host(cls, value: str) -> str:
+        return _bare_host(value, "connectors.google host")
+
+    def enabled(self) -> bool:
+        """False when the user has not named a client id or a host."""
+        return bool(
+            self.client_id
+            and self.auth_host
+            and self.token_host
+            and self.userinfo_host
+            and self.gmail_host
+        )
+
+
 class ConnectorsConfig(BaseModel):
     """Outbound account connectors. Each one is off until configured."""
 
@@ -753,6 +807,7 @@ class ConnectorsConfig(BaseModel):
 
     github: GithubConnectorConfig = Field(default_factory=GithubConnectorConfig)
     microsoft: MicrosoftConnectorConfig = Field(default_factory=MicrosoftConnectorConfig)
+    google: GoogleConnectorConfig = Field(default_factory=GoogleConnectorConfig)
 
 
 class NotifyConfig(BaseModel):

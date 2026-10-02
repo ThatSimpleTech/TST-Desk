@@ -1376,21 +1376,25 @@ class Transcribe(ClientMessage):
 
 
 class SetEmailNotify(ClientMessage):
-    """Save SMTP settings (TD-3820). Acked with ``setup_state``.
+    """Save email settings (TD-3820, TD-4854). Acked with ``setup_state``.
 
     ``password`` is written to the keychain and never stored on
     ``setup_state``. None or "" leaves the stored password alone.
+    ``google_client_secret`` is the same for the desktop client secret.
     """
 
     type: Literal["set_email_notify"] = "set_email_notify"
     enabled: bool = False
-    method: Literal["smtp", "microsoft"] = "smtp"
+    method: Literal["smtp", "microsoft", "google"] = "smtp"
     host: str = ""
     port: int = 587
     security: Literal["starttls", "tls"] = "starttls"
     username: str = ""
     from_address: str = ""
     password: str | None = None
+    # Desktop client secret (TD-4854). Written to the keychain. None or ""
+    # leaves the stored secret alone. Never echoed on setup_state.
+    google_client_secret: str | None = None
 
 
 class TestEmail(ClientMessage):
@@ -1430,6 +1434,25 @@ class MicrosoftDisconnect(ClientMessage):
     """Delete the Microsoft keychain item (TD-4853). Acked with ``microsoft_status``."""
 
     type: Literal["microsoft_disconnect"] = "microsoft_disconnect"
+
+
+class GoogleConnect(ClientMessage):
+    """Start Google sign-in (TD-4854). Acked with ``google_status``.
+
+    The daemon opens the browser and listens on 127.0.0.1. The code, the
+    verifier, the client secret, and the tokens stay in the daemon.
+    """
+
+    type: Literal["google_connect"] = "google_connect"
+
+
+class GoogleDisconnect(ClientMessage):
+    """Delete the Google token keychain item (TD-4854). Acked with ``google_status``.
+
+    The desktop client secret is a different item and is left in place.
+    """
+
+    type: Literal["google_disconnect"] = "google_disconnect"
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────
@@ -2137,7 +2160,7 @@ class EmailNotifyState(BaseModel):
     """Email settings on ``setup_state``. Never a password or a token."""
 
     enabled: bool = False
-    method: Literal["smtp", "microsoft"] = "smtp"
+    method: Literal["smtp", "microsoft", "google"] = "smtp"
     host: str = ""
     port: int = 587
     security: Literal["starttls", "tls"] = "starttls"
@@ -2172,6 +2195,23 @@ class MicrosoftConnectorState(BaseModel):
     phase: MicrosoftPhase = "off"
     account: str | None = None
     message: str = ""
+
+
+GooglePhase = Literal["off", "idle", "pending", "connected", "denied", "error", "expired"]
+
+
+class GoogleConnectorState(BaseModel):
+    """Google sign-in as Settings may show it. Never a token, secret, or auth code.
+
+    ``client_secret_stored`` is a presence probe for the desktop client secret.
+    """
+
+    enabled: bool = False
+    connected: bool = False
+    phase: GooglePhase = "off"
+    account: str | None = None
+    message: str = ""
+    client_secret_stored: bool = False
 
 
 class SetupState(DaemonEvent):
@@ -2273,6 +2313,8 @@ class SetupState(DaemonEvent):
     github: GithubConnectorState = Field(default_factory=GithubConnectorState)
     # TD-4853: Microsoft sign-in for email. Additive. No token, no auth code.
     microsoft: MicrosoftConnectorState = Field(default_factory=MicrosoftConnectorState)
+    # TD-4854: Google sign-in for email. Additive. No token, no secret, no auth code.
+    google: GoogleConnectorState = Field(default_factory=GoogleConnectorState)
 
 
 class PairingCode(DaemonEvent):
@@ -3061,6 +3103,25 @@ class MicrosoftStatus(DaemonEvent):
     message: str = ""
 
 
+class GoogleStatus(DaemonEvent):
+    """Google connector snapshot (TD-4854). Connection-scoped.
+
+    Seq is fixed at 1 so it cannot rewind a session attach. The same
+    shape rides on ``setup_state.google``. ``account`` is the mailbox.
+    ``client_secret_stored`` is a presence probe. The secret, the tokens,
+    and the authorization code are not included.
+    """
+
+    type: Literal["google_status"] = "google_status"
+    seq: int = 1
+    enabled: bool = False
+    connected: bool = False
+    phase: GooglePhase = "off"
+    account: str | None = None
+    message: str = ""
+    client_secret_stored: bool = False
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
@@ -3171,7 +3232,9 @@ ClientMessageT = Annotated[
     | GithubConnect
     | GithubDisconnect
     | MicrosoftConnect
-    | MicrosoftDisconnect,
+    | MicrosoftDisconnect
+    | GoogleConnect
+    | GoogleDisconnect,
     Field(discriminator="type"),
 ]
 
@@ -3238,6 +3301,7 @@ DaemonEventT = Annotated[
     | EmailTestResult
     | GithubStatus
     | MicrosoftStatus
+    | GoogleStatus
     | GrokCommands
     | GrokPlan
     | GrokMode
@@ -3362,6 +3426,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "github_disconnect",
         "microsoft_connect",
         "microsoft_disconnect",
+        "google_connect",
+        "google_disconnect",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -3435,6 +3501,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "email_test_result",
         "github_status",
         "microsoft_status",
+        "google_status",
     }
 )
 

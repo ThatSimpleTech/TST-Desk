@@ -7829,8 +7829,8 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49, E53 | 25 | 91 |
-| **Total planned** | **49** | **341** | **1073** |
+| Later | E47, E49, E53 | 26 | 94 |
+| **Total planned** | **49** | **342** | **1076** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -9332,3 +9332,47 @@ DECISIONS.md.
 
 Suite: 4259 passed / 8 skipped, ruff + `mypy --strict` clean over 210
 files, vitest 1466, svelte-check 730 files 0 errors 0 warnings.
+
+---
+
+### TD-4854 — Sign in with Google for email delivery
+**Size:** 3 · **Depends on:** TD-4853
+
+Gmail users send a scheduled job's email by signing in. This path has
+no app password.
+
+**Acceptance criteria:**
+- [x] `connectors.google.client_id` empty by default hides the Google
+      method and shows how to create a Desktop app client. Hosts come
+      from config. No host is hard-coded in Python. The client secret is
+      keychain-only, entered in Settings, and dropped if someone puts it
+      in yaml
+- [x] OAuth authorization code with PKCE, reusing the TD-4853 loopback
+      listener. The redirect is `http://127.0.0.1:<ephemeral port>`, the
+      listener binds 127.0.0.1 only, and the scope is `gmail.send` plus
+      OpenID email. Tokens live in the keychain, refresh on their own,
+      and Disconnect deletes them and leaves the client secret. A refresh
+      that fails with `invalid_grant` marks the connection expired and
+      says to reconnect, including an unverified app or a client still
+      in testing
+- [x] A job's email goes through SMTP, Microsoft Graph, or Gmail
+      `users.messages.send` with the TD-3821 HTML and text body as
+      base64url. Settings → Email chooses the method. Send test email
+      works for all three
+- [x] Tests cover the TD-4853 analogue (PKCE and state, the shared
+      loopback, token refresh, a fake-server send, failure messages
+      without secrets, protocol parity, and the Settings section) plus
+      `invalid_grant` handling and the MIME base64url encoding
+
+Done (2026-09-29): Settings → Email can send through Gmail after a
+loopback sign-in. The desktop client secret lives in the keychain
+account `tst-google-client-secret`. The access and refresh tokens live
+in `tst-google-oauth` and refresh on their own. Disconnect deletes the
+tokens and leaves the secret. `invalid_grant` marks the connection
+expired and tells the user to reconnect. The Gmail request is the same
+plain-text and HTML report, base64url-encoded. The Later row is 26
+stories / 94 points, and the planned total is 342 / 1076. Class B entry
+in DECISIONS.md.
+
+Suite: 4290 passed / 8 skipped, ruff + `mypy --strict` clean over 217
+files, vitest 1469, svelte-check 731 files 0 errors 0 warnings.

@@ -1,9 +1,12 @@
 <script lang="ts">
-	// Email delivery (TD-3820, TD-4853). SMTP keeps the password in the
-	// keychain. Microsoft sign-in stores tokens there too; this form never
-	// sees them. SMTP fields stay in component state when that method is hidden.
+	// Email delivery (TD-3820, TD-4853, TD-4854). SMTP keeps the password in
+	// the keychain. Microsoft and Google sign-in store tokens there too; this
+	// form never sees them. The Google client secret is typed here and stored
+	// the same way. SMTP fields stay in component state when that method is hidden.
 	import {
+		connectGoogle,
 		connectMicrosoft,
+		disconnectGoogle,
 		disconnectMicrosoft,
 		saveEmailNotify,
 		sendTestEmail,
@@ -13,14 +16,20 @@
 	const OFF =
 		'Microsoft sign-in is off until config.yaml sets connectors.microsoft.client_id. Register a public client with no secret, allow a loopback redirect on 127.0.0.1, grant offline_access, Mail.Send, and User.Read, and paste the client id. Hosts are connectors.microsoft.login_host and connectors.microsoft.graph_host. Tenant defaults to common.';
 
+	// Same sentence as the daemon's OFF_MESSAGE. Shown when the client id is
+	// empty, in place of the daemon message, so a planted secret cannot appear.
+	const GOOGLE_OFF =
+		'Google sign-in is off until config.yaml sets connectors.google.client_id. Create an OAuth client of type Desktop app, allow a loopback redirect on 127.0.0.1, grant https://www.googleapis.com/auth/gmail.send plus openid and email, paste the client id into config, and enter the client secret in Settings. The secret is not a confidential credential for a desktop client, but it still lives in the keychain, not in this file. Hosts are connectors.google.auth_host, connectors.google.token_host, connectors.google.userinfo_host, and connectors.google.gmail_host.';
+
 	let enabled = $state(false);
-	let method = $state<'smtp' | 'microsoft'>('smtp');
+	let method = $state<'smtp' | 'microsoft' | 'google'>('smtp');
 	let host = $state('');
 	let port = $state('587');
 	let security = $state<'starttls' | 'tls'>('starttls');
 	let username = $state('');
 	let fromAddress = $state('');
 	let password = $state('');
+	let clientSecret = $state('');
 	let testTo = $state('');
 
 	// Copy the daemon's form. The password field stays local: a later
@@ -38,6 +47,9 @@
 	const signedIn = $derived(
 		settings.microsoftAccount ? `Signed in as ${settings.microsoftAccount}` : 'Connected',
 	);
+	const googleSignedIn = $derived(
+		settings.googleAccount ? `Signed in as ${settings.googleAccount}` : 'Connected',
+	);
 
 	function save(): void {
 		const parsed = Number(port);
@@ -50,8 +62,10 @@
 			username: username.trim(),
 			from_address: fromAddress.trim(),
 			password: password === '' ? null : password,
+			googleClientSecret: clientSecret === '' ? null : clientSecret,
 		});
 		password = '';
+		clientSecret = '';
 	}
 
 	function sendTest(): void {
@@ -65,6 +79,11 @@
 		The password is stored in the OS keychain, not in config.yaml.
 		{#if settings.emailPasswordStored}
 			A password is already stored. Leave the field blank to keep it.
+		{/if}
+	{:else if method === 'google'}
+		Google sign-in stores tokens in the OS keychain, not in config.yaml. The client secret is stored there too.
+		{#if settings.googleClientSecretStored}
+			A client secret is already stored. Leave the field blank to keep it.
 		{/if}
 	{:else}
 		Microsoft sign-in stores tokens in the OS keychain, not in config.yaml.
@@ -100,11 +119,22 @@
 				onclick={() => (method = 'microsoft')}>Microsoft</button
 			>
 		{/if}
+		{#if settings.googleEnabled}
+			<button
+				class="choice"
+				class:choice--active={method === 'google'}
+				type="button"
+				onclick={() => (method = 'google')}>Google</button
+			>
+		{/if}
 	</div>
 </div>
 
 {#if !settings.microsoftEnabled}
 	<p class="hint">{OFF}</p>
+{/if}
+{#if !settings.googleEnabled}
+	<p class="hint">{GOOGLE_OFF}</p>
 {/if}
 
 {#if method === 'smtp'}
@@ -145,7 +175,7 @@
 			placeholder={settings.emailPasswordStored ? 'Stored in the keychain' : 'Keychain only'}
 		/>
 	</label>
-{:else if settings.microsoftEnabled}
+{:else if method === 'microsoft' && settings.microsoftEnabled}
 	{#if settings.microsoftMessage}
 		<p class="hint">{settings.microsoftMessage}</p>
 	{/if}
@@ -158,6 +188,31 @@
 		{/if}
 		{#if settings.microsoftConnected || settings.microsoftPhase === 'pending'}
 			<button class="btn btn--quiet" type="button" onclick={disconnectMicrosoft}>Disconnect</button>
+		{/if}
+	</div>
+{:else if method === 'google' && settings.googleEnabled}
+	<label class="field">
+		<span class="field-name">Client secret</span>
+		<input
+			class="input"
+			type="password"
+			bind:value={clientSecret}
+			autocomplete="new-password"
+			placeholder={settings.googleClientSecretStored ? 'Stored in the keychain' : 'Keychain only'}
+		/>
+	</label>
+	{#if settings.googleMessage}
+		<p class="hint">{settings.googleMessage}</p>
+	{/if}
+	{#if settings.googlePhase === 'connected'}
+		<p class="ok">{googleSignedIn}</p>
+	{/if}
+	<div class="actions">
+		{#if settings.googlePhase !== 'connected'}
+			<button class="btn" type="button" onclick={connectGoogle}>Sign in with Google</button>
+		{/if}
+		{#if settings.googleConnected || settings.googlePhase === 'pending'}
+			<button class="btn btn--quiet" type="button" onclick={disconnectGoogle}>Disconnect</button>
 		{/if}
 	</div>
 {/if}
@@ -202,6 +257,7 @@
 
 	.choices {
 		display: flex;
+		flex-wrap: wrap;
 		gap: var(--space-2);
 	}
 

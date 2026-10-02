@@ -322,6 +322,11 @@ _OUTBOUND_CAPABLE = {
         "one-shot OAuth redirect listener; binds 127.0.0.1 only and closes "
         "after one redirect or a timeout"
     ),
+    "connectors/google_http.py": (
+        "Google auth-code token exchange, userinfo, and Gmail send; destinations "
+        "are connectors.google.auth_host, token_host, userinfo_host, and gmail_host "
+        "from config"
+    ),
 }
 
 

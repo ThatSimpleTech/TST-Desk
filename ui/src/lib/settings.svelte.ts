@@ -16,6 +16,7 @@ import { reducePairing } from "./pair-device.svelte.js";
 import type {
 	DaemonEventUnion,
 	GithubPhase,
+	GooglePhase,
 	MicrosoftPhase,
 	PolicyRuleSummary,
 	RemoteDeviceSummary,
@@ -137,9 +138,9 @@ export const settings = $state({
 	/** Hold-to-talk (TD-4701). From setup_state; the URL never arrives. */
 	speechEnabled: false,
 	speechReady: false,
-	/** Email delivery (TD-3820, TD-4853). From setup_state. No password, no token. */
+	/** Email delivery (TD-3820, TD-4853, TD-4854). From setup_state. No password, no token. */
 	emailEnabled: false,
-	emailMethod: "smtp" as "smtp" | "microsoft",
+	emailMethod: "smtp" as "smtp" | "microsoft" | "google",
 	emailHost: "",
 	emailPort: 587,
 	emailSecurity: "starttls" as "starttls" | "tls",
@@ -164,6 +165,13 @@ export const settings = $state({
 	microsoftPhase: "off" as MicrosoftPhase,
 	microsoftAccount: null as string | null,
 	microsoftMessage: "",
+	/** Google sign-in (TD-4854). From setup_state and google_status. */
+	googleEnabled: false,
+	googleConnected: false,
+	googlePhase: "off" as GooglePhase,
+	googleAccount: null as string | null,
+	googleMessage: "",
+	googleClientSecretStored: false,
 });
 
 let started = false;
@@ -252,6 +260,12 @@ export function resetSettings(): void {
 	settings.microsoftPhase = "off";
 	settings.microsoftAccount = null;
 	settings.microsoftMessage = "";
+	settings.googleEnabled = false;
+	settings.googleConnected = false;
+	settings.googlePhase = "off";
+	settings.googleAccount = null;
+	settings.googleMessage = "";
+	settings.googleClientSecretStored = false;
 	started = false;
 }
 
@@ -313,6 +327,35 @@ function applyMicrosoft(microsoft: {
 	settings.microsoftMessage = microsoft?.message ?? "";
 }
 
+const GOOGLE_PHASES: readonly GooglePhase[] = [
+	"off",
+	"idle",
+	"pending",
+	"connected",
+	"denied",
+	"error",
+	"expired",
+];
+
+function applyGoogle(google: {
+	enabled?: boolean;
+	connected?: boolean;
+	phase?: string;
+	account?: string | null;
+	message?: string;
+	client_secret_stored?: boolean;
+} | undefined): void {
+	settings.googleEnabled = google?.enabled ?? false;
+	settings.googleConnected = google?.connected ?? false;
+	const phase = google?.phase;
+	settings.googlePhase = GOOGLE_PHASES.includes(phase as GooglePhase)
+		? (phase as GooglePhase)
+		: "off";
+	settings.googleAccount = google?.account ?? null;
+	settings.googleMessage = google?.message ?? "";
+	settings.googleClientSecretStored = google?.client_secret_stored ?? false;
+}
+
 function reduce(event: DaemonEventUnion): void {
 	reducePairing(event);
 	if (event.type === "setup_state") {
@@ -369,7 +412,8 @@ function reduce(event: DaemonEventUnion): void {
 		settings.speechReady = event.speech_ready ?? false;
 		const email = event.email;
 		settings.emailEnabled = email?.enabled ?? false;
-		settings.emailMethod = email?.method === "microsoft" ? "microsoft" : "smtp";
+		settings.emailMethod =
+			email?.method === "microsoft" || email?.method === "google" ? email.method : "smtp";
 		settings.emailHost = email?.host ?? "";
 		settings.emailPort = email?.port ?? 587;
 		settings.emailSecurity = email?.security === "tls" ? "tls" : "starttls";
@@ -378,6 +422,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.emailPasswordStored = email?.password_stored ?? false;
 		applyGithub(event.github);
 		applyMicrosoft(event.microsoft);
+		applyGoogle(event.google);
 		return;
 	}
 	if (event.type === "github_status") {
@@ -386,6 +431,10 @@ function reduce(event: DaemonEventUnion): void {
 	}
 	if (event.type === "microsoft_status") {
 		applyMicrosoft(event);
+		return;
+	}
+	if (event.type === "google_status") {
+		applyGoogle(event);
 		return;
 	}
 	if (event.type === "email_test_result") {
@@ -705,14 +754,18 @@ export function deleteMcpServer(id: string): void {
 /** Persist email settings. An empty password leaves the keychain item alone. */
 export function saveEmailNotify(input: {
 	enabled: boolean;
-	method: "smtp" | "microsoft";
+	method: "smtp" | "microsoft" | "google";
 	host: string;
 	port: number;
 	security: "starttls" | "tls";
 	username: string;
 	from_address: string;
 	password: string | null;
+	googleClientSecret?: string | null;
 }): void {
+	// Omit an empty secret so a Microsoft or SMTP save stays the same object
+	// the form has always sent. A typed secret is sent only for Google.
+	const secret = input.googleClientSecret;
 	sendToDaemon({
 		type: "set_email_notify",
 		enabled: input.enabled,
@@ -723,6 +776,7 @@ export function saveEmailNotify(input: {
 		username: input.username,
 		from_address: input.from_address,
 		password: input.password,
+		...(input.method === "google" && secret ? { google_client_secret: secret } : {}),
 	});
 }
 
@@ -749,4 +803,14 @@ export function connectMicrosoft(): void {
 /** Delete the Microsoft keychain item. */
 export function disconnectMicrosoft(): void {
 	sendToDaemon({ type: "microsoft_disconnect" });
+}
+
+/** Start Google sign-in. The daemon opens the browser and answers with google_status. */
+export function connectGoogle(): void {
+	sendToDaemon({ type: "google_connect" });
+}
+
+/** Delete the Google token item. The desktop client secret stays in the keychain. */
+export function disconnectGoogle(): void {
+	sendToDaemon({ type: "google_disconnect" });
 }

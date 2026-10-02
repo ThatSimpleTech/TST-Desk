@@ -106,7 +106,8 @@
     "security": "starttls",
     "username": "desk",
     "from_address": "desk@example.com",
-    "password": null
+    "password": null,
+    "google_client_secret": null
   },
   "test_email": {
     "type": "test_email",
@@ -123,6 +124,12 @@
   },
   "microsoft_disconnect": {
     "type": "microsoft_disconnect"
+  },
+  "google_connect": {
+    "type": "google_connect"
+  },
+  "google_disconnect": {
+    "type": "google_disconnect"
   },
   "set_cu_indicators": {
     "type": "set_cu_indicators",
@@ -1204,6 +1211,14 @@
       "phase": "off",
       "account": null,
       "message": ""
+    },
+    "google": {
+      "enabled": false,
+      "connected": false,
+      "phase": "off",
+      "account": null,
+      "message": "",
+      "client_secret_stored": false
     }
   },
   "pairing_code": {
@@ -1862,6 +1877,16 @@
     "phase": "connected",
     "account": "owner@example.com",
     "message": ""
+  },
+  "google_status": {
+    "type": "google_status",
+    "seq": 1,
+    "enabled": true,
+    "connected": true,
+    "phase": "connected",
+    "account": "owner@example.com",
+    "message": "",
+    "client_secret_stored": true
   },
   "grok_extensions": {
     "type": "grok_extensions",
