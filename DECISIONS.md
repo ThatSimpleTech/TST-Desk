@@ -11813,3 +11813,36 @@ Cancelling local prep the way a socket read is cancelled. `close()`
 on a leader the OS refused to kill. `Popen.poll` as the only death
 check on Linux, which races the watcher's `waitpid`. Treating
 `ChildProcessError` as an unreaped exit.
+
+## TD-5002 — Interactive progress guard (Class B)
+
+2026-10-03. Three live interactive sessions had been calling tools for
+hours with no reply and no file write. Skip-all skips the declared
+caps, and the §12.7 breakers return immediately unless the session is
+an autonomy run.
+
+**Decision:** An interactive turn pauses itself. Twelve tool calls
+since the last user-visible reply or successful `fs_write` / `fs_edit`
+trigger one model call with the tools removed. `DONE` ends the turn
+with that answer. `CONTINUE` naming a new next step opens another
+window of twelve, at most three times. Any other reply pauses. The
+same tool batch three times pauses with no check. Fifty-two model
+calls since the last successful file write pause even when the model
+narrates on every call: a reply resets the twelve-call window only.
+Resume clears the counters and continues the same turn. The pause
+reuses `paused` (a fault report, not an approval). The banner's
+Resume control sends the existing `resume` message.
+
+**Decision:** Autonomy sessions do not take this check. Their charter
+breakers stay the stop. A delegate child skips it too, because that
+child is not a session the user can resume, and a pause there would
+stall the parent tool call. Skip-all still skips `spend_usd`,
+`wall_clock_hours`, and `max_iterations`. A shell call is not a write,
+because the stuck sessions were successful shell calls.
+
+**Rejected:** A flat cap of 52 calls of every kind. That number stops
+a turn that is still editing. A self-check that still has its tools.
+The model was already doing that. Counting a one-line preamble as
+enough to reset the model-call budget. Applying the guard to autonomy
+runs that already stop on their charter. Changing TD-806 so skip-all
+honors the declared caps.

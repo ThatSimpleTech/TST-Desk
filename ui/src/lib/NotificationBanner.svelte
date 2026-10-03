@@ -6,7 +6,9 @@
 	// report — states, versions, recent event types only, never content, args,
 	// or paths) for the report-it path in error copy.
 	import { banners, dismiss, copyDiagnostics, notify } from './notifications.svelte.js';
-	import { ws, daemon } from './connection-status.svelte.js';
+	import { ws, daemon, sendToDaemon } from './connection-status.svelte.js';
+	import { session } from './session-status.svelte.js';
+	import { resumePausedSession } from './resume-paused';
 
 	let copiedId = $state<number | null>(null);
 
@@ -41,6 +43,14 @@
 					<span class="nb-body">{banner.body}</span>
 				</div>
 				<div class="nb-actions">
+					{#if session.state === 'paused' && session.sessionId}
+						<button
+							class="nb-action"
+							type="button"
+							onclick={() => resumePausedSession(session.sessionId, session.state, sendToDaemon)}
+							>Resume</button
+						>
+					{/if}
 					<button class="nb-action" type="button" onclick={() => copyFor(banner.id)}>
 						{copiedId === banner.id ? 'Copied' : 'Copy diagnostics'}
 					</button>

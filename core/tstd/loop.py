@@ -23,7 +23,7 @@ import base64
 import json
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -73,6 +73,13 @@ from .local_worker import (
 from .logging import get_logger, redact_secrets
 from .memory_commit import MemoryCommitter
 from .policy import load_approved_imports, save_approved_imports
+from .progress_guard import (
+    PROGRESS_CHECK_INSTRUCTION,
+    ProgressGuard,
+    interpret_check,
+    pause_reason_for,
+    tool_note,
+)
 from .prompt_images import cap_prompt_images
 from .protocol import (
     AssistantDelta,
@@ -157,6 +164,158 @@ def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
     if cls is None:
         return None
     return cls.value
+
+
+_GUARD_REASON_LIMIT = 400
+
+
+async def _show_progress_note(session: Session, messages: list[ChatMessage], text: str) -> None:
+    """Put one short assistant line on the transcript and in the chat."""
+    messages.append(ChatMessage(role="assistant", content=text))
+    await session.conversation_changed()
+    await session.event_log.add(AssistantDelta(session_id=session.id, delta=text, seq=1))
+
+
+async def _finish_progress_answer(
+    session: Session,
+    messages: list[ChatMessage],
+    answer: str,
+    tracker: CostTracker,
+    tier: TierName,
+    turn_start: float,
+    config: ModelConfig,
+    client_for: Callable[..., Awaitable[ProviderLike]],
+    assembler: PromptAssembler,
+    router: TierRouter,
+) -> None:
+    """The progress check answered the user. End the turn with that text."""
+    await _show_progress_note(session, messages, answer)
+    router.record_success()
+    await _emit_turn_complete(session, tier, turn_start, tracker)
+    await maybe_verify_after_turn(session, config, tracker, client_for, assembler)
+    session.snapshot_branches()
+    log.info(
+        "turn complete",
+        extra={"extra_fields": {"session_id": session.id, "progress_guard": "done"}},
+    )
+
+
+async def _progress_check_gate(
+    guard: ProgressGuard,
+    session: Session,
+    messages: list[ChatMessage],
+    provider: ProviderLike,
+    model_slug: str,
+    tracker: CostTracker,
+    tier: TierName,
+    tier_cfg: Any,
+    turn_start: float,
+    config: ModelConfig,
+    client_for: Callable[..., Awaitable[ProviderLike]],
+    assembler: PromptAssembler,
+    router: TierRouter,
+) -> Literal["proceed", "pause", "stop"]:
+    """Ask the tool-free question. ``stop`` means the turn is over."""
+    check_messages = [
+        *messages,
+        ChatMessage(role="user", content=PROGRESS_CHECK_INSTRUCTION),
+    ]
+    content, tool_calls, failed, error_msg, _code, _raw = await _stream_and_parse(
+        provider,
+        model_slug,
+        check_messages,
+        session,
+        None,
+        tracker,
+        tier,
+        tier_cfg,
+        emit_events=False,
+    )
+    if session.cancel_requested or error_msg == "cancelled":
+        return "stop"
+    if failed:
+        guard.pause_reason = pause_reason_for(error_msg or "the progress check failed")
+        return "pause"
+    if tool_calls and not (content or "").strip():
+        guard.pause_reason = pause_reason_for("the progress check tried to call a tool")
+        return "pause"
+    kind, detail = interpret_check(content or "", guard.last_continue)
+    if kind == "done":
+        await _finish_progress_answer(
+            session,
+            messages,
+            detail,
+            tracker,
+            tier,
+            turn_start,
+            config,
+            client_for,
+            assembler,
+            router,
+        )
+        return "stop"
+    if kind == "continue":
+        guard.note_auto_continue(detail)
+        await _show_progress_note(session, messages, f"Next: {detail}")
+        return "proceed"
+    guard.pause_reason = pause_reason_for(detail)
+    return "pause"
+
+
+async def _interactive_guard(
+    guard: ProgressGuard,
+    session: Session,
+    messages: list[ChatMessage],
+    provider: ProviderLike,
+    model_slug: str,
+    tracker: CostTracker,
+    tier: TierName,
+    tier_cfg: Any,
+    turn_start: float,
+    config: ModelConfig,
+    client_for: Callable[..., Awaitable[ProviderLike]],
+    assembler: PromptAssembler,
+    router: TierRouter,
+) -> bool:
+    """True when the loop should call the model. False ends this turn.
+
+    Autonomy sessions keep their own breakers. A delegate child is not
+    a session the user can resume, so it skips the guard too.
+    """
+    if session.autonomy or session.delegate_depth >= 1:
+        return True
+    gate = guard.before_model_call()
+    if gate == "check":
+        checked = await _progress_check_gate(
+            guard,
+            session,
+            messages,
+            provider,
+            model_slug,
+            tracker,
+            tier,
+            tier_cfg,
+            turn_start,
+            config,
+            client_for,
+            assembler,
+            router,
+        )
+        if checked == "stop":
+            return False
+        gate = checked
+    if gate == "pause":
+        log.warning(
+            "progress guard pause",
+            extra={"extra_fields": {"session_id": session.id, "summary": guard.pause_reason}},
+        )
+        await session.pause_at_cap(guard.pause_reason[:_GUARD_REASON_LIMIT])
+        await session.wait_for_resume()
+        if session.cancel_requested:
+            return False
+        guard.on_resume()
+    guard.note_model_call()
+    return True
 
 
 def _cap_violation(
@@ -285,6 +444,8 @@ async def _stream_and_parse(
     tracker: CostTracker,
     tier: TierName,
     tier_cfg: Any,
+    *,
+    emit_events: bool = True,
 ) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None, str]:
     """Call the provider, stream deltas, and accumulate tool calls.
 
@@ -330,7 +491,7 @@ async def _stream_and_parse(
         # scratchpad back as something it said is both wrong and paid for.
         # A reasoning model spends minutes here, so this is also the only
         # sign of life the window gets before the answer starts.
-        if chunk.delta.reasoning:
+        if chunk.delta.reasoning and emit_events:
             await session.event_log.add(
                 AssistantReasoning(
                     session_id=session.id,
@@ -339,16 +500,18 @@ async def _stream_and_parse(
                 )
             )
 
-        # Stream content delta
+        # Stream content delta. A progress check turns emission off so a
+        # BLOCKED line does not land in the chat as if it were the answer.
         if chunk.delta.content:
             collected_content += chunk.delta.content
-            await session.event_log.add(
-                AssistantDelta(
-                    session_id=session.id,
-                    delta=chunk.delta.content,
-                    seq=1,
+            if emit_events:
+                await session.event_log.add(
+                    AssistantDelta(
+                        session_id=session.id,
+                        delta=chunk.delta.content,
+                        seq=1,
+                    )
                 )
-            )
 
         # Accumulate tool call deltas
         _parse_tool_call_stream(tool_calls, chunk)
@@ -456,10 +619,11 @@ async def _dispatch_and_append_results(
     session: Session,
     messages: list[ChatMessage],
     tool_calls: dict[int, dict[str, str | int]],
-) -> None:
+) -> list[tuple[str, str, bool]]:
     """Execute tool calls and append their results to the conversation.
 
-    Emits ``ToolResult`` events for each dispatch result.
+    Emits ``ToolResult`` events for each dispatch result. Returns one
+    progress-guard note per result (name, canonical args, wrote a file).
     """
     # Build (tool_call_id, name, arguments) list for batch dispatch
     dispatch_items: list[tuple[str, str, dict[str, Any]]] = []
@@ -480,10 +644,12 @@ async def _dispatch_and_append_results(
 
     # Skip dispatch if the session was cancelled during streaming
     if session.cancel_requested:
-        return
+        return []
 
     # Dispatch (parallel-safe tools run concurrently)
     results = await dispatcher.dispatch_many(dispatch_items, session)
+    by_id = {item[0]: item for item in dispatch_items}
+    notes: list[tuple[str, str, bool]] = []
 
     # Append results as tool role messages and emit events
     for r in results:
@@ -530,8 +696,12 @@ async def _dispatch_and_append_results(
             )
         )
         note_tool_result(session, r.name, r.status, diff=r.diff, output=r.output)
+        item = by_id.get(r.tool_call_id)
+        args: Mapping[str, Any] = item[2] if item is not None else {}
+        notes.append(tool_note(r.name, args, status=r.status))
     record_autonomy_round(session, dispatch_items, results)
     await session.conversation_changed()
+    return notes
 
 
 async def dispatch_worker_child_tools(
@@ -922,6 +1092,7 @@ async def agent_loop(
         #    One overflow retry per user turn. Resetting this inside the
         #    loop would clear it on the continue that performs the retry.
         overflow_retried = False
+        guard = ProgressGuard()
         while True:
             # 2a. Determine active tier via router
             tier = router.record_turn_start()
@@ -1296,6 +1467,25 @@ async def agent_loop(
             if session.delegate_runtime is not None:
                 session.delegate_runtime.iterations = _iterations
 
+            # Interactive turns pause when a stretch of calls produces no
+            # file write (TD-5002). Autonomy keeps the charter breakers.
+            if not await _interactive_guard(
+                guard,
+                session,
+                messages,
+                provider,
+                model_slug,
+                tracker,
+                tier,
+                tier_cfg,
+                turn_start,
+                config,
+                client_for,
+                assembler,
+                router,
+            ):
+                break
+
             # 2d. Call provider (streaming)
             (
                 collected_content,
@@ -1456,12 +1646,16 @@ async def agent_loop(
                     # between the ToolCall event emission and the dispatch.
                     # 0.05s is enough for the test to detect the event and cancel.
                     await asyncio.sleep(0.05)
-                    await _dispatch_and_append_results(
+                    notes = await _dispatch_and_append_results(
                         tool_dispatcher, session, messages, tool_calls
                     )
                     # If cancelled during dispatch, exit the tool-call loop
                     if session.cancel_requested:
                         break
+                    if not session.autonomy and session.delegate_depth < 1:
+                        if (collected_content or "").strip():
+                            guard.note_reply()
+                        guard.note_tools(notes)
                     if session.autonomy and session.autonomy_class_c:
                         await _emit_turn_complete(session, tier, turn_start, tracker)
                         session.snapshot_branches()
