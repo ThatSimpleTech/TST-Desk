@@ -21,7 +21,8 @@ def test_asset_server_binds_loopback_only() -> None:
 
 
 def test_manifest_does_not_back_up_or_phone_home() -> None:
-    manifest = (ANDROID / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8")
+    manifest_path = ANDROID / "app" / "src" / "main" / "AndroidManifest.xml"
+    manifest = manifest_path.read_text(encoding="utf-8")
     assert 'android:allowBackup="false"' in manifest
     assert "android.webkit.WebView.EnableSafeBrowsing" in manifest
     assert 'android:value="false"' in manifest
