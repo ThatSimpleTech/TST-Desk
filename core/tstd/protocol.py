@@ -360,6 +360,17 @@ class Cancel(ClientMessage):
     session_id: str
 
 
+class StopTurn(ClientMessage):
+    """Stop the in-flight turn and leave the session open (TD-5003).
+
+    The composer stop control sends this. ``cancel`` still ends the
+    session. A session with nothing in flight ignores it.
+    """
+
+    type: Literal["stop_turn"] = "stop_turn"
+    session_id: str
+
+
 class RunVerify(ClientMessage):
     """Confirm a pending interactive verify (TD-4204 ask mode)."""
 
@@ -2575,6 +2586,7 @@ ClientMessageT = Annotated[
     | SetWorkspacePin
     | Resume
     | Cancel
+    | StopTurn
     | RunVerify
     | DenyVerify
     | Attach
@@ -2739,6 +2751,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_workspace_pin",
         "resume",
         "cancel",
+        "stop_turn",
         "run_verify",
         "deny_verify",
         "attach",

@@ -177,9 +177,10 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 	},
 };
 
-/** Copy for a failed turn's typed error code, or null to stay silent (cancelled). */
+/** Copy for a failed turn's typed error code, or null to stay silent.
+ *  `cancelled` ends a session. `stopped` ends only the turn (TD-5003). */
 export function turnFailureCopy(errorCode: string | null): NoticeSpec | null {
-	if (errorCode === null || errorCode === "cancelled") return null;
+	if (errorCode === null || errorCode === "cancelled" || errorCode === "stopped") return null;
 	const known = TURN_ERROR_COPY[errorCode];
 	if (known) return known;
 	// Unknown codes still never surface as tracebacks, just as a named code.

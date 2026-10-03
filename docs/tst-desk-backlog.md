@@ -8947,3 +8947,19 @@ skip-all skips the spend, wall-clock, and iteration caps.
 - [x] Autonomy sessions do not take the check. Delegate children do not
       either
 - [x] The banner names the pause and offers Resume
+
+### TD-5003 — Stop ends the turn, not the session
+**Size:** 3 · **Depends on:** TD-404, TD-1714
+
+The composer stop control sent `cancel`, and `cancel` marks the session
+`cancelled`. A cancelled session is terminal, so the pane unbinds.
+
+**Acceptance criteria:**
+- [x] The composer stop control and Esc send `stop_turn`
+- [x] The in-flight turn ends with `turn_complete` (`error_code` `stopped`,
+      not a failure). Partial text stays. The session stays `running`
+- [x] The next user message, including one already queued, still runs
+- [x] A paused or approval-parked turn is released. The session is not
+      cancelled
+- [x] `cancel` still ends the session
+- [x] A stopped turn does not raise a failure notice
