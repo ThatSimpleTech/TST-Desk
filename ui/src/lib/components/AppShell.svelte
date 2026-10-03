@@ -81,10 +81,11 @@
 	import { narrowMediaQuery } from '../layout-mode';
 
 	// TD-3701: one AppShell. Below 640px the CSS hides rail + inspector;
-	// these flags only reveal them again. Wide viewports ignore the flags.
+	// showRail / the open flag reveal them again. On a wider window the
+	// activity pane starts open and the header can collapse it.
 	let narrow = $state(false);
 	let showRail = $state(false);
-	let showInspector = $state(false);
+	let inspectorOpen = $state(true);
 
 	// Global shortcuts (TD-1609): Esc peels layers (menu → palette → modal →
 	// turn), ⌘, opens settings (TD-1703), ⌘K the command palette (TD-1707).
@@ -200,10 +201,11 @@
 		});
 		const mq = window.matchMedia(narrowMediaQuery());
 		const syncNarrow = () => {
-			narrow = mq.matches;
-			if (!mq.matches) {
+			const next = mq.matches;
+			if (next !== narrow) {
+				narrow = next;
 				showRail = false;
-				showInspector = false;
+				inspectorOpen = !next;
 			}
 		};
 		syncNarrow();
@@ -381,15 +383,15 @@
 			aria-pressed={showRail}
 			onclick={() => (showRail = !showRail)}><Icon name="panel-left" size={16} /></button
 		>
-		<button
-			class="shell-gear"
-			type="button"
-			title="Inspector"
-			aria-label="Show inspector"
-			aria-pressed={showInspector}
-			onclick={() => (showInspector = !showInspector)}><Icon name="panel-right" size={16} /></button
-		>
 	{/if}
+	<button
+		class="shell-gear"
+		type="button"
+		title={inspectorOpen ? 'Hide activity pane' : 'Show activity pane'}
+		aria-label={inspectorOpen ? 'Hide activity pane' : 'Show activity pane'}
+		aria-pressed={inspectorOpen}
+		onclick={() => (inspectorOpen = !inspectorOpen)}><Icon name="panel-right" size={16} /></button
+	>
 	<!-- Settings is reached from the rail's account anchor (TD-1712) or ⌘,;
 	     the header no longer buries it behind a gear. -->
 </header>
@@ -399,7 +401,8 @@
 <div
 	class="shell-body"
 	class:shell-show-rail={showRail}
-	class:shell-show-inspector={showInspector}
+	class:shell-show-inspector={narrow && inspectorOpen}
+	class:shell-hide-inspector={!narrow && !inspectorOpen}
 >
 	<!-- Session rail (TD-1701): collapsible session list at the left edge. -->
 	<SessionRail />
@@ -717,6 +720,18 @@
 	.pane-activity > :global(.screen-pane) {
 		flex: 1;
 		min-height: 0;
+	}
+
+	/* A wide window can collapse the activity pane. The rule sits outside
+	   the narrow query so a fold in landscape, which is wider than 640px,
+	   can hide that column too. */
+	.shell-body.shell-hide-inspector :global(.splitpane) {
+		grid-template-columns: 1fr !important;
+	}
+
+	.shell-body.shell-hide-inspector :global(.splitpane .right),
+	.shell-body.shell-hide-inspector :global(.splitpane .divider) {
+		display: none;
 	}
 
 	/* TD-3701: one pane on a narrow viewport (chat + approval). Rail and

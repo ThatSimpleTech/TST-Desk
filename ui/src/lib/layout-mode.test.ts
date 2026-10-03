@@ -21,11 +21,19 @@ describe("narrow viewport (TD-3701)", () => {
       rail: true,
       inspector: true,
     });
+    expect(shellChrome(1024, { inspectorCollapsed: true })).toEqual({
+      rail: true,
+      inspector: false,
+    });
   });
 
   it("AppShell CSS uses the same breakpoint the helper names", () => {
     expect(SHELL).toContain(`@media ${narrowMediaQuery()}`);
     expect(SHELL).toContain("shell-show-rail");
     expect(SHELL).toContain("shell-show-inspector");
+    const mediaAt = SHELL.indexOf(`@media ${narrowMediaQuery()}`);
+    const hideAt = SHELL.indexOf("shell-hide-inspector");
+    expect(hideAt).toBeGreaterThan(-1);
+    expect(hideAt).toBeLessThan(mediaAt);
   });
 });
