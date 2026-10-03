@@ -174,6 +174,14 @@ describe("error copy", () => {
     expect(sessionStateCopy("paused", "iteration cap exceeded: 1 >= 0.5")?.body).toContain("max_iterations");
   });
 
+  it("a progress-guard pause tells the user to resume", () => {
+    const spec = sessionStateCopy("paused", "progress guard: 12 tool calls without a reply");
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.title).toBe("Turn paused");
+    expect(spec?.body).toContain("progress guard:");
+    expect(spec?.body).toContain("Resume");
+  });
+
   it("transport and parse failures get tailored toasts, not the fallback", () => {
     for (const code of ["timeout", "connection_error", "request_error", "parse_error", "stream_interrupted"]) {
       const spec = turnFailureCopy(code);

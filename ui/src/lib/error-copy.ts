@@ -217,6 +217,13 @@ export function sessionStateCopy(state: string, reason: string | null): NoticeSp
 				body: `${why}. Resume to continue, or raise max_iterations under caps: in .tst/config.yaml.`,
 			};
 		}
+		if (why.startsWith("progress guard:")) {
+			return {
+				severity: "banner",
+				title: "Turn paused",
+				body: `${why} Resume to give it another stretch, or cancel the session.`,
+			};
+		}
 		return { severity: "banner", title: "Session paused", body: why };
 	}
 	if (state === "interrupted") {

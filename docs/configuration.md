@@ -922,6 +922,17 @@ violation as its reason, the UI raises a card, and the run waits — indefinitel
 a poll. Resuming re-reads this file and re-checks the caps, so resuming without raising the cap
 pauses again immediately. That is the loop: raise the number here, then resume.
 
+**Interactive turns also pause when they stop making progress.** This is not a cap and it is
+not in this file. Skip-all still skips the three caps above. It does not skip the progress
+guard. An interactive turn pauses when the same tool call comes back three times, when 52
+model calls have passed since the last successful `fs_write` or `fs_edit`, or when 12 tool
+calls have passed with no reply and no file write. That twelfth stretch asks the model one
+question with the tools removed. `DONE` ends the turn with the answer. `CONTINUE` with a new
+next step allows another 12 calls, up to three times. Anything else pauses. Resume, on the
+banner, starts the counters over and continues the same turn. A reply resets the 12-call
+window only. A file write resets the 52-call budget too. Unattended autonomy runs keep the
+charter breakers and do not take this check.
+
 ### 4.3 `attachments` — what a message may carry
 
 | Key | Type | Default | Effect |

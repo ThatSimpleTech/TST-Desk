@@ -8917,3 +8917,33 @@ DECISIONS.md.
 
 Suite: 3539 passed / 8 skipped, ruff + `mypy --strict` clean over 155
 files, vitest 1404, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
+# Epic E51 — Interactive progress guard
+
+Filed 2026-10-03. Interactive turns with skip-all were running until
+someone cancelled them. The charter breakers do not apply there, and
+skip-all skips the spend, wall-clock, and iteration caps.
+
+---
+
+### TD-5002 — Pause a turn that stops making progress
+**Size:** 5 · **Depends on:** TD-707, TD-806, TD-4203
+
+**Acceptance criteria:**
+- [x] An interactive turn that makes 12 tool calls with no user-visible
+      reply and no successful `fs_write` / `fs_edit` runs one tool-free
+      progress check
+- [x] `DONE` finishes the turn with that answer. `CONTINUE` with a new
+      next step opens another window, at most three times. `BLOCKED`,
+      an empty reply, a repeated next step, or any other text pauses
+- [x] The same tool batch three times pauses without a check
+- [x] 52 model calls since the last successful file write pause, including
+      when the model keeps narrating. A reply resets the 12-call window
+      only. A write resets both
+- [x] Resume continues the same turn with the counters cleared. The pause
+      is a `paused` session state, not an approval
+- [x] Autonomy sessions do not take the check. Delegate children do not
+      either
+- [x] The banner names the pause and offers Resume
