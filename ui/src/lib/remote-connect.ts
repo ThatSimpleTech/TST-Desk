@@ -18,6 +18,81 @@ export type AttachParse =
 
 const UNSPECIFIED_HOSTS = new Set(["0.0.0.0", "::", "", "*", "[::]"]);
 
+/** Desktop attach allows any specific host. The phone shell allows Tailscale only. */
+export type WsHostPolicy = "any-specific" | "remote-shell";
+
+export function wsHostPolicyFor(mode: string): WsHostPolicy {
+  return mode === "android" ? "remote-shell" : "any-specific";
+}
+
+const REMOTE_SHELL_REFUSAL =
+  "The phone shell only connects to a Tailscale address (100.64.0.0/10, fd7a:115c:a1e0::/48, or a .ts.net name).";
+
+function ipv4Octets(host: string): number[] | null {
+  const parts = host.split(".");
+  if (parts.length !== 4) return null;
+  const octets: number[] = [];
+  for (const part of parts) {
+    if (!/^[0-9]{1,3}$/.test(part)) return null;
+    const value = Number(part);
+    if (value > 255) return null;
+    octets.push(value);
+  }
+  return octets;
+}
+
+/** Tailscale CGNAT `100.64.0.0/10`. */
+export function isTailscaleIpv4(host: string): boolean {
+  const octets = ipv4Octets(host);
+  if (octets === null) return false;
+  return octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
+}
+
+function expandIpv6(host: string): number[] | null {
+  const bare = host.toLowerCase().split("%")[0];
+  if (bare === "" || bare.includes(".")) return null;
+  const halves = bare.split("::");
+  if (halves.length > 2) return null;
+  const parseSide = (side: string): string[] | null => {
+    if (side === "") return [];
+    const groups = side.split(":");
+    if (groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+    return groups;
+  };
+  const head = parseSide(halves[0] ?? "");
+  if (head === null) return null;
+  const tail = halves.length === 2 ? parseSide(halves[1] ?? "") : [];
+  if (tail === null) return null;
+  if (halves.length === 1 && head.length !== 8) return null;
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0) return null;
+  const groups = [...head, ...Array.from({ length: missing }, () => "0"), ...tail];
+  if (groups.length !== 8) return null;
+  return groups.map((group) => Number.parseInt(group, 16));
+}
+
+/** Tailscale ULA `fd7a:115c:a1e0::/48`. */
+export function isTailscaleIpv6(host: string): boolean {
+  const groups = expandIpv6(unwrapHost(host));
+  if (groups === null) return false;
+  return groups[0] === 0xfd7a && groups[1] === 0x115c && groups[2] === 0xa1e0;
+}
+
+const MAGIC_DNS = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+ts\.net$/;
+
+/** Tailscale MagicDNS. `ts.net` alone is not a machine. */
+export function isTailscaleMagicDns(host: string): boolean {
+  const name = unwrapHost(host).toLowerCase();
+  if (name.length > 253) return false;
+  return MAGIC_DNS.test(name);
+}
+
+export function isRemoteShellHost(host: string): boolean {
+  const bare = unwrapHost(host).toLowerCase();
+  if (bare === "" || isUnspecifiedHost(bare)) return false;
+  return isTailscaleIpv4(bare) || isTailscaleIpv6(bare) || isTailscaleMagicDns(bare);
+}
+
 export function isUnspecifiedHost(host: string): boolean {
   const bare = unwrapHost(host).toLowerCase();
   if (UNSPECIFIED_HOSTS.has(bare)) return true;
@@ -37,6 +112,7 @@ export function daemonWsUrl(host: string, port: number): string {
 
 export function parseWsUrl(
   input: string,
+  policy: WsHostPolicy = wsHostPolicyFor(import.meta.env.MODE),
 ): { ok: true; host: string; port: number } | { ok: false; error: string } {
   const trimmed = input.trim();
   if (trimmed === "") {
@@ -56,6 +132,9 @@ export function parseWsUrl(
   if (isUnspecifiedHost(host)) {
     return { ok: false, error: "Refusing 0.0.0.0 / :: — connect to a specific address." };
   }
+  if (policy === "remote-shell" && !isRemoteShellHost(host)) {
+    return { ok: false, error: REMOTE_SHELL_REFUSAL };
+  }
   if (host === "") {
     return { ok: false, error: "URL is missing a host." };
   }
@@ -69,8 +148,12 @@ export function parseWsUrl(
   return { ok: true, host, port };
 }
 
-export function validateAttachTarget(ws: string, token: string): AttachParse {
-  const parsed = parseWsUrl(ws);
+export function validateAttachTarget(
+  ws: string,
+  token: string,
+  policy: WsHostPolicy = wsHostPolicyFor(import.meta.env.MODE),
+): AttachParse {
+  const parsed = parseWsUrl(ws, policy);
   if (!parsed.ok) return { ok: false, reason: "invalid", error: parsed.error };
   const trimmedToken = token.trim();
   if (trimmedToken === "") {
@@ -85,13 +168,17 @@ function paramsOf(raw: string): URLSearchParams {
 }
 
 /** Read `ws` + `token` from the hash first (not sent to an HTTP server), then the query. */
-export function parseAttachParams(search: string, hash = ""): AttachParse {
+export function parseAttachParams(
+  search: string,
+  hash = "",
+  policy: WsHostPolicy = wsHostPolicyFor(import.meta.env.MODE),
+): AttachParse {
   const fromHash = paramsOf(hash);
   const fromSearch = paramsOf(search);
   const ws = fromHash.get("ws") ?? fromSearch.get("ws");
   const token = fromHash.get("token") ?? fromSearch.get("token");
   if (ws === null && token === null) return { ok: false, reason: "missing" };
-  return validateAttachTarget(ws ?? "", token ?? "");
+  return validateAttachTarget(ws ?? "", token ?? "", policy);
 }
 
 export function parseStoredAttach(raw: string | null): AttachTarget | null {

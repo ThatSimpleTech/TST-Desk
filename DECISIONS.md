@@ -11813,3 +11813,38 @@ Cancelling local prep the way a socket read is cancelled. `close()`
 on a leader the OS refused to kill. `Popen.poll` as the only death
 check on Linux, which races the watcher's `waitpid`. Treating
 `ChildProcessError` as an unreaped exit.
+
+## TD-5001 — Android shell is a loopback WebView (Class B)
+
+2026-10-03. Adam overrode the E49 exclusion of a native phone app and
+chose a sideload APK rather than Play Console.
+
+**Decision:** The phone app bundles the existing static UI in a WebView.
+`vite build --mode android` is a separate CSP and attach policy from the
+desktop bundle. Desktop `connect-src` stays `ws://127.0.0.1:*` plus Tauri
+IPC. The android bundle's `connect-src` is `'self' ws:` because the
+daemon address is chosen at runtime. The attach parser, not the CSP,
+limits that socket to Tailscale CGNAT `100.64.0.0/10`, ULA
+`fd7a:115c:a1e0::/48`, or a `*.ts.net` name.
+
+**Decision:** The WebView loads `http://127.0.0.1:<port>/`, served by a
+socket bound only to that address inside the phone. That origin is a
+secure context, and so is `https://appassets.androidplatform.net`. Either
+one refuses the daemon's cleartext `ws://` unless mixed content is
+allowed. The shell sets `MIXED_CONTENT_ALWAYS_ALLOW`. The android CSP
+(`script-src 'self'`, `connect-src 'self' ws:`) is what confines the
+page. The WebView refuses navigation to any other origin. Cleartext is
+permitted in the network security config because a domain rule cannot
+name the CGNAT range. Safe Browsing is off. `allowBackup` is off. There
+is no Play Services dependency. The release APK is signed with the debug
+keystore so it can be installed without Play Console. That keystore is
+not an upload key.
+
+**Rationale:** TD-3701 already made the UI a protocol client outside
+Tauri. A second native client would reimplement the transcript, the
+composer, and approvals. The loopback page is what makes the existing
+client able to open `ws://` at all.
+
+**Rejected:** Widening the desktop CSP. Embedding Tailscale. A hosted
+relay. Loading `file://` or `https://appassets.androidplatform.net`
+(mixed-content block on `ws://`). Play Console packaging in this story.

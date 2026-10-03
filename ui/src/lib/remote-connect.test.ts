@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   daemonWsUrl,
+  isRemoteShellHost,
   isUnspecifiedHost,
   parseAttachParams,
   parseStoredAttach,
@@ -9,6 +10,7 @@ import {
   serializeAttach,
   stripAttachFromUrl,
   validateAttachTarget,
+  wsHostPolicyFor,
 } from "./remote-connect";
 
 describe("parseWsUrl", () => {
@@ -48,6 +50,63 @@ describe("parseWsUrl", () => {
 
   it("requires a port", () => {
     expect(parseWsUrl("ws://100.64.1.2").ok).toBe(false);
+  });
+
+  it("desktop policy still accepts a specific non-tailscale host", () => {
+    expect(wsHostPolicyFor("production")).toBe("any-specific");
+    expect(wsHostPolicyFor("development")).toBe("any-specific");
+    expect(parseWsUrl("ws://192.168.1.9:9", "any-specific").ok).toBe(true);
+    expect(parseWsUrl("ws://127.0.0.1:9", "any-specific").ok).toBe(true);
+  });
+});
+
+describe("remote-shell host policy", () => {
+  it("is the android build's policy", () => {
+    expect(wsHostPolicyFor("android")).toBe("remote-shell");
+  });
+
+  it("accepts Tailscale CGNAT, ULA, and MagicDNS", () => {
+    expect(isRemoteShellHost("100.64.0.1")).toBe(true);
+    expect(isRemoteShellHost("100.127.255.255")).toBe(true);
+    expect(isRemoteShellHost("fd7a:115c:a1e0::1")).toBe(true);
+    expect(isRemoteShellHost("FD7A:115C:A1E0::1")).toBe(true);
+    expect(isRemoteShellHost("desk.tailnet.ts.net")).toBe(true);
+    for (const url of [
+      "ws://100.64.0.1:9",
+      "ws://100.127.255.255:9",
+      "ws://[fd7a:115c:a1e0::1]:9",
+      "ws://desk.tailnet.ts.net:9",
+    ]) {
+      expect(parseWsUrl(url, "remote-shell").ok).toBe(true);
+    }
+    expect(validateAttachTarget("ws://100.64.1.2:9", "tok", "remote-shell").ok).toBe(true);
+  });
+
+  it("refuses unspecified, loopback, LAN, and public hosts", () => {
+    expect(isRemoteShellHost("100.63.255.255")).toBe(false);
+    expect(isRemoteShellHost("100.128.0.1")).toBe(false);
+    expect(isRemoteShellHost("fd7a:115c:a1e1::1")).toBe(false);
+    expect(isRemoteShellHost("ts.net")).toBe(false);
+    expect(isRemoteShellHost("evil.ts.net.example")).toBe(false);
+    for (const url of [
+      "ws://0.0.0.0:9",
+      "ws://[::]:9",
+      "ws://127.0.0.1:9",
+      "ws://localhost:9",
+      "ws://10.1.1.1:9",
+      "ws://192.168.1.9:9",
+      "ws://8.8.8.8:9",
+      "ws://example.com:9",
+      "ws://ts.net:9",
+      "ws://[fd7a:115c:a1e1::1]:9",
+    ]) {
+      expect(parseWsUrl(url, "remote-shell").ok).toBe(false);
+    }
+    const refused = validateAttachTarget("ws://8.8.8.8:9", "tok", "remote-shell");
+    expect(refused.ok).toBe(false);
+    if (!refused.ok && refused.reason === "invalid") {
+      expect(refused.error).toContain("Tailscale");
+    }
   });
 });
 

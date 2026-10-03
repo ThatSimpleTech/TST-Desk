@@ -8917,3 +8917,40 @@ DECISIONS.md.
 
 Suite: 3539 passed / 8 skipped, ruff + `mypy --strict` clean over 155
 files, vitest 1404, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
+# Epic E50 — Android remote shell
+
+Filed 2026-10-03. Adam overrode the E49 line that a native phone app is out
+of scope. The first ship is a sideload APK, not Play Console. Prime
+directives still hold: no account, no relay, no `0.0.0.0`, no telemetry.
+
+---
+
+### TD-5001 — Android WebView shell
+**Size:** 8 · **Depends on:** TD-3701, TD-3602
+
+The phone is another viewer of the daemon. It bundles the existing static
+UI. It does not speak a new protocol.
+
+**Acceptance criteria:**
+- [x] The release APK contains the android-mode UI (`connect-src 'self' ws:`
+      and the Tailscale refusal string). The activity serves that UI from
+      `127.0.0.1` and the page policy refuses every other origin. Not
+      installed on a device in this session
+- [x] Attach accepts Tailscale CGNAT, Tailscale ULA, and `*.ts.net`, and
+      refuses unspecified, loopback, LAN, and public hosts. Desktop attach
+      and desktop CSP stay as they were
+- [x] No account, no hosted relay, no Play Services, no Safe Browsing, no
+      backup of app data. The APK is debug-signed for sideload
+- [x] `remote-connect` tests, CSP tests, shell unit tests, and
+      `test_android_shell` pass
+
+Done (2026-10-03): `android/` is a WebView shell. `vite build --mode android`
+writes `ui/build-android` (it does not replace the desktop `ui/build`).
+aapt's default ignore pattern drops `_app`; the shell replaces that pattern.
+The sideload APK is `android/app/build/outputs/apk/release/app-release.apk`
+(debug keystore, not a Play upload). Class B entry in DECISIONS.md.
+
+---

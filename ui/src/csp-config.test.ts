@@ -9,8 +9,10 @@ import tauriConf from "../../shell/tauri.conf.json";
 
 const prod = contentSecurityPolicy("production");
 const dev = contentSecurityPolicy("development");
+const android = contentSecurityPolicy("android");
 const prodD = prod.directives!;
 const devD = dev.directives!;
+const androidD = android.directives!;
 
 describe("webview CSP (TD-4807)", () => {
   it("hashes inline scripts per build instead of allowlisting them", () => {
@@ -39,12 +41,20 @@ describe("webview CSP (TD-4807)", () => {
   });
 
   it("never permits eval or a remote script source in either mode", () => {
-    for (const policy of [prod, dev]) {
+    for (const policy of [prod, dev, android]) {
       const all = Object.values(policy.directives!).flat();
       expect(all).not.toContain("unsafe-eval");
       expect(all).not.toContain("*");
       expect(all.filter((s) => s.startsWith("https:"))).toEqual([]);
     }
+  });
+
+  it("android shell allows a runtime ws host and not the desktop loopback pin", () => {
+    expect(android.mode).toBe("hash");
+    expect(androidD["connect-src"]).toEqual(["self", "ws:"]);
+    expect(androidD["connect-src"]).not.toContain("ws://127.0.0.1:*");
+    expect(androidD["connect-src"]).not.toContain("ipc://localhost");
+    expect(prodD["connect-src"]).toContain("ws://127.0.0.1:*");
   });
 
   it("opens the Vite HMR socket in development only", () => {

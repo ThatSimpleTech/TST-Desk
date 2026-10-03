@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The daemon speaks ws:// on a Tailscale address chosen at runtime, and the
+  UI is served from the loopback asset server. A domain rule cannot name the
+  CGNAT range. The WebView refuses every page that is not that loopback origin.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

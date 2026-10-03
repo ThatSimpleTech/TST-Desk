@@ -141,6 +141,8 @@ same client messages they are on the desktop. Settings will copy address +
 token (TD-3603); until then, the port is the one in `port.json` and the token
 is the contents of `remote-token`.
 
+**Android shell (TD-5001).** A sideload APK is that same UI in a WebView, not a second protocol and not a Play Store service. The page is served to the WebView from `127.0.0.1` inside the phone — an https page would refuse the daemon's cleartext `ws://` as mixed content — and the WebView refuses every other origin. The android UI build's attach parser accepts only a Tailscale address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`, or `*.ts.net`). Desktop CSP stays `ws://127.0.0.1`. The APK is debug-signed for sideload. There is still no account and no relay.
+
 On a viewport narrower than 640px the same `AppShell` hides the session rail
 and the inspector so the phone is chat + approval. Either pane can be shown
 again; they are not a separate product. On a wide viewport both sidebars are

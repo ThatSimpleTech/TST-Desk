@@ -20,15 +20,22 @@ export function contentSecurityPolicy(mode: string): NonNullable<KitConfig['csp'
 			// attributes (cursor, glow); SvelteKit hashes anything it
 			// emits inline on top of this.
 			'style-src': ['self', 'unsafe-inline'],
-			'connect-src': [
-				'self',
-				// The daemon socket; the port is per-run, hence the wildcard.
-				'ws://127.0.0.1:*',
-				// Tauri IPC fallback channel (Windows/Linux).
-				'ipc://localhost',
-				// Vite HMR, dev only.
-				...(mode === 'development' ? (['ws://localhost:*'] as const) : [])
-			],
+			// Android mode (TD-5001): the daemon address is a Tailscale
+			// host chosen at runtime, so it cannot be pinned here. The
+			// phone shell's attach parser refuses anything that is not
+			// Tailscale. Desktop stays loopback plus Tauri IPC.
+			'connect-src':
+				mode === 'android'
+					? ['self', 'ws:']
+					: [
+							'self',
+							// The daemon socket; the port is per-run, hence the wildcard.
+							'ws://127.0.0.1:*',
+							// Tauri IPC fallback channel (Windows/Linux).
+							'ipc://localhost',
+							// Vite HMR, dev only.
+							...(mode === 'development' ? (['ws://localhost:*'] as const) : [])
+						],
 			// Screen-frame previews arrive as data: URLs via the host reader.
 			'img-src': ['self', 'data:'],
 			'font-src': ['self'],
@@ -48,9 +55,14 @@ export default defineConfig(({ mode }) => ({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 
-			// Tauri serves static files from ui/build. Emit a prerendered
-			// index.html plus a 200.html fallback for client-side routes.
-			adapter: adapter({ fallback: '200.html' }),
+			// Tauri serves static files from ui/build. The android shell writes
+			// build-android so a phone build does not replace that bundle.
+			// Both emit a prerendered index.html plus a 200.html fallback.
+			adapter: adapter({
+				pages: mode === 'android' ? 'build-android' : 'build',
+				assets: mode === 'android' ? 'build-android' : 'build',
+				fallback: '200.html'
+			}),
 
 			csp: contentSecurityPolicy(mode)
 		})

@@ -414,8 +414,13 @@ browser (the desktop window is Tauri; a phone is not). Connect with
 `ws://100.64.1.2:9xxx` and the file
 `~/Library/Application Support/com.thatsimpletech.tstdesk/remote-token` on
 macOS. A URL of the form `?ws=ws://…&token=…` (or the same pair in the hash)
-fills the form. No account, no relay. TD-3603 will copy address + token from
-Settings; this branch still types them.
+fills the form. No account, no relay. Settings shows the bound address and
+never the token; copy the token from `remote-token`.
+
+**Android shell (TD-5001).** `android/` builds a sideload APK that loads this
+same UI. The phone build accepts only a Tailscale address or a `*.ts.net`
+name. Install and the token path are in `android/README.md`. The APK is not
+a Play upload.
 
 ### `autonomy`
 
