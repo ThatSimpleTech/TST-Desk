@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.TstDesk" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- The UI is charcoal. Light system icons stay readable on that strip. -->
         <item name="android:statusBarColor">@color/ink</item>
-        <item name="android:navigationBarColor">@color/paper</item>
-        <item name="android:windowBackground">@color/paper</item>
+        <item name="android:navigationBarColor">@color/ink</item>
+        <item name="android:windowBackground">@color/ink</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 </resources>

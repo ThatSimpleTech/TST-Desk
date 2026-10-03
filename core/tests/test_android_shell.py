@@ -29,6 +29,17 @@ def test_manifest_does_not_back_up_or_phone_home() -> None:
     assert "0.0.0.0" not in manifest
 
 
+def test_webview_clears_the_status_bar() -> None:
+    """Target 35 draws edge-to-edge. The page has to sit below the status bar.
+
+    WebView paints through its own padding, so the inset belongs on a parent.
+    """
+    source = (PKG / "MainActivity.kt").read_text(encoding="utf-8")
+    assert "setOnApplyWindowInsetsListener" in source
+    assert "WindowInsets.Type.systemBars()" in source
+    assert "FrameLayout" in source
+
+
 def test_webview_opens_the_app_root() -> None:
     """`/index.html` is not a client route. That pathname is the 404 page."""
     source = (PKG / "MainActivity.kt").read_text(encoding="utf-8")

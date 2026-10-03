@@ -2,11 +2,15 @@ package com.thatsimpletech.tstdesk
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.WindowInsets
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import java.io.IOException
 
 /** Viewer for one TST Desk daemon. The page is the bundled UI. The socket is not. */
@@ -41,7 +45,22 @@ class MainActivity : Activity() {
                 return !isShellPage(request.url.toString(), port)
             }
         }
-        setContentView(view)
+        val ink = getColor(R.color.ink)
+        view.setBackgroundColor(ink)
+        // WebView draws through its own padding, so the inset has to be a
+        // parent. Target 35 lays the window out under the status bar.
+        val root = FrameLayout(this)
+        root.setBackgroundColor(ink)
+        root.addView(
+            view,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        applySystemBarInsets(root)
+        setContentView(root)
+        root.requestApplyInsets()
         // `/` is the app route. `/index.html` is only the file, and the
         // client router turns that pathname into its 404 page.
         view.loadUrl("http://${AssetServer.LOOPBACK_HOST}:$port/")
@@ -55,6 +74,19 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
+    private fun applySystemBarInsets(root: View) {
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            val pad = systemBarPadding(insets)
+            view.setPadding(pad[0], pad[1], pad[2], pad[3])
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowInsets.CONSUMED
+            } else {
+                @Suppress("DEPRECATION")
+                insets.consumeSystemWindowInsets()
+            }
+        }
+    }
+
     private fun readAsset(path: String): ByteArray? {
         return try {
             assets.open(path).use { it.readBytes() }
@@ -62,4 +94,24 @@ class MainActivity : Activity() {
             null
         }
     }
+}
+
+/**
+ * Status bar, navigation bar, and cutout. The keyboard is not included:
+ * the window already resizes for that.
+ */
+internal fun systemBarPadding(insets: WindowInsets): IntArray {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val bars = insets.getInsets(
+            WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+        )
+        return intArrayOf(bars.left, bars.top, bars.right, bars.bottom)
+    }
+    @Suppress("DEPRECATION")
+    return intArrayOf(
+        insets.systemWindowInsetLeft,
+        insets.systemWindowInsetTop,
+        insets.systemWindowInsetRight,
+        insets.systemWindowInsetBottom,
+    )
 }
