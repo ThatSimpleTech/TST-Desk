@@ -188,6 +188,7 @@ anywhere.
 `Daemon._on_connection_closed` calls `_cleanup_attach`, which removes the connection from
 `_attached_clients` and cancels *that connection's streaming task*. It does not reach the runner.
 The only things that stop a loop are `Session.cancel` (user asked) and daemon shutdown.
+`stop_turn` ends the current turn and leaves the loop waiting for the next message.
 
 ### The session state machine
 
@@ -313,6 +314,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_workspace_pin` | — | Pin or unpin a workspace on the Projects list. Machine-wide. Acked with `setup_state` (TD-2806). |
 | `resume` | yes | Resume a session paused at a declared cap, after the cap was raised. |
 | `cancel` | yes | Cancel a running session. |
+| `stop_turn` | yes | Stop the in-flight turn and leave the session open. Idle sessions ignore it. The composer stop control sends this; `cancel` still ends the session (TD-5003). |
 | `run_verify` | yes | Confirm a pending interactive verify after a write (TD-4204 ask mode). |
 | `deny_verify` | yes | Skip a pending interactive verify (TD-4204 ask mode). |
 | `attach` | yes | Subscribe to a session, replaying from `from_seq`. |

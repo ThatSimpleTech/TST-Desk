@@ -338,9 +338,11 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
     cancelTurn(): boolean {
       if (state.sessionId === null) return false;
-      const sent = deps.send({ type: "cancel", session_id: state.sessionId });
+      // Stop this turn only. `cancel` still ends the session, and nothing
+      // in the composer sends it (TD-5003).
+      const sent = deps.send({ type: "stop_turn", session_id: state.sessionId });
       // The user said stop waiting: drop the local wait (and its watchdog)
-      // immediately — the daemon's session_state remains the truth for the
+      // immediately — the daemon's turn_complete remains the truth for the
       // turn itself and lands separately.
       if (sent) wait.end();
       return sent;

@@ -288,10 +288,10 @@ describe("sending and cancelling", () => {
     expect(state.messages).toEqual([]);
   });
 
-  it("cancelTurn sends cancel with the active session id", () => {
+  it("cancelTurn stops the turn and does not close the session", () => {
     const { store, sent } = boundStore();
     expect(store.cancelTurn()).toBe(true);
-    expect(sent).toEqual([{ type: "cancel", session_id: "s1" }]);
+    expect(sent).toEqual([{ type: "stop_turn", session_id: "s1" }]);
   });
 
   it("cancelTurn refuses without a session", () => {
@@ -644,7 +644,7 @@ describe("first-token watchdog (TD-1713)", () => {
     expect(state.turnStalled).toBe(true);
 
     expect(store.cancelTurn()).toBe(true);
-    expect(sent).toContainEqual({ type: "cancel", session_id: "s1" });
+    expect(sent).toContainEqual({ type: "stop_turn", session_id: "s1" });
     expect(state.turnStalled).toBe(false);
     expect(state.awaitingFirstToken).toBe(false);
     store.dispose();

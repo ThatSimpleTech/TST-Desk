@@ -149,6 +149,7 @@ describe("error copy", () => {
 
   it("a cancelled turn and a null code stay silent", () => {
     expect(turnFailureCopy("cancelled")).toBeNull();
+    expect(turnFailureCopy("stopped")).toBeNull();
     expect(turnFailureCopy(null)).toBeNull();
   });
 

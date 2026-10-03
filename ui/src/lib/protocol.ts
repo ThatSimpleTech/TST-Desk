@@ -172,6 +172,12 @@ export interface Cancel extends ClientMessage {
   session_id: string;
 }
 
+/** Stop the in-flight turn. The session stays open (TD-5003). */
+export interface StopTurn extends ClientMessage {
+  type: "stop_turn";
+  session_id: string;
+}
+
 export interface RunVerify extends ClientMessage {
   type: "run_verify";
   session_id: string;
@@ -741,6 +747,7 @@ export type ClientMessageUnion =
   | SetWorkspacePin
   | Resume
   | Cancel
+  | StopTurn
   | RunVerify
   | DenyVerify
   | Attach

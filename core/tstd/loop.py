@@ -233,6 +233,9 @@ async def _progress_check_gate(
     )
     if session.cancel_requested or error_msg == "cancelled":
         return "stop"
+    if session.stop_turn_requested or error_msg == "stopped":
+        await _finish_stopped_turn(session, tier, turn_start, tracker)
+        return "stop"
     if failed:
         guard.pause_reason = pause_reason_for(error_msg or "the progress check failed")
         return "pause"
@@ -312,6 +315,9 @@ async def _interactive_guard(
         await session.pause_at_cap(guard.pause_reason[:_GUARD_REASON_LIMIT])
         await session.wait_for_resume()
         if session.cancel_requested:
+            return False
+        if session.stop_turn_requested:
+            await _finish_stopped_turn(session, tier, turn_start, tracker)
             return False
         guard.on_resume()
     guard.note_model_call()
@@ -399,6 +405,37 @@ async def _emit_turn_complete(
     await session.close_cu_session()
 
 
+async def _finish_stopped_turn(
+    session: Session,
+    tier: TierName,
+    turn_start: float,
+    tracker: CostTracker,
+) -> None:
+    """Seal a turn the user stopped. The session stays open (TD-5003).
+
+    ``failed`` stays false and the code is ``stopped``, which the UI
+    treats as silence. The flag is cleared before the emit so a second
+    check during the await cannot seal the turn twice.
+    """
+    if not session.stop_turn_requested:
+        return
+    if session.state == "paused":
+        await session.set_state("running", reason="turn stopped")
+    session.acknowledge_stop_turn()
+    await _emit_turn_complete(
+        session,
+        tier,
+        turn_start,
+        tracker,
+        failed=False,
+        error_code="stopped",
+    )
+    log.info(
+        "turn stopped",
+        extra={"extra_fields": {"session_id": session.id, "tier": tier}},
+    )
+
+
 def _rule_rel_path(session: Session, path: Path) -> str:
     """Render a rule's source path workspace-relative for the timeline."""
     try:
@@ -476,8 +513,9 @@ async def _stream_and_parse(
     usage: Usage | None = None
 
     async for chunk in _stream_turn(provider, model_slug, messages, tool_definitions):
-        if session.cancel_requested:
-            failed, error_msg = True, "cancelled"
+        if session.cancel_requested or session.stop_turn_requested:
+            failed = True
+            error_msg = "cancelled" if session.cancel_requested else "stopped"
             break
 
         if isinstance(chunk, ProviderError):
@@ -1005,6 +1043,9 @@ async def agent_loop(
         queued = await session.wait_for_user_message()
         if queued is None:
             break  # session was cancelled
+        # A stop that landed as the previous turn sealed must not abort
+        # this one. A stop after this line belongs to this turn.
+        session.acknowledge_stop_turn()
         apply_slash_skill(session, queued.display)
 
         # TD-1721: a preset switch while idle is applied on this turn.
@@ -1094,6 +1135,11 @@ async def agent_loop(
         overflow_retried = False
         guard = ProgressGuard()
         while True:
+            if session.cancel_requested:
+                break
+            if session.stop_turn_requested:
+                await _finish_stopped_turn(session, router.active_tier, turn_start, tracker)
+                break
             # 2a. Determine active tier via router
             tier = router.record_turn_start()
             cu_heavy = session_is_cu_heavy(session)
@@ -1443,6 +1489,8 @@ async def agent_loop(
                 and tool_dispatcher.skip_all_fn()
             )
             while True:
+                if session.cancel_requested or session.stop_turn_requested:
+                    break
                 violation = _cap_violation(
                     session, tracker, _session_start, _iterations, skip_all=skip_all
                 )
@@ -1463,6 +1511,13 @@ async def agent_loop(
                 )
                 await session.pause_at_cap(violation)
                 await session.wait_for_resume()
+                if session.cancel_requested or session.stop_turn_requested:
+                    break
+            if session.cancel_requested:
+                break
+            if session.stop_turn_requested:
+                await _finish_stopped_turn(session, tier, turn_start, tracker)
+                break
             _iterations += 1
             if session.delegate_runtime is not None:
                 session.delegate_runtime.iterations = _iterations
@@ -1507,9 +1562,16 @@ async def agent_loop(
 
             # 2e. Handle failure
             if failed:
-                # If the session was cancelled during streaming, bail out
-                # without emitting a turn_complete or recording a failure.
+                # Cancel ends the session: no turn_complete, no failure row.
+                # Stop seals this turn and leaves the session open.
                 if session.cancel_requested:
+                    break
+                if session.stop_turn_requested or error_msg == "stopped":
+                    partial = (collected_content or "").strip()
+                    if partial:
+                        messages.append(ChatMessage(role="assistant", content=partial))
+                        await session.conversation_changed()
+                    await _finish_stopped_turn(session, tier, turn_start, tracker)
                     break
 
                 if error_code == "context_overflow":
@@ -1649,8 +1711,13 @@ async def agent_loop(
                     notes = await _dispatch_and_append_results(
                         tool_dispatcher, session, messages, tool_calls
                     )
-                    # If cancelled during dispatch, exit the tool-call loop
+                    # Cancel ends the session. Stop seals the turn after the
+                    # tool results are on the transcript, so the next
+                    # message is not a dangling tool call.
                     if session.cancel_requested:
+                        break
+                    if session.stop_turn_requested:
+                        await _finish_stopped_turn(session, tier, turn_start, tracker)
                         break
                     if not session.autonomy and session.delegate_depth < 1:
                         if (collected_content or "").strip():

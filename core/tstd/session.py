@@ -248,6 +248,8 @@ class Session:
         self._state = "idle"
         self.event_log = SessionEventLog()
         self._cancel_event = asyncio.Event()
+        # Stop the in-flight turn without ending the session (TD-5003).
+        self._stop_turn_event = asyncio.Event()
         self._user_message_queue: asyncio.Queue[QueuedUserMessage] = asyncio.Queue()
         # The loop's conversation lives here so a fork can truncate it
         # (TD-1708).  The loop aliases this list; it must not rebind.
@@ -510,6 +512,57 @@ class Session:
         # Wake a loop parked in wait_for_resume so it observes cancellation.
         self._resume_event.set()
 
+    async def stop_turn(self) -> None:
+        """Abort the in-flight turn. The session and its transcript stay.
+
+        ``cancel`` ends the session. This does not. An idle session ignores
+        it, so a click that lands as the turn finishes cannot kill the next
+        one. A paused turn returns to ``running``; the loop then seals the
+        turn instead of continuing it.
+        """
+        if self.cancel_requested:
+            return
+        if self._state == "running" and not self.turn_in_flight:
+            return
+        if self._state not in ("running", "awaiting_approval", "paused"):
+            return
+        self._stop_turn_event.set()
+        for pending in self._pending_approvals.values():
+            if not pending.future.done():
+                pending.future.set_result((False, "stopped"))
+        if self._state == "paused":
+            await self.set_state("running", reason="turn stopped")
+        # After the state change, so a loop parked on the pause wakes
+        # into ``running`` and seals the turn.
+        self._resume_event.set()
+
+    def acknowledge_stop_turn(self) -> None:
+        """Drop the stop flag once the loop has finished that turn."""
+        self._stop_turn_event.clear()
+
+    @property
+    def stop_turn_requested(self) -> bool:
+        return self._stop_turn_event.is_set()
+
+    async def wait_for_turn_abort(self) -> None:
+        """Block until the session is cancelled or this turn is stopped."""
+        if self.cancel_requested or self.stop_turn_requested:
+            return
+        cancel_wait = asyncio.create_task(self._cancel_event.wait())
+        stop_wait = asyncio.create_task(self._stop_turn_event.wait())
+        try:
+            await asyncio.wait(
+                {cancel_wait, stop_wait},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in (cancel_wait, stop_wait):
+                if not task.done():
+                    task.cancel()
+            for task in (cancel_wait, stop_wait):
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
     # ── Approvals (TD-802) ──────────────────────────────────────────
 
     async def request_approval(
@@ -770,13 +823,20 @@ class Session:
         """
         self._resume_event.clear()
         await self.set_state("paused", reason=reason)
+        # A stop or cancel that landed while the state was changing
+        # must not leave the loop parked.
+        if self.cancel_requested or self.stop_turn_requested:
+            self._resume_event.set()
 
     async def wait_for_resume(self) -> None:
         """Block until the user resumes the session (or it is cancelled).
 
         Waits without spinning or polling; the daemon's ``resume``
-        handler signals the event.
+        handler signals the event. A stop or cancel releases the wait
+        too, and the loop decides which one it was.
         """
+        if self.cancel_requested or self.stop_turn_requested:
+            self._resume_event.set()
         await self._resume_event.wait()
 
     async def resume(self) -> None:

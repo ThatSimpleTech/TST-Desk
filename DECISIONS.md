@@ -11846,3 +11846,28 @@ The model was already doing that. Counting a one-line preamble as
 enough to reset the model-call budget. Applying the guard to autonomy
 runs that already stop on their charter. Changing TD-806 so skip-all
 honors the declared caps.
+
+## TD-5003 — Stop ends the turn, not the session (Class B)
+
+2026-10-03. The composer stop control and Esc sent `cancel`. `Session.cancel`
+sets `cancelled`, and a cancelled session is terminal, so the pane
+unbinds and the conversation closes.
+
+**Decision:** `stop_turn` is a separate client message. It aborts the
+in-flight turn: the provider stream, a running shell, a parked approval,
+and a cap or progress-guard pause. The loop emits `turn_complete` with
+`failed` false and `error_code` `stopped`, which the UI treats as
+silence. Session state stays `running` (a pause returns to `running`
+first). The runner task stays up. `active_sessions` is unchanged.
+`cancel` still ends the session. A stop while idle is ignored, so a
+click that lands as the turn finishes cannot kill the next one. A
+message already queued still runs as the next turn. Partial streamed
+text stays on the transcript and in the conversation. The Grok engine
+interrupts the current prompt the same way a queued follow-up does,
+then seals the turn instead of dropping it.
+
+**Rejected:** Reusing `cancel` and reopening the session. `cancelled`
+is terminal, and the pane unbinds. Reusing `cancel` without the state
+change. Other callers, including shutdown and an explicit session
+cancel, still need it to end the loop. Showing a failure toast for a
+stop the user asked for.
