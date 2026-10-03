@@ -328,9 +328,9 @@
 				<button
 					type="button"
 					class="send"
-					title="Stop generating (Esc)"
+					title="Stop this turn (Esc)"
 					onclick={() => oncancel?.()}
-					aria-label="Stop generating"
+					aria-label="Stop this turn"
 				>
 					<Icon name="stop" size={14} filled />
 				</button>

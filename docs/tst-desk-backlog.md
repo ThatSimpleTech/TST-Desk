@@ -8954,3 +8954,47 @@ The sideload APK is `android/app/build/outputs/apk/release/app-release.apk`
 (debug keystore, not a Play upload). Class B entry in DECISIONS.md.
 
 ---
+
+# Epic E51 — Interactive progress guard
+
+Filed 2026-10-03. Interactive turns with skip-all were running until
+someone cancelled them. The charter breakers do not apply there, and
+skip-all skips the spend, wall-clock, and iteration caps.
+
+---
+
+### TD-5002 — Pause a turn that stops making progress
+**Size:** 5 · **Depends on:** TD-707, TD-806, TD-4203
+
+**Acceptance criteria:**
+- [x] An interactive turn that makes 12 tool calls with no user-visible
+      reply and no successful `fs_write` / `fs_edit` runs one tool-free
+      progress check
+- [x] `DONE` finishes the turn with that answer. `CONTINUE` with a new
+      next step opens another window, at most three times. `BLOCKED`,
+      an empty reply, a repeated next step, or any other text pauses
+- [x] The same tool batch three times pauses without a check
+- [x] 52 model calls since the last successful file write pause, including
+      when the model keeps narrating. A reply resets the 12-call window
+      only. A write resets both
+- [x] Resume continues the same turn with the counters cleared. The pause
+      is a `paused` session state, not an approval
+- [x] Autonomy sessions do not take the check. Delegate children do not
+      either
+- [x] The banner names the pause and offers Resume
+
+### TD-5003 — Stop ends the turn, not the session
+**Size:** 3 · **Depends on:** TD-404, TD-1714
+
+The composer stop control sent `cancel`, and `cancel` marks the session
+`cancelled`. A cancelled session is terminal, so the pane unbinds.
+
+**Acceptance criteria:**
+- [x] The composer stop control and Esc send `stop_turn`
+- [x] The in-flight turn ends with `turn_complete` (`error_code` `stopped`,
+      not a failure). Partial text stays. The session stays `running`
+- [x] The next user message, including one already queued, still runs
+- [x] A paused or approval-parked turn is released. The session is not
+      cancelled
+- [x] `cancel` still ends the session
+- [x] A stopped turn does not raise a failure notice

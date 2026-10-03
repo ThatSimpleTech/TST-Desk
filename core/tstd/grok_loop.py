@@ -503,6 +503,8 @@ async def grok_loop(
             queued = await session.wait_for_user_message()
             if queued is None:
                 break
+            # A stop from the previous turn must not abort this one.
+            session.acknowledge_stop_turn()
             user_content = queued.display
             turn_id = str(uuid.uuid4())
             turn_start = time.time()
@@ -544,9 +546,11 @@ async def grok_loop(
                     acp.prompt(grok_id, prompt_text, prompt_images, **prompt_kwargs)
                 )
                 followup = False
+                stopped = False
                 while not prompt_task.done():
                     followup = session.pending_user_messages > 0
-                    if session.cancel_requested or followup:
+                    stopped = session.stop_turn_requested and not session.cancel_requested
+                    if session.cancel_requested or stopped or followup:
                         await _interrupt_prompt(
                             acp,
                             prompt_task,
@@ -560,6 +564,22 @@ async def grok_loop(
                     await asyncio.sleep(0.05)
                 if session.cancel_requested:
                     break
+                if stopped or session.stop_turn_requested:
+                    await session.event_log.add(
+                        TurnComplete(
+                            session_id=session.id,
+                            tokens=0,
+                            cost=0,
+                            tier="brain",
+                            duration=time.time() - turn_start,
+                            failed=False,
+                            error_code="stopped",
+                            seq=1,
+                        )
+                    )
+                    session.acknowledge_stop_turn()
+                    await session.close_cu_session()
+                    continue
                 if followup:
                     # Do not emit turn_complete: the next queued message is
                     # the interruption and must start a new prompt. The

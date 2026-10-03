@@ -177,9 +177,10 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 	},
 };
 
-/** Copy for a failed turn's typed error code, or null to stay silent (cancelled). */
+/** Copy for a failed turn's typed error code, or null to stay silent.
+ *  `cancelled` ends a session. `stopped` ends only the turn (TD-5003). */
 export function turnFailureCopy(errorCode: string | null): NoticeSpec | null {
-	if (errorCode === null || errorCode === "cancelled") return null;
+	if (errorCode === null || errorCode === "cancelled" || errorCode === "stopped") return null;
 	const known = TURN_ERROR_COPY[errorCode];
 	if (known) return known;
 	// Unknown codes still never surface as tracebacks, just as a named code.
@@ -215,6 +216,13 @@ export function sessionStateCopy(state: string, reason: string | null): NoticeSp
 				severity: "banner",
 				title: "Iteration cap reached",
 				body: `${why}. Resume to continue, or raise max_iterations under caps: in .tst/config.yaml.`,
+			};
+		}
+		if (why.startsWith("progress guard:")) {
+			return {
+				severity: "banner",
+				title: "Turn paused",
+				body: `${why} Resume to give it another stretch, or cancel the session.`,
 			};
 		}
 		return { severity: "banner", title: "Session paused", body: why };

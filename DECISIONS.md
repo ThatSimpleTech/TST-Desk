@@ -11848,3 +11848,61 @@ client able to open `ws://` at all.
 **Rejected:** Widening the desktop CSP. Embedding Tailscale. A hosted
 relay. Loading `file://` or `https://appassets.androidplatform.net`
 (mixed-content block on `ws://`). Play Console packaging in this story.
+
+## TD-5002 — Interactive progress guard (Class B)
+
+2026-10-03. Three live interactive sessions had been calling tools for
+hours with no reply and no file write. Skip-all skips the declared
+caps, and the §12.7 breakers return immediately unless the session is
+an autonomy run.
+
+**Decision:** An interactive turn pauses itself. Twelve tool calls
+since the last user-visible reply or successful `fs_write` / `fs_edit`
+trigger one model call with the tools removed. `DONE` ends the turn
+with that answer. `CONTINUE` naming a new next step opens another
+window of twelve, at most three times. Any other reply pauses. The
+same tool batch three times pauses with no check. Fifty-two model
+calls since the last successful file write pause even when the model
+narrates on every call: a reply resets the twelve-call window only.
+Resume clears the counters and continues the same turn. The pause
+reuses `paused` (a fault report, not an approval). The banner's
+Resume control sends the existing `resume` message.
+
+**Decision:** Autonomy sessions do not take this check. Their charter
+breakers stay the stop. A delegate child skips it too, because that
+child is not a session the user can resume, and a pause there would
+stall the parent tool call. Skip-all still skips `spend_usd`,
+`wall_clock_hours`, and `max_iterations`. A shell call is not a write,
+because the stuck sessions were successful shell calls.
+
+**Rejected:** A flat cap of 52 calls of every kind. That number stops
+a turn that is still editing. A self-check that still has its tools.
+The model was already doing that. Counting a one-line preamble as
+enough to reset the model-call budget. Applying the guard to autonomy
+runs that already stop on their charter. Changing TD-806 so skip-all
+honors the declared caps.
+
+## TD-5003 — Stop ends the turn, not the session (Class B)
+
+2026-10-03. The composer stop control and Esc sent `cancel`. `Session.cancel`
+sets `cancelled`, and a cancelled session is terminal, so the pane
+unbinds and the conversation closes.
+
+**Decision:** `stop_turn` is a separate client message. It aborts the
+in-flight turn: the provider stream, a running shell, a parked approval,
+and a cap or progress-guard pause. The loop emits `turn_complete` with
+`failed` false and `error_code` `stopped`, which the UI treats as
+silence. Session state stays `running` (a pause returns to `running`
+first). The runner task stays up. `active_sessions` is unchanged.
+`cancel` still ends the session. A stop while idle is ignored, so a
+click that lands as the turn finishes cannot kill the next one. A
+message already queued still runs as the next turn. Partial streamed
+text stays on the transcript and in the conversation. The Grok engine
+interrupts the current prompt the same way a queued follow-up does,
+then seals the turn instead of dropping it.
+
+**Rejected:** Reusing `cancel` and reopening the session. `cancelled`
+is terminal, and the pane unbinds. Reusing `cancel` without the state
+change. Other callers, including shutdown and an explicit session
+cancel, still need it to end the loop. Showing a failure toast for a
+stop the user asked for.

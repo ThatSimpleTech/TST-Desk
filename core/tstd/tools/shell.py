@@ -470,6 +470,8 @@ async def run_shell(
     _check_workspace(session.workspace_path)
     if session.cancel_requested:
         return "cancelled — command not started"
+    if session.stop_turn_requested:
+        return "stopped — command not started"
 
     # Spawn under a shield so a cancellation landing mid-spawn does not
     # cancel the spawn coroutine itself — the OS child may already exist,
@@ -522,7 +524,7 @@ async def run_shell(
             )
 
         work_task = asyncio.create_task(_work())
-        cancel_task = asyncio.create_task(session.wait_for_cancel())
+        cancel_task = asyncio.create_task(session.wait_for_turn_abort())
         await asyncio.wait(
             {work_task, cancel_task},
             timeout=float(timeout_secs),
@@ -537,6 +539,8 @@ async def run_shell(
             detail = kill_note or "process group killed"
             if session.cancel_requested:
                 header = f"cancelled — {detail}"
+            elif session.stop_turn_requested:
+                header = f"stopped — {detail}"
             else:
                 header = f"timed out after {timeout_secs}s — {detail}"
             with contextlib.suppress(TimeoutError):

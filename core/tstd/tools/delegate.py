@@ -226,8 +226,9 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
         return cap_worker_summary("Worker stopped: parent iteration cap.")
 
     for child_i in range(child_limit):
-        if parent.cancel_requested:
-            return cap_worker_summary(last_text or "Worker stopped: parent cancelled.")
+        if parent.cancel_requested or parent.stop_turn_requested:
+            why = "parent cancelled" if parent.cancel_requested else "parent stopped the turn"
+            return cap_worker_summary(last_text or f"Worker stopped: {why}.")
         # Child never inherits skip-all for spend: a delegated worker
         # must not keep billing after the parent cap is already hit.
         violation = _cap_violation(

@@ -149,6 +149,7 @@ describe("error copy", () => {
 
   it("a cancelled turn and a null code stay silent", () => {
     expect(turnFailureCopy("cancelled")).toBeNull();
+    expect(turnFailureCopy("stopped")).toBeNull();
     expect(turnFailureCopy(null)).toBeNull();
   });
 
@@ -172,6 +173,14 @@ describe("error copy", () => {
     expect(sessionStateCopy("paused", "spend cap exceeded: 1 >= 0.5")?.body).toContain("spend_usd");
     expect(sessionStateCopy("paused", "wall-clock cap exceeded: 1 >= 0.5")?.body).toContain("wall_clock_hours");
     expect(sessionStateCopy("paused", "iteration cap exceeded: 1 >= 0.5")?.body).toContain("max_iterations");
+  });
+
+  it("a progress-guard pause tells the user to resume", () => {
+    const spec = sessionStateCopy("paused", "progress guard: 12 tool calls without a reply");
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.title).toBe("Turn paused");
+    expect(spec?.body).toContain("progress guard:");
+    expect(spec?.body).toContain("Resume");
   });
 
   it("transport and parse failures get tailored toasts, not the fallback", () => {

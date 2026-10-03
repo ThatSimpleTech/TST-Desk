@@ -303,6 +303,7 @@ from .protocol import (
     SetWorkspacePin,
     Shutdown,
     StartAutonomy,
+    StopTurn,
     TierState,
     Transcribe,
     Transcript,
@@ -2114,6 +2115,18 @@ class Daemon:
             events = found.event_log.events_from(found.event_log.last_seq)
             if events:
                 return events[0].model_dump_json()
+            return None
+
+        if isinstance(msg, StopTurn):
+            # End the turn only. The runner stays, and the session stays
+            # in the active count — the conversation is still open.
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            await found.stop_turn()
             return None
 
         if isinstance(msg, (RunVerify, DenyVerify)):

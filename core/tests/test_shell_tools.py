@@ -417,6 +417,25 @@ class TestCancel:
         assert "cancelled — process group killed" in result.output
         await _assert_group_gone(tmp_path)
 
+    async def test_stop_kills_process_group(self, tmp_path: Path) -> None:
+        session = make_session(tmp_path)
+        await session.set_state("running")
+        await session.add_user_message("go")
+        dispatcher = make_shell_dispatcher(tmp_path)
+        task = asyncio.create_task(
+            dispatcher.dispatch("c1", "shell", {"command": _escape_probe(tmp_path)}, session)
+        )
+        await _wait_for_file(tmp_path / "pgid.txt")
+        await session.stop_turn()
+        result = await task
+        assert result.status == "success"
+        if _KILL_REFUSED in result.output:
+            return
+        assert "stopped — process group killed" in result.output
+        assert session.state == "running"
+        assert session.cancel_requested is False
+        await _assert_group_gone(tmp_path)
+
     async def test_cancel_before_start_does_not_run(self, tmp_path: Path) -> None:
         session = make_session(tmp_path)
         dispatcher = make_shell_dispatcher(tmp_path)
