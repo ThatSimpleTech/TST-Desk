@@ -17,6 +17,10 @@ class ShellPolicyTest {
         assertEquals("index.html", bundledAssetPath("/"))
         assertEquals("index.html", bundledAssetPath(""))
         assertEquals("index.html", bundledAssetPath("/quick-entry"))
+        assertTrue(isShellDocumentAlias("/index.html"))
+        assertTrue(isShellDocumentAlias("/index.html?x=1"))
+        assertFalse(isShellDocumentAlias("/"))
+        assertFalse(isShellDocumentAlias("/_app/index.html"))
     }
 
     @Test
@@ -68,6 +72,9 @@ class ShellPolicyTest {
             val page = http("http://${server.boundHost}:${server.port}/")
             assertEquals(200, page.code)
             assertEquals("<html>ok</html>", page.text)
+            val alias = http("http://${server.boundHost}:${server.port}/index.html")
+            assertEquals(302, alias.code)
+            assertEquals("/", alias.location)
             val script = http("http://${server.boundHost}:${server.port}/_app/a.js")
             assertEquals(200, script.code)
             assertTrue(script.type.startsWith("text/javascript"))
@@ -80,7 +87,7 @@ class ShellPolicyTest {
     }
 }
 
-private data class HttpBody(val code: Int, val type: String, val text: String)
+private data class HttpBody(val code: Int, val type: String, val text: String, val location: String?)
 
 private fun http(raw: String): HttpBody {
     val connection = URL(raw).openConnection() as HttpURLConnection
@@ -89,10 +96,11 @@ private fun http(raw: String): HttpBody {
     connection.readTimeout = 2_000
     val code = connection.responseCode
     val type = connection.contentType ?: ""
+    val location = connection.getHeaderField("Location")
     val stream = if (code >= 400) connection.errorStream else connection.inputStream
     val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
     connection.disconnect()
-    return HttpBody(code, type, text)
+    return HttpBody(code, type, text, location)
 }
 
 private fun rawStatus(host: String, port: Int, path: String): Int {

@@ -92,6 +92,10 @@ class AssetServer(
             write(client, 405, "Method Not Allowed", ByteArray(0), "text/plain; charset=utf-8")
             return
         }
+        if (isShellDocumentAlias(parts[1])) {
+            redirect(client, "/")
+            return
+        }
         val asset = bundledAssetPath(parts[1].substringBefore('?'))
         if (asset == null) {
             write(client, 400, "Bad Request", ByteArray(0), "text/plain; charset=utf-8")
@@ -104,6 +108,17 @@ class AssetServer(
         }
         val payload = if (method == "HEAD") ByteArray(0) else body
         write(client, 200, "OK", payload, assetMime(asset), contentLength = body.size)
+    }
+
+    private fun redirect(client: Socket, location: String) {
+        val header = "HTTP/1.1 302 Found\r\n" +
+            "Location: $location\r\n" +
+            "Content-Length: 0\r\n" +
+            "Cache-Control: no-store\r\n" +
+            "Connection: close\r\n\r\n"
+        val out = BufferedOutputStream(client.getOutputStream())
+        out.write(header.toByteArray(StandardCharsets.US_ASCII))
+        out.flush()
     }
 
     private fun write(

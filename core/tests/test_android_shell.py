@@ -29,6 +29,12 @@ def test_manifest_does_not_back_up_or_phone_home() -> None:
     assert "0.0.0.0" not in manifest
 
 
+def test_webview_opens_the_app_root() -> None:
+    """`/index.html` is not a client route. That pathname is the 404 page."""
+    source = (PKG / "MainActivity.kt").read_text(encoding="utf-8")
+    assert 'loadUrl("http://${AssetServer.LOOPBACK_HOST}:$port/")' in source
+
+
 def test_webview_allows_the_daemon_socket_from_loopback() -> None:
     """127.0.0.1 is a secure context, so a never-allow mixed-content mode
     would block the daemon's cleartext ws:// before the attach parser runs.

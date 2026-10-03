@@ -9,6 +9,15 @@ import java.nio.file.Path
  * A path that escapes the bundle is null. A route with no file extension
  * is the shell document, so client-side routes still open.
  */
+/**
+ * `/index.html` is the file on disk. The client router has no such route,
+ * so a document URL of `/index.html` renders the shell's 404 page.
+ */
+fun isShellDocumentAlias(rawPath: String): Boolean {
+    val path = rawPath.substringBefore('?').trim()
+    return path == "/index.html" || path == "index.html"
+}
+
 fun bundledAssetPath(rawPath: String): String? {
     val decoded = try {
         URLDecoder.decode(rawPath, StandardCharsets.UTF_8)

@@ -42,7 +42,9 @@ class MainActivity : Activity() {
             }
         }
         setContentView(view)
-        view.loadUrl("http://${AssetServer.LOOPBACK_HOST}:$port/index.html")
+        // `/` is the app route. `/index.html` is only the file, and the
+        // client router turns that pathname into its 404 page.
+        view.loadUrl("http://${AssetServer.LOOPBACK_HOST}:$port/")
     }
 
     override fun onDestroy() {
