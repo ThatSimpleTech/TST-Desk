@@ -135,6 +135,18 @@ comment is the very next line.
   the tree loads on every turn, whether or not the agent goes near that subtree. Ten nested
   files means ten files in every prompt. If you want a rule that only costs you when it is
   relevant, that is `.tst/rules/` with `appliesTo` — see §4.
+- **Nested files share an 8,000-token budget.** Past it, the rest are left out, shallowest
+  kept first, and Doctor names them. Each one left out says this in the inspector:
+  "nested steering budget of 8,000 tokens used up; not loaded".
+  A tree of worktrees or vendored repos is the usual way to hit it. Open the project folder
+  itself instead of its parent.
+- **Identical nested files load once.** A nested file whose text matches one already loaded
+  says "same text as a steering file already loaded; not loaded again". Worktree copies of the
+  same `AGENTS.md` cost one file, not one per copy.
+- **The home folder gets no nested walk.** Open a session on `~` itself and only the global,
+  root and rules levels load. Every repo under home has its own contract, and loading them all
+  at once is how a session outgrows the model before the first message. Doctor says:
+  "workspace is your home folder; AGENTS.md and CLAUDE.md files in its subfolders were not loaded. Open a project folder to use them".
 
 ### When an edit takes effect
 

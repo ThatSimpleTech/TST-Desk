@@ -11906,3 +11906,38 @@ is terminal, and the pane unbinds. Reusing `cancel` without the state
 change. Other callers, including shutdown and an explicit session
 cancel, still need it to end the loop. Showing a failure toast for a
 stop the user asked for.
+
+## TD-5004 — Nested steering has a budget, and home has no nested walk (Class B)
+
+2026-10-08. A phone session opened on `/home/thatsimple` walked every
+repo and worktree under it and loaded 73 `AGENTS.md`/`CLAUDE.md` files,
+about 310 KB, into the system prompt. Every turn overflowed the model
+(792,560 tokens against a 65,536 window). Nested steering is not scoped
+by what the session touches (§4.1), so the cost was paid before the
+first word.
+
+**Decision:** Three guards, all in steering assembly. (1) When the
+workspace is the home folder itself, the resolver skips the nested walk;
+global, root and rules still load, and Doctor carries
+`HOME_NESTED_SKIPPED`. (2) A nested file whose text matches one already
+loaded is inactive with `NESTED_DUPLICATE_WARNING`. (3) Nested files
+share `NESTED_TOKEN_BUDGET` (8,000 heuristic tokens), kept in discovery
+order, so the shallowest stay. Files past it are inactive with
+`NESTED_BUDGET_WARNING`, and Doctor names them. The decision runs before
+import processing, so a file left out never raises an import approval.
+Root, rules and global files are never capped; the line-limit rule that
+a long file still loads in full is unchanged.
+
+**Rationale:** The overflow was silent until the provider refused, and
+the UI could only say "start a fresh session". The guards keep a
+reasonable repo exactly as before (TST Desk itself: one file) and turn
+the pathological tree into a named, fixable notice. A constant rather
+than a config key: nobody has asked to tune it, and the fix for hitting
+it is opening the right folder.
+
+**Rejected:** Refusing to open a session on home. A plain chat there is
+legitimate. Capping by file count. One 300-line file and thirty 3-line
+files are not the same cost. Dropping deepest-first. The shallowest
+files are the closest to the folder the user opened. Sizing the budget
+from the active tier's context window. Steering is assembled once for
+several tiers, and a fixed number is predictable in the guide.
