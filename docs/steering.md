@@ -148,6 +148,15 @@ comment is the very next line.
   at once is how a session outgrows the model before the first message. Doctor says:
   "workspace is your home folder; AGENTS.md and CLAUDE.md files in its subfolders were not loaded. Open a project folder to use them".
 
+### The workspace map is budgeted too
+
+The brain tier also gets a file map of the workspace, after steering. It takes at most 15% of
+the brain tier's `context_window` and is cut on a whole line past that, with a marker saying
+where. A git repo maps what `git ls-files` lists. A folder that is not a repo is walked
+instead, and that walk skips hidden directories (`.cache`, `.local`, `.npm` and the like),
+which on a home folder are nearly every file. The agent can still list or read anything the
+map leaves out; the map only saves it a first look.
+
 ### When an edit takes effect
 
 Steering is re-resolved at the top of every turn. Save the file and the next message picks it

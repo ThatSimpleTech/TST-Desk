@@ -87,6 +87,7 @@ from .context.instructions import (
     create_rule_file,
     list_workspace_instructions,
 )
+from .context.manifest import manifest_config_for_window
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
 from .context.skills import list_workspace_skills_async
@@ -3420,6 +3421,9 @@ class Daemon:
         assembled = await PromptAssembler(
             found.workspace_path,
             claude_global_fallback=self.config.steering.claude_global_fallback,
+            manifest_config=manifest_config_for_window(
+                _session_model_config(found, self.config).tier("brain").context_window
+            ),
         ).assemble(
             tier,
             matched_paths=set(found.touched_paths),

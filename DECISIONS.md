@@ -11980,3 +11980,33 @@ on disk). A deep link or QR pairing flow (a bigger surface than a paste
 done once). Persisting the token in `config.yaml` (§2: no secret in a
 config file). Rotating on a timer (it would silently break the saved
 phone, which is the bug being fixed).
+
+## TD-5006 — The workspace map gets a share of the brain window (Class B)
+
+2026-10-08, same day as TD-5004. With nested steering capped, the next
+home-folder session still sent a 1,515,768-character system prompt. The
+map was the cause: the non-git walk listed 20,020 files, 19,879 under
+`.cache`, and the caps were 20,000 entries and 5 MB, sizes no model
+window takes.
+
+**Decision:** `manifest_config_for_window` sets the map's byte cap to 15%
+of the brain tier's `context_window` (4 chars per token), floor 2,000
+bytes, ceiling the old 5 MB. The loop and the instruction inspector both
+build their `PromptAssembler` with it, from the session's own config
+snapshot. The byte cut now ends on a whole line before the marker. The
+non-git walk skips hidden directories; hidden files stay. Git repos are
+unchanged except for the cap.
+
+**Rationale:** The map is the most expendable block in the brain prompt:
+the agent can list and read files with tools. Tying it to the window
+makes the same code right for a 32k local model and a 1M hosted one.
+Hidden directories in a non-repo folder are tool state, not the user's
+work. Real home folder after the change: 20,380 characters (~5,100
+tokens, 15% of the 32,768 ezer-forge window). TST Desk itself: ~7,700
+tokens in total.
+
+**Rejected:** No map on the home folder. A map of home's visible top
+level is still useful, and the budget already bounds it. A fixed byte
+cap. Wrong for every window but one. Respecting `.gitignore`-style
+files outside git. A new parser for a case the hidden-directory rule
+already covers.

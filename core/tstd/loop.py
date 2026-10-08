@@ -55,6 +55,7 @@ from .compaction import budget_threshold, estimate_tokens, maybe_compact
 from .config import ConfigError, JudgmentsConfig, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
+from .context.manifest import manifest_config_for_window
 from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
@@ -801,6 +802,7 @@ async def agent_loop(
     assembler = prompt_assembler or PromptAssembler(
         session.workspace_path,
         claude_global_fallback=config.steering.claude_global_fallback,
+        manifest_config=manifest_config_for_window(config.tier("brain").context_window),
     )
     embeddings_client = EmbeddingsClient.from_config(config)
 
