@@ -73,7 +73,7 @@ boundary resting on it.
 
 Three files are written with `chmod(0o600)`: the session store (`sessions.json`), the port file
 (`port.json`, which carries the loopback auth token), and — when a non-loopback listener is
-up — `remote-token` (a rotating token distinct from the port file). **On Windows that chmod is a
+up — `remote-token` (a token distinct from the port file, kept across restarts). **On Windows that chmod is a
 no-op, and that is the decision, not an oversight.**
 
 `os.chmod` on Windows can only toggle the read-only attribute. `0o600` carries a write bit, so

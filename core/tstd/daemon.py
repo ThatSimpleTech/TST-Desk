@@ -266,6 +266,7 @@ from .protocol import (
     ResetCuPermissions,
     Resume,
     RevokePolicyRule,
+    RotateRemoteToken,
     RunDiagnostics,
     RunGrokCommand,
     RunJob,
@@ -343,7 +344,9 @@ from .provider_refresh import RefreshingProvider, _close_client
 from .remote_attach import (
     bind_spec_when_enabled,
     load_remote_attach,
+    load_remote_port,
     save_remote_attach,
+    save_remote_port,
 )
 from .router import TIER_NAMES, TierRouter
 from .scheduler.calendar_path import CalendarPathError, require_calendar_file
@@ -825,12 +828,17 @@ class Daemon:
                 bind = ""
         else:
             self.config.remote.bind = ""
+        # TD-5005: a pinned or remembered port keeps a saved phone working.
+        remote_port = 0
+        if self.remote_attach_enabled:
+            remote_port = self.config.remote.port or load_remote_port(self.data_dir)
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
             on_disconnect=self._on_connection_closed,
             bind=bind,
             interfaces=interfaces,
+            port=remote_port,
         )
         self._cu_server: Any = None
         # TD-4835: keychain presence cache — see _credential_is_stored.
@@ -991,6 +999,7 @@ class Daemon:
             pinned_workspaces=list(self.workspace_pins),
             remote_attach_enabled=self.remote_attach_enabled,
             remote_bind=self.ws_server.extra_host,
+            remote_port=self.ws_server.port if self.ws_server.extra_host else None,
             credentials=credentials,
             tier_credentials={name: tiers[name].credential for name in tiers},
             tier_loopback={name: is_loopback_url(tiers[name].base_url) for name in tiers},
@@ -1603,6 +1612,7 @@ class Daemon:
             self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
             self._audit_writer.start()
         await self.ws_server.start()
+        self._remember_remote_port()
         if sys.platform == "darwin":
             from .cu_host import start_cu_socket
 
@@ -2388,6 +2398,8 @@ class Daemon:
 
         if isinstance(msg, SetRemoteAttach):
             return await self._handle_set_remote_attach(msg)
+        if isinstance(msg, RotateRemoteToken):
+            return await self._handle_rotate_remote_token()
 
         if isinstance(msg, SetCuIndicators):
             self.cu_indicators = CuIndicatorPrefs(
@@ -3272,6 +3284,7 @@ class Daemon:
             self.config.remote.bind = spec
             try:
                 await self.ws_server.apply_bind(spec)
+                self._remember_remote_port()
             except (ValueError, OSError):
                 # Flag stays on; the address appears once a Tailscale iface exists.
                 log.warning(
@@ -3288,6 +3301,16 @@ class Daemon:
         self.remote_attach_enabled = msg.enabled
         save_remote_attach(self.data_dir, msg.enabled, self.remote_attach_last_bind)
         return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_rotate_remote_token(self) -> str:
+        """New phone token from Settings (TD-5005); answers with setup_state."""
+        await self.ws_server.rotate_remote_token()
+        return (await self._setup_state_event()).model_dump_json()
+
+    def _remember_remote_port(self) -> None:
+        """Save the bound port so the next start reuses it (TD-5005)."""
+        if self.ws_server.extra_host is not None:
+            save_remote_port(self.data_dir, self.ws_server.port)
 
     async def _handle_attach(self, msg: Attach, session: Session, connection: Any) -> str | None:
         """Handle an attach: replay events from from_seq, then stream live."""

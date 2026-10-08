@@ -604,14 +604,26 @@ class ComputerUseConfig(BaseModel):
 
 
 class RemoteConfig(BaseModel):
-    """Opt-in Tailscale bind (TD-3601). Empty is off — loopback only."""
+    """Opt-in Tailscale bind (TD-3601). Empty is off — loopback only.
+
+    ``port`` pins the listener port (TD-5005). 0 means the port the
+    listener last used while remote attach was on, else a random one.
+    """
 
     bind: str = ""
+    port: int = 0
 
     @field_validator("bind")
     @classmethod
     def _strip_bind(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("port")
+    @classmethod
+    def _port_range(cls, value: int) -> int:
+        if value != 0 and not 1024 <= value <= 65535:
+            raise ValueError("remote.port must be 0 or between 1024 and 65535")
+        return value
 
 
 class VoiceConfig(BaseModel):

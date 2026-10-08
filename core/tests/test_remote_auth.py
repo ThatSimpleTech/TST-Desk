@@ -1,4 +1,4 @@
-"""TD-3602: non-loopback hello needs a rotating user-data-dir token."""
+"""TD-3602: non-loopback hello needs the user-data-dir token (kept across restarts, TD-5005)."""
 
 from __future__ import annotations
 
@@ -99,19 +99,20 @@ class TestRemoteAuth:
                 await server.stop()
 
     @pytest.mark.asyncio
-    async def test_remote_token_rotates_on_restart(self) -> None:
+    async def test_remote_token_survives_restart(self) -> None:
+        """TD-5005 reverses TD-3602 here: a saved phone keeps working."""
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp)
             first = WebSocketServer(data, ping_interval=0, is_remote_connection=lambda _ws: True)
             await first.start()
             token1 = first.remote_token
             await first.stop()
+            assert read_remote_token_file(data) == token1, "shutdown keeps the file"
 
             second = WebSocketServer(data, ping_interval=0, is_remote_connection=lambda _ws: True)
             await second.start()
-            token2 = second.remote_token
             try:
-                assert token1 != token2
+                assert second.remote_token == token1
                 uri = f"ws://127.0.0.1:{second.port}"
                 async with connect(uri) as ws:
                     await ws.send(
@@ -124,8 +125,7 @@ class TestRemoteAuth:
                         )
                     )
                     msg = json.loads(await ws.recv())
-                    assert msg["type"] == "error"
-                    assert msg["code"] == "auth_failed"
+                    assert msg["type"] == "hello_ack"
             finally:
                 await second.stop()
 

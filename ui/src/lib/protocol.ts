@@ -155,6 +155,11 @@ export interface SetRemoteAttach extends ClientMessage {
   enabled: boolean;
 }
 
+/** New phone token (TD-5005). Drops remote clients; the token never crosses the wire. */
+export interface RotateRemoteToken extends ClientMessage {
+  type: "rotate_remote_token";
+}
+
 /** Pin or unpin a workspace on the Projects list (TD-2806). */
 export interface SetWorkspacePin extends ClientMessage {
   type: "set_workspace_pin";
@@ -807,6 +812,7 @@ export type ClientMessageUnion =
   | ResetCuPermissions
   | SetCuKill
   | SetRemoteAttach
+  | RotateRemoteToken
   | ListJobs
   | SaveJob
   | DeleteJob
@@ -1274,6 +1280,8 @@ export interface SetupState extends DaemonEvent {
   // remote_bind is the bound Tailscale address, never a token.
   remote_attach_enabled?: boolean;
   remote_bind?: string | null;
+  // TD-5005: listener port while remote attach is bound.
+  remote_port?: number | null;
   // TD-1717: named keys. Additive; an older daemon does not send them.
   credentials?: CredentialSummary[];
   tier_credentials?: Record<string, string | null>;

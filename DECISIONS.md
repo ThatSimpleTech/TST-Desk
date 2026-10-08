@@ -11941,3 +11941,42 @@ files are not the same cost. Dropping deepest-first. The shallowest
 files are the closest to the folder the user opened. Sizing the budget
 from the active tier's context window. Steering is assembled once for
 several tiers, and a fixed number is predictable in the guide.
+
+## TD-5005 — The phone keeps its connection (Class B; reverses part of TD-3602 and TD-3701)
+
+2026-10-08. Adam, in chat, after hearing the trade-off: "Yes fix it". The
+phone asked for the address and the token on every launch, and both
+changed on every daemon start, so a saved value would have died at the
+next restart anyway.
+
+**Decision:** Four parts. (1) The listener port is remembered as
+`last_port` in `remote-attach.yaml` while remote attach is bound and is
+reused on the next start; `remote.port` pins one instead. A busy port
+falls back to a random one rather than failing the start. (2)
+`remote-token` survives shutdown and is reused if it is a well-formed
+64-hex token; a damaged file is replaced. It changes only on the new
+`rotate_remote_token` verb (Settings "New token"), which also drops every
+remote client, and turning remote attach off still deletes it. The token
+never crosses the wire; `setup_state` gains `remote_port` only. (3) The
+Android shell injects `TstDeskNative`, which seals the attach JSON with a
+non-exportable Android Keystore AES-256-GCM key into private
+SharedPreferences (`allowBackup` is already off). The UI uses it when
+present and `sessionStorage` otherwise, so a browser tab keeps TD-3701.
+(4) A handshake `auth_failed` (no session id, before `connected`) stops
+the retry loop, clears the saved token and shows the form with the
+address filled in. Phone Settings has "Forget this computer".
+
+**Rationale:** A token that rotates on restart protected against a stale
+token lingering after its daemon died. With a 0600 file on the daemon
+side, an explicit rotate, and revoke-on-off, the remaining exposure is
+the phone itself, which Adam accepted: an unlocked phone on the tailnet
+can drive this daemon without pasting anything. The Keystore keeps the
+token out of plain storage and out of backups. Platform APIs only, so no
+new dependency.
+
+**Rejected:** `androidx.security` EncryptedSharedPreferences (a new
+dependency, and deprecated upstream). WebView `localStorage` (plain text
+on disk). A deep link or QR pairing flow (a bigger surface than a paste
+done once). Persisting the token in `config.yaml` (§2: no secret in a
+config file). Rotating on a timer (it would silently break the saved
+phone, which is the bug being fixed).

@@ -41,8 +41,10 @@ from .protocol import (
     validate_token,
 )
 from .remote_auth import (
+    REMOTE_TOKEN_FILE,
     connection_is_remote,
     is_loopback_host,
+    read_remote_token_file,
     remove_remote_token_file,
     write_remote_token_file,
 )
@@ -67,6 +69,17 @@ _SHUTDOWN_CLOSE_SECONDS = 1.0
 def generate_token() -> str:
     """Generate a random hex auth token."""
     return secrets.token_hex(_TOKEN_BYTES)
+
+
+def _is_token(value: str) -> bool:
+    """True for a token this module could have minted (64 hex chars)."""
+    if len(value) != 2 * _TOKEN_BYTES:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True
 
 
 async def _close_client(conn: ServerConnection) -> None:
@@ -136,8 +149,12 @@ class WebSocketServer:
         bind: str = "",
         interfaces: InterfaceEnumerator | None = None,
         is_remote_connection: Callable[[ServerConnection], bool] | None = None,
+        port: int = 0,
     ) -> None:
         self.data_dir = data_dir
+        # 0 is a random port. A fixed one keeps a saved phone working
+        # across restarts (TD-5005); if it is taken, start() falls back.
+        self._preferred_port = port
         self._server: Server | None = None
         self._extra_server: Server | None = None
         self._token: str = ""
@@ -203,12 +220,7 @@ class WebSocketServer:
         if extra is not None:
             validate_interface(extra, extra_allowed=extra)
 
-        loopback = await serve(
-            self._on_connect,
-            "127.0.0.1",
-            0,  # ephemeral port
-            process_request=self._auth_middleware,
-        )
+        loopback = await self._serve_loopback()
         self._server = loopback
         self._port = loopback.sockets[0].getsockname()[1]
 
@@ -255,7 +267,7 @@ class WebSocketServer:
         self._bind = spec.strip()
         if extra == self._extra_host:
             return
-        await self._stop_extra()
+        await self._stop_extra(revoke=extra is None)
         if extra is None:
             return
         if self._server is None or self._port == 0:
@@ -275,15 +287,20 @@ class WebSocketServer:
             extra={"extra_fields": {"port": self._port, "extra_host": self._extra_host}},
         )
 
-    async def _stop_extra(self) -> None:
-        """Drop the extra listener and its remote token. Loopback stays."""
+    async def _stop_extra(self, *, revoke: bool) -> None:
+        """Drop the extra listener. Loopback stays.
+
+        *revoke* also deletes the remote-token file: remote attach turned
+        off. A shutdown or a host change keeps it (TD-5005).
+        """
         extra = self._extra_server
         self._extra_server = None
         self._extra_host = None
         if extra is not None:
             extra.close()
             await extra.wait_closed()
-        remove_remote_token_file(self.data_dir)
+        if revoke:
+            remove_remote_token_file(self.data_dir)
         self._remote_token = ""
 
     async def _ping_loop(self) -> None:
@@ -365,24 +382,71 @@ class WebSocketServer:
         self._connections.clear()
         self._handshaken.clear()
 
-        await self._stop_extra()
+        await self._stop_extra(revoke=False)
         if self._server is not None:
             await self._server.wait_closed()
         self._server = None
 
         log.info("ws server stopped")
 
-    def _issue_remote_token(self) -> None:
-        """Mint a new remote token and replace the on-disk file.
+    async def _serve_loopback(self) -> Server:
+        """Bind loopback on the preferred port, or a random one if it is busy."""
+        if self._preferred_port:
+            try:
+                return await serve(
+                    self._on_connect,
+                    "127.0.0.1",
+                    self._preferred_port,
+                    process_request=self._auth_middleware,
+                )
+            except OSError:
+                log.warning(
+                    "preferred port busy; using a random port",
+                    extra={"extra_fields": {"port": self._preferred_port}},
+                )
+        return await serve(
+            self._on_connect,
+            "127.0.0.1",
+            0,  # ephemeral port
+            process_request=self._auth_middleware,
+        )
 
-        Called on every start that has a remote listener (or a test
-        classifier). The previous file is invalid after this write.
+    def _issue_remote_token(self) -> None:
+        """Load the saved remote token, or mint one if there is none.
+
+        The token survives restarts so a saved phone keeps working
+        (TD-5005). It changes only on :meth:`rotate_remote_token` or when
+        remote attach is turned off, which deletes the file.
         """
+        saved = read_remote_token_file(self.data_dir)
+        if saved is not None and _is_token(saved) and saved != self._token:
+            self._remote_token = saved
+            (self.data_dir / REMOTE_TOKEN_FILE).chmod(0o600)
+            return
+        self._mint_remote_token()
+
+    def _mint_remote_token(self) -> None:
         token = generate_token()
         while token == self._token:
             token = generate_token()
         self._remote_token = token
         write_remote_token_file(self.data_dir, token)
+
+    async def rotate_remote_token(self) -> bool:
+        """Replace the remote token and drop every remote client (TD-5005).
+
+        Returns False when no remote listener is up, so there is no token
+        to replace. A phone still holding the old token must be given
+        the new one.
+        """
+        if self._extra_host is None or not self._remote_token:
+            return False
+        self._mint_remote_token()
+        remote = [c for c in self._connections if self.peer_is_remote(c)]
+        if remote:
+            await asyncio.gather(*(_close_client(conn) for conn in remote))
+        log.info("remote token rotated", extra={"extra_fields": {"dropped": len(remote)}})
+        return True
 
     async def _on_connect(self, websocket: ServerConnection) -> None:
         """Handle a new client connection, requiring a token handshake."""

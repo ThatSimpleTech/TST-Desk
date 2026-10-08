@@ -341,6 +341,17 @@ class SetRemoteAttach(ClientMessage):
     enabled: bool
 
 
+class RotateRemoteToken(ClientMessage):
+    """Replace the phone token and drop remote clients (TD-5005).
+
+    Machine-wide, no session. A no-op when remote attach is off. The
+    daemon answers with ``setup_state``. The new token is never sent on
+    the wire: it is read from ``{user_data_dir}/remote-token``.
+    """
+
+    type: Literal["rotate_remote_token"] = "rotate_remote_token"
+
+
 class Resume(ClientMessage):
     """Resume a session paused at a declared cap (TD-707).
 
@@ -1931,6 +1942,8 @@ class SetupState(DaemonEvent):
     # ``remote_bind`` is the bound Tailscale address, never a token.
     remote_attach_enabled: bool = False
     remote_bind: str | None = None
+    # TD-5005: the listener port while remote attach is bound, else None.
+    remote_port: int | None = None
     # TD-1717: named keys. Additive; an older client ignores them.
     # ``stored`` is a keychain probe, never the secret. ``tier_credentials``
     # is the configured binding (None = unbound). ``tier_loopback`` lets
@@ -2646,6 +2659,7 @@ ClientMessageT = Annotated[
     | ResetCuPermissions
     | SetCuKill
     | SetRemoteAttach
+    | RotateRemoteToken
     | ListJobs
     | SaveJob
     | DeleteJob
@@ -2811,6 +2825,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "reset_cu_permissions",
         "set_cu_kill",
         "set_remote_attach",
+        "rotate_remote_token",
         "list_jobs",
         "save_job",
         "delete_job",

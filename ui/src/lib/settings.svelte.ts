@@ -89,6 +89,7 @@ export const settings = $state({
 	remoteAttachEnabled: false,
 	/** Bound Tailscale address, never a token. */
 	remoteBind: null as string | null,
+	remotePort: null as number | null,
 	/** Agent engine for new sessions. */
 	engine: "native" as "native" | "grok",
 	grokAvailable: false,
@@ -160,6 +161,7 @@ export function resetSettings(): void {
 	settings.cuShowOnRealDisplay = true;
 	settings.remoteAttachEnabled = false;
 	settings.remoteBind = null;
+	settings.remotePort = null;
 	settings.engine = "native";
 	settings.grokAvailable = false;
 	settings.grokBinary = null;
@@ -207,6 +209,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? true;
 		settings.remoteAttachEnabled = event.remote_attach_enabled ?? false;
 		settings.remoteBind = event.remote_bind ?? null;
+		settings.remotePort = event.remote_port ?? null;
 		settings.engine = event.engine ?? "native";
 		settings.grokAvailable = event.grok_available ?? false;
 		settings.grokBinary = event.grok_binary ?? null;
@@ -451,6 +454,11 @@ export function setVoice(enabled: boolean): void {
 /** Turn remote attach on or off (TD-3603). Acked with setup_state. */
 export function setRemoteAttach(enabled: boolean): void {
 	sendToDaemon({ type: "set_remote_attach", enabled });
+}
+
+/** New phone token (TD-5005). Acked with setup_state; the token stays in the file. */
+export function rotateRemoteToken(): void {
+	sendToDaemon({ type: "rotate_remote_token" });
 }
 
 /** Persist computer-use indicator prefs (TD-3402). Acked with setup_state. */

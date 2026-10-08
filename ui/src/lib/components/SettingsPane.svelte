@@ -13,12 +13,15 @@
 		setCoworker,
 		setVoice,
 		setRemoteAttach,
+		rotateRemoteToken,
 		loadRules,
 		SETTINGS_SECTIONS,
 		THEMES,
 		type SettingsSection,
 	} from '../settings.svelte.js';
 	import { session } from '../session-status.svelte.js';
+	import { forgetRemoteTarget, remoteAttach } from '../connection-status.svelte.js';
+	import { isTauri } from '../open-file';
 	import PolicyRuleList from './PolicyRuleList.svelte';
 	import SettingsKeys from './SettingsKeys.svelte';
 	import SettingsEngine from './SettingsEngine.svelte';
@@ -149,13 +152,40 @@
 					</div>
 					<p class="hint">
 						{#if settings.remoteBind}
-							Listening on {settings.remoteBind}. Off unbinds that address and leaves
-							127.0.0.1.
+							Phone address: ws://{settings.remoteBind}{settings.remotePort
+								? `:${settings.remotePort}`
+								: ''}. It and the phone token stay the same across restarts. Off unbinds
+							that address, deletes the token, and leaves 127.0.0.1.
 						{:else}
 							Off by default. On binds the Tailscale address; the port-file token stays
 							local.
 						{/if}
 					</p>
+					{#if settings.remoteBind}
+						<div class="keep-running">
+							<p class="keep-title">Phone token</p>
+							<button class="choice" type="button" onclick={() => rotateRemoteToken()}
+								>New token</button
+							>
+						</div>
+						<p class="hint">
+							A new token disconnects every phone. Paste the new remote-token file into each
+							phone again.
+						</p>
+					{/if}
+					{#if !isTauri()}
+						<div class="keep-running">
+							<p class="keep-title">This device</p>
+							<button class="choice" type="button" onclick={() => forgetRemoteTarget()}
+								>Forget this computer</button
+							>
+						</div>
+						<p class="hint">
+							{remoteAttach.durable
+								? 'The address and token are saved on this device, encrypted. Forget clears them and disconnects.'
+								: 'This tab keeps the token until it closes. Forget clears it now and disconnects.'}
+						</p>
+					{/if}
 					<CuIndicatorToggles />
 				{:else if settings.section === 'computer'}
 					<CuPolicyPane />

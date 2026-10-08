@@ -3,9 +3,16 @@
 	// Tauri and no ws+token target is known yet. The desktop window never
 	// sees this — it still reads port.json through the host.
 	import { connectRemote, remoteAttach } from '../connection-status.svelte.js';
+	import { attachStore } from '../attach-store';
 
-	let wsUrl = $state('');
+	// A refused saved token comes back with its address kept (TD-5005).
+	let wsUrl = $state(remoteAttach.lastUrl);
 	let token = $state('');
+	const durable = attachStore().durable;
+
+	$effect(() => {
+		if (remoteAttach.lastUrl !== '' && wsUrl === '') wsUrl = remoteAttach.lastUrl;
+	});
 
 	function onSubmit(event: SubmitEvent): void {
 		event.preventDefault();
@@ -19,10 +26,14 @@
 			<h1 class="title">Attach from this browser</h1>
 			<p class="body">
 				Same TST Desk client — no account, no hosted relay. Paste the Tailscale
-				<code class="mono">ws://</code> address and the rotating token in
+				<code class="mono">ws://</code> address from Settings and the token in
 				<code class="mono">remote-token</code> (not <code class="mono">port.json</code>).
-				Settings will copy both (TD-3603).
 			</p>
+			{#if durable}
+				<p class="body">
+					This phone saves both, encrypted, and reconnects on launch. Forget it in Settings.
+				</p>
+			{/if}
 			<label class="field">
 				<span class="field-label">WebSocket URL</span>
 				<input

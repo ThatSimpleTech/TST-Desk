@@ -1,9 +1,12 @@
-"""Rotating user-data-dir token for non-loopback hellos (TD-3602).
+"""User-data-dir token for non-loopback hellos (TD-3602, TD-5005).
 
 Loopback keeps the port-file token. A connection on the extra Tailscale
 listener — or any non-loopback peer — must present this token. The
 port-file token is not enough there. The file is never the port.json
 token and the value is never logged.
+
+The token survives restarts so a saved phone keeps working (TD-5005). It
+changes on an explicit rotate, and turning remote attach off deletes it.
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ def write_remote_token_file(data_dir: Path, token: str) -> Path:
 
 
 def remove_remote_token_file(data_dir: Path) -> None:
-    """Delete the remote-token file, if present. Used on clean shutdown."""
+    """Delete the remote-token file, if present. Used when remote attach is turned off."""
     (data_dir / REMOTE_TOKEN_FILE).unlink(missing_ok=True)
 
 

@@ -406,16 +406,19 @@ reads local interface addresses, not `tailscale status`.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `bind` | string | *empty* | Interface name or Tailscale IP. Empty / omitted is loopback only. |
+| `port` | int | `0` | Listener port while remote attach is on (TD-5005). `0` reuses the port the listener last used, else picks a random one. A pinned port that is busy at start falls back to a random one. Must be `0` or 1024–65535. |
 
 **Attach from another device (TD-3701).** Open the same TST Desk UI in a
 browser (the desktop window is Tauri; a phone is not). Connect with
-`ws://<bind>:<port>` plus the rotating token in `{user_data_dir}/remote-token`
+`ws://<bind>:<port>` plus the token in `{user_data_dir}/remote-token`
 — not the token in `port.json`. Example:
 `ws://100.64.1.2:9xxx` and the file
 `~/Library/Application Support/com.thatsimpletech.tstdesk/remote-token` on
 macOS. A URL of the form `?ws=ws://…&token=…` (or the same pair in the hash)
-fills the form. No account, no relay. Settings shows the bound address and
-never the token; copy the token from `remote-token`.
+fills the form. No account, no relay. Settings shows the address and port and
+never the token; copy the token from `remote-token`. The address and token stay
+the same across restarts (TD-5005). Settings → **New token** replaces the token
+and disconnects every remote client. Turning remote attach off deletes it.
 
 **Android shell (TD-5001).** `android/` builds a sideload APK that loads this
 same UI. The phone build accepts only a Tailscale address or a `*.ts.net`

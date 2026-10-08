@@ -39,6 +39,12 @@ class MainActivity : Activity() {
         // the socket to Tailscale.
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.mediaPlaybackRequiresUserGesture = true
+        // TD-5005: the saved daemon address and token, sealed with a Keystore
+        // key. Only the bundled shell page loads here, so only it can call this.
+        view.addJavascriptInterface(
+            AttachBridge(AttachVault(KeystoreSealer(), PrefsBlobStore(this))),
+            "TstDeskNative",
+        )
         val port = started.port
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {

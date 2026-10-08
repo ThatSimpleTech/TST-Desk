@@ -21,7 +21,9 @@ import { bindClient, ingestEvent, resetSession } from "./session-status.svelte.j
 import { clearNotifications, notifyEvent } from "./notifications.svelte.js";
 import { watchResume } from "./resume";
 import { isTauri } from "./open-file";
+import { attachStore } from "./attach-store";
 import {
+  daemonWsUrl,
   parseStoredAttach,
   resolveBrowserTarget,
   serializeAttach,
@@ -31,8 +33,6 @@ import {
 } from "./remote-connect";
 
 type UnlistenFn = () => void;
-
-const REMOTE_ATTACH_STORAGE = "tstdesk.remoteAttach";
 
 export interface DaemonStatus {
   state: "starting" | "connected" | "crashed" | "stopping" | "stopped";
@@ -49,9 +49,18 @@ export const daemon = $state<DaemonStatus>({ state: "stopped", port: null, resta
 export const lastEvent = $state<{ event: DaemonEventUnion | null }>({ event: null });
 
 /** Browser-only: the connect form is up because no ws+token is known yet. */
-export const remoteAttach = $state<{ needed: boolean; error: string | null }>({
+export const remoteAttach = $state<{
+  needed: boolean;
+  error: string | null;
+  /** Address to prefill after a refused token (TD-5005). Never the token. */
+  lastUrl: string;
+  /** True when this device keeps the target after the app closes. */
+  durable: boolean;
+}>({
   needed: false,
   error: null,
+  lastUrl: "",
+  durable: false,
 });
 
 let remoteTarget: AttachTarget | null = null;
@@ -126,21 +135,47 @@ function targetToInfo(target: AttachTarget): DaemonInfo {
 }
 
 function persistRemoteTarget(target: AttachTarget): void {
-  if (typeof sessionStorage === "undefined") return;
-  try {
-    sessionStorage.setItem(REMOTE_ATTACH_STORAGE, serializeAttach(target));
-  } catch {
-    // Quota or private mode — reconnect this tab still works via remoteTarget.
-  }
+  const store = attachStore();
+  remoteAttach.durable = store.durable;
+  store.save(serializeAttach(target));
 }
 
 function loadStoredTarget(): AttachTarget | null {
-  if (typeof sessionStorage === "undefined") return null;
-  try {
-    return parseStoredAttach(sessionStorage.getItem(REMOTE_ATTACH_STORAGE));
-  } catch {
-    return null;
-  }
+  return parseStoredAttach(attachStore().load());
+}
+
+export const REFUSED_TOKEN_ERROR =
+  "TST Desk refused the saved token. Paste the current remote-token file.";
+
+/** A remote hello was refused: stop retrying, forget the token, ask again (TD-5005). */
+function handleRefusedToken(): void {
+  client?.stop();
+  attachStore().clear();
+  remoteAttach.lastUrl = remoteTarget === null ? "" : daemonWsUrl(remoteTarget.host, remoteTarget.port);
+  remoteTarget = null;
+  remoteAttach.needed = true;
+  remoteAttach.error = REFUSED_TOKEN_ERROR;
+}
+
+/** Forget the saved computer on this device and show the attach form. */
+export function forgetRemoteTarget(): void {
+  if (isTauri()) return;
+  client?.stop();
+  attachStore().clear();
+  remoteAttach.lastUrl = remoteTarget === null ? "" : daemonWsUrl(remoteTarget.host, remoteTarget.port);
+  remoteTarget = null;
+  remoteAttach.needed = true;
+  remoteAttach.error = null;
+}
+
+/** True for the daemon's handshake refusal, not a provider's own auth error. */
+export function isHandshakeRefusal(event: DaemonEventUnion, state: ConnectionState): boolean {
+  return (
+    event.type === "error" &&
+    event.code === "auth_failed" &&
+    (event.session_id ?? null) === null &&
+    state !== "connected"
+  );
 }
 
 function applyBrowserTarget(): boolean {
@@ -204,6 +239,10 @@ function makeClient(): void {
     },
     {
       onEvent(event) {
+        if (!isTauri() && isHandshakeRefusal(event, ws.state)) {
+          handleRefusedToken();
+          return;
+        }
         lastEvent.event = event;
         for (const sub of eventSubs) sub(event);
         ingestEvent(event); // wire the session reducer (TD-1006)

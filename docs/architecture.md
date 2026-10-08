@@ -129,7 +129,7 @@ Ctrl+C sends `detach`, not `cancel`. An unknown id is the daemon's existing
 **Browser attach (TD-3701).** The same Svelte `ProtocolClient` — not a second
 app — works outside Tauri. A phone or laptop browser does not read `port.json`.
 It connects to `ws://<tailscale-ip>:<port>` (the extra listener from TD-3601)
-and presents the rotating `{user_data_dir}/remote-token` (TD-3602) in
+and presents `{user_data_dir}/remote-token` (TD-3602) in
 `hello.token`. The UI takes that pair from a connect form, or from
 `?ws=&token=` / `#ws=&token=` (hash preferred; the token is stripped from the
 address bar after read). Loopback in a browser still uses the port-file token.
@@ -137,11 +137,13 @@ There is no account and no hosted relay. The daemon still does not bind
 `0.0.0.0` / `::`; the form refuses those as connect targets too.
 
 The window is still only a viewer. Read transcript, send, and approve are the
-same client messages they are on the desktop. Settings will copy address +
-token (TD-3603); until then, the port is the one in `port.json` and the token
-is the contents of `remote-token`.
+same client messages they are on the desktop. Settings shows the address and
+port (TD-5005); the token is the contents of `remote-token`. Both stay the same
+across restarts: the port is remembered beside the remote-attach switch and the
+token file is kept at shutdown. Settings "New token" replaces it and drops every
+remote client; turning remote attach off deletes it.
 
-**Android shell (TD-5001).** A sideload APK is that same UI in a WebView, not a second protocol and not a Play Store service. The page is served to the WebView from `127.0.0.1` inside the phone — an https page would refuse the daemon's cleartext `ws://` as mixed content — and the WebView refuses every other origin. The android UI build's attach parser accepts only a Tailscale address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`, or `*.ts.net`). Desktop CSP stays `ws://127.0.0.1`. The APK is debug-signed for sideload. There is still no account and no relay.
+**Android shell (TD-5001).** A sideload APK is that same UI in a WebView, not a second protocol and not a Play Store service. The page is served to the WebView from `127.0.0.1` inside the phone — an https page would refuse the daemon's cleartext `ws://` as mixed content — and the WebView refuses every other origin. The android UI build's attach parser accepts only a Tailscale address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`, or `*.ts.net`). Desktop CSP stays `ws://127.0.0.1`. The APK is debug-signed for sideload. There is still no account and no relay. The shell keeps the attach target (address + token) sealed with an Android Keystore AES-GCM key and hands it to the page through a `TstDeskNative` bridge, so the phone reconnects on launch (TD-5005). A refused saved token is cleared and the form comes back with the address filled in. Settings on the phone has "Forget this computer". A plain browser tab still keeps the token in `sessionStorage` only.
 
 On a viewport narrower than 640px the same `AppShell` hides the session rail
 and the inspector so the phone is chat + approval. Either pane can be shown
@@ -250,7 +252,7 @@ discriminated unions (`ClientMessageT`, `DaemonEventT`) so parsing is total and 
    Missing the window is `handshake_timeout`.
 3. Daemon validates the version first, then the token. Loopback hellos present the port-file
    token. A non-loopback hello (the extra listener, or a non-loopback peer) must present the
-   rotating token in `{user_data_dir}/remote-token` — the port-file token is not enough. The
+   token in `{user_data_dir}/remote-token` — the port-file token is not enough. The
    protocol field is still `hello.token`. An out-of-range version fails with
    `version_unsupported` and a message naming the versions on both sides; a bad token fails with
    `auth_failed` and does not open a session. Either way the daemon sends a typed `error` frame
@@ -377,7 +379,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_cu_policy` | — | Set machine-wide computer-use enable, background/full-control mode, unhide-on-finish and denied apps. Persists `~/.tst-cu-mcp/config.yaml`; the MCP server re-reads it on the next tool call. Acked with `setup_state` (TD-4830). |
 | `set_judgments` | — | Judgment-seam toggles: actuation verification, semantic no-progress breaker, candidate selection, confidence threshold, state cap, and the connector (`worker` or `typesafe`). Machine-wide; persists the `judgments:` block of the user config. All default off; every judgment fails closed. Takes effect on the next session. Acked with `setup_state` (TD-708 dev). |
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
-| `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener. Acked with `setup_state` (TD-3603). |
+| `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener and deletes `remote-token`. Acked with `setup_state` (TD-3603). |
+| `rotate_remote_token` | — | Replace `remote-token` and drop every remote client. Machine-wide; a no-op while remote attach is off. The token never crosses the wire. Acked with `setup_state` (TD-5005). |
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
 | `save_job` | — | Create or replace a scheduled job from draft fields. Optional `preset` (a catalog name) and `engine` (`native` or `grok`) pin that job's model; omitted uses the window's current choice. On an edit, omitted keeps the stored pin and `""` clears it (TD-3812). Optional `grace` is a duration phrase or a number of seconds (how late a slot may be and still run); the job stores seconds. On an edit, omitted keeps the stored grace and `""` clears it; omitted on create means a late slot still runs once (TD-3813). Optional `retries` (0–3) is extra tries after a transient scheduled failure, and `retry_delay` is a duration phrase or seconds (default 10 minutes when retries is at least 1). On an edit, omitted retries keeps the stored count, 0 clears it, omitted delay keeps the stored seconds, and `""` means the default; both are ignored by Run now (TD-3814). An existing `id` edits that job and keeps its run receipt; on that edit an omitted cadence or next run keeps the stored value and an empty string clears it (TD-3810). Pause is this verb with `paused` set. Optional `then` is another job's id, started once after this job ends ok; on an edit, omitted keeps it and `""` clears it, and a cycle is refused. The child's own schedule is not moved (TD-3817). Does not run the job. Acked with `job_list` (TD-3805). |
 | `delete_job` | — | Remove a scheduled job by id and its run history, and clear `then` on any job that pointed at this id. Acked with `job_list`. Unknown id is a typed error (TD-3805, TD-3811, TD-3817). |
@@ -430,7 +433,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server` / `set_judgments`. `remote_bind` is the bound Tailscale address, never a token. Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `rotate_remote_token` / `set_mcp_server` / `delete_mcp_server` / `set_judgments`. `remote_bind` is the bound Tailscale address, never a token. Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
