@@ -12104,3 +12104,34 @@ same empty reply as no verdict, so a prose item never goes green.
 `extra_body` with low reasoning effort narrows this but does not
 remove it; a server-side switch that turns thinking off, or a larger
 classifier cap, does.
+
+## TD-5010 — In-turn elision aims below the budget (Class B)
+
+2026-10-09. In-turn elision (TD-4839) shrank the turn's tool results
+until the prompt fit the compaction budget, so it landed a few tokens
+under it. The next tool round added a small result, the prompt was
+over again, and the largest earlier result was rewritten. Every
+rewrite changes the prompt prefix, so llama.cpp on EZER threw away its
+prefix cache and re-read the prompt from the rewritten result on, once
+per tool round of a long tool turn.
+
+**Decision:** `fit_inflight_turn` still triggers only when the prompt
+is over the budget, but then elides to `ELIDE_TARGET_FRACTION` (0.7)
+of it. Everything else stays: largest result first, absorbing the
+whole excess, the 1,000-character keep floor, the stuck set, the pass
+limit, and the overflow retry's half budget (which gets the same 70%
+target). The loop and the docs say so.
+
+**Rationale:** A gap between trigger and target is the ordinary fix
+for a threshold that flaps. 30% of a 32,768-token tier's budget is
+about 6,900 tokens, room for several capped results before the
+history is touched again; between those rewrites the prefix is stable
+and the server's cache holds. Eliding more of one big result costs
+less than re-reading 20,000 tokens of prompt on every call, and the
+note in the elided result already tells the model how to re-read it.
+
+**Rejected:** Never re-eliding a result once elided. A turn that keeps
+reading would then overflow the window. Eliding only the newest
+results. The newest is usually what the model asked for last and is
+about to use. A config knob for the fraction. No user can pick it
+better than a constant, and a test pins 0.7.

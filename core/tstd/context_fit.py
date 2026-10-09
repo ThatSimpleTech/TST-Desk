@@ -7,10 +7,11 @@ reaches it. Two guards live here instead:
 * The per-result character cap scales with the tokens still free, so
   one read cannot fill a small window. Large windows stay at the
   historical 50,000-character ceiling.
-* Before each provider call, the middles of this turn's tool results
-  are elided until the same budget compaction uses is met. Messages
-  are not removed: an assistant ``tool_calls`` message stays next to
-  its ``tool`` results, and the user's message stays.
+* Before each provider call, if the prompt is over the same budget
+  compaction uses, the middles of this turn's tool results are elided
+  down to ``ELIDE_TARGET_FRACTION`` of it (TD-5010). Messages are not
+  removed: an assistant ``tool_calls`` message stays next to its
+  ``tool`` results, and the user's message stays.
 
 The window and the output reservation come from the tier config. No
 context length is hardcoded here.
@@ -40,6 +41,12 @@ RESULT_CHAR_FLOOR = 4_000
 _MIN_KEEP_CHARS = 1_000
 _ELISION_PHRASE = "chars elided — re-read with offset/limit"
 _MAX_ELISION_PASSES = 64
+# Elision triggers at the budget but aims below it (TD-5010). Landing
+# just under the budget meant the next small result tipped it over
+# again, and every rewrite of an earlier result changes the prompt
+# prefix a local server caches. The gap is room for the rest of the
+# turn's results before history is touched again.
+ELIDE_TARGET_FRACTION = 0.7
 
 
 @dataclass(frozen=True)
@@ -176,7 +183,7 @@ def fit_inflight_turn(
     *,
     tools: Sequence[ToolDefinition] | None = None,
 ) -> tuple[list[ChatMessage], InTurnFit | None]:
-    """Elide in-flight tool results until the prompt fits *budget*.
+    """Elide in-flight tool results once the prompt is over *budget*.
 
     *budget* defaults to the compaction threshold. The overflow retry
     passes half of that. *tools* are the definitions the request sends:
@@ -186,9 +193,12 @@ def fit_inflight_turn(
     tool results — so a text-only compaction still emits a single
     ContextCompacted.
 
-    The largest result absorbs the whole excess first, which lands near
-    the budget instead of at the floor. A later, tighter budget can
-    then still shrink. Messages are never deleted.
+    Over the budget, results shrink until the prompt fits
+    ``ELIDE_TARGET_FRACTION`` of it, not the budget itself (TD-5010):
+    the next few results then fit without rewriting the ones already
+    sent. The largest result absorbs the whole excess first, which
+    lands near the target instead of at the floor. A later, tighter
+    budget can then still shrink. Messages are never deleted.
     """
     budget_tokens = budget_threshold(tier) if budget is None else budget
     tokens_before, method = estimate_tokens(messages, counter, tools)
@@ -198,13 +208,14 @@ def fit_inflight_turn(
     if not indexes:
         return messages, None
 
+    target_tokens = max(1, int(budget_tokens * ELIDE_TARGET_FRACTION))
     chars_per_token = effective_chars_per_token(counter)
     fitted = list(messages)
     elided: set[int] = set()
     stuck: set[int] = set()
     for _ in range(_MAX_ELISION_PASSES):
         tokens, _ = estimate_tokens(fitted, counter, tools)
-        if tokens <= budget_tokens:
+        if tokens <= target_tokens:
             break
         candidates = [
             index
@@ -215,7 +226,7 @@ def fit_inflight_turn(
             break
         largest = max(candidates, key=lambda index: len(content_as_text(fitted[index].content)))
         text = content_as_text(fitted[largest].content)
-        excess_chars = math.ceil((tokens - budget_tokens) * chars_per_token)
+        excess_chars = math.ceil((tokens - target_tokens) * chars_per_token)
         target = max(_MIN_KEEP_CHARS, len(text) - excess_chars)
         new_text = elide_tool_text(text, target)
         if len(new_text) >= len(text):

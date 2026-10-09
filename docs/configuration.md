@@ -677,10 +677,12 @@ at the learned ratio (4 characters per token before the endpoint has reported us
 below 4,000 characters. On a 32,768-token tier one result cannot fill the window by itself. At
 128,000 tokens or larger the cap stays 50,000 unless the learned ratio is above about 2. If the
 in-flight turn's tool results still exceed the compaction budget, their middles are replaced
-with a note to re-read with offset and limit before the next model call. A provider that still
-reports a context overflow is retried once at a tighter budget. If it overflows again, the turn
-fails with a short message that names the configured window. The raw provider error stays in
-the log.
+with a note to re-read with offset and limit before the next model call, largest first, until
+the prompt is down to 70% of the budget (TD-5010). The gap lets the turn's next few results
+fit without rewriting the ones already sent, which would throw away a local server's prompt
+cache. A provider that still reports a context overflow is retried once at half the budget,
+elided the same way. If it overflows again, the turn fails with a short message that names the
+configured window. The raw provider error stays in the log.
 
 ---
 

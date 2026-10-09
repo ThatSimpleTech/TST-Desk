@@ -1460,9 +1460,11 @@ async def agent_loop(
                 )
 
             # In-flight tool results sit past the compaction cut (TD-4839).
-            # Elide their middles until the prompt fits the same budget,
-            # or half of it after a provider context overflow. Messages
-            # stay, so a tool_calls group is never split.
+            # Once the prompt is over the same budget, or half of it
+            # after a provider context overflow, elide their middles to
+            # 70% of that budget (TD-5010), so the next results fit
+            # without rewriting these. Messages stay, so a tool_calls
+            # group is never split.
             elide_budget = max(1, budget_threshold(tier_cfg) // 2) if overflow_retried else None
             fitted, fit = fit_inflight_turn(
                 messages, tier_cfg, counter, budget=elide_budget, tools=tool_definitions
