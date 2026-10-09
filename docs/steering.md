@@ -154,10 +154,11 @@ comment is the very next line.
 
 The brain tier also gets a file map of the workspace, after steering. It takes at most 15% of
 the brain tier's `context_window` and is cut on a whole line past that, with a marker saying
-where. A git repo maps what `git ls-files` lists. A folder that is not a repo is walked
-instead, and that walk skips hidden directories (`.cache`, `.local`, `.npm` and the like),
-which on a home folder are nearly every file. The agent can still list or read anything the
-map leaves out; the map only saves it a first look.
+where. The share is converted to characters at the brain endpoint's learned token ratio once it
+has one, 4 characters per token before (TD-5013). A git repo maps what `git ls-files` lists. A
+folder that is not a repo is walked instead, and that walk skips hidden directories (`.cache`,
+`.local`, `.npm` and the like), which on a home folder are nearly every file. The agent can
+still list or read anything the map leaves out; the map only saves it a first look.
 
 ### When an edit takes effect
 

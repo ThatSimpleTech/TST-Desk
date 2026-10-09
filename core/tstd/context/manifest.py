@@ -78,9 +78,17 @@ class ManifestConfig:
     ignore_patterns: frozenset[str] = field(default_factory=frozenset)
 
 
-def manifest_config_for_window(context_window: int) -> ManifestConfig:
-    """Manifest limits for a brain tier with *context_window* tokens (TD-5006)."""
-    budget = context_window * CHARS_PER_TOKEN * MANIFEST_WINDOW_PERCENT // 100
+def manifest_config_for_window(
+    context_window: int, chars_per_token: float = CHARS_PER_TOKEN
+) -> ManifestConfig:
+    """Manifest limits for a brain tier with *context_window* tokens (TD-5006).
+
+    *chars_per_token* converts the token share to bytes. Callers pass the
+    brain endpoint's learned figure, ``4 / ratio`` (TD-5013): at a ratio
+    of 1.17 the flat 4 gave the map about 17.5% of the window in real
+    tokens, not 15%. The default is the flat 4.
+    """
+    budget = int(context_window * chars_per_token * MANIFEST_WINDOW_PERCENT // 100)
     return ManifestConfig(max_bytes=max(_MIN_WINDOW_BYTES, min(_DEFAULT_MAX_BYTES, budget)))
 
 

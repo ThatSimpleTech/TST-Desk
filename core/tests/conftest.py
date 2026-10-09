@@ -31,6 +31,7 @@ from tstd.context import calibration as calibration_module
 from tstd.context.calibration import CalibrationKey, CalibrationStore
 from tstd.context.embeddings import EmbeddingsClient
 from tstd.keychain import KeychainError
+from tstd.logging import user_data_dir
 
 _KEEP_REAL_PING_INTERVAL = {
     "test_default_interval_leaves_room_for_a_missed_frame",
@@ -40,6 +41,11 @@ _KEEP_REAL_PING_INTERVAL = {
 _KEEP_EMBEDDINGS_FROM_CONFIG = {
     "test_embeddings",
 }
+
+
+# The developer's own data folder, read at import, before any fixture moves
+# HOME. Nothing in the suite may persist into it (TD-5013).
+_REAL_USER_DATA_DIR = user_data_dir()
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +72,7 @@ class _NonLearningStore(CalibrationStore):
 
 
 @pytest.fixture(autouse=True)
-def _no_token_calibration_from_canned_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+def _no_token_calibration_from_canned_usage(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Loops in the suite do not learn token ratios by default (TD-5007).
 
     ``MockProvider`` reports the same canned ``prompt_tokens`` whatever
@@ -75,8 +81,19 @@ def _no_token_calibration_from_canned_usage(monkeypatch: pytest.MonkeyPatch) -> 
     endpoint. Every test gets its own store that never learns. Tests of
     calibration inject a real ``CalibrationStore`` into ``agent_loop`` or
     patch this one back.
+
+    A daemon started in-process turns persistence on for this per-test
+    store (TD-5013). Its data dir is the test's own or, with HOME moved
+    by ``_throwaway_home``, a throwaway one, and a store that never
+    learns never saves. The teardown fails any test that left the
+    daemon-wide store pointed into the developer's real data folder.
     """
     monkeypatch.setattr(calibration_module, "_PROCESS_STORE", _NonLearningStore())
+    yield
+    path = calibration_module.process_calibration_store().path
+    assert path is None or not path.resolve().is_relative_to(_REAL_USER_DATA_DIR.resolve()), (
+        f"a test pointed token calibration at the real data folder: {path}"
+    )
 
 
 @pytest.fixture(autouse=True)

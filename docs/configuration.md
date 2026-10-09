@@ -677,9 +677,23 @@ thousand tokens on every call), and 4 tokens of chat-template overhead per messa
 ratio between that figure and the estimate is learned per `base_url` and slug (the first report
 sets it, later ones move it by 30%, clamped to 0.5–3.0) and every later estimate for that
 endpoint is scaled by it. A request of under 256 estimated tokens, one carrying an image, or a
-response with no usage figure teaches nothing. The learned ratio is kept in memory only: after a
-daemon restart the first call is estimated at 4 characters per token again. The `turn start`
-log line carries the ratio in use as `token_ratio`.
+response with no usage figure teaches nothing. The `turn start` log line carries the ratio in
+use as `token_ratio`.
+
+Learned ratios survive a restart (TD-5013). The daemon keeps them in `token-calibration.json`
+in its data directory (the platform directory in §1, or `--data-dir`), loads the file at start
+and rewrites it whenever a ratio moves. A loaded ratio keeps moving by 30% per report, as if
+the daemon had never stopped. An entry not updated for 30 days, a ratio outside 0.5–3.0, a
+malformed entry, or a file that cannot be read is ignored, with one log line, and that endpoint
+starts at 4 characters per token again. The file is a cache, not a setting: delete it to make
+every endpoint relearn, and do not edit it. A save that fails (a read-only folder, a full disk)
+is logged once and the ratio stays in memory; the turn is never affected.
+
+The workspace map's share of the brain window (15%, see the steering guide) converts to
+characters at the brain endpoint's learned ratio too: at a ratio of 1.17 that is about 3.4
+characters per token instead of 4. It is taken once, when a session's loop starts, so the map
+does not resize mid-session. A brain tier whose model is discovered on the first turn (no `slug`
+on a local server) sizes that session's map at 4 characters per token.
 
 A single tool result is capped at the smaller of 50,000 characters and a quarter of
 (`context_window` − `max_output_tokens` − tokens already in the prompt), converted to characters

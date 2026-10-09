@@ -64,11 +64,13 @@ from .context import PromptAssembler
 from .context.calibration import (
     CalibratedTokenCounter,
     CalibrationStore,
+    calibration_key,
     effective_chars_per_token,
     process_calibration_store,
+    tier_chars_per_token,
 )
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
-from .context.manifest import manifest_config_for_window
+from .context.manifest import ManifestConfig, manifest_config_for_window
 from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
 from .context.tokens import make_token_counter
@@ -700,6 +702,27 @@ def _calibration_observer(
     return _observe
 
 
+def brain_manifest_config(config: ModelConfig, store: CalibrationStore) -> ManifestConfig:
+    """The workspace map's limits for *config*'s brain tier (TD-5006, TD-5013).
+
+    The map's share of the window becomes bytes at the brain endpoint's
+    learned characters per token, keyed exactly as the turn's token
+    counter keys it (``calibration_key``). The loop and the instruction
+    inspector both size the map here. The figure is taken when the
+    assembler is built and kept for the loop: a map that resized as the
+    ratio moved would change the prompt prefix on every call.
+
+    A brain tier on a loopback server with no slug in the config is
+    resolved by discovery on the first turn (TD-1805), after a loop has
+    built its assembler. Until then there is no key, so that loop's map
+    is sized at the flat 4 characters per token.
+    """
+    brain = effective_tier(config, "brain", cu_heavy=False)
+    return manifest_config_for_window(
+        brain.context_window, chars_per_token=tier_chars_per_token(store, brain)
+    )
+
+
 async def _build_assistant_tool_call(
     session: Session,
     tool_calls: dict[int, dict[str, str | int]],
@@ -932,10 +955,15 @@ async def agent_loop(
             session talking to the same endpoint.
     """
     # ── Conversation state ──────────────────────────────────────────
+    # Learned token ratios (TD-5007). Taken before the assembler, which
+    # sizes the workspace map from the brain endpoint's ratio (TD-5013).
+    calibration = (
+        calibration_store if calibration_store is not None else (process_calibration_store())
+    )
     assembler = prompt_assembler or PromptAssembler(
         session.workspace_path,
         claude_global_fallback=config.steering.claude_global_fallback,
-        manifest_config=manifest_config_for_window(config.tier("brain").context_window),
+        manifest_config=brain_manifest_config(config, calibration),
     )
     embeddings_client = EmbeddingsClient.from_config(config)
 
@@ -1153,10 +1181,8 @@ async def agent_loop(
     _last_active_rules: set[str] | None = None
 
     # One token counter per endpoint and model (TD-405); encoders load
-    # once. Each is scaled by what that endpoint reports (TD-5007).
-    calibration = (
-        calibration_store if calibration_store is not None else (process_calibration_store())
-    )
+    # once. Each is scaled by what that endpoint reports (TD-5007), from
+    # the ``calibration`` store taken above.
     _token_counters: dict[tuple[str, str], CalibratedTokenCounter] = {}
 
     # Cap enforcement (TD-707): the session start clock and per-call
@@ -1506,7 +1532,7 @@ async def agent_loop(
             #     steering block and manifest were just re-read from
             #     disk at 2b, so instructions survive compaction.
             model_slug = tier_cfg.require_slug()
-            counter_key = (tier_cfg.base_url, model_slug)
+            counter_key = calibration_key(tier_cfg)
             counter = _token_counters.get(counter_key)
             if counter is None:
                 counter = CalibratedTokenCounter(

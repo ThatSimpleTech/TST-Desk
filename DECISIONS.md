@@ -12011,6 +12011,10 @@ cap. Wrong for every window but one. Respecting `.gitignore`-style
 files outside git. A new parser for a case the hidden-directory rule
 already covers.
 
+**Revised by TD-5013 (2026-10-09):** the 4 chars per token is now the
+brain endpoint's learned `4 / ratio` once the calibration store has
+one, taken when the loop builds its assembler.
+
 ## TD-5007 — Token estimates count tools and learn the provider's ratio (Class B)
 
 2026-10-09. On EZER's ezer-forge tier the 4 chars/token estimate ran
@@ -12059,12 +12063,20 @@ the prompt. Calibrating from the progress check. It resends the
 turn's prompt plus one question, so it measures nothing new and would
 move the EMA twice for one turn. Persisting ratios to disk. See above.
 
+**Revised by TD-5013 (2026-10-09):** the store is now persisted, to
+`token-calibration.json` in the daemon's data dir, so a restart no
+longer starts at 1.0. Entries not updated for 30 days are dropped at
+load, which answers the stale-ratio concern above.
+
 **Known gap:** The workspace manifest budget (15% of the brain window,
 TD-5006) still converts at a flat 4 characters per token. It is fixed
 once when the loop starts, before any ratio is learned. At EZER's 1.6
 the manifest is about 24% of a 32k window in real tokens. The
 calibrated estimate counts it correctly, so nothing overflows, but it
 is part of the prompt elision cannot shrink.
+
+**Closed by TD-5013 (2026-10-09):** the manifest budget converts at
+the brain endpoint's learned ratio, which survives a restart.
 
 ## TD-5008 — Tiers send max_tokens and carry an extra_body (Class B)
 
@@ -12397,3 +12409,71 @@ nothing reads it. A warning on every empty verdict. See above.
 its thinking in `content` (a `<think>` block) returns text at the cap,
 the parse still fails closed, and nothing is logged. The 2-token answer
 was measured by hand against ezer-forge; the tests run on MockProvider.
+
+## TD-5013 — Learned token ratios survive a restart and size the workspace map (Class B)
+
+2026-10-09. TD-5007 kept the learned ratios in memory, so after every
+daemon restart the first call was estimated at ratio 1.0. On EZER the
+real ratio is about 1.17, so that call ran about 15% under. The
+workspace map (TD-5006) was sized once at loop start at a flat 4
+characters per token, before any ratio was known; TD-5007 left that as
+a known gap.
+
+**Decision:** `CalibrationStore.enable_persistence(path)` loads a file
+and from then on rewrites it whenever an observation moves a ratio.
+The daemon calls it once in `run()`, before sessions are restored,
+with `token-calibration.json` in its data dir. A store built without
+it, which is every store the tests build, never touches disk. The file
+is `{"version": 1, "ratios": [{"base_url", "model", "ratio",
+"updated_at"}]}`, `updated_at` in ISO-8601 UTC. A loaded ratio is a
+measurement: the next report moves it by the EMA instead of replacing
+it. A ratio already in memory wins over the file's. A load leaves out,
+with one log line and no exception, an unreadable or non-JSON file, a
+version other than 1, a malformed entry, a ratio outside 0.5-3.0 and
+an entry not updated for 30 days. A missing file is silent. A key
+written twice keeps its newest entry. The save is a same-folder temp
+file plus `os.replace`, with no fsync, and catches everything: a
+failure is logged once per store and the ratio stays in memory. Two
+daemons on one data dir: the last writer wins.
+
+**Decision:** `manifest_config_for_window` takes `chars_per_token`
+(default 4). `brain_manifest_config(config, store)` in `loop.py`
+passes the brain endpoint's `4 / ratio`, keyed by
+`calibration_key(tier)`, which the turn's token counter now uses too,
+so the two cannot key one endpoint two ways. The loop and the
+instruction inspector both call it. The loop takes it once, when it
+builds its assembler. A brain tier whose slug is still unresolved (a
+local server with no `slug`, discovered on the first turn, TD-1805)
+has no key, so that loop's map is flat.
+
+**Decision:** In the test suite, an in-process daemon enables
+persistence on the per-test store from TD-5007's autouse fixture. That
+store never learns, so it never saves, and HOME already points at a
+throwaway folder. The fixture's teardown now also fails any test that
+left the daemon-wide store pointed into the real user data dir, read
+when conftest is imported.
+
+**Rationale:** TD-5007 did not persist because a stale ratio could
+outlive a model or template change behind the same slug. The EMA
+already handles a change while the endpoint is in use: at alpha 0.3,
+three reports move the ratio two thirds of the way. The 30-day cutoff
+covers an endpoint nobody used for a month. Against that, every
+restart cost a mis-estimated first call. The file is a cache, so the
+worst a bad one can do is what a missing one does. No fsync, because a
+torn file loads as corrupt and is relearned, and a turn should not
+wait on the disk. Sizing the map once per loop keeps the prompt prefix
+stable: a map that resized as the EMA moved would change the prefix on
+every call and throw away a local server's prompt cache (TD-5010).
+
+**Rejected:** Saving on a timer or at shutdown. A crash would lose
+what the file is there to keep, and the write is a few hundred bytes.
+A config key for the file name or the age. Nobody can pick them better
+than a constant. Resizing the map on every turn. See the prefix cache
+above. Seeding ratios from config. Same reason as TD-5007's rejected
+per-model multiplier.
+
+**Known gap:** The instruction inspector sizes the map at the ratio
+the store holds now; the loop sized it when it started. Once the EMA
+has moved, a truncated map in the inspector can end a few lines away
+from the one the model got. A session whose brain slug is discovered
+on its first turn keeps a flat map until the next session starts.

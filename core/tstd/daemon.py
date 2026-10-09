@@ -80,6 +80,7 @@ from .console_shutdown import (
     remove_windows_console_shutdown,
 )
 from .context.assembler import ContextAssembler
+from .context.calibration import enable_calibration_persistence, process_calibration_store
 from .context.commands import list_workspace_commands_async
 from .context.discover import SteeringFileResolver, append_steering_notice
 from .context.instructions import (
@@ -87,7 +88,6 @@ from .context.instructions import (
     create_rule_file,
     list_workspace_instructions,
 )
-from .context.manifest import manifest_config_for_window
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
 from .context.skills import list_workspace_skills_async
@@ -137,7 +137,7 @@ from .local_worker import (
     titlebar_slugs,
 )
 from .logging import get_logger, log_directory, setup_logging, user_data_dir
-from .loop import ProviderLike, agent_loop
+from .loop import ProviderLike, agent_loop, brain_manifest_config
 from .mcp.loader import McpSupervisor
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
@@ -1574,6 +1574,11 @@ class Daemon:
 
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
+
+            # Learned token ratios outlive a restart (TD-5013). Before
+            # revive, so a restored loop's first call is already scaled and
+            # its workspace map sized from the brain's ratio. Never raises.
+            enable_calibration_persistence(self.data_dir)
 
             # Audit writer before revive so restored loops can record calls.
             self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
@@ -3421,8 +3426,8 @@ class Daemon:
         assembled = await PromptAssembler(
             found.workspace_path,
             claude_global_fallback=self.config.steering.claude_global_fallback,
-            manifest_config=manifest_config_for_window(
-                _session_model_config(found, self.config).tier("brain").context_window
+            manifest_config=brain_manifest_config(
+                _session_model_config(found, self.config), process_calibration_store()
             ),
         ).assemble(
             tier,
