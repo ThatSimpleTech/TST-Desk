@@ -12031,20 +12031,22 @@ missing or zero `prompt_tokens`, and any request carrying a non-text
 part (a screenshot is billed in tokens the estimate cannot see) teach
 nothing. Only the main turn call observes, through an `on_usage`
 callback on `_stream_and_parse`; the progress check does not. The
-store is process-wide, injectable through `agent_loop(calibration_store=)`
-and clearable, and not persisted. The tool-result cap and the
-elision excess convert tokens back to characters at `4 / ratio`. The
-ratio is on the `turn start` log line as `token_ratio`. In the test
-suite an autouse fixture swaps in a store that never learns, because
-MockProvider reports a canned 1,200 prompt tokens whatever it was
-sent; calibration tests inject a real store.
+store is process-wide, injectable through
+`agent_loop(calibration_store=)` and clearable, and not persisted. The
+tool-result cap and the elision excess convert tokens back to
+characters at `4 / ratio`. The ratio is on the `turn start` log line
+as `token_ratio`. In the test suite an autouse fixture swaps in a
+store that never learns, because MockProvider reports a canned 1,200
+prompt tokens whatever it was sent; calibration tests inject a real
+store.
 
 **Rationale:** A ratio measured against the endpoint's own tokenizer
 fixes code, JSON and non-English text alike, with no tokenizer
 download per model. Observing the raw estimate rather than the
 calibrated one keeps the ratio from compounding call after call. One
-store per daemon is right because sessions and delegate children talk
-to the same endpoints. Not persisting keeps a stale ratio from
+store per daemon is right because sessions talk to the same endpoints.
+A delegate child does not estimate at all: it inherits only the
+parent's tool-result cap. Not persisting keeps a stale ratio from
 surviving a model or template change behind the same slug: after a
 restart the first call runs at ratio 1.0 plus tool accounting, which
 already removes the largest error, and the context-overflow retry
@@ -12057,6 +12059,13 @@ the prompt. Calibrating from the progress check. It resends the
 turn's prompt plus one question, so it measures nothing new and would
 move the EMA twice for one turn. Persisting ratios to disk. See above.
 
+**Known gap:** The workspace manifest budget (15% of the brain window,
+TD-5006) still converts at a flat 4 characters per token. It is fixed
+once when the loop starts, before any ratio is learned. At EZER's 1.6
+the manifest is about 24% of a 32k window in real tokens. The
+calibrated estimate counts it correctly, so nothing overflows, but it
+is part of the prompt elision cannot shrink.
+
 ## TD-5008 — Tiers send max_tokens and carry an extra_body (Class B)
 
 2026-10-09. `max_output_tokens` was a compaction reservation only: the
@@ -12068,33 +12077,62 @@ is how EZER's model is told to think less.
 
 **Decision:** `_stream_and_parse` (the turn and the progress check)
 and the delegate worker send `max_tokens = max_output_tokens` from
-their tier. `TierConfig` gains `extra_body: dict | None`, merged last
-into those requests and into the classifier's `_worker_completion`.
-The classifier keeps `max_tokens=8`. `extra_body` may not set `model`,
-`messages`, `tools`, `tool_choice`, `stream`, `stream_options` or
-`max_tokens`; a load error names every clash and says what to use
-instead. The settings writers edit single lines, so a slug, credential
-or active-preset save leaves the block as written; the tier is not
-mirrored in the protocol, so nothing else needed to carry it. Memory
-distillation, the supervisor and the validator review already sent
-`max_tokens` and do not take `extra_body` yet.
+their tier. `TierConfig` gains `extra_body: dict | None`, which fills
+in fields those requests left unset, and the same for
+`_worker_completion`. That one callable serves the classifier, DoD
+polls and worker-backed judgment calls, and all of them keep its
+`max_tokens=8` and `temperature=0.0`: a field the caller set always
+wins. `extra_body` may not set `model`, `messages`, `tools`,
+`tool_choice`, `stream`, `stream_options`, `max_tokens` or
+`max_completion_tokens`; a load error names every clash and says what
+to use instead. Its values must survive `json.dumps(allow_nan=False)`,
+so an unquoted YAML date is a load error that names the field rather
+than a failure on every request. The settings writers edit single
+lines, so a slug, credential or active-preset save leaves the block as
+written; the tier is not mirrored in the protocol, so nothing else
+needed to carry it. Memory distillation, the supervisor and the
+validator review already sent `max_tokens` and do not take
+`extra_body` yet.
 
 **Rationale:** The cap the budget reserves for the answer should be
 the cap the server applies, or the reservation is fiction in one
 direction or the other. A free-form map is the honest shape for
 server-specific knobs: the names belong to the server's docs, not to
-ours, and any typed field we invented would lag them. Reserved keys
-are refused rather than ignored because the merge runs last, so a
-clash would silently replace the transcript, the tools or the cap.
+ours, and any typed field we invented would lag them. Filling in
+rather than overriding keeps each call site's explicit choices: the
+classifier's verdict has to be deterministic whatever temperature the
+worker tier's turns run at. Reserved keys are refused rather than
+ignored because the loop sets them on some requests and not others,
+so the same line would apply sometimes and be dropped silently the
+rest of the time.
+
+**A reply cut at the cap.** With `max_tokens` sent, a long reply stops
+with `finish_reason: "length"`. `_stream_and_parse` now returns the
+last finish reason. Cut text is kept, and a warning names the tier,
+model and cap. A tool call whose arguments do not parse as a JSON
+object is not dispatched (nothing runs, so nothing bypasses the
+classifier), and is not replayed as sent: invalid JSON in history can
+break a chat template. It goes back in the assistant message with `{}`
+as its arguments, answered by a tool message that names the cap and
+says to split large writes (fs_write a skeleton, then fs_edit). The
+turn goes on, so the model can retry smaller. Complete calls in the
+same batch still run. The delegate worker does the same from the
+non-streamed response's `finish_reason`. The helpers are in
+`output_cap.py`.
 
 **Rejected:** Typed fields per known server (`reasoning_effort`,
-`top_k`). Every server spells them differently. Letting `extra_body`
-override `max_tokens`. Two places to set one number, and the
-compaction budget would no longer match the cap. Raising the
-classifier's 8 tokens in this story. Its cost and latency budget is a
-separate decision. A secret filter on `extra_body`. The docs and the
-shipped comment say never to put a key there, and the prime directive
-already forbids secrets in config.
+`top_k`). Every server spells them differently. Merging `extra_body`
+last, as first built. A `temperature` on the worker tier then replaced
+the classifier's 0.0, and its verdicts are cached per tool and
+arguments. Letting `extra_body` override `max_tokens`. Two places to
+set one number, and the compaction budget would no longer match the
+cap. Raising the classifier's 8 tokens in this story. Its cost and
+latency budget is a separate decision. Ending the turn on a cut tool
+call. The model can fix it by sending less, and that is cheaper than a
+new user message. Telling the model through a user message. A user
+message is a turn boundary for compaction and elision. A secret filter
+on `extra_body`. The docs and the shipped comment say never to put a
+key there, and the prime directive already forbids secrets in config.
 
 **Known gap:** On a worker that reasons before it answers, 8 tokens
 end inside the thinking. The reply content is empty, the parse fails,
@@ -12117,10 +12155,18 @@ per tool round of a long tool turn.
 
 **Decision:** `fit_inflight_turn` still triggers only when the prompt
 is over the budget, but then elides to `ELIDE_TARGET_FRACTION` (0.7)
-of it. Everything else stays: largest result first, absorbing the
-whole excess, the 1,000-character keep floor, the stuck set, the pass
-limit, and the overflow retry's half budget (which gets the same 70%
-target). The loop and the docs say so.
+of it. The results always keep at least the gap's share (30% of the
+budget) above the floor: the target is `max(0.7 budget, floor + 0.3
+budget)`, capped at the budget, where the floor is the prompt's
+estimate with every in-flight result cut to 1,000 characters. At a
+floor of 40% or less the target is 70%; at 70% or more it is the
+budget, as before. Everything else stays: largest result first,
+absorbing the whole excess, the 1,000-character keep floor, the stuck
+set, the pass limit, and the overflow retry's half budget (which gets
+the same rule). The excess converts to whole base tokens before it
+becomes characters, and a result this call already cut is cut again
+before another is touched, so a calibrated ratio's rounding never
+opens a second result. The loop and the docs say so.
 
 **Rationale:** A gap between trigger and target is the ordinary fix
 for a threshold that flaps. 30% of a 32,768-token tier's budget is
@@ -12129,9 +12175,16 @@ history is touched again; between those rewrites the prefix is stable
 and the server's cache holds. Eliding more of one big result costs
 less than re-reading 20,000 tokens of prompt on every call, and the
 note in the elided result already tells the model how to re-read it.
+The gap is only worth having when the results can give it up. On a
+32k window the system prompt, the tool definitions and the turn
+compaction keeps verbatim can fill 80% of the budget alone. Aiming at
+70% there cut every result, the one the model just asked for
+included, to the floor, still missed, and sent the model re-reading.
 
 **Rejected:** Never re-eliding a result once elided. A turn that keeps
 reading would then overflow the window. Eliding only the newest
 results. The newest is usually what the model asked for last and is
 about to use. A config knob for the fraction. No user can pick it
-better than a constant, and a test pins 0.7.
+better than a constant, and a test pins 0.7. A hard switch to the
+budget once 70% is out of reach. Just below the switch it still cuts
+every result to the floor; the ramp has no such edge.

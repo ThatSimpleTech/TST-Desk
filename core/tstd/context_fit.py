@@ -9,7 +9,8 @@ reaches it. Two guards live here instead:
   historical 50,000-character ceiling.
 * Before each provider call, if the prompt is over the same budget
   compaction uses, the middles of this turn's tool results are elided
-  down to ``ELIDE_TARGET_FRACTION`` of it (TD-5010). Messages are not
+  down to ``ELIDE_TARGET_FRACTION`` of it (TD-5010), or less deep
+  when the rest of the prompt leaves no room for that. Messages are not
   removed: an assistant ``tool_calls`` message stays next to its
   ``tool`` results, and the user's message stays.
 
@@ -26,7 +27,7 @@ from typing import Any
 
 from .compaction import budget_threshold, estimate_tokens
 from .config import TierConfig
-from .context.calibration import effective_chars_per_token
+from .context.calibration import calibration_ratio
 from .context.tokens import CHARS_PER_TOKEN, TokenCounter
 from .provider import ChatMessage, ToolDefinition, content_as_text
 from .tools.results import DEFAULT_MAX_RESULT_CHARS
@@ -45,7 +46,9 @@ _MAX_ELISION_PASSES = 64
 # just under the budget meant the next small result tipped it over
 # again, and every rewrite of an earlier result changes the prompt
 # prefix a local server caches. The gap is room for the rest of the
-# turn's results before history is touched again.
+# turn's results before history is touched again. When the part of the
+# prompt elision cannot touch leaves no room for it, the target rises
+# (see ``elision_target``).
 ELIDE_TARGET_FRACTION = 0.7
 
 
@@ -148,6 +151,37 @@ def _inflight_tool_indexes(messages: list[ChatMessage]) -> list[int]:
     ]
 
 
+def elision_target(budget_tokens: int, floor_tokens: int) -> int:
+    """Where elision aims, given *floor_tokens*: the prompt with every
+    in-flight result cut to the keep floor.
+
+    Normally ``ELIDE_TARGET_FRACTION`` of the budget (TD-5010). The
+    in-flight results always keep at least the gap's share of the budget
+    above the floor, though. The system prompt, the tool definitions and
+    the earlier turns compaction keeps verbatim can fill most of the
+    budget by themselves, and then aiming at 70% would cut every result,
+    the one the model just asked for included, to the floor. So the
+    target rises with the floor, and at a floor of 70% or more it is the
+    budget itself, as before TD-5010.
+    """
+    hysteresis = int(budget_tokens * ELIDE_TARGET_FRACTION)
+    results_share = budget_tokens - hysteresis
+    return max(1, min(budget_tokens, max(hysteresis, floor_tokens + results_share)))
+
+
+def _chars_to_shed(excess_tokens: int, counter: TokenCounter) -> int:
+    """Characters to cut so the estimate drops by *excess_tokens* or more.
+
+    A calibrated count is ``ceil(base * ratio)`` per message, so cutting
+    ``excess * 4 / ratio`` characters can leave the prompt a token over
+    and send the next pass to a second result. Whole base tokens, each
+    worth ``ratio`` estimated tokens, cannot fall short under the
+    heuristic counter.
+    """
+    base_tokens = math.ceil(excess_tokens / calibration_ratio(counter))
+    return base_tokens * CHARS_PER_TOKEN
+
+
 def _with_tool_text(message: ChatMessage, new_text: str) -> ChatMessage:
     """Replace the text of a tool message, leaving image parts in place.
 
@@ -175,6 +209,22 @@ def _with_tool_text(message: ChatMessage, new_text: str) -> ChatMessage:
     return replace(message, content=parts)
 
 
+def _floor_tokens(
+    messages: list[ChatMessage],
+    indexes: list[int],
+    counter: TokenCounter,
+    tools: Sequence[ToolDefinition] | None,
+) -> int:
+    """The prompt's estimate with every in-flight result at the keep floor."""
+    floored = list(messages)
+    for index in indexes:
+        text = content_as_text(floored[index].content)
+        if len(text) > _MIN_KEEP_CHARS:
+            floored[index] = _with_tool_text(floored[index], elide_tool_text(text, _MIN_KEEP_CHARS))
+    tokens, _ = estimate_tokens(floored, counter, tools)
+    return tokens
+
+
 def fit_inflight_turn(
     messages: list[ChatMessage],
     tier: TierConfig,
@@ -196,9 +246,13 @@ def fit_inflight_turn(
     Over the budget, results shrink until the prompt fits
     ``ELIDE_TARGET_FRACTION`` of it, not the budget itself (TD-5010):
     the next few results then fit without rewriting the ones already
-    sent. The largest result absorbs the whole excess first, which
-    lands near the target instead of at the floor. A later, tighter
-    budget can then still shrink. Messages are never deleted.
+    sent. When the rest of the prompt leaves no room for that, the
+    target rises toward the budget (``elision_target``) rather than
+    cutting every result to the floor. The largest result absorbs the
+    whole excess first, which lands near the target instead of at the
+    floor; a remainder goes back to a result this call already cut. A
+    later, tighter budget can then still shrink. Messages are never
+    deleted.
     """
     budget_tokens = budget_threshold(tier) if budget is None else budget
     tokens_before, method = estimate_tokens(messages, counter, tools)
@@ -208,9 +262,8 @@ def fit_inflight_turn(
     if not indexes:
         return messages, None
 
-    target_tokens = max(1, int(budget_tokens * ELIDE_TARGET_FRACTION))
-    chars_per_token = effective_chars_per_token(counter)
     fitted = list(messages)
+    target_tokens = elision_target(budget_tokens, _floor_tokens(fitted, indexes, counter, tools))
     elided: set[int] = set()
     stuck: set[int] = set()
     for _ in range(_MAX_ELISION_PASSES):
@@ -224,9 +277,14 @@ def fit_inflight_turn(
         ]
         if not candidates:
             break
-        largest = max(candidates, key=lambda index: len(content_as_text(fitted[index].content)))
+        # A result this call already cut goes first, so a remainder of
+        # the excess does not rewrite a second result.
+        largest = max(
+            candidates,
+            key=lambda index: (index in elided, len(content_as_text(fitted[index].content))),
+        )
         text = content_as_text(fitted[largest].content)
-        excess_chars = math.ceil((tokens - target_tokens) * chars_per_token)
+        excess_chars = _chars_to_shed(tokens - target_tokens, counter)
         target = max(_MIN_KEEP_CHARS, len(text) - excess_chars)
         new_text = elide_tool_text(text, target)
         if len(new_text) >= len(text):

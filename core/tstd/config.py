@@ -12,6 +12,7 @@ messages that name the offending key.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from functools import lru_cache
@@ -44,9 +45,19 @@ CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _OPENROUTER_FAMILY_RE = re.compile(r"^openrouter(?:-\d+)?$")
 
 # Request fields a tier's ``extra_body`` may not set (TD-5008): the loop
-# owns them, and the merge would override what it built.
+# owns them. ``max_completion_tokens`` is the newer OpenAI name for the
+# output cap, so it would fight ``max_tokens``.
 EXTRA_BODY_RESERVED_KEYS = frozenset(
-    {"model", "messages", "tools", "tool_choice", "stream", "stream_options", "max_tokens"}
+    {
+        "model",
+        "messages",
+        "tools",
+        "tool_choice",
+        "stream",
+        "stream_options",
+        "max_tokens",
+        "max_completion_tokens",
+    }
 )
 
 _DEFAULT_CONFIG_RESOURCE = "config.yaml"
@@ -201,9 +212,10 @@ class TierConfig(BaseModel):
     # Named key from the credentials catalog (TD-1717). None / omitted /
     # blank means unbound: loopback sends no key, remote uses openrouter.
     credential: str | None = None
-    # Provider-specific JSON fields merged into every chat request this
+    # Provider-specific JSON fields added to every chat request this
     # tier makes (TD-5008), e.g. a llama.cpp server's
-    # ``chat_template_kwargs``. Sent as-is: never put a secret here.
+    # ``chat_template_kwargs``. They fill in only fields the request left
+    # unset. Sent as-is: never put a secret here.
     extra_body: dict[str, Any] | None = None
 
     @field_validator("credential")
@@ -219,11 +231,12 @@ class TierConfig(BaseModel):
     def _extra_body_leaves_request_keys_alone(
         cls, value: dict[str, Any] | None
     ) -> dict[str, Any] | None:
-        """Refuse keys the request already sets (TD-5008).
+        """Refuse keys the request owns (TD-5008).
 
-        ``extra_body`` is merged last, so one of these would silently
-        replace what the loop built — the model, the transcript, the
-        tools, streaming, or the output cap from ``max_output_tokens``.
+        ``extra_body`` only fills in fields a request left unset, so one
+        of these would be dropped on some requests and sent on others:
+        the model, the transcript, the tools, streaming, or the output
+        cap that comes from ``max_output_tokens``.
         """
         if value is None:
             return None
@@ -234,6 +247,26 @@ class TierConfig(BaseModel):
                 f"{'it' if len(clashes) == 1 else 'them'} itself. Use slug for the "
                 "model and max_output_tokens for the output cap"
             )
+        return value
+
+    @field_validator("extra_body")
+    @classmethod
+    def _extra_body_is_plain_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Refuse values the request body cannot carry.
+
+        YAML reads an unquoted ``2026-10-09`` as a date. Left in, it
+        loads fine and then fails every request the tier makes, far
+        from the line that caused it.
+        """
+        if value is None:
+            return None
+        try:
+            json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"extra_body must be plain JSON ({error}). Quote dates, times and "
+                "other values YAML would read as something else"
+            ) from error
         return value
 
     @model_validator(mode="after")

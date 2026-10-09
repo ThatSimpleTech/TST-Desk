@@ -13,13 +13,20 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ..config import ModelConfig, TierConfig
 from ..context import PromptAssembler
 from ..logging import get_logger
-from ..provider import ChatCompletionRequest, ChatMessage, ProviderError
+from ..output_cap import (
+    LENGTH_FINISH,
+    cut_call_reply,
+    log_output_cap,
+    split_cut_calls,
+    stub_call,
+)
+from ..provider import ChatCompletionRequest, ChatMessage, ProviderError, ToolCall
 from ..session import Session
 from .dispatch import ToolDispatcher
 from .registry import Tool, ToolRegistry
@@ -261,11 +268,29 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
         if content.strip():
             last_text = content
 
-        if not tool_calls:
+        # Stopped at max_output_tokens (TD-5008): a cut call is not run,
+        # and goes back to the worker with empty arguments and a note.
+        cut: list[ToolCall] = []
+        if resp.finish_reason == LENGTH_FINISH:
+            tool_calls, cut = split_cut_calls(tool_calls)
+            log_output_cap(
+                session_id=parent.id,
+                tier="worker",
+                model=worker_cfg.require_slug(),
+                max_output_tokens=worker_cfg.max_output_tokens,
+                cut_calls=len(cut),
+            )
+
+        if not tool_calls and not cut:
             finished = content.strip() or last_text or "Worker finished with no summary."
             return cap_worker_summary(finished)
 
-        messages.append(resp.message)
+        if cut:
+            stubs = [stub_call(tc.id, tc.function.name if tc.function else "") for tc in cut]
+            messages.append(replace(resp.message, tool_calls=[*tool_calls, *stubs]))
+            messages.extend(cut_call_reply(tc.id, worker_cfg.max_output_tokens) for tc in cut)
+        else:
+            messages.append(resp.message)
         items: list[tuple[str, str, dict[str, Any]]] = []
         for tc in tool_calls:
             name = tc.function.name if tc.function is not None else ""

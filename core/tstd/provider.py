@@ -161,7 +161,10 @@ class ChatCompletionRequest:
         if self.stop is not None:
             d["stop"] = self.stop
         if self.extra_body:
-            d.update(self.extra_body)
+            # A tier's extra_body only fills in (TD-5008): what the caller
+            # set, such as the classifier's temperature 0.0, wins.
+            for key, value in self.extra_body.items():
+                d.setdefault(key, value)
         return d
 
     @staticmethod

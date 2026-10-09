@@ -65,6 +65,10 @@ class Script:
         tool_batch: Parallel tool calls for the ``tool_call`` kind, as
             ``(name, arguments JSON)`` pairs. Empty keeps the single
             ``tool_name`` / ``tool_arguments`` call, id ``call_mock_1``.
+        finish_reason: Replaces the scripted finish reason on the last
+            chunk and on the non-streamed response. ``"length"`` with
+            truncated ``tool_arguments`` is a reply cut off at
+            ``max_tokens`` (TD-5008). ``None`` keeps the default.
     """
 
     kind: Literal[
@@ -83,6 +87,7 @@ class Script:
     completion_tokens: int = DEFAULT_COMPLETION_TOKENS
     cached_tokens: int | None = DEFAULT_CACHED_TOKENS
     tool_batch: tuple[tuple[str, str], ...] = ()
+    finish_reason: str | None = None
 
     @property
     def usage(self) -> Usage:
@@ -255,7 +260,7 @@ class MockProvider:
             id=f"mock-{model}",
             model=model,
             message=message,
-            finish_reason=finish_reason,
+            finish_reason=script.finish_reason or finish_reason,
             usage=script.usage,
         )
 
@@ -379,7 +384,7 @@ class MockProvider:
             yield StreamChunk(
                 id=chunk_id,
                 delta=Delta(),
-                finish_reason="tool_calls",
+                finish_reason=script.finish_reason or "tool_calls",
                 usage=script.usage,
             )
             return
@@ -421,7 +426,7 @@ class MockProvider:
         yield StreamChunk(
             id=chunk_id,
             delta=Delta(),
-            finish_reason="stop",
+            finish_reason=script.finish_reason or "stop",
             usage=script.usage,
         )
 

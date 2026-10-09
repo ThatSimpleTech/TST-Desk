@@ -3,7 +3,9 @@
 In-turn elision triggers at the compaction budget but shrinks the turn's
 tool results to ``ELIDE_TARGET_FRACTION`` of it. The next small result
 then fits without rewriting results already sent, so a local server's
-prefix cache survives. The overflow retry still halves the budget.
+prefix cache survives. When the rest of the prompt leaves no room for
+that, the target rises toward the budget instead of cutting every
+result to the floor. The overflow retry still halves the budget.
 """
 
 from __future__ import annotations
@@ -25,13 +27,20 @@ from tests.test_context_fit import (
     _write_reads,
 )
 from tests.test_loop import wait_for_turn
+from tests.test_token_calibration import _calibrated
 from tstd import context_fit
 from tstd.compaction import budget_threshold, estimate_tokens
 from tstd.context.tokens import HeuristicTokenCounter
-from tstd.context_fit import ELIDE_TARGET_FRACTION, fit_inflight_turn
+from tstd.context_fit import ELIDE_TARGET_FRACTION, elision_target, fit_inflight_turn
 from tstd.mock import MockProvider, Script
 from tstd.protocol import ContextCompacted
-from tstd.provider import ChatCompletionRequest, ChatMessage, content_as_text
+from tstd.provider import (
+    ChatCompletionRequest,
+    ChatMessage,
+    FunctionCall,
+    ToolCall,
+    content_as_text,
+)
 from tstd.session import Session
 
 _COUNTER = HeuristicTokenCounter()
@@ -131,6 +140,79 @@ def test_results_at_the_floor_stop_the_loop() -> None:
     for message in fitted:
         if message.role == "tool":
             assert _ELISION_NOTE in content_as_text(message.content)
+
+
+@pytest.mark.parametrize(
+    ("floor", "expected"),
+    [
+        (1_000, 7_000),  # the usual 70%
+        (4_000, 7_000),  # results still keep 30% of the budget above the floor
+        (5_000, 8_000),  # the target rises with the floor
+        (7_000, 10_000),  # at a 70% floor: the budget itself, as before TD-5010
+        (12_000, 10_000),  # over the budget: never aim above it
+    ],
+)
+def test_elision_target_rises_with_the_floor(floor: int, expected: int) -> None:
+    assert elision_target(10_000, floor) == expected
+
+
+def _old_call(call_id: str) -> ToolCall:
+    return ToolCall(
+        id=call_id, type="function", function=FunctionCall(name="fs_read", arguments="{}")
+    )
+
+
+def _second_turn(history_chars: int, bodies: list[str]) -> list[ChatMessage]:
+    """Turn 1's read, kept verbatim by compaction, then turn 2's reads."""
+    messages: list[ChatMessage] = [
+        ChatMessage(role="system", content="s" * 8_000),
+        ChatMessage(role="user", content="read the parser"),
+        ChatMessage(role="assistant", content=None, tool_calls=[_old_call("old")]),
+        ChatMessage(role="tool", content="o" * (history_chars - 8_000), tool_call_id="old"),
+        ChatMessage(role="assistant", content="Read it."),
+    ]
+    return [*messages, *_tool_turn(bodies, user="now the tests")[1:]]
+
+
+def test_history_over_seventy_percent_cuts_only_the_excess() -> None:
+    """EZER's shape: what elision cannot touch is already 80% of the budget."""
+    tier = _tier(context_window=32768, max_output_tokens=2048)
+    budget = budget_threshold(tier)
+    bodies = ["a" * 9_000, "b" * 6_000, "c" * 5_000]
+    messages = _second_turn(4 * int(budget * 0.8), bodies)
+    history, _ = estimate_tokens(messages[:5], _COUNTER)
+    assert history > _target(budget)
+
+    fitted, stats = fit_inflight_turn(messages, tier, _COUNTER)
+
+    assert stats is not None
+    assert stats.tokens_before > budget
+    # The old trim: only the largest result, only by the excess.
+    assert _target(budget) < stats.tokens_after <= budget
+    assert stats.elided_results == 1
+    lengths = [len(content_as_text(m.content)) for m in fitted[-3:]]
+    assert 1_000 < lengths[0] < 9_000
+    assert lengths[1:] == [6_000, 5_000]
+    assert fitted[:5] == messages[:5]
+
+
+def test_largest_result_absorbs_a_calibrated_excess_in_one_cut() -> None:
+    """Rounding under a learned ratio must not open a second result."""
+    tier = _tier(context_window=32768, max_output_tokens=2048)
+    target = _target(budget_threshold(tier))
+    for ratio in (1.36, 1.55, 2.3):
+        counter = _calibrated(ratio)
+        # Many sizes, so the per-message rounding hits every remainder.
+        for big in range(52_000, 52_400, 7):
+            sizes = [12_000, big, 9_000, 3_000]
+            fitted, stats = fit_inflight_turn(
+                _tool_turn(["z" * size for size in sizes]), tier, counter
+            )
+            assert stats is not None
+            after = [len(content_as_text(m.content)) for m in fitted if m.role == "tool"]
+            assert stats.elided_results == 1, (ratio, sizes, after)
+            assert after[0] == 12_000 and after[2:] == [9_000, 3_000]
+            assert stats.tokens_after <= target
 
 
 # ── Loop ────────────────────────────────────────────────────────────────

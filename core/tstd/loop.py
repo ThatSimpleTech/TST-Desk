@@ -79,6 +79,13 @@ from .local_worker import (
 )
 from .logging import get_logger, redact_secrets
 from .memory_commit import MemoryCommitter
+from .output_cap import (
+    LENGTH_FINISH,
+    arguments_complete,
+    cut_call_reply,
+    log_output_cap,
+    stub_call,
+)
 from .policy import load_approved_imports, save_approved_imports
 from .progress_guard import (
     PROGRESS_CHECK_INSTRUCTION,
@@ -227,7 +234,7 @@ async def _progress_check_gate(
         *messages,
         ChatMessage(role="user", content=PROGRESS_CHECK_INSTRUCTION),
     ]
-    content, tool_calls, failed, error_msg, _code, _raw = await _stream_and_parse(
+    content, tool_calls, failed, error_msg, _code, _raw, _finish = await _stream_and_parse(
         provider,
         model_slug,
         check_messages,
@@ -497,7 +504,7 @@ async def _stream_and_parse(
     *,
     emit_events: bool = True,
     on_usage: Callable[[Usage], None] | None = None,
-) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None, str]:
+) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None, str, str | None]:
     """Call the provider, stream deltas, and accumulate tool calls.
 
     The request caps generation at the tier's ``max_output_tokens`` and
@@ -509,10 +516,13 @@ async def _stream_and_parse(
 
     Returns:
         A tuple of ``(collected_content, tool_calls, failed, error_msg,
-        error_code, raw_detail)``. ``error_code`` is the provider's typed
-        code (e.g. ``auth_failed``) so clients can key tailored copy off
-        it (TD-1008). ``raw_detail`` is the upstream body for the log;
-        it is empty unless the chunk is a ``ProviderError``.
+        error_code, raw_detail, finish_reason)``. ``error_code`` is the
+        provider's typed code (e.g. ``auth_failed``) so clients can key
+        tailored copy off it (TD-1008). ``raw_detail`` is the upstream
+        body for the log; it is empty unless the chunk is a
+        ``ProviderError``. ``finish_reason`` is the last one the stream
+        reported, or ``None``; ``"length"`` means the reply stopped at
+        ``max_output_tokens`` (TD-5008).
     """
     collected_content = ""
     tool_calls: dict[int, dict[str, str | int]] = {}
@@ -520,6 +530,7 @@ async def _stream_and_parse(
     error_msg = ""
     error_code: str | None = None
     raw_detail = ""
+    finish_reason: str | None = None
 
     # TD-1804: usage is collected from any chunk that carries it and
     # recorded once, after the stream closes.  Providers disagree about
@@ -585,6 +596,8 @@ async def _stream_and_parse(
 
         if chunk.usage is not None:
             usage = chunk.usage
+        if chunk.finish_reason:
+            finish_reason = chunk.finish_reason
 
     # Tokens the provider reported are recorded even when the call ended
     # badly — they were spent either way, and a cancelled or failed call
@@ -598,7 +611,7 @@ async def _stream_and_parse(
         if on_usage is not None:
             on_usage(usage)
 
-    return collected_content, tool_calls, failed, error_msg, error_code, raw_detail
+    return collected_content, tool_calls, failed, error_msg, error_code, raw_detail, finish_reason
 
 
 def _carries_non_text(messages: list[ChatMessage]) -> bool:
@@ -926,8 +939,9 @@ async def agent_loop(
         worker_cfg = config.tier("worker")
         worker_client = await client_for(worker_cfg)
         # The 8-token cap is the classifier's own (a one-letter verdict),
-        # not the tier's. extra_body still applies (TD-5008): it is how a
-        # reasoning model is told to keep its thinking short.
+        # not the tier's; DoD polls and judgment calls share it. extra_body
+        # still applies (TD-5008): it is how a reasoning model is told to
+        # keep its thinking short. It only fills in, so temperature stays 0.
         request = ChatCompletionRequest(
             model=worker_cfg.require_slug(),
             messages=[ChatMessage(role="user", content=prompt)],
@@ -1634,6 +1648,7 @@ async def agent_loop(
                 error_msg,
                 error_code,
                 raw_detail,
+                finish_reason,
             ) = await _stream_and_parse(
                 provider,
                 model_slug,
@@ -1753,6 +1768,7 @@ async def agent_loop(
                             "session_id": session.id,
                             "tier": tier,
                             "turn": router.turn_count,
+                            "finish_reason": finish_reason,
                         }
                     },
                 )
@@ -1763,17 +1779,43 @@ async def agent_loop(
             # 2e. Record success
             router.record_success()
 
+            # A reply stopped at max_output_tokens (TD-5008): cut text is
+            # kept; a cut tool call is never run or replayed as sent.
+            cut_calls: dict[int, dict[str, str | int]] = {}
+            if finish_reason == LENGTH_FINISH:
+                cut_calls = {
+                    index: call
+                    for index, call in tool_calls.items()
+                    if not arguments_complete(str(call["arguments"]))
+                }
+                tool_calls = {i: c for i, c in tool_calls.items() if i not in cut_calls}
+                log_output_cap(
+                    session_id=session.id,
+                    tier=tier,
+                    model=model_slug,
+                    max_output_tokens=tier_cfg.max_output_tokens,
+                    cut_calls=len(cut_calls),
+                )
+
             # 2f. Append assistant response to conversation
-            if tool_calls:
+            if tool_calls or cut_calls:
                 provider_tool_calls = await _build_assistant_tool_call(
                     session, tool_calls, tool_dispatcher
                 )
+                provider_tool_calls += [
+                    stub_call(str(call["id"]), str(call["name"])) for call in cut_calls.values()
+                ]
                 messages.append(
                     ChatMessage(
                         role="assistant",
                         content=None,
                         tool_calls=provider_tool_calls,
                     )
+                )
+                # Answered now, so the model sees why and retries smaller.
+                messages.extend(
+                    cut_call_reply(str(call["id"]), tier_cfg.max_output_tokens)
+                    for call in cut_calls.values()
                 )
                 await session.conversation_changed()
 

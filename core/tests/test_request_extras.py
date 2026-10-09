@@ -149,6 +149,7 @@ def test_reserved_set_is_what_the_request_owns() -> None:
         "stream",
         "stream_options",
         "max_tokens",
+        "max_completion_tokens",
     } == EXTRA_BODY_RESERVED_KEYS
 
 

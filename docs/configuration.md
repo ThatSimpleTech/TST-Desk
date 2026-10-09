@@ -635,7 +635,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
 | `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
 | `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
-| `extra_body` | map | none | Extra JSON fields merged into every chat request the tier makes: the turn, the progress check, a delegated worker, and (on the worker tier) the tool-call classifier. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options` or `max_tokens`; a load error names the clash. Sent as written: never put a key or token here. |
+| `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
@@ -656,9 +656,11 @@ turns. No model call is spent doing it. So:
   first is your steering block.
 - `max_output_tokens` caps generation, and the provider counts a reasoning model's thinking
   inside that cap. Size it for the thinking plus the answer, or turn the thinking down with
-  `extra_body` (§3.6). A reply cut off at the cap ends with `finish_reason: length`. Raising it
-  also shrinks the compaction budget, so on a small window it is a trade. The tool-call
-  classifier keeps its own 8-token cap.
+  `extra_body` (§3.6). A reply cut off at the cap ends with `finish_reason: length`: cut text
+  is kept and the cap is logged, and a cut tool call is not run. The model gets the call back
+  with empty arguments and a note to send smaller pieces. Raising the cap also shrinks the
+  compaction budget, so on a small window it is a trade. The tool-call classifier, DoD polls
+  and judgment calls that run on the worker tier keep their own 8-token cap.
 
 **How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call
 arguments, every tool definition the request sends (as the request serializes it — a few
@@ -680,7 +682,10 @@ in-flight turn's tool results still exceed the compaction budget, their middles 
 with a note to re-read with offset and limit before the next model call, largest first, until
 the prompt is down to 70% of the budget (TD-5010). The gap lets the turn's next few results
 fit without rewriting the ones already sent, which would throw away a local server's prompt
-cache. A provider that still reports a context overflow is retried once at half the budget,
+cache. The turn's results always keep at least 30% of the budget, though. When everything
+else in the prompt (the system prompt, the tools, the history compaction keeps, and the turn's
+results at 1,000 characters each) already fills more than 40% of it, the target rises, up to
+the budget itself, rather than cutting every result down to 1,000 characters. A provider that still reports a context overflow is retried once at half the budget,
 elided the same way. If it overflows again, the turn fails with a short message that names the
 configured window. The raw provider error stays in the log.
 
@@ -878,8 +883,8 @@ down or unnamed falls back the same way — it does not fail the click.
 
 ### 3.6 Provider-specific request fields (`extra_body`)
 
-Some servers take settings the OpenAI shape has no field for. `extra_body` on a tier is merged
-into the JSON body of every chat request that tier makes (TD-5008). On EZER, a llama.cpp
+Some servers take settings the OpenAI shape has no field for. `extra_body` on a tier is added
+to the JSON body of every chat request that tier makes (TD-5008). On EZER, a llama.cpp
 reasoning model behind LiteLLM, this keeps the thinking short so the answer fits inside
 `max_output_tokens`:
 
@@ -897,14 +902,17 @@ extra_body:
 ```
 
 It reaches the turn, the progress check and a delegated worker. On the worker tier it also
-reaches the tool-call classifier, whose own `max_tokens` stays 8. The validator review, the
+reaches the tool-call classifier, DoD polls and judgment calls that run on the worker, which
+keep their own `max_tokens` of 8 and `temperature` of 0. The validator review, the
 supervisor check and memory distillation do not send it yet. The values go to the server as
 written, so check the server's own documentation for the field names, and never put a key or a
 token here. The settings screen keeps the block when it writes a slug, a credential or the
 active preset.
 
-The request already owns some fields, and `extra_body` is merged last, so setting one of them
-would silently replace what TST Desk built. Those are a load error:
+`extra_body` only fills in fields a request left unset: where TST Desk sets a field itself, its
+value wins. A `temperature` here applies to the turn, which sets none, but not to the
+classifier, which asks for 0. The fields TST Desk owns on every request are a load error, so
+a setting never applies to some requests and silently not to others:
 
 <!-- verify: tier-invalid -->
 ```yaml
@@ -925,7 +933,10 @@ max_output_tokens for the output cap
 ```
 
 The reserved fields are `model`, `messages`, `tools`, `tool_choice`, `stream`,
-`stream_options` and `max_tokens`.
+`stream_options`, `max_tokens` and `max_completion_tokens` (the newer OpenAI name for the
+output cap). Values must be plain JSON: strings, numbers, booleans, null, lists and maps. YAML
+reads an unquoted `2026-10-09` as a date, so quote dates and times, or the config fails to
+load with `extra_body must be plain JSON`.
 
 ---
 

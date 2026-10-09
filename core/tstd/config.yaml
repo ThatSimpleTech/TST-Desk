@@ -24,11 +24,14 @@
 #                        (TD-1801). An off-box tier with no credential
 #                        uses `openrouter` so existing keychains keep
 #                        working.
-#   extra_body        — optional map merged into every request body for
+#   extra_body        — optional map added to every request body for
 #                        the tier, e.g. chat_template_kwargs for a
-#                        llama.cpp server. It cannot set model, messages,
-#                        tools, tool_choice, stream, stream_options or
-#                        max_tokens. Never put a key here.
+#                        llama.cpp server. It fills in only fields the
+#                        request did not set. It cannot set model,
+#                        messages, tools, tool_choice, stream,
+#                        stream_options, max_tokens or
+#                        max_completion_tokens. Plain JSON values only
+#                        (quote dates). Never put a key here.
 
 # Named API keys (TD-1717). Names live here; secrets live in the OS
 # keychain under tst-<id>. Settings shows the name, never the secret.

@@ -13,9 +13,10 @@ messages and tools it sends. When the provider reports
 folded into a per-endpoint store. Every later estimate for that endpoint
 is scaled by it.
 
-The store is process-wide on purpose: sessions and delegate children in
-one daemon talk to the same endpoints, and a ratio learned by one is
-true for all of them. It lives in memory only. After a daemon restart
+The store is process-wide on purpose: sessions in one daemon talk to
+the same endpoints, and a ratio learned by one is true for all of them.
+A delegate child does not estimate at all; it inherits only the
+parent's tool-result cap. The store lives in memory only. After a daemon restart
 the first call is estimated at ratio 1.0 (plus tool accounting), and the
 context-overflow retry still backstops it.
 """
