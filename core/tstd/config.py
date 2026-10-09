@@ -12,6 +12,7 @@ messages that name the offending key.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import shutil
@@ -23,7 +24,15 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from .logging import user_data_dir
 
@@ -217,6 +226,12 @@ class TierConfig(BaseModel):
     # ``chat_template_kwargs``. They fill in only fields the request left
     # unset. Sent as-is: never put a secret here.
     extra_body: dict[str, Any] | None = None
+    # Merged over ``extra_body`` on the worker's one-word verdict calls
+    # only (TD-5012): the classifier, DoD polls and worker-backed
+    # judgment calls. An 8-token answer ends inside a reasoning model's
+    # thinking, so this is where ``enable_thinking: false`` goes without
+    # turning it off for the turn or a delegated worker.
+    verdict_extra_body: dict[str, Any] | None = None
 
     @field_validator("credential")
     @classmethod
@@ -226,32 +241,35 @@ class TierConfig(BaseModel):
         cleaned = value.strip()
         return cleaned or None
 
-    @field_validator("extra_body")
+    @field_validator("extra_body", "verdict_extra_body")
     @classmethod
     def _extra_body_leaves_request_keys_alone(
-        cls, value: dict[str, Any] | None
+        cls, value: dict[str, Any] | None, info: ValidationInfo
     ) -> dict[str, Any] | None:
-        """Refuse keys the request owns (TD-5008).
+        """Refuse keys the request owns (TD-5008, TD-5012).
 
         ``extra_body`` only fills in fields a request left unset, so one
         of these would be dropped on some requests and sent on others:
         the model, the transcript, the tools, streaming, or the output
-        cap that comes from ``max_output_tokens``.
+        cap that comes from ``max_output_tokens``. ``verdict_extra_body``
+        reaches the request the same way, so the same keys are refused.
         """
         if value is None:
             return None
         clashes = sorted(key for key in value if key in EXTRA_BODY_RESERVED_KEYS)
         if clashes:
             raise ValueError(
-                f"extra_body cannot set {', '.join(clashes)}: TST Desk sends "
+                f"{info.field_name} cannot set {', '.join(clashes)}: TST Desk sends "
                 f"{'it' if len(clashes) == 1 else 'them'} itself. Use slug for the "
                 "model and max_output_tokens for the output cap"
             )
         return value
 
-    @field_validator("extra_body")
+    @field_validator("extra_body", "verdict_extra_body")
     @classmethod
-    def _extra_body_is_plain_json(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+    def _extra_body_is_plain_json(
+        cls, value: dict[str, Any] | None, info: ValidationInfo
+    ) -> dict[str, Any] | None:
         """Refuse values the request body cannot carry.
 
         YAML reads an unquoted ``2026-10-09`` as a date. Left in, it
@@ -264,7 +282,7 @@ class TierConfig(BaseModel):
             json.dumps(value, allow_nan=False)
         except (TypeError, ValueError) as error:
             raise ValueError(
-                f"extra_body must be plain JSON ({error}). Quote dates, times and "
+                f"{info.field_name} must be plain JSON ({error}). Quote dates, times and "
                 "other values YAML would read as something else"
             ) from error
         return value
@@ -298,6 +316,37 @@ class TierConfig(BaseModel):
                 fix="Resolve the tier's slug before using it (tstd.discovery).",
             )
         return self.slug
+
+    def verdict_extras(self) -> dict[str, Any] | None:
+        """The extras a one-word verdict call sends (TD-5012).
+
+        Every worker verdict path takes its extras from here: the
+        classifier, DoD polls and worker-backed judgment calls. With no
+        ``verdict_extra_body`` this is ``extra_body`` itself, so the
+        request is what TD-5008 sent. Otherwise the two are deep-merged:
+        nested maps merge, ``verdict_extra_body`` wins a leaf, and
+        neither input is changed.
+        """
+        if self.verdict_extra_body is None:
+            return self.extra_body
+        return merge_extra_body(self.extra_body or {}, self.verdict_extra_body)
+
+
+def merge_extra_body(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge *override* onto *base* into a new dict (TD-5012).
+
+    A key that is a map on both sides merges recursively; anything else
+    in *override* replaces what *base* had. The result shares nothing
+    mutable with either input.
+    """
+    merged = copy.deepcopy(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = merge_extra_body(existing, value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
 
 
 class Preset(BaseModel):

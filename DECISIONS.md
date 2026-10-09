@@ -12141,7 +12141,8 @@ result is cached for the same tool and arguments. A DoD poll reads the
 same empty reply as no verdict, so a prose item never goes green.
 `extra_body` with low reasoning effort narrows this but does not
 remove it; a server-side switch that turns thinking off, or a larger
-classifier cap, does.
+classifier cap, does. TD-5012 closes this: `verdict_extra_body` turns
+the thinking off on the verdict calls only.
 
 ## TD-5010 — In-turn elision aims below the budget (Class B)
 
@@ -12330,3 +12331,65 @@ already says "Claude Code's global files"). Truncating catalog
 descriptions to fit a budget (the gate removes the cost where it
 hurt). Raising the body cap for one skill. Skipping skills whose folder
 holds other files (the directory line makes them whole).
+
+## TD-5012 — Verdict calls can turn the worker's thinking off (Class B)
+
+2026-10-09. The worker's one-word verdict calls (the tool-call
+classifier, DoD polls and worker-backed judgment calls) all go through
+`_worker_completion` with `max_tokens=8` and `temperature=0`. On EZER
+the worker is ezer-forge: Qwen Flash-Next on llama.cpp behind LiteLLM.
+With `chat_template_kwargs.reasoning_effort: low` in `extra_body`, the 8
+tokens ended inside the thinking: content `''` and `finish_reason:
+length`. The classifier failed closed to Class B and prose DoD items
+never went green (TD-5008's known gap). Sending
+`chat_template_kwargs.enable_thinking: false` returned `A` in 2 tokens,
+also through LiteLLM.
+
+**Decision:** `TierConfig` gains `verdict_extra_body: dict | None`. The
+`extra_body` validators now cover both fields, so the same reserved
+request keys are refused and values must be plain JSON; the load error
+names the field that broke the rule. `TierConfig.verdict_extras()` is
+the one helper every verdict path uses. With no `verdict_extra_body` it
+returns `extra_body` itself, so the request is byte-for-byte what
+TD-5008 sent. Otherwise `merge_extra_body` builds a new dict: nested
+maps merge, `verdict_extra_body` wins a leaf, and neither input changes.
+The result still only fills in, so `max_tokens=8` and `temperature=0.0`
+stand. `_worker_completion` is the only live verdict path: the
+classifier connector, the judgment backend, the actuation verifier's
+fallback and the DoD poller all take it. Unchanged: the turn, the
+progress check, the delegate worker, memory distillation (it sends no
+extras), the validator review, the supervisor check, the daemon's
+`max_tokens=1` key probe, the grounding client, the e2e harnesses and
+the judgment eval recordings. On the brain or validator tier the key
+loads and is never sent.
+
+**Decision:** A verdict that comes back with empty content and
+`finish_reason: "length"` logs one warning per `(base_url, model)` per
+process. It names the worker tier and `verdict_extra_body` and says the
+model probably spent the cap thinking. Verdicts run on every ambiguous
+tool call and every DoD poll, so a warning per call would flood the log.
+
+**Rationale:** Thinking off is right for a one-letter answer and wrong
+for the turn and a delegate, which want their low-effort thinking. So
+the switch is scoped to the verdict calls, not the tier. Merging rather
+than replacing keeps one place for what the server needs on every call,
+such as a `top_k`, and lets the verdict map say only what differs. One
+helper means a new verdict path cannot skip the merge. Without the
+warning the failure looks like a judgment (an approval prompt, a red
+DoD item), not a config gap.
+
+**Rejected:** Turning thinking off in the worker's `extra_body`. It
+reaches delegates and worker turns too. Raising the 8-token cap. The
+thinking has no fixed length, so no cap is sure to be enough, and a
+larger one adds latency to every ambiguous tool call; it stays a
+separate decision. A typed `thinking: false` field. Every server spells
+the switch differently (TD-5008). A shallow merge. A verdict
+`chat_template_kwargs` would replace the whole map and drop
+`reasoning_effort`. Refusing the key on the brain and validator tiers.
+A tier block is often copied between tiers, and the key is inert where
+nothing reads it. A warning on every empty verdict. See above.
+
+**Known gap:** The warning only sees an empty reply. A server that puts
+its thinking in `content` (a `<think>` block) returns text at the cap,
+the parse still fails closed, and nothing is logged. The 2-token answer
+was measured by hand against ezer-forge; the tests run on MockProvider.

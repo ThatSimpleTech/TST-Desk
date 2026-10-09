@@ -182,6 +182,43 @@ def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
 
 _GUARD_REASON_LIMIT = 400
 
+# The worker's one-word verdict calls (classifier, DoD polls, judgment
+# calls) cap their own reply; the tier's max_output_tokens is for turns.
+_VERDICT_MAX_TOKENS = 8
+
+#: (base_url, model) already warned about an empty verdict at the cap
+#: (TD-5012). Verdicts run on every ambiguous tool call and every DoD
+#: poll, so one warning per endpoint per process is enough.
+_VERDICT_CAP_WARNED: set[tuple[str, str]] = set()
+
+
+def _warn_verdict_cap_once(tier_cfg: TierConfig, model: str) -> None:
+    """Say once why a verdict came back empty at its cap (TD-5012).
+
+    Empty content with ``finish_reason: "length"`` on an 8-token call
+    means the model spent the cap before it answered, almost always
+    thinking. The parse then fails closed (Class B, or no DoD verdict),
+    which looks like a judgment rather than a config gap.
+    """
+    key = (tier_cfg.base_url, model)
+    if key in _VERDICT_CAP_WARNED:
+        return
+    _VERDICT_CAP_WARNED.add(key)
+    log.warning(
+        "worker verdict call hit its token cap with no answer; the model probably "
+        "spent the cap thinking. Set verdict_extra_body on the worker tier to turn "
+        "thinking off for verdict calls",
+        extra={
+            "extra_fields": {
+                "tier": "worker",
+                "base_url": tier_cfg.base_url,
+                "model": model,
+                "max_tokens": _VERDICT_MAX_TOKENS,
+                "verdict_extra_body_set": tier_cfg.verdict_extra_body is not None,
+            }
+        },
+    )
+
 
 async def _show_progress_note(session: Session, messages: list[ChatMessage], text: str) -> None:
     """Put one short assistant line on the transcript and in the chat."""
@@ -940,14 +977,16 @@ async def agent_loop(
         worker_client = await client_for(worker_cfg)
         # The 8-token cap is the classifier's own (a one-letter verdict),
         # not the tier's; DoD polls and judgment calls share it. extra_body
-        # still applies (TD-5008): it is how a reasoning model is told to
-        # keep its thinking short. It only fills in, so temperature stays 0.
+        # still applies (TD-5008), with verdict_extra_body merged over it
+        # (TD-5012): an 8-token answer ends inside a reasoning model's
+        # thinking, so this is where that thinking is turned off. Both
+        # only fill in, so temperature stays 0.
         request = ChatCompletionRequest(
             model=worker_cfg.require_slug(),
             messages=[ChatMessage(role="user", content=prompt)],
-            max_tokens=8,
+            max_tokens=_VERDICT_MAX_TOKENS,
             temperature=0.0,
-            extra_body=worker_cfg.extra_body,
+            extra_body=worker_cfg.verdict_extras(),
         )
         resp = await worker_client.chat_completion(request)
         if isinstance(resp, ProviderError):
@@ -960,7 +999,10 @@ async def agent_loop(
         # The judgment seam reads this after the await.  DoD polls share
         # the callable and ignore the note.
         note_judgment_completion_cost(cost)
-        return content_as_text(resp.message.content)
+        text = content_as_text(resp.message.content)
+        if not text.strip() and resp.finish_reason == "length":
+            _warn_verdict_cap_once(worker_cfg, request.model)
+        return text
 
     async def _judgment_backend_for(cfg: JudgmentsConfig) -> JudgmentBackend:
         return await judgment_backend_for(cfg, _worker_completion)

@@ -642,6 +642,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
 | `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
 | `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
+| `verdict_extra_body` | map | none | Merged over `extra_body` on the worker tier's one-word verdict calls only: the tool-call classifier, DoD polls and judgment calls that run on the worker. Nested maps merge and this map wins a clash. The turn, a delegated worker and memory distillation never send it. Same rules as `extra_body`; it does nothing on the brain and validator tiers. Use it to turn a reasoning model's thinking off for an 8-token answer — see §3.6. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
@@ -666,7 +667,8 @@ turns. No model call is spent doing it. So:
   is kept and the cap is logged, and a cut tool call is not run. The model gets the call back
   with empty arguments and a note to send smaller pieces. Raising the cap also shrinks the
   compaction budget, so on a small window it is a trade. The tool-call classifier, DoD polls
-  and judgment calls that run on the worker tier keep their own 8-token cap.
+  and judgment calls that run on the worker tier keep their own 8-token cap; on a reasoning
+  model, turn their thinking off with `verdict_extra_body` (§3.6).
 
 **How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call
 arguments, every tool definition the request sends (as the request serializes it — a few
@@ -943,6 +945,37 @@ The reserved fields are `model`, `messages`, `tools`, `tool_choice`, `stream`,
 output cap). Values must be plain JSON: strings, numbers, booleans, null, lists and maps. YAML
 reads an unquoted `2026-10-09` as a date, so quote dates and times, or the config fails to
 load with `extra_body must be plain JSON`.
+
+**Verdict calls (`verdict_extra_body`).** The tool-call classifier, DoD polls and judgment calls
+that run on the worker ask for a one-word answer in 8 tokens (TD-5012). On a reasoning model
+the 8 tokens end inside the thinking, so the reply is empty: the classifier falls back to
+Class B and a prose DoD item never goes green. `verdict_extra_body` is merged over `extra_body`
+on those calls only, so the thinking can be off there and stay on for the turn and a delegated
+worker. On EZER, a llama.cpp Qwen model behind LiteLLM:
+
+<!-- verify: tier -->
+```yaml
+base_url: http://127.0.0.1:8000/v1
+input_price: 0.0
+output_price: 0.0
+cache_read_price: 0.0
+context_window: 32768
+max_output_tokens: 4096
+extra_body:
+  chat_template_kwargs:
+    reasoning_effort: low
+verdict_extra_body:
+  chat_template_kwargs:
+    enable_thinking: false
+```
+
+A verdict call then sends `chat_template_kwargs: {reasoning_effort: low, enable_thinking:
+false}`; everything else sends `{reasoning_effort: low}`. Nested maps merge key by key, and
+`verdict_extra_body` wins where both set the same key. With `reasoning_effort: low` alone,
+EZER's verdicts came back empty with `finish_reason: length`; with `enable_thinking: false`
+the classifier answered in 2 tokens. Check your own server's documentation for its switch.
+The same reserved keys and the plain-JSON rule apply. When a verdict comes back empty at its
+cap, the daemon logs one warning per endpoint and model that names `verdict_extra_body`.
 
 ---
 

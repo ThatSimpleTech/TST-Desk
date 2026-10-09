@@ -32,6 +32,7 @@
 #                        stream_options, max_tokens or
 #                        max_completion_tokens. Plain JSON values only
 #                        (quote dates). Never put a key here.
+#   verdict_extra_body — merged over extra_body on 8-token verdict calls only
 
 # Named API keys (TD-1717). Names live here; secrets live in the OS
 # keychain under tst-<id>. Settings shows the name, never the secret.
