@@ -7,6 +7,12 @@ catalog; bodies attach only after ``load_skill`` or a slash invoke.
 
 User-global wins on the same ``<name>``.  When both of *our* trees have
 no ``SKILL.md``, fall back to ``.claude/skills/`` and ``~/.claude/skills/``.
+
+Frontmatter (TD-5011): ``description`` is required; ``whenToUse`` falls
+back to it.  ``name`` is accepted, and the directory name wins when they
+differ.  Claude Code keys that only describe a skill or grant it
+something are ignored; a key that would restrict or reroute it, and any
+unknown key, still skips the skill (TD-4502: a partial skill cannot load).
 """
 
 from __future__ import annotations
@@ -29,7 +35,21 @@ SkillSource = Literal["workspace", "user", "claude_workspace", "claude_user"]
 # Fixed body cap. Recorded in DECISIONS.md (TD-4502).
 SKILL_BODY_TOKEN_CAP = 4000
 
-_ALLOWED_FRONTMATTER = frozenset({"description", "whenToUse"})
+#: Keys a skill reads.  Only ``description`` is required (TD-5011).
+_HONORED_FRONTMATTER = frozenset({"name", "description", "whenToUse"})
+#: Claude Code keys dropped without effect (TD-5011).  They label the
+#: skill (``license``, ``version``, ``metadata``, ``compatibility``,
+#: ``argument-hint``) or pre-approve tools (``allowed-tools``); without the
+#: grant, the skill's tool calls go through this workspace's own policy.
+_IGNORED_FRONTMATTER = frozenset(
+    {"license", "version", "metadata", "compatibility", "argument-hint", "allowed-tools"}
+)
+#: Claude Code switches ignored at their default value only.  Any other
+#: value limits who may invoke the skill, which the catalog cannot honor.
+_DEFAULT_ONLY_FRONTMATTER: dict[str, bool] = {
+    "disable-model-invocation": False,
+    "user-invocable": True,
+}
 _SKILL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SLASH_SKILL = re.compile(r"^\s*/([A-Za-z0-9][A-Za-z0-9._-]*)(?:\s|$)")
 _LOAD_MARKER = re.compile(r"Load skill `([^`]+)`")
@@ -75,7 +95,8 @@ class SkillDiscoverer:
         """Discover skills for *workspace_path*, user-global winning on name.
 
         Missing trees are not errors.  Invalid directory names are
-        skipped.  Extra or missing frontmatter keys skip that skill.
+        skipped.  A missing ``description``, or a frontmatter key that
+        cannot be honored or ignored, skips that skill.
         """
         workspace = Path(workspace_path).expanduser().resolve()
         ours_ws = self._skill_files(workspace / ".tst" / "skills")
@@ -122,23 +143,35 @@ class SkillDiscoverer:
         except OSError:
             return None
         metadata, body = parse_frontmatter(raw)
-        extra = set(metadata) - _ALLOWED_FRONTMATTER
-        if extra:
+        refused = sorted(str(key) for key in metadata if not _key_is_accepted(key, metadata[key]))
+        if refused:
             log.warning(
-                "skill skipped: extra frontmatter keys",
-                extra={"extra_fields": {"path": str(path), "keys": sorted(extra)}},
+                "skill skipped: frontmatter keys it cannot honor",
+                extra={"extra_fields": {"path": str(path), "keys": refused}},
             )
             return None
         raw_desc = metadata.get("description")
         raw_when = metadata.get("whenToUse")
+        raw_name = metadata.get("name")
         if not isinstance(raw_desc, str) or not raw_desc.strip():
             return None
-        if not isinstance(raw_when, str) or not raw_when.strip():
+        if raw_when is not None and not isinstance(raw_when, str):
             return None
+        if raw_name is not None and not isinstance(raw_name, str):
+            return None
+        if raw_name is not None and raw_name.strip() != name:
+            # The directory is what `/name`, `load_skill` and the tree merge
+            # key on, so it wins; the mismatch is logged, not fatal (TD-5011).
+            log.warning(
+                "skill name differs from its directory; using the directory",
+                extra={"extra_fields": {"path": str(path), "name": raw_name.strip()}},
+            )
+        description = raw_desc.strip()
+        when_to_use = raw_when.strip() if raw_when is not None else ""
         return Skill(
             name=name,
-            description=raw_desc.strip(),
-            when_to_use=raw_when.strip(),
+            description=description,
+            when_to_use=when_to_use or description,
             source=source,
             body=body,
             path=path,
@@ -150,6 +183,15 @@ class SkillDiscoverer:
         """*higher* wins on the same name. Result is sorted by name."""
         merged = {**lower, **higher}
         return [merged[name] for name in sorted(merged)]
+
+
+def _key_is_accepted(key: object, value: object) -> bool:
+    """Whether a frontmatter key lets the skill load (TD-4502, TD-5011)."""
+    if key in _HONORED_FRONTMATTER or key in _IGNORED_FRONTMATTER:
+        return True
+    if isinstance(key, str) and key in _DEFAULT_ONLY_FRONTMATTER:
+        return value is _DEFAULT_ONLY_FRONTMATTER[key]
+    return False
 
 
 def list_workspace_skills(
@@ -178,7 +220,12 @@ def render_skill_catalog(skills: Sequence[Skill]) -> str:
         "Slash `/name` loads a skill that is not also a command.",
     ]
     for skill in skills:
-        lines.append(f"- `{skill.name}`: {skill.description} (when to use: {skill.when_to_use})")
+        line = f"- `{skill.name}`: {skill.description}"
+        if skill.when_to_use != skill.description:
+            # A Claude Code skill has no `whenToUse`; its description already
+            # says when, so it is not repeated (TD-5011).
+            line += f" (when to use: {skill.when_to_use})"
+        lines.append(line)
     return "\n".join(lines)
 
 

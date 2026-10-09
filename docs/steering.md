@@ -27,7 +27,8 @@ enough.
 Skills are not steering. A `SKILL.md` under `.tst/skills/<name>/` (or the
 user-global tree) is a catalog entry the brain can load on demand. It
 never joins the steering block or the cache prefix, and the agent cannot
-write any file named `SKILL.md`.
+write any file named `SKILL.md`. Claude Code skills load as written; §9
+lists the frontmatter keys.
 
 If your repo already has a `CLAUDE.md`, you are already done — see §9.
 
@@ -911,6 +912,17 @@ What does **not** carry over, and what to do about it:
   Type `/` in the composer to list them. The agent cannot write those trees.
   If both of our trees are empty, `.claude/commands/` (and `~/.claude/commands/`)
   is the fallback. See TD-4501.
+- **Skills** live in `.tst/skills/<name>/SKILL.md` (and `~/.tstdesk/skills/`). If both of
+  our trees are empty, `.claude/skills/` (and `~/.claude/skills/`) is the fallback, and a
+  Claude Code skill loads as written (TD-5011). `description` is the one required key.
+  `whenToUse` is optional and falls back to `description`. `name` is accepted, but the
+  directory name is the skill's name: when they differ, the directory wins and the mismatch
+  is logged. `license`, `version`, `metadata`, `compatibility`, `argument-hint` and
+  `allowed-tools` are ignored. Without the `allowed-tools` grant, the skill's tool calls go
+  through this workspace's policy like any other call. `disable-model-invocation` and `user-invocable` are ignored at
+  their defaults. Any other value, and `model`, `tools`, `disallowed-tools`, `hooks`,
+  `context`, `agent` or an unknown key, skips the skill, because the catalog cannot honor
+  it and a partial skill does not load (TD-4502). A skip is logged with the key.
 - **Frontmatter conventions from other tools** are stripped, not interpreted. If your
   `CLAUDE.md` opens with a YAML block — `description`, `globs`, `alwaysApply`, or anything else
   — it is removed before the file is assembled, so it never reaches the model and you have

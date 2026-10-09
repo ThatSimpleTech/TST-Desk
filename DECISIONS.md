@@ -12229,3 +12229,41 @@ in the delegate preamble (block [1] already reaches the worker; a second
 copy is drift). `shlex` (it cannot see operators or keep quote state for
 `>`). Covering `cp`, `mv`, `patch`, `git apply` and `curl -o` (tool
 moves, not hand edits; left for a later story).
+
+## TD-5011 — Claude Code skills load (Class B; revises part of TD-4502)
+
+2026-10-09. TD-4502 allowed only `description` and `whenToUse` and
+skipped a skill with any other key. Every Claude Code skill has `name`
+and none has `whenToUse`, so none loaded: 0 of the 14 skills in
+`~/.claude/skills` reached the catalog for TST Desk or the home folder,
+and 0 of 251 `SKILL.md` files under `~/.claude` parsed.
+
+**Decision:** `description` is the one required key. `whenToUse` is
+optional and falls back to `description`; a non-string value still
+skips. `name` is accepted: a non-string skips, and when it differs from
+the directory the directory name is kept and a warning logs both.
+`license`, `version`, `metadata`, `compatibility`, `argument-hint` and
+`allowed-tools` are ignored. `disable-model-invocation: false` and
+`user-invocable: true` (the defaults) are ignored; any other value
+skips. `model`, `tools`, `disallowed-tools`, `hooks`, `context`, `agent`
+and unknown keys still skip, with the key logged. The catalog line
+drops "(when to use: ...)" when it would repeat the description. After:
+14 of 14 load for both workspaces, and 246 of 251 files parse.
+
+**Rationale:** TD-4502 refused extra keys "so a partial skill cannot
+load". Labels change nothing about what a skill does, so ignoring them
+loads the whole skill. `allowed-tools` pre-approves tools; ignoring a
+grant is the strict direction, since the skill's calls go through this
+workspace's policy as usual. The directory is what `/name`,
+`load_skill` and the tree merge key on, so a `name` that disagrees
+cannot win without two names for one skill. Keys that limit who may
+invoke a skill, restrict its tools, switch its model or attach hooks
+would be silently dropped promises, which is exactly a partial skill.
+
+**Rejected:** Ignoring every unknown key (a restriction would be
+dropped without notice). Honoring `disable-model-invocation` by hiding
+the skill from the catalog while keeping `/name` (a new invocation
+mode; 2 of 251 files use it). Using `name` over the directory (two
+names for one skill, and `/name` would stop matching the folder).
+Mapping `allowed-tools` onto policy rules (a skill would widen
+permissions just by being loaded).
