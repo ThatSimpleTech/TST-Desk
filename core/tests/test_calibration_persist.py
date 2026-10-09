@@ -25,10 +25,11 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import _real_user_data_dirs
 from tests.test_context_fit import _forge_config
 from tests.test_loop import mock_factory, wait_for_turn
 from tstd import loop as loop_module
-from tstd.config import ModelConfig, TierConfig
+from tstd.config import ModelConfig, Preset, TierConfig
 from tstd.context import calibration as calibration_module
 from tstd.context.calibration import (
     CALIBRATION_FILE,
@@ -36,9 +37,11 @@ from tstd.context.calibration import (
     MAX_ENTRY_AGE,
     MAX_RATIO,
     MIN_RATIO,
+    STAMP_REFRESH,
     CalibrationStore,
     calibration_key,
     calibration_path,
+    enable_calibration_persistence,
     process_calibration_store,
     tier_chars_per_token,
 )
@@ -46,6 +49,7 @@ from tstd.context.manifest import ManifestConfig, manifest_config_for_window
 from tstd.context.prompt import PromptAssembler
 from tstd.context.tokens import CHARS_PER_TOKEN
 from tstd.daemon import Daemon
+from tstd.logging import LINUX_DATA_DIR_NAME, LINUX_LEGACY_DATA_DIR_NAME
 from tstd.loop import brain_manifest_config
 from tstd.mock import MockProvider, Script
 from tstd.router import TierRouter
@@ -227,6 +231,7 @@ def test_bad_entries_are_left_out_and_counted_in_one_line(
         _entry(("http://c/v1", "c"), updated_at="yesterday"),
         _entry(("http://d/v1", "d"), updated_at="2026-10-09T10:00:00"),  # naive
         _entry(("http://e/v1", "e"), updated_at=1_760_000_000),
+        _entry(("http://j/v1", "j"), ratio=10**400),  # too large for a float
     ]
     out_of_band: list[object] = [
         _entry(("http://f/v1", "f"), ratio=MIN_RATIO - 0.01),
@@ -250,7 +255,7 @@ def test_bad_entries_are_left_out_and_counted_in_one_line(
     assert store.ratio(("http://lo/v1", "lo")) == MIN_RATIO
     assert store.ratio(("http://hi/v1", "hi")) == MAX_RATIO
     assert store.ratio(_OTHER) == 2.0
-    for letter in "abcdefghi":
+    for letter in "abcdefghij":
         assert store.ratio((f"http://{letter}/v1", letter)) is None
     records = _records(caplog)
     assert len(records) == 1
@@ -275,6 +280,41 @@ def test_only_stale_entries_log_at_info(tmp_path: Path, caplog: pytest.LogCaptur
     (record,) = _records(caplog)
     assert record.levelno == logging.INFO
     assert _fields(record)["stale"] == 1
+
+
+def test_a_ratio_too_large_for_a_float_does_not_stop_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The daemon's startup hook, which run() calls with no except around it.
+    monkeypatch.setattr(calibration_module, "_PROCESS_STORE", CalibrationStore())
+    _write(calibration_path(tmp_path), [_entry(ratio=10**400), _entry(_OTHER, ratio=1.3)])
+
+    store = enable_calibration_persistence(tmp_path)
+
+    assert store.ratio(_KEY) is None
+    assert store.ratio(_OTHER) == 1.3
+
+
+def test_a_loader_surprise_is_logged_and_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=_LOGGER)
+    path = tmp_path / CALIBRATION_FILE
+    _write(path, [_entry()])
+
+    def _boom(entry: object, now: datetime) -> str:
+        raise RuntimeError("a case nobody foresaw")
+
+    monkeypatch.setattr(calibration_module, "_parse_entry", _boom)
+    store = _persistent(path)
+
+    assert store.path == path
+    assert store.ratio(_KEY) is None
+    (record,) = _records(caplog)
+    assert record.levelno == logging.WARNING
+    assert "could not be loaded" in record.getMessage()
+    store.observe(_KEY, 1_000, 1_300)
+    assert json.loads(path.read_text())["ratios"][0]["ratio"] == 1.3
 
 
 def test_a_key_written_twice_keeps_the_newest(tmp_path: Path) -> None:
@@ -356,6 +396,54 @@ def test_an_ignored_observation_does_not_save(tmp_path: Path) -> None:
     assert not path.exists()
 
 
+def test_a_settled_ratio_refreshes_its_stamp_once_a_day(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    clock = [start]
+    monkeypatch.setattr(calibration_module, "_now", lambda: clock[0])
+    real_write = calibration_module._atomic_write
+    writes: list[str] = []
+
+    def _counting(path: Path, text: str) -> None:
+        writes.append(text)
+        real_write(path, text)
+
+    monkeypatch.setattr(calibration_module, "_atomic_write", _counting)
+    path = tmp_path / CALIBRATION_FILE
+    store = _persistent(path)
+
+    for day in range(40):
+        clock[0] = start + day * STAMP_REFRESH
+        # 5x clamps to MAX_RATIO, so after the first call the ratio never moves.
+        for _ in range(3):
+            store.observe(_KEY, 1_000, 5_000)
+
+    assert len(writes) == 40, "one write a day for a ratio that does not move, not one per call"
+    (entry,) = json.loads(path.read_text())["ratios"]
+    assert entry["ratio"] == MAX_RATIO
+    assert datetime.fromisoformat(entry["updated_at"]) == clock[0]
+    # Without the refresh the stamp would be 39 days old, and dropped as stale.
+    assert _persistent(path).ratio(_KEY) == MAX_RATIO
+
+
+def test_a_loaded_stamp_is_refreshed_once_it_is_a_day_old(tmp_path: Path) -> None:
+    path = tmp_path / CALIBRATION_FILE
+    _write(path, [_entry(ratio=1.17, updated_at=_stamp(timedelta(hours=1)))])
+    before = path.read_text(encoding="utf-8")
+
+    _persistent(path).observe(_KEY, 1_000, 1_170)  # sample equals the ratio
+
+    assert path.read_text(encoding="utf-8") == before, "a fresh stamp is not rewritten"
+
+    _write(path, [_entry(ratio=1.17, updated_at=_stamp(STAMP_REFRESH + timedelta(hours=1)))])
+    _persistent(path).observe(_KEY, 1_000, 1_170)
+
+    (entry,) = json.loads(path.read_text())["ratios"]
+    assert entry["ratio"] == 1.17
+    assert datetime.now(UTC) - datetime.fromisoformat(entry["updated_at"]) < timedelta(minutes=1)
+
+
 def test_a_store_with_no_path_never_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     writes: list[Path] = []
     monkeypatch.setattr(calibration_module, "_atomic_write", lambda path, text: writes.append(path))
@@ -369,6 +457,25 @@ def test_a_store_with_no_path_never_writes(tmp_path: Path, monkeypatch: pytest.M
     assert writes == []
     assert list(tmp_path.iterdir()) == []
     assert not list(Path.home().rglob(CALIBRATION_FILE))
+
+
+@pytest.mark.skipif(sys.platform in ("darwin", "win32"), reason="the rename is Linux only")
+def test_the_suite_guard_does_not_rename_a_leftover_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # conftest works out the real data dirs at import, with the
+    # developer's own HOME. user_data_dir() would rename this folder.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    share = tmp_path / ".local" / "share"
+    legacy = share / LINUX_LEGACY_DATA_DIR_NAME
+    legacy.mkdir(parents=True)
+
+    guarded = _real_user_data_dirs()
+
+    assert legacy.is_dir()
+    assert not (share / LINUX_DATA_DIR_NAME).exists()
+    assert set(guarded) == {share / LINUX_DATA_DIR_NAME, legacy}
 
 
 # ── The daemon's startup hook ────────────────────────────────────────────
@@ -454,9 +561,7 @@ def test_an_unresolved_brain_slug_stays_flat() -> None:
     )
 
 
-async def test_the_loop_sizes_its_map_from_the_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _record_manifest_configs(monkeypatch: pytest.MonkeyPatch) -> list[ManifestConfig | None]:
     seen: list[ManifestConfig | None] = []
 
     class _Recording(PromptAssembler):
@@ -465,10 +570,10 @@ async def test_the_loop_sizes_its_map_from_the_store(
             super().__init__(*args, manifest_config=manifest_config, **kw)
 
     monkeypatch.setattr(loop_module, "PromptAssembler", _Recording)
-    config = _forge_config()
-    store = CalibrationStore()
-    store.observe(_KEY, 1_000, 1_600)
-    session = Session(str(tmp_path))
+    return seen
+
+
+async def _one_turn(session: Session, config: ModelConfig, store: CalibrationStore) -> None:
     mock = MockProvider(sequences={"ezer-forge": [Script(kind="stream", content="hello")]})
     runner = SessionRunner(
         session,
@@ -482,9 +587,59 @@ async def test_the_loop_sizes_its_map_from_the_store(
         await wait_for_turn(session, 1, 10.0)
     finally:
         await runner.cancel()
+    assert mock.calls and {c.model for c in mock.calls} == {"ezer-forge"}
+
+
+async def test_the_loop_sizes_its_map_from_the_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _record_manifest_configs(monkeypatch)
+    config = _forge_config()
+    store = CalibrationStore()
+    store.observe(_KEY, 1_000, 1_600)
+
+    await _one_turn(Session(str(tmp_path)), config, store)
 
     assert seen == [
         manifest_config_for_window(
             _brain(config).context_window, chars_per_token=CHARS_PER_TOKEN / 1.6
         )
     ]
+
+
+async def test_the_loop_sizes_its_map_for_the_sessions_own_preset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The daemon passes its own config to every loop. A session bound to
+    # another preset (TD-1721) calls that preset's brain, so its map is
+    # sized from that brain's window and ratio, as the inspector sizes it.
+    seen = _record_manifest_configs(monkeypatch)
+    hosted = TierConfig(
+        slug="hosted-model",
+        base_url="http://hosted.example/v1",
+        input_price=0.0,
+        output_price=0.0,
+        cache_read_price=0.0,
+        context_window=1_000_000,
+        max_output_tokens=4096,
+    )
+    daemon_config = ModelConfig(
+        presets={
+            "hosted": Preset(brain=hosted, worker=hosted, validator=hosted),
+            "test": _forge_config().presets["test"],
+        },
+        active_preset="hosted",
+    )
+    session = Session(str(tmp_path))
+    # What Daemon._bind_session_preset does.
+    session.config = daemon_config.model_copy(update={"active_preset": "test"})
+    store = CalibrationStore()
+    store.observe(_KEY, 1_000, 1_600)
+    # Taken before the turn: the turn's own usage report moves the ratio.
+    expected = brain_manifest_config(session.config, store)
+    assert expected == manifest_config_for_window(32_768, chars_per_token=CHARS_PER_TOKEN / 1.6)
+    assert expected != brain_manifest_config(daemon_config, store)
+
+    await _one_turn(session, daemon_config, store)
+
+    assert seen == [expected]

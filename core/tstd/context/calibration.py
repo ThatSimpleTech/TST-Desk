@@ -22,9 +22,12 @@ Ratios survive a restart (TD-5013), but only when asked. A store built
 with no path, which is what every test builds, never touches disk. The
 daemon turns persistence on once at startup with
 ``token-calibration.json`` in its data folder: that loads the file, and
-every later observation that moves a ratio rewrites it. A loaded ratio
-is a measurement, so the next observation continues its EMA instead of
-replacing it. The file is::
+every later observation that moves a ratio rewrites it. So does one
+whose entry was last written ``STAMP_REFRESH`` ago or more: a ratio that
+has settled, or sits at a clamp bound, stops moving, and without that
+its ``updated_at`` would freeze and an endpoint used every day would be
+dropped as stale. A loaded ratio is a measurement, so the next
+observation continues its EMA instead of replacing it. The file is::
 
     {"version": 1, "ratios": [{"base_url": "...", "model": "...",
                                "ratio": 1.17, "updated_at": "<ISO-8601 UTC>"}]}
@@ -87,11 +90,13 @@ MAX_RATIO = 3.0
 MIN_RAW_TOKENS = 256
 
 # The persisted file (TD-5013): its name in the daemon's data folder, the
-# one format version this code reads, and the age past which an entry is
-# left out at load.
+# one format version this code reads, the age past which an entry is left
+# out at load, and how stale a saved stamp may get before an observation
+# that did not move the ratio rewrites it anyway.
 CALIBRATION_FILE = "token-calibration.json"
 FILE_VERSION = 1
 MAX_ENTRY_AGE = timedelta(days=30)
+STAMP_REFRESH = timedelta(days=1)
 
 CalibrationKey = tuple[str, str]
 """``(base_url, model slug)`` — one tokenizer behind one endpoint."""
@@ -130,6 +135,8 @@ class CalibrationStore:
     def __init__(self) -> None:
         self._ratios: dict[CalibrationKey, float] = {}
         self._updated: dict[CalibrationKey, datetime] = {}
+        # Each key's ``updated_at`` as the file last held it (TD-5013).
+        self._saved: dict[CalibrationKey, datetime] = {}
         self._path: Path | None = None
         self._save_failed = False
 
@@ -151,17 +158,19 @@ class CalibrationStore:
         calibrated estimate would compound the ratio on every call.
         Returns ``None`` (and changes nothing) when the observation is
         ignored: no usage figure, or an estimate too small to trust.
-        With persistence on, a ratio that moved is saved before this
-        returns (TD-5013).
+        With persistence on, a ratio that moved, or whose saved stamp is
+        ``STAMP_REFRESH`` old, is saved before this returns (TD-5013).
         """
         if prompt_tokens is None or prompt_tokens <= 0 or raw_estimate < MIN_RAW_TOKENS:
             return None
         sample = _clamp(prompt_tokens / raw_estimate)
         previous = self._ratios.get(key)
         updated = sample if previous is None else previous + EMA_ALPHA * (sample - previous)
+        now = _now()
         self._ratios[key] = updated
-        self._updated[key] = _now()
-        if updated != previous:
+        self._updated[key] = now
+        saved = self._saved.get(key)
+        if updated != previous or saved is None or now - saved >= STAMP_REFRESH:
             self._save()
         return updated
 
@@ -172,9 +181,10 @@ class CalibrationStore:
         """
         self._ratios.clear()
         self._updated.clear()
+        self._saved.clear()
 
     def enable_persistence(self, path: Path) -> None:
-        """Load *path*, then save to it whenever a ratio moves (TD-5013).
+        """Load *path*, then save to it as ratios move (TD-5013).
 
         The daemon calls this once, at startup. A ratio this store already
         learned in memory is newer than the file's and is kept. Nothing
@@ -182,10 +192,22 @@ class CalibrationStore:
         save replaces it.
         """
         self._path = path
-        for key, (ratio, updated_at) in _load(path).items():
+        try:
+            loaded = _load(path)
+        except Exception as e:
+            # ``_load`` handles every bad input it knows of. This is the
+            # backstop for one it does not: the daemon calls this on
+            # startup, and a cache must never keep it from starting.
+            log.warning(
+                "token calibration file could not be loaded; ratios start over",
+                extra={"extra_fields": {"path": str(path), "error": repr(e)}},
+            )
+            loaded = {}
+        for key, (ratio, updated_at) in loaded.items():
             if key not in self._ratios:
                 self._ratios[key] = ratio
                 self._updated[key] = updated_at
+                self._saved[key] = updated_at
 
     def _save(self) -> None:
         """Rewrite the file from memory. Never raises; logs a failure once."""
@@ -204,6 +226,7 @@ class CalibrationStore:
             ]
             text = json.dumps({"version": FILE_VERSION, "ratios": entries}, indent=2) + "\n"
             _atomic_write(path, text)
+            self._saved = dict(self._updated)
         except Exception as e:
             # A cache that cannot be written must not fail a turn. One
             # line per store: a read-only folder would otherwise log on
@@ -249,7 +272,10 @@ def _parse_entry(entry: object, now: datetime) -> tuple[CalibrationKey, float, d
         return "malformed"
     if updated_at.tzinfo is None:
         return "malformed"
-    value = float(ratio)
+    try:
+        value = float(ratio)
+    except (OverflowError, ValueError):  # an integer too large for a float
+        return "malformed"
     # NaN fails both comparisons, so it lands here too.
     if not MIN_RATIO <= value <= MAX_RATIO:
         return "out_of_band"

@@ -18,6 +18,7 @@ are not about the cadence should not see it either.
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 import tempfile
 from collections.abc import Awaitable, Callable, Iterator
@@ -31,7 +32,7 @@ from tstd.context import calibration as calibration_module
 from tstd.context.calibration import CalibrationKey, CalibrationStore
 from tstd.context.embeddings import EmbeddingsClient
 from tstd.keychain import KeychainError
-from tstd.logging import user_data_dir
+from tstd.logging import LINUX_DATA_DIR_NAME, LINUX_LEGACY_DATA_DIR_NAME, user_data_dir
 
 _KEEP_REAL_PING_INTERVAL = {
     "test_default_interval_leaves_room_for_a_missed_frame",
@@ -43,9 +44,24 @@ _KEEP_EMBEDDINGS_FROM_CONFIG = {
 }
 
 
-# The developer's own data folder, read at import, before any fixture moves
-# HOME. Nothing in the suite may persist into it (TD-5013).
-_REAL_USER_DATA_DIR = user_data_dir()
+def _real_user_data_dirs() -> tuple[Path, ...]:
+    """The developer's own data folders, worked out with no side effect (TD-5013).
+
+    On Linux ``user_data_dir()`` renames a leftover reverse-DNS folder to
+    ``tst-desk``, so calling it here would change the real data area
+    just by collecting the suite. Both Linux names are guarded instead.
+    The macOS and Windows branches only build a path.
+    """
+    if sys.platform in ("darwin", "win32"):
+        return (user_data_dir(),)
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return (base / LINUX_DATA_DIR_NAME, base / LINUX_LEGACY_DATA_DIR_NAME)
+
+
+# Read at import, before any fixture moves HOME. Nothing in the suite may
+# persist into these (TD-5013).
+_REAL_USER_DATA_DIRS = tuple(d.resolve() for d in _real_user_data_dirs())
 
 
 @pytest.fixture(autouse=True)
@@ -91,9 +107,9 @@ def _no_token_calibration_from_canned_usage(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(calibration_module, "_PROCESS_STORE", _NonLearningStore())
     yield
     path = calibration_module.process_calibration_store().path
-    assert path is None or not path.resolve().is_relative_to(_REAL_USER_DATA_DIR.resolve()), (
-        f"a test pointed token calibration at the real data folder: {path}"
-    )
+    assert path is None or not any(
+        path.resolve().is_relative_to(real) for real in _REAL_USER_DATA_DIRS
+    ), f"a test pointed token calibration at the real data folder: {path}"
 
 
 @pytest.fixture(autouse=True)

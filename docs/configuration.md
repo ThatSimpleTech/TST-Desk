@@ -682,18 +682,21 @@ use as `token_ratio`.
 
 Learned ratios survive a restart (TD-5013). The daemon keeps them in `token-calibration.json`
 in its data directory (the platform directory in §1, or `--data-dir`), loads the file at start
-and rewrites it whenever a ratio moves. A loaded ratio keeps moving by 30% per report, as if
-the daemon had never stopped. An entry not updated for 30 days, a ratio outside 0.5–3.0, a
-malformed entry, or a file that cannot be read is ignored, with one log line, and that endpoint
-starts at 4 characters per token again. The file is a cache, not a setting: delete it to make
-every endpoint relearn, and do not edit it. A save that fails (a read-only folder, a full disk)
-is logged once and the ratio stays in memory; the turn is never affected.
+and rewrites it whenever a ratio moves, and at least once a day for an endpoint in use, so a
+ratio that has settled is not dropped as stale. A loaded ratio keeps moving by 30% per report,
+as if the daemon had never stopped. An entry not updated for 30 days, a ratio outside 0.5–3.0,
+a malformed entry, or a file that cannot be read is ignored, with one log line, and that
+endpoint starts at 4 characters per token again. The file is a cache, not a setting: delete it
+while TST Desk is stopped to make every endpoint relearn (a running daemon rewrites it from
+memory on the next report), and do not edit it. A save that fails (a read-only folder, a full
+disk) is logged once and the ratio stays in memory; the turn is never affected.
 
 The workspace map's share of the brain window (15%, see the steering guide) converts to
 characters at the brain endpoint's learned ratio too: at a ratio of 1.17 that is about 3.4
-characters per token instead of 4. It is taken once, when a session's loop starts, so the map
-does not resize mid-session. A brain tier whose model is discovered on the first turn (no `slug`
-on a local server) sizes that session's map at 4 characters per token.
+characters per token instead of 4. It is taken once, for the brain of the session's own preset,
+when its loop starts, so the map does not resize mid-session. A brain tier whose model is
+discovered on the first turn (no `slug` on a local server) sizes that session's map at 4
+characters per token.
 
 A single tool result is capped at the smaller of 50,000 characters and a quarter of
 (`context_window` − `max_output_tokens` − tokens already in the prompt), converted to characters

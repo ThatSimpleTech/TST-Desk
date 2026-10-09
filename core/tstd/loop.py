@@ -707,10 +707,12 @@ def brain_manifest_config(config: ModelConfig, store: CalibrationStore) -> Manif
 
     The map's share of the window becomes bytes at the brain endpoint's
     learned characters per token, keyed exactly as the turn's token
-    counter keys it (``calibration_key``). The loop and the instruction
-    inspector both size the map here. The figure is taken when the
-    assembler is built and kept for the loop: a map that resized as the
-    ratio moved would change the prompt prefix on every call.
+    counter keys it (``calibration_key``). *config* is the snapshot the
+    session calls (its preset's, TD-1721, else the daemon's). The loop
+    and the instruction inspector both size the map here. The figure is
+    taken when the assembler is built and kept for the loop: a map that
+    resized as the ratio moved would change the prompt prefix on every
+    call.
 
     A brain tier on a loopback server with no slug in the config is
     resolved by discovery on the first turn (TD-1805), after a loop has
@@ -960,10 +962,15 @@ async def agent_loop(
     calibration = (
         calibration_store if calibration_store is not None else (process_calibration_store())
     )
+    # The map is sized for the brain this session's calls go to: its own
+    # preset snapshot when it has one (TD-1721), as at turn start and in
+    # the instruction inspector, not the daemon's active preset.
     assembler = prompt_assembler or PromptAssembler(
         session.workspace_path,
         claude_global_fallback=config.steering.claude_global_fallback,
-        manifest_config=brain_manifest_config(config, calibration),
+        manifest_config=brain_manifest_config(
+            session.config if session.config is not None else config, calibration
+        ),
     )
     embeddings_client = EmbeddingsClient.from_config(config)
 
