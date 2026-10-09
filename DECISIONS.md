@@ -12056,3 +12056,51 @@ tokenizer per slug. Heavy, and wrong for any gateway that rewrites
 the prompt. Calibrating from the progress check. It resends the
 turn's prompt plus one question, so it measures nothing new and would
 move the EMA twice for one turn. Persisting ratios to disk. See above.
+
+## TD-5008 — Tiers send max_tokens and carry an extra_body (Class B)
+
+2026-10-09. `max_output_tokens` was a compaction reservation only: the
+turn, the progress check and the delegate worker sent no `max_tokens`,
+so a reasoning model behind EZER's LiteLLM ran to the server's own
+default, thinking included. There was also no way to pass a server's
+own request fields, such as llama.cpp's `chat_template_kwargs`, which
+is how EZER's model is told to think less.
+
+**Decision:** `_stream_and_parse` (the turn and the progress check)
+and the delegate worker send `max_tokens = max_output_tokens` from
+their tier. `TierConfig` gains `extra_body: dict | None`, merged last
+into those requests and into the classifier's `_worker_completion`.
+The classifier keeps `max_tokens=8`. `extra_body` may not set `model`,
+`messages`, `tools`, `tool_choice`, `stream`, `stream_options` or
+`max_tokens`; a load error names every clash and says what to use
+instead. The settings writers edit single lines, so a slug, credential
+or active-preset save leaves the block as written; the tier is not
+mirrored in the protocol, so nothing else needed to carry it. Memory
+distillation, the supervisor and the validator review already sent
+`max_tokens` and do not take `extra_body` yet.
+
+**Rationale:** The cap the budget reserves for the answer should be
+the cap the server applies, or the reservation is fiction in one
+direction or the other. A free-form map is the honest shape for
+server-specific knobs: the names belong to the server's docs, not to
+ours, and any typed field we invented would lag them. Reserved keys
+are refused rather than ignored because the merge runs last, so a
+clash would silently replace the transcript, the tools or the cap.
+
+**Rejected:** Typed fields per known server (`reasoning_effort`,
+`top_k`). Every server spells them differently. Letting `extra_body`
+override `max_tokens`. Two places to set one number, and the
+compaction budget would no longer match the cap. Raising the
+classifier's 8 tokens in this story. Its cost and latency budget is a
+separate decision. A secret filter on `extra_body`. The docs and the
+shipped comment say never to put a key there, and the prime directive
+already forbids secrets in config.
+
+**Known gap:** On a worker that reasons before it answers, 8 tokens
+end inside the thinking. The reply content is empty, the parse fails,
+the judgment fails closed to Class B (an approval prompt), and that
+result is cached for the same tool and arguments. A DoD poll reads the
+same empty reply as no verdict, so a prose item never goes green.
+`extra_body` with low reasoning effort narrows this but does not
+remove it; a server-side switch that turns thinking off, or a larger
+classifier cap, does.

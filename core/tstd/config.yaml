@@ -17,12 +17,18 @@
 #   output_price     — $ per million output tokens (completion)
 #   cache_read_price — $ per million input tokens read from cache
 #   context_window   — max context tokens the model supports
-#   max_output_tokens — max tokens the model may generate
+#   max_output_tokens — max tokens the model may generate; sent as
+#                        max_tokens on every turn (TD-5008)
 #   credential        — named API key from the credentials catalog
 #                        below. Omit on a loopback tier for no key
 #                        (TD-1801). An off-box tier with no credential
 #                        uses `openrouter` so existing keychains keep
 #                        working.
+#   extra_body        — optional map merged into every request body for
+#                        the tier, e.g. chat_template_kwargs for a
+#                        llama.cpp server. It cannot set model, messages,
+#                        tools, tool_choice, stream, stream_options or
+#                        max_tokens. Never put a key here.
 
 # Named API keys (TD-1717). Names live here; secrets live in the OS
 # keychain under tst-<id>. Settings shows the name, never the secret.

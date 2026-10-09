@@ -364,6 +364,9 @@ def _stream_turn(
     model: str,
     messages: list[ChatMessage],
     tools: list[ProviderToolDefinition] | None = None,
+    *,
+    max_tokens: int | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> AsyncIterator[StreamChunk | ProviderError]:
     """Open a stream from the provider.
 
@@ -372,13 +375,16 @@ def _stream_turn(
     Returns an ``AsyncIterator`` ready for ``async for``.
 
     If *tools* is provided, it is passed as the ``tools`` parameter to
-    the chat completion request.
+    the chat completion request. *max_tokens* and *extra_body* come
+    from the tier (TD-5008).
     """
     request = ChatCompletionRequest(
         model=model,
         messages=list(messages),
         tools=tools,
         stream=True,
+        max_tokens=max_tokens,
+        extra_body=extra_body,
     )
     return provider.chat_completion_stream(request)
 
@@ -487,12 +493,16 @@ async def _stream_and_parse(
     tool_definitions: list[ProviderToolDefinition] | None,
     tracker: CostTracker,
     tier: TierName,
-    tier_cfg: Any,
+    tier_cfg: TierConfig,
     *,
     emit_events: bool = True,
     on_usage: Callable[[Usage], None] | None = None,
 ) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None, str]:
     """Call the provider, stream deltas, and accumulate tool calls.
+
+    The request caps generation at the tier's ``max_output_tokens`` and
+    carries its ``extra_body`` (TD-5008), so the turn and the progress
+    check both send them.
 
     *on_usage* receives the call's reported usage once the stream closes
     (TD-5007: the main turn call feeds token calibration from it).
@@ -523,7 +533,15 @@ async def _stream_and_parse(
     # the complete cumulative figure rather than a partial first one.
     usage: Usage | None = None
 
-    async for chunk in _stream_turn(provider, model_slug, messages, tool_definitions):
+    stream = _stream_turn(
+        provider,
+        model_slug,
+        messages,
+        tool_definitions,
+        max_tokens=tier_cfg.max_output_tokens,
+        extra_body=tier_cfg.extra_body,
+    )
+    async for chunk in stream:
         if session.cancel_requested or session.stop_turn_requested:
             failed = True
             error_msg = "cancelled" if session.cancel_requested else "stopped"
@@ -907,11 +925,15 @@ async def agent_loop(
         # not the CU remapped client — they are not a pixel loop (TD-3903).
         worker_cfg = config.tier("worker")
         worker_client = await client_for(worker_cfg)
+        # The 8-token cap is the classifier's own (a one-letter verdict),
+        # not the tier's. extra_body still applies (TD-5008): it is how a
+        # reasoning model is told to keep its thinking short.
         request = ChatCompletionRequest(
             model=worker_cfg.require_slug(),
             messages=[ChatMessage(role="user", content=prompt)],
             max_tokens=8,
             temperature=0.0,
+            extra_body=worker_cfg.extra_body,
         )
         resp = await worker_client.chat_completion(request)
         if isinstance(resp, ProviderError):

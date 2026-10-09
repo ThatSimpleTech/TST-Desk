@@ -633,26 +633,32 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `output_price` | float ≥ 0 | *required* | Dollars per **million** completion tokens. |
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
-| `max_output_tokens` | int > 0 | *required* | The answer reservation subtracted from `context_window` — see below. |
+| `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
 | `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
+| `extra_body` | map | none | Extra JSON fields merged into every chat request the tier makes: the turn, the progress check, a delegated worker, and (on the worker tier) the tool-call classifier. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options` or `max_tokens`; a load error names the clash. Sent as written: never put a key or token here. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
 a wrong number here buys you a wrong cap, not an error. A preset priced at zero (the `local`
 and `vllm` presets) honestly reports a cost of zero.
 
-**`context_window` and `max_output_tokens` are a compaction budget, not request parameters.**
-Neither is sent to the model. Together they set the point at which the conversation is
-compacted: at 80% of `context_window - max_output_tokens`, the oldest messages are replaced by
-an extractive summary, keeping the system message and the two most recent user turns. No model
-call is spent doing it. So:
+**`context_window` is a compaction budget; `max_output_tokens` is also the output cap.**
+`context_window` is never sent. `max_output_tokens` is sent as `max_tokens` on the turn, the
+progress check and a delegated worker's requests (TD-5008); the validator review, the supervisor
+check and memory distillation already sent it. Together they set the point at which the
+conversation is compacted: at 80% of `context_window - max_output_tokens`, the oldest messages
+are replaced by an extractive summary, keeping the system message and the two most recent user
+turns. No model call is spent doing it. So:
 
 - `context_window` must be no larger than what the *server* actually serves. A local server
   usually caps context well below the model's architectural ceiling; setting the ceiling here
   means compaction never fires and the server silently truncates instead — and what it drops
   first is your steering block.
-- `max_output_tokens` does **not** cap generation. It only reserves room for the answer inside
-  the budget. Your provider's own default output limit is what actually applies.
+- `max_output_tokens` caps generation, and the provider counts a reasoning model's thinking
+  inside that cap. Size it for the thinking plus the answer, or turn the thinking down with
+  `extra_body` (§3.6). A reply cut off at the cap ends with `finish_reason: length`. Raising it
+  also shrinks the compaction budget, so on a small window it is a trade. The tool-call
+  classifier keeps its own 8-token cap.
 
 **How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call
 arguments, every tool definition the request sends (as the request serializes it — a few
@@ -668,13 +674,13 @@ log line carries the ratio in use as `token_ratio`.
 A single tool result is capped at the smaller of 50,000 characters and a quarter of
 (`context_window` − `max_output_tokens` − tokens already in the prompt), converted to characters
 at the learned ratio (4 characters per token before the endpoint has reported usage), and never
-below 4,000 characters. On a 32,768-token tier one result cannot fill the
-window by itself. At 128,000 tokens or larger the cap stays 50,000 unless the learned ratio is
-above about 2. If the in-flight turn's tool
-results still exceed the compaction budget, their middles are replaced with a note to re-read
-with offset and limit before the next model call. A provider that still reports a context
-overflow is retried once at a tighter budget. If it overflows again, the turn fails with a short
-message that names the configured window. The raw provider error stays in the log.
+below 4,000 characters. On a 32,768-token tier one result cannot fill the window by itself. At
+128,000 tokens or larger the cap stays 50,000 unless the learned ratio is above about 2. If the
+in-flight turn's tool results still exceed the compaction budget, their middles are replaced
+with a note to re-read with offset and limit before the next model call. A provider that still
+reports a context overflow is retried once at a tighter budget. If it overflows again, the turn
+fails with a short message that names the configured window. The raw provider error stays in
+the log.
 
 ---
 
@@ -867,6 +873,57 @@ To ground computer-use clicks on the same loopback server, set
 `computer_use.grounding.base_url` to that `/v1` URL (or a dedicated
 sidecar). Empty keeps the intended (x, y). A vision model that is
 down or unnamed falls back the same way — it does not fail the click.
+
+### 3.6 Provider-specific request fields (`extra_body`)
+
+Some servers take settings the OpenAI shape has no field for. `extra_body` on a tier is merged
+into the JSON body of every chat request that tier makes (TD-5008). On EZER, a llama.cpp
+reasoning model behind LiteLLM, this keeps the thinking short so the answer fits inside
+`max_output_tokens`:
+
+<!-- verify: tier -->
+```yaml
+base_url: http://127.0.0.1:8000/v1
+input_price: 0.0
+output_price: 0.0
+cache_read_price: 0.0
+context_window: 32768
+max_output_tokens: 4096
+extra_body:
+  chat_template_kwargs:
+    reasoning_effort: low
+```
+
+It reaches the turn, the progress check and a delegated worker. On the worker tier it also
+reaches the tool-call classifier, whose own `max_tokens` stays 8. The validator review, the
+supervisor check and memory distillation do not send it yet. The values go to the server as
+written, so check the server's own documentation for the field names, and never put a key or a
+token here. The settings screen keeps the block when it writes a slug, a credential or the
+active preset.
+
+The request already owns some fields, and `extra_body` is merged last, so setting one of them
+would silently replace what TST Desk built. Those are a load error:
+
+<!-- verify: tier-invalid -->
+```yaml
+base_url: http://127.0.0.1:8000/v1
+input_price: 0.0
+output_price: 0.0
+cache_read_price: 0.0
+context_window: 32768
+max_output_tokens: 4096
+extra_body:
+  max_tokens: 16384
+```
+
+```
+Invalid model configuration in .../config.yaml: presets.<preset>.<tier>.extra_body: Value error,
+extra_body cannot set max_tokens: TST Desk sends it itself. Use slug for the model and
+max_output_tokens for the output cap
+```
+
+The reserved fields are `model`, `messages`, `tools`, `tool_choice`, `stream`,
+`stream_options` and `max_tokens`.
 
 ---
 

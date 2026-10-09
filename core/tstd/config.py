@@ -43,6 +43,12 @@ CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # A second OpenRouter key slugifies to openrouter-2 (TD-1718). Same host.
 _OPENROUTER_FAMILY_RE = re.compile(r"^openrouter(?:-\d+)?$")
 
+# Request fields a tier's ``extra_body`` may not set (TD-5008): the loop
+# owns them, and the merge would override what it built.
+EXTRA_BODY_RESERVED_KEYS = frozenset(
+    {"model", "messages", "tools", "tool_choice", "stream", "stream_options", "max_tokens"}
+)
+
 _DEFAULT_CONFIG_RESOURCE = "config.yaml"
 
 
@@ -195,6 +201,10 @@ class TierConfig(BaseModel):
     # Named key from the credentials catalog (TD-1717). None / omitted /
     # blank means unbound: loopback sends no key, remote uses openrouter.
     credential: str | None = None
+    # Provider-specific JSON fields merged into every chat request this
+    # tier makes (TD-5008), e.g. a llama.cpp server's
+    # ``chat_template_kwargs``. Sent as-is: never put a secret here.
+    extra_body: dict[str, Any] | None = None
 
     @field_validator("credential")
     @classmethod
@@ -203,6 +213,28 @@ class TierConfig(BaseModel):
             return None
         cleaned = value.strip()
         return cleaned or None
+
+    @field_validator("extra_body")
+    @classmethod
+    def _extra_body_leaves_request_keys_alone(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Refuse keys the request already sets (TD-5008).
+
+        ``extra_body`` is merged last, so one of these would silently
+        replace what the loop built — the model, the transcript, the
+        tools, streaming, or the output cap from ``max_output_tokens``.
+        """
+        if value is None:
+            return None
+        clashes = sorted(key for key in value if key in EXTRA_BODY_RESERVED_KEYS)
+        if clashes:
+            raise ValueError(
+                f"extra_body cannot set {', '.join(clashes)}: TST Desk sends "
+                f"{'it' if len(clashes) == 1 else 'them'} itself. Use slug for the "
+                "model and max_output_tokens for the output cap"
+            )
+        return value
 
     @model_validator(mode="after")
     def _slug_required_off_box(self) -> TierConfig:

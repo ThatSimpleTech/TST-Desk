@@ -246,6 +246,8 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
             messages=list(messages),
             tools=tool_defs or None,
             stream=False,
+            max_tokens=worker_cfg.max_output_tokens,
+            extra_body=worker_cfg.extra_body,
         )
         resp = await provider.chat_completion(request)
         if isinstance(resp, ProviderError):
