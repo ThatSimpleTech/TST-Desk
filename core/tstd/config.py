@@ -398,11 +398,12 @@ class ProjectContextConfig(BaseModel):
 class SteeringConfig(BaseModel):
     """Which extra steering files discovery may read (TD-4845).
 
-    ``claude_global_fallback`` gates only ``~/.claude/CLAUDE.md``.
-    Workspace and nested ``CLAUDE.md`` files are project files and stay
-    on the TD-502 fallback. Default false: TST Desk's global file is
-    ``~/.tstdesk/AGENTS.md``, and Claude Code's rules are not spent in
-    the prompt or followed into an outside import.
+    ``claude_global_fallback`` gates ``~/.claude/CLAUDE.md`` and, since
+    TD-5011, ``~/.claude/skills/``.  Workspace and nested ``CLAUDE.md``
+    files and a workspace's own ``.claude/skills/`` are project files and
+    stay on. Default false: TST Desk's global file is
+    ``~/.tstdesk/AGENTS.md``, and Claude Code's rules and skill catalog
+    are not spent in the prompt or followed into an outside import.
     """
 
     claude_global_fallback: bool = False

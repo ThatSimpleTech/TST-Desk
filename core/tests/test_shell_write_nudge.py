@@ -8,13 +8,17 @@ note.  The note never changes how or whether the command runs.
 
 from __future__ import annotations
 
+import asyncio
 import sys
+import time
+from collections.abc import Awaitable
 from pathlib import Path
 
 import pytest
 
 from tstd.context.prompt import BASE_SYSTEM_PROMPT, PromptAssembler
 from tstd.session import Session
+from tstd.tools import shell as shell_module
 from tstd.tools.registry import create_registry
 from tstd.tools.shell import run_shell
 from tstd.tools.shell_writes import SHELL_WRITE_NOTE, writes_workspace_files
@@ -27,7 +31,7 @@ WRITES: list[str] = [
     "echo hi >> notes.txt",
     "printf 'x' >notes.txt",
     "ls &> listing.txt",
-    "make 2>&1 > build.log",
+    "make 2>&1 > build.txt",
     "echo x > {ws}/inside.txt",
     'echo x > "$OUT"',
     "ls\necho done > status.txt",
@@ -45,7 +49,7 @@ WRITES: list[str] = [
     "grep -rl foo src | xargs sed -i 's/foo/bar/'",
     "find . -name '*.py' -exec sed -i 's/a/b/' {} +",
     "gawk -i inplace '{print}' data.txt",
-    "pytest -q 2>&1 | tee test-output.log",
+    "pytest -q 2>&1 | tee test-output.txt",
     "echo x | sudo tee -a config.ini",
     "dd if=/dev/zero of=blob.bin bs=1k count=1",
     "python3 -c \"open('out.txt', 'w').write('x')\"",
@@ -54,6 +58,33 @@ WRITES: list[str] = [
     "python3 -c \"p = 'notes.md'; open(p, 'a').write('x')\"",
     "python3 - <<'EOF'\nwith open('src/app.py', 'a') as f:\n    f.write('x')\nEOF",
     "node -e \"require('fs').writeFileSync('out.json', '{}')\"",
+    # Input redirects are read; the output target still counts.
+    "tee out.txt < in.txt",
+    "sudo -u www-data tee config.ini < new.ini",
+    # A wrapper's option value is not the program.
+    "env -u PYTHONPATH sed -i 's/a/b/' setup.cfg",
+    "timeout -s KILL 30 sed -i 's/a/b/' f",
+    "env -u PYTHONHOME -u PYTHONPATH python3 -c \"open('a.txt', 'w')\"",
+    "nice -n 10 sed -i 's/a/b/' f",
+    "xargs -n 1 sed -i 's/a/b/' < files.txt",
+    # The cwd leaves a subshell, `popd` and a failed `cd` lose it.
+    "(cd /tmp && make); echo x > notes.md",
+    "( cd /tmp; make ); echo x > notes.md",
+    "pushd /tmp && make; popd; echo x > notes.md",
+    "cd /nonexistent || echo x > out.txt",
+    "cd \"$X\" && python3 - <<'PY'\nopen('x.txt', 'w')\nPY",
+    # `<<` inside quotes opens no heredoc.
+    "grep -n '<<EOF' scripts/build.sh\necho done > status.txt",
+    # A heredoc piped into python is code.
+    "cat <<'EOF' | python3 -\nopen('out.txt', 'w').write('x')\nEOF",
+    # A shell's `-c` script and stdin are read like the command itself.
+    "bash -c 'echo x > out.txt'",
+    "sh -c \"sed -i 's/a/b/' f\"",
+    "env FOO=1 bash -lc 'echo x > out.txt'",
+    "bash <<'EOF'\necho x > out.txt\nEOF",
+    "python3 -Bc \"open('a.txt', 'w')\"",
+    # An arithmetic shift opens no heredoc that would hide the next line.
+    "echo $((1 << 2))\necho x > out.txt",
 ]
 
 READ_ONLY: list[str] = [
@@ -102,6 +133,32 @@ READ_ONLY: list[str] = [
     "diff <(sort a) <(sort b)",
     "dd if=disk.img of=/dev/null",
     "echo 'unterminated > x",
+    # Input redirects, here-strings and process substitution are read.
+    "tee < in.txt",
+    "sed -n p < in.txt",
+    "wc -l < data.csv",
+    "cat <<< 'a > b'",
+    'while read l; do echo "$l"; done < list.txt',
+    "python3 script.py < input.txt",
+    # A heredoc fed to a script is data, not code.
+    "python3 tool.py <<'EOF'\nopen('x.txt', 'w')\nEOF",
+    # The cwd at the heredoc is outside the workspace.
+    "cd /tmp/probe && python3 - <<'PY'\nopen('x.txt', 'w').write('a')\nPY",
+    "( cd /tmp && echo x > a.txt )",
+    # Null devices, temp variables, mktemp names, os.devnull.
+    "cmd > nul",
+    "cmd > NUL 2>&1",
+    "Get-ChildItem > $null",
+    'ls > "${TMPDIR:-/tmp}/list.txt"',
+    'ls > "${TMP}/list.txt"',
+    'out=$(mktemp); ls > "$out"',
+    'dir=$(mktemp -d) && echo x > "$dir/a.txt"',
+    "python3 -c \"import os; open(os.devnull, 'w')\"",
+    # Captured logs are output, not file changes.
+    "pytest -q > test.log 2>&1",
+    "make 2>&1 | tee build.log",
+    "nohup ./server > server.log 2>&1 &",
+    "bash script.sh",
 ]
 
 
@@ -136,6 +193,36 @@ class TestDetection:
         link.symlink_to(real)
         assert writes_workspace_files(f"echo x > {real}/a.txt", link)
 
+    def test_container_mount_counts_as_the_workspace(self, workspace: Path) -> None:
+        command = "echo x > /workspace/out.txt"
+        assert not writes_workspace_files(command, workspace)
+        assert writes_workspace_files(command, workspace, mount="/workspace")
+        assert writes_workspace_files(
+            "cd /workspace/src && sed -i 's/a/b/' a.py", workspace, mount="/workspace"
+        )
+        assert not writes_workspace_files("echo x > /tmp/out.txt", workspace, mount="/workspace")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "python3 - <<'EOF'\n" + "x = open(\n" * 5000 + "EOF",
+            "python3 - <<'EOF'\n" + "open(a, " * 20000 + "\nEOF",
+            'python -c "' + "open('a'" * 20000 + '"',
+            "node - <<'EOF'\n" + "writeFileSync(`" * 20000 + "\nEOF",
+        ],
+        ids=["unclosed-lines", "unclosed-heredoc", "unclosed-inline", "unclosed-node"],
+    )
+    def test_pathological_inline_code_is_bounded(self, command: str, workspace: Path) -> None:
+        # Reviewers measured 12-290 s here before the scan was bounded; the
+        # check runs on the daemon's event loop after every shell call.
+        started = time.perf_counter()
+        assert writes_workspace_files(command, workspace)
+        assert time.perf_counter() - started < 2.0
+
+    def test_realistic_reads_stay_unflagged_under_the_bound(self, workspace: Path) -> None:
+        body = "with open('data/f.txt') as fh:\n    rows = fh.read()\n" * 400
+        assert not writes_workspace_files(f"python3 - <<'EOF'\n{body}EOF", workspace)
+
 
 class TestShellResult:
     async def test_write_gets_the_note_and_still_runs(self, workspace: Path) -> None:
@@ -151,13 +238,55 @@ class TestShellResult:
         assert "exit code: 0" in result
         assert SHELL_WRITE_NOTE not in result
 
+    def test_note_is_forward_looking(self) -> None:
+        # Text is all the detector reads: the write may have failed, and a
+        # literal model must not resend a file it already wrote.
+        assert "looks like" in SHELL_WRITE_NOTE
+        assert "no need to redo" in SHELL_WRITE_NOTE
+        assert "wrote files" not in SHELL_WRITE_NOTE
+
+    async def test_failed_write_note_claims_no_write(self, workspace: Path) -> None:
+        result = await run_shell(Session(str(workspace)), "sed -i 's/a/b/' does_not_exist.txt")
+        assert "exit code: 0" not in result
+        assert SHELL_WRITE_NOTE in result
+
+    async def test_autonomous_command_judges_the_container_mount(
+        self, workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The container is not started here: the note is read from the text.
+        def fake_open(session: Session, command: str) -> Awaitable[asyncio.subprocess.Process]:
+            return asyncio.create_subprocess_shell(
+                "exit 0",
+                cwd=session.workspace_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+        monkeypatch.setattr(shell_module, "_open_shell_process", fake_open)
+        session = Session(str(workspace))
+        session.autonomy = True
+        assert SHELL_WRITE_NOTE in await run_shell(session, "echo x > /workspace/out.txt")
+        session.autonomy = False
+        assert SHELL_WRITE_NOTE not in await run_shell(session, "echo x > /workspace/out.txt")
+
 
 class TestStandingInstructions:
     def test_base_prompt_names_the_file_tools_and_the_shell_forms(self) -> None:
         assert "fs_edit" in BASE_SYSTEM_PROMPT
         assert "fs_write" in BASE_SYSTEM_PROMPT
-        for form in ("sed -i", "redirects", "heredocs", "tee"):
+        for form in ("sed -i", "redirects", "heredocs", "tee", "inline scripts"):
             assert form in BASE_SYSTEM_PROMPT
+
+    def test_base_prompt_keeps_the_shell_for_tool_moves(self) -> None:
+        # A rule that forbade `rm`, `git mv` or `ruff format` could not be followed.
+        for allowed in (
+            "deleting",
+            "renaming",
+            "formatters",
+            "code generators",
+            "package managers",
+        ):
+            assert allowed in BASE_SYSTEM_PROMPT
 
     @pytest.mark.parametrize("tier", ["brain", "worker", "validator"])
     def test_every_tier_gets_the_rule_in_a_stable_prefix(
@@ -179,3 +308,4 @@ class TestStandingInstructions:
         assert "existing file" in descriptions["fs_edit"]
         assert "whole file" in descriptions["fs_write"]
         assert "fs_edit" in descriptions["shell"] and "fs_write" in descriptions["shell"]
+        assert "package managers" in descriptions["shell"]

@@ -1135,7 +1135,11 @@ async def agent_loop(
         # A stop that landed as the previous turn sealed must not abort
         # this one. A stop after this line belongs to this turn.
         session.acknowledge_stop_turn()
-        apply_slash_skill(session, queued.display)
+        apply_slash_skill(
+            session,
+            queued.display,
+            claude_global_fallback=config.steering.claude_global_fallback,
+        )
 
         # TD-1721: a preset switch while idle is applied on this turn.
         if session.config is not None:
@@ -1414,7 +1418,10 @@ async def agent_loop(
                         last_cached_tokens=tracker.last_cached_prompt_tokens,
                         cache_observed=tracker.cache_observed,
                         memory=session.last_memory,
-                        skills=list_workspace_skills(session.workspace_path),
+                        skills=list_workspace_skills(
+                            session.workspace_path,
+                            claude_global_fallback=config.steering.claude_global_fallback,
+                        ),
                         loaded_skill_names=session.loaded_skills,
                     )
                 )

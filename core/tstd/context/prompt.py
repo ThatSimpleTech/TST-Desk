@@ -45,10 +45,11 @@ BASE_SYSTEM_PROMPT = (
     "When you need the public web, fire several web_search queries in one "
     "turn (different angles), web_fetch the two or three best URLs, then "
     "answer from those pages. Do not stop at snippets. "
-    "Change files with fs_edit (exact replacement) or fs_write (a new file "
-    "or a whole file), never through the shell (sed -i, redirects, "
-    "heredocs, tee, inline python or node writes): shell writes skip the "
-    "diff view and review."
+    "Create or change file contents with fs_edit (exact replacement) or "
+    "fs_write (a new or whole file), not with shell redirects, heredocs, "
+    "tee, sed -i or inline scripts, which skip the diff view and review. "
+    "The shell is fine for deleting, moving or renaming files, formatters, "
+    "code generators and package managers."
 )
 
 #: Block [3] placeholder until the memory story lands (spec §5).  Keeps
@@ -305,7 +306,11 @@ class PromptAssembler:
         # bodies are brain-only and must not enter prefix_hash.
         skill_parts: list[str] = []
         if tier == "brain":
-            discovered = list_workspace_skills(self._workspace, self._home_dir)
+            discovered = list_workspace_skills(
+                self._workspace,
+                self._home_dir,
+                claude_global_fallback=self._claude_global_fallback,
+            )
             catalog = render_skill_catalog(discovered)
             if catalog:
                 skill_parts.append(catalog)

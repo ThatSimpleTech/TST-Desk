@@ -20,62 +20,74 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
+from .shell_syntax import INPUT_REDIRECTS, PIPES, Segment, Token, segments, tokenize
 from .shell_write_forms import (
     INTERPRETER,
-    INTERPRETER_IN_LINE,
     code_writes,
     gawk_in_place,
-    inline_code,
+    interpreter_source,
     perl_files,
     sed_files,
+    shell_source,
 )
 
+# Forward-looking on purpose: the detector reads text, so the write may
+# have failed, and a model told the write "should" have gone through
+# fs_write must not send the whole file again to comply.
 SHELL_WRITE_NOTE = (
-    "[note: this command wrote files through the shell. Use fs_edit or fs_write "
-    "for file changes so they show in the diff and can be reviewed.]"
+    "[note: this command looks like it changed workspace files through the "
+    "shell. For your next file change, use fs_edit or fs_write so it shows in "
+    "the diff; no need to redo this one.]"
 )
 
-_REDIRECTS = frozenset({">", ">>", ">|", ">&", "&>", "&>>"})
-_SEPARATORS = frozenset({"|", "||", "|&", "&", "&&", ";", ";;", "\n"})
-# Longest first, so `&>>` is not read as `&>` then `>`.
-_OPERATORS = tuple(sorted(_REDIRECTS | _SEPARATORS, key=len, reverse=True))
 _KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "("})
-_WRAPPERS = frozenset(
-    {"sudo", "doas", "env", "command", "builtin", "exec", "nohup", "nice", "time", "timeout"}
-    | {"stdbuf", "xargs"}
-)
+#: Programs that run the next word as a command, with their options that
+#: take a separate value (`env -u NAME`, `sudo -u USER`, `timeout -s SIG`),
+#: so that value is not read as the program.
+_WRAPPERS: dict[str, frozenset[str]] = {
+    "sudo": frozenset({"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-T", "-U"}),
+    "doas": frozenset({"-u", "-C"}),
+    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
+    "xargs": frozenset({"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s"})
+    | frozenset({"--arg-file", "--delimiter", "--max-args", "--max-procs"}),
+    "timeout": frozenset({"-s", "-k", "--signal", "--kill-after"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "stdbuf": frozenset({"-i", "-o", "-e"}),
+    "time": frozenset({"-f", "-o", "--format", "--output"}),
+    "exec": frozenset({"-a"}),
+    **{name: frozenset() for name in ("command", "builtin", "nohup")},
+}
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+#: `bash -c "bash -c '...'"` is read this many levels deep, no further.
+_MAX_NESTING = 3
 _PROGRAM_WORD = re.compile(r"^[A-Za-z0-9_./+-]+$")
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_TEMP_VARS = ("$TMPDIR", "${TMPDIR}", "$TMP", "${TMP}", "$TEMP", "${TEMP}")
+_ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
+#: `$NAME/...`, `${NAME}/...` or `${NAME:-default}/...` at the start of a path.
+_VARIABLE_PREFIX = re.compile(r"^\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)(?::?[-=][^}]*)?\})(?=/|$)")
 _HOME_PREFIXES = ("~", "$HOME", "${HOME}")
-# `<<EOF`, `<<-EOF`, `<<'EOF'`, `<<"EOF"`, `<<\EOF`; not the `<<<` here-string.
-_HEREDOC = re.compile(
-    r"(?<!<)<<(?!<)(-?)\s*(?:'([^'\n]+)'|\"([^\"\n]+)\"|\\?([A-Za-z_][A-Za-z0-9_]*))"
-)
+#: Null devices: cmd's `nul` and PowerShell's `$null` (a POSIX shell
+#: expands `$null` to nothing and writes no file).
+_NULL_DEVICES = frozenset({"nul", "nul:", "$null"})
 
 
-@dataclass(frozen=True)
-class _Token:
-    text: str
-    operator: bool = False
-    quoted: bool = False
-
-
-@dataclass(frozen=True)
+@dataclass
 class _Scope:
     """The workspace a target must fall inside to count."""
 
     roots: tuple[str, ...]
     home: str
+    #: Variables that hold scratch space: `$TMPDIR`, or `out=$(mktemp)`.
+    temp_names: set[str] = field(default_factory=lambda: {"TMPDIR", "TMP", "TEMP"})
 
     @classmethod
-    def of(cls, workspace: str | Path) -> _Scope:
+    def of(cls, workspace: str | Path, mount: str | None) -> _Scope:
         raw = os.path.normpath(os.path.abspath(workspace))
-        roots = tuple(dict.fromkeys((raw, os.path.realpath(raw))))
+        mounted = (os.path.normpath(mount),) if mount else ()
+        roots = tuple(dict.fromkeys((raw, os.path.realpath(raw), *mounted)))
         return cls(roots=roots, home=os.path.expanduser("~"))
 
     def expand_home(self, target: str) -> str:
@@ -87,20 +99,23 @@ class _Scope:
     def inside(self, raw: str, cwd: str | None) -> bool:
         """Whether a write to *raw*, run from *cwd*, lands in the workspace.
 
-        Scratch space (``/dev``, ``$TMPDIR``), git's own ``.git/`` files
-        and absolute paths elsewhere do not count.  An expansion this
-        cannot follow (``"$out"``) and a relative path after an unknown
-        ``cd`` do count: a nudge on a real write matters more than silence
-        on a rare scratch one.
+        Scratch space (``/dev``, null devices, ``$TMPDIR``, a ``mktemp``
+        name), git's own ``.git/`` files and absolute paths elsewhere do
+        not count.  An expansion this cannot follow (``"$out"``) and a
+        relative path after an unknown ``cd`` do count: a nudge on a real
+        write matters more than silence on a rare scratch one.
         """
         target = raw.strip().lstrip("!")  # zsh clobber mark: `>!file`
         if target.count(")") > target.count("("):
             target = target.rstrip(")")  # `(cd x && echo > y)`
         if not target or target.startswith("("):
             return False  # process substitution: `tee >(gzip > f)`
-        if target == "/dev" or target.startswith("/dev/") or "mktemp" in target:
+        if target.lower() in _NULL_DEVICES or target == "/dev" or target.startswith("/dev/"):
             return False
-        if any(target == var or target.startswith(var + "/") for var in _TEMP_VARS):
+        variable = _VARIABLE_PREFIX.match(target)
+        if "mktemp" in target or (
+            variable is not None and (variable.group(1) or variable.group(2)) in self.temp_names
+        ):
             return False
         target = self.expand_home(target)
         if "$" in target or "`" in target:
@@ -131,152 +146,112 @@ class _Scope:
         return None if cwd is None else os.path.normpath(os.path.join(cwd, target))
 
 
-def writes_workspace_files(command: str, workspace: str | Path) -> bool:
+def writes_workspace_files(
+    command: str, workspace: str | Path, *, mount: str | None = None
+) -> bool:
     """Whether *command* looks like it writes a file inside *workspace*.
 
-    Covers output redirection (not descriptor dups, ``/dev``, temp space,
-    or absolute paths outside the workspace), ``sed -i``, ``perl -i``,
-    ``gawk -i inplace``, ``tee``, ``dd of=``, inline ``python -c`` /
-    ``node -e`` code (or a heredoc fed to them) that opens a file for
-    writing, and a heredoc with a redirect.  A command that cannot be
-    tokenized is not flagged.
+    Covers output redirection (not descriptor dups, ``/dev``, null
+    devices, temp space, ``.log`` captures, or absolute paths outside the
+    workspace), ``sed -i``, ``perl -i``, ``gawk -i inplace``, ``tee``,
+    ``dd of=``, inline ``python -c`` / ``node -e`` code or a heredoc fed to
+    them that opens a file for writing, and any of those inside ``sh -c``.
+    A command that cannot be tokenized is not flagged.
+
+    *mount* is where a container sees the workspace (autonomy mounts it at
+    ``/workspace``); a path under it counts too.
     """
-    scope = _Scope.of(workspace)
-    text, heredocs = _split_heredocs(command)
-    for opener, body in heredocs:
-        if INTERPRETER_IN_LINE.search(opener) and code_writes(
-            body, partial(scope.inside, cwd=scope.roots[0])
-        ):
-            return True
-    tokens = _tokenize(text)
-    if tokens is None:
-        return False
-    cwd: str | None = scope.roots[0]
-    for segment in _segments(tokens):
-        wrote, cwd = _segment_writes(segment, scope, cwd)
-        if wrote:
-            return True
-    return False
+    scope = _Scope.of(workspace, mount)
+    return _Walk(scope, scope.roots[0], 0).command_writes(command)
 
 
-def _split_heredocs(command: str) -> tuple[str, list[tuple[str, str]]]:
-    """Cut heredoc bodies out of *command*: (text without them, [(opener line, body)]).
+@dataclass
+class _Walk:
+    """One pass over a command's simple commands, tracking the cwd."""
 
-    A body is data, not shell: `>` in a heredoc of HTML or Python is not a
-    redirect.  An unterminated body runs to the end, as in the shell.
-    """
-    lines = command.split("\n")
-    kept: list[str] = []
-    bodies: list[tuple[str, str]] = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        kept.append(line)
-        i += 1
-        for match in _HEREDOC.finditer(line):
-            strip_tabs = match.group(1) == "-"
-            word = match.group(2) or match.group(3) or match.group(4)
-            body: list[str] = []
-            while i < len(lines):
-                candidate = lines[i].lstrip("\t") if strip_tabs else lines[i]
-                i += 1
-                if candidate.strip() == word:
-                    break
-                body.append(lines[i - 1])
-            bodies.append((line, "\n".join(body)))
-    return "\n".join(kept), bodies
+    scope: _Scope
+    cwd: str | None
+    nesting: int
+    #: The cwd outside each `( ... )` subshell entered so far.
+    outer: list[str | None] = field(default_factory=list)
+    #: Heredoc bodies `cat <<EOF |` sends down the pipe.
+    piped: list[str] = field(default_factory=list)
 
+    def command_writes(self, command: str) -> bool:
+        tokens = tokenize(command)
+        if tokens is None:
+            return False
+        return any(self._step(segment) for segment in segments(tokens))
 
-def _tokenize(command: str) -> list[_Token] | None:
-    """POSIX-ish words and unquoted operators; None on an unclosed quote."""
-    tokens: list[_Token] = []
-    buf: list[str] = []
-    in_word = False
-    quoted = False
-    i, n = 0, len(command)
-
-    def flush() -> None:
-        nonlocal in_word, quoted
-        if in_word:
-            tokens.append(_Token("".join(buf), quoted=quoted))
-        buf.clear()
-        in_word = quoted = False
-
-    while i < n:
-        ch = command[i]
-        if ch in " \t\r":
-            flush()
-            i += 1
-        elif ch == "\\":
-            if command.startswith("\\\n", i):
-                i += 2  # line continuation
-                continue
-            buf.append(command[i + 1 : i + 2])
-            in_word = quoted = True
-            i += 2
-        elif ch == "'":
-            end = command.find("'", i + 1)
-            if end < 0:
-                return None
-            buf.append(command[i + 1 : end])
-            in_word = quoted = True
-            i = end + 1
-        elif ch == '"':
-            j = i + 1
-            while j < n and command[j] != '"':
-                if command[j] == "\\" and j + 1 < n and command[j + 1] in '"\\$`\n':
-                    j += 1
-                buf.append(command[j])
-                j += 1
-            if j >= n:
-                return None
-            in_word = quoted = True
-            i = j + 1
-        elif ch == "#" and not in_word:
-            end = command.find("\n", i)
-            i = n if end < 0 else end
-        else:
-            op = next((o for o in _OPERATORS if command.startswith(o, i)), None)
-            if op is None:
-                buf.append(ch)
-                in_word = True
-                i += 1
+    def _step(self, segment: Segment) -> bool:
+        self.outer.extend([self.cwd] * _opened_subshells(segment.tokens))
+        words, wrote, bodies = _redirect_pass(segment.tokens, self.scope, self.cwd)
+        stdin = bodies or self.piped
+        self.piped = []
+        for word in words:
+            assigned = _ASSIGNMENT.match(word)
+            if assigned is not None and "mktemp" in word:
+                self.scope.temp_names.add(assigned.group(1))
+        start = _program_index(words)
+        if start is not None:
+            name = _program_name(words[start])
+            args = words[start + 1 :]
+            if name in ("cd", "pushd"):
+                # After `cd X || ...` the shell may be in either place.
+                failed = segment.separator == "||"
+                self.cwd = (
+                    None if failed else self.scope.next_cwd(args[0] if args else None, self.cwd)
+                )
+            elif name == "popd":
+                self.cwd = None
             else:
-                flush()
-                tokens.append(_Token(op, operator=True))
-                i += len(op)
-    flush()
-    return tokens
+                wrote = wrote or self._program_writes(name, args, stdin)
+                if name == "cat" and bodies and segment.separator in PIPES:
+                    self.piped = bodies  # `cat <<'EOF' | python3`
+        for _ in range(_closed_subshells(segment.tokens)):
+            if self.outer:
+                self.cwd = self.outer.pop()
+        return wrote
+
+    def _program_writes(self, name: str, args: list[str], stdin: list[str]) -> bool:
+        if stdin and INTERPRETER.match(name) and interpreter_source(name, args)[0] == "stdin":
+            inside = partial(self.scope.inside, cwd=self.cwd)
+            return any(code_writes(body, inside) for body in stdin)  # `python3 - <<EOF`
+        if name in _SHELLS:
+            source, code = shell_source(args)
+            scripts = [code] if source == "arg" and code is not None else []
+            scripts += stdin if source == "stdin" else []
+            return any(self._nested(script) for script in scripts)
+        return _program_writes(name, args, self.scope, self.cwd)
+
+    def _nested(self, script: str) -> bool:
+        if self.nesting >= _MAX_NESTING:
+            return False
+        return _Walk(self.scope, self.cwd, self.nesting + 1).command_writes(script)
 
 
-def _segments(tokens: list[_Token]) -> list[list[_Token]]:
-    segments: list[list[_Token]] = [[]]
-    for token in tokens:
-        if token.operator and token.text in _SEPARATORS:
-            segments.append([])
-        else:
-            segments[-1].append(token)
-    return [segment for segment in segments if segment]
+def _opened_subshells(tokens: tuple[Token, ...]) -> int:
+    """`(` that open this segment: `(cd x && make)` starts a subshell."""
+    first = next((t for t in tokens if not t.operator), None)
+    if first is None or first.quoted:
+        return 0
+    return len(first.text) - len(first.text.lstrip("("))
 
 
-def _segment_writes(
-    segment: list[_Token], scope: _Scope, cwd: str | None
-) -> tuple[bool, str | None]:
-    """(does this simple command write the workspace, the cwd after it)."""
-    words, wrote = _redirect_pass(segment, scope, cwd)
-    start = _program_index(words)
-    if start is None:
-        return wrote, cwd
-    name = _program_name(words[start])
-    args = words[start + 1 :]
-    if name in ("cd", "pushd"):
-        return wrote, scope.next_cwd(args[0] if args else None, cwd)
-    return wrote or _program_writes(name, args, scope, cwd), cwd
+def _closed_subshells(tokens: tuple[Token, ...]) -> int:
+    """`)` in the last word that close more than the word opened (not `$(pwd)`)."""
+    last = next((t for t in reversed(tokens) if not t.operator), None)
+    if last is None or last.quoted:
+        return 0
+    return max(0, last.text.count(")") - last.text.count("("))
 
 
-def _redirect_pass(segment: list[_Token], scope: _Scope, cwd: str | None) -> tuple[list[str], bool]:
-    """Judge the segment's redirections; return its other words and the verdict."""
+def _redirect_pass(
+    segment: tuple[Token, ...], scope: _Scope, cwd: str | None
+) -> tuple[list[str], bool, list[str]]:
+    """Judge the segment's redirections: (other words, verdict, heredoc bodies)."""
     words: list[str] = []
+    bodies: list[str] = []
     wrote = False
     depth = 0  # inside `[[ ]]` or `(( ))`, `>` compares rather than redirects
     i = 0
@@ -292,27 +267,45 @@ def _redirect_pass(segment: list[_Token], scope: _Scope, cwd: str | None) -> tup
             continue
         if depth or i >= len(segment) or segment[i].operator:
             continue
-        target = segment[i].text
+        target = segment[i]
         i += 1
         if words and words[-1].isdigit():
             words.pop()  # the descriptor of `2>`
-        if token.text == ">&" and (target.isdigit() or target == "-"):
+        if token.text in INPUT_REDIRECTS:
+            if target.body is not None:
+                bodies.append(target.body)
+            continue  # `< in`, `<<EOF`, `<<< str`: read, never written
+        if token.text == ">&" and (target.text.isdigit() or target.text == "-"):
             continue  # `2>&1`, `>&2`, `>&-`
-        wrote = wrote or scope.inside(target, cwd)
-    return words, wrote
+        wrote = wrote or _output_hits(target.text, scope, cwd)
+    return words, wrote, bodies
+
+
+def _output_hits(target: str, scope: _Scope, cwd: str | None) -> bool:
+    """A captured ``.log`` is output, not a file change fs_write could make."""
+    return not target.lower().endswith(".log") and scope.inside(target, cwd)
 
 
 def _program_index(words: list[str]) -> int | None:
     """Index of the command word, past assignments, keywords and wrappers."""
-    wrapped = False
+    wrapper: str | None = None
+    takes_value = False
     for i, raw in enumerate(words):
         word = raw.lstrip("({")
+        if takes_value:
+            takes_value = False
+            continue  # the value of `env -u NAME`, `xargs -I FILE`
         if not word or word in _KEYWORDS or _ASSIGNMENT.match(word):
             continue
-        if wrapped and (word.startswith("-") or word[0].isdigit() or not _PROGRAM_WORD.match(word)):
-            continue  # a wrapper's own options: `sudo -n`, `timeout 10`, `xargs -I {}`
-        if _program_name(word) in _WRAPPERS:
-            wrapped = True
+        if wrapper is not None and (
+            word.startswith("-") or word[0].isdigit() or not _PROGRAM_WORD.match(word)
+        ):
+            # A wrapper's own options: `sudo -n`, `timeout 10`, `xargs -I {}`.
+            takes_value = word in _WRAPPERS[wrapper]
+            continue
+        name = _program_name(word)
+        if name in _WRAPPERS:
+            wrapper = name
             continue
         return i
     return None
@@ -324,7 +317,7 @@ def _program_name(word: str) -> str:
 
 def _program_writes(name: str, args: list[str], scope: _Scope, cwd: str | None) -> bool:
     if name == "tee":
-        return any(scope.inside(arg, cwd) for arg in args if arg and not arg.startswith("-"))
+        return any(_output_hits(arg, scope, cwd) for arg in args if arg and not arg.startswith("-"))
     if name == "dd":
         return any(arg.startswith("of=") and scope.inside(arg[3:], cwd) for arg in args)
     if name in ("sed", "gsed"):
@@ -336,8 +329,12 @@ def _program_writes(name: str, args: list[str], scope: _Scope, cwd: str | None) 
     if name == "find":
         return _find_exec_writes(args, scope, cwd)
     if INTERPRETER.match(name):
-        code = inline_code(name, args)
-        return code is not None and code_writes(code, partial(scope.inside, cwd=cwd))
+        source, code = interpreter_source(name, args)
+        return (
+            source == "arg"
+            and code is not None
+            and code_writes(code, partial(scope.inside, cwd=cwd))
+        )
     return False
 
 

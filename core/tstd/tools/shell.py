@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from ..autonomy.sandbox import WORKSPACE_DEST as _AUTONOMY_WORKSPACE
 from ..proc_lifecycle import (
     kill_left_leader_running,
     reap_subprocess,
@@ -587,6 +588,8 @@ async def run_shell(
     # "killed by SIGKILL" sentinel (SIGKILL itself is absent on Windows).
     exit_code = proc.returncode if proc.returncode is not None else -9
     # Read from the command text only, after it ran: the nudge never
-    # changes how or whether a command runs (TD-5009).
-    wrote = writes_workspace_files(command, session.workspace_path)
+    # changes how or whether a command runs (TD-5009).  An autonomous
+    # command ran in a container that sees the workspace at its mount.
+    mount = _AUTONOMY_WORKSPACE if session.autonomy else None
+    wrote = writes_workspace_files(command, session.workspace_path, mount=mount)
     return _format_result(header, exit_code, out, err, SHELL_WRITE_NOTE if wrote else "")

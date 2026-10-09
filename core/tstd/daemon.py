@@ -3431,7 +3431,10 @@ class Daemon:
             loaded_skills=list(found.loaded_skills),
         )
         tracker = found.cost_tracker
-        skills = await list_workspace_skills_async(found.workspace_path)
+        skills = await list_workspace_skills_async(
+            found.workspace_path,
+            claude_global_fallback=self.config.steering.claude_global_fallback,
+        )
         return build_instruction_stack(
             found.id,
             assembled.steering,

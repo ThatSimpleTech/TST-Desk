@@ -4,7 +4,9 @@ TD-4502 skipped a skill with any key besides ``description`` and
 ``whenToUse``, so every Claude Code skill (each has ``name`` and none has
 ``whenToUse``) was dropped.  The directory name still wins over ``name``.
 Keys that only label a skill or grant it something are ignored; a key
-that would restrict or reroute it still skips the skill.
+that would restrict or reroute it still skips the skill.  The skills here
+sit in ``~/.claude/skills``, so each test opts into that tree with
+``claude_global_fallback`` (off by default, see test_skill_gate.py).
 """
 
 from __future__ import annotations
@@ -35,7 +37,9 @@ def _claude_skill(home: Path, directory: str, frontmatter: str, body: str = "Do 
 
 
 def _names(ws: Path, home: Path) -> list[str]:
-    return [s.name for s in SkillDiscoverer(home_dir=home).discover(ws)]
+    return [
+        s.name for s in SkillDiscoverer(home_dir=home, claude_global_fallback=True).discover(ws)
+    ]
 
 
 @pytest.fixture
@@ -49,7 +53,7 @@ class TestClaudeFormat:
     def test_name_and_description_only_loads(self, dirs: tuple[Path, Path]) -> None:
         ws, home = dirs
         _claude_skill(home, "yt-plan", "name: yt-plan\ndescription: Plan a video. Use when asked")
-        skills = SkillDiscoverer(home_dir=home).discover(ws)
+        skills = SkillDiscoverer(home_dir=home, claude_global_fallback=True).discover(ws)
         assert [s.name for s in skills] == ["yt-plan"]
         assert skills[0].source == "claude_user"
         assert skills[0].description == "Plan a video. Use when asked"
@@ -61,13 +65,13 @@ class TestClaudeFormat:
             ws / ".tst" / "skills" / "review" / "SKILL.md",
             "---\nname: review\ndescription: Review\nwhenToUse: After a diff\n---\nbody\n",
         )
-        skills = SkillDiscoverer(home_dir=home).discover(ws)
+        skills = SkillDiscoverer(home_dir=home, claude_global_fallback=True).discover(ws)
         assert [(s.name, s.when_to_use) for s in skills] == [("review", "After a diff")]
 
     def test_folded_description_loads(self, dirs: tuple[Path, Path]) -> None:
         ws, home = dirs
         _claude_skill(home, "forge", "name: forge\ndescription: >\n  Two lines\n  of text")
-        skills = SkillDiscoverer(home_dir=home).discover(ws)
+        skills = SkillDiscoverer(home_dir=home, claude_global_fallback=True).discover(ws)
         assert skills[0].description == "Two lines of text"
 
 
@@ -102,8 +106,12 @@ class TestNameKey:
         ws, home = dirs
         _claude_skill(home, "yt-seo", "name: youtube-seo\ndescription: SEO pass")
         session = Session(str(ws))
-        assert try_load_skill(session, "youtube-seo", home_dir=home).startswith("Error:")
-        result = apply_slash_skill(session, "/yt-seo now", home_dir=home)
+        assert try_load_skill(
+            session, "youtube-seo", home_dir=home, claude_global_fallback=True
+        ).startswith("Error:")
+        result = apply_slash_skill(
+            session, "/yt-seo now", home_dir=home, claude_global_fallback=True
+        )
         assert result is not None and result.startswith("Loaded skill `yt-seo`")
         assert session.loaded_skills == ["yt-seo"]
 
@@ -115,7 +123,7 @@ class TestWhenToUse:
     ) -> None:
         ws, home = dirs
         _claude_skill(home, "s", f"description: Summarize\n{line}".rstrip())
-        skills = SkillDiscoverer(home_dir=home).discover(ws)
+        skills = SkillDiscoverer(home_dir=home, claude_global_fallback=True).discover(ws)
         assert [(s.name, s.when_to_use) for s in skills] == [("s", "Summarize")]
 
     def test_non_string_skips(self, dirs: tuple[Path, Path]) -> None:
@@ -179,12 +187,16 @@ class TestCatalog:
     def test_description_is_not_repeated_as_when_to_use(self, dirs: tuple[Path, Path]) -> None:
         ws, home = dirs
         _claude_skill(home, "s", "name: s\ndescription: Summarize a file")
-        catalog = render_skill_catalog(SkillDiscoverer(home_dir=home).discover(ws))
+        catalog = render_skill_catalog(
+            SkillDiscoverer(home_dir=home, claude_global_fallback=True).discover(ws)
+        )
         assert "- `s`: Summarize a file\n" in catalog + "\n"
         assert "when to use" not in catalog
 
     def test_distinct_when_to_use_is_kept(self, dirs: tuple[Path, Path]) -> None:
         ws, home = dirs
         _claude_skill(home, "s", "description: Summarize\nwhenToUse: After a long read")
-        catalog = render_skill_catalog(SkillDiscoverer(home_dir=home).discover(ws))
+        catalog = render_skill_catalog(
+            SkillDiscoverer(home_dir=home, claude_global_fallback=True).discover(ws)
+        )
         assert "- `s`: Summarize (when to use: After a long read)" in catalog

@@ -374,8 +374,8 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
             "inside an existing file, use fs_edit. "
             "Creates parent directories if they do not exist. "
             "By default, overwrites the file; use append=True to append. "
-            "File changes go through fs_write or fs_edit, not the shell, so "
-            "they show in the diff.",
+            "File contents are written with fs_write or fs_edit, not the "
+            "shell, so the change shows in the diff.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -443,8 +443,10 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
             description="Execute a shell command and return its output. "
             "The command runs in the session's workspace directory. "
             "Use this for running scripts, compilers, tests, and other CLI tools. "
-            "Do not change files with it (sed -i, redirects, heredocs, tee); "
-            "use fs_edit or fs_write, which show the change in the diff.",
+            "Do not write file contents with it (sed -i, redirects, heredocs, "
+            "tee, inline scripts); use fs_edit or fs_write, which show the "
+            "change in the diff. Deleting, moving, formatters, code generators "
+            "and package managers are fine here.",
             parameters={
                 "type": "object",
                 "properties": {

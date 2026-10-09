@@ -352,6 +352,12 @@ It is not read, and nothing it imports is read, unless
 `claude_global_fallback` is true. Workspace-root and nested `CLAUDE.md`
 files are project files and are not gated by this key.
 
+The same key gates `~/.claude/skills/` (TD-5011). Claude Code's user-global
+skills are a catalog line each in every brain prompt (14 skills on the
+owner's box came to about 900 estimated tokens), so they are opt-in. A
+workspace's own `.claude/skills/` is not gated, and when the workspace is
+the home folder, `~/.claude/skills/` is that workspace's own tree.
+
 When the key is false, `~/.claude/CLAUDE.md` exists, and
 `~/.tstdesk/AGENTS.md` does not, Doctor's steering row says the file was
 not loaded and names this key. Turning the key on restores the previous
@@ -360,7 +366,7 @@ workspace.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `claude_global_fallback` | bool | `false` | When true, `~/.claude/CLAUDE.md` is the user-global file if `~/.tstdesk/AGENTS.md` is absent. When false, that file is never read. |
+| `claude_global_fallback` | bool | `false` | When true, `~/.claude/CLAUDE.md` is the user-global file if `~/.tstdesk/AGENTS.md` is absent, and `~/.claude/skills/` joins the skill fallback. When false, neither is read. |
 
 ### `session`
 
@@ -996,17 +1002,21 @@ everything; turning it on accepts that unparsed write forms and Class C steering
 redirects will run. "Always allow this in this workspace" still writes a rule for the
 exact command, not a blanket `shell: **`. A `never` rule still refuses.
 
-**File changes go through `fs_edit` and `fs_write`, not the shell.** Only those two tools
-name the files they touch, so only their changes get a diff in the Files and Work panes, a
-checkpoint commit, and credit with the progress guard (§4.2). A file the shell changes
-(`sed -i`, a `>` redirect, a heredoc, `tee`, `dd of=`, or a `python -c` / `node -e` write) gets
-none of the three. The base prompt every tier gets says so, and so do the three tools'
-descriptions (TD-5009). When a shell command's text looks like it writes a workspace file, its
-result carries a one-line note, just under the exit code, that points back to `fs_edit` and
-`fs_write`. The note is read from the command text after the command has run. It never blocks,
-delays or changes the command, and it is not a rule you can set. Writes to `/dev`,
-`$TMPDIR`, git's own `.git/` files, or any path outside the workspace (`/tmp/...`, `~/...`,
-`../...`) get no note.
+**File contents change through `fs_edit` and `fs_write`, not the shell.** Only those two
+tools name the files they touch, so only their changes get a diff in the Files and Work panes,
+a checkpoint commit, and credit with the progress guard (§4.2). A file the shell writes
+(`sed -i`, a `>` redirect, a heredoc, `tee`, `dd of=`, or a `python -c` / `node -e` write, also
+inside `bash -c`) gets none of the three. The base prompt every tier gets says so, and so do
+the three tools' descriptions (TD-5009). Deleting, moving or renaming files, formatters, code
+generators and package managers stay in the shell. When a shell command's text looks like it
+writes a workspace file, its result carries a one-line note, just under the exit code, that
+points the next change to `fs_edit` and `fs_write` and says the write it saw need not be
+redone. The note is read from the command text after the command has run, so it can appear on
+a command that failed. It never blocks, delays or changes the command, and it is not a rule you
+can set. Writes to `/dev`, `nul` or `$null`, `$TMPDIR` (also `${TMPDIR:-/tmp}`), a name set from
+`mktemp`, a captured `.log`, git's own `.git/` files, or any path outside the workspace
+(`/tmp/...`, `~/...`, `../...`) get no note. Input redirects (`< file`, `<<<`) are reads. In an
+autonomous session the container's `/workspace` counts as the workspace.
 
 ### 4.2 `caps` — when the agent stops and asks
 

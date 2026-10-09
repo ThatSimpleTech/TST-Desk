@@ -12197,21 +12197,44 @@ only `tool_result.diff`, and the dispatcher builds a diff, a checkpoint
 commit and progress-guard credit only for a tool with `path_fields`.
 Shell has none, so a shell edit is invisible to review.
 
-**Decision:** (1) `BASE_SYSTEM_PROMPT` ends with one static sentence:
-change files with `fs_edit` or `fs_write`, never through the shell. It
+**Decision:** (1) `BASE_SYSTEM_PROMPT` ends with two static sentences:
+create or change file contents with `fs_edit` or `fs_write`, not shell
+redirects, heredocs, `tee`, `sed -i` or inline scripts; the shell is
+fine for deleting, moving or renaming, formatters, code generators and
+package managers. A rule against every shell write could not be
+followed (`rm`, `git mv`, `ruff format`, `npm install` all write). It
 lives in block [1], so every tier gets it, the delegate worker
 included, and the cache prefix stays byte-stable. The `fs_edit`,
 `fs_write` and `shell` descriptions say when to use each. (2) After a
 shell command runs, `writes_workspace_files` reads its text and, on a
 likely workspace write, `run_shell` adds a one-line note right under
-`exit code: N`. Covered: `>`, `>>`, `&>` (not fd dups, not `/dev`,
-`$TMPDIR`, `.git/`, or paths outside the workspace such as `/tmp`
-or `~`), `sed -i` / `--in-place`, `perl -i`, `gawk -i inplace`,
-`tee FILE`, `dd of=`, `python -c` / `node -e` and interpreter heredocs
-that open a file for writing, and those programs under `sudo`, `env`,
-`xargs` or `find -exec`. `[[ a > b ]]`, `(( ))`, quoted `>` and heredoc
-bodies do not count. Real audit data: 4 of 833 shell calls flagged, all
-four `cat > file <<EOF` workspace writes.
+`exit code: N`. The note says the command "looks like" it changed
+files, points the next change to `fs_edit` / `fs_write`, and says the
+write need not be redone: the check reads text, so the write may have
+failed, and a literal model must not resend a whole file through
+`fs_write` (double the content tokens in a 65k slot). Covered: `>`,
+`>>`, `&>` (not fd dups, not `/dev`, `nul` / `$null`, `$TMPDIR` or
+`${TMPDIR:-...}`, a name assigned from `mktemp`, a `.log` capture,
+`.git/`, or paths outside the workspace such as `/tmp` or `~`),
+`sed -i` / `--in-place`, `perl -i`, `gawk -i inplace`, `tee FILE`,
+`dd of=`, `python -c` / `node -e` and code an interpreter reads from a
+heredoc (`python3 - <<EOF`, `cat <<EOF | python3`) that opens a file
+for writing, those programs under `sudo`, `env`, `timeout`, `nice`,
+`xargs` (their option values such as `env -u NAME` are skipped) or
+`find -exec`, and all of it inside `bash -c` / `sh -c` or a heredoc fed
+to a shell (three levels deep at most). `[[ a > b ]]`, `(( ))`, quoted
+`>`, input redirects (`<`, `<<`, `<<<`, `<&`, `<>`: their word is read,
+never written, and is not an argument of `tee` or `sed`) and heredoc
+bodies do not count. The cwd follows `cd` and `pushd` into a heredoc's
+opening line, stays inside a `( ... )` subshell, and becomes unknown
+after `popd` or `cd X || ...` (relative paths then count). In an
+autonomous session the container mount (`/workspace`) is a workspace
+root. Heredocs are found by the tokenizer, so `'<<EOF'` in quotes opens
+nothing. Inline code is read at most 2,000 characters per call and
+100,000 per piece of code; code that needs more counts as a write, so
+pathological input costs milliseconds, not minutes, on the event loop.
+Real audit data: 4 of 833 shell calls flagged, all four
+`cat > file <<EOF` workspace writes.
 
 **Rationale:** The prompt rule prevents the habit; the note corrects it
 in the same turn, where the model is already reading the result. Pure
@@ -12228,7 +12251,11 @@ call, TD-4805). Diffing the workspace before and after every shell call
 in the delegate preamble (block [1] already reaches the worker; a second
 copy is drift). `shlex` (it cannot see operators or keep quote state for
 `>`). Covering `cp`, `mv`, `patch`, `git apply` and `curl -o` (tool
-moves, not hand edits; left for a later story).
+moves, not hand edits; left for a later story). Flagging `.log` captures
+(`fs_write` cannot produce a test log, so the note would be wrong
+advice). Skipping the note on a non-zero exit (`pytest > out.txt`
+fails and still writes). Running the check in a thread (bounding the
+scan fixes the cost; a thread would hide it).
 
 ## TD-5011 — Claude Code skills load (Class B; revises part of TD-4502)
 
@@ -12247,8 +12274,40 @@ the directory the directory name is kept and a warning logs both.
 `user-invocable: true` (the defaults) are ignored; any other value
 skips. `model`, `tools`, `disallowed-tools`, `hooks`, `context`, `agent`
 and unknown keys still skip, with the key logged. The catalog line
-drops "(when to use: ...)" when it would repeat the description. After:
-14 of 14 load for both workspaces, and 246 of 251 files parse.
+drops "(when to use: ...)" when it would repeat the description. Of the
+14 skills in `~/.claude/skills`, all 14 parse and 13 can load:
+`my-writing-style` is 4,089 tokens, over the 4,000-token body cap, so
+`load_skill` and `/name` refuse it. 246 of 251 files under `~/.claude`
+parse.
+
+**Decision:** `~/.claude/skills/` is read only when
+`steering.claude_global_fallback` is true, the key TD-4845 put on
+`~/.claude/CLAUDE.md` (default false). A workspace's own
+`.claude/skills/` stays on, as workspace and nested `CLAUDE.md` do; when
+the workspace is the home folder, `~/.claude/skills/` is that
+workspace's tree and loads without the key. Same reason as TD-4845:
+Claude Code's global files are Claude Code's, and their cost lands on
+every brain prompt. Measured on EZER for the TST-Desk workspace: the
+13-entry catalog is 3,550 characters, 888 heuristic tokens (about
+1,200 real at the 1.36x text ratio), most of it YouTube skills a coding
+session never uses, on a 65k forge slot that already overflows.
+`load_skill` and `/name` read the same key from the session's config.
+
+**Decision:** A skill over the body cap is left out of the catalog, and
+its path is logged once per process: `load_skill` would refuse it every
+time, and each try costs the model a turn. `/name` still answers with
+the over-budget refusal. The cap stays 4,000. Every other skip or
+name-mismatch warning is also logged once per file, not on every
+prompt.
+
+**Decision:** A loaded skill's block names its directory, in tilde form
+for a user-global skill (`~/.claude/skills/yt-edit`, TD-1104: no
+absolute home) and workspace-relative otherwise, with "relative paths in
+this skill are relative to it". Six of the 13 bodies run a sibling
+script by bare name (`python3 chapters.py`), and the shell starts in
+the workspace. The fs tools still refuse paths outside the workspace;
+the shell reaches the skill's files. Without the line those skills load
+partial, which TD-4502 forbids.
 
 **Rationale:** TD-4502 refused extra keys "so a partial skill cannot
 load". Labels change nothing about what a skill does, so ignoring them
@@ -12266,4 +12325,8 @@ the skill from the catalog while keeping `/name` (a new invocation
 mode; 2 of 251 files use it). Using `name` over the directory (two
 names for one skill, and `/name` would stop matching the folder).
 Mapping `allowed-tools` onto policy rules (a skill would widen
-permissions just by being loaded).
+permissions just by being loaded). A separate key for skills (one key
+already says "Claude Code's global files"). Truncating catalog
+descriptions to fit a budget (the gate removes the cost where it
+hurt). Raising the body cap for one skill. Skipping skills whose folder
+holds other files (the directory line makes them whole).

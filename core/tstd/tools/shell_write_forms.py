@@ -1,10 +1,11 @@
 """How particular programs write files, read from their arguments (TD-5009).
 
 Helpers for :mod:`tstd.tools.shell_writes`: the in-place switches of
-``sed``, ``perl`` and ``gawk``, and the inline code of ``python -c`` and
-``node -e``.  Pure text work: nothing here runs or opens anything.
-:func:`code_writes` takes *inside*, the caller's "does this path land in
-the workspace" test, so this module does not need to know the workspace.
+``sed``, ``perl`` and ``gawk``, where ``python``, ``node`` and ``sh`` take
+their code from, and whether that code opens a file for writing.  Pure
+text work: nothing here runs or opens anything.  :func:`code_writes`
+takes *inside*, the caller's "does this path land in the workspace" test,
+so this module does not need to know the workspace.
 """
 
 from __future__ import annotations
@@ -12,13 +13,26 @@ from __future__ import annotations
 import re
 import string
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal
 
 #: A program name that runs inline code given on the command line.
 INTERPRETER = re.compile(r"^(?:python(?:\d+(?:\.\d+)*)?|pypy3?|node|nodejs)$")
-#: The same names anywhere in a heredoc's opening line (`python3 - <<EOF`).
-INTERPRETER_IN_LINE = re.compile(
-    r"(?:^|[\s|;&(/])(?:python(?:\d+(?:\.\d+)*)?|pypy3?|node|nodejs)(?=\s|$)"
-)
+
+#: Where a program takes its code: an argument (``-c``/``-e``), standard
+#: input (``python3 -``, ``bash -s``, a heredoc), or a file or module whose
+#: writes are its own.
+CodeSource = Literal["arg", "stdin", "file"]
+
+#: Characters read for one call's arguments.  A real path and mode fit in
+#: far less; an unclosed ``open(`` stops here instead of at the end.
+_CALL_SCAN_LIMIT = 2_000
+#: Characters read for call arguments across one piece of code.  Without
+#: it, text full of unclosed ``open(`` is read once per match: quadratic,
+#: on the daemon's event loop.  Code that needs more counts as a write.
+_CODE_SCAN_BUDGET = 100_000
+#: Options of ``sh``/``bash`` whose value is the next word.
+_SHELL_VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
 
 _OPEN_CALL = re.compile(r"\bopen\s*\(")
 _NODE_WRITE_CALL = re.compile(
@@ -125,26 +139,70 @@ def gawk_in_place(args: list[str]) -> bool:
     return False
 
 
-def inline_code(name: str, args: list[str]) -> str | None:
-    """The code of ``python -c CODE`` or ``node -e CODE``; None for a script."""
-    python = not name.startswith("node")
-    flags = ("-c",) if python else ("-e", "--eval", "-p", "--print")
-    takes_value = ("-X", "-W") if python else ("-r", "--require")
+def interpreter_source(name: str, args: list[str]) -> tuple[CodeSource, str | None]:
+    """Where ``python`` or ``node`` takes its code, and the code when inline."""
+    return _node_source(args) if name.startswith("node") else _python_source(args)
+
+
+def shell_source(args: list[str]) -> tuple[CodeSource, str | None]:
+    """Where ``sh``/``bash`` takes its script: ``-c SCRIPT``, stdin, or a file."""
     i = 0
     while i < len(args):
         arg = args[i]
         i += 1
-        if arg in flags:
-            return args[i] if i < len(args) else None
-        if python and arg.startswith("-c"):
-            return arg[2:]
-        if not python and arg.startswith(("--eval=", "--print=")):
-            return arg.split("=", 1)[1]
-        if arg in takes_value:
+        if arg in _SHELL_VALUE_OPTIONS:
+            i += 1
+        elif arg == "--":
+            break
+        elif arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+            return "arg", (args[i] if i < len(args) else None)  # `-c`, `-lc`, `-ec`
+        elif arg.startswith("-") and not arg.startswith("--") and "s" in arg[1:]:
+            return "stdin", None
+        elif not arg.startswith(("-", "+")):
+            return "file", None
+    return ("file" if i < len(args) else "stdin"), None
+
+
+def _python_source(args: list[str]) -> tuple[CodeSource, str | None]:
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg == "-":
+            return "stdin", None
+        if not arg.startswith("-"):
+            return "file", None
+        if arg.startswith("--"):
+            continue
+        for pos, flag in enumerate(arg[1:], start=1):
+            if flag == "c":  # `-c CODE`, `-cCODE`, `-Bc CODE`
+                rest = arg[pos + 1 :]
+                return "arg", rest or (args[i] if i < len(args) else None)
+            if flag == "m":
+                return "file", None  # a module: its writes are its own
+            if flag in "WX":  # `-W ignore`, `-Xutf8`: the rest is the value
+                if pos == len(arg) - 1:
+                    i += 1
+                break
+    return "stdin", None
+
+
+def _node_source(args: list[str]) -> tuple[CodeSource, str | None]:
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg in ("-e", "--eval", "-p", "--print"):
+            return "arg", (args[i] if i < len(args) else None)
+        if arg.startswith(("--eval=", "--print=")):
+            return "arg", arg.split("=", 1)[1]
+        if arg == "-":
+            return "stdin", None
+        if arg in ("-r", "--require"):
             i += 1
         elif not arg.startswith("-"):
-            return None  # a script file or module: its writes are its own
-    return None
+            return "file", None
+    return "stdin", None
 
 
 def code_writes(code: str, inside: Callable[[str], bool]) -> bool:
@@ -154,12 +212,18 @@ def code_writes(code: str, inside: Callable[[str], bool]) -> bool:
     plain string literal, or a name assigned one, is judged by *inside*.
     """
     names = {m.group(1): m.group(3) for m in _STRING_ASSIGNMENT.finditer(code)}
+    budget = _ScanBudget(_CODE_SCAN_BUDGET)
     for match in _OPEN_CALL.finditer(code):
-        writes, path = _open_call(_call_arguments(code, match.end()), names)
+        call = _call_arguments(code, match.end(), budget)
+        if call is None:
+            return True
+        writes, path = _open_call(call, names)
         if writes and (path is None or inside(path)):
             return True
     for match in _NODE_WRITE_CALL.finditer(code):
-        args = _call_arguments(code, match.end())
+        args = _call_arguments(code, match.end(), budget)
+        if args is None:
+            return True
         path = _path_of(args[0], names) if args else None
         if path is None or inside(path):
             return True
@@ -195,6 +259,8 @@ def _open_call(args: list[str], names: dict[str, str]) -> tuple[bool, str | None
 
 
 def _path_of(arg: str, names: dict[str, str]) -> str | None:
+    if arg.strip() == "os.devnull":
+        return "/dev/null"
     literal = _literal(arg)
     return literal if literal is not None else names.get(arg.strip())
 
@@ -204,17 +270,32 @@ def _literal(arg: str) -> str | None:
     return match.group(2) if match is not None else None
 
 
-def _call_arguments(code: str, start: int) -> list[str]:
-    """Top-level arguments of the call whose ``(`` ends just before *start*."""
+@dataclass
+class _ScanBudget:
+    """Characters :func:`_call_arguments` may still read in one piece of code."""
+
+    left: int
+
+
+def _call_arguments(code: str, start: int, budget: _ScanBudget) -> list[str] | None:
+    """Top-level arguments of the call whose ``(`` ends just before *start*.
+
+    Reads at most :data:`_CALL_SCAN_LIMIT` characters; None once *budget*
+    is spent, so the caller can stop reading.
+    """
+    if budget.left <= 0:
+        return None
+    reach = min(len(code), start + _CALL_SCAN_LIMIT)
+    stop = min(reach, start + budget.left)
     args: list[str] = []
     current: list[str] = []
     depth = 0
     i = start
-    while i < len(code):
+    while i < stop:
         ch = code[i]
         if ch in "'\"`":
             end = i + 1
-            while end < len(code) and code[end] != ch:
+            while end < stop and code[end] != ch:
                 end += 2 if code[end] == "\\" else 1
             current.append(code[i : end + 1])
             i = end + 1
@@ -232,6 +313,9 @@ def _call_arguments(code: str, start: int) -> list[str]:
             continue
         current.append(ch)
         i += 1
+    budget.left -= i - start
+    if stop < reach and i >= stop:
+        return None  # the budget ran out inside this call
     tail = "".join(current).strip()
     if tail:
         args.append(tail)
