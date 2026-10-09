@@ -60,6 +60,7 @@ from ..proc_lifecycle import (
 )
 from ..protocol import ShellOutput
 from ..session import Session
+from .shell_writes import SHELL_WRITE_NOTE, writes_workspace_files
 
 # Read chunk size for draining stdout/stderr.
 _READ_CHUNK = 4096
@@ -387,12 +388,19 @@ def _format_result(
     exit_code: int,
     out: _StreamCapture,
     err: _StreamCapture,
+    note: str = "",
 ) -> str:
-    """Build the model-facing result string."""
+    """Build the model-facing result string.
+
+    *note* sits under the exit code, ahead of the streams, so a result
+    the dispatcher caps for a small window still carries it (TD-5009).
+    """
     lines: list[str] = []
     if header:
         lines.append(header)
     lines.append(f"exit code: {exit_code}")
+    if note:
+        lines.append(note)
     for label, capture in (("stdout", out), ("stderr", err)):
         lines.append(f"── {label} ──")
         text = capture.text
@@ -578,4 +586,7 @@ async def run_shell(
     # A cancelled process may have no returncode; -9 is the conventional
     # "killed by SIGKILL" sentinel (SIGKILL itself is absent on Windows).
     exit_code = proc.returncode if proc.returncode is not None else -9
-    return _format_result(header, exit_code, out, err)
+    # Read from the command text only, after it ran: the nudge never
+    # changes how or whether a command runs (TD-5009).
+    wrote = writes_workspace_files(command, session.workspace_path)
+    return _format_result(header, exit_code, out, err, SHELL_WRITE_NOTE if wrote else "")

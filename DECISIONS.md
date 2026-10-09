@@ -12188,3 +12188,44 @@ about to use. A config knob for the fraction. No user can pick it
 better than a constant, and a test pins 0.7. A hard switch to the
 budget once 70% is out of reach. Just below the switch it still cuts
 every result to the floor; the ramp has no such edge.
+
+## TD-5009 — File changes go through fs_edit and fs_write (Class B)
+
+2026-10-09. Agents changed files with `sed -i`, redirects and heredocs.
+Those writes never reach the diff view: the Files and Work panes read
+only `tool_result.diff`, and the dispatcher builds a diff, a checkpoint
+commit and progress-guard credit only for a tool with `path_fields`.
+Shell has none, so a shell edit is invisible to review.
+
+**Decision:** (1) `BASE_SYSTEM_PROMPT` ends with one static sentence:
+change files with `fs_edit` or `fs_write`, never through the shell. It
+lives in block [1], so every tier gets it, the delegate worker
+included, and the cache prefix stays byte-stable. The `fs_edit`,
+`fs_write` and `shell` descriptions say when to use each. (2) After a
+shell command runs, `writes_workspace_files` reads its text and, on a
+likely workspace write, `run_shell` adds a one-line note right under
+`exit code: N`. Covered: `>`, `>>`, `&>` (not fd dups, not `/dev`,
+`$TMPDIR`, `.git/`, or paths outside the workspace such as `/tmp`
+or `~`), `sed -i` / `--in-place`, `perl -i`, `gawk -i inplace`,
+`tee FILE`, `dd of=`, `python -c` / `node -e` and interpreter heredocs
+that open a file for writing, and those programs under `sudo`, `env`,
+`xargs` or `find -exec`. `[[ a > b ]]`, `(( ))`, quoted `>` and heredoc
+bodies do not count. Real audit data: 4 of 833 shell calls flagged, all
+four `cat > file <<EOF` workspace writes.
+
+**Rationale:** The prompt rule prevents the habit; the note corrects it
+in the same turn, where the model is already reading the result. Pure
+text work on the command string, after the run, so the nudge adds no
+process and cannot change what runs. Under the exit code, a result cut
+to the window's cap still keeps it. A false nudge costs one line; a
+missed one costs a change nobody reviewed, so an expansion the parser
+cannot follow (`"$OUT"`) counts as inside.
+
+**Rejected:** Refusing or asking on a detected write (a heuristic must
+not change whether a command runs; policy already asks on every shell
+call, TD-4805). Diffing the workspace before and after every shell call
+(a git process per call, and wrong on a dirty tree). A per-call reminder
+in the delegate preamble (block [1] already reaches the worker; a second
+copy is drift). `shlex` (it cannot see operators or keep quote state for
+`>`). Covering `cp`, `mv`, `patch`, `git apply` and `curl -o` (tool
+moves, not hand edits; left for a later story).
