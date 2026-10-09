@@ -654,10 +654,23 @@ call is spent doing it. So:
 - `max_output_tokens` does **not** cap generation. It only reserves room for the answer inside
   the budget. Your provider's own default output limit is what actually applies.
 
+**How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call
+arguments, every tool definition the request sends (as the request serializes it — a few
+thousand tokens on every call), and 4 tokens of chat-template overhead per message. It starts at
+4 characters per token. Once an endpoint reports `usage.prompt_tokens` for a main turn call, the
+ratio between that figure and the estimate is learned per `base_url` and slug (the first report
+sets it, later ones move it by 30%, clamped to 0.5–3.0) and every later estimate for that
+endpoint is scaled by it. A request of under 256 estimated tokens, one carrying an image, or a
+response with no usage figure teaches nothing. The learned ratio is kept in memory only: after a
+daemon restart the first call is estimated at 4 characters per token again. The `turn start`
+log line carries the ratio in use as `token_ratio`.
+
 A single tool result is capped at the smaller of 50,000 characters and a quarter of
-(`context_window` − `max_output_tokens` − tokens already in the prompt), counted at 4 characters
-per token, and never below 4,000 characters. On a 32,768-token tier one result cannot fill the
-window by itself. At 128,000 tokens or larger the cap stays 50,000. If the in-flight turn's tool
+(`context_window` − `max_output_tokens` − tokens already in the prompt), converted to characters
+at the learned ratio (4 characters per token before the endpoint has reported usage), and never
+below 4,000 characters. On a 32,768-token tier one result cannot fill the
+window by itself. At 128,000 tokens or larger the cap stays 50,000 unless the learned ratio is
+above about 2. If the in-flight turn's tool
 results still exceed the compaction budget, their middles are replaced with a note to re-read
 with offset and limit before the next model call. A provider that still reports a context
 overflow is retried once at a tighter budget. If it overflows again, the turn fails with a short

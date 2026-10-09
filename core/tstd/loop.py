@@ -54,11 +54,17 @@ from .autonomy.worker import JudgmentAudit
 from .compaction import budget_threshold, estimate_tokens, maybe_compact
 from .config import ConfigError, JudgmentsConfig, ModelConfig, ModelDiscoveryError, TierConfig
 from .context import PromptAssembler
+from .context.calibration import (
+    CalibratedTokenCounter,
+    CalibrationStore,
+    effective_chars_per_token,
+    process_calibration_store,
+)
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
 from .context.manifest import manifest_config_for_window
 from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
-from .context.tokens import TokenCounter, make_token_counter
+from .context.tokens import make_token_counter
 from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_failure_text
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
@@ -484,8 +490,12 @@ async def _stream_and_parse(
     tier_cfg: Any,
     *,
     emit_events: bool = True,
+    on_usage: Callable[[Usage], None] | None = None,
 ) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None, str]:
     """Call the provider, stream deltas, and accumulate tool calls.
+
+    *on_usage* receives the call's reported usage once the stream closes
+    (TD-5007: the main turn call feeds token calibration from it).
 
     Returns:
         A tuple of ``(collected_content, tool_calls, failed, error_msg,
@@ -567,8 +577,41 @@ async def _stream_and_parse(
         # TD-1006: the cost meter updates as costs accrue — one
         # cost_update per recorded call, not one per turn.
         await session.event_log.add(tracker.emit_cost_update(session.id))
+        if on_usage is not None:
+            on_usage(usage)
 
     return collected_content, tool_calls, failed, error_msg, error_code, raw_detail
+
+
+def _carries_non_text(messages: list[ChatMessage]) -> bool:
+    """True when any message has a part the estimate cannot see."""
+    return any(
+        isinstance(message.content, list)
+        and any(part.get("type") != "text" for part in message.content)
+        for message in messages
+    )
+
+
+def _calibration_observer(
+    counter: CalibratedTokenCounter,
+    messages: list[ChatMessage],
+    tools: list[ProviderToolDefinition] | None,
+) -> Callable[[Usage], None] | None:
+    """Usage callback that teaches *counter* this call's real size.
+
+    The raw estimate is taken now, from the base counter, over exactly
+    what is about to be sent. A calibrated estimate here would compound
+    the ratio call after call. A screenshot is billed in tokens the text
+    estimate never counts, so an image-bearing call teaches nothing.
+    """
+    if _carries_non_text(messages):
+        return None
+    raw_estimate, _ = estimate_tokens(messages, counter.base, tools)
+
+    def _observe(usage: Usage) -> None:
+        counter.observe(raw_estimate, usage.prompt_tokens)
+
+    return _observe
 
 
 async def _build_assistant_tool_call(
@@ -766,6 +809,7 @@ async def agent_loop(
     tool_dispatcher: ToolDispatcher | None = None,
     prompt_assembler: PromptAssembler | None = None,
     audit_sink: ModelCallSink | None = None,
+    calibration_store: CalibrationStore | None = None,
 ) -> None:
     """Agent loop — runs inside ``SessionRunner``.
 
@@ -797,6 +841,9 @@ async def agent_loop(
         audit_sink: Optional :class:`ModelCallSink` (TD-902).  When
             provided, every recorded model call is forwarded for audit
             persistence.  The sink only enqueues — it never blocks.
+        calibration_store: Where learned token ratios live (TD-5007).
+            ``None`` is the daemon-wide store, shared with every other
+            session talking to the same endpoint.
     """
     # ── Conversation state ──────────────────────────────────────────
     assembler = prompt_assembler or PromptAssembler(
@@ -1009,8 +1056,12 @@ async def agent_loop(
     # newly matched by a touched file is announced in the timeline.
     _last_active_rules: set[str] | None = None
 
-    # One token counter per model slug (TD-405); encoders load once.
-    _token_counters: dict[str, TokenCounter] = {}
+    # One token counter per endpoint and model (TD-405); encoders load
+    # once. Each is scaled by what that endpoint reports (TD-5007).
+    calibration = (
+        calibration_store if calibration_store is not None else (process_calibration_store())
+    )
+    _token_counters: dict[tuple[str, str], CalibratedTokenCounter] = {}
 
     # Cap enforcement (TD-707): the session start clock and per-call
     # iteration counter the caps are measured against.
@@ -1352,11 +1403,14 @@ async def agent_loop(
             #     steering block and manifest were just re-read from
             #     disk at 2b, so instructions survive compaction.
             model_slug = tier_cfg.require_slug()
-            counter = _token_counters.get(model_slug)
+            counter_key = (tier_cfg.base_url, model_slug)
+            counter = _token_counters.get(counter_key)
             if counter is None:
-                counter = make_token_counter(model_slug)
-                _token_counters[model_slug] = counter
-            compacted, compaction = maybe_compact(messages, tier_cfg, counter)
+                counter = CalibratedTokenCounter(
+                    make_token_counter(model_slug), calibration, counter_key
+                )
+                _token_counters[counter_key] = counter
+            compacted, compaction = maybe_compact(messages, tier_cfg, counter, tool_definitions)
             if compaction is not None:
                 messages[:] = compacted
                 await session.event_log.add(
@@ -1388,7 +1442,9 @@ async def agent_loop(
             # or half of it after a provider context overflow. Messages
             # stay, so a tool_calls group is never split.
             elide_budget = max(1, budget_threshold(tier_cfg) // 2) if overflow_retried else None
-            fitted, fit = fit_inflight_turn(messages, tier_cfg, counter, budget=elide_budget)
+            fitted, fit = fit_inflight_turn(
+                messages, tier_cfg, counter, budget=elide_budget, tools=tool_definitions
+            )
             if fit is not None:
                 messages[:] = fitted
                 await session.event_log.add(
@@ -1438,6 +1494,8 @@ async def agent_loop(
                         "turn": router.turn_count,
                         "cache_prefix_hash": assembled.prefix_hash,
                         "cache_prefix_tokens": assembled.prefix_tokens,
+                        # None until this endpoint has reported usage.
+                        "token_ratio": counter.ratio,
                     }
                 },
             )
@@ -1543,7 +1601,8 @@ async def agent_loop(
             ):
                 break
 
-            # 2d. Call provider (streaming)
+            # 2d. Call provider (streaming). Only this call teaches the
+            #     token ratio (TD-5007); the progress check does not.
             (
                 collected_content,
                 tool_calls,
@@ -1560,6 +1619,7 @@ async def agent_loop(
                 tracker,
                 tier,
                 tier_cfg,
+                on_usage=_calibration_observer(counter, messages, tool_definitions),
             )
 
             # 2e. Handle failure
@@ -1700,11 +1760,12 @@ async def agent_loop(
                     # size, so the cap scales with the tokens still free
                     # in this prompt (TD-4839). Set on the dispatcher: the
                     # delegate child copies the attribute when it is built.
-                    prefix_tokens, _ = estimate_tokens(messages, counter)
+                    prefix_tokens, _ = estimate_tokens(messages, counter, tool_definitions)
                     tool_dispatcher.max_result_chars = tool_result_char_cap(
                         tier_cfg.context_window,
                         tier_cfg.max_output_tokens,
                         prefix_tokens,
+                        effective_chars_per_token(counter),
                     )
                     # Yield control so the event loop can process cancellation
                     # between the ToolCall event emission and the dispatch.

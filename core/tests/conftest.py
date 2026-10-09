@@ -27,6 +27,8 @@ from typing import Any
 import pytest
 
 from tstd.config import ModelConfig, cached_config
+from tstd.context import calibration as calibration_module
+from tstd.context.calibration import CalibrationKey, CalibrationStore
 from tstd.context.embeddings import EmbeddingsClient
 from tstd.keychain import KeychainError
 
@@ -52,6 +54,29 @@ def _throwaway_home(
     cached_config.cache_clear()
     yield
     cached_config.cache_clear()
+
+
+class _NonLearningStore(CalibrationStore):
+    """A calibration store that never learns a ratio."""
+
+    def observe(
+        self, key: CalibrationKey, raw_estimate: int, prompt_tokens: int | None
+    ) -> float | None:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _no_token_calibration_from_canned_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Loops in the suite do not learn token ratios by default (TD-5007).
+
+    ``MockProvider`` reports the same canned ``prompt_tokens`` whatever
+    was sent, so a ratio learned from it is not a measurement. It would
+    also leak: the store is daemon-wide and most tests share one mock
+    endpoint. Every test gets its own store that never learns. Tests of
+    calibration inject a real ``CalibrationStore`` into ``agent_loop`` or
+    patch this one back.
+    """
+    monkeypatch.setattr(calibration_module, "_PROCESS_STORE", _NonLearningStore())
 
 
 @pytest.fixture(autouse=True)

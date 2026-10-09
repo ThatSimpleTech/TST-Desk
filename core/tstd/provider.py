@@ -97,6 +97,22 @@ def content_as_text(content: MessageContent | None) -> str:
     return "\n".join(parts)
 
 
+def tool_definition_payload(tool: ToolDefinition) -> dict[str, Any]:
+    """One ``tools`` entry exactly as the request body carries it.
+
+    The token estimate (TD-5007) counts this same shape, so the two
+    cannot drift apart.
+    """
+    function: dict[str, Any] = {}
+    if tool.function is not None:
+        function = {
+            "name": tool.function.name,
+            "description": tool.function.description,
+            "parameters": tool.function.parameters,
+        }
+    return {"type": tool.type, "function": function}
+
+
 @dataclass
 class ChatMessage:
     """A single message in the chat conversation."""
@@ -128,19 +144,7 @@ class ChatCompletionRequest:
             "messages": [self._message_to_dict(m) for m in self.messages],
         }
         if self.tools:
-            d["tools"] = [
-                {
-                    "type": t.type,
-                    "function": {
-                        "name": t.function.name,
-                        "description": t.function.description,
-                        "parameters": t.function.parameters,
-                    }
-                    if t.function
-                    else {},
-                }
-                for t in self.tools
-            ]
+            d["tools"] = [tool_definition_payload(t) for t in self.tools]
             # OpenAI's default when tools are present. Some gateways (EZER
             # LiteLLM guided_json) treat an omitted tool_choice as "JSON in
             # content" and never fill message.tool_calls (TD-1724).

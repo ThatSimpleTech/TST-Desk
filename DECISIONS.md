@@ -12010,3 +12010,49 @@ level is still useful, and the budget already bounds it. A fixed byte
 cap. Wrong for every window but one. Respecting `.gitignore`-style
 files outside git. A new parser for a case the hidden-directory rule
 already covers.
+
+## TD-5007 — Token estimates count tools and learn the provider's ratio (Class B)
+
+2026-10-09. On EZER's ezer-forge tier the 4 chars/token estimate ran
+1.55-1.6x under `usage.prompt_tokens`, and it never counted the tool
+definitions at all (about 2,900 tokens for a 20-tool registry, sent
+on every call). Compaction and in-turn elision aimed at a budget the
+real prompt had already passed, and the 32,768-token slot overflowed.
+
+**Decision:** `estimate_tokens` takes the request's tools and counts
+each definition as `to_dict` serializes it, plus 4 tokens of template
+overhead per message. A new `CalibratedTokenCounter` scales the base
+counter by a ratio learned per `(base_url, slug)`: `prompt_tokens /
+raw estimate`, where the raw estimate is the base counter's count of
+exactly the messages and tools about to be sent. The first report
+replaces the seed; later ones fold in with an EMA (alpha 0.3). Each
+sample is clamped to 0.5-3.0. A raw estimate under 256 tokens, a
+missing or zero `prompt_tokens`, and any request carrying a non-text
+part (a screenshot is billed in tokens the estimate cannot see) teach
+nothing. Only the main turn call observes, through an `on_usage`
+callback on `_stream_and_parse`; the progress check does not. The
+store is process-wide, injectable through `agent_loop(calibration_store=)`
+and clearable, and not persisted. The tool-result cap and the
+elision excess convert tokens back to characters at `4 / ratio`. The
+ratio is on the `turn start` log line as `token_ratio`. In the test
+suite an autouse fixture swaps in a store that never learns, because
+MockProvider reports a canned 1,200 prompt tokens whatever it was
+sent; calibration tests inject a real store.
+
+**Rationale:** A ratio measured against the endpoint's own tokenizer
+fixes code, JSON and non-English text alike, with no tokenizer
+download per model. Observing the raw estimate rather than the
+calibrated one keeps the ratio from compounding call after call. One
+store per daemon is right because sessions and delegate children talk
+to the same endpoints. Not persisting keeps a stale ratio from
+surviving a model or template change behind the same slug: after a
+restart the first call runs at ratio 1.0 plus tool accounting, which
+already removes the largest error, and the context-overflow retry
+(TD-4839) still backstops it.
+
+**Rejected:** A fixed per-model multiplier in config. It is a number
+the user cannot measure and it drifts with the template. A real
+tokenizer per slug. Heavy, and wrong for any gateway that rewrites
+the prompt. Calibrating from the progress check. It resends the
+turn's prompt plus one question, so it measures nothing new and would
+move the EMA twice for one turn. Persisting ratios to disk. See above.
