@@ -12368,6 +12368,10 @@ loads and is never sent.
 process. It names the worker tier and `verdict_extra_body` and says the
 model probably spent the cap thinking. Verdicts run on every ambiguous
 tool call and every DoD poll, so a warning per call would flood the log.
+The `base_url` is the host the call went to (`resolve_base_url`), so a
+bound credential's host wins over the tier URL (TD-1718). When
+`verdict_extra_body` is already set, the warning says the server seems
+to ignore the switch and to check its spelling, not to set the key.
 
 **Rationale:** Thinking off is right for a one-letter answer and wrong
 for the turn and a delegate, which want their low-effort thinking. So

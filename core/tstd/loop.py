@@ -52,7 +52,14 @@ from .autonomy.verify import (
 from .autonomy.wakeup import deliver_wakeup
 from .autonomy.worker import JudgmentAudit
 from .compaction import budget_threshold, estimate_tokens, maybe_compact
-from .config import ConfigError, JudgmentsConfig, ModelConfig, ModelDiscoveryError, TierConfig
+from .config import (
+    ConfigError,
+    JudgmentsConfig,
+    ModelConfig,
+    ModelDiscoveryError,
+    TierConfig,
+    resolve_base_url,
+)
 from .context import PromptAssembler
 from .context.calibration import (
     CalibratedTokenCounter,
@@ -192,26 +199,37 @@ _VERDICT_MAX_TOKENS = 8
 _VERDICT_CAP_WARNED: set[tuple[str, str]] = set()
 
 
-def _warn_verdict_cap_once(tier_cfg: TierConfig, model: str) -> None:
+def _warn_verdict_cap_once(tier_cfg: TierConfig, base_url: str, model: str) -> None:
     """Say once why a verdict came back empty at its cap (TD-5012).
 
     Empty content with ``finish_reason: "length"`` on an 8-token call
     means the model spent the cap before it answered, almost always
     thinking. The parse then fails closed (Class B, or no DoD verdict),
     which looks like a judgment rather than a config gap.
+
+    *base_url* is the host the call went to (``resolve_base_url``), so a
+    bound credential's host wins over the tier URL (TD-1718). With
+    ``verdict_extra_body`` already set the advice changes: the server
+    seems to ignore the switch, so its spelling is the suspect.
     """
-    key = (tier_cfg.base_url, model)
+    key = (base_url, model)
     if key in _VERDICT_CAP_WARNED:
         return
     _VERDICT_CAP_WARNED.add(key)
+    if tier_cfg.verdict_extra_body is None:
+        advice = "Set verdict_extra_body on the worker tier to turn thinking off for verdict calls"
+    else:
+        advice = (
+            "verdict_extra_body is set on the worker tier but the server seems to ignore "
+            "it; check its switch is spelled the way the server expects"
+        )
     log.warning(
         "worker verdict call hit its token cap with no answer; the model probably "
-        "spent the cap thinking. Set verdict_extra_body on the worker tier to turn "
-        "thinking off for verdict calls",
+        "spent the cap thinking. " + advice,
         extra={
             "extra_fields": {
                 "tier": "worker",
-                "base_url": tier_cfg.base_url,
+                "base_url": base_url,
                 "model": model,
                 "max_tokens": _VERDICT_MAX_TOKENS,
                 "verdict_extra_body_set": tier_cfg.verdict_extra_body is not None,
@@ -1001,7 +1019,7 @@ async def agent_loop(
         note_judgment_completion_cost(cost)
         text = content_as_text(resp.message.content)
         if not text.strip() and resp.finish_reason == "length":
-            _warn_verdict_cap_once(worker_cfg, request.model)
+            _warn_verdict_cap_once(worker_cfg, resolve_base_url(config, worker_cfg), request.model)
         return text
 
     async def _judgment_backend_for(cfg: JudgmentsConfig) -> JudgmentBackend:

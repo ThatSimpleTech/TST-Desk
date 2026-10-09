@@ -30,6 +30,7 @@ from tstd.boundary_config import BoundaryConfig
 from tstd.config import (
     EXTRA_BODY_RESERVED_KEYS,
     ConfigError,
+    CredentialConfig,
     ModelConfig,
     Preset,
     TierConfig,
@@ -40,7 +41,13 @@ from tstd.config_write import save_tier_credential, save_tier_slug
 from tstd.context import PromptAssembler
 from tstd.cost import CostTracker
 from tstd.mock import MockProvider, Script
-from tstd.provider import ChatCompletionRequest, ChatMessage, content_as_text
+from tstd.provider import (
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatMessage,
+    ProviderError,
+    content_as_text,
+)
 from tstd.router import TierRouter
 from tstd.session import Session
 from tstd.tools.delegate import DelegateRuntime, run_worker_child
@@ -106,14 +113,35 @@ def _cap_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     ]
 
 
+class _NoFinishReason(MockProvider):
+    """Non-stream replies with no ``finish_reason`` at all.
+
+    MockProvider fills a missing one in with ``"stop"``, so a Script
+    alone cannot send None.
+    """
+
+    async def chat_completion(
+        self, request: ChatCompletionRequest
+    ) -> ChatCompletionResponse | ProviderError:
+        resp = await super().chat_completion(request)
+        if isinstance(resp, ChatCompletionResponse):
+            resp.finish_reason = None
+        return resp
+
+
 async def _run_dod(
-    tmp_path: Path, config: ModelConfig, worker: Script, *, max_iterations: int = 8
+    tmp_path: Path,
+    config: ModelConfig,
+    worker: Script,
+    *,
+    max_iterations: int = 8,
+    provider_cls: type[MockProvider] = MockProvider,
 ) -> tuple[Session, MockProvider]:
     """An unattended run whose DoD prose item is polled on the worker."""
     session = Session(str(tmp_path))
     charter = make_charter(max_iterations=max_iterations)
     _wire_autonomy(session, charter)
-    mock = MockProvider(
+    mock = provider_cls(
         scripts={"test-brain": Script(kind="stream", content="Working"), "test-worker": worker}
     )
     runner = await start_loop(session, TierRouter(), mock, config)
@@ -443,12 +471,13 @@ async def test_without_verdict_extra_body_the_request_is_unchanged(tmp_path: Pat
 # ── The cap warning ─────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("verdict", [None, _THINK_OFF], ids=["unset", "set"])
 async def test_an_empty_verdict_at_the_cap_warns_once(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, verdict: dict[str, Any] | None
 ) -> None:
     empty = Script(kind="text", content="", finish_reason="length")
     with caplog.at_level(logging.WARNING, logger="tstd.loop"):
-        session, mock = await _run_dod(tmp_path, _config(verdict=None), empty, max_iterations=3)
+        session, mock = await _run_dod(tmp_path, _config(verdict), empty, max_iterations=3)
     assert session.autonomy_stop_reason != DOD_MET
 
     polls = [call for call in mock.calls if call.model == "test-worker"]
@@ -458,12 +487,46 @@ async def test_an_empty_verdict_at_the_cap_warns_once(
     message = warnings[0].getMessage()
     assert "worker tier" in message
     assert "probably spent the cap thinking" in message
+    # Unset: turn it on. Set: the server ignored the switch, so the
+    # advice is the spelling, not a setting the user already has.
+    if verdict is None:
+        assert "Set verdict_extra_body" in message
+        assert "spelled" not in message
+    else:
+        assert "Set verdict_extra_body" not in message
+        assert "verdict_extra_body is set" in message
+        assert "spelled the way the server expects" in message
     fields = getattr(warnings[0], "extra_fields", {})
     assert fields["tier"] == "worker"
     assert fields["base_url"] == _URL
     assert fields["model"] == "test-worker"
     assert fields["max_tokens"] == 8
-    assert fields["verdict_extra_body_set"] is False
+    assert fields["verdict_extra_body_set"] is (verdict is not None)
+
+
+async def test_the_warning_names_the_host_the_call_went_to(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A bound credential's host is where the call goes (TD-1718)."""
+    base = _config(verdict=None)
+    preset = base.presets["test"]
+    config = base.model_copy(
+        update={
+            "credentials": {"lan": CredentialConfig(name="LAN", base_url="http://cred.local/v1")},
+            "presets": {
+                "test": preset.model_copy(
+                    update={"worker": preset.worker.model_copy(update={"credential": "lan"})}
+                )
+            },
+        }
+    )
+    assert config.tier("worker").base_url == _URL
+    empty = Script(kind="text", content="", finish_reason="length")
+    with caplog.at_level(logging.WARNING, logger="tstd.loop"):
+        await _run_dod(tmp_path, config, empty, max_iterations=2)
+    warnings = _cap_warnings(caplog)
+    assert len(warnings) == 1
+    assert getattr(warnings[0], "extra_fields", {})["base_url"] == "http://cred.local/v1"
 
 
 @pytest.mark.parametrize(
@@ -477,8 +540,12 @@ async def test_no_warning_unless_empty_at_the_cap(
     finish_reason: str | None,
 ) -> None:
     script = Script(kind="text", content=content, finish_reason=finish_reason)
+    # A None finish_reason needs the stub; MockProvider would send "stop".
+    provider_cls = _NoFinishReason if finish_reason is None else MockProvider
     with caplog.at_level(logging.WARNING, logger="tstd.loop"):
-        session, mock = await _run_dod(tmp_path, _config(), script, max_iterations=2)
+        session, mock = await _run_dod(
+            tmp_path, _config(), script, max_iterations=2, provider_cls=provider_cls
+        )
     assert any(call.model == "test-worker" for call in mock.calls)
     assert _cap_warnings(caplog) == []
     # A verdict cut at the cap after its answer is still a verdict.
@@ -486,14 +553,14 @@ async def test_no_warning_unless_empty_at_the_cap(
 
 
 def test_the_warning_is_per_endpoint_and_model(caplog: pytest.LogCaptureFixture) -> None:
-    first = _tier("forge")
-    other_host = first.model_copy(update={"base_url": "http://other.local/v1"})
+    tier = _tier("forge")
+    other = "http://other.local/v1"
     with caplog.at_level(logging.WARNING, logger="tstd.loop"):
-        loop_module._warn_verdict_cap_once(first, "forge")
-        loop_module._warn_verdict_cap_once(first, "forge")
-        loop_module._warn_verdict_cap_once(first, "other-model")
-        loop_module._warn_verdict_cap_once(other_host, "forge")
-        loop_module._warn_verdict_cap_once(other_host, "forge")
+        loop_module._warn_verdict_cap_once(tier, _URL, "forge")
+        loop_module._warn_verdict_cap_once(tier, _URL, "forge")
+        loop_module._warn_verdict_cap_once(tier, _URL, "other-model")
+        loop_module._warn_verdict_cap_once(tier, other, "forge")
+        loop_module._warn_verdict_cap_once(tier, other, "forge")
     keys = [
         (getattr(r, "extra_fields", {})["base_url"], getattr(r, "extra_fields", {})["model"])
         for r in _cap_warnings(caplog)

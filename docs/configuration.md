@@ -975,7 +975,8 @@ false}`; everything else sends `{reasoning_effort: low}`. Nested maps merge key 
 EZER's verdicts came back empty with `finish_reason: length`; with `enable_thinking: false`
 the classifier answered in 2 tokens. Check your own server's documentation for its switch.
 The same reserved keys and the plain-JSON rule apply. When a verdict comes back empty at its
-cap, the daemon logs one warning per endpoint and model that names `verdict_extra_body`.
+cap, the daemon logs one warning per endpoint and model that names `verdict_extra_body`. If
+`verdict_extra_body` is already set, the warning says to check how the switch is spelled.
 
 ---
 
