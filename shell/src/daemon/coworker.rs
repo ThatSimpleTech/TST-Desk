@@ -1,5 +1,6 @@
 //! Coworker mode (TD-2902): close hides the window; quit still shuts down.
 //! `--parent-pid` is always passed (TD-2903); close keeps the host alive.
+//! Closing windows in any order stays in the tray (TD-5020).
 //!
 //! The bit lives at `{user_data_dir}/coworker.yaml` as `{enabled: true}`,
 //! the same shape as skip-all. Default on when the file is missing.
@@ -52,6 +53,84 @@ pub fn window_close_action_with_count(
         LifecycleEvent::CloseRequested if window_count > 1 => CloseAction::Destroy,
         LifecycleEvent::CloseRequested if coworker_on => CloseAction::Hide,
         LifecycleEvent::CloseRequested => CloseAction::Shutdown,
+    }
+}
+
+/// Label of the window `tauri.conf.json` opens at launch.
+pub const MAIN_WINDOW_LABEL: &str = "main";
+
+/// Windows that count toward "last window" (TD-5020). The hidden
+/// quick-entry overlay is not a viewer: counting it made closing the
+/// main window destroy it instead of hiding it.
+pub fn viewer_window_count<'a>(labels: impl IntoIterator<Item = &'a str>) -> usize {
+    labels
+        .into_iter()
+        .filter(|label| *label != crate::quick_entry::WINDOW_LABEL)
+        .count()
+}
+
+/// What the host does with `RunEvent::ExitRequested` (TD-5020).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitAction {
+    /// Keep the host and tstd up with no window; the tray brings one back.
+    StayInTray,
+    /// Let the process exit. Quit has already stopped tstd.
+    Exit,
+    /// Prevent this exit and run Quit, which stops tstd first.
+    Shutdown,
+}
+
+/// Tauri raises ExitRequested with `code: None` when the last window is
+/// destroyed, and with `Some` from `app.exit`. Close-to-hide does not
+/// cover every order: a session window closes without the hide rule,
+/// and an extra main window is destroyed. So a user-caused exit stays
+/// in the tray while Keep running is on. With coworker off, or with no
+/// tray to come back through, it quits as before.
+pub fn exit_requested_action(
+    code: Option<i32>,
+    quitting: bool,
+    coworker_on: bool,
+    tray_ok: bool,
+) -> ExitAction {
+    if quitting {
+        return ExitAction::Exit;
+    }
+    match code {
+        None if coworker_on && tray_ok => ExitAction::StayInTray,
+        _ => ExitAction::Shutdown,
+    }
+}
+
+/// Which window Show (tray, Reopen, a second launch) raises.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShowTarget {
+    Existing(String),
+    /// Every viewer was closed while Keep running stayed on.
+    OpenNew,
+    /// Quit is under way; a new window would only be torn down.
+    Nothing,
+}
+
+/// Main first, then another desk window, then a session window. The
+/// quick-entry overlay is never the window Show brings back.
+pub fn show_target<'a>(labels: impl IntoIterator<Item = &'a str>, quitting: bool) -> ShowTarget {
+    let rank = |label: &str| {
+        if label == MAIN_WINDOW_LABEL {
+            0
+        } else if crate::session_window::is_session_window_label(label) {
+            2
+        } else {
+            1
+        }
+    };
+    let best = labels
+        .into_iter()
+        .filter(|label| *label != crate::quick_entry::WINDOW_LABEL)
+        .min_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.cmp(b)));
+    match best {
+        Some(label) => ShowTarget::Existing(label.to_string()),
+        None if quitting => ShowTarget::Nothing,
+        None => ShowTarget::OpenNew,
     }
 }
 
@@ -165,6 +244,80 @@ mod tests {
         assert_eq!(
             window_close_action(LifecycleEvent::Quit, false),
             CloseAction::Shutdown
+        );
+    }
+
+    #[test]
+    fn exit_requested_table() {
+        use ExitAction::{Exit, Shutdown, StayInTray};
+        // (code, quitting, coworker_on, tray_ok) → action
+        let table = [
+            // Last window destroyed, Keep running on, tray up: stay.
+            ((None, false, true, true), StayInTray),
+            // No way back without a tray: quit as before.
+            ((None, false, true, false), Shutdown),
+            // Keep running off: quit as before.
+            ((None, false, false, true), Shutdown),
+            ((None, false, false, false), Shutdown),
+            // Our own app.exit after Quit stopped tstd.
+            ((Some(0), true, true, true), Exit),
+            ((Some(0), true, false, false), Exit),
+            // A window closing during Quit must not cancel the exit.
+            ((None, true, true, true), Exit),
+            // An exit nobody routed through Quit still stops tstd first.
+            ((Some(0), false, true, true), Shutdown),
+            ((Some(1), false, false, true), Shutdown),
+        ];
+        for ((code, quitting, coworker_on, tray_ok), want) in table {
+            assert_eq!(
+                exit_requested_action(code, quitting, coworker_on, tray_ok),
+                want,
+                "code={code:?} quitting={quitting} coworker={coworker_on} tray={tray_ok}"
+            );
+        }
+    }
+
+    #[test]
+    fn quick_entry_does_not_count_as_a_viewer() {
+        assert_eq!(viewer_window_count(["main", "quick-entry"]), 1);
+        assert_eq!(viewer_window_count(["quick-entry"]), 0);
+        assert_eq!(viewer_window_count(["main", "desk-2", "session-abc"]), 3);
+        // Main plus the hidden overlay is the last window: it hides.
+        assert_eq!(
+            window_close_action_with_count(
+                LifecycleEvent::CloseRequested,
+                true,
+                viewer_window_count(["main", "quick-entry"]),
+            ),
+            CloseAction::Hide
+        );
+    }
+
+    #[test]
+    fn show_prefers_main_then_desk_then_session() {
+        let pick = |labels: &[&str]| show_target(labels.iter().copied(), false);
+        assert_eq!(
+            pick(&["session-a", "desk-3", "main", "quick-entry"]),
+            ShowTarget::Existing("main".into())
+        );
+        assert_eq!(
+            pick(&["session-a", "desk-3", "desk-2"]),
+            ShowTarget::Existing("desk-2".into())
+        );
+        assert_eq!(
+            pick(&["session-b", "session-a"]),
+            ShowTarget::Existing("session-a".into())
+        );
+    }
+
+    #[test]
+    fn show_opens_a_desk_window_when_none_is_left() {
+        assert_eq!(show_target([], false), ShowTarget::OpenNew);
+        assert_eq!(show_target(["quick-entry"], false), ShowTarget::OpenNew);
+        assert_eq!(show_target(["quick-entry"], true), ShowTarget::Nothing);
+        assert_eq!(
+            show_target(["desk-2"], true),
+            ShowTarget::Existing("desk-2".into())
         );
     }
 
