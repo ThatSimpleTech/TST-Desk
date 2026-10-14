@@ -9,16 +9,13 @@
 // replays the session's event log, so full conversation history rebuilds
 // through the same reducer as live events: there is no separate history path.
 
-import {
-  toChips,
-  toWireAttachments,
-  type AttachmentChip,
-  type NewAttachment,
-} from "./attachments";
+import { toChips, toWireAttachments, type NewAttachment } from "./attachments";
 import { isBridged } from "./bridged-id";
+import type { ChatMessage } from "./chat-message";
 import { applyChatEvent, type BindHold } from "./chat-events";
 import { createBranchSnaps } from "./chat-fork";
 import { createMessageQueue, type QueuedMessage } from "./chat-queue";
+import { createDraftStore, noteSent, type DraftStore } from "./draft-store";
 import { createFirstTokenWait } from "./first-token-wait";
 import { resetDisclosures } from "./reasoning-disclosure.svelte.js";
 import { applyBind } from "./session-binding";
@@ -28,70 +25,7 @@ import type {
   SessionState,
 } from "./protocol";
 
-export interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  /** A reasoning model's thinking for this message (TD-1901), kept apart
-   *  from `text` because it is not the answer: TD-1902 folds it behind a
-   *  disclosure, and nothing may ever concatenate the two. Absent for
-   *  models that do not reason. */
-  reasoning?: string;
-  /** Epoch ms of the first reasoning delta, so the disclosure can label
-   *  itself with a duration. Cleared to a final elapsed by `reasoningMs`
-   *  once content starts. */
-  reasoningStartedAt?: number;
-  /** How long reasoning ran, once the answer began. Undefined while it is
-   *  still streaming — that is what distinguishes live from finished. */
-  reasoningMs?: number;
-  complete: boolean;
-  /** Epoch ms when the client first saw the message (send echo or first
-   *  delta). Replayed history stamps attach time — display-only (TD-1606). */
-  at: number;
-  /** Files sent with a user row, rendered as chips (TD-1709). Names and
-   *  sizes only: the bytes are gone the moment they are on the wire, and
-   *  keeping them would hold the whole session's attachments in memory for
-   *  a transcript that only ever shows the label. */
-  attachments?: AttachmentChip[];
-  /** Tool calls that ran during this assistant turn (TD-1902). Folded
-   *  like reasoning so a tool-heavy turn does not grow the transcript
-   *  without bound. Absent when the turn used no tools. Flat mirror of the
-   *  tool entries in `parts` — same object references, so a result update
-   *  lands in both. Kept for lookup and tests; rendering follows `parts`. */
-  tools?: ToolBlock[];
-  /** Ordered content of an assistant row: text segments and tool calls in
-   *  arrival order, so a tool that ran after the last text renders after it
-   *  instead of above the whole answer. Text deltas append to the trailing
-   *  text part, or open a new one after a tool. `text` stays the
-   *  concatenation of the text parts for copy and tests. Absent on user
-   *  rows and on assistant rows that never streamed content or tools. */
-  parts?: ChatPart[];
-  /** 0-based index among user turns (TD-1708). Only on user rows. */
-  userIndex?: number;
-  siblingIndex?: number;
-  siblingCount?: number;
-  /** Daemon-issued id for this user turn. Stamps a local echo so replay
-   *  of `user_turn` does not duplicate the row. */
-  turnId?: string;
-}
-
-/** One ordered entry on an assistant row: a text segment or a tool call.
- *  Text splits only at tool boundaries — one part holds everything said
- *  before the tool, the next everything after — so markdown within a
- *  segment renders intact. */
-export type ChatPart = { kind: "text"; text: string } | { kind: "tool"; tool: ToolBlock };
-
-/** One tool call on an assistant row (TD-1902). `status` is unset while
- *  the call is still running — that is what keeps the disclosure open. */
-export interface ToolBlock {
-  toolCallId: string;
-  name: string;
-  arguments: Record<string, unknown>;
-  decisionClass?: "A" | "B" | "C" | null;
-  status?: "success" | "error";
-  output?: string;
-  errorCode?: string | null;
-}
+export type { ChatMessage, ChatPart, ToolBlock } from "./chat-message";
 
 export interface ChatState {
   sessionId: string | null;
@@ -116,6 +50,14 @@ export interface ChatState {
   /** Seconds the last turn took, as measured by the daemon on turn_complete.
    *  The UI never times turns itself (AGENTS §6). Cleared on the next send. */
   lastTurnDuration: number | null;
+  /** The last turn_complete's error_code, cleared with lastTurnDuration and
+   *  when another turn starts. "interrupted_by_restart" is a turn the daemon
+   *  sealed after a restart cut it off, and the pane offers Continue for it
+   *  (TD-5019). */
+  lastTurnError: string | null;
+  /** The composer's text. Here rather than in the pane so each session keeps
+   *  its own and a send the daemon refuses can come back to it (TD-5019). */
+  draft: string;
 }
 
 export interface ChatDeps {
@@ -126,6 +68,8 @@ export interface ChatDeps {
    *  to one session rebuild here, from the replay `attach` then fetches.
    *  Optional: a pane with no activity lane alongside it is still a pane. */
   onBind?(sessionId: string | null): void;
+  /** Where drafts outlive the window (TD-5019). Defaults to localStorage. */
+  drafts?: DraftStore;
 }
 
 export interface ChatStore {
@@ -136,6 +80,11 @@ export interface ChatStore {
    *  one fails its caps or its text test (TD-1709). */
   sendUserMessage(text: string, attachments?: readonly NewAttachment[]): boolean;
   retryLastUserMessage(): boolean;
+  /** Pick up a turn a restart cut off (TD-5019): an ordinary "Continue"
+   *  message the user clicked, through the same path as any other send. */
+  continueTurn(): boolean;
+  /** The draft or the queue changed: save them once typing settles. */
+  keepDraft(): void;
   /** Replace a past user turn and fork from there (TD-1708). */
   forkFrom(userIndex: number, content: string): boolean;
   /** Switch to another sibling at a forked user turn (TD-1708). */
@@ -174,6 +123,8 @@ export function createChatState(): ChatState {
     turnStalled: false,
     awaitingSince: null,
     lastTurnDuration: null,
+    lastTurnError: null,
+    draft: "",
   };
 }
 
@@ -213,6 +164,14 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   // when a wait starts and stops, from turn evidence; the wait itself decides
   // what one in progress is worth.
   const wait = createFirstTokenWait(state);
+  const drafts = deps.drafts ?? createDraftStore();
+  // Texts on their way to the daemon, until it starts or refuses each one.
+  const sending: string[] = [];
+
+  /** Write the bound session's waiting draft save now, not after the debounce. */
+  function flushDraft(): void {
+    if (state.sessionId !== null) drafts.flush(state.sessionId);
+  }
 
   // Closure-level so retryLastUserMessage can call it without `this` —
   // the reactive shell re-exports these methods detached.
@@ -240,6 +199,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
           },
     );
     if (!sent) return false;
+    noteSent(sending, content);
     nextId += 1;
     const userIndex = state.messages.filter((m) => m.role === "user").length;
     state.messages.push({
@@ -259,6 +219,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     wait.end();
     wait.begin();
     state.lastTurnDuration = null;
+    state.lastTurnError = null;
     return true;
   }
 
@@ -279,8 +240,15 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   const hold: BindHold = { sessionId: null, lastList: [] };
 
   function switchSession(sessionId: string | null, turnState: SessionState["state"] | null): void {
+    const moving = state.sessionId !== sessionId;
+    // Saved before the bind clears the queue, so the rows leave with it.
+    if (moving) flushDraft();
     applyBind(state, { queue, wait, deps, onUnbind: resetDisclosures }, sessionId, turnState);
     forks.clear();
+    if (moving) {
+      sending.length = 0;
+      state.draft = sessionId === null ? "" : drafts.restore(sessionId);
+    }
     // A session on another computer that the last list didn't name (a new
     // one made there just now) is held until a list does (TD-5015).
     const listed = hold.lastList.some((s) => s.session_id === sessionId);
@@ -298,6 +266,8 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     },
     switchSession,
     hold,
+    sending,
+    flushDraft,
   };
 
   return {
@@ -326,17 +296,27 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       return false;
     },
 
+    continueTurn(): boolean {
+      return sendUserMessage("Continue");
+    },
+
+    keepDraft(): void {
+      if (state.sessionId !== null) drafts.schedule(state.sessionId, state.draft, state.queued);
+    },
+
     forkFrom(userIndex: number, content: string): boolean {
       if (state.sessionId === null) return false;
       const text = content.trim();
       if (text === "") return false;
       if (!forks.has(userIndex)) forks.save(userIndex, 0, state.messages);
-      return deps.send({
+      const sent = deps.send({
         type: "fork_from",
         session_id: state.sessionId,
         user_index: userIndex,
         content: text,
       });
+      if (sent) noteSent(sending, text);
+      return sent;
     },
 
     setBranch(userIndex: number, siblingIndex: number): boolean {
@@ -382,6 +362,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     removeQueuedMessage: queue.remove,
 
     dispose(): void {
+      flushDraft();
       if (state.sessionId !== null) deps.detach(state.sessionId);
       deps.onBind?.(null);
       state.sessionId = null;
@@ -392,6 +373,9 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       queue.clear();
       wait.end();
       state.lastTurnDuration = null;
+      state.lastTurnError = null;
+      state.draft = "";
+      sending.length = 0;
     },
   };
 }
