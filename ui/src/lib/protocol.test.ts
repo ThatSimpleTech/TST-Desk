@@ -987,6 +987,8 @@ describe("All fixtures have required shape", () => {
       "delete_job_template",
       "get_session_job_source",
       "transcribe",
+      "set_email_notify",
+      "test_email",
     ];
     for (const key of clientTypes) {
       const msg = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -1022,6 +1024,7 @@ describe("All fixtures have required shape", () => {
       "grok_session_list",
       "grok_extensions",
       "transcript",
+      "email_test_result",
     ];
     for (const key of eventTypes) {
       const evt = (fixtures as Record<string, unknown>)[key] as Record<string, unknown>;
@@ -1339,6 +1342,7 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(save.grace).toBe("2 hours");
     expect(save.retries).toBe(2);
     expect(save.retry_delay).toBe("10 minutes");
+    expect(save.max_run).toBe("20 minutes");
     expect(save.then).toBe("job-2");
     expect(save.skip_calendar).toBe("/home/user/holidays.ics");
     expect(save.skip_match).toBe("holiday|PTO|OOO");
@@ -1356,6 +1360,7 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(jobs.jobs[0]?.retries).toBe(2);
     expect(jobs.jobs[0]?.retry_delay).toBe(600);
     expect(jobs.jobs[0]?.attempt).toBe(0);
+    expect(jobs.jobs[0]?.max_run).toBe(1200);
     expect(jobs.jobs[0]?.then).toBe("job-2");
     expect(jobs.jobs[0]?.skip_calendar).toBe("/home/user/holidays.ics");
     expect(jobs.jobs[0]?.skip_match).toBe("holiday|PTO|OOO");
@@ -1411,6 +1416,7 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(save.cadence).toBe("weekdays at 7:45");
     expect(save.grace).toBe("2 hours");
     expect(save.retries).toBe(1);
+    expect(save.max_run).toBe("20 minutes");
     expect(save.preset).toBe("vllm");
     expect(save.engine).toBe("native");
     const del = fixtures.delete_job_template as DeleteJobTemplate;
@@ -1426,7 +1432,9 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(templates.templates[0]?.cadence).toBe("weekdays at 7:45");
     expect(templates.templates[0]?.builtin).toBe(true);
     expect(templates.templates[0]?.grace).toBe(7200);
+    expect(templates.templates[0]?.max_run ?? null).toBeNull();
     expect(templates.templates[1]?.next_run).toBe("tomorrow at 9:00");
+    expect(templates.templates[1]?.max_run).toBe(1200);
     expect(templates.templates[1]?.builtin).toBe(false);
     expect("session_id" in templates).toBe(false);
     const source = fixtures.session_job_source as SessionJobSource;

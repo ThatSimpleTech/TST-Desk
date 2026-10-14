@@ -218,6 +218,7 @@ from .protocol import (
     DiagnosticsReport,
     Drain,
     DrainResult,
+    EmailNotifyState,
     EndSession,
     ExportUsage,
     FocusWindow,
@@ -296,6 +297,7 @@ from .protocol import (
     SetCuIndicators,
     SetCuKill,
     SetCuPolicy,
+    SetEmailNotify,
     SetEngine,
     SetGrokMode,
     SetJudgments,
@@ -317,6 +319,7 @@ from .protocol import (
     StartAutonomy,
     StartPairing,
     StopTurn,
+    TestEmail,
     TierState,
     Transcribe,
     Transcript,
@@ -781,6 +784,7 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         retries=job.retries,
         retry_delay=job.retry_delay,
         attempt=job.attempt,
+        max_run=job.max_run,
         then=job.then,
         skip_calendar=job.skip_calendar,
         skip_match=job.skip_match,
@@ -788,6 +792,9 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         last_status=job.last_status,
         last_summary=job.last_summary,
         last_session_id=job.last_session_id,
+        email_to=job.email_to,
+        last_delivery=job.last_delivery,
+        last_delivery_error=job.last_delivery_error,
         running=running,
     )
 
@@ -807,6 +814,8 @@ def _job_runs_event(job_id: str, runs: list[JobRun]) -> str:
                 attempt=run.attempt,
                 attempts=run.attempts,
                 note=run.note,
+                delivery=run.delivery,
+                delivery_error=run.delivery_error,
             )
             for run in runs
         ],
@@ -828,9 +837,11 @@ def _job_templates_event(views: list[TemplateView]) -> str:
                 grace=view.grace,
                 retries=view.retries,
                 retry_delay=view.retry_delay,
+                max_run=view.max_run,
                 preset=view.preset,
                 engine=view.engine,
                 workspace=view.workspace,
+                email_to=view.email_to,
             )
             for view in views
         ]
@@ -1145,6 +1156,26 @@ class Daemon:
             ],
             speech_enabled=self.config.speech.enabled,
             speech_ready=self.config.speech.enabled and bool(self.config.speech.base_url),
+            email=await self._email_notify_state(),
+        )
+
+    async def _email_notify_state(self) -> EmailNotifyState:
+        """SMTP form values plus a presence probe. The password stays put."""
+        from .keychain import KeychainError, smtp_password_is_stored
+
+        email = self.config.notify.email
+        try:
+            stored = await smtp_password_is_stored()
+        except (KeychainError, FileNotFoundError):
+            stored = False
+        return EmailNotifyState(
+            enabled=email.enabled,
+            host=email.host,
+            port=email.port,
+            security=email.security,
+            username=email.username,
+            from_address=email.from_address,
+            password_stored=stored,
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
@@ -1999,27 +2030,51 @@ class Daemon:
         already set. A later tick must not run it again: that would fail
         a park this process just opened.
         """
+        from .scheduler.email_delivery import bind_email_sender, reset_email_sender
+
+        token = bind_email_sender(self._send_job_email)
         try:
-            if await revive_parked(self.data_dir, self._scheduler_deliver):
-                await self._push_job_list()
-        except Exception:
-            log.exception("scheduler park revive failed")
-        while not self._shutdown_event.is_set():
             try:
-                await self.run_due_jobs()
+                if await revive_parked(self.data_dir, self._scheduler_deliver):
+                    await self._push_job_list()
             except Exception:
-                log.exception("scheduler tick failed")
-            try:
-                await asyncio.wait_for(
-                    self._shutdown_event.wait(),
-                    timeout=self._scheduler_tick,
-                )
-            except TimeoutError:
-                continue
+                log.exception("scheduler park revive failed")
+            while not self._shutdown_event.is_set():
+                try:
+                    await self.run_due_jobs()
+                except Exception:
+                    log.exception("scheduler tick failed")
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown_event.wait(),
+                        timeout=self._scheduler_tick,
+                    )
+                except TimeoutError:
+                    continue
+        finally:
+            reset_email_sender(token)
 
     async def _channel_notify(self, channel: DeliverTo, summary: str) -> None:
         """Default scheduler delivery: Slack/ntfy ``send``, never a skip log."""
         await channel_notify(self.config, channel, summary)
+
+    async def _send_job_email(self, job: Job, body: str, when: datetime) -> None:
+        """SMTP for one scheduled report. Bound for the tick and for Run now."""
+        from .notify.email import report_chrome, send
+
+        chrome = report_chrome(
+            job.instruction, when, job.timezone, job.preset, self.config.active_preset
+        )
+        await send(
+            self.config,
+            body,
+            to=job.email_to or "",
+            subject=chrome.subject,
+            title=chrome.title,
+            when=chrome.when,
+            timezone_name=chrome.timezone_name,
+            preset=chrome.preset,
+        )
 
     async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
         """Wake due jobs against this daemon. Tests call this directly.
@@ -2027,17 +2082,23 @@ class Daemon:
         Nothing fires during a drain hold (TD-5023). A due job stays due,
         so the first tick after the hold runs it.
         """
+        from .scheduler.email_delivery import bind_email_sender, reset_email_sender
+
         if self._drain.active:
             return []
         when = now if now is not None else datetime.now(UTC)
-        ran = await run_due_jobs(
-            self.data_dir,
-            when,
-            run_turn=self._scheduled_run_turn,
-            deliver=self._scheduler_deliver,
-            in_flight=self._in_flight,
-            on_parked=self._arm_park_watch,
-        )
+        token = bind_email_sender(self._send_job_email)
+        try:
+            ran = await run_due_jobs(
+                self.data_dir,
+                when,
+                run_turn=self._scheduled_run_turn,
+                deliver=self._scheduler_deliver,
+                in_flight=self._in_flight,
+                on_parked=self._arm_park_watch,
+            )
+        finally:
+            reset_email_sender(token)
         if ran:
             # Both halves of the row moved: next_run advanced and the run
             # receipt landed. Nothing asked for this, so push it — otherwise
@@ -2674,6 +2735,12 @@ class Daemon:
             )
             save_cu_policy(self.cu_policy)
             return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetEmailNotify):
+            return await self._handle_set_email_notify(msg)
+
+        if isinstance(msg, TestEmail):
+            return await self._handle_test_email(msg)
 
         if isinstance(msg, SetJudgments):
             # TD-708 (dev): persist the judgments block; running sessions
@@ -4003,6 +4070,7 @@ class Daemon:
             cadence=draft.cadence,
             next_run=draft.next_run,
             deliver_to=draft.deliver_to,
+            email_to=draft.email_to,
             paused=draft.paused,
         ).model_dump_json()
 
@@ -4073,9 +4141,11 @@ class Daemon:
                 grace=msg.grace,
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
+                max_run=msg.max_run,
                 preset=msg.preset,
                 engine=msg.engine,
                 workspace=msg.workspace,
+                email_to=msg.email_to,
             ),
             self.config.presets,
             self._known_workspaces(),
@@ -4121,6 +4191,9 @@ class Daemon:
         return await self._job_list_event()
 
     async def _finish_manual_run(self, job: Job) -> None:
+        from .scheduler.email_delivery import bind_email_sender, reset_email_sender
+
+        token = bind_email_sender(self._send_job_email)
         try:
             await run_manual_job(
                 self.data_dir,
@@ -4137,8 +4210,24 @@ class Daemon:
                 extra={"extra_fields": {"job_id": job.id}},
             )
         finally:
+            reset_email_sender(token)
             self._in_flight.release(job.id)
             await self._push_job_list()
+
+    async def _handle_set_email_notify(self, msg: SetEmailNotify) -> str:
+        from .notify.email import EmailNotifyError
+        from .notify.email_settings import apply_email_notify
+
+        try:
+            await apply_email_notify(self.config, msg, self.config_path)
+        except EmailNotifyError as exc:
+            return build_error("bad_request", f"{exc.error_class}: {exc.message}")
+        return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_test_email(self, msg: TestEmail) -> str:
+        from .notify.email_settings import send_test_email
+
+        return (await send_test_email(self.config, msg.to)).model_dump_json()
 
     async def _job_list_event(self) -> str:
         jobs = await asyncio.to_thread(list_jobs, self.data_dir)
@@ -4166,9 +4255,11 @@ class Daemon:
                 grace=msg.grace,
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
+                max_run=msg.max_run,
                 then=msg.then,
                 skip_calendar=msg.skip_calendar,
                 skip_match=msg.skip_match,
+                email_to=msg.email_to,
             )
             # Pause omits ``then``. Checking a link it did not send would
             # refuse to pause a row whose file was hand-edited into a loop.
@@ -4190,9 +4281,11 @@ class Daemon:
                 grace=msg.grace,
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
+                max_run=msg.max_run,
                 then=msg.then,
                 skip_calendar=msg.skip_calendar,
                 skip_match=msg.skip_match,
+                email_to=msg.email_to,
             )
         )
         # Create only: an existing job whose folder moved must stay editable

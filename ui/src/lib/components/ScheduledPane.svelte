@@ -39,6 +39,7 @@
 	import EmptyState from './EmptyState.svelte';
 	import ScheduledCalendarField from './ScheduledCalendarField.svelte';
 	import ScheduledGraceField from './ScheduledGraceField.svelte';
+	import ScheduledMaxRunField from './ScheduledMaxRunField.svelte';
 	import ScheduledHistory from './ScheduledHistory.svelte';
 	import ScheduledRetriesField from './ScheduledRetriesField.svelte';
 	import ScheduledThenField from './ScheduledThenField.svelte';
@@ -211,10 +212,23 @@
 				<option value="window">window</option>
 				<option value="slack">slack</option>
 				<option value="ntfy">ntfy</option>
+				<option value="email">email</option>
 			</select>
 		</label>
+		{#if scheduled.draft.deliver_to === 'email'}
+			<label class="field">
+				<span>Email address</span>
+				<input
+					type="email"
+					value={scheduled.draft.email_to}
+					oninput={(e) => setDraftField('email_to', e.currentTarget.value)}
+					placeholder="owner@example.com"
+				/>
+			</label>
+		{/if}
 		<ScheduledGraceField />
 		<ScheduledRetriesField />
+		<ScheduledMaxRunField />
 		<ScheduledThenField />
 		<ScheduledCalendarField />
 		<ScheduledPinFields />

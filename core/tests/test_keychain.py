@@ -18,6 +18,7 @@ from tstd.keychain import (
     DISCORD_WEBHOOK_ACCOUNT,
     NTFY_TOPIC_ACCOUNT,
     SLACK_WEBHOOK_ACCOUNT,
+    SMTP_PASSWORD_ACCOUNT,
     TELEGRAM_BOT_ACCOUNT,
     KeychainBackend,
     KeychainError,
@@ -30,12 +31,14 @@ from tstd.keychain import (
     get_discord_webhook_url,
     get_ntfy_topic_url,
     get_slack_webhook_url,
+    get_smtp_password,
     get_telegram_bot_url,
     has_keychain_backend,
     store_api_key,
     store_discord_webhook_url,
     store_ntfy_topic_url,
     store_slack_webhook_url,
+    store_smtp_password,
     store_telegram_bot_url,
 )
 from tstd.provider import ProviderClient
@@ -106,6 +109,15 @@ class TestExtraNotifyAccounts:
         assert TELEGRAM_BOT_ACCOUNT == "tst-telegram-bot"
         await store_telegram_bot_url("https://api.telegram.org/botx/sendMessage?chat_id=1")
         assert "api.telegram.org" in await get_telegram_bot_url()
+
+    async def test_smtp_password_is_tst_smtp_password(self) -> None:
+        assert SMTP_PASSWORD_ACCOUNT == "tst-smtp-password"
+        await store_smtp_password("desk-secret")
+        assert await get_smtp_password() == "desk-secret"
+
+    async def test_smtp_password_rejects_a_newline(self) -> None:
+        with pytest.raises(KeychainError, match="newline"):
+            await store_smtp_password("desk\nsecret")
 
 
 class TestKeychainCRUD:

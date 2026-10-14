@@ -1,11 +1,13 @@
 """Park a scheduled run that is waiting on an approval card (TD-3815).
 
-The runner used to sit in ``_TURN_TIMEOUT_SECS`` until the turn ended,
-then record a timeout. That string is transient, so the next try opened
-another session onto the same card. Parking returns as soon as the
-session is ``awaiting_approval``, advances the slot the way a finished
-fire does, and lets one background watch settle the same history line
-when the user answers — or a restart, if the process is gone first.
+The runner used to sit until the turn budget ended, then record a
+timeout. That string is transient, so the next try opened another
+session onto the same card. Parking returns as soon as the session is
+``awaiting_approval``, advances the slot the way a finished fire does,
+and lets one background watch settle the same history line when the
+user answers — or a restart, if the process is gone first. A budget
+that does expire is a max-run stop: the runner cancels the turn and
+does not retry it.
 
 The watch is cancelled on shutdown without settling. The row stays
 parked on disk so the next start can close it. Cancelling the session
@@ -18,13 +20,14 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from ..logging import get_logger
 from ..protocol import ApprovalRequest, ToolResult, TurnComplete
 from ..session import Session
+from .email_delivery import deliver_job
 from .grace import _clock
 from .history import RunTrigger, append_run, close_waiting_run
 from .models import DeliverTo, Job, normalize_next_run, normalize_summary
@@ -68,11 +71,10 @@ async def await_turn_or_approval(session: Session, budget: float) -> bool:
     """True when the session is parked on an approval card.
 
     A finished turn returns False so the caller reads the outcome.
-    ``budget`` is the runner's turn budget, passed in so a test can
-    shorten it without this module binding the constant at import.
-    Exceeding it raises the same ``TimeoutError`` the runner already
-    maps to a transient retry. A turn that never asks for approval
-    still uses that budget.
+    ``budget`` is the runner's turn budget. Exceeding it raises
+    ``TimeoutError``. The runner cancels that turn and records a
+    max-run stop, which is not a transient retry. A turn that never
+    asks for approval still uses that budget.
     """
     deadline = time.monotonic() + budget
     seen = session.event_log.last_seq
@@ -166,7 +168,17 @@ async def park_run(
         "scheduled run parked for approval",
         extra={"extra_fields": {"job_id": job.id, "summary_len": len(text)}},
     )
-    await deliver(job.deliver_to, waiting_line(job.timezone, scheduled_for, text))
+    notice = waiting_line(job.timezone, scheduled_for, text)
+    await deliver_job(
+        deliver,
+        data_dir,
+        job,
+        job.deliver_to,
+        notice,
+        now,
+        body=notice,
+        started_at=stamp,
+    )
     return stamp
 
 
@@ -194,7 +206,7 @@ async def skip_if_parked(
     if saved is None or not found:
         return False
     slot, channel = found[-1]
-    await asyncio.to_thread(
+    recorded = await asyncio.to_thread(
         append_run,
         data_dir,
         job.id,
@@ -209,7 +221,16 @@ async def skip_if_parked(
         "scheduled slot missed, previous run still waiting",
         extra={"extra_fields": {"job_id": job.id}},
     )
-    await deliver(channel, PARKED_MISS)
+    await deliver_job(
+        deliver,
+        data_dir,
+        job,
+        channel,
+        PARKED_MISS,
+        now,
+        body=PARKED_MISS,
+        started_at=recorded.started_at,
+    )
     return True
 
 
@@ -374,7 +395,17 @@ async def _settle(
         scheduled_for=scheduled_for,
     )
     if disk.deliver and disk.channel is not None:
-        await deliver(disk.channel, disk.summary)
+        await deliver_job(
+            deliver,
+            data_dir,
+            None,
+            disk.channel,
+            disk.summary,
+            datetime.now(UTC),
+            body=disk.summary,
+            started_at=started_at,
+            job_id=job_id,
+        )
     return disk.saved
 
 

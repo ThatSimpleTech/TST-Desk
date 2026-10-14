@@ -6429,6 +6429,101 @@ files, vitest 1452, svelte-check 721 files 0 errors 0 warnings.
 
 ---
 
+### TD-3819 — Scheduled runs get a realistic, configurable time limit
+**Size:** 2 · **Depends on:** TD-3815
+
+**Acceptance criteria:**
+- [x] `scheduler.max_run_seconds` (default 900) replaces the 120 second
+      waiter for a scheduled turn. It is documented in
+      `docs/configuration.md` and shipped in `config.yaml`. A job may
+      set `max_run` as a duration phrase or seconds, from 1 to 60
+      minutes, and that limit wins. On an edit, omitted keeps it and
+      `""` clears it so the job uses the config. A template may carry it
+- [x] When the limit expires, the turn is cancelled and the receipt
+      says `stopped after N minutes (max run time)`. That reason is not
+      transient, so TD-3814 does not retry it
+- [x] `tst run` takes `--timeout` in seconds. The default base is
+      `scheduler.max_run_seconds`. The provider retry allowance is still
+      added when the config can be read
+- [x] The job form has a Max run time select: Default, 5, 10, 15, 30,
+      and 60 min
+
+Done (2026-09-29): a scheduled turn runs until its own limit, or until
+`scheduler.max_run_seconds` (15 minutes) when the job does not set one.
+Hitting the limit cancels the session and records a max-run stop, which
+is not retried. `tst run --timeout` replaces the base for one command
+and still leaves room for provider retries. The pane's select sends the
+same duration phrases grace already uses. Class B entry in DECISIONS.md.
+
+Suite: 4129 passed / 8 skipped, ruff + `mypy --strict` clean over 182
+files, vitest 1456, svelte-check 724 files 0 errors 0 warnings.
+
+---
+
+### TD-3820 — Email as a scheduled-job delivery channel
+**Size:** 3 · **Depends on:** TD-3801, TD-3802, TD-4707, TD-3807
+
+**Acceptance criteria:**
+- [x] `notify.email` sends over STARTTLS or implicit TLS with the stdlib.
+      The password lives only in the keychain account `tst-smtp-password`.
+      A send is refused when TLS is not established. Logs record the
+      recipient domain, never the password and never the message body
+- [x] A job may set `deliver_to` to `email` with one validated `email_to`.
+      The protocol, job edit, templates, and the Scheduled pane all carry it.
+      Deliver to → Email reveals the address field
+- [x] The message body is the assistant text after the last tool call, or
+      the full turn when there is no tool call. The subject is the first
+      60 characters of the instruction, an em dash, and the local date.
+      The message is plain text plus a minimal HTML rendering
+- [x] Settings → Email saves host, port, security, username, and from.
+      The password field writes the keychain. Send test email reports the
+      SMTP outcome. A failure shows the error class and message, with no
+      secret
+- [x] A failed send marks that run's delivery as failed on the job and in
+      history. The run's own ok or failed status stays what the turn did
+
+Done (2026-09-29): a scheduled job can mail its report. The body is the
+final assistant message, the password stays in the keychain, and a mail
+failure is a delivery failure rather than a change to the run's status.
+Settings can save the SMTP form and send a test. Class B entry in
+DECISIONS.md.
+
+Suite: 4157 passed / 8 skipped, ruff + `mypy --strict` clean over 186
+files, vitest 1460, svelte-check 727 files 0 errors 0 warnings.
+
+---
+
+### TD-3821 — Scheduled-job report emails look like a designed newsletter
+**Size:** 2 · **Depends on:** TD-3820
+
+**Acceptance criteria:**
+- [x] The report Markdown renders to email-safe HTML: headings,
+      paragraphs, bold and italic, links, bullet and numbered lists,
+      tables, inline code, code blocks, and blockquotes. Styles are
+      inline. The column is centred at max-width 680px, with a system
+      font, a header band (job title and local date), and a footer
+      `Sent by TST Desk · <job title> · ran <local time> on <preset>`
+- [x] Model output is escaped. Links are http or https only. Images,
+      scripts, style blocks, and event attributes in the report do not
+      become live HTML
+- [x] The message stays multipart/alternative. The plain part is the
+      same Markdown
+- [x] Settings → Send test email sends a short sample report through
+      the same renderer
+
+Done (2026-09-29): a scheduled report arrives as a one-column
+newsletter. The plain part is still the Markdown. The HTML escapes the
+model text, keeps http and https links, and drops images. The header
+is the same 60-character instruction label as the subject, and the
+footer names that label, the local time, and the preset. Send test
+email uses a short sample of the same layout. Class B entry in
+DECISIONS.md.
+
+Suite: 4178 passed / 8 skipped, ruff + `mypy --strict` clean over 189
+files, vitest 1460, svelte-check 727 files 0 errors 0 warnings.
+
+---
+
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
