@@ -23,9 +23,9 @@ import hashlib
 import hmac
 import io
 import os
+import platform
 import re
 import secrets
-import socket
 import tempfile
 import time
 import unicodedata
@@ -109,7 +109,7 @@ def sanitize_device_name(raw: str) -> str:
 
 def desktop_name() -> str:
     """This computer's short host name, as the phone will show it."""
-    return socket.gethostname().split(".")[0].strip() or "TST Desk"
+    return platform.node().split(".")[0].strip() or "TST Desk"
 
 
 def iso_utc(ts: float) -> str:

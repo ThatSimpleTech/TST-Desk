@@ -405,7 +405,7 @@ def test_the_qr_is_a_plain_standalone_svg() -> None:
 
 
 def test_the_pairing_code_event_matches_the_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("tstd.remote_devices.socket.gethostname", lambda: "ezer.tail1234.ts.net")
+    monkeypatch.setattr("tstd.remote_devices.platform.node", lambda: "ezer.tail1234.ts.net")
     event = pairing_code_event("ABCD2345", _T0 + 600, "100.64.7.7", 39079)
     assert event.model_dump(exclude={"qr_svg"}) == {
         "type": "pairing_code",

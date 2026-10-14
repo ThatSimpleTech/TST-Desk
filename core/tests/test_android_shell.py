@@ -17,7 +17,12 @@ def test_asset_server_binds_loopback_only() -> None:
     source = (PKG / "AssetServer.kt").read_text(encoding="utf-8")
     assert 'const val LOOPBACK_HOST = "127.0.0.1"' in source
     assert "check(bindHost == LOOPBACK_HOST)" in source
-    assert "ServerSocket(0, 50, address)" in source
+    # TD-5014: the remembered port (or a random one) on that same address.
+    assert "val address = InetAddress.getByName(LOOPBACK_HOST)" in source
+    assert "bindLoopback(address, remembered)" in source
+    assert "server.bind(InetSocketAddress(address, port), 50)" in source
+    assert source.count("InetSocketAddress(") == 1
+    assert "ServerSocket(0" not in source and "ServerSocket(port" not in source
 
 
 def test_manifest_does_not_back_up_or_phone_home() -> None:
