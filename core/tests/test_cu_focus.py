@@ -31,7 +31,7 @@ class _Ws:
         self.sent: list[str] = []
         self._fail = fail
 
-    async def broadcast(self, payload: str) -> int:
+    async def broadcast(self, payload: str, **_audience: object) -> int:
         if self._fail:
             raise RuntimeError("socket gone")
         self.sent.append(payload)
