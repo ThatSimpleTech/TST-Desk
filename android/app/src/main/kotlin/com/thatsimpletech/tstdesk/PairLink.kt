@@ -95,6 +95,14 @@ class PendingPairLink {
     fun clearIf(delivered: String) {
         link.compareAndSet(delivered, null)
     }
+
+    /**
+     * A scanned pairing link the page did not receive. An activity recreated
+     * while the scanner was open is still loading its page, so the link
+     * waits here for that page's boot, the same as an opened link.
+     */
+    fun keepUndeliveredScan(text: String?, delivered: Boolean): String? =
+        if (delivered) null else offer(text)
 }
 
 /**

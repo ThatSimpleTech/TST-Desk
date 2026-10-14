@@ -81,8 +81,19 @@ class AttachVault(private val sealer: Sealer, private val store: BlobStore) {
 
     fun save(raw: String): Boolean {
         if (!looksLikeTarget(raw)) return false
+        val plain = raw.toByteArray(Charsets.UTF_8)
+        // A key that will not seal will not open the old blob either, and
+        // this save replaces that blob anyway, so a fresh key costs nothing.
+        // Without this a key stuck that way refuses every pairing for good.
+        val (iv, sealed) = sealOrNull(plain) ?: run {
+            try {
+                sealer.discardKey()
+            } catch (_: Exception) {
+                // Still try: the second seal reports whether the Keystore is back.
+            }
+            sealOrNull(plain)
+        } ?: return false
         return try {
-            val (iv, sealed) = sealer.seal(raw.toByteArray(Charsets.UTF_8))
             val encoder = Base64.getEncoder()
             store.write("${encoder.encodeToString(iv)}:${encoder.encodeToString(sealed)}")
             true
@@ -90,6 +101,13 @@ class AttachVault(private val sealer: Sealer, private val store: BlobStore) {
             false
         }
     }
+
+    private fun sealOrNull(plain: ByteArray): Pair<ByteArray, ByteArray>? =
+        try {
+            sealer.seal(plain)
+        } catch (_: Exception) {
+            null
+        }
 
     /**
      * Forget the target. The key goes too, since it now guards nothing, so
