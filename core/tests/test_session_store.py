@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -472,3 +473,46 @@ async def test_a_failed_write_removes_its_own_temp_file(
     rec = SessionStore(tmp_path).get("s1")
     assert rec is not None
     assert rec.state == "idle"
+
+
+async def test_a_cancelled_writer_cannot_overwrite_a_later_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancelled caller (shutdown, a dropped socket) leaves its thread running.
+
+    The lock has to stay held until that thread lands. Released early, a
+    later write lands first and the older payload then replaces it.
+    """
+    store = SessionStore(tmp_path)
+    await store.upsert("s1", "/ws", "idle")
+    real_replace = os.replace
+    in_rename = threading.Event()
+    let_go = threading.Event()
+    first_landed = threading.Event()
+
+    def hold_the_first(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        if in_rename.is_set():
+            real_replace(src, dst)
+            return
+        in_rename.set()
+        let_go.wait(timeout=5)
+        real_replace(src, dst)
+        first_landed.set()
+
+    monkeypatch.setattr("tstd.session_store.os.replace", hold_the_first)
+    first = asyncio.create_task(store.update_state("s1", "running"))
+    assert await asyncio.to_thread(in_rename.wait, 5)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+
+    later = asyncio.create_task(store.update_state("s1", "cancelled"))
+    await asyncio.sleep(0.05)  # room for the later write to overtake
+    let_go.set()
+    await later
+    assert await asyncio.to_thread(first_landed.wait, 5)
+
+    rec = SessionStore(tmp_path).get("s1")
+    assert rec is not None
+    assert rec.state == "cancelled"

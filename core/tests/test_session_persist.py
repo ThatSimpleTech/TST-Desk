@@ -345,6 +345,8 @@ def _run_together(*jobs: Any) -> None:
         thread.start()
     for thread in threads:
         thread.join(timeout=10)
+    # A writer stuck on the lock is a failure, not a quiet pass.
+    assert not [thread for thread in threads if thread.is_alive()]
     assert not errors
 
 

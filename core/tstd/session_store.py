@@ -94,6 +94,9 @@ class SessionStore:
         # One write at a time (TD-5016). Overlapping writers used to share
         # one temp name, and the second rename found it already moved.
         self._write_lock = asyncio.Lock()
+        # In-flight writes. The loop holds tasks weakly, and one whose
+        # caller was cancelled has no other owner until it lands.
+        self._writes: set[asyncio.Task[None]] = set()
         self._load()
 
     async def upsert(
@@ -287,10 +290,20 @@ class SessionStore:
     async def _persist(self) -> None:
         """Write records atomically off the event loop, one write at a time.
 
-        The payload is built on the loop under the lock, so the thread never
-        reads ``_records`` while the loop changes it, and the last write to
-        land holds every change made before it took the lock.
+        The write runs as its own task and the caller only waits on it. A
+        cancelled caller cannot stop the thread, so the lock must stay held
+        until the thread is done; otherwise a later write could land first
+        and then be overwritten by this older payload.
         """
+        write = asyncio.create_task(self._write_in_order())
+        self._writes.add(write)
+        write.add_done_callback(self._writes.discard)
+        await asyncio.shield(write)
+
+    async def _write_in_order(self) -> None:
+        # The payload is built on the loop under the lock, so the thread
+        # never reads ``_records`` while the loop changes it, and the last
+        # write to land holds every change made before it took the lock.
         async with self._write_lock:
             payload = [asdict(r) for r in self._records.values()]
             await asyncio.to_thread(self._persist_sync, payload)
