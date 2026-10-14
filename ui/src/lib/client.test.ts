@@ -213,6 +213,28 @@ describe("reconnect and backoff", () => {
     expect(h.client.connectionState).toBe("stopped");
   });
 
+  it("keeps retrying on its backoff after a handshake error that is not a refusal (TD-5014)", async () => {
+    const h = buildClient({ baseBackoffMs: 5, maxBackoffMs: 20 });
+    await h.client.start();
+    const message = "This computer can't read its paired devices right now. Trying again.";
+    for (const [attempt, wait] of [[0, 5], [1, 10]] as const) {
+      const server = h.servers[attempt];
+      server.socket.onopen?.();
+      // The daemon answers the hello with a typed error, then closes.
+      server.push(JSON.stringify({ type: "error", code: "devices_unavailable", message }));
+      server.drop();
+      expect(h.client.connectionState).toBe("reconnecting");
+      expect(h.sockets.length).toBe(attempt + 1);
+      await vi.advanceTimersByTimeAsync(wait);
+      expect(h.sockets.length).toBe(attempt + 2);
+    }
+    expect(h.onEvent).toHaveBeenCalledWith(expect.objectContaining({ code: "devices_unavailable", message }));
+    // Once the computer can read its list again, the same key gets in.
+    h.servers[2].handshake();
+    expect(h.client.connectionState).toBe("connected");
+    h.client.stop();
+  });
+
   it("caps backoff at maxBackoffMs", async () => {
     const h = buildClient({ baseBackoffMs: 5, maxBackoffMs: 8 });
     await h.client.start();

@@ -192,6 +192,9 @@
 								? 'The address and key are saved on this device, encrypted. Forget clears them and disconnects.'
 								: 'This tab keeps the key until it closes. Forget clears it now and disconnects.'}
 						</p>
+						{#if remoteAttach.storeNote !== null}
+							<p class="hint" role="status">{remoteAttach.storeNote}</p>
+						{/if}
 					{/if}
 					<button
 						class="disclosure"

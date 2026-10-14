@@ -27,7 +27,8 @@ export interface AttachStore {
   /** True when the target survives closing the app. */
   readonly durable: boolean;
   load(): string | null;
-  save(raw: string): void;
+  /** False when nothing was saved (TD-5014): the caller decides whether to retry. */
+  save(raw: string): boolean;
   clear(): void;
 }
 
@@ -57,9 +58,10 @@ function nativeStore(bridge: NativeAttachBridge): AttachStore {
     },
     save: (raw) => {
       try {
-        bridge.saveAttach(raw);
+        return bridge.saveAttach(raw) === true;
       } catch {
         // Keystore unavailable: this launch still has the target in memory.
+        return false;
       }
     },
     clear: () => {
@@ -85,8 +87,10 @@ function sessionStore(storage: Storage): AttachStore {
     save: (raw) => {
       try {
         storage.setItem(REMOTE_ATTACH_STORAGE, raw);
+        return true;
       } catch {
         // Quota or private mode: reconnect in this tab still works from memory.
+        return false;
       }
     },
     clear: () => {
@@ -99,7 +103,7 @@ function sessionStore(storage: Storage): AttachStore {
   };
 }
 
-const NO_STORE: AttachStore = { durable: false, load: () => null, save: () => {}, clear: () => {} };
+const NO_STORE: AttachStore = { durable: false, load: () => null, save: () => false, clear: () => {} };
 
 /** Native store in the Android shell, sessionStorage in a browser tab. */
 export function attachStore(scope: object = globalThis): AttachStore {

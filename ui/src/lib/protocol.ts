@@ -28,6 +28,9 @@ export interface Pair extends ClientMessage {
   code: string;
   device_name: string;
   version: number;
+  /** This phone's current device key when it is re-pairing, so the daemon
+   *  drops the entry it replaces. Never a legacy remote-token. */
+  replaces?: string | null;
 }
 
 export interface OpenWorkspace extends ClientMessage {
@@ -180,7 +183,8 @@ export interface CancelPairing extends ClientMessage {
   type: "cancel_pairing";
 }
 
-/** Forget one paired device and close only its connections (TD-5014). Loopback only. */
+/** Forget one paired device and close only its connections (TD-5014). From
+ *  loopback, any device; from a remote peer, only the device it signed in as. */
 export interface RemoveRemoteDevice extends ClientMessage {
   type: "remove_remote_device";
   device_id: string;

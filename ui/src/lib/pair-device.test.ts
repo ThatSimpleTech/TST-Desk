@@ -20,6 +20,7 @@ import {
   pairDialog,
   PAIRED_CLOSE_MS,
   reducePairing,
+  refreshRemoteDevices,
   removeRemoteDevice,
 } from "./pair-device.svelte.js";
 
@@ -62,11 +63,14 @@ describe("pair dialog (TD-5014)", () => {
     reducePairing(CODE);
     expect(pairDialog.offer?.display_code).toBe("ABCD-2345");
     expect(pairDialog.waiting).toBe(false);
+    // Starting can turn remote attach on: read the settings back (addendum 5).
+    expect(mocks.sent).toEqual([{ type: "start_pairing" }, { type: "get_setup_state" }]);
   });
 
-  it("ignores a code it did not ask for", () => {
+  it("ignores a code it did not ask for, but still reads settings back", () => {
     reducePairing(CODE);
     expect(pairDialog.offer).toBeNull();
+    expect(mocks.sent).toEqual([{ type: "get_setup_state" }]);
   });
 
   it("cancel tells the daemon to drop the code", () => {
@@ -104,13 +108,16 @@ describe("pair dialog (TD-5014)", () => {
     } as DaemonEventUnion);
     expect(pairDialog.error).toMatch(/Tailscale isn't running/);
     expect(pairDialog.waiting).toBe(false);
+    expect(mocks.sent.at(-1)).toEqual({ type: "get_setup_state" });
   });
 
   it("leaves a session's own error alone", () => {
     openPairDialog();
     reducePairing(CODE);
+    mocks.sent.length = 0;
     reducePairing({ type: "error", seq: 3, session_id: "s1", code: "provider", message: "x" } as DaemonEventUnion);
     expect(pairDialog.error).toBeNull();
+    expect(mocks.sent).toEqual([]);
   });
 
   it("says so when the daemon is not connected", () => {
@@ -118,6 +125,11 @@ describe("pair dialog (TD-5014)", () => {
     openPairDialog();
     expect(pairDialog.error).not.toBeNull();
     expect(pairDialog.waiting).toBe(false);
+  });
+
+  it("asks for the device list on demand (the list does this on mount)", () => {
+    refreshRemoteDevices();
+    expect(mocks.sent).toEqual([{ type: "get_setup_state" }]);
   });
 
   it("removes a device by id", () => {
