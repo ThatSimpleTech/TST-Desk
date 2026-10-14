@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from tests.test_daemon_shutdown import (
+    _quiet_budget,
     _read_log,
     _shutting_down_reasons,
     _spawn,
@@ -117,7 +118,11 @@ async def _parent_death(*, coworker: bool, foreign_pid: int | None) -> None:
             data_dir = Path(tmp)
             if coworker:
                 save_coworker(tmp, True)
-            daemon = Daemon(data_dir=data_dir, parent_pid=sleeper.pid)
+            # The watchdog arms the budget now (TD-5021); in-process it must
+            # not be able to end pytest.
+            daemon = Daemon(
+                data_dir=data_dir, parent_pid=sleeper.pid, shutdown_budget=_quiet_budget()
+            )
             # Aggressive poll so the test stays fast.
             daemon._parent_poll_interval = 0.05
             runner = asyncio.create_task(daemon.run())

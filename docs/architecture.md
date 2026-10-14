@@ -231,7 +231,11 @@ saved**. The registry still knows the id and workspace. Events that reached
 disk can be replayed so the window shows what we actually have. The loop does
 not start, and a new message is refused — continuing without the conversation
 would be inventing context. A session that has both `events.jsonl` and
-`conversation.json` is revived as `running` instead.
+`conversation.json` is revived as `running` instead. When its last
+`user_turn` has no `turn_complete` (a restart cut the turn), revive seals it
+once: each unanswered tool call gets a "Not finished" tool reply, and the log
+gets a failed `turn_complete` with `error_code: interrupted_by_restart`. That
+seal is the only thing revive adds; nothing is sent to the model (TD-5018).
 
 Note that `running` spans the session's whole life, not one turn. "Is a turn in flight" is a
 separate question answered by `Session.turn_in_flight`, counted off `turn_complete` events —
@@ -440,7 +444,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `memory_reject` | yes | Reject a distill proposal. Writes nothing. |
 | `end_session` | yes | Run distill for this session (TD-2302). Not a kill. |
 | `shutdown` | — | Ask the daemon to shut down cleanly. Sent by the supervising host. |
-| `drain` | — | Before a restart: wait up to `timeout_s` for open turns, then refuse new `user_message` / `fork_from` with `daemon_draining` for `hold_s` more. Due jobs wait too. `0`/`0` releases. Loopback only (`loopback_only` for a phone or a paired computer). Answered with `drain_result`. Sent by `tst drain` (TD-5023). |
+| `drain` | — | Before a restart: wait up to `timeout_s` for open turns, then refuse every verb that starts a turn (`user_message`, `fork_from`, `run_grok_command`, `approve_grok_plan`, `start_autonomy`, `run_job`) with `daemon_draining` for `hold_s` more. Due jobs wait too; approve, deny, stop and resume still pass. `0`/`0` releases, and a release, a later drain or shutdown ends a drain's wait early. Loopback only (`loopback_only` for a phone or a paired computer). Answered with `drain_result`. Sent by `tst drain` (TD-5023). |
 | `list_sessions` | — | Ask for the current session list. A viewer's list also carries every paired computer's cached rows, answered from the cache without dialing (TD-5015). |
 | `new_session` | yes | Create a fresh session in an existing session's workspace. |
 | `archive_session` | yes | File a session away, or restore it. Never a kill. |

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -110,6 +111,9 @@ async def test_cut_turn_is_sealed_once(tmp_path: Path, caplog: pytest.LogCapture
         assert sess is not None
         assert len(_seals(list(sess.event_log.all_events))) == 1
         assert [m.tool_call_id for m in sess.conversation if m.role == "tool"] == ["c1"]
+        # Nothing continues by itself: the loop waits for the person.
+        await asyncio.sleep(0.2)
+        assert mock.calls == []
 
         # Continue is an ordinary message; the request it makes is whole.
         await sess.add_user_message("Continue")

@@ -497,6 +497,10 @@ SHUTDOWN_SETTLE_SECONDS = 1.5
 DRAINING_MESSAGE = (
     "TST Desk is about to restart. Your message was not sent; send it again in a few seconds."
 )
+# Every message that starts a new turn on this computer. A drain hold
+# refuses them all, since the restart would cut the turn. Approve, deny,
+# stop and resume only let an open turn finish, so they still pass.
+_TURN_STARTS = (UserMessage, ForkFrom, RunGrokCommand, ApproveGrokPlan, StartAutonomy, RunJob)
 
 
 class DrainHold:
@@ -513,6 +517,7 @@ class DrainHold:
         self._ends: float | None = None
         self._until: datetime | None = None
         self._closed = False
+        self._generation = 0
 
     @property
     def active(self) -> bool:
@@ -525,14 +530,24 @@ class DrainHold:
             return None
         return self._until.isoformat()
 
-    def hold_for(self, seconds: float) -> None:
-        """Refuse new turns for *seconds* from now; 0 releases the hold."""
+    @property
+    def generation(self) -> int:
+        """Bumped by every :meth:`hold_for`, so a drain sees it was replaced."""
+        return self._generation
+
+    def hold_for(self, seconds: float) -> int:
+        """Refuse new turns for *seconds* from now; 0 releases the hold.
+
+        Returns the new :attr:`generation`.
+        """
+        self._generation += 1
         if seconds <= 0:
             self._ends = None
             self._until = None
-            return
-        self._ends = self._clock() + seconds
-        self._until = datetime.now(UTC) + timedelta(seconds=seconds)
+        else:
+            self._ends = self._clock() + seconds
+            self._until = datetime.now(UTC) + timedelta(seconds=seconds)
+        return self._generation
 
     def close(self) -> None:
         """Shutdown: refuse new turns until the process ends."""
@@ -845,9 +860,11 @@ class Daemon:
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
         self._shutdown_budget = shutdown_budget if shutdown_budget is not None else ShutdownBudget()
-        # Why this process is stopping, for the "shutting down" line. The
-        # first request wins (TD-5021).
+        # Why this process is stopping, for the "shutting down" line, and
+        # the path that asked when the reason is a drain. The first request
+        # wins (TD-5021).
         self._shutdown_reason: str | None = None
+        self._shutdown_trigger: str | None = None
         # Refuses new local turns during a drain and for all of shutdown
         # (TD-5023).
         self._drain = DrainHold()
@@ -1746,8 +1763,10 @@ class Daemon:
         release_port_file(self.data_dir)
         # An unnamed reason is an embedder setting the event itself, or
         # serve failing before anything asked.
-        reason = self._shutdown_reason or "other"
-        log.info("shutting down", extra={"extra_fields": {"reason": reason}})
+        fields = {"reason": self._shutdown_reason or "other"}
+        if self._shutdown_reason == "drain" and self._shutdown_trigger is not None:
+            fields["trigger"] = self._shutdown_trigger
+        log.info("shutting down", extra={"extra_fields": fields})
         await self._wait_for_open_turns(SHUTDOWN_SETTLE_SECONDS)
         phases = ShutdownPhases()
         flight = ProviderFlight()
@@ -1843,10 +1862,12 @@ class Daemon:
         the websocket ``shutdown``), so none of them can hang for good.
         Logs nothing, for the reason ``_on_signal`` gives: the caller logs
         after. A request while a drain hold is up is the restart the drain
-        was for, so its reason is ``drain``.
+        was for, so its reason is ``drain``; *reason* is kept as the
+        trigger, so the log still says which path it was.
         """
         if self._shutdown_reason is None:
             self._shutdown_reason = "drain" if self._drain.active else reason
+            self._shutdown_trigger = reason
         self._shutdown_event.set()
         self._shutdown_budget.arm(self.data_dir)
 
@@ -1865,14 +1886,16 @@ class Daemon:
             (waiting if sess.state == "awaiting_approval" else running).append(sess.id)
         return running, waiting
 
-    async def _wait_for_open_turns(self, seconds: float) -> None:
-        """Poll until no local turn is still working, or *seconds* pass.
+    async def _wait_for_open_turns(
+        self, seconds: float, *, stop: Callable[[], bool] | None = None
+    ) -> None:
+        """Poll until no local turn is still working, *seconds* pass, or *stop*.
 
         Only a ``running`` turn can finish by itself. One parked on an
         approval or paused for the person is not waited on.
         """
         deadline = time.monotonic() + seconds
-        while True:
+        while stop is None or not stop():
             sessions = await self.session_registry.list_sessions()
             if not any(s.turn_in_flight and s.state == "running" for s in sessions):
                 return
@@ -1887,14 +1910,25 @@ class Daemon:
         The hold covers the wait and then ``hold_s`` more: long enough to
         swap the build and restart the host, and it ends by itself. 0/0
         releases it and changes nothing else.
+
+        Shutdown, a release or a later drain ends the wait early, and this
+        drain then leaves the hold as it finds it. The server's close waits
+        for this handler, so a drain still polling would hold shutdown
+        until the budget killed the process; and a release must not come
+        back when the turn it gave up on finishes.
         """
         release = msg.timeout_s == 0 and msg.hold_s == 0
         if release:
             self._drain.hold_for(0)
         else:
-            self._drain.hold_for(msg.timeout_s + msg.hold_s)
-            await self._wait_for_open_turns(msg.timeout_s)
-            self._drain.hold_for(msg.hold_s)
+            mine = self._drain.hold_for(msg.timeout_s + msg.hold_s)
+
+            def superseded() -> bool:
+                return self._shutdown_event.is_set() or self._drain.generation != mine
+
+            await self._wait_for_open_turns(msg.timeout_s, stop=superseded)
+            if not superseded():
+                self._drain.hold_for(msg.hold_s)
             for sess in await self.session_registry.list_sessions():
                 if sess.state not in TERMINAL_STATES:
                     await sess.conversation_changed()
@@ -2195,8 +2229,9 @@ class Daemon:
         # TD-5023: after the hub, so a bridged id was already forwarded to
         # the computer that runs it. Approve, deny and stop still pass, so
         # open turns can finish.
-        if isinstance(msg, UserMessage | ForkFrom) and self._drain.active:
-            return build_error("daemon_draining", DRAINING_MESSAGE, session_id=msg.session_id)
+        if isinstance(msg, _TURN_STARTS) and self._drain.active:
+            sid = getattr(msg, "session_id", None)
+            return build_error("daemon_draining", DRAINING_MESSAGE, session_id=sid)
 
         if isinstance(msg, Drain):
             return await self._drain_turns(msg)

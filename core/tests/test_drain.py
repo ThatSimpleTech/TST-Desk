@@ -192,6 +192,63 @@ async def test_shutdown_gives_an_open_turn_a_short_settle(tmp_path: Path, fleet:
     assert sess is not None and sess.state == "cancelled"
 
 
+async def test_hold_refuses_every_verb_that_starts_a_turn(tmp_path: Path, fleet: Fleet) -> None:
+    """Not only user_message: anything that would start a turn the restart cuts."""
+    daemon = await fleet.start(tmp_path / "d", provider=_slow(0.1))
+    async with window(daemon) as ws:
+        sid = await _open(ws, tmp_path / "ws")
+        await ask(ws, _drain(0, 60), "drain_result")
+        for frame, session_id in (
+            ({"type": "run_grok_command", "session_id": sid, "name": "compact"}, sid),
+            ({"type": "approve_grok_plan", "session_id": sid}, sid),
+            ({"type": "start_autonomy", "workspace_path": str(tmp_path / "ws")}, None),
+            ({"type": "run_job", "job_id": "inbox"}, None),
+        ):
+            refused = await ask(ws, frame, "error")
+            assert refused["code"] == "daemon_draining", frame
+            assert refused.get("session_id") == session_id, frame
+        sess = daemon.session_registry.get(sid)
+        assert sess is not None and not sess.turn_in_flight
+        assert len(await daemon.session_registry.list_sessions()) == 1
+
+
+async def test_shutdown_during_a_drain_does_not_wait_for_it(tmp_path: Path, fleet: Fleet) -> None:
+    """The server's close waits for the drain's handler, so the drain must stop."""
+    daemon = await fleet.start(tmp_path / "d", provider=_slow(30.0))
+    async with window(daemon) as ws, window(daemon) as cli:
+        sid = await _open(ws, tmp_path / "ws")
+        await _attached(ws, sid)
+        await _send(ws, sid, "go")
+        await recv_until(ws, lambda f: f.get("type") == "assistant_delta")
+        await cli.send(json.dumps(_drain(60, 0)))
+        await eventually(lambda: daemon._drain.active)
+        started = time.monotonic()
+        await fleet.stop(daemon)
+        elapsed = time.monotonic() - started
+    assert elapsed < SHUTDOWN_SETTLE_SECONDS + 1.5
+    sess = daemon.session_registry.get(sid)
+    assert sess is not None and sess.state == "cancelled"
+
+
+async def test_a_release_during_a_drain_is_not_undone(tmp_path: Path, fleet: Fleet) -> None:
+    daemon = await fleet.start(tmp_path / "d", provider=_slow(1.0))
+    async with window(daemon) as ws, window(daemon) as cli:
+        sid = await _open(ws, tmp_path / "ws")
+        await _attached(ws, sid)
+        await _send(ws, sid, "go")
+        await recv_until(ws, lambda f: f.get("type") == "assistant_delta")
+        await cli.send(json.dumps(_drain(10, 60)))
+        await eventually(lambda: daemon._drain.active)
+        async with window(daemon) as other:
+            released = await ask(other, _drain(0, 0), "drain_result")
+        assert released["hold_until"] is None
+        # The first drain stops waiting and answers; it never holds again.
+        first = await recv_until(cli, lambda f: f.get("type") == "drain_result", within=3)
+        assert first["hold_until"] is None
+        await recv_until(ws, lambda f: f.get("type") == "turn_complete")
+        assert not daemon._drain.active
+
+
 async def test_release_clears_the_hold(tmp_path: Path, fleet: Fleet) -> None:
     daemon = await fleet.start(tmp_path / "d", provider=_slow(0.1))
     async with window(daemon) as ws:

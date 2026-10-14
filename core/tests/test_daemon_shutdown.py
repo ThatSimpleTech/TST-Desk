@@ -353,6 +353,9 @@ class TestShutdownReason:
                 await eventually(daemon._shutdown_event.is_set)
 
         assert await _reasons_for(daemon, trigger, caplog) == ["drain"]
+        # The path that asked is kept beside it.
+        line = next(r for r in caplog.records if r.getMessage() == "shutting down")
+        assert line.__dict__["extra_fields"] == {"reason": "drain", "trigger": "websocket"}
 
     async def test_shutdown_cancels_sessions_for_the_daemon(self, tmp_path: Path) -> None:
         """TD-5018: the cancelled state says the daemon stopped, not the user."""

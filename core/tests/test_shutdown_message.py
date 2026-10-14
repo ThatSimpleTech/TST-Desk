@@ -23,6 +23,7 @@ import pytest
 from websockets.asyncio.client import connect
 
 from tests.test_daemon_shutdown import (
+    _quiet_budget,
     _read_log,
     _shutting_down_reasons,
     _spawn,
@@ -46,7 +47,9 @@ async def _wait_for_port_file(path: Path, seconds: float = 10.0) -> dict:
 
 
 async def _shutdown_via_message(data_dir: Path, *, foreign_pid: int | None) -> Path:
-    daemon = Daemon(data_dir=data_dir)
+    # The websocket path arms the budget now (TD-5021); in-process it must
+    # not be able to end pytest.
+    daemon = Daemon(data_dir=data_dir, shutdown_budget=_quiet_budget())
     runner = asyncio.create_task(daemon.run())
     port_file = create_port_file_path(data_dir)
     try:
