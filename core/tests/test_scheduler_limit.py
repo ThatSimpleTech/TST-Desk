@@ -18,6 +18,7 @@ from tests.test_loop import make_config
 from tstd.config import ConfigError, default_config_yaml, load_config
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
+from tstd.protocol import SessionState
 from tstd.scheduler.edit import apply_job_edit
 from tstd.scheduler.limit import parse_max_run, run_limit_seconds, stop_summary
 from tstd.scheduler.models import Job, JobDraft, JobValidationError, validate_draft
@@ -271,5 +272,35 @@ async def test_the_per_job_limit_wins(tmp_path: Path) -> None:
         # loop task marks the session complete. Cancelled would mean the
         # short config won.
         assert session.state != "cancelled"
+    finally:
+        await daemon._shutdown()
+
+
+async def test_the_cancelled_state_names_the_limit_not_the_user(tmp_path: Path) -> None:
+    """TD-5018 keeps "cancelled by user" for the person. A max-run stop is not one."""
+    data = tmp_path / "data"
+    data.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    save_job(data, _base_job(workspace=str(workspace), max_run=None, retries=0))
+    daemon = Daemon(
+        data_dir=data,
+        provider=MockProvider(default=Script(kind="stream", content="digest", chunk_delay=30)),
+    )
+    daemon.config = make_config()
+    daemon.config.scheduler.max_run_seconds = 0.2
+    try:
+        await daemon.run_due_jobs(_NOW)
+        job = get_job(data, "inbox")
+        assert job is not None
+        assert job.last_session_id
+        session = daemon.session_registry.get(job.last_session_id)
+        assert isinstance(session, Session)
+        cancelled = [
+            event
+            for event in session.event_log.all_events
+            if isinstance(event, SessionState) and event.state == "cancelled"
+        ]
+        assert [event.reason for event in cancelled] == [stop_summary(0.2)]
     finally:
         await daemon._shutdown()

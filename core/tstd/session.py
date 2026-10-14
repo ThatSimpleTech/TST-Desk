@@ -1123,11 +1123,11 @@ class SessionRegistry:
         """Look up a runner by session ID."""
         return self._runners.get(session_id)
 
-    async def cancel(self, session_id: str) -> None:
-        """Cancel a session and its runner."""
+    async def cancel(self, session_id: str, reason: str = "cancelled by user") -> None:
+        """Cancel a session and its runner. *reason* is the ``cancelled`` state's."""
         runner = self._runners.get(session_id)
         if runner:
-            await runner.cancel()
+            await runner.cancel(reason)
 
     async def remove(self, session_id: str) -> None:
         """Remove a session and its runner from the registry."""

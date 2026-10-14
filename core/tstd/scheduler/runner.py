@@ -594,7 +594,7 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
     try:
         parked = await await_turn_or_approval(session, budget)
     except TimeoutError:
-        await _stop_over_limit(host, session_id, session)
+        await _stop_over_limit(host, session_id, session, stop_summary(budget))
         log.info(
             "scheduled run stopped at max run time",
             extra={"extra_fields": {"session_id": session_id, "limit_seconds": budget}},
@@ -623,18 +623,22 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
     )
 
 
-async def _stop_over_limit(host: SessionHost, session_id: str, session: Session) -> None:
+async def _stop_over_limit(
+    host: SessionHost, session_id: str, session: Session, reason: str
+) -> None:
     """Cancel the session the limit cut, including its loop task.
 
     ``session.cancel`` alone sets the flag. The runner task is what is
     still inside the provider call, so the registry cancel is the one
     that actually stops it. A host with no registry still flags the session.
+    *reason* lands on the ``cancelled`` state, so the transcript names the
+    limit rather than the user (TD-5018).
     """
     cancel = getattr(host.session_registry, "cancel", None)
     if cancel is not None:
-        await cancel(session_id)
+        await cancel(session_id, reason=reason)
         return
-    await session.cancel()
+    await session.cancel(reason)
 
 
 def turn_summary(session: Session) -> str:
