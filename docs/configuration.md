@@ -442,6 +442,48 @@ A pairing link opened from another app or a web page never pairs on its own:
 the phone shows "Pair with … at …?" and which saved computer it would
 replace. Only the in-app scanner and the typed code pair directly.
 
+**Pair another computer (TD-5015).** One computer can show another's
+sessions in its own list, beside its own. On the computer whose sessions you
+want to see, choose pair in Settings or run `tst pair`, as for a phone. On the
+computer you sit at, open Settings → Computers → "Add a computer" and paste the
+`tstdesk://pair` link (the Pair dialog has "Copy link", since a desk can't
+scan), or type the address and code. In a terminal:
+
+```text
+tst machines                                   # list paired computers and their status
+tst machines add 'tstdesk://pair?h=…&p=…&c=…'  # pair with a link
+tst machines add 100.64.1.5:39079 ABCD-2345    # or host:port and the code it shows
+tst machines remove mch_0123456789ab           # forget one
+```
+
+Only Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) and
+`*.ts.net` names are accepted, checked when you pair and again before every
+connection. The other computer must have remote attach on (pairing turns it
+on there). This computer connects only while a TST Desk window or a paired
+phone is open, and stops 60 seconds after the last one closes. A computer that
+can't be reached keeps its last-known sessions in the list, greyed, and is
+tried again on its own (or with "Try now"). Its sessions open again when it is
+back. Up to 16 computers can be paired. Self-pairing is allowed and shows
+every session twice, the copy marked "this computer".
+
+Pairing gives this computer its own key for the other one, exactly like a
+phone's, and the other computer lists it under Phones and devices. The key is
+kept in the OS keychain (service `com.thatsimpletech.tstdesk`, account
+`tst-machine.<mch>`), never in a file. `{user_data_dir}/computers.yaml`
+(readable by you only, replaced whole on every write) holds only the index:
+for each computer its `mch_` id, its `machine_id`, name, host, port, the
+device id it was given there, and the paired and last-seen times. Do not edit
+it by hand. Remove asks the other computer to forget this one first, then
+deletes the key and the entry; when the other computer is offline, it still
+lists this computer until it is removed there. A damaged file is renamed to
+`computers.yaml.corrupt-<time>` and the list starts empty; one that cannot be
+read is left alone.
+
+What another computer may do here is limited: it can list, open, drive and
+answer the approvals of this computer's sessions, but cannot change approval
+settings, keys, pairing, jobs, policy rules or anything machine-wide, and it
+never sees other computers this one paired (one hop).
+
 **Attach with the token (the older way, TD-3701).** Open the same TST Desk UI
 in a browser (the desktop window is Tauri; a phone is not). Connect with
 `ws://<bind>:<port>` plus the token in `{user_data_dir}/remote-token`

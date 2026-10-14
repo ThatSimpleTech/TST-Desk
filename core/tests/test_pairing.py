@@ -166,7 +166,15 @@ async def test_a_phone_pairs_then_connects_with_its_own_key(server: _Server) -> 
     reply, close_code = await pair(server.port, code[:4] + "-" + code[4:].lower())
     assert close_code == 1000
     assert reply["type"] == "pair_ok"
-    assert set(reply) == {"type", "version", "device_id", "device_name", "token", "desktop_name"}
+    assert set(reply) == {
+        "type",
+        "version",
+        "device_id",
+        "device_name",
+        "token",
+        "desktop_name",
+        "machine_id",
+    }
     assert reply["version"] == PROTOCOL_VERSION
     assert reply["device_name"] == "Pixel 11 Pro Fold"
     assert reply["token"] not in (server.ws.token, server.ws.remote_token)
@@ -460,7 +468,14 @@ def test_pairing_completed_carries_a_summary_and_no_key() -> None:
     device = RemoteDeviceSummary(id="dev_0123456789ab", name="Pixel", paired_at="t")
     event = parse_daemon_event(PairingCompleted(device=device).model_dump_json())
     assert isinstance(event, PairingCompleted)
-    assert set(event.device.model_dump()) == {"id", "name", "paired_at", "last_seen", "connected"}
+    assert set(event.device.model_dump()) == {
+        "id",
+        "name",
+        "paired_at",
+        "last_seen",
+        "connected",
+        "kind",
+    }
 
 
 # ── the daemon's verbs ───────────────────────────────────────────────
@@ -611,7 +626,7 @@ async def test_pairing_completed_reaches_the_computer_and_not_other_phones(tmp_p
                 assert row["connected"] is True and row["last_seen"] is not None
                 state = await ask(window, {"type": "get_setup_state"})
                 assert state["remote_devices"] == [row]
-                assert set(row) == {"id", "name", "paired_at", "last_seen", "connected"}
+                assert set(row) == {"id", "name", "paired_at", "last_seen", "connected", "kind"}
                 assert reply["token"] not in json.dumps(state)
             (row,) = await presence(window)
             assert row["connected"] is False
@@ -722,7 +737,8 @@ async def test_a_phone_can_forget_itself_and_nothing_else(tmp_path: Path) -> Non
                 assert refused["code"] == "loopback_only"
                 state = await ask(phone, {"type": "remove_remote_device", "device_id": me.id})
                 assert state["type"] == "setup_state"
-                assert [d["id"] for d in state["remote_devices"]] == [other.id]
+                # TD-5015 (SPEC A.11): a remote peer never hears the device list.
+                assert "remote_devices" not in state and "remote_port" not in state
                 await asyncio.wait_for(phone.wait_closed(), 5)
                 assert phone.close_code == 1008
             assert [d["id"] for d in await presence(window)] == [other.id]

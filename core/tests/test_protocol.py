@@ -13,6 +13,7 @@ from tstd.protocol import (
     _KNOWN_CLIENT_TYPES,
     _KNOWN_EVENT_TYPES,
     PROTOCOL_VERSION,
+    AddMachine,
     AlwaysAllow,
     ApprovalRequest,
     Approve,
@@ -39,7 +40,10 @@ from tstd.protocol import (
     GetUsage,
     HandshakeError,
     Hello,
+    ListMachines,
     ListPolicyRules,
+    MachineList,
+    MachineSummary,
     MemoryAccept,
     MemoryEdit,
     MemoryFileEdit,
@@ -48,9 +52,12 @@ from tstd.protocol import (
     MoveSession,
     NewSession,
     OpenWorkspace,
+    Pair,
     PolicyRules,
     PolicyRuleSummary,
     Ready,
+    ReconnectMachine,
+    RemoveMachine,
     RenameSession,
     Resume,
     RevokePolicyRule,
@@ -83,6 +90,7 @@ from tstd.protocol import (
     parse_client_message,
     parse_daemon_event,
     parse_hello,
+    parse_pair,
 )
 
 
@@ -1168,3 +1176,88 @@ class TestEdgeCases:
         hello = parse_hello('{"type": "hello", "token": "x", "version": 1}')
         assert hello.token == "x"
         assert hello.version == 1
+
+
+class TestMachineMessages:
+    """TD-5015: the four machine verbs, machine_list, pair kind, hello features."""
+
+    def test_add_machine_link_form(self) -> None:
+        link = "tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345"
+        msg = parse_client_message(json.dumps({"type": "add_machine", "link": link}))
+        assert isinstance(msg, AddMachine)
+        assert msg.link == link and msg.host is None and msg.code is None
+
+    def test_add_machine_address_form(self) -> None:
+        raw = {"type": "add_machine", "host": "100.64.1.5", "port": 39079, "code": "ABCD-2345"}
+        msg = parse_client_message(json.dumps(raw))
+        assert isinstance(msg, AddMachine)
+        assert (msg.host, msg.port, msg.link) == ("100.64.1.5", 39079, None)
+
+    @pytest.mark.parametrize("port", [0, 65536, "x"])
+    def test_add_machine_bad_port(self, port: object) -> None:
+        raw = {"type": "add_machine", "host": "100.64.1.5", "port": port, "code": "ABCD2345"}
+        with pytest.raises(HandshakeError):
+            parse_client_message(json.dumps(raw))
+
+    @pytest.mark.parametrize(
+        "frame",
+        [
+            {"type": "add_machine", "host": "100.64.1.5", "port": 1, "code": 98765432},
+            {"type": "add_machine", "link": 98765432},
+        ],
+    )
+    def test_a_malformed_add_machine_never_quotes_the_code(self, frame: dict[str, object]) -> None:
+        with pytest.raises(HandshakeError) as caught:
+            parse_client_message(json.dumps(frame))
+        leaked = "98765432" in str(caught.value)
+        assert caught.value.code == "bad_request" and not leaked
+
+    @pytest.mark.parametrize("cls", [RemoveMachine, ReconnectMachine])
+    def test_machine_verbs_need_an_id(self, cls: type[RemoveMachine | ReconnectMachine]) -> None:
+        kind = cls.model_fields["type"].default
+        msg = parse_client_message(json.dumps({"type": kind, "machine": "mch_0123456789ab"}))
+        assert isinstance(msg, cls) and msg.machine == "mch_0123456789ab"
+        for bad in ({"type": kind}, {"type": kind, "machine": ""}):
+            with pytest.raises(HandshakeError):
+                parse_client_message(json.dumps(bad))
+
+    def test_list_machines(self) -> None:
+        assert isinstance(parse_client_message('{"type": "list_machines"}'), ListMachines)
+
+    def test_machine_list_roundtrip(self) -> None:
+        row = MachineSummary(
+            id="mch_0123456789ab",
+            name="EZER",
+            host="100.64.1.5",
+            port=39079,
+            status="connected",
+            paired_at="2026-10-14T00:00:00Z",
+        )
+        parsed = _roundtrip(MachineList(machines=[row]))
+        assert parsed.machines == [row] and parsed.machines[0].same_computer is False
+
+    def test_machine_list_rejects_an_unknown_status(self) -> None:
+        raw = {
+            "type": "machine_list",
+            "seq": 1,
+            "machines": [{"id": "m", "name": "n", "status": "sleepy", "paired_at": "t"}],
+        }
+        with pytest.raises(HandshakeError):
+            parse_daemon_event(json.dumps(raw))
+
+    def test_pair_kind_defaults_to_phone(self) -> None:
+        raw = {"type": "pair", "code": "ABCD2345", "device_name": "Pixel", "version": 1}
+        assert parse_pair(json.dumps(raw)).kind == "phone"
+        assert parse_pair(json.dumps({**raw, "kind": "machine"})).kind == "machine"
+        with pytest.raises(HandshakeError) as caught:
+            parse_pair(json.dumps({**raw, "kind": "admin"}))
+        assert "ABCD2345" not in str(caught.value)
+
+    def test_hello_features(self) -> None:
+        hello = Hello.model_validate({"token": "x", "version": 1, "features": ["bridge"]})
+        assert hello.features == ["bridge"]
+        with pytest.raises(ValidationError):
+            Hello.model_validate({"token": "x", "version": 1, "features": ["a"] * 9})
+
+    def test_pair_model_kind(self) -> None:
+        assert Pair(code="c", version=1).kind == "phone"

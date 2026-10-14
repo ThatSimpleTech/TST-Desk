@@ -539,7 +539,7 @@ async def test_a_slept_through_digest_is_skipped_not_run(tmp_path: Path) -> None
     )
     sent: list[str] = []
 
-    async def capture(payload: str) -> int:
+    async def capture(payload: str, **_audience: object) -> int:
         sent.append(payload)
         return 1
 

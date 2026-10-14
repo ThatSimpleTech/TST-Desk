@@ -159,7 +159,7 @@ def test_add_returns_a_key_and_stores_only_its_hash(tmp_path: Path) -> None:
     devices = data["devices"]
     assert isinstance(devices, list)
     assert devices[0]["token_sha256"] == hashlib.sha256(token.encode()).hexdigest()
-    assert set(devices[0]) == {"id", "name", "token_sha256", "paired_at", "last_seen"}
+    assert set(devices[0]) == {"id", "name", "token_sha256", "paired_at", "last_seen", "kind"}
 
 
 def test_verify_finds_the_device_and_nothing_else(tmp_path: Path) -> None:
@@ -371,7 +371,7 @@ def test_summaries_carry_the_connected_flag_and_never_a_hash(tmp_path: Path) -> 
     rows = {s.id: s.model_dump() for s in reg.summaries(connected={a.id})}
     assert rows[a.id]["connected"] is True and rows[b.id]["connected"] is False
     for row in rows.values():
-        assert set(row) == {"id", "name", "paired_at", "last_seen", "connected"}
+        assert set(row) == {"id", "name", "paired_at", "last_seen", "connected", "kind"}
 
 
 @pytest.mark.parametrize(
@@ -418,3 +418,45 @@ def test_the_pairing_code_event_matches_the_contract(monkeypatch: pytest.MonkeyP
         "link": "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer",
         "expires_at": "2026-10-14T10:50:00Z",
     }
+
+
+# ── device kind (TD-5015) ────────────────────────────────────────────
+
+
+def _rewrite_first(tmp: Path, **fields: object) -> None:
+    """Edit the first device entry on disk; a None value deletes the key."""
+    data = _file(tmp)
+    devices = data["devices"]
+    assert isinstance(devices, list)
+    for key, value in fields.items():
+        if value is None:
+            devices[0].pop(key, None)
+        else:
+            devices[0][key] = value
+    (tmp / REMOTE_DEVICES_FILE).write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+def test_a_v1_entry_without_kind_loads_as_a_phone(tmp_path: Path) -> None:
+    device, _ = _registry(tmp_path).add("Pixel")
+    _rewrite_first(tmp_path, kind=None)
+    again = _registry(tmp_path)
+    assert again.kind_of(device.id) == "phone"
+    assert again.summaries()[0].kind == "phone"
+
+
+def test_a_machine_kind_round_trips_and_keeps_its_key(tmp_path: Path) -> None:
+    reg = _registry(tmp_path)
+    machine, key = reg.add("desk", kind="machine")
+    phone, _ = reg.add("Pixel")
+    assert machine.kind == "machine" and phone.kind == "phone"
+    again = _registry(tmp_path)
+    assert again.kind_of(machine.id) == "machine"
+    assert again.kind_of(phone.id) == "phone"
+    assert again.kind_of("dev_000000000000") is None
+    assert again.verify(key) == machine.id
+
+
+def test_an_unknown_kind_skips_the_entry(tmp_path: Path) -> None:
+    _registry(tmp_path).add("Pixel")
+    _rewrite_first(tmp_path, kind="admin")
+    assert len(_registry(tmp_path)) == 0

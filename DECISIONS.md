@@ -12558,3 +12558,122 @@ in the UI with an npm package (the CLI needs one too; one library in one
 place). Auto-redeeming pairing links (above). Storing keys in plain text
 next to the hashes (prime directive 2). mDNS discovery (Tailscale carries
 no multicast).
+
+
+## TD-5015 — One session list across computers: the daemon is a one-hop hub (Class B)
+
+2026-10-14. Adam wants the sessions on every computer he works from in one
+list, in the window he already has open, and on the phone. Each computer
+runs its own daemon; TD-5014 already pairs a device with a code and gives it
+its own key.
+
+**Decision:**
+
+1. Multi-computer lives in the local daemon as a one-hop **hub**, with one
+   **lane** (a 1:1 upstream socket) per viewer connection per computer. The
+   window keeps its one loopback socket. The CSP, the Rust shell (except
+   `safe_session_id` refusing `:`) and the Kotlin code are untouched.
+2. The daemon process dials, but only from `bridge_link.py` and
+   `machine_pairing.py`, and only paired Tailscale hosts (`100.64.0.0/10`,
+   `fd7a:115c:a1e0::/48`, `*.ts.net`), checked at pair time and before every
+   dial. Both modules are new `_OUTBOUND_CAPABLE` entries; `daemon.py` still
+   never dials. Reconnecting to a paired computer counts as user-initiated,
+   like the phone reconnecting.
+3. Devices gain `kind` (`phone` or `machine`) in `pair` and in
+   `remote-devices.yaml`. A machine peer gets a deny-by-default verb list
+   (`MACHINE_PEER_VERBS`), own rows only, and no broadcasts.
+4. Viewers opt in with `hello.features: ["machines"]`; only loopback and
+   phone-kind connections can be viewers. Without it a list is own-only.
+5. The bridged id grammar `<raw>:mch_<12hex>` is protocol. `seq` passes
+   through unchanged.
+6. `computers.yaml` (0600, written whole, never a key) is the index; each
+   key is in the OS keychain under account `tst-machine.<mch>`; each daemon
+   mints `machine-id` (`mid_` + 16 hex) once and sends it in `hello_ack` and
+   `pair_ok`.
+7. A remote peer's `setup_state` drops `remote_devices`, `remote_bind` and
+   `remote_port`; `focus_window` is loopback only; the `job_list` push is
+   viewers only.
+8. The phone keeps one hub and sees that hub's computers.
+9. Workspace-keyed panes and local-disk features are hidden for remote
+   sessions; self-pairing is allowed (every row twice, `same_computer`).
+10. Remote rows are cached and refreshed (30 s, plus 1 s after a row event),
+    and pushed as merged lists only when they change.
+11. Four machine verbs (`add_machine`, `remove_machine`, `list_machines`,
+    `reconnect_machine`) plus `machine_list`. Pairing errors reuse the TD-5014
+    codes; an id-less error from another computer is prefixed with its name.
+
+**Prime directive 3, read for a hub (PD3).** "No outbound call the user did
+not initiate" is read as: pairing is the user's initiation, and keeping the
+paired link up while a viewer is open is the same consent a phone gives by
+staying paired. So links run only while a viewer is handshaken and stop 60 s
+after the last one leaves; nothing dials an unpaired host, a non-Tailscale
+host, or anything at all with no viewer.
+
+**Approvals are never queued.** `approve`, `deny` and `always_allow` never
+wait for a lane: they go on the open lane, else on the open control link,
+else get `machine_unreachable` at once. A queued approval could land minutes
+later, after the person stopped looking, so it is refused instead. Sending
+on the control link (beyond the spec's "the open lane") lets an approval
+from an OS notice reach a session nobody has attached, without waiting for
+a lane to connect.
+
+**The approvals check.** Every verb in `MACHINE_PEER_VERBS` was checked for a
+way to turn approvals off: presets carry only tier configs, `set_plan` only
+locks the brain tier, `set_tier` picks a model, and `always_allow` needs a
+pending approval and writes the narrowest rule (never class C). None was
+dropped. Left out on purpose: `set_skip_all_approvals`, `set_grok_mode`,
+`run_grok_command` and `approve_grok_plan` (the Grok yolo bypass),
+`start_autonomy`, the policy-rule verbs (`list_policy_rules`,
+`revoke_policy_rule`), every key, credential, MCP, engine and voice verb,
+remote attach and pairing, the machine verbs, `open_workspace`,
+`move_session`, `open_in_terminal`, `shutdown`, jobs, usage, diagnostics,
+`get_setup_state` and `set_cu_*`. `FORWARDED_VERBS` is the list minus the
+self `remove_remote_device`; a test walks `_KNOWN_CLIENT_TYPES`, so a new
+verb starts refused until it is classified.
+
+**The remote-peer scrub (A.11).** The phone UI reads `remote_bind` and
+`remote_port` only for the "Phones reach this computer at …" hint in
+Settings. On the phone that hint now falls back to the generic copy; the
+fields are dropped anyway, because a phone or another computer has no use
+for this computer's listener address and the list of its other devices.
+
+**Deferred:** a phone with several hubs (one Keystore alias per saved
+computer). Until then a phone sees its one hub's computers.
+
+**Choices beyond the spec:**
+
+- Approvals use the control link when no lane is open (above).
+- The `job_list` push goes to viewers only, so a plain loopback client
+  (the CLI, an old window without `features`) no longer gets it; direct
+  replies to the job verbs are unchanged.
+- Timings: refresh 30 s, linger 60 s, lane idle 5 min, a verb waits 10 s
+  for its lane with at most 64 queued, row refresh debounced 1 s; the link
+  backs off 1 s doubling to 30 s with jitter, 45 s of silence reconnects,
+  60 s without a handshake is `unreachable`, a locked keychain retries
+  every 5 minutes.
+- A malformed `add_machine` gets a fixed `bad_request` message instead of
+  the validation text, which would quote a code back.
+- At most 16 paired computers (`machine_limit`).
+- Review fixes: a parked computer (refused, locked, outdated) answers
+  verbs at once with `machine_unreachable` carrying its reason, and its
+  lanes wait dormant (recording attach/detach) until Try now or the
+  5-minute retry brings it back; a viewer joining never wakes it. Re-pairing
+  relinks open lanes in place instead of dropping them. A malformed frame
+  with a session id is passed on with a warning (never dropped); a skewed
+  `session_list` loses only its bad rows. A dial URL must name exactly the
+  checked host, and a `.ts.net` name must be plain DNS labels.
+
+**Rationale:** The daemon already owns sessions, approvals and the one
+socket every client speaks; a hub keeps the window, the shell's CSP and the
+phone unchanged, and one lane per viewer keeps attach, replay and seq
+meaning exactly what they mean on one connection. One hop (a machine peer
+is never a viewer, bridged-grammar rows are dropped upstream) means A↔B
+pairs and self-pairing cannot loop.
+
+**Rejected:** The window opening a socket per computer (a CSP change, the
+shell and phone would each need it, and every client would re-implement
+merging). A shared upstream socket for all viewers (attach and seq are
+per-connection, so viewers would see each other's replays). Forwarding
+through more than one hop (loops, and a peer's peers were never paired by
+this user). Keeping links up with no viewer (an outbound call nobody is
+looking at).

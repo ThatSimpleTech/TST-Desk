@@ -229,6 +229,9 @@ class PairingCodes:
 # ── The device registry ──────────────────────────────────────────────
 
 
+DeviceKind = Literal["phone", "machine"]
+
+
 @dataclass
 class _Device:
     id: str
@@ -236,6 +239,8 @@ class _Device:
     token_sha256: str
     paired_at: str
     last_seen: str | None = None
+    # TD-5015: a v1 entry without kind is a phone; kind grants no privilege.
+    kind: DeviceKind = "phone"
 
 
 def _timestamp(value: object) -> str | None:
@@ -263,7 +268,10 @@ def _device_from(raw: object) -> _Device | None:
     last_seen = _timestamp(last_raw)
     if last_raw is not None and last_seen is None:
         return None
-    return _Device(device_id, sanitize_device_name(name), digest, paired_at, last_seen)
+    kind = raw.get("kind", "phone")
+    if kind not in ("phone", "machine"):
+        return None
+    return _Device(device_id, sanitize_device_name(name), digest, paired_at, last_seen, kind)
 
 
 def _entries(data: Any) -> list[Any] | None:
@@ -397,6 +405,7 @@ class RemoteDeviceRegistry:
                     "token_sha256": d.token_sha256,
                     "paired_at": d.paired_at,
                     "last_seen": d.last_seen,
+                    "kind": d.kind,
                 }
                 for d in devices
             ],
@@ -413,7 +422,9 @@ class RemoteDeviceRegistry:
                 os.unlink(tmp)
             raise
 
-    def add(self, name: str, avoid: Collection[str] = ()) -> tuple[RemoteDeviceSummary, str]:
+    def add(
+        self, name: str, avoid: Collection[str] = (), kind: DeviceKind = "phone"
+    ) -> tuple[RemoteDeviceSummary, str]:
         """Pair a device. Returns its summary and its key — the only copy.
 
         *avoid* holds tokens the key must never equal (the loopback and
@@ -432,6 +443,7 @@ class RemoteDeviceRegistry:
             name=sanitize_device_name(name),
             token_sha256=_hash_token(token),
             paired_at=iso_utc(self._clock()),
+            kind=kind,
         )
         self._devices[device_id] = device
         try:
@@ -493,6 +505,11 @@ class RemoteDeviceRegistry:
         self._last_written[device_id] = now
         return True
 
+    def kind_of(self, device_id: str) -> DeviceKind | None:
+        """The device's kind, or None when the id is unknown."""
+        device = self._devices.get(device_id)
+        return None if device is None else device.kind
+
     def summaries(self, connected: Collection[str] = ()) -> list[RemoteDeviceSummary]:
         """What the UI may see: never a key or its hash."""
         return [self._summary(d, connected=d.id in connected) for d in self._devices.values()]
@@ -505,4 +522,5 @@ class RemoteDeviceRegistry:
             paired_at=device.paired_at,
             last_seen=device.last_seen,
             connected=connected,
+            kind=device.kind,
         )

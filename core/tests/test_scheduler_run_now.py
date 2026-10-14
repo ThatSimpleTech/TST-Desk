@@ -265,7 +265,7 @@ async def test_run_now_replies_before_the_turn_and_the_tick_leaves_the_slot(
     gate, entered = _hold(daemon)
     sent: list[str] = []
 
-    async def capture(payload: str) -> int:
+    async def capture(payload: str, **_audience: object) -> int:
         sent.append(payload)
         return 1
 

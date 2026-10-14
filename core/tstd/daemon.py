@@ -122,6 +122,7 @@ from .grok_home import (
     open_in_terminal,
 )
 from .grok_loop import grok_loop
+from .hub import NOT_HANDLED, Hub
 from .keychain import (
     KeychainError,
     KeychainLockedError,
@@ -138,6 +139,7 @@ from .local_worker import (
 )
 from .logging import get_logger, log_directory, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop, brain_manifest_config
+from .machine_pairing import DialPolicy
 from .mcp.loader import McpSupervisor
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
@@ -782,6 +784,7 @@ class Daemon:
         scheduler_tick: float = 15.0,
         interfaces: InterfaceEnumerator | None = None,
         shutdown_budget: ShutdownBudget | None = None,
+        dial_policy: DialPolicy | None = None,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
@@ -862,6 +865,12 @@ class Daemon:
             pairing=self.pairing,
             on_paired=self._on_device_paired,
             on_device_presence=self._on_device_presence,
+            on_handshake=self._on_handshake,
+        )
+        # TD-5015: paired computers. Only the bridge's links dial, only to
+        # paired Tailscale hosts (dial_policy is the tests' seam).
+        self.hub = Hub(
+            self.data_dir, self.ws_server, self._handle_list_sessions, policy=dial_policy
         )
         self._cu_server: Any = None
         # TD-4835: keychain presence cache — see _credential_is_stored.
@@ -1695,6 +1704,7 @@ class Daemon:
         # Stop the WebSocket server. The port file was released above,
         # before this await; stop releases it again only if it still
         # names this process.
+        await phases.run("bridge", self.hub.stop())
         await phases.run("ws_stop", self.ws_server.stop())
 
         # Stop session loops
@@ -1883,10 +1893,10 @@ class Daemon:
             await self._push_job_list()
 
     async def _push_job_list(self) -> None:
-        """Broadcast the job list to every handshaken client. Never raises."""
+        """Broadcast the job list to every viewer (TD-5015). Never raises."""
         try:
             payload = await self._job_list_event()
-            await self.ws_server.broadcast(payload)
+            await self.ws_server.broadcast(payload, audience="viewers")
         except Exception:
             log.exception("failed to push scheduled job list")
 
@@ -1980,7 +1990,7 @@ class Daemon:
             for sess in await self.session_registry.list_sessions():
                 if sess.id != closed_session_id and sess.cu_session_active:
                     return
-            await self.ws_server.broadcast(FocusWindow().model_dump_json())
+            await self.ws_server.broadcast(FocusWindow().model_dump_json(), audience="loopback")
         except Exception:
             log.exception("failed to broadcast focus_window after cu_session close")
 
@@ -2002,7 +2012,9 @@ class Daemon:
         reply = await self._dispatch_message(raw, _connection)
         if reply is None:
             return None
-        return scrub_wire_json(reply)
+        # TD-5015: a viewer's session_list carries every computer's rows;
+        # a remote peer's setup_state drops this computer's devices.
+        return scrub_wire_json(self.hub.finish(reply, _connection))
 
     async def _dispatch_message(self, raw: str, _connection: Any) -> str | None:
         """Handle a post-handshake message from a client.
@@ -2014,6 +2026,12 @@ class Daemon:
             msg: ClientMessageT = parse_client_message(raw)
         except HandshakeError as e:
             return build_error(e.code, e.message)
+
+        # TD-5015: peer policy, machine verbs, bridged ids. Never awaits
+        # the network.
+        handled = await self.hub.intercept(msg, _connection)
+        if handled is not NOT_HANDLED:
+            return cast("str | None", handled)
 
         if isinstance(msg, OpenWorkspace):
             # Validate before creating anything (TD-1103): a nonexistent or
@@ -3373,8 +3391,10 @@ class Daemon:
             )
         else:
             reply = (await self._setup_state_event()).model_dump_json()
+        # Through the reply chokepoint: a remote peer removing itself must
+        # not get this computer's device list and address (TD-5015).
         with contextlib.suppress(websockets.exceptions.ConnectionClosed):
-            await connection.send(scrub_wire_json(reply))
+            await connection.send(scrub_wire_json(self.hub.finish(reply, connection)))
         await self.ws_server.close_device(device_id)
 
     async def _handle_start_pairing(self) -> str:
@@ -4188,8 +4208,12 @@ class Daemon:
         if task is not None and not task.done():
             task.cancel()
 
+    async def _on_handshake(self, connection: Any) -> None:
+        await self.hub.on_handshake(connection)
+
     async def _on_connection_closed(self, connection: Any) -> None:
         """Clean up all subscriptions for a disconnected client."""
+        await self.hub.on_closed(connection)
         # Clean up any attach subscriptions for this connection
         for session_id in list(self._attached_clients.keys()):
             conn_key = (id(connection), session_id)
