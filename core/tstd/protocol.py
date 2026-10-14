@@ -116,6 +116,21 @@ class Hello(ClientMessage):
     version: int = Field(ge=0, description="Validated by validate_hello()")
 
 
+class Pair(ClientMessage):
+    """Redeem a pairing code as the first frame, instead of hello (TD-5014).
+
+    Remote peers only. Success is an out-of-band ``pair_ok`` carrying the
+    device's own key, then close 1000; the phone then reconnects with
+    ``hello``. ``code`` is normalized by the daemon, never logged.
+    ``device_name`` is cleaned on the daemon side (empty is "Unnamed device").
+    """
+
+    type: Literal["pair"] = "pair"
+    code: str = Field(min_length=1)
+    device_name: str = ""
+    version: int = Field(ge=0, description="Validated like hello's version")
+
+
 class OpenWorkspace(ClientMessage):
     """Open a workspace directory for a new session."""
 
@@ -350,6 +365,33 @@ class RotateRemoteToken(ClientMessage):
     """
 
     type: Literal["rotate_remote_token"] = "rotate_remote_token"
+
+
+class StartPairing(ClientMessage):
+    """Show a pairing code for a new phone (TD-5014). Loopback only.
+
+    Machine-wide, no session. Turns remote attach on first when it is off.
+    Answered with ``pairing_code``, or an error ``pairing_unavailable``
+    when no Tailscale address can be bound. A new start replaces the code.
+    """
+
+    type: Literal["start_pairing"] = "start_pairing"
+
+
+class CancelPairing(ClientMessage):
+    """Drop the active pairing code (TD-5014). Loopback only; acked with ``setup_state``."""
+
+    type: Literal["cancel_pairing"] = "cancel_pairing"
+
+
+class RemoveRemoteDevice(ClientMessage):
+    """Forget one paired device and close its connections (TD-5014).
+
+    Loopback only; acked with ``setup_state``. An unknown id changes nothing.
+    """
+
+    type: Literal["remove_remote_device"] = "remove_remote_device"
+    device_id: str = Field(min_length=1)
 
 
 class Resume(ClientMessage):
@@ -1897,6 +1939,20 @@ class McpServerSummary(BaseModel):
     enabled: bool = True
 
 
+class RemoteDeviceSummary(BaseModel):
+    """One paired device as the UI may see it (TD-5014). Never a key or hash.
+
+    Times are ``YYYY-MM-DDTHH:MM:SSZ``. ``last_seen`` is None until the
+    device first connects, and is written at most once a minute.
+    """
+
+    id: str
+    name: str
+    paired_at: str
+    last_seen: str | None = None
+    connected: bool = False
+
+
 class SetupState(DaemonEvent):
     """Response to ``get_setup_state``; also the ack for ``set_api_key`` and
     ``set_preset`` (TD-1101).
@@ -1944,6 +2000,8 @@ class SetupState(DaemonEvent):
     remote_bind: str | None = None
     # TD-5005: the listener port while remote attach is bound, else None.
     remote_port: int | None = None
+    # TD-5014: paired devices. Additive; kept while remote attach is off.
+    remote_devices: list[RemoteDeviceSummary] = Field(default_factory=list)
     # TD-1717: named keys. Additive; an older client ignores them.
     # ``stored`` is a keychain probe, never the secret. ``tier_credentials``
     # is the configured binding (None = unbound). ``tier_loopback`` lets
@@ -1987,6 +2045,35 @@ class SetupState(DaemonEvent):
     # the daemon. An older client ignores both fields.
     speech_enabled: bool = False
     speech_ready: bool = False
+
+
+class PairingCode(DaemonEvent):
+    """Reply to ``start_pairing`` (TD-5014). Connection-scoped; loopback only.
+
+    ``code`` is 8 Crockford base32 characters, ``display_code`` the same
+    as ``ABCD-2345``. ``link`` is ``tstdesk://pair?h=&p=&c=&n=`` and
+    ``qr_svg`` a standalone black-on-white ``<svg>`` of that link.
+    ``expires_at`` is ``YYYY-MM-DDTHH:MM:SSZ``, 10 minutes after the start.
+    """
+
+    type: Literal["pairing_code"] = "pairing_code"
+    seq: int = 1
+    code: str
+    display_code: str
+    host: str
+    port: int
+    desktop_name: str
+    link: str
+    qr_svg: str
+    expires_at: str
+
+
+class PairingCompleted(DaemonEvent):
+    """A phone redeemed the code (TD-5014). Broadcast to loopback clients only."""
+
+    type: Literal["pairing_completed"] = "pairing_completed"
+    seq: int = 1
+    device: RemoteDeviceSummary
 
 
 class GrokCommand(BaseModel):
@@ -2580,6 +2667,7 @@ class Transcript(DaemonEvent):
 
 ClientMessageT = Annotated[
     Hello
+    | Pair
     | OpenWorkspace
     | UserMessage
     | Approve
@@ -2660,6 +2748,9 @@ ClientMessageT = Annotated[
     | SetCuKill
     | SetRemoteAttach
     | RotateRemoteToken
+    | StartPairing
+    | CancelPairing
+    | RemoveRemoteDevice
     | ListJobs
     | SaveJob
     | DeleteJob
@@ -2708,6 +2799,8 @@ DaemonEventT = Annotated[
     | SessionList
     | PolicyRules
     | SetupState
+    | PairingCode
+    | PairingCompleted
     | ApiKeyValidated
     | DiagnosticsReport
     | UsageReport
@@ -2746,6 +2839,7 @@ _daemon_event_adapter: TypeAdapter[DaemonEventT] = TypeAdapter(DaemonEventT)
 _KNOWN_CLIENT_TYPES = frozenset(
     {
         "hello",
+        "pair",
         "open_workspace",
         "user_message",
         "approve",
@@ -2826,6 +2920,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_cu_kill",
         "set_remote_attach",
         "rotate_remote_token",
+        "start_pairing",
+        "cancel_pairing",
+        "remove_remote_device",
         "list_jobs",
         "save_job",
         "delete_job",
@@ -2874,6 +2971,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "session_list",
         "policy_rules",
         "setup_state",
+        "pairing_code",
+        "pairing_completed",
         "api_key_validated",
         "diagnostics_report",
         "usage_report",
@@ -2977,6 +3076,57 @@ def parse_hello(raw: str) -> Hello:
 def build_hello_ack() -> str:
     """Build the server's handshake acknowledgement."""
     return json.dumps({"type": "hello_ack", "version": PROTOCOL_VERSION})
+
+
+def handshake_type(raw: str) -> str | None:
+    """The ``type`` of a first frame, or None when it has none.
+
+    Only picks the path (``pair`` or ``hello``); each path parses and
+    rejects the frame itself.
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    kind = data.get("type")
+    return kind if isinstance(kind, str) else None
+
+
+def parse_pair(raw: str) -> Pair:
+    """Parse a first-frame ``pair`` (TD-5014). Anything else is bad_request.
+
+    The error never quotes the frame: a validation message echoes its
+    input, and the handshake rejection is logged, so it would log the code.
+    """
+    try:
+        msg = parse_client_message(raw)
+    except HandshakeError:
+        raise HandshakeError(
+            "bad_request", "Malformed pair message: it needs code, device_name and version."
+        ) from None
+    if not isinstance(msg, Pair):
+        raise HandshakeError("bad_request", "Expected a pair message")
+    return msg
+
+
+def build_pair_ok(device_id: str, device_name: str, token: str, desktop_name: str) -> str:
+    """The redeem reply (TD-5014). Out-of-band like ``hello_ack``: no seq.
+
+    Carries the device's key, so it goes straight to the socket — never
+    through a log or the event funnel.
+    """
+    return json.dumps(
+        {
+            "type": "pair_ok",
+            "version": PROTOCOL_VERSION,
+            "device_id": device_id,
+            "device_name": device_name,
+            "token": token,
+            "desktop_name": desktop_name,
+        }
+    )
 
 
 def build_ping() -> str:

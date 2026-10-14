@@ -34,6 +34,7 @@ from tstd.protocol import (
     AutonomySummary,
     BoundaryUpdate,
     Cancel,
+    CancelPairing,
     CharterDocument,
     CheckCuPermissions,
     CheckpointNotice,
@@ -121,12 +122,17 @@ from tstd.protocol import (
     OpenArtifact,
     OpenInTerminal,
     OpenWorkspace,
+    Pair,
+    PairingCode,
+    PairingCompleted,
     ParseJob,
     Ping,
     PolicyRules,
     PolicyRuleSummary,
     Ready,
+    RemoteDeviceSummary,
     RemovePin,
+    RemoveRemoteDevice,
     RenameSession,
     Resume,
     RevokePolicyRule,
@@ -170,6 +176,7 @@ from tstd.protocol import (
     Shutdown,
     SkillStackEntry,
     StartAutonomy,
+    StartPairing,
     SteeringReloaded,
     TierState,
     TierSwitched,
@@ -350,6 +357,11 @@ FIXTURES = {
     "check_cu_permissions": CheckCuPermissions(),
     "set_cu_kill": SetCuKill(killed=True),
     "set_remote_attach": SetRemoteAttach(enabled=True),
+    # Phone pairing (TD-5014). `pair` is a first frame like `hello`.
+    "pair": Pair(code="ABCD2345", device_name="Pixel", version=1),
+    "start_pairing": StartPairing(),
+    "cancel_pairing": CancelPairing(),
+    "remove_remote_device": RemoveRemoteDevice(device_id="dev_0123456789ab"),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", engine="native", seq=2),
@@ -756,6 +768,22 @@ FIXTURES = {
         speech_enabled=False,
         speech_ready=False,
     ),
+    # Phone pairing (TD-5014): connection-scoped, seq=1. Made-up code and host.
+    "pairing_code": PairingCode(
+        code="ABCD2345",
+        display_code="ABCD-2345",
+        host="100.64.1.5",
+        port=48123,
+        desktop_name="desk",
+        link="tstdesk://pair?h=100.64.1.5&p=48123&c=ABCD2345&n=desk",
+        qr_svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29 29"></svg>',
+        expires_at="2026-10-14T10:50:00Z",
+    ),
+    "pairing_completed": PairingCompleted(
+        device=RemoteDeviceSummary(
+            id="dev_0123456789ab", name="Pixel", paired_at="2026-10-14T10:41:00Z"
+        )
+    ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so
     # consumers see every status — the fail row carries the concrete fix.
@@ -1122,6 +1150,15 @@ def main() -> None:
         fixtures[name] = json.loads(msg.model_dump_json())
     # hello_ack is built as a plain dict, not a Pydantic model.
     fixtures["hello_ack"] = {"type": "hello_ack", "version": PROTOCOL_VERSION}
+    # pair_ok too (TD-5014). The key is a placeholder, never a real one.
+    fixtures["pair_ok"] = {
+        "type": "pair_ok",
+        "version": PROTOCOL_VERSION,
+        "device_id": "dev_0123456789ab",
+        "device_name": "Pixel",
+        "token": "0" * 64,
+        "desktop_name": "desk",
+    }
     output_path.write_text(json.dumps(fixtures, indent=2))
     print(f"Wrote {len(fixtures)} fixtures to {output_path}")
 
