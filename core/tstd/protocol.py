@@ -109,11 +109,20 @@ class DaemonEvent(BaseModel):
 
 
 class Hello(ClientMessage):
-    """Opening handshake: token + protocol version."""
+    """Opening handshake: token + protocol version.
+
+    ``features`` (TD-5015) is what the client opts into. ``"machines"``
+    makes a loopback or phone connection a *viewer*: its session lists
+    carry other computers' rows and it gets ``machine_list``.
+    ``"bridge"`` is what a hub sends when it dials another computer; it
+    makes the connection a machine peer. Unknown names are ignored, so
+    an old daemon ignores the whole field.
+    """
 
     type: Literal["hello"] = "hello"
     token: str = Field(min_length=1)
     version: int = Field(ge=0, description="Validated by validate_hello()")
+    features: list[Annotated[str, Field(max_length=32)]] = Field(default_factory=list, max_length=8)
 
 
 class Pair(ClientMessage):
@@ -134,6 +143,9 @@ class Pair(ClientMessage):
     device_name: str = ""
     version: int = Field(ge=0, description="Validated like hello's version")
     replaces: str | None = None
+    # TD-5015: another computer pairing as a hub sends "machine". It grants
+    # nothing: a machine-kind device gets fewer verbs than a phone.
+    kind: Literal["phone", "machine"] = "phone"
 
 
 class OpenWorkspace(ClientMessage):
@@ -404,6 +416,48 @@ class RemoveRemoteDevice(ClientMessage):
 
     type: Literal["remove_remote_device"] = "remove_remote_device"
     device_id: str = Field(min_length=1)
+
+
+class AddMachine(ClientMessage):
+    """Pair another computer so its sessions show here (TD-5015). Loopback only.
+
+    Either ``link`` (a ``tstdesk://pair`` link) or ``host``, ``port`` and
+    ``code``. The host must be a Tailscale address or a ``*.ts.net`` name.
+    Runs in the background; the answer is a pushed ``machine_list`` or an
+    error: ``pair_failed``, ``pair_locked``, ``machine_unreachable``,
+    ``not_tailscale``, ``machine_limit``, ``machine_busy`` or
+    ``keychain_locked``. The code is never logged or echoed.
+    """
+
+    type: Literal["add_machine"] = "add_machine"
+    link: str | None = None
+    host: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
+    code: str | None = None
+
+
+class RemoveMachine(ClientMessage):
+    """Forget a paired computer (TD-5015). Loopback only. Answered with ``machine_list``.
+
+    Best effort, the hub first removes itself from that computer's
+    paired devices. ``machine_not_found`` for an unknown id.
+    """
+
+    type: Literal["remove_machine"] = "remove_machine"
+    machine: str = Field(min_length=1)
+
+
+class ListMachines(ClientMessage):
+    """The paired computers as ``machine_list`` (TD-5015). Loopback or a viewer."""
+
+    type: Literal["list_machines"] = "list_machines"
+
+
+class ReconnectMachine(ClientMessage):
+    """Try a paired computer again now, resetting the backoff (TD-5015). Loopback only."""
+
+    type: Literal["reconnect_machine"] = "reconnect_machine"
+    machine: str = Field(min_length=1)
 
 
 class Resume(ClientMessage):
@@ -1891,6 +1945,10 @@ class SessionSummary(BaseModel):
     # workspace. Additive with a default, so a client that ignores it
     # still sorts newest-first.
     starred: bool = False
+    # The paired computer this row lives on (TD-5015), as its ``mch_`` id;
+    # None is the answering daemon's own. Set by the hub, never trusted
+    # from upstream. Only viewers ever see a non-None value.
+    machine: str | None = None
     # Auto-title from the first non-empty user message (TD-3001). None
     # until then — the rail falls back to the short id. Additive.
     title: str | None = None
@@ -1963,6 +2021,9 @@ class RemoteDeviceSummary(BaseModel):
     paired_at: str
     last_seen: str | None = None
     connected: bool = False
+    # TD-5015: "machine" is another computer's hub. A file entry written
+    # before the field reads as a phone.
+    kind: Literal["phone", "machine"] = "phone"
 
 
 class SetupState(DaemonEvent):
@@ -2086,6 +2147,41 @@ class PairingCompleted(DaemonEvent):
     type: Literal["pairing_completed"] = "pairing_completed"
     seq: int = 1
     device: RemoteDeviceSummary
+
+
+MachineStatus = Literal["connected", "connecting", "unreachable", "refused", "locked", "outdated"]
+
+
+class MachineSummary(BaseModel):
+    """One paired computer as a viewer may see it (TD-5015). Never a key.
+
+    ``id`` is this hub's handle (``mch_`` + 12 hex), the suffix of every
+    bridged session id. ``host`` and ``port`` are None for phones.
+    ``same_computer`` is a self-pair (the other end has this daemon's
+    own ``machine_id``). ``detail`` says why a computer is not connected.
+    """
+
+    id: str
+    name: str
+    host: str | None = None
+    port: int | None = None
+    status: MachineStatus
+    last_seen: str | None = None
+    paired_at: str
+    same_computer: bool = False
+    detail: str | None = None
+
+
+class MachineList(DaemonEvent):
+    """The paired computers (TD-5015). Connection-scoped.
+
+    The reply to the four machine verbs, and pushed to viewers when one
+    changes. Never sent to a machine peer or a non-viewer remote peer.
+    """
+
+    type: Literal["machine_list"] = "machine_list"
+    seq: int = 1
+    machines: list[MachineSummary] = Field(default_factory=list)
 
 
 class GrokCommand(BaseModel):
@@ -2347,6 +2443,9 @@ class Error(DaemonEvent):
     session_id: str | None = None
     code: str
     message: str
+    # TD-5015: the paired computer an error came from, or is about. A store
+    # that consumes unscoped errors ignores one that carries this.
+    machine: str | None = None
 
 
 class ScreenFrame(DaemonEvent):
@@ -2763,6 +2862,10 @@ ClientMessageT = Annotated[
     | StartPairing
     | CancelPairing
     | RemoveRemoteDevice
+    | AddMachine
+    | RemoveMachine
+    | ListMachines
+    | ReconnectMachine
     | ListJobs
     | SaveJob
     | DeleteJob
@@ -2813,6 +2916,7 @@ DaemonEventT = Annotated[
     | SetupState
     | PairingCode
     | PairingCompleted
+    | MachineList
     | ApiKeyValidated
     | DiagnosticsReport
     | UsageReport
@@ -2935,6 +3039,10 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "start_pairing",
         "cancel_pairing",
         "remove_remote_device",
+        "add_machine",
+        "remove_machine",
+        "list_machines",
+        "reconnect_machine",
         "list_jobs",
         "save_job",
         "delete_job",
@@ -2985,6 +3093,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "setup_state",
         "pairing_code",
         "pairing_completed",
+        "machine_list",
         "api_key_validated",
         "diagnostics_report",
         "usage_report",
@@ -3054,6 +3163,11 @@ def parse_client_message(raw: str) -> ClientMessageT:
     try:
         return _client_message_adapter.validate_python(data)
     except ValueError as e:
+        if data["type"] == "add_machine":
+            # A validation message quotes its input, so it would echo a code.
+            raise HandshakeError(
+                "bad_request", "Malformed add_machine: give a link, or host, port and code."
+            ) from None
         raise HandshakeError("bad_request", str(e)) from e
 
 
@@ -3101,9 +3215,19 @@ def parse_hello(raw: str) -> Hello:
     return msg
 
 
-def build_hello_ack() -> str:
-    """Build the server's handshake acknowledgement."""
-    return json.dumps({"type": "hello_ack", "version": PROTOCOL_VERSION})
+def build_hello_ack(machine_id: str | None = None, desktop_name: str | None = None) -> str:
+    """Build the server's handshake acknowledgement.
+
+    ``machine_id`` and ``desktop_name`` (TD-5015) say which computer this
+    is, so a hub can tell "same computer at a new address" and "this is
+    me". Sent only after the token checked out.
+    """
+    payload: dict[str, Any] = {"type": "hello_ack", "version": PROTOCOL_VERSION}
+    if machine_id is not None:
+        payload["machine_id"] = machine_id
+    if desktop_name is not None:
+        payload["desktop_name"] = desktop_name
+    return json.dumps(payload)
 
 
 def handshake_type(raw: str) -> str | None:
@@ -3139,22 +3263,30 @@ def parse_pair(raw: str) -> Pair:
     return msg
 
 
-def build_pair_ok(device_id: str, device_name: str, token: str, desktop_name: str) -> str:
+def build_pair_ok(
+    device_id: str,
+    device_name: str,
+    token: str,
+    desktop_name: str,
+    machine_id: str | None = None,
+) -> str:
     """The redeem reply (TD-5014). Out-of-band like ``hello_ack``: no seq.
 
     Carries the device's key, so it goes straight to the socket — never
-    through a log or the event funnel.
+    through a log or the event funnel. ``machine_id`` (TD-5015) is this
+    computer's identity, for a hub pairing it.
     """
-    return json.dumps(
-        {
-            "type": "pair_ok",
-            "version": PROTOCOL_VERSION,
-            "device_id": device_id,
-            "device_name": device_name,
-            "token": token,
-            "desktop_name": desktop_name,
-        }
-    )
+    payload: dict[str, Any] = {
+        "type": "pair_ok",
+        "version": PROTOCOL_VERSION,
+        "device_id": device_id,
+        "device_name": device_name,
+        "token": token,
+        "desktop_name": desktop_name,
+    }
+    if machine_id is not None:
+        payload["machine_id"] = machine_id
+    return json.dumps(payload)
 
 
 def build_ping() -> str:
@@ -3162,18 +3294,26 @@ def build_ping() -> str:
     return Ping().model_dump_json()
 
 
-def build_error(code: str, message: str, session_id: str | None = None) -> str:
+def build_error(
+    code: str,
+    message: str,
+    session_id: str | None = None,
+    machine: str | None = None,
+) -> str:
     """Build a typed error message.
 
     The message passes through the shared redaction chokepoint (TD-1405):
     this envelope bypasses the event log — it is written straight to the
     socket — so it must scrub here rather than rely on ``event_log.add``.
     ``session_id`` (optional, TD-1711) lets the UI attribute the error to
-    the session whose message was refused.
+    the session whose message was refused. ``machine`` (TD-5015) marks an
+    error that came from, or is about, a paired computer.
     """
     payload: dict[str, str] = {"type": "error", "code": code, "message": redact_secrets(message)}
     if session_id is not None:
         payload["session_id"] = session_id
+    if machine is not None:
+        payload["machine"] = machine
     return json.dumps(payload)
 
 

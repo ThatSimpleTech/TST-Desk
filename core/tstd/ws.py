@@ -34,12 +34,14 @@ import json
 import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import websockets.exceptions
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from .identity import load_or_mint_machine_id
 from .logging import get_logger
+from .peer_policy import LOOPBACK_PLAIN, PeerView, classify
 from .port_file import PORT_FILE_NAME as _PORT_FILE
 from .port_file import release_port_file, write_port_file
 from .protocol import (
@@ -76,6 +78,9 @@ from .remote_devices import (
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 
 log = get_logger("tstd.ws")
+
+# Who a broadcast reaches (TD-5015). Machine peers never get one.
+Audience = Literal["all", "viewers", "loopback"]
 
 # Token length in bytes (64 hex chars)
 _TOKEN_BYTES = 32
@@ -181,6 +186,8 @@ class WebSocketServer:
         pairing: PairingCodes | None = None,
         on_paired: Callable[[RemoteDeviceSummary], Awaitable[None]] | None = None,
         on_device_presence: Callable[[str], Awaitable[None]] | None = None,
+        on_handshake: Callable[[ServerConnection], Awaitable[None]] | None = None,
+        machine_id: str | None = None,
     ) -> None:
         self.data_dir = data_dir
         # 0 is a random port. A fixed one keeps a saved phone working
@@ -219,6 +226,10 @@ class WebSocketServer:
         self._device_of: dict[ServerConnection, str] = {}
         # Set by stop(): the closes it causes are not presence worth telling.
         self._stopping = False
+        # TD-5015: what each handshaken connection is (viewer, machine peer).
+        self._peers: dict[ServerConnection, PeerView] = {}
+        self._on_handshake = on_handshake
+        self._machine_id = machine_id
 
     @property
     def port(self) -> int:
@@ -248,6 +259,18 @@ class WebSocketServer:
     @property
     def pairing(self) -> PairingCodes:
         return self._pairing
+
+    @property
+    def machine_id(self) -> str | None:
+        """This computer's identity (``mid_``), minted at start()."""
+        return self._machine_id
+
+    def peer_view(self, websocket: ServerConnection) -> PeerView:
+        """What this connection is. One not handshaken here: plain loopback."""
+        return self._peers.get(websocket, LOOPBACK_PLAIN)
+
+    def viewer_connections(self) -> list[ServerConnection]:
+        return [conn for conn, peer in self._peers.items() if peer.viewer]
 
     def connected_device_ids(self) -> set[str]:
         """Paired devices with at least one live, handshaken connection."""
@@ -291,6 +314,8 @@ class WebSocketServer:
         """Start the WebSocket server on loopback, and Tailscale if configured."""
         self._stopping = False
         self._token = generate_token()
+        if self._machine_id is None:
+            self._machine_id = load_or_mint_machine_id(self.data_dir)
         extra = resolve_remote_bind(self._bind, self._interfaces)
         validate_interface("127.0.0.1")
         if extra is not None:
@@ -397,21 +422,30 @@ class WebSocketServer:
                 with contextlib.suppress(websockets.exceptions.ConnectionClosed):
                     await conn.send(frame)
 
-    async def broadcast(self, payload: str, *, loopback_only: bool = False) -> int:
+    async def broadcast(
+        self, payload: str, *, loopback_only: bool = False, audience: Audience = "all"
+    ) -> int:
         """Send one frame to every handshaken client. Returns how many got it.
 
         Unlike a session event, which goes to the connections attached to
         that session, this reaches every client that finished the handshake
         — the right shape for state that belongs to the user data dir
         rather than to a session, such as the scheduled-job list.
-        *loopback_only* skips remote peers (TD-5014's ``pairing_completed``).
+        *loopback_only* skips remote peers (TD-5014's ``pairing_completed``);
+        it is ``audience="loopback"``. ``"viewers"`` reaches viewers only.
+        Machine peers never get a broadcast (TD-5015).
 
         A client that closed between the snapshot and the send is skipped,
         not an error: it will re-read the state when it reconnects.
         """
         sent = 0
+        if loopback_only:
+            audience = "loopback"
         for conn in list(self._handshaken):
-            if loopback_only and self.peer_is_remote(conn):
+            peer = self.peer_view(conn)
+            if peer.machine or (audience == "viewers" and not peer.viewer):
+                continue
+            if audience == "loopback" and self.peer_is_remote(conn):
                 continue
             try:
                 await conn.send(payload)
@@ -462,6 +496,7 @@ class WebSocketServer:
         self._connections.clear()
         self._handshaken.clear()
         self._device_of.clear()
+        self._peers.clear()
 
         await self._stop_extra(revoke=False)
         if self._server is not None:
@@ -553,8 +588,12 @@ class WebSocketServer:
             hello = parse_hello(raw)
             validate_hello(hello)
             device_id = self._authenticate(websocket, hello.token)
-            await websocket.send(build_hello_ack())
+            await websocket.send(
+                build_hello_ack(machine_id=self._machine_id, desktop_name=desktop_name())
+            )
             self._handshaken.add(websocket)
+            kind = self._devices.kind_of(device_id) if device_id is not None else None
+            self._peers[websocket] = classify(self.peer_is_remote(websocket), kind, hello.features)
             if device_id is not None:
                 self._device_of[websocket] = device_id
                 self._devices.touch_last_seen(device_id)
@@ -580,6 +619,8 @@ class WebSocketServer:
         try:
             if device_id is not None:
                 await self._announce_presence(device_id)
+            if self._on_handshake is not None:
+                await self._on_handshake(websocket)
             async for raw in websocket:
                 current = self._device_of.get(websocket)
                 if current is not None:
@@ -594,6 +635,7 @@ class WebSocketServer:
             self._connections.discard(websocket)
             self._handshaken.discard(websocket)
             self._device_of.pop(websocket, None)
+            self._peers.pop(websocket, None)
             if self._on_disconnect is not None:
                 await self._on_disconnect(websocket)
             # The id from the handshake, not the map: close_device() untracks
@@ -657,12 +699,14 @@ class WebSocketServer:
         replaced = self._devices.verify(pair.replaces) if pair.replaces else None
         try:
             device, token = self._devices.add(
-                pair.device_name, avoid=(self._token, self._remote_token)
+                pair.device_name, avoid=(self._token, self._remote_token), kind=pair.kind
             )
         except (DeviceLimitError, OSError) as e:
             raise HandshakeError("pair_failed", PAIR_FAILED_MESSAGE) from e
         try:
-            await websocket.send(build_pair_ok(device.id, device.name, token, desktop_name()))
+            await websocket.send(
+                build_pair_ok(device.id, device.name, token, desktop_name(), self._machine_id)
+            )
         except websockets.exceptions.ConnectionClosed:
             # The phone never got its key; nobody could ever use this entry.
             self._forget(device.id, "could not remove an undelivered remote device")

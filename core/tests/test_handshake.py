@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -84,6 +85,23 @@ class TestHello:
         with pytest.raises(ValidationError):
             Hello(token="abc", version=-1)  # negative version fails
 
+    def test_features_default_empty_and_parse(self) -> None:
+        """TD-5015: features opt a client into viewer or bridge behaviour."""
+        assert parse_hello(json.dumps({"type": "hello", "token": "t", "version": 1})).features == []
+        raw = {"type": "hello", "token": "t", "version": 1, "features": ["machines", "later"]}
+        assert parse_hello(json.dumps(raw)).features == ["machines", "later"]
+
+    @pytest.mark.parametrize(
+        "features",
+        [["x" * 33], ["a"] * 9, "machines", [1]],
+    )
+    def test_bad_features_are_a_malformed_hello(self, features: object) -> None:
+        raw = {"type": "hello", "token": "ab" * 32, "version": 1, "features": features}
+        with pytest.raises(HandshakeError) as caught:
+            parse_hello(json.dumps(raw))
+        assert caught.value.code == "bad_request"
+        assert "ab" * 32 not in str(caught.value)
+
 
 class TestVersionValidation:
     def test_valid_version(self) -> None:
@@ -112,6 +130,13 @@ class TestMessageBuilders:
         msg = json.loads(build_hello_ack())
         assert msg["type"] == "hello_ack"
         assert msg["version"] == PROTOCOL_VERSION
+        assert "machine_id" not in msg and "desktop_name" not in msg
+
+    def test_hello_ack_names_the_computer(self) -> None:
+        """TD-5015: which computer this is, for "same computer" and "this is me"."""
+        msg = json.loads(build_hello_ack(machine_id="mid_0123456789abcdef", desktop_name="ezer"))
+        assert msg["machine_id"] == "mid_0123456789abcdef"
+        assert msg["desktop_name"] == "ezer"
 
     def test_error(self) -> None:
         msg = json.loads(build_error("test_code", "test message"))
@@ -144,8 +169,24 @@ class TestHandshakeIntegration:
                 msg = json.loads(response)
                 assert msg["type"] == "hello_ack"
                 assert msg["version"] == PROTOCOL_VERSION
+                # TD-5015: the ack says which computer answered.
+                assert re.fullmatch(r"mid_[0-9a-f]{16}", msg["machine_id"])
+                assert msg["machine_id"] == server.machine_id
+                assert isinstance(msg["desktop_name"], str) and msg["desktop_name"]
 
             await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_machine_id_survives_a_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server = WebSocketServer(Path(tmp))
+            await server.start()
+            first = server.machine_id
+            await server.stop()
+            again = WebSocketServer(Path(tmp))
+            await again.start()
+            assert first is not None and again.machine_id == first
+            await again.stop()
 
     @pytest.mark.asyncio
     async def test_bad_token_rejected(self) -> None:

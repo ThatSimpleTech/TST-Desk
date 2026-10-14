@@ -183,6 +183,11 @@ _KEYCHAIN_SEAMS = (
     "tstd.keychain.get_telegram_bot_url",
     "tstd.keychain.store_telegram_bot_url",
     "tstd.keychain.delete_telegram_bot_url",
+    # TD-5015: paired computers' keys. Callers reach them through the
+    # module (``keychain.get_machine_key``), so these are the only names.
+    "tstd.keychain.store_machine_key",
+    "tstd.keychain.get_machine_key",
+    "tstd.keychain.delete_machine_key",
     "tstd.daemon.api_key_is_stored",
     "tstd.notify.slack.get_slack_webhook_url",
     "tstd.notify.ntfy.get_ntfy_topic_url",

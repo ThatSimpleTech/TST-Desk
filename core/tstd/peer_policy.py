@@ -1,0 +1,155 @@
+"""Who a connection is, and which verbs it may send (TD-5015).
+
+Three kinds of peer matter once computers pair with each other:
+
+- A **viewer** opted in with ``hello.features: ["machines"]`` and is
+  either loopback (this computer's own window) or a phone-kind device.
+  Its session lists carry every paired computer's rows, and it may act
+  on them by their bridged ids (the hub forwards).
+- A **machine peer** is another computer's hub: a device whose record
+  says ``kind: machine``, or any connection whose hello carries
+  ``"bridge"``. It is deny-by-default: only ``MACHINE_PEER_VERBS``, own
+  sessions only, never a bridged id, never a broadcast. It is never a
+  viewer, so bridging stays one hop (A<->B and self-pairing cannot loop).
+- Everything else (the CLI, the legacy remote token, an old client) sees
+  exactly what it saw before TD-5015: own rows, no ``machine_list``.
+
+Pure: no I/O, no daemon imports. A test walks ``_KNOWN_CLIENT_TYPES`` so
+a new verb starts refused for machine peers until it is classified here.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Literal
+
+from .protocol import ClientMessage, build_error
+
+DeviceKind = Literal["phone", "machine"]
+
+VIEWER_FEATURE = "machines"
+BRIDGE_FEATURE = "bridge"
+
+# What another computer's hub may ask of this one. Each was checked for a
+# way to turn approvals off (DECISIONS TD-5015): presets carry only tier
+# configs, set_plan only locks the brain tier, always_allow needs a pending
+# approval and writes the narrowest rule (never class C). The approval
+# switches themselves (set_skip_all_approvals, set_grok_mode,
+# approve_grok_plan, start_autonomy) are not here.
+MACHINE_PEER_VERBS: frozenset[str] = frozenset(
+    {
+        "list_sessions",
+        "attach",
+        "detach",
+        "user_message",
+        "stop_turn",
+        "cancel",
+        "resume",
+        "approve",
+        "deny",
+        "always_allow",
+        "run_verify",
+        "deny_verify",
+        "new_session",
+        "fork_from",
+        "set_branch",
+        "set_tier",
+        "set_plan",
+        "set_session_preset",
+        "rename_session",
+        "set_session_star",
+        "archive_session",
+        "delete_session",
+        "end_session",
+        "get_instruction_stack",
+        "memory_accept",
+        "memory_edit",
+        "memory_reject",
+        # Only for its own device id; the existing pairing gate checks that.
+        "remove_remote_device",
+    }
+)
+
+# What a hub forwards for a bridged id: the same list less the self-removal.
+# ``list_sessions`` is answered from the hub's cache, never forwarded per
+# call; it is listed so the UI's copy of this set matches the spec.
+FORWARDED_VERBS: frozenset[str] = MACHINE_PEER_VERBS - {"remove_remote_device"}
+
+# Approvals are never queued while a lane connects (A.8): a late approve
+# could land after the person stopped expecting it.
+APPROVAL_VERBS: frozenset[str] = frozenset({"approve", "deny", "always_allow"})
+
+# The four machine verbs. ``list_machines`` is also open to viewers.
+MACHINE_VERBS: frozenset[str] = frozenset(
+    {"add_machine", "remove_machine", "list_machines", "reconnect_machine"}
+)
+VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
+
+
+@dataclass(frozen=True)
+class PeerView:
+    """One connection as the policy sees it."""
+
+    remote: bool
+    machine: bool
+    viewer: bool
+
+    @property
+    def loopback(self) -> bool:
+        return not self.remote
+
+
+LOOPBACK_PLAIN = PeerView(remote=False, machine=False, viewer=False)
+
+
+def classify(remote: bool, device_kind: DeviceKind | None, features: Iterable[str]) -> PeerView:
+    """The peer kind for one handshaken connection.
+
+    *device_kind* is None for the loopback token and the legacy remote
+    token: neither is a device. ``"bridge"`` only ever narrows.
+    """
+    wanted = set(features)
+    machine = device_kind == "machine" or BRIDGE_FEATURE in wanted
+    viewer = not machine and VIEWER_FEATURE in wanted and (not remote or device_kind == "phone")
+    return PeerView(remote=remote, machine=machine, viewer=viewer)
+
+
+def message_session_id(msg: ClientMessage) -> str | None:
+    """The message's ``session_id`` when it has one."""
+    value = getattr(msg, "session_id", None)
+    return value if isinstance(value, str) else None
+
+
+def check(msg: ClientMessage, peer: PeerView, *, bridged: bool) -> str | None:
+    """A ready error frame when *peer* may not send *msg*, else None.
+
+    *bridged* says the message's ``session_id`` is in the bridged grammar.
+    Forwarding itself is the daemon's call; this only refuses.
+    """
+    sid = message_session_id(msg)
+    if peer.machine:
+        if msg.type not in MACHINE_PEER_VERBS:
+            return build_error(
+                "not_allowed",
+                "Another computer can't do that here. Use this computer itself.",
+                session_id=sid,
+            )
+        if bridged:
+            return build_error(
+                "bridged_session",
+                "That session is on another computer. Open it from the computer it runs on.",
+                session_id=sid,
+            )
+        return None
+    if msg.type in MACHINE_VERBS:
+        if peer.loopback or (peer.viewer and msg.type in VIEWER_MACHINE_VERBS):
+            return None
+        return build_error("loopback_only", "Only the computer itself can add or remove computers.")
+    if bridged and peer.viewer and msg.type not in FORWARDED_VERBS:
+        return build_error(
+            "not_on_remote",
+            "That doesn't work for a session on another computer yet.",
+            session_id=sid,
+        )
+    return None
