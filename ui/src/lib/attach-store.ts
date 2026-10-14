@@ -12,7 +12,16 @@ export interface NativeAttachBridge {
   loadAttach(): string | null;
   saveAttach(raw: string): boolean;
   clearAttach(): void;
+  // TD-5014 pairing. Optional: a 0.1.5 shell has only the three above and
+  // must keep working, so callers check each one before use (see pairing.ts).
+  deviceName?(): string;
+  scanPairing?(): boolean;
+  takePairLink?(): string | null;
+  attachStatus?(): string;
 }
+
+/** Result of the shell's last loadAttach() (TD-5014). */
+export type AttachStatus = "none" | "ok" | "unreadable" | "unavailable";
 
 export interface AttachStore {
   /** True when the target survives closing the app. */

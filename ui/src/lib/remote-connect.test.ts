@@ -4,9 +4,11 @@ import {
   isRemoteShellHost,
   isUnspecifiedHost,
   parseAttachParams,
+  parseStoredAddress,
   parseStoredAttach,
   parseWsUrl,
   resolveBrowserTarget,
+  serializeAddress,
   serializeAttach,
   stripAttachFromUrl,
   validateAttachTarget,
@@ -198,6 +200,27 @@ describe("stored attach", () => {
     expect(parseStoredAttach(serializeAttach(target))).toEqual(target);
     expect(parseStoredAttach("{")).toBeNull();
     expect(parseStoredAttach(JSON.stringify({ host: "0.0.0.0", port: 1, token: "x" }))).toBeNull();
+  });
+
+  it("carries a paired device's id and computer name, and drops bad ones (TD-5014)", () => {
+    const paired = { host: "100.64.1.2", port: 9000, token: "k", deviceId: "dev_0123456789ab", desktopName: "ezer" };
+    expect(parseStoredAttach(serializeAttach(paired))).toEqual(paired);
+    const junk = JSON.stringify({ host: "100.64.1.2", port: 9000, token: "k", deviceId: "evil", desktopName: "\u0007" });
+    expect(parseStoredAttach(junk)).toEqual({ host: "100.64.1.2", port: 9000, token: "k" });
+  });
+
+  it("never loads a refused key's record as a target, but keeps its address (TD-5014)", () => {
+    const raw = serializeAddress({ host: "100.64.1.2", port: 9000, desktopName: "ezer" });
+    expect(JSON.parse(raw)).toEqual({ host: "100.64.1.2", port: 9000, token: "", desktopName: "ezer" });
+    expect(parseStoredAttach(raw)).toBeNull();
+    expect(parseStoredAddress(raw)).toEqual({ host: "100.64.1.2", port: 9000, desktopName: "ezer" });
+    expect(parseStoredAddress(serializeAttach({ host: "100.64.1.2", port: 9000, token: "k" }))).toEqual({
+      host: "100.64.1.2",
+      port: 9000,
+      desktopName: null,
+    });
+    expect(parseStoredAddress("[]")).toBeNull();
+    expect(parseStoredAddress(null)).toBeNull();
   });
 });
 

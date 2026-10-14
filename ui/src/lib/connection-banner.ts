@@ -6,7 +6,9 @@
 export type BannerWs = "disconnected" | "connecting" | "connected" | "reconnecting" | "stopped";
 export type BannerDaemon = "starting" | "connected" | "crashed" | "stopping" | "stopped";
 
-export function bannerLabel(ws: BannerWs, daemon: BannerDaemon): string {
+/** `desktopName` is the paired computer a phone is retrying (TD-5014): a
+ *  network failure keeps the saved target and says who it is waiting for. */
+export function bannerLabel(ws: BannerWs, daemon: BannerDaemon, desktopName: string | null = null): string {
 	if (ws === "connected") return "Connected";
 	// Host gave up (or is stopping) while the socket never attached.
 	if (
@@ -15,7 +17,9 @@ export function bannerLabel(ws: BannerWs, daemon: BannerDaemon): string {
 	) {
 		return daemon === "stopping" ? "Daemon stopped" : "Couldn’t start the daemon";
 	}
-	if (ws === "connecting" || ws === "reconnecting") return "Connecting…";
+	if (ws === "connecting" || ws === "reconnecting") {
+		return desktopName === null ? "Connecting…" : `Connecting to ${desktopName}…`;
+	}
 	if (ws === "disconnected") {
 		if (daemon === "crashed") return "Daemon crashed — reconnecting";
 		return "Not connected";

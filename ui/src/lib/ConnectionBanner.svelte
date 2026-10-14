@@ -1,11 +1,15 @@
 <script lang="ts">
-	import { ws, daemon } from './connection-status.svelte.js';
+	import { ws, daemon, remoteAttach } from './connection-status.svelte.js';
 	import { bannerLabel, bannerTone } from './connection-banner';
+	import { isTauri } from './open-file';
 
 	// Presentational only: both values come straight from the store, which
 	// reads them from the host event and the real socket (AGENTS §6 — the UI
 	// never derives truth it wasn't given). Copy lives in connection-banner.ts.
-	let label = $derived(bannerLabel(ws.state, daemon.state));
+	// TD-5014: a phone retrying its saved computer names it.
+	let label = $derived(
+		bannerLabel(ws.state, daemon.state, isTauri() ? null : remoteAttach.desktopName),
+	);
 	let tone = $derived(bannerTone(ws.state, daemon.state));
 
 	// Connected is the normal state and shows nothing at all: a healthy

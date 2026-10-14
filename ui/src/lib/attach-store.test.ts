@@ -59,6 +59,15 @@ describe("attachStore (TD-5005)", () => {
     expect(store.load()).toBeNull();
   });
 
+  it("accepts a 0.1.5 shell without the pairing methods, and a newer one with them (TD-5014)", () => {
+    const old = fakeBridge();
+    expect(nativeAttachBridge({ TstDeskNative: old })).toBe(old);
+    const newer = { ...fakeBridge(), deviceName: () => "Pixel", scanPairing: () => true, takePairLink: () => null, attachStatus: () => "ok" };
+    const bridge = nativeAttachBridge({ TstDeskNative: newer });
+    expect(bridge?.deviceName?.()).toBe("Pixel");
+    expect(attachStore({ TstDeskNative: newer }).durable).toBe(true);
+  });
+
   it("ignores a partial bridge from an older shell", () => {
     expect(nativeAttachBridge({ TstDeskNative: { loadAttach: () => null } })).toBeNull();
     expect(attachStore({ TstDeskNative: { loadAttach: () => null } }).durable).toBe(false);

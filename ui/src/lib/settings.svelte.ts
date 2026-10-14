@@ -11,10 +11,12 @@
 // only via sendToDaemon — no client reference, no import cycle.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
-import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
+import { reducePairing } from "./pair-device.svelte.js";
+import type { DaemonEventUnion, PolicyRuleSummary, RemoteDeviceSummary } from "./protocol";
 
 export type SettingsSection =
 	| "appearance"
+	| "devices"
 	| "computer"
 	| "engine"
 	| "model"
@@ -24,6 +26,7 @@ export type SettingsSection =
 	| "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
+	"devices",
 	"computer",
 	"engine",
 	"model",
@@ -90,6 +93,8 @@ export const settings = $state({
 	/** Bound Tailscale address, never a token. */
 	remoteBind: null as string | null,
 	remotePort: null as number | null,
+	/** Paired phones (TD-5014). From setup_state; never a token or hash. */
+	remoteDevices: [] as RemoteDeviceSummary[],
 	/** Agent engine for new sessions. */
 	engine: "native" as "native" | "grok",
 	grokAvailable: false,
@@ -162,6 +167,7 @@ export function resetSettings(): void {
 	settings.remoteAttachEnabled = false;
 	settings.remoteBind = null;
 	settings.remotePort = null;
+	settings.remoteDevices = [];
 	settings.engine = "native";
 	settings.grokAvailable = false;
 	settings.grokBinary = null;
@@ -187,6 +193,7 @@ export function resetSettings(): void {
 }
 
 function reduce(event: DaemonEventUnion): void {
+	reducePairing(event);
 	if (event.type === "setup_state") {
 		settings.presets = event.presets;
 		settings.activePreset = event.active_preset;
@@ -210,6 +217,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.remoteAttachEnabled = event.remote_attach_enabled ?? false;
 		settings.remoteBind = event.remote_bind ?? null;
 		settings.remotePort = event.remote_port ?? null;
+		settings.remoteDevices = event.remote_devices ?? [];
 		settings.engine = event.engine ?? "native";
 		settings.grokAvailable = event.grok_available ?? false;
 		settings.grokBinary = event.grok_binary ?? null;

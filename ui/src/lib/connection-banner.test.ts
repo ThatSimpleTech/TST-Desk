@@ -28,6 +28,13 @@ describe("bannerLabel (TD-1304)", () => {
 		expect(bannerLabel("disconnected", "starting")).toBe("Not connected");
 	});
 
+	it("names the paired computer a phone is retrying (TD-5014)", () => {
+		expect(bannerLabel("reconnecting", "starting", "ezer")).toBe("Connecting to ezer…");
+		expect(bannerTone("reconnecting", "starting")).toBe("info");
+		expect(bannerLabel("connected", "connected", "ezer")).toBe("Connected");
+		expect(bannerLabel("reconnecting", "starting", null)).toBe("Connecting…");
+	});
+
 	it("says Daemon stopped on an orderly shutdown", () => {
 		expect(bannerLabel("connecting", "stopping")).toBe("Daemon stopped");
 		expect(bannerLabel("stopped", "stopped")).toBe("Stopped");

@@ -31,10 +31,19 @@
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
 	import CuPolicyPane from './CuPolicyPane.svelte';
 	import SettingsJudgments from './SettingsJudgments.svelte';
+	import PairedDevices from './PairedDevices.svelte';
+	import PairDeviceDialog from './PairDeviceDialog.svelte';
+	import { openPairDialog } from '../pair-device.svelte.js';
 	import Icon from './Icon.svelte';
+
+	// TD-5014: only the computer itself may pair or remove; the daemon refuses
+	// both from a phone, so a phone viewing Settings gets the list only.
+	const onComputer = isTauri();
+	let showLegacy = $state(false);
 
 	const SECTION_LABEL: Record<SettingsSection, string> = {
 		appearance: 'Appearance',
+		devices: 'Phones and devices',
 		computer: 'Computer use',
 		engine: 'Engine',
 		model: 'Model',
@@ -138,7 +147,9 @@
 						when the system has it, or your configured voice.base_url endpoint. Works
 						with either engine; it only fills the draft.
 					</p>
-					<div class="keep-running">
+					<CuIndicatorToggles />
+				{:else if settings.section === 'devices'}
+					<div class="keep-running keep-running--first">
 						<p class="keep-title">Allow remote attach</p>
 						<button
 							class="choice"
@@ -152,28 +163,24 @@
 					</div>
 					<p class="hint">
 						{#if settings.remoteBind}
-							Phone address: ws://{settings.remoteBind}{settings.remotePort
+							Phones reach this computer over Tailscale at {settings.remoteBind}{settings.remotePort
 								? `:${settings.remotePort}`
-								: ''}. It and the phone token stay the same across restarts. Off unbinds
-							that address, deletes the token, and leaves 127.0.0.1.
+								: ''}. Off stops listening; paired phones stay paired and work again when
+							it is back on.
 						{:else}
-							Off by default. On binds the Tailscale address; the port-file token stays
-							local.
+							Off by default. Pairing a phone turns it on, on this computer's Tailscale
+							address only.
 						{/if}
 					</p>
-					{#if settings.remoteBind}
-						<div class="keep-running">
-							<p class="keep-title">Phone token</p>
-							<button class="choice" type="button" onclick={() => rotateRemoteToken()}
-								>New token</button
-							>
-						</div>
-						<p class="hint">
-							A new token disconnects every phone. Paste the new remote-token file into each
-							phone again.
-						</p>
-					{/if}
-					{#if !isTauri()}
+					<div class="keep-running">
+						<p class="keep-title">Paired phones</p>
+						{#if onComputer}
+							<button class="choice" type="button" onclick={openPairDialog}>Pair a phone</button>
+						{/if}
+					</div>
+					<PairedDevices canManage={onComputer} />
+					{#if !onComputer}
+						<p class="hint">Pair or remove phones in Settings on the computer.</p>
 						<div class="keep-running">
 							<p class="keep-title">This device</p>
 							<button class="choice" type="button" onclick={() => forgetRemoteTarget()}
@@ -182,11 +189,43 @@
 						</div>
 						<p class="hint">
 							{remoteAttach.durable
-								? 'The address and token are saved on this device, encrypted. Forget clears them and disconnects.'
-								: 'This tab keeps the token until it closes. Forget clears it now and disconnects.'}
+								? 'The address and key are saved on this device, encrypted. Forget clears them and disconnects.'
+								: 'This tab keeps the key until it closes. Forget clears it now and disconnects.'}
 						</p>
 					{/if}
-					<CuIndicatorToggles />
+					<button
+						class="disclosure"
+						type="button"
+						aria-expanded={showLegacy}
+						onclick={() => (showLegacy = !showLegacy)}>Older way: token</button
+					>
+					{#if showLegacy}
+						<p class="hint">
+							{#if settings.remoteBind}
+								Phone address: ws://{settings.remoteBind}{settings.remotePort
+									? `:${settings.remotePort}`
+									: ''}. It and the phone token stay the same across restarts. Off unbinds
+								that address, deletes the token, and leaves 127.0.0.1.
+							{:else}
+								On binds the Tailscale address; the port-file token stays local.
+							{/if}
+						</p>
+						{#if settings.remoteBind}
+							<div class="keep-running">
+								<p class="keep-title">Phone token</p>
+								<button class="choice" type="button" onclick={() => rotateRemoteToken()}
+									>New token</button
+								>
+							</div>
+							<p class="hint">
+								A new token disconnects every phone that uses it. Paste the new remote-token
+								file into each of those phones again. Paired phones keep their own keys.
+							</p>
+						{/if}
+					{/if}
+					{#if onComputer}
+						<PairDeviceDialog />
+					{/if}
 				{:else if settings.section === 'computer'}
 					<CuPolicyPane />
 					<SettingsJudgments />
@@ -358,5 +397,22 @@
 		font-weight: var(--weight-medium);
 		color: var(--color-ink);
 		margin: 0;
+	}
+
+	.keep-running--first {
+		margin-top: 0;
+		padding-top: 0;
+		border-top: 0;
+	}
+
+	.disclosure {
+		display: block;
+		margin-top: var(--space-4);
+		padding: 0;
+		background: transparent;
+		border: 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
+		cursor: pointer;
 	}
 </style>
