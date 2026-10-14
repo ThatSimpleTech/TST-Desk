@@ -17,6 +17,7 @@ A server that will not negotiate TLS is refused before AUTH.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import re
 import smtplib
@@ -222,7 +223,7 @@ def _smtp_send(
     except EmailNotifyError:
         raise
     except Exception as exc:
-        error_class, text = _public_error(exc, password, body, html_body)
+        error_class, text = _public_error(exc, _secret_forms(username, password), body, html_body)
         raise EmailNotifyError(error_class, text) from None
     finally:
         if client is not None:
@@ -246,11 +247,32 @@ def _message(from_address: str, to: str, subject: str, body: str, html_body: str
     return message
 
 
-def _public_error(exc: BaseException, password: str, body: str, html_body: str) -> tuple[str, str]:
+def _secret_forms(username: str, password: str) -> list[str]:
+    """The password as it crossed the wire, longest first.
+
+    AUTH PLAIN sends base64 of ``\\0user\\0password`` and AUTH LOGIN sends
+    base64 of the password alone. A 535 reply that quotes either would
+    otherwise reach the stored delivery error, since base64 is not
+    secret-shaped to the shared redactor.
+    """
+    if not password:
+        return []
+    plain = f"\0{username}\0{password}".encode()
+    forms = {
+        password,
+        base64.b64encode(plain).decode("ascii"),
+        base64.b64encode(password.encode()).decode("ascii"),
+    }
+    return sorted(forms, key=len, reverse=True)
+
+
+def _public_error(
+    exc: BaseException, secrets: list[str], body: str, html_body: str
+) -> tuple[str, str]:
     """SMTP text can echo the AUTH secret or the report. Neither leaves this function."""
     text = str(exc)
-    if password:
-        text = text.replace(password, "[redacted]")
+    for secret in secrets:
+        text = text.replace(secret, "[redacted]")
     # The HTML document is the longer form of the same report. Replace it
     # before the plain body so a quoted copy of the whole message goes first.
     if html_body:

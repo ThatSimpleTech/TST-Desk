@@ -3293,6 +3293,11 @@ def parse_client_message(raw: str) -> ClientMessageT:
             raise HandshakeError(
                 "bad_request", "Malformed add_machine: give a link, or host, port and code."
             ) from None
+        if data["type"] == "set_email_notify":
+            # Same reason: the input may be the SMTP password (TD-3820).
+            raise HandshakeError(
+                "bad_request", "Malformed set_email_notify: check the email settings fields."
+            ) from None
         raise HandshakeError("bad_request", str(e)) from e
 
 

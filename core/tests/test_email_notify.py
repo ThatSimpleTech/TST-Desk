@@ -76,11 +76,18 @@ class FakeSmtp:
     """Enough SMTP to prove STARTTLS, AUTH, and the message. Loopback only."""
 
     def __init__(
-        self, *, advertise_starttls: bool, implicit_tls: bool, ctx: ssl.SSLContext
+        self,
+        *,
+        advertise_starttls: bool,
+        implicit_tls: bool,
+        ctx: ssl.SSLContext,
+        echo_token: bool = False,
     ) -> None:
         self.advertise_starttls = advertise_starttls
         self.implicit_tls = implicit_tls
         self.ctx = ctx
+        # A rejection quotes the base64 AUTH token instead of the password.
+        self.echo_token = echo_token
         self.commands: list[str] = []
         self.data = b""
         self._server: asyncio.Server | None = None
@@ -129,7 +136,8 @@ class FakeSmtp:
                 elif upper.startswith("AUTH"):
                     supplied = _plain_password(text)
                     if supplied != _PASSWORD:
-                        writer.write(f"535 rejected {supplied}\r\n".encode())
+                        quoted = text.split(" ", 2)[-1] if self.echo_token else supplied
+                        writer.write(f"535 rejected {quoted}\r\n".encode())
                     else:
                         writer.write(b"235 OK\r\n")
                 elif upper == "DATA":
