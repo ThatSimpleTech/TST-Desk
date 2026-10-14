@@ -55,7 +55,9 @@ pub(crate) fn host_log_plugin(data_dir: &Path) -> TauriPlugin<Wry> {
             file_name: Some(stem),
         }))
         .max_file_size(u128::from(ROTATE_BYTES))
-        .rotation_strategy(RotationStrategy::KeepSome(2))
+        // One dated archive beside host.log, like tstd.stderr.log.1.
+        // KeepSome(n) keeps n archives besides the active file.
+        .rotation_strategy(RotationStrategy::KeepSome(1))
         .build()
 }
 
@@ -73,9 +75,16 @@ pub(crate) fn tstd_stderr(data_dir: &Path) -> Stdio {
 
 fn open_tstd_stderr(data_dir: &Path) -> io::Result<File> {
     std::fs::create_dir_all(logs_dir(data_dir))?;
-    let path = tstd_stderr_path(data_dir);
-    rotate_if_over(&path, ROTATE_BYTES)?;
-    open_append_private(&path)
+    open_rolled(&tstd_stderr_path(data_dir), ROTATE_BYTES)
+}
+
+/// A rollover that fails still appends: a lost traceback costs more
+/// than a file past the limit.
+fn open_rolled(path: &Path, limit: u64) -> io::Result<File> {
+    if let Err(e) = rotate_if_over(path, limit) {
+        log::warn!("could not roll over the tstd stderr log; appending: {e}");
+    }
+    open_append_private(path)
 }
 
 /// Keep one older file as `<name>.1`. Rotation runs at spawn, so a
@@ -179,6 +188,28 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"first\nsecond\n");
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_rollover_still_appends() {
+        use std::io::Write;
+
+        let data_dir = temp_data_dir("stuck");
+        std::fs::create_dir_all(logs_dir(&data_dir)).unwrap();
+        let path = tstd_stderr_path(&data_dir);
+        std::fs::write(&path, vec![b'x'; 64]).unwrap();
+        // A non-empty directory where `.1` should go makes the rename fail.
+        let rolled = logs_dir(&data_dir).join("tstd.stderr.log.1");
+        std::fs::create_dir_all(rolled.join("busy")).unwrap();
+        assert!(rotate_if_over(&path, 32).is_err());
+        let mut file = open_rolled(&path, 32).unwrap();
+        file.write_all(b"more").unwrap();
+        drop(file);
+        let text = std::fs::read(&path).unwrap();
+        assert_eq!(text.len(), 68);
+        assert!(text.ends_with(b"more"));
         let _ = std::fs::remove_dir_all(&data_dir);
     }
 

@@ -326,8 +326,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            app.handle()
-                .plugin(daemon::log_files::host_log_plugin(&daemon::data_dir()))?;
+            // A setup error panics the app. A log folder that cannot be
+            // opened must not keep TST Desk from starting (TD-5021).
+            if let Err(e) = app
+                .handle()
+                .plugin(daemon::log_files::host_log_plugin(&daemon::data_dir()))
+            {
+                eprintln!("host log not started: {e}");
+            }
             log::info!(
                 "host started (pid {}, version {})",
                 std::process::id(),

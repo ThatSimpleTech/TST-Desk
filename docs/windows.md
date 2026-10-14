@@ -148,8 +148,10 @@ Closing the window is not quitting the app (TD-2902).
   and parked approvals continue. OS notifications still fire while the window is gone.
   While hidden, a running session or a parked approval badges the dock / taskbar (or the
   taskbar tooltip). Clicking the app icon shows the window, focuses a parked approval if
-  there is one, and re-attaches; a second host process attaches to the live listener
-  instead of spawning another daemon.
+  there is one, and re-attaches. A second launch never starts a second host (TD-5024):
+  it hands over to the running one, which shows its window, and exits. With Keep running
+  on, closing every window in any order leaves the host in the tray (TD-5020); tray
+  **Show** or a second launch opens a new window.
 - **Quit** (menu / palette **Quit TST Desk**, or Cmd+Q) sends `shutdown`,
   reaps the process group, and leaves no listener. That is the TD-1002
   v0.1 contract, kept for Quit. Dock, AppleScript, logout, and restart
