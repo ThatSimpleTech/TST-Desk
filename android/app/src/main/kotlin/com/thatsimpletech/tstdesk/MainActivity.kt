@@ -30,8 +30,12 @@ class MainActivity : Activity(), PairingHost {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // TD-5014: a fresh launch from a tstdesk://pair link. A restored or
-        // Recents launch re-delivers the old intent, whose code is spent.
+        // TD-5014: a link the page had not taken yet when a configuration
+        // change recreated the activity. Held in memory only, so a Recents
+        // launch after the process died never brings one back.
+        pendingLink.offer(lastNonConfigurationInstance as? String)
+        // A fresh launch from a tstdesk://pair link. A restored or Recents
+        // launch re-delivers the old intent, whose code is spent.
         if (savedInstanceState == null) acceptPairIntent(intent)
         val started = AssetServer(ports = PrefsPortMemory(this)) { path -> readAsset(path) }
         started.start()
@@ -96,6 +100,9 @@ class MainActivity : Activity(), PairingHost {
         }
     }
 
+    /** Moves an untaken link to the next instance; the old page can no longer take it. */
+    override fun onRetainNonConfigurationInstance(): Any? = pendingLink.take()
+
     override fun onDestroy() {
         webView?.destroy()
         webView = null
@@ -137,12 +144,16 @@ class MainActivity : Activity(), PairingHost {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != SCAN_REQUEST) return
         val text = if (resultCode == RESULT_OK) data?.getStringExtra(ScanActivity.EXTRA_TEXT) else null
-        finishScan(scanResultJson(text, data?.getStringExtra(ScanActivity.EXTRA_REASON)))
+        finishScan(scanResultJson(text, data?.getStringExtra(ScanActivity.EXTRA_REASON))) { delivered ->
+            // Recreated while the scanner was open: the reloading page takes
+            // the scanned link through takePairLink() instead.
+            pendingLink.keepUndeliveredScan(text, delivered)
+        }
     }
 
-    private fun finishScan(resultJson: String) {
+    private fun finishScan(resultJson: String, done: (Boolean) -> Unit = {}) {
         scanning.set(false)
-        callPage(SCAN_CALLBACK, resultJson) {}
+        callPage(SCAN_CALLBACK, resultJson, done)
     }
 
     private fun acceptPairIntent(intent: Intent?): String? {

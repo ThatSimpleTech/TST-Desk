@@ -89,6 +89,43 @@ class PairLinkTest {
     }
 
     @Test
+    fun aScanThePageMissedWaitsForItsBoot() {
+        val pending = PendingPairLink()
+        assertEquals(good, pending.keepUndeliveredScan(good, delivered = false))
+        assertEquals("the reloaded page takes it once", good, pending.take())
+        assertNull(pending.take())
+    }
+
+    @Test
+    fun aDeliveredOrNonLinkScanIsNotKept() {
+        val pending = PendingPairLink()
+        assertNull(pending.keepUndeliveredScan(good, delivered = true))
+        assertNull("the page already has it", pending.take())
+        assertNull(pending.keepUndeliveredScan("ABCD-EFGH", delivered = false))
+        assertNull(pending.keepUndeliveredScan("https://example.com/", delivered = false))
+        assertNull("a failed scan has no text", pending.keepUndeliveredScan(null, delivered = false))
+        assertNull(pending.take())
+    }
+
+    @Test
+    fun anUntakenLinkMovesToARecreatedActivityAndATakenOneDoesNot() {
+        // What onRetainNonConfigurationInstance / onCreate do across a recreate.
+        val before = PendingPairLink()
+        before.offer(good)
+        val after = PendingPairLink()
+        after.offer(before.take())
+        assertNull("the old page can no longer take it", before.take())
+        assertEquals(good, after.take())
+
+        val spent = PendingPairLink()
+        spent.offer(good)
+        assertEquals(good, spent.take())
+        val next = PendingPairLink()
+        next.offer(spent.take())
+        assertNull("a spent link is not handed on", next.take())
+    }
+
+    @Test
     fun theDeviceNameIsTheUsersOwnFirst() {
         assertEquals("Adam's Fold", deviceLabel("Adam's Fold", "Google", "Pixel 11 Pro Fold"))
         assertEquals("Google Pixel 11 Pro Fold", deviceLabel(null, "Google", "Pixel 11 Pro Fold"))

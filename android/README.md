@@ -7,7 +7,7 @@ The phone and the computer both need Tailscale.
 ## Pair a phone (TD-5014)
 
 1. On the computer, open **Settings → Pair a phone**. It turns on remote attach if it is off and shows a QR code and an 8-character code (`ABCD-EFGH`). The code works once and expires after 10 minutes.
-2. On the phone, open TST Desk and tap **Scan**, then point the camera at the code. If the phone's own camera app offers to open the `tstdesk://pair` link, that works too: it opens this app and pairs.
+2. On the phone, open TST Desk and tap **Scan**, then point the camera at the code. If the phone's own camera app offers to open the `tstdesk://pair` link, that works too: it opens this app and pairs. A pairing link opened from another app asks first before it replaces a computer the phone already has saved.
 3. If the camera is not an option, type the computer's address and the code instead.
 
 The phone gets its own key for that computer and saves it, encrypted with an Android Keystore key. It reconnects by itself every time it opens. Each paired phone shows up in the computer's Settings, and removing it there disconnects only that phone. If the computer stops accepting the saved key, the phone keeps the computer's address and asks you to scan again.

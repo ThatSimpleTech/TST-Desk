@@ -42,6 +42,28 @@ private class FailingSealer(private val error: Exception) : Sealer {
     override fun open(iv: ByteArray, sealed: ByteArray): ByteArray = throw error
 }
 
+/** A key that will not seal until it is dropped, the way a key that no longer loads fails. */
+private class StuckKeySealer(private var failuresLeft: Int) : Sealer {
+    private val working = JvmSealer()
+    var seals = 0
+    var discarded = 0
+
+    override fun seal(plain: ByteArray): Pair<ByteArray, ByteArray> {
+        seals++
+        if (failuresLeft > 0) {
+            failuresLeft--
+            throw KeyStoreException("the saved attach key did not load")
+        }
+        return working.seal(plain)
+    }
+
+    override fun open(iv: ByteArray, sealed: ByteArray): ByteArray = working.open(iv, sealed)
+
+    override fun discardKey() {
+        discarded++
+    }
+}
+
 private class MemoryStore : BlobStore {
     var value: String? = null
     override fun read() = value
@@ -177,6 +199,54 @@ class AttachVaultTest {
         val later = AttachVault(sealer, store)
         assertEquals(target, later.load())
         assertEquals(AttachVault.STATUS_OK, later.status)
+    }
+
+    @Test
+    fun aKeyThatWillNotSealIsReplacedAndTheSaveGoesThrough() {
+        val store = MemoryStore()
+        store.value = "b2xk:b2xkLWJsb2Itc2VhbGVkLXdpdGgtdGhlLXN0dWNrLWtleQ=="
+        val sealer = StuckKeySealer(failuresLeft = 1)
+        val vault = AttachVault(sealer, store)
+        assertTrue(vault.save(target))
+        assertEquals(2, sealer.seals)
+        assertEquals("the stuck key is dropped once", 1, sealer.discarded)
+        assertEquals(target, vault.load())
+        assertEquals(AttachVault.STATUS_OK, vault.status)
+    }
+
+    @Test
+    fun aSaveFailsOnlyWhenTheFreshKeyFailsToo() {
+        val store = MemoryStore()
+        val sealer = StuckKeySealer(failuresLeft = 2)
+        assertFalse(AttachVault(sealer, store).save(target))
+        assertEquals("one retry, not a loop", 2, sealer.seals)
+        assertEquals(1, sealer.discarded)
+        assertNull(store.value)
+    }
+
+    @Test
+    fun aKeyThatCannotBeDroppedStillGetsTheSecondSeal() {
+        val store = MemoryStore()
+        val sealer = StuckKeySealer(failuresLeft = 1)
+        val vault = AttachVault(
+            object : Sealer by sealer {
+                override fun discardKey() {
+                    throw KeyStoreException("busy")
+                }
+            },
+            store,
+        )
+        assertTrue(vault.save(target))
+        assertEquals(2, sealer.seals)
+        assertEquals(target, vault.load())
+    }
+
+    @Test
+    fun aWorkingKeyIsNeverDropped() {
+        val sealer = StuckKeySealer(failuresLeft = 0)
+        assertTrue(AttachVault(sealer, MemoryStore()).save(target))
+        assertEquals(1, sealer.seals)
+        assertEquals(0, sealer.discarded)
     }
 
     @Test
