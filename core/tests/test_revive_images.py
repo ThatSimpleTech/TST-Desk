@@ -15,7 +15,7 @@ import pytest
 from tests.test_loop import wait_for_turn
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
-from tstd.protocol import AssistantDelta, UserTurn
+from tstd.protocol import AssistantDelta, TurnComplete, UserTurn
 from tstd.provider import ChatMessage
 from tstd.session_persist import SessionPersist
 from tstd.session_store import SessionStore
@@ -50,6 +50,12 @@ async def test_image_turn_revives_not_tombstone(
         UserTurn(session_id="img-1", turn_id="t1", content="What is in this picture?", seq=1),
     )
     persist.append_event("img-1", AssistantDelta(session_id="img-1", delta="A pixel.", seq=2))
+    # The picture turn finished before the restart, so the revive seal
+    # (TD-5018) leaves it alone and turn 2 below is the follow-up.
+    persist.append_event(
+        "img-1",
+        TurnComplete(session_id="img-1", tokens=3, cost=0, tier="brain", duration=0.1, seq=3),
+    )
     picture_turn: list[dict[str, object]] = [
         {"type": "text", "text": "What is in this picture?"},
         {"type": "image_url", "image_url": {"url": _PICTURE}},
@@ -81,7 +87,7 @@ async def test_image_turn_revives_not_tombstone(
 
         # Live, not a tombstone: it takes a message and the model sees the picture.
         await sess.add_user_message("And now?")
-        await wait_for_turn(sess, 1)
+        await wait_for_turn(sess, 2)
         assert sess.conversation[-1].content == "Still a pixel."
         assert mock.calls
         assert picture_turn in [m.content for m in mock.calls[0].messages]

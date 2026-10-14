@@ -103,10 +103,17 @@ Closing the window is not quitting the app (TD-2902).
 - **Quit** (menu / palette **Quit TST Desk**) sends `shutdown` and reaps the
   process group.
 
-A second host process attaches to the live listener instead of spawning
-another daemon. The tray (TD-4703) is Show / New window / Quit; the tooltip
-counts running sessions. Restore after hide is tray Show, or launching the
-app again — it depends on the desktop. There is no macOS `Reopen` event on Linux.
+A second launch never starts a second host (TD-5024): it hands over to the
+running one over the D-Bus session bus, which shows its window, and exits.
+With Keep running on, closing every window in any order leaves the host in
+the tray (TD-5020); tray Show or a second launch opens a new window. The
+tray (TD-4703) is Show / New window / Quit; the tooltip counts running
+sessions. There is no macOS `Reopen` event on Linux.
+
+The host keeps two logs next to `tstd.log`: `logs/tstd.stderr.log` (tstd's
+raw stderr, owner-only, one `.1` kept) and, in release builds,
+`logs/host.log` (its own lifecycle: start, spawn, attach, restart, quit; one
+dated archive).
 
 While hidden, a running session or a parked approval updates the window title
 (the cheap Linux / Windows badge path). OS notifications still fire.
@@ -117,14 +124,16 @@ Let open turns finish first, so a restart does not cut one (TD-5023):
 
 1. `cd core && uv run tst drain --timeout 120`
 2. Replace the AppImage.
-3. Restart the host.
+3. Quit TST Desk (tray or menu **Quit**), then launch the new AppImage.
+   Launching it while the old host runs only raises the old window
+   (TD-5024), so the old build would keep running.
 
 `tst drain` waits up to `--timeout` seconds for open turns, then keeps
 refusing new ones for `--hold` seconds (default 120) so the restart lands
 on a quiet daemon. It exits 0 when drained, 2 when a turn is still running
 or waiting on an approval (it prints only the session ids), and 1 when no
-daemon is running; it never starts one. `tst drain --release` lifts the
-hold if you change your mind. A turn cut anyway is closed as "Not
+daemon is running; it never starts one. The restarted daemon starts
+without a hold; `tst drain --release` lifts it if you call the deploy off. A turn cut anyway is closed as "Not
 finished" when the daemon comes back (TD-5018), and a second `tstd` on the
 same data dir waits up to 10 s for the first to exit before giving up
 (TD-5022).

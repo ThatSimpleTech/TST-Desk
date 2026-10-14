@@ -12726,3 +12726,196 @@ review).
 
 **Rejected:** merging only for local tiers. Cloud APIs accept one system
 message too, and one code path is easier to trust.
+
+## TD-5018, TD-5019 — A turn cut by a restart is sealed, and Continue picks it up (Class B)
+
+2026-10-14. Every app restart on EZER that day stopped tstd through the
+parent-pid watchdog (TD-2903). A turn that was running stayed open in the
+log forever: no TurnComplete, a typing row that never ended, and an
+assistant message whose tool_calls had no answer, which the provider
+rejects on the next send.
+
+**Decision (daemon).** When a revived session's log has a UserTurn with no
+later TurnComplete (`turn_seal.open_turn`), `Daemon._revive_session`
+repairs and seals it before the session is used:
+- Each assistant tool_call without an answer gets the tool reply "Not
+  finished: TST Desk restarted during this call. It may have partly run;
+  check before running it again."
+- The log gets one `TurnComplete(failed=true, zeros,
+  error_code="interrupted_by_restart")` on the router's active tier.
+- Both are persisted, so a second revive adds nothing. Shutdown now
+  cancels sessions with reason "daemon shutdown", not "cancelled by user".
+
+**Decision (window).** That error code shows "Cut off by a restart" with a
+Continue chip under the conversation. Continue sends one ordinary
+"Continue" message through the normal send path (it works after
+attachment turns, where Retry refuses). The queue head is not flushed
+after such a seal. `lastTurnError` is cleared on a local send, on bind,
+and when a user_turn starts a turn the pane hasn't seen (a Continue from
+another device), so the chip shows only while the sealed turn is last.
+
+**Drafts survive a restart (TD-5019).** Each session's composer text and
+its text-only queued rows are saved as `{text, queued}` under
+`tst.draft.v1.<sessionId>` in localStorage, debounced 300 ms. On restore
+both come back as composer text, queued rows first; nothing is sent.
+Attachment bytes and rows are never stored, and every storage access is
+in try/catch. Windows share localStorage, so a window writes only changes
+its own composer made: a switch, dispose or echo flushes a pending save,
+never an untouched copy. A message the daemon accepted is the daemon's to
+keep; a send-now dropped by a hard kill (not a drain) is not brought back,
+since saving in-flight sends would duplicate text when the daemon still
+holds it.
+
+**Rationale:** the stubs make the next send valid and tell the model a
+call may have partly run. Sealing in the log keeps busy and
+turn_in_flight honest after a restart with no client action. Continue is
+a click, so nothing auto-continues (AGENTS §2.3). Drafts live only in the
+webview, so the webview keeps them.
+
+**Rejected:** dropping the dangling assistant message (hides that a tool
+may have run); re-running the cut call (not idempotent, and an automatic
+send); sealing lazily on the next message (the list shows a live turn
+until then); flushing or auto-sending queued rows after the restart;
+drafts in the daemon (a protocol change for text it never sees).
+
+## TD-5020 — Closing the last window by any route stays in the tray (Class B; extends TD-2902, TD-4703)
+
+2026-10-14. Close-to-hide (TD-2902) only covered a last window that went
+through the close rule. A `session-*` window closes without it, and with
+more than one window open main is destroyed (TD-4703). So closing main,
+then a session window, destroyed the last window; Tauri raised
+`RunEvent::ExitRequested { code: None }` (tauri-runtime-wry 2.11.4) and
+the host answered every ExitRequested with `request_quit`, which stopped
+tstd even with Keep running on. On macOS the hidden quick-entry overlay
+also counted as a window.
+
+**Decision:** `coworker::exit_requested_action(code, quitting,
+coworker_on, tray_ok)` decides.
+- `None`, not quitting, Keep running on, tray present: `StayInTray`
+  (`prevent_exit`, host and tstd stay up, the one-time close hint shows).
+- While quitting: `Exit`.
+- Keep running off, no tray, or a `Some(code)` exit that did not come
+  through Quit: `Shutdown`, today's `request_quit`.
+
+`show_any_window` (tray Show, macOS Reopen, a second launch) raises main,
+then another desk window, then a session window, and opens a new desk
+window when none is left; while quitting it opens nothing. Quick-entry is
+left out of the count and of Show.
+
+**Rationale:** Keep running means closing windows never stops sessions,
+in any order. The fix sits in the host's one exit hook, so TD-2902,
+TD-4703 and `--parent-pid` (TD-2903) are untouched: Quit still stops
+tstd, a host kill still trips the watchdog. Without a tray a windowless
+app has no way back, so that case still quits.
+
+**Rejected:** hiding the last session window instead of destroying it
+(Show would bring back a viewer bound to one session); hiding main when
+others are open (reverses TD-4703 for main); a hidden keep-alive webview;
+treating every `Some(code)` as Exit (would skip tstd's graceful shutdown).
+
+**Known gap:** with no window open there is no webview, so the tray's
+running count and desktop approval notices pause until a window opens;
+tstd and the phone are unaffected. `approval_notice.rs` still has its own
+window picker (follow-up).
+
+## TD-5021 — Every shutdown ends within 5 s and says why; tstd stderr is kept (Class A)
+
+2026-10-14. Every shutdown path (signal, websocket `shutdown`, host gone,
+drain) goes through `_request_shutdown(reason)`, which arms a 5 s
+budget; `_shutdown` logs "shutting down" with the reason and waits at
+most 1.5 s for running turns. A close step that hangs exits 1 instead of
+hanging. The host writes tstd's stderr to `logs/tstd.stderr.log` (0600,
+appended, one `.1` at 5 MB) and, in release builds, its own lifecycle to
+`logs/host.log` (5 MB, one dated archive). Logging never stops a launch:
+a host log that cannot be opened is reported on stderr and skipped, and a
+failed rollover keeps appending.
+
+## TD-5022 — One tstd per data folder, through an OS lock (Class B)
+
+2026-10-14. `tstd main()` takes an exclusive lock on
+`<data_dir>/tstd.lock` (flock on POSIX, msvcrt on Windows; 0600, never
+deleted, non-inheritable) before anything else. A second daemon polls for
+up to 10 s, logging "waiting for previous daemon" once, then exits 1 with
+"another tstd owns this data dir" and touches neither port.json nor any
+session file.
+
+**Rationale:** two daemons on one folder both write session logs and
+port.json. The kernel drops the lock when the process dies, even on
+SIGKILL, so there is no stale-pid cleanup. The 10 s wait covers a normal
+restart, where the new daemon starts while the old one is inside its 5 s
+budget.
+
+**Rejected:** a pid file (racy, pid reuse, stale after a crash);
+port.json as the lock (written late, meant for discovery); failing at
+once (every quick restart would fail).
+
+## TD-5023 — A loopback-only drain for deploys (Class B; Adam approved 2026-10-14)
+
+2026-10-14. New client message `drain {timeout_s 0..600 = 30, hold_s
+0..600 = 120}` and event `drain_result {drained, running[],
+awaiting_approval[], hold_until}`, sent only to the asking connection.
+Additive, so PROTOCOL_VERSION stays 1.
+- The daemon waits up to timeout_s for running turns. From the drain
+  until hold_s runs out, and for all of shutdown, every verb that starts
+  a turn on this computer gets `daemon_draining` ("TST Desk is about to
+  restart. Your message was not sent; send it again in a few seconds."):
+  user_message, fork_from, run_grok_command, approve_grok_plan,
+  start_autonomy and run_job. Nothing is queued and due jobs wait.
+  approve, deny, stop_turn and resume still pass, since they only let an
+  open turn finish. 0/0 releases the hold.
+- The latest request wins: a release, a later drain or a shutdown ends
+  an earlier drain's wait, and the superseded drain leaves the hold as it
+  finds it. So a release is never undone and a drain never holds shutdown
+  past the 1.5 s settle (found by the review).
+- Sessions parked on an approval are listed, not waited on.
+- peer_policy refuses drain from a phone or paired computer
+  (`loopback_only`). The check runs after `hub.intercept`, so bridged
+  sessions still go to their own computer.
+- `tst drain [--timeout N] [--hold N] [--release] [--json]` only talks to
+  a running daemon, prints session ids only, and exits 0 drained, 2 still
+  open, 1 no daemon.
+- A shutdown during a hold logs reason `drain` with a `trigger` naming
+  the path that asked (signal, websocket or host_gone).
+- The window puts a refused text back in the composer, ahead of anything
+  typed since, and removes its echo row.
+
+**Rationale:** a deploy should restart a quiet daemon. Turns the drain
+lets finish are never cut, and the hold keeps a new message from starting
+one in the gap. Refusing with clear copy, rather than queueing, keeps
+"nothing auto-continues". Only someone on the computer may pause it.
+
+**Rejected:** queueing held messages and sending them after the restart
+(an automatic send); draining inside `shutdown` (the deployer can't see
+what is open); a hold that never expires (a failed deploy would leave the
+daemon refusing work); waiting on approval-parked turns (hours).
+
+## TD-5024 — A second launch shows the running app (Class B; new dependency, Adam approved 2026-10-14)
+
+2026-10-14. A relaunch was a full second host attached to the running
+tstd, whose `--parent-pid` still named the first host, so the first
+host's exit stopped the daemon under the second window.
+
+**Decision:** add `tauri-plugin-single-instance = "2"` (resolved 2.4.5;
+`Apache-2.0 OR MIT`; the only new package in Cargo.lock). It is
+registered first; a second process hands over and exits inside the
+plugin's setup, before any window or the daemon supervisor starts. The
+callback calls `show_any_window` (TD-5020); the second launch's argv and
+cwd are ignored and never logged. The handover is local IPC only (D-Bus
+session bus on Linux, a socket under /tmp on macOS, a named mutex on
+Windows).
+
+**Rationale:** one host per user keeps the daemon's life tied to exactly
+the process `--parent-pid` names, without moving lifetime logic out of
+Python.
+
+**Consequence for deploys:** every build shares one instance name (the
+bundle identifier), so a new AppImage launched while the old host runs
+only raises the old window and exits. A deploy must Quit TST Desk before
+launching the new build (docs/linux.md, "Restarting for a deploy"). The
+plugin's semver feature is deliberately not used, since it would bring
+back two hosts across versions. A `tauri dev` host and the installed app
+also count as one instance.
+
+**Rejected:** re-pointing tstd's watchdog at the newest host (Design A's
+lease, reverses TD-2903); our own lock file plus IPC (more code, same
+result).
