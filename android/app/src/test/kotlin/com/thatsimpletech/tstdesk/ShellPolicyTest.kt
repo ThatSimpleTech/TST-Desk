@@ -2,12 +2,15 @@ package com.thatsimpletech.tstdesk
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
 
@@ -84,6 +87,64 @@ class ShellPolicyTest {
         } finally {
             server.stop()
         }
+    }
+
+    @Test
+    fun theRememberedPortIsBoundAgain() {
+        val memory = FakePortMemory()
+        val first = AssetServer(ports = memory) { null }
+        first.start()
+        val port = first.port
+        first.stop()
+        assertEquals("a fresh port is remembered", port, memory.port)
+        val second = AssetServer(ports = memory) { null }
+        second.start()
+        try {
+            assertEquals("same origin as last launch", port, second.port)
+            assertEquals(1, memory.writes)
+        } finally {
+            second.stop()
+        }
+    }
+
+    @Test
+    fun aBusyRememberedPortFallsBackAndRemembersTheNewOne() {
+        ServerSocket(0, 1, InetAddress.getByName(AssetServer.LOOPBACK_HOST)).use { squatter ->
+            val memory = FakePortMemory(squatter.localPort)
+            val server = AssetServer(ports = memory) { null }
+            server.start()
+            try {
+                assertNotEquals(squatter.localPort, server.port)
+                assertTrue(server.port in 1..65535)
+                assertEquals(server.port, memory.port)
+            } finally {
+                server.stop()
+            }
+        }
+    }
+
+    @Test
+    fun aJunkRememberedPortIsIgnored() {
+        for (junk in listOf(-1, 0, 80, 70_000)) {
+            val memory = FakePortMemory(junk)
+            val server = AssetServer(ports = memory) { null }
+            server.start()
+            try {
+                assertTrue(server.port >= AssetServer.MIN_REMEMBERED_PORT)
+                assertEquals(server.port, memory.port)
+            } finally {
+                server.stop()
+            }
+        }
+    }
+}
+
+private class FakePortMemory(var port: Int = 0) : PortMemory {
+    var writes = 0
+    override fun recall() = port
+    override fun remember(port: Int) {
+        this.port = port
+        writes++
     }
 }
 

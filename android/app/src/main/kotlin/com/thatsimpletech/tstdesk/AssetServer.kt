@@ -1,9 +1,12 @@
 package com.thatsimpletech.tstdesk
 
+import android.content.Context
 import java.io.BufferedOutputStream
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStreamReader
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -20,6 +23,7 @@ import kotlin.concurrent.thread
  */
 class AssetServer(
     private val bindHost: String = LOOPBACK_HOST,
+    private val ports: PortMemory = PortMemory.NONE,
     private val files: (String) -> ByteArray?,
 ) {
     private var socket: ServerSocket? = null
@@ -36,10 +40,12 @@ class AssetServer(
     fun start() {
         check(bindHost == LOOPBACK_HOST) { "asset server binds loopback only" }
         val address = InetAddress.getByName(LOOPBACK_HOST)
-        val server = ServerSocket(0, 50, address)
+        val remembered = ports.recall()
+        val server = bindLoopback(address, remembered)
         socket = server
         boundHost = server.inetAddress.hostAddress ?: ""
         port = server.localPort
+        if (port != remembered) ports.remember(port)
         running.set(true)
         thread(name = "tst-asset-server", isDaemon = true) {
             while (running.get()) {
@@ -142,5 +148,69 @@ class AssetServer(
 
     companion object {
         const val LOOPBACK_HOST = "127.0.0.1"
+
+        /** Below this an app cannot bind, so a remembered value there is junk. */
+        const val MIN_REMEMBERED_PORT = 1024
+    }
+}
+
+/**
+ * Bind the remembered port first (TD-5014). The page origin includes the
+ * port and the WebView keeps its storage per origin, so a new port every
+ * launch was a new, empty origin. A busy port falls back to a random one.
+ */
+internal fun bindLoopback(address: InetAddress, preferred: Int): ServerSocket {
+    if (preferred in AssetServer.MIN_REMEMBERED_PORT..65535) {
+        try {
+            return listen(address, preferred)
+        } catch (_: IOException) {
+            // Taken by something else this launch: a random port, remembered next.
+        }
+    }
+    return listen(address, 0)
+}
+
+private fun listen(address: InetAddress, port: Int): ServerSocket {
+    val server = ServerSocket()
+    try {
+        // Last launch's closed connections can sit in TIME_WAIT on this port.
+        server.reuseAddress = true
+        server.bind(InetSocketAddress(address, port), 50)
+    } catch (e: IOException) {
+        server.close()
+        throw e
+    }
+    return server
+}
+
+/** Where the shell keeps its loopback port between launches. */
+interface PortMemory {
+    fun recall(): Int
+    fun remember(port: Int)
+
+    companion object {
+        val NONE: PortMemory = object : PortMemory {
+            override fun recall() = 0
+            override fun remember(port: Int) = Unit
+        }
+    }
+}
+
+/** Private app storage, next to the sealed attach target. */
+class PrefsPortMemory(context: Context) : PortMemory {
+    private val prefs = context.getSharedPreferences("shell", Context.MODE_PRIVATE)
+
+    override fun recall(): Int = try {
+        prefs.getInt(KEY, 0)
+    } catch (_: ClassCastException) {
+        0
+    }
+
+    override fun remember(port: Int) {
+        prefs.edit().putInt(KEY, port).apply()
+    }
+
+    private companion object {
+        const val KEY = "asset_port"
     }
 }
