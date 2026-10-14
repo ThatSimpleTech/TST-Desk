@@ -726,7 +726,14 @@ progress check and a delegated worker's requests (TD-5008); the validator review
 check and memory distillation already sent it. Together they set the point at which the
 conversation is compacted: at 80% of `context_window - max_output_tokens`, the oldest messages
 are replaced by an extractive summary, keeping the system message and the two most recent user
-turns. No model call is spent doing it. So:
+turns. No model call is spent doing it. The session stores the summary as a second system
+message, but a request carries only one: the summary joins the first system message, and any
+later system message goes ahead of the next user message. Strict local chat templates (Qwen
+3.5 and later, Mistral) refuse a system message anywhere but first; others, such as Llama 3 and
+Gemma 4, render it (TD-5142). If a server reports that its template raised an error on a
+conversation (llama.cpp, or a server that names jinja2's exceptions), the turn fails once with
+`template_error` and names the template's reason. It is not retried, because the same messages
+fail the same way. So:
 
 - `context_window` must be no larger than what the *server* actually serves. A local server
   usually caps context well below the model's architectural ceiling; setting the ceiling here

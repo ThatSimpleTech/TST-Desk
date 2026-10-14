@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+import re
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
@@ -123,6 +124,70 @@ class ChatMessage:
     tool_call_id: str | None = None
 
 
+def _prefix_content(prefix: str, content: MessageContent | None) -> MessageContent:
+    """*content* with *prefix* ahead of it, keeping image parts."""
+    if content is None or content == "" or content == []:
+        return prefix
+    if isinstance(content, str):
+        return f"{prefix}\n\n{content}"
+    return [{"type": "text", "text": prefix}, *content]
+
+
+def wire_messages(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
+    """The messages as the request body carries them (TD-5142).
+
+    Strict local chat templates (Qwen 3.5 and later, Mistral) accept one
+    system message, first, and raise on any other. llama.cpp answers that
+    with a 500, so a session whose history has a second system message
+    fails every request from then on. Compaction stores its summary that
+    way (compaction.py), so the wire, not the stored conversation, fixes
+    it up:
+
+    - system messages before the first other message merge into one, in
+      order, a blank line apart. An automatic or whole-history /compact
+      summary sits there, right after the system prompt.
+    - a later system message (a /compact "from here" summary) goes ahead
+      of the next user message's own text, so it keeps its place in the
+      story. With no user message before the next assistant or tool
+      message, it joins the first system message instead: a user message
+      there could split a tool call from its results.
+
+    System messages carry text; image parts in one are dropped. A
+    conversation without a stray system message comes back as the same
+    messages, so the body (and the server's prompt cache) is unchanged.
+    """
+    if not any(m.role == "system" for m in messages[1:]):
+        return list(messages)
+
+    leading: list[str] = []
+    out: list[ChatMessage] = []
+    pending: list[str] = []
+    started = False
+    for message in messages:
+        if message.role == "system":
+            text = content_as_text(message.content)
+            if not started:
+                leading.append(text)
+            else:
+                pending.append(text)
+            continue
+        started = True
+        if pending:
+            prefix = "\n\n".join(t for t in pending if t)
+            pending = []
+            if message.role == "user":
+                if prefix:
+                    message = replace(message, content=_prefix_content(prefix, message.content))
+            else:
+                leading.append(prefix)
+        out.append(message)
+    leading.extend(pending)
+
+    if leading:
+        out.insert(0, ChatMessage(role="system", content="\n\n".join(t for t in leading if t)))
+    return out
+
+
 @dataclass
 class ChatCompletionRequest:
     """A chat completion request to the OpenAI-compatible API."""
@@ -141,7 +206,7 @@ class ChatCompletionRequest:
         """Serialize to the OpenAI-compatible JSON request body."""
         d: dict[str, Any] = {
             "model": self.model,
-            "messages": [self._message_to_dict(m) for m in self.messages],
+            "messages": [self._message_to_dict(m) for m in wire_messages(self.messages)],
         }
         if self.tools:
             d["tools"] = [tool_definition_payload(t) for t in self.tools]
@@ -535,6 +600,54 @@ def is_context_overflow(status: int, body: str) -> bool:
         return False
     folded = body.casefold()
     return any(phrase in folded for phrase in _OVERFLOW_PHRASES)
+
+
+# A chat template that refuses the messages (TD-5142). The server could
+# not build a prompt, so the same request fails the same way every time:
+# llama.cpp reports "Jinja Exception: <reason>" as a 500, and Python
+# servers name jinja2's exceptions. The reason stops at the end of its
+# line or of the JSON string that quotes it.
+_TEMPLATE_ERROR = re.compile(
+    r"(?:Jinja Exception|jinja2\.exceptions\.\w+|TemplateError|TemplateSyntaxError)"
+    r":[ \t]*([^\"\\\n]*)",
+    re.IGNORECASE,
+)
+
+# Any other llama.cpp render failure (an unknown filter, a null operand)
+# comes wrapped as "While executing <node> at line L, column C in source:
+# ... Error: <reason>", with the newline raw or JSON-escaped.
+_LLAMA_TEMPLATE_WRAPPER = re.compile(
+    r"While executing \w+ at line \d+, column \d+ in source:.*?(?:\n|\\n)Error:"
+    r"[ \t]*([^\"\\\n]*)",
+    re.DOTALL,
+)
+
+# LiteLLM appends a failed fallback's error to the original one, which
+# keeps its own status. Only the text before this says why the request
+# failed; a template refusal from a fallback model must not stop the
+# retries a 503 from the primary deserves.
+_FALLBACK_TAIL = "Error doing the fallback:"
+
+
+def template_error_reason(text: str) -> str | None:
+    """The template's own reason when *text* reports a chat-template
+    failure ("" when it gives none), else None."""
+    own = text.split(_FALLBACK_TAIL, 1)[0]
+    match = _TEMPLATE_ERROR.search(own) or _LLAMA_TEMPLATE_WRAPPER.search(own)
+    if match is None:
+        return None
+    return match.group(1).strip()
+
+
+def template_error_message(reason: str) -> str:
+    """Plain copy for a chat-template refusal. Resending sends the same
+    messages, so it says so instead of asking for a retry."""
+    detail = f": {reason.rstrip('.')}." if reason else "."
+    return (
+        f"The model server's chat template refused this conversation{detail} "
+        "Resending won't help. Start a fresh session, or switch the tier "
+        "to another model in config.yaml."
+    )
 
 
 def context_length_message(provider_detail: str = "") -> str:
@@ -1034,19 +1147,27 @@ class ProviderClient:
         if is_context_overflow(status, body_text) or is_context_overflow(status, provider_msg):
             code = "context_overflow"
 
+        template_reason = template_error_reason(provider_msg)
+        if template_reason is None:
+            template_reason = template_error_reason(body_text)
+        if template_reason is not None and code != "context_overflow" and status not in (401, 413):
+            code = "template_error"
+
         # Override for known status codes that carry specific semantics
         if status == 401:
             code = "auth_failed"
         elif status == 413:
             code = "context_length_exceeded"
 
-        retryable = status in (429, 500, 502, 503, 504)
+        retryable = status in (429, 500, 502, 503, 504) and code != "template_error"
         retry_after = _parse_retry_after(response.headers.get("retry-after"))
 
         # Build actionable messages for known error types. Overflow copy
         # is one sentence — the raw body stays on ``detail`` for the log.
         if code == "context_overflow":
             message = "The request exceeded the model's context window."
+        elif code == "template_error":
+            message = template_error_message(template_reason or "")
         elif status == 401 or code == "auth_failed":
             message = auth_failure_message()
         elif status == 413 or code == "context_length_exceeded":

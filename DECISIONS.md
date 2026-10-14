@@ -12677,3 +12677,52 @@ per-connection, so viewers would see each other's replays). Forwarding
 through more than one hop (loops, and a peer's peers were never paired by
 this user). Keeping links up with no viewer (an outbound call nobody is
 looking at).
+
+## TD-5142 — A compacted session goes out with one system message (Class B)
+
+Found 2026-10-14 from Adam's phone: "I encountered an error: The provider
+rejected the request." on every message, about four minutes each. Cause:
+compaction stores its summary as a second system message
+(core/tstd/compaction.py, `maybe_compact`). The
+Qwen3.8 template on ezer-forge raises "System message must be at the
+beginning." for that, llama.cpp answers 500, LiteLLM relays it, and the
+daemon retried it eight times. Every later request in the session failed
+the same way. Both stuck sessions in the log (4919aeb7 on 10-14 and
+539f941d on 10-03) failed on the request right after their only real
+compaction. The repeated COMPACTION rows before that were in-turn
+tool-result trims (TD-5010), which add no system message.
+
+**Fixed at the wire, not in storage.** `wire_messages`
+(core/tstd/provider.py) runs inside `ChatCompletionRequest.to_dict`,
+which only the two request paths call; `session_persist` reuses the
+per-message serializer, so stored sessions keep their shape. System
+messages before the first other message merge into one, a blank line
+apart. A later one (what a `/compact` "from here" summary would be,
+TD-5109) goes ahead of the next user message's own text, so it keeps its place in the story; with
+no user message before the next assistant or tool message it joins the
+first system message instead, because a user message there could split a
+tool call from its results. A conversation without a stray system
+message is sent exactly as before, so the body and the server's prompt
+cache don't change.
+
+**Why not store the summary as a user message.** Strict-alternation
+templates (Mistral, older Gemma) raise on two user messages in a row, which a
+stored user summary followed by the next user turn produces. Fixing it
+at the wire also repairs sessions already stuck, with no migration:
+the stored histories of both sessions render on the live ezer-forge
+server's `/apply-template` with the fix and fail without it.
+
+**A template refusal is not retried.** llama.cpp's "Jinja Exception:
+<reason>", its "While executing ... in source: ... Error: <reason>"
+wrapper for any other render failure, and jinja2's exception names
+become `template_error`, not retryable, with copy that names the
+template's reason and says resending won't help. The scheduler treats it
+as permanent and the window shows a banner. A plain 500 is still
+retried. Only the text before LiteLLM's "Error doing the fallback:" counts:
+LiteLLM appends a failed fallback's error to the original one and keeps
+the original status, so a template refusal from a fallback model must
+not turn the primary's 503 or 429 into a permanent failure (found by the
+review).
+
+**Rejected:** merging only for local tiers. Cloud APIs accept one system
+message too, and one code path is easier to trust.

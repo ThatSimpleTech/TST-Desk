@@ -120,6 +120,13 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		body: "This turn does not fit the model's context window in config.yaml. Switch the tier to a larger-context model, or start a fresh session.",
 	},
 	server_error: { severity: "toast", title: "Provider error", body: "The provider returned an internal error (500). Resend in a moment." },
+	// TD-5142. The model server could not turn this conversation into a
+	// prompt; the same messages fail the same way, so resending is no fix.
+	template_error: {
+		severity: "banner",
+		title: "Model can't read this conversation",
+		body: "The model server's chat template refused this conversation, so resending won't help. Start a fresh session, or switch the tier to another model in config.yaml.",
+	},
 	bad_gateway: { severity: "toast", title: "Provider unreachable", body: "Bad gateway from the provider (502). Resend in a moment." },
 	service_unavailable: {
 		severity: "toast",

@@ -142,6 +142,15 @@ describe("error copy", () => {
     }
   });
 
+  it("a chat-template refusal is a banner that says resending won't help", () => {
+    // TD-5142. The daemon does not retry it, so a "resend in a moment"
+    // toast would send the user round the same failure.
+    const spec = turnFailureCopy("template_error");
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.body).toContain("won't help");
+    expect(spec?.body).toContain("fresh session");
+  });
+
   it("Grok ACP engine faults are named toasts, not unrecognised codes", () => {
     expect(turnFailureCopy("already_started")?.title).toBe("Grok is already running");
     expect(turnFailureCopy("agent_exited")?.title).toBe("Grok stopped");

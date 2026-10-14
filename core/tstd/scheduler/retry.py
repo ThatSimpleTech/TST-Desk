@@ -45,6 +45,7 @@ TRANSIENT_RULES: tuple[tuple[Literal["exact", "prefix", "contains", "http"], str
     ("exact", "gateway_timeout", True),
     ("exact", "context_overflow", False),
     ("exact", "context_length_exceeded", False),
+    ("exact", "template_error", False),
     ("exact", "auth_failed", False),
     ("exact", "api_key_rejected", False),
     ("exact", "missing_api_key", False),
