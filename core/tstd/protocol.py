@@ -123,12 +123,17 @@ class Pair(ClientMessage):
     device's own key, then close 1000; the phone then reconnects with
     ``hello``. ``code`` is normalized by the daemon, never logged.
     ``device_name`` is cleaned on the daemon side (empty is "Unnamed device").
+    ``replaces`` is the phone's current device key when it has one: once
+    the new key is out, the device that key verifies as is removed and
+    its connections closed. A legacy remote-token there retires nothing.
+    Never logged.
     """
 
     type: Literal["pair"] = "pair"
     code: str = Field(min_length=1)
     device_name: str = ""
     version: int = Field(ge=0, description="Validated like hello's version")
+    replaces: str | None = None
 
 
 class OpenWorkspace(ClientMessage):
@@ -370,9 +375,12 @@ class RotateRemoteToken(ClientMessage):
 class StartPairing(ClientMessage):
     """Show a pairing code for a new phone (TD-5014). Loopback only.
 
-    Machine-wide, no session. Turns remote attach on first when it is off.
-    Answered with ``pairing_code``, or an error ``pairing_unavailable``
-    when no Tailscale address can be bound. A new start replaces the code.
+    Machine-wide, no session. Turns remote attach on first when it is off,
+    and back off when that still binds no Tailscale address. Answered with
+    ``pairing_code``, or an error (never with a ``session_id``):
+    ``pairing_unavailable`` when no Tailscale address can be bound or the
+    paired devices file cannot be read, ``pairing_limit`` when full. A new
+    start replaces the code.
     """
 
     type: Literal["start_pairing"] = "start_pairing"
@@ -387,7 +395,11 @@ class CancelPairing(ClientMessage):
 class RemoveRemoteDevice(ClientMessage):
     """Forget one paired device and close its connections (TD-5014).
 
-    Loopback only; acked with ``setup_state``. An unknown id changes nothing.
+    Loopback, or a phone naming the device it authenticated as ("Forget
+    this computer"); any other id from a remote peer is ``loopback_only``.
+    Acked with ``setup_state`` before the connections close, or the error
+    ``remove_failed`` when the file cannot be written (the connections
+    close anyway). An unknown id changes nothing.
     """
 
     type: Literal["remove_remote_device"] = "remove_remote_device"
@@ -3068,9 +3080,25 @@ def parse_daemon_event(raw: str) -> DaemonEventT:
         raise HandshakeError("bad_request", str(e)) from e
 
 
+_MALFORMED_HELLO = "Malformed hello message"
+
+
 def parse_hello(raw: str) -> Hello:
-    """Parse a raw JSON string into a Hello message (for the handshake)."""
-    return parse_client_message(raw)  # type: ignore[return-value]
+    """Parse a raw JSON string into a Hello message (for the handshake).
+
+    The error is fixed text: a validation message echoes its input, and
+    the handshake rejection is logged and sent back, so it would carry
+    the token. An unknown ``type`` stays ``unknown_message``.
+    """
+    try:
+        msg = parse_client_message(raw)
+    except UnknownMessageTypeError:
+        raise
+    except HandshakeError:
+        raise HandshakeError("bad_request", _MALFORMED_HELLO) from None
+    if not isinstance(msg, Hello):
+        raise HandshakeError("bad_request", _MALFORMED_HELLO)
+    return msg
 
 
 def build_hello_ack() -> str:

@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -37,9 +39,11 @@ from tstd.protocol import (
 )
 from tstd.remote_attach import load_remote_attach
 from tstd.remote_devices import (
+    DEVICES_UNAVAILABLE_MESSAGE,
     MAX_DEVICES,
     PAIR_FAILED_MESSAGE,
     PAIR_LOCKED_MESSAGE,
+    PAIRING_FILE_UNAVAILABLE_MESSAGE,
     REMOTE_DEVICES_FILE,
     PairingCodes,
     RemoteDeviceRegistry,
@@ -72,10 +76,18 @@ async def pair(
     name: str = "Pixel 11 Pro Fold",
     path: str = PHONE,
     version: int = PROTOCOL_VERSION,
+    replaces: str | None = None,
 ) -> tuple[dict[str, Any], int | None]:
     """Send one pair frame. Returns the reply and the close code."""
     async with connect(f"ws://127.0.0.1:{port}{path}") as ws:
-        frame = {"type": "pair", "code": code, "device_name": name, "version": version}
+        frame: dict[str, Any] = {
+            "type": "pair",
+            "code": code,
+            "device_name": name,
+            "version": version,
+        }
+        if replaces is not None:
+            frame["replaces"] = replaces
         await ws.send(json.dumps(frame))
         reply = await _recv(ws)
         await asyncio.wait_for(ws.wait_closed(), 5)
@@ -108,6 +120,8 @@ class _Server:
         self.devices.load()
         self.pairing = PairingCodes(clock=self.clock)
         self.paired: list[RemoteDeviceSummary] = []
+        # (device id, connected) at each presence callback.
+        self.presence: list[tuple[str, bool]] = []
         self.ws = WebSocketServer(
             tmp,
             ping_interval=0,
@@ -115,10 +129,22 @@ class _Server:
             devices=self.devices,
             pairing=self.pairing,
             on_paired=self._on_paired,
+            on_device_presence=self._on_presence,
         )
 
     async def _on_paired(self, device: RemoteDeviceSummary) -> None:
         self.paired.append(device)
+
+    async def _on_presence(self, device_id: str) -> None:
+        self.presence.append((device_id, device_id in self.ws.connected_device_ids()))
+
+    async def settled(self, count: int) -> list[tuple[str, bool]]:
+        """The presence calls, once there are *count* of them."""
+        for _ in range(200):
+            if len(self.presence) >= count:
+                break
+            await asyncio.sleep(0.01)
+        return self.presence
 
     @property
     def port(self) -> int:
@@ -286,6 +312,127 @@ async def test_rotating_the_legacy_token_keeps_paired_devices(server: _Server) -
         server.ws._extra_host = None
 
 
+async def test_a_re_pair_retires_the_device_it_replaces(server: _Server) -> None:
+    code, _ = server.pairing.start()
+    old, _ = await pair(server.port, code, name="Old key")
+    async with attached(server.port, old["token"]) as old_ws:
+        code, _ = server.pairing.start()
+        new, close_code = await pair(server.port, code, replaces=old["token"])
+        assert new["type"] == "pair_ok" and close_code == 1000
+        await asyncio.wait_for(old_ws.wait_closed(), 5)
+        assert old_ws.close_code == 1008
+    assert [s.id for s in server.devices.summaries()] == [new["device_id"]]
+    assert (await hello_reply(server.port, old["token"]))["code"] == "auth_failed"
+    assert (await hello_reply(server.port, new["token"]))["type"] == "hello_ack"
+
+
+@pytest.mark.parametrize("replaces", ["legacy", "ab" * 32, "not a key"])
+async def test_replaces_that_is_no_device_key_retires_nothing(
+    server: _Server, replaces: str
+) -> None:
+    code, _ = server.pairing.start()
+    kept, _ = await pair(server.port, code, name="Kept")
+    stand_in = server.ws.remote_token if replaces == "legacy" else replaces
+    code, _ = server.pairing.start()
+    new, _ = await pair(server.port, code, replaces=stand_in)
+    assert new["type"] == "pair_ok"
+    assert {s.id for s in server.devices.summaries()} == {kept["device_id"], new["device_id"]}
+    assert (await hello_reply(server.port, server.ws.remote_token))["type"] == "hello_ack"
+
+
+async def test_replaces_is_never_logged(server: _Server, caplog: pytest.LogCaptureFixture) -> None:
+    code, _ = server.pairing.start()
+    old, _ = await pair(server.port, code)
+    code, _ = server.pairing.start()
+    with caplog.at_level(logging.DEBUG):
+        await pair(server.port, code, replaces=old["token"])
+    ours = [r for r in caplog.records if r.name.startswith("tstd")]
+    logged = " ".join(f"{r.getMessage()} {r.__dict__}" for r in ours)
+    assert "pairing redeemed" in logged
+    assert old["token"] not in logged
+
+
+async def test_presence_is_reported_when_a_device_connects_and_drops(server: _Server) -> None:
+    code, _ = server.pairing.start()
+    reply, _ = await pair(server.port, code)
+    async with attached(server.port, server.ws.remote_token):
+        pass
+    assert server.presence == []  # neither the pair socket nor the legacy token
+    async with attached(server.port, reply["token"]):
+        assert await server.settled(1) == [(reply["device_id"], True)]
+    assert await server.settled(2) == [(reply["device_id"], True), (reply["device_id"], False)]
+
+
+async def test_a_removed_device_dropping_is_still_reported(server: _Server) -> None:
+    code, _ = server.pairing.start()
+    reply, _ = await pair(server.port, code)
+    async with attached(server.port, reply["token"]) as ws:
+        await server.settled(1)
+        assert server.devices.remove(reply["device_id"])
+        await server.ws.close_device(reply["device_id"])
+        await asyncio.wait_for(ws.wait_closed(), 5)
+    assert (await server.settled(2))[1] == (reply["device_id"], False)
+
+
+async def test_stopping_reports_no_presence(tmp_path: Path) -> None:
+    srv = _Server(tmp_path)
+    await srv.ws.start()
+    code, _ = srv.pairing.start()
+    reply, _ = await pair(srv.port, code)
+    async with attached(srv.port, reply["token"]) as ws:
+        await srv.settled(1)
+        await srv.ws.stop()
+        await asyncio.wait_for(ws.wait_closed(), 5)
+    assert srv.presence == [(reply["device_id"], True)]
+
+
+def _make_unreadable(tmp: Path) -> Path:
+    """Move the devices file away and leave a directory in its place."""
+    path = tmp / REMOTE_DEVICES_FILE
+    saved = tmp / "saved-devices.yaml"
+    os.replace(path, saved)
+    path.mkdir()
+    return saved
+
+
+def _make_readable(tmp: Path, saved: Path) -> None:
+    (tmp / REMOTE_DEVICES_FILE).rmdir()
+    os.replace(saved, tmp / REMOTE_DEVICES_FILE)
+
+
+def _left_alone(tmp: Path) -> bool:
+    """Kept as it was: nothing set aside, nothing written over it."""
+    path = tmp / REMOTE_DEVICES_FILE
+    return path.is_dir() and not list(tmp.glob(f"{REMOTE_DEVICES_FILE}.corrupt-*"))
+
+
+async def test_an_unreadable_devices_file_means_retry_not_refused(tmp_path: Path) -> None:
+    setup = RemoteDeviceRegistry(tmp_path)
+    setup.load()
+    summary, key = setup.add("Phone")
+    saved = _make_unreadable(tmp_path)
+    srv = _Server(tmp_path)
+    assert not srv.devices.available
+    await srv.ws.start()
+    try:
+        for token in (key, "ab" * 32):
+            reply = await hello_reply(srv.port, token)
+            assert reply == {
+                "type": "error",
+                "code": "devices_unavailable",
+                "message": DEVICES_UNAVAILABLE_MESSAGE,
+            }
+        assert (await hello_reply(srv.port, srv.ws.remote_token))["type"] == "hello_ack"
+        assert _left_alone(tmp_path)
+        # The next hello reads it again, so no restart is needed.
+        _make_readable(tmp_path, saved)
+        assert (await hello_reply(srv.port, key))["type"] == "hello_ack"
+        assert srv.devices.available and summary.id in srv.devices
+        assert (await hello_reply(srv.port, "ab" * 32))["code"] == "auth_failed"
+    finally:
+        await srv.ws.stop()
+
+
 # ── protocol shapes ──────────────────────────────────────────────────
 
 
@@ -293,7 +440,16 @@ def test_the_new_messages_parse() -> None:
     msg = parse_client_message(
         '{"type": "pair", "code": "ABCD2345", "device_name": "Pixel", "version": 1}'
     )
-    assert isinstance(msg, Pair) and msg.code == "ABCD2345"
+    assert isinstance(msg, Pair) and msg.code == "ABCD2345" and msg.replaces is None
+    key = "ab" * 32
+    again = parse_client_message(
+        json.dumps({"type": "pair", "code": "ABCD2345", "version": 1, "replaces": key})
+    )
+    assert isinstance(again, Pair) and again.replaces == key
+    nulled = parse_client_message(
+        '{"type": "pair", "code": "ABCD2345", "version": 1, "replaces": null}'
+    )
+    assert isinstance(nulled, Pair) and nulled.replaces is None
     assert isinstance(parse_client_message('{"type": "start_pairing"}'), StartPairing)
     assert isinstance(parse_client_message('{"type": "cancel_pairing"}'), CancelPairing)
     removed = parse_client_message('{"type": "remove_remote_device", "device_id": "dev_x"}')
@@ -348,6 +504,14 @@ async def ask(ws: ClientConnection, msg: dict[str, Any]) -> dict[str, Any]:
     return await _recv(ws)
 
 
+async def presence(window: ClientConnection) -> list[dict[str, Any]]:
+    """The device list in the next frame: an unasked-for presence ``setup_state``."""
+    frame = await _recv(window)
+    assert frame["type"] == "setup_state", frame
+    devices: list[dict[str, Any]] = frame["remote_devices"]
+    return devices
+
+
 async def test_start_pairing_turns_remote_attach_on_and_returns_a_code(tmp_path: Path) -> None:
     async with (
         running_daemon(tmp_path) as daemon,
@@ -377,7 +541,47 @@ async def test_no_tailscale_means_pairing_unavailable(tmp_path: Path) -> None:
         assert reply["message"] == (
             "Tailscale isn't running on this computer, so a phone can't reach it."
         )
+        assert "session_id" not in reply
         assert not daemon.pairing.active
+        # Pairing turned remote attach on only to show a code: it goes back off.
+        assert daemon.remote_attach_enabled is False
+        assert load_remote_attach(tmp_path)[0] is False
+
+
+async def test_no_tailscale_leaves_remote_attach_on_when_it_already_was(tmp_path: Path) -> None:
+    async with (
+        running_daemon(tmp_path, _no_tailscale) as daemon,
+        attached(daemon.ws_server.port, daemon.ws_server.token, "/") as window,
+    ):
+        turned = await ask(window, {"type": "set_remote_attach", "enabled": True})
+        assert turned["remote_attach_enabled"] is True
+        reply = await ask(window, {"type": "start_pairing"})
+        assert reply["code"] == "pairing_unavailable"
+        assert daemon.remote_attach_enabled is True
+        assert load_remote_attach(tmp_path)[0] is True
+
+
+async def test_an_unreadable_devices_file_makes_pairing_unavailable_until_it_reads(
+    tmp_path: Path,
+) -> None:
+    setup = RemoteDeviceRegistry(tmp_path)
+    setup.load()
+    setup.add("Phone")
+    saved = _make_unreadable(tmp_path)
+    async with (
+        running_daemon(tmp_path) as daemon,
+        attached(daemon.ws_server.port, daemon.ws_server.token, "/") as window,
+    ):
+        reply = await ask(window, {"type": "start_pairing"})
+        assert reply == {
+            "type": "error",
+            "code": "pairing_unavailable",
+            "message": PAIRING_FILE_UNAVAILABLE_MESSAGE,
+        }
+        assert daemon.remote_attach_enabled is False and not daemon.pairing.active
+        _make_readable(tmp_path, saved)
+        assert (await ask(window, {"type": "start_pairing"}))["type"] == "pairing_code"
+        assert len(daemon.remote_devices) == 1
 
 
 async def test_pairing_completed_reaches_the_computer_and_not_other_phones(tmp_path: Path) -> None:
@@ -402,11 +606,17 @@ async def test_pairing_completed_reaches_the_computer_and_not_other_phones(tmp_p
             assert [d["id"] for d in state["remote_devices"]] == [reply["device_id"]]
             assert state["remote_devices"][0]["connected"] is False
             async with attached(port, reply["token"]):
+                # Presence: the computer hears of the connection unasked.
+                (row,) = await presence(window)
+                assert row["connected"] is True and row["last_seen"] is not None
                 state = await ask(window, {"type": "get_setup_state"})
-                (row,) = state["remote_devices"]
-                assert row["connected"] is True
+                assert state["remote_devices"] == [row]
                 assert set(row) == {"id", "name", "paired_at", "last_seen", "connected"}
                 assert reply["token"] not in json.dumps(state)
+            (row,) = await presence(window)
+            assert row["connected"] is False
+            with pytest.raises(TimeoutError):
+                await _recv(other_phone, within=0.3)
 
 
 async def test_a_remote_peer_cannot_pair_cancel_or_remove(tmp_path: Path) -> None:
@@ -440,11 +650,16 @@ async def test_the_computer_removes_a_device_and_drops_its_connection(tmp_path: 
             attached(port, gone_key) as gone_ws,
             attached(port, keep_key) as keep_ws,
         ):
+            await presence(window)
+            both = await presence(window)
+            assert {d["id"] for d in both if d["connected"]} == {keep.id, gone.id}
             state = await ask(window, {"type": "remove_remote_device", "device_id": gone.id})
             assert state["type"] == "setup_state"
             assert [d["id"] for d in state["remote_devices"]] == [keep.id]
             await asyncio.wait_for(gone_ws.wait_closed(), 5)
             await asyncio.wait_for(keep_ws.ping(), 5)
+            # The close is announced too, after the reply.
+            assert [d["id"] for d in await presence(window)] == [keep.id]
             unknown = await ask(window, {"type": "remove_remote_device", "device_id": "dev_nope"})
             assert unknown["type"] == "setup_state"
             assert [d["id"] for d in unknown["remote_devices"]] == [keep.id]
@@ -493,3 +708,59 @@ async def test_a_restart_keeps_the_paired_device(tmp_path: Path) -> None:
     async with running_daemon(tmp_path) as again:
         assert again.remote_devices.verify(key) == summary.id
         assert (await hello_reply(again.ws_server.port, key))["type"] == "hello_ack"
+
+
+async def test_a_phone_can_forget_itself_and_nothing_else(tmp_path: Path) -> None:
+    async with running_daemon(tmp_path) as daemon:
+        port = daemon.ws_server.port
+        me, my_key = daemon.remote_devices.add("Me")
+        other, _ = daemon.remote_devices.add("Other")
+        async with attached(port, daemon.ws_server.token, "/") as window:
+            async with attached(port, my_key) as phone:
+                await presence(window)
+                refused = await ask(phone, {"type": "remove_remote_device", "device_id": other.id})
+                assert refused["code"] == "loopback_only"
+                state = await ask(phone, {"type": "remove_remote_device", "device_id": me.id})
+                assert state["type"] == "setup_state"
+                assert [d["id"] for d in state["remote_devices"]] == [other.id]
+                await asyncio.wait_for(phone.wait_closed(), 5)
+                assert phone.close_code == 1008
+            assert [d["id"] for d in await presence(window)] == [other.id]
+        assert other.id in daemon.remote_devices and me.id not in daemon.remote_devices
+        assert (await hello_reply(port, my_key))["code"] == "auth_failed"
+
+
+async def test_a_legacy_token_phone_cannot_remove_anything(tmp_path: Path) -> None:
+    async with running_daemon(tmp_path) as daemon:
+        summary, _ = daemon.remote_devices.add("Phone")
+        async with attached(daemon.ws_server.port, daemon.ws_server.remote_token) as phone:
+            reply = await ask(phone, {"type": "remove_remote_device", "device_id": summary.id})
+        assert reply["code"] == "loopback_only"
+        assert summary.id in daemon.remote_devices
+
+
+async def test_a_failed_remove_says_so_and_still_drops_the_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def denied(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    async with running_daemon(tmp_path) as daemon:
+        port = daemon.ws_server.port
+        summary, key = daemon.remote_devices.add("Phone")
+        async with (
+            attached(port, daemon.ws_server.token, "/") as window,
+            attached(port, key) as phone,
+        ):
+            await presence(window)
+            monkeypatch.setattr("tstd.remote_devices.os.replace", denied)
+            reply = await ask(window, {"type": "remove_remote_device", "device_id": summary.id})
+            assert reply == {
+                "type": "error",
+                "code": "remove_failed",
+                "message": "Couldn't update the paired devices file: Permission denied",
+            }
+            await asyncio.wait_for(phone.wait_closed(), 5)
+            assert [d["connected"] for d in await presence(window)] == [False]
+        # Still in the file, so still in memory: the two never disagree.
+        assert daemon.remote_devices.verify(key) == summary.id

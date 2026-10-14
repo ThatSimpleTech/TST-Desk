@@ -357,6 +357,7 @@ from .remote_attach import (
 from .remote_auth import is_loopback_host
 from .remote_devices import (
     MAX_DEVICES,
+    PAIRING_FILE_UNAVAILABLE_MESSAGE,
     PairingCodes,
     RemoteDeviceRegistry,
     pairing_code_event,
@@ -842,9 +843,9 @@ class Daemon:
         else:
             self.config.remote.bind = ""
         # TD-5005: a pinned or remembered port keeps a saved phone working.
-        remote_port = 0
-        if self.remote_attach_enabled:
-            remote_port = self.config.remote.port or load_remote_port(self.data_dir)
+        # Loopback takes it even while remote attach is off, so turning it
+        # on later puts Tailscale on the port the phones dial.
+        remote_port = self.config.remote.port or load_remote_port(self.data_dir)
         # TD-5014: paired devices outlive remote attach being off; the
         # pairing code is memory only.
         self.remote_devices = RemoteDeviceRegistry(self.data_dir)
@@ -860,6 +861,7 @@ class Daemon:
             devices=self.remote_devices,
             pairing=self.pairing,
             on_paired=self._on_device_paired,
+            on_device_presence=self._on_device_presence,
         )
         self._cu_server: Any = None
         # TD-4835: keychain presence cache — see _credential_is_stored.
@@ -3338,32 +3340,67 @@ class Daemon:
 
     async def _handle_pairing_verb(
         self, msg: StartPairing | CancelPairing | RemoveRemoteDevice, connection: Any
-    ) -> str:
-        """The TD-5014 verbs. The computer itself only: a phone cannot pair more."""
+    ) -> str | None:
+        """The TD-5014 verbs. The computer itself, except a phone forgetting itself."""
         if self.ws_server.peer_is_remote(connection):
+            own = self.ws_server.device_of(connection)
+            if isinstance(msg, RemoveRemoteDevice) and own is not None and msg.device_id == own:
+                await self._remove_remote_device(own, connection)
+                return None
             return build_error(
                 "loopback_only", "Only the computer itself can pair or remove devices."
             )
         if isinstance(msg, StartPairing):
             return await self._handle_start_pairing()
-        if isinstance(msg, CancelPairing):
-            self.pairing.cancel()
-        elif self.remote_devices.remove(msg.device_id):
-            await self.ws_server.close_device(msg.device_id)
+        if isinstance(msg, RemoveRemoteDevice):
+            await self._remove_remote_device(msg.device_id, connection)
+            return None
+        self.pairing.cancel()
         return (await self._setup_state_event()).model_dump_json()
 
+    async def _remove_remote_device(self, device_id: str, connection: Any) -> None:
+        """Forget a device: reply on *connection*, then close the device's sockets.
+
+        The reply goes first so a phone forgetting itself still hears it,
+        and so it comes before the presence broadcast those closes send.
+        A failed write still closes them: the person asked for it to go.
+        """
+        try:
+            self.remote_devices.remove(device_id)
+        except OSError as e:
+            reply = build_error(
+                "remove_failed", f"Couldn't update the paired devices file: {e.strerror or e}"
+            )
+        else:
+            reply = (await self._setup_state_event()).model_dump_json()
+        with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+            await connection.send(scrub_wire_json(reply))
+        await self.ws_server.close_device(device_id)
+
     async def _handle_start_pairing(self) -> str:
-        """Mint a code; turn remote attach on first, as the toggle would."""
+        """Mint a code; turn remote attach on first, as the toggle would.
+
+        If turning it on still binds no Tailscale address, it goes back
+        off: a refused pairing leaves the switch as the person had it.
+        """
+        if not self.remote_devices.available:
+            self.remote_devices.load()
+        if not self.remote_devices.available:
+            return build_error("pairing_unavailable", PAIRING_FILE_UNAVAILABLE_MESSAGE)
         if self.remote_devices.is_full:
             return build_error(
                 "pairing_limit",
                 f"This computer already has {MAX_DEVICES} paired devices. "
                 "Remove one before pairing another.",
             )
+        turned_on = False
         if self.ws_server.extra_host is None:
+            turned_on = not self.remote_attach_enabled
             await self._handle_set_remote_attach(SetRemoteAttach(enabled=True))
         host = self.ws_server.extra_host
         if host is None or is_loopback_host(host):
+            if turned_on:
+                await self._handle_set_remote_attach(SetRemoteAttach(enabled=False))
             return build_error(
                 "pairing_unavailable",
                 "Tailscale isn't running on this computer, so a phone can't reach it.",
@@ -3377,10 +3414,27 @@ class Daemon:
         payload = scrub_wire_json(PairingCompleted(device=device).model_dump_json())
         await self.ws_server.broadcast(payload, loopback_only=True)
 
+    async def _on_device_presence(self, _device_id: str) -> None:
+        """A paired phone connected or dropped: refresh the computer's list.
+
+        Loopback windows only, so Settings shows connected and last seen
+        live; a phone has no business with the list.
+        """
+        state = await self._setup_state_event()
+        await self.ws_server.broadcast(scrub_wire_json(state.model_dump_json()), loopback_only=True)
+
     def _remember_remote_port(self) -> None:
-        """Save the bound port so the next start reuses it (TD-5005)."""
-        if self.ws_server.extra_host is not None:
-            save_remote_port(self.data_dir, self.ws_server.port)
+        """Save the bound port so the next start reuses it (TD-5005).
+
+        A random port replaces a remembered one only when this start tried
+        the remembered one and found it busy. One it never tried is still
+        the port every paired phone dials.
+        """
+        if self.ws_server.extra_host is None:
+            return
+        if not self.ws_server.preferred_port and load_remote_port(self.data_dir):
+            return
+        save_remote_port(self.data_dir, self.ws_server.port)
 
     async def _handle_attach(self, msg: Attach, session: Session, connection: Any) -> str | None:
         """Handle an attach: replay events from from_seq, then stream live."""

@@ -10,6 +10,10 @@ Keys are stored as sha256 only, in ``{user_data_dir}/remote-devices.yaml``
 (0600, written atomically). The code lives in daemon memory only: one at a
 time, 10 minutes, single use, burned after 5 wrong tries. Neither a code
 nor a key is ever logged.
+
+A file that cannot be read (an OSError, not a damaged file) is never set
+aside or written over: the registry is "unavailable" until a later
+:meth:`RemoteDeviceRegistry.load` reads it, and phones are told to retry.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ import socket
 import tempfile
 import time
 import unicodedata
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +56,10 @@ UNNAMED_DEVICE = "Unnamed device"
 
 PAIR_FAILED_MESSAGE = "That pairing code didn't work. Start pairing again on the computer."
 PAIR_LOCKED_MESSAGE = "Too many wrong codes. Start pairing again on the computer."
+DEVICES_UNAVAILABLE_MESSAGE = "This computer can't read its paired devices right now. Trying again."
+PAIRING_FILE_UNAVAILABLE_MESSAGE = (
+    "This computer can't read its paired devices file, so it can't pair right now."
+)
 
 Clock = Callable[[], float]
 RedeemResult = Literal["ok", "failed", "locked"]
@@ -65,6 +73,10 @@ _CODE_FIXUPS = str.maketrans({"O": "0", "I": "1", "L": "1"})
 
 class DeviceLimitError(ValueError):
     """Raised when a pairing would go past ``MAX_DEVICES``."""
+
+
+class RegistryUnavailableError(OSError):
+    """Raised by a write while the file could not be read: never overwrite it."""
 
 
 # ── Small helpers ────────────────────────────────────────────────────
@@ -273,10 +285,16 @@ class RemoteDeviceRegistry:
         self._devices: dict[str, _Device] = {}
         # Clock reading of the last last_seen write, per device.
         self._last_written: dict[str, float] = {}
+        self._unavailable = False
 
     @property
     def path(self) -> Path:
         return self._path
+
+    @property
+    def available(self) -> bool:
+        """False while the file exists but could not be read (an OSError)."""
+        return not self._unavailable
 
     @property
     def is_full(self) -> bool:
@@ -289,15 +307,26 @@ class RemoteDeviceRegistry:
         return device_id in self._devices
 
     def load(self) -> None:
-        """Read the file. A damaged one is set aside, never a failed start."""
+        """Read the file. A damaged one is set aside, never a failed start.
+
+        Damaged means bad YAML, bad UTF-8 or the wrong shape. A file that
+        cannot be read at all is kept as it is: the list starts empty and
+        the registry is unavailable, so nothing is saved over it, until a
+        later call reads it.
+        """
         self._devices = {}
         self._last_written = {}
-        if not self._path.exists():
-            return
         try:
             data: Any = yaml.safe_load(self._path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        except FileNotFoundError:
+            self._now_available()
+            return
+        except OSError as e:
+            self._now_unavailable(e)
+            return
+        except (UnicodeDecodeError, yaml.YAMLError):
             data = None
+        self._now_available()
         entries = _entries(data)
         if entries is None:
             self._set_aside()
@@ -314,6 +343,28 @@ class RemoteDeviceRegistry:
                 "skipped malformed remote device entries",
                 extra={"extra_fields": {"skipped": skipped, "path": str(self._path)}},
             )
+
+    def _now_unavailable(self, error: OSError) -> None:
+        # Retried on every phone hello: warn once, not once a retry.
+        if not self._unavailable:
+            log.warning(
+                "remote devices file could not be read; keeping it and retrying",
+                extra={
+                    "extra_fields": {
+                        "path": str(self._path),
+                        "error": error.strerror or type(error).__name__,
+                    }
+                },
+            )
+        self._unavailable = True
+
+    def _now_available(self) -> None:
+        if self._unavailable:
+            log.info(
+                "remote devices file readable again",
+                extra={"extra_fields": {"path": str(self._path)}},
+            )
+        self._unavailable = False
 
     def _set_aside(self) -> None:
         target = self._path.with_name(f"{REMOTE_DEVICES_FILE}.corrupt-{int(self._clock())}")
@@ -332,6 +383,11 @@ class RemoteDeviceRegistry:
 
     def save(self) -> None:
         """Atomic temp + rename, chmod 0600."""
+        self._write(self._devices.values())
+
+    def _write(self, devices: Iterable[_Device]) -> None:
+        if self._unavailable:
+            raise RegistryUnavailableError(f"{self._path.name} could not be read")
         payload = {
             "version": _FILE_VERSION,
             "devices": [
@@ -342,7 +398,7 @@ class RemoteDeviceRegistry:
                     "paired_at": d.paired_at,
                     "last_seen": d.last_seen,
                 }
-                for d in self._devices.values()
+                for d in devices
             ],
         }
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -397,11 +453,16 @@ class RemoteDeviceRegistry:
         return match
 
     def remove(self, device_id: str) -> bool:
-        """Forget a device. False when the id is unknown."""
-        if self._devices.pop(device_id, None) is None:
+        """Forget a device. False when the id is unknown.
+
+        The file is written first. A failed write raises OSError and the
+        device stays, so memory never forgets a key the file still holds.
+        """
+        if device_id not in self._devices:
             return False
+        self._write(d for d in self._devices.values() if d.id != device_id)
+        del self._devices[device_id]
         self._last_written.pop(device_id, None)
-        self.save()
         log.info("remote device removed", extra={"extra_fields": {"device_id": device_id}})
         return True
 
