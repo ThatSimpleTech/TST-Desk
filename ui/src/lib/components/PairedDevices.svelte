@@ -50,6 +50,10 @@
 				></span>
 				<span class="who">
 					<span class="name">{device.name}</span>
+					{#if device.kind === 'machine'}
+						<!-- TD-5015: another computer that paired with this one. -->
+						<span class="seen">A computer, not a phone</span>
+					{/if}
 					<span class="seen">{seen(device)}</span>
 					<span class="seen">{pairedWords(device.paired_at, now)}</span>
 				</span>

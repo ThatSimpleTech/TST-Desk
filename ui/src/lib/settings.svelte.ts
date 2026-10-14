@@ -17,6 +17,7 @@ import type { DaemonEventUnion, PolicyRuleSummary, RemoteDeviceSummary } from ".
 export type SettingsSection =
 	| "appearance"
 	| "devices"
+	| "machines"
 	| "computer"
 	| "engine"
 	| "model"
@@ -27,6 +28,7 @@ export type SettingsSection =
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
 	"devices",
+	"machines",
 	"computer",
 	"engine",
 	"model",
