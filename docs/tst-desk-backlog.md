@@ -9093,6 +9093,38 @@ The sideload APK is `android/app/build/outputs/apk/release/app-release.apk`
 
 ---
 
+### TD-5026 — The phone's paperclip opens a file picker
+**Size:** 2 · **Depends on:** TD-5001, TD-1709
+
+The composer's `<input type=file>` is inert on Android WebView. A tap fires
+`input.click()` into nothing: the host must implement
+`WebChromeClient.onShowFileChooser` and hand the chosen URIs back through its
+callback, or `onchange` never fires and no attachment is ever staged. Desktop
+works because the desktop browsers (and Tauri) implement that callback; the
+WebView shell did not.
+
+**Acceptance criteria:**
+- [x] The shell `WebView` has a `WebChromeClient` that overrides
+      `onShowFileChooser` and launches the system document picker
+- [ ] Tapping the paperclip on a device opens the picker; a chosen text file
+      (or image, when the tier accepts images) is base64'd through the same
+      composer gate (`attachments.ts`) and staged as a draft
+- [x] `multiple` is honoured; the MIME list defaults to `*/*` so the picker
+      shows everything the daemon can take, not only images
+- [x] A cancel returns null so the input can fire again; a second tap while a
+      picker is open resolves the earlier callback rather than leaving it
+      dangling
+- [x] Returned URIs keep only `content://` and `file://` schemes; junk entries
+      are dropped
+- [x] `:app:testDebugUnitTest` green
+
+Done (2026-10-14): `MainActivity` gains a `WebChromeClient` + the pure
+chooser helpers in `FileChooser.kt`; the chosen URIs are delivered via
+`onActivityResult`. Device AC is open — no emulator/ADB on this machine, so
+on-device picker behaviour is unverified. Device test needed before close.
+
+---
+
 # Epic E51 — Interactive progress guard
 
 Filed 2026-10-03. Interactive turns with skip-all were running until
